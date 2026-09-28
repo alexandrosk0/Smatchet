@@ -94,7 +94,6 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
             ctx->fieldCatalog.AvailableComponents = defaultCtx.fieldCatalog.AvailableComponents;
             ctx->fieldCatalog.AvailableIssueTypeMeta = defaultCtx.fieldCatalog.AvailableIssueTypeMeta;
             ctx->fieldCatalog.AvailableUsers = defaultCtx.fieldCatalog.AvailableUsers;
-            ctx->fieldCatalog.projectComponentOptions_ = defaultCtx.fieldCatalog.projectComponentOptions_;
             ctx->fieldCatalog.fieldCatalogEverLoaded_ = defaultCtx.fieldCatalog.fieldCatalogEverLoaded_;
             ctx->fieldCatalog.currentCatalogProjectKey_ = defaultCtx.fieldCatalog.currentCatalogProjectKey_;
             ctx->fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
@@ -713,7 +712,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // Pattern mirrors TicketSyncService::DrainPendingStreamingBatches: update-in-place for matching
     // ids, then republish + bump revision once if any field changed.
     bool anyFieldUpdated = false;
-    std::vector<CachedTicket> updatedTickets;  // Track updated tickets for cache persistence
+    std::vector<CachedTicket> updatedTickets; // Track updated tickets for cache persistence
     {
         std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
         // Handle membership removals first (within the same lock) before merge, so removed IDs
@@ -731,8 +730,8 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
             if (it != ctx.ActiveTickets.end() &&
                 (it->fieldValues != t.fieldValues || it->fieldRichValues != t.fieldRichValues)) {
-                *it = t;  // Update in place with fully-populated fetched data
-                updatedTickets.push_back(t);  // Track for cache persistence
+                *it = t;                     // Update in place with fully-populated fetched data
+                updatedTickets.push_back(t); // Track for cache persistence
                 anyFieldUpdated = true;
             }
         }
@@ -881,7 +880,6 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
             std::vector<TrackerComponent>().swap(ctx.fieldCatalog.AvailableComponents);
             std::vector<TrackerIssueTypeCreateMeta>().swap(ctx.fieldCatalog.AvailableIssueTypeMeta);
             std::vector<TrackerUser>().swap(ctx.fieldCatalog.AvailableUsers);
-            ctx.fieldCatalog.projectComponentOptions_.clear();
         }
         // Deliberate: retirement (unlike LRU eviction) means this pane is gone for good as far as
         // the retention sweep is concerned, so its owned-id set is emptied and its rows become

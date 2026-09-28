@@ -14,7 +14,7 @@
 // FROZEN-vs-LIVE FOCUS (the load-bearing distinction): the connectivity FSM re-resolves the
 // FOCUSED context's backend and field catalog LIVE on every call (the production code reads
 // focusedContext().Backend and fieldCatalog(), both of which re-resolve focusedContextPtr_ per
-// call). The existing adapter overrides BackendShared()/KickTimeFieldCatalog() forward to the
+// call). The existing adapter override BackendShared() forwards to the
 // FROZEN per-context ctx_ that the adapter captured at construction. The connectivity accessors
 // below are therefore named DISTINCTLY (FocusedBackendShared, FocusedFieldCatalog*) so they get
 // their OWN adapter override bodies that forward to app_.BackendShared()/app_.fieldCatalog()

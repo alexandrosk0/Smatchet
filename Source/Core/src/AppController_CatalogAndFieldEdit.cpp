@@ -5,6 +5,8 @@
 #include "IssueTransitionsCacheService.h" // transitions delegators forward to transitions_.
 #include "ITrackerIssueMutations.h" // fan-in Phase 2: AppController.h fwd-decls it now; this TU calls Mutations() methods.
 #include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
+#include "LookupPayloadsPure.h"            // lookup_cache kinds + the user roster codec (Pillar 6).
+#include "ProjectComponentsCacheService.h" // component delegators forward to components_.
 
 #include <algorithm>
 #include <chrono>
@@ -352,6 +354,63 @@ void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
     cat.AvailableUsers = std::move(users);
 }
 
+void AppController::SaveAvailableUsersForOfflineAsync(const std::string& cacheBackendKey,
+                                                      std::string usersPayloadJson) {
+    const std::shared_ptr<LocalCacheManager> store = std::atomic_load(&Cache);
+    if (!store || cacheBackendKey.empty() || usersPayloadJson.empty()) {
+        return;
+    }
+    try {
+        LaunchBackgroundTask([store, cacheBackendKey, payload = std::move(usersPayloadJson)]() {
+            store->UpsertLookup(cacheBackendKey, smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, payload);
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: saving the user roster did not start: %s", ex.what());
+    }
+}
+
+void AppController::SeedAvailableUsersFromStoreAsync() {
+    GridLiveContext& ctx = focusedContext(); // latch once: the apply below targets this pane
+    {
+        std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
+        if (!ctx.fieldCatalog.AvailableUsers.empty()) {
+            return;
+        }
+    }
+    const std::shared_ptr<LocalCacheManager> store = std::atomic_load(&Cache);
+    const std::string backendKey = ctx.CacheBackendKeyCopy();
+    if (!store || backendKey.empty()) {
+        return;
+    }
+    // Dangle-safety: a retired context stays alive as a husk in retiredContexts_ until ~AppController,
+    // and the backend generation + namespace re-check below drops an apply after a tracker swap.
+    GridLiveContext* ctxPtr = &ctx;
+    const std::uint64_t generation = ctx.backendGeneration_.load();
+    try {
+        LaunchBackgroundTask([this, store, backendKey, ctxPtr, generation]() {
+            LookupCacheRow row;
+            auto users = std::make_shared<std::vector<TrackerUser>>();
+            if (!store->TryGetLookup(backendKey, smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, row) ||
+                !smatchet::lookup::ParseUsers(row.PayloadJson, *users) || users->empty()) {
+                return;
+            }
+            // AvailableUsers is read by reference on the UI thread, so it is only written there.
+            PostToMainThread([ctxPtr, generation, backendKey, users]() {
+                if (ctxPtr->backendGeneration_.load() != generation || ctxPtr->CacheBackendKeyCopy() != backendKey) {
+                    return; // the pane switched tracker meanwhile
+                }
+                GridContextFieldCatalog& cat = ctxPtr->fieldCatalog;
+                std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+                if (cat.AvailableUsers.empty()) { // never override a live roster
+                    cat.AvailableUsers = std::move(*users);
+                }
+            });
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: loading the saved user roster did not start: %s", ex.what());
+    }
+}
+
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                                     bool errorTransient) {
@@ -593,15 +652,22 @@ void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat)
 // Phase 2). Only thin public delegators remain here; see the delegator block below. The editmeta cache
 // methods moved earlier (Phase 1, EditMetaCacheService).
 
-std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
+ProjectComponentsLookup AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
+    return components_ ? components_->GetComponentOptions(projectKey) : ProjectComponentsLookup();
+}
+
+bool AppController::EnsureProjectComponentsLoaded(const std::string& projectKey) {
+    return components_ && components_->EnsureComponentsLoaded(projectKey);
+}
+
+bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
+    if (projectKey.empty()) {
+        return false;
+    }
     const GridContextFieldCatalog& cat =
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
     std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-    const auto it = cat.projectComponentOptions_.find(projectKey);
-    if (it == cat.projectComponentOptions_.end()) {
-        return std::vector<TrackerFieldOption>();
-    }
-    return it->second;
+    return ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(projectKey);
 }
 
 bool AppController::FieldCatalogLacksProjectScope() const {
@@ -615,95 +681,6 @@ bool AppController::FieldCatalogLacksProjectScope() const {
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
     std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
     return cat.fieldCatalogEverLoaded_ && cat.currentCatalogProjectKey_.empty();
-}
-
-bool AppController::IsProjectComponentsLoaded(const std::string& projectKey) const {
-    const GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
-    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-    return cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end();
-}
-
-void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey) {
-    if (projectKey.empty()) {
-        return;
-    }
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    if (!backend) {
-        return;
-    }
-    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
-    // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
-    GridContextFieldCatalog& cat = fieldCatalog();
-    {
-        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-        if (cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end()) {
-            return; // already warmed
-        }
-        if (!cat.projectComponentsInFlight_.insert(projectKey).second) {
-            return; // a fetch for this project is already running
-        }
-        // Failure backoff: a previous fetch failed and recorded a retry deadline. Skip relaunch
-        // (and undo the in-flight marker we just took) until that deadline passes — otherwise the
-        // every-frame paint-path call would hammer the backend after each failure.
-        const auto retryIt = cat.projectComponentsRetryAfter_.find(projectKey);
-        if (retryIt != cat.projectComponentsRetryAfter_.end() && std::chrono::steady_clock::now() < retryIt->second) {
-            cat.projectComponentsInFlight_.erase(projectKey);
-            return;
-        }
-    }
-    TrackerConfig trackerCfgForWorker = ConfigManager::Load();
-    // Capture the KICK-TIME catalog by pointer (#975). fieldCatalog() re-resolves
-    // focusedContextPtr_ at CALL time; re-resolving it inside the worker would target whatever
-    // context is focused at COMPLETION time, not the one whose projectComponentsInFlight_ marker
-    // we just inserted above. A focus switch mid-fetch would then leave THIS context's marker set
-    // forever (the pane stuck "Loading components…" until restart) while spuriously
-    // erasing/writing the completion-time context. Capturing &catPtr pins the kick-time context's
-    // catalog for the whole worker run.
-    // Dangle-safety: a GridContextFieldCatalog is a subobject of a GridLiveContext. The UI thread
-    // never frees a live context mid-session — on retirement it moves the context (as a defer-free
-    // husk) into retiredContexts_, which survives until ~AppController (ADR-0012 graveyard applied
-    // to contexts; see AppController.h retiredContexts_). The husk's availableFieldsMutex_ and
-    // containers stay valid (cleared, not destroyed), so this raw pointer is always safe to lock
-    // and mutate. If the context was retired mid-fetch, erasing the marker on the husk is a no-op
-    // that leaks nothing visible (a husk is never painted), so no extra guard is needed.
-    GridContextFieldCatalog* catPtr = &cat;
-    LaunchBackgroundTask([this, projectKey, backend, catPtr,
-                          trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
-        // Operate on the kick-time context (#975) — NOT a completion-time fieldCatalog() re-resolve.
-        GridContextFieldCatalog& cat = *catPtr;
-        if (shuttingDown_.load()) {
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            cat.projectComponentsInFlight_.erase(projectKey);
-            return;
-        }
-        ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
-        if (catalog == nullptr) {
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            cat.projectComponentsInFlight_.erase(projectKey);
-            return;
-        }
-        // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
-        auto componentsResult = catalog->FetchProjectComponents(trackerCfgForWorker, projectKey);
-        if (!componentsResult) {
-            LOG_DEBUG("AppController: lazy per-project component load failed for %s: %s", projectKey.c_str(),
-                      componentsResult.error().Detail.c_str());
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            // Record a backoff deadline so the every-frame paint path stops relaunching until it
-            // passes (~once / 30s per failing project instead of every frame).
-            cat.projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-            cat.projectComponentsInFlight_.erase(projectKey);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-        // Insert the key on success regardless of count — presence == loaded, so a genuinely empty
-        // project settles to "(no options)" instead of showing "Loading components…" forever.
-        cat.projectComponentOptions_[projectKey] = std::move(componentsResult.value().Options);
-        cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
-        cat.projectComponentsInFlight_.erase(projectKey);
-    });
 }
 
 // Editmeta-cache delegators — forward to `editMeta_` (EditMetaCacheService, god-object
@@ -730,6 +707,10 @@ void AppController::InvalidateIssueEditMeta(const std::string& issueId) { editMe
 void AppController::PruneEditMetaCacheToActiveTickets() { editMeta_->PruneEditMetaCacheToActiveTickets(); }
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
+    // The same warm fills the per-project component options, so each row's components editor has them.
+    if (components_) {
+        components_->WarmForActiveTicketsAsync(trackerCfgForWorker);
+    }
     editMeta_->WarmIssueTypeEditMetaAtStartAsync(std::move(trackerCfgForWorker));
 }
 

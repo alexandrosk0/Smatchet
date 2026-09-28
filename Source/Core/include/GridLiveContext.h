@@ -48,12 +48,8 @@ struct GridContextFieldCatalog {
     bool fieldCatalogEverLoaded_ = false;
     /// Project key for the most-recent in-flight catalog fetch (see SetCurrentCatalogProject).
     std::string currentCatalogProjectKey_;
-    /// Per-project component option lists for cross-project grid views, keyed by project key.
-    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
-    /// Project keys with an in-flight lazy component fetch (EnsureProjectComponentsLoaded).
-    std::unordered_set<std::string> projectComponentsInFlight_;
-    /// Per-project backoff after a FAILED component fetch (30 s relaunch guard).
-    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
+    // Per-project component options are not per-pane: ProjectComponentsCacheService keys them by
+    // tracker and project, so panes on one tracker share them.
 };
 
 /// Per-context lazy in-memory group roster (user-info-window Slice 3, plan item 15;
@@ -180,8 +176,8 @@ struct GridLiveContext {
     /// alongside the latch re-arm above; AppController::EnsurePaneLiveSyncStarted bails while
     /// now < syncRetryAfter (see PaneSyncKickPolicy.h). Without it a fast-failing backend
     /// re-kicked a full sync EVERY FRAME (re-arm each failed session + per-frame kick site).
-    /// UI thread only — same single-thread discipline as initialSyncKicked. Mirrors the
-    /// projectComponentsRetryAfter_ 30 s pattern above.
+    /// UI thread only — same single-thread discipline as initialSyncKicked. Same 30 s as the
+    /// lookup backoff (smatchet::offline::kLookupRetryAfterSeconds).
     std::chrono::steady_clock::time_point syncRetryAfter{};
     /// JQL the most-recent kicked sync for this context used (UI thread only — written by
     /// the EnsurePaneLiveSyncStarted main-thread post and AppController::RecordPaneSyncKick,

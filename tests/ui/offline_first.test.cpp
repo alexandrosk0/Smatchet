@@ -17,6 +17,7 @@
 #include "CachedTicketTypes.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "Config/ConfigManager.h"
+#include "DataFreshnessCue.h"
 #include "PendingActionTypes.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
@@ -24,6 +25,7 @@
 #include "SmatchetGridUiSupport.h"   // ProcessGridFieldEdits — the real grid commit pipeline
 #include "SmatchetUiSession.h"       // g_ui, PendingFieldEdit
 #include "Types/ConnectivityTypes.h"
+#include "Types/ProjectComponentsTypes.h"
 #include "Types/TransitionsTypes.h"
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
 
@@ -515,6 +517,115 @@ static void RegisterOfflineFirstWorklogOfflineQueues(ImGuiTestEngine* engine) {
     };
 }
 
+namespace {
+
+bool HasOption(const ProjectComponentsLookup& lookup, const char* value) {
+    return lookup.options != nullptr &&
+           std::any_of(lookup.options->begin(), lookup.options->end(),
+                       [value](const TrackerFieldOption& option) { return option.Value == value; });
+}
+
+bool HasUser(const AppController& app, const char* accountId, const char* displayName) {
+    const std::vector<TrackerUser>& users = app.GetAvailableUsers();
+    return std::any_of(users.begin(), users.end(), [accountId, displayName](const TrackerUser& user) {
+        return user.AccountId == accountId && user.DisplayName == displayName;
+    });
+}
+
+} // namespace
+
+// OfflineFirst/Components_OfflineShowsSavedOptions: a project's component options, once fetched, stay on
+// offer while the tracker is unreachable, with no request made, and a project with nothing saved says
+// "not available yet" instead of spinning on "Loading components…" (the old editor spun forever). The
+// next-session restore from the lookup cache is pinned in ProjectComponentsCacheService.test.cpp.
+static void RegisterOfflineFirstComponentsOfflineShowsSavedOptions(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Components_OfflineShowsSavedOptions");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        using smatchet::offline::DataFreshness;
+
+        // Online: the fixture's OFF components load (the post-sync warm may already have them).
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, [app]() {
+            app->EnsureProjectComponentsLoaded("OFF");
+            return app->GetComponentOptionsForProject("OFF").freshness == DataFreshness::Fresh;
+        }));
+
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        // What the grid does every frame for a components cell in each project.
+        for (int frame = 0; frame < 10; ++frame) {
+            app->EnsureProjectComponentsLoaded("OFF");
+            app->EnsureProjectComponentsLoaded("NOPE");
+            ctx->Yield();
+        }
+
+        const ProjectComponentsLookup off = app->GetComponentOptionsForProject("OFF");
+        IM_CHECK_NO_RET(HasOption(off, "Backend"));
+        IM_CHECK_NO_RET(HasOption(off, "Frontend"));
+        const ProjectComponentsLookup none = app->GetComponentOptionsForProject("NOPE");
+        IM_CHECK_NO_RET(none.options == nullptr);
+        IM_CHECK_NO_RET(!none.inFlight);
+        IM_CHECK_NO_RET(none.freshness == DataFreshness::UnavailableNoCache);
+        IM_CHECK_NO_RET(std::strstr(DataFreshnessCue::CueText(none.freshness), "Loading") == nullptr);
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+    };
+}
+
+// OfflineFirst/Users_RestoredFromSavedRoster: the user roster a live catalog fetch brought is saved to
+// the local lookup cache (real SQLite), and a pane with no users gets it back from there while the
+// tracker is unreachable, with no request made (the JQL autocomplete and assignee names used to go
+// empty offline).
+static void RegisterOfflineFirstUsersRestoredFromSavedRoster(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Users_RestoredFromSavedRoster");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+
+        // Online: a live catalog fetch through the grid path brings (and saves) the fixture roster.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, []() { return !g_ui.fieldCatalogLoading; }));
+        g_ui.triggerCatalogRefetch = true;
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, [app]() {
+            return !g_ui.triggerCatalogRefetch && !g_ui.fieldCatalogLoading && HasUser(*app, "acc-ana", "Ana Offline");
+        }));
+
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+
+        // The pane loses its in-memory roster (as a tracker switch does); the saved copy comes back.
+        // The save runs on a worker, so keep asking until the row is readable.
+        app->SetAvailableUsers({});
+        int frame = 0;
+        const bool restored = YieldUntil(ctx, 600, [app, &frame]() {
+            if (frame++ % 10 == 0) {
+                app->SeedAvailableUsersFromStoreAsync();
+            }
+            return HasUser(*app, "acc-ana", "Ana Offline");
+        });
+        IM_CHECK_NO_RET(restored);
+        IM_CHECK_NO_RET(HasUser(*app, "acc-bob", "Bob Offline"));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -522,6 +633,8 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCommentsOfflineShowsCachedThread(engine);
     RegisterOfflineFirstCommentsPostedOfflineReplays(engine);
     RegisterOfflineFirstWorklogOfflineQueues(engine);
+    RegisterOfflineFirstComponentsOfflineShowsSavedOptions(engine);
+    RegisterOfflineFirstUsersRestoredFromSavedRoster(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

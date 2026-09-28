@@ -144,9 +144,9 @@ PendingActionTarget FieldEditPipelineService::BindTarget(const PendingActionTarg
 }
 
 bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
-    const FieldEditCommitRequest& req, const std::shared_ptr<ITrackerBackend>& backend,
-    nlohmann::json& outFieldsPayload, std::unordered_map<std::string, std::string>& outDisplayValues,
-    std::string& outError) {
+    const FieldEditCommitRequest& req, const PendingActionTarget& target, nlohmann::json& outFieldsPayload,
+    std::unordered_map<std::string, std::string>& outDisplayValues, std::string& outError) {
+    const std::shared_ptr<ITrackerBackend>& backend = target.Backend;
     const std::string& issueId = req.IssueId;
     const TrackerField& field = req.Field;
     outError.clear();
@@ -168,7 +168,8 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
 
     // No editmeta fetch here: the network path loads it first, while a queued edit never waits on the
     // network (Pillar 6), so this check uses whatever is loaded and is optimistic otherwise.
-    if (!editMeta_.CanEditFieldForIssueWithType(issueId, field.Id, &field, req.IssueTypeKeySnapshot)) {
+    if (!editMeta_.CanEditFieldForIssueWithType(target.BackendKey, issueId, field.Id, &field,
+                                                req.IssueTypeKeySnapshot)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         return false;
     }
@@ -240,11 +241,11 @@ FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const Field
 
     // Sprint and timetracking returned above; this field is permission-checked against the editmeta of
     // the edit's own backend.
-    editMeta_.EnsureIssueEditMetaLoadedFor(target.Backend, req.IssueId, req.IssueTypeKeySnapshot);
+    editMeta_.EnsureIssueEditMetaLoadedFor(target.Backend, target.BackendKey, req.IssueId, req.IssueTypeKeySnapshot);
 
     nlohmann::json fieldsPayload;
     std::unordered_map<std::string, std::string> displayValues;
-    if (!TryBuildFieldEditPayloadForNetwork(req, target.Backend, fieldsPayload, displayValues, result.Error)) {
+    if (!TryBuildFieldEditPayloadForNetwork(req, target, fieldsPayload, displayValues, result.Error)) {
         return result;
     }
     if (!ApplyFieldUpdateWithEditMetaRetry(req, target, fieldsPayload, *mutations, result)) {
@@ -271,8 +272,9 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const FieldEdit
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
-        editMeta_.RefreshIssueEditMetaFor(target.Backend, issueId, req.IssueTypeKeySnapshot);
-        if (!editMeta_.CanEditFieldForIssueWithType(issueId, field.Id, &field, req.IssueTypeKeySnapshot)) {
+        editMeta_.RefreshIssueEditMetaFor(target.Backend, target.BackendKey, issueId, req.IssueTypeKeySnapshot);
+        if (!editMeta_.CanEditFieldForIssueWithType(target.BackendKey, issueId, field.Id, &field,
+                                                    req.IssueTypeKeySnapshot)) {
             outResult.Error =
                 "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
             outResult.ErrorTransient = false;
@@ -371,7 +373,7 @@ bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const FieldEditCommitR
         }
         PutEstimateDisplays(edit.value(), displayValues);
         fieldsPayload = std::move(edit.value().FieldsPayload);
-    } else if (!TryBuildFieldEditPayloadForNetwork(req, target.Backend, fieldsPayload, displayValues, outError)) {
+    } else if (!TryBuildFieldEditPayloadForNetwork(req, target, fieldsPayload, displayValues, outError)) {
         return false;
     }
     try {

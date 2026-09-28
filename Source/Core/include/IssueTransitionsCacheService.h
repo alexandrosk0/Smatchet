@@ -17,11 +17,11 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "Config/ConfigManager.h"
 #include "KeyedLookupCache.h"
+#include "StoreLoadLatch.h"
 #include "Tracker/TrackerFieldSchema.h"
 #include "Types/TransitionsTypes.h"
 
@@ -49,7 +49,8 @@ class IssueTransitionsCacheService {
     /// have focus (#2260).
     void InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId);
 
-    /// Connectivity came back: clear every failure backoff so the next combo open retries.
+    /// Connectivity came back: clear every failure backoff (fetches and the saved-workflow load) so the
+    /// next combo open retries.
     void OnConnectivityRecovered();
 
   private:
@@ -65,6 +66,6 @@ class IssueTransitionsCacheService {
     mutable std::mutex learnedMutex_;
     /// LearnedMemoryKey(backend, "project|type|from") -> target statuses. Guarded by learnedMutex_.
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> learned_;
-    /// Backends whose stored rows were loaded (or are loading). Guarded by learnedMutex_.
-    std::unordered_set<std::string> learnedLoadedBackends_;
+    /// Backends whose stored rows were loaded (or are loading).
+    smatchet::offline::StoreLoadLatch learnedLoad_;
 };

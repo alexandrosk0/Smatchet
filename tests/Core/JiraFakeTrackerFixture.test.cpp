@@ -296,6 +296,32 @@ TEST_CASE("JiraFakeTrackerFixture::Offline — catalog.fields builds a Status fi
     CHECK(fields[1].Family == TrackerFieldFamily::Text);
 }
 
+TEST_CASE("JiraFakeTrackerFixture::Offline — catalog.users and projectComponents are scripted on the client") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"catalog": {"fields": [
+        {"id": "summary", "name": "Summary", "family": "Text", "options": []}],
+        "users": [{"accountId": "acc-ana", "displayName": "Ana Offline", "email": "ana@example.test"}]},
+        "projectComponents": {"OFF": [{"id": "100", "name": "Backend", "description": "Server side"}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    TrackerConfig cfg;
+    const auto catalog = client->FetchFieldCatalog(cfg, std::string());
+    REQUIRE(static_cast<bool>(catalog));
+    REQUIRE(catalog.value().Users.size() == 1);
+    CHECK(catalog.value().Users[0].AccountId == "acc-ana");
+    CHECK(catalog.value().Users[0].EmailAddress == "ana@example.test");
+
+    const auto components = client->FetchProjectComponents(cfg, "OFF");
+    REQUIRE(static_cast<bool>(components));
+    REQUIRE(components.value().Options.size() == 1);
+    CHECK(components.value().Options[0].Id == "100");
+    CHECK(components.value().Options[0].Value == "Backend");
+    CHECK(components.value().Options[0].SecondaryValue == "Server side");
+    // An unscripted project keeps the fake's failure default.
+    CHECK_FALSE(static_cast<bool>(client->FetchProjectComponents(cfg, "OTHER")));
+}
+
 TEST_CASE("JiraFakeTrackerFixture::Offline — an empty catalog keeps the not-supported default") {
     smatchet_tests::ScopedFakeNetworkReset reset;
     const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();

@@ -63,10 +63,13 @@ class JiraFakeTrackerFixture {
     std::vector<ScriptedReply> updateIssueFieldsReplies_;
     std::vector<ScriptedReply> createIssueReplies_;
     // Offline-first harness (Quality Pillar 6): an optional network mode applied to the global
-    // switch on Configure, plus the scripted field catalog, transitions and comments.
+    // switch on Configure, plus the scripted field catalog (fields and user roster), per-project
+    // components, transitions and comments.
     bool hasNetworkMode_ = false;
     FakeNetworkMode networkMode_ = FakeNetworkMode::Up;
     std::vector<TrackerField> fields_;
+    std::vector<TrackerUser> users_;
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentsByKey_;
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> issueTransitionsByIssueId_;
     std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
 };

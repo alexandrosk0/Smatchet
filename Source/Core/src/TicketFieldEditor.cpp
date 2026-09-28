@@ -3,6 +3,8 @@
 #include "TicketFieldEditor_Worklog.h"
 
 #include "AppController.h"
+#include "ComponentOptionsPickPure.h"
+#include "DataFreshnessCue.h"
 #include "IssueTransitionsCacheService.h"
 #include "StatusComboOptionsPure.h"
 #include "TrackerDateTimeFieldEditor.h"
@@ -25,6 +27,7 @@
 #include "TicketFieldEditorDurationPopupPure.h"
 #include "Ui/FieldPreviewLinePure.h"
 #include "TouchCellEditGesture.h"
+#include "Types/ProjectComponentsTypes.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -814,17 +817,23 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
 }
 
-// Draws the open multi-select combo body: clear-all, search input, and the per-option checkbox
-// list (checked options are always shown even when filtered out). Extracted from
-// RenderMultiSelectEditor; caller owns BeginCombo/EndCombo and the effective-option resolution.
-// `selectedSet` is mutated as the user toggles checkboxes. Behaviour byte-identical.
+// Draws the open multi-select combo body: a freshness cue when the list is not live, clear-all, search
+// input, and the per-option checkbox list (checked options are always shown even when filtered out).
+// The caller owns BeginCombo/EndCombo and the effective-option resolution. `selectedSet` is mutated as
+// the user toggles checkboxes.
 void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
-                                const std::vector<TrackerFieldOption>* opts, bool componentsLoaded,
-                                std::unordered_set<std::string>& selectedSet, bool catalogUnscoped) {
+                                const std::vector<TrackerFieldOption>* opts, smatchet::offline::DataFreshness freshness,
+                                const std::string& freshnessDetail, std::unordered_set<std::string>& selectedSet,
+                                bool catalogUnscoped) {
     if (state.MultiSelectActiveKey != editorKey) {
         state.MultiSelectActiveKey = editorKey;
         state.MultiSelectSearchBuf[0] = '\0';
+    }
+    // Pillar 6: say when the list is saved, refreshing or not available yet instead of spinning.
+    if (freshness != smatchet::offline::DataFreshness::Fresh) {
+        DataFreshnessCue::Draw(freshness, freshnessDetail.empty() ? nullptr : freshnessDetail.c_str());
+        ImGui::Separator();
     }
 
     if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
@@ -875,41 +884,44 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
         }
         ImGui::PopID();
     }
-    if (!drewAny) {
-        if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
-            // Per-project options have not loaded yet. The lazy fetch was kicked above and the
-            // real options appear on a later frame once it lands. A successful fetch that
-            // returned zero components marks the project loaded, so a genuinely empty project
-            // shows the no-options text rather than spinning here forever.
-            ImGui::TextDisabled("Loading components\xE2\x80\xA6");
-        } else {
-            RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
-        }
+    // With nothing cached the cue above already says why the list is empty. A successful fetch that
+    // returned zero components is Fresh, so a genuinely empty project shows the no-options text.
+    if (!drewAny && (!filterLower.empty() || smatchet::offline::ShouldRenderContent(freshness))) {
+        RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
     }
+}
+
+// The option list a components editor or cell uses for its row (Pillar 6): the row's own project list,
+// live or saved, kicking a background fetch while it is not live; else the catalog's list when the
+// catalog was fetched for that same project; else none. Never another project's list: the catalog of a
+// cross-project view would offer components that do not exist in this row's project. `holder` keeps
+// the returned list alive.
+smatchet::components::ComponentOptionsPick PickRowComponents(AppController& app, const CachedTicket& ticket,
+                                                             const TrackerField& field,
+                                                             ProjectComponentsLookup& holder) {
+    const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+    holder = app.GetComponentOptionsForProject(projectKey);
+    if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
+        holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
+    }
+    const bool catalogIsRowProject = !holder.options && app.IsFieldCatalogScopedToProject(projectKey);
+    return smatchet::components::PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
+                                                      app.GetLastTrackerConnectivityState());
 }
 
 void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                              bool singleClickToEdit) {
-    // For the grid components MultiSelect on cross-project views, options are scoped to THIS row's
-    // own Jira project (resolved from the issue-key prefix). When the per-project map has not been
-    // warmed for this project, kick a lazy fetch and use the (empty) per-project set anyway — never
-    // fall back to field.AllowedValueOptions, which is a CROSS-PROJECT UNION from the scoped catalog
-    // and would leak other projects' components into this row's dropdown. The list populates next
-    // frame once the async fetch lands. Non-components fields keep the global AllowedValueOptions.
+    // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickRowComponents
+    // explains. Every other field keeps the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
-    std::vector<TrackerFieldOption> perProject;
-    bool componentsLoaded = true; // non-components fields are always "loaded"
+    ProjectComponentsLookup rowComponents;
+    smatchet::offline::DataFreshness optionsFreshness = smatchet::offline::DataFreshness::Fresh;
     if (field.Id == "components") {
-        const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-        perProject = app.GetComponentOptionsForProject(projectKey);
-        componentsLoaded = app.IsProjectComponentsLoaded(projectKey);
-        if (!componentsLoaded) {
-            // Non-blocking lazy fetch; mutates in-flight bookkeeping + spawns a worker.
-            app.EnsureProjectComponentsLoaded(projectKey);
-        }
-        opts = &perProject;
+        const smatchet::components::ComponentOptionsPick pick = PickRowComponents(app, ticket, field, rowComponents);
+        opts = pick.Options;
+        optionsFreshness = pick.Freshness;
     }
     // Resolve current selection ids against the effective option set (matters when a row's project
     // uses a per-project list distinct from the global catalog).
@@ -940,8 +952,8 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
         // Components have their own per-project lazy path, so the unscoped-catalog hint would
         // mislead there; every other project-scoped multi-select (versions, custom options) gets it.
         const bool catalogUnscoped = field.Id != "components" && opts->empty() && app.FieldCatalogLacksProjectScope();
-        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet,
-                                   catalogUnscoped);
+        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, optionsFreshness,
+                                   rowComponents.lastError, selectedSet, catalogUnscoped);
         ImGui::EndCombo();
     }
     DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);
@@ -1115,24 +1127,17 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
     } else {
         // Components cells on cross-project views resolve their display name against this row's
-        // own project options (same per-project pattern as RenderMultiSelectEditor). The global
+        // own project options (PickRowComponents, as in RenderMultiSelectEditor). The global
         // components field has empty/wrong AllowedValueOptions cross-project, so without this the
         // collapsed cell rendered the raw numeric component id instead of its name.
         const TrackerField* displayField = field;
         TrackerField effectiveField;
         if (field != nullptr && column.FieldId == "components") {
-            const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-            std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
-            // Always scope to this row's project and never fall back to the global cross-project
-            // union. When not yet loaded, kick a lazy fetch and use the empty per-project set so
-            // selected-id names resolve on a later frame once the fetch lands (raw id shows
-            // briefly). Gate on the loaded flag rather than an empty vector so a successful zero-
-            // component fetch does not relaunch a worker every frame.
-            if (!app.IsProjectComponentsLoaded(projectKey)) {
-                app.EnsureProjectComponentsLoaded(projectKey);
-            }
+            ProjectComponentsLookup rowComponents;
+            const smatchet::components::ComponentOptionsPick pick =
+                PickRowComponents(app, ticket, *field, rowComponents);
             effectiveField = *field;
-            effectiveField.AllowedValueOptions = std::move(perProject);
+            effectiveField.AllowedValueOptions = *pick.Options;
             displayField = &effectiveField;
         }
         display = app.ResolveDisplayValue(column.FieldId, displayField, currentValue);

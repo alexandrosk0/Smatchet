@@ -144,8 +144,10 @@ class ConnectivityMonitorService;
 class AttachmentAppUpdateService;
 class IssueTransitionsCacheService;
 class LuaAutomationHost;
+class ProjectComponentsCacheService;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
+struct ProjectComponentsLookup;
 struct TransitionsLookup;
 struct TransitionsQuery;
 
@@ -794,6 +796,14 @@ class AppController : public IAppThreading,
     /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
     /// Idempotent; safe to call with an empty vector to clear the cache.
     void SetAvailableUsers(std::vector<TrackerUser> users);
+    /// UI thread. Save a live user roster (smatchet::lookup::SerializeUsers output) to the lookup cache
+    /// under `cacheBackendKey`, on a worker, for offline use (Quality Pillar 6). An empty payload saves
+    /// nothing, so an empty or failed fetch never replaces a saved roster.
+    void SaveAvailableUsersForOfflineAsync(const std::string& cacheBackendKey, std::string usersPayloadJson);
+    /// UI thread. When the focused pane has no users yet, load the roster saved by an earlier session
+    /// on a worker and apply it on the UI thread, unless a live roster (or another tracker) got there
+    /// first. Lets the JQL autocomplete and assignee names work before, or without, a live fetch.
+    void SeedAvailableUsersFromStoreAsync();
 
     const std::vector<TrackerIssueTypeCreateMeta>& GetTrackerIssueTypeCreateMeta() const {
         return fieldCatalog().AvailableIssueTypeMeta;
@@ -969,10 +979,18 @@ class AppController : public IAppThreading,
 
     const TrackerField* FindFieldById(const std::string& fieldId) const override;
 
-    /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
-     *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
-     *  has not been warmed yet (caller falls back to the global components catalog). */
-    std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
+    /** Component options for one Jira project key (e.g. "PROJ") in the focused tracker, from
+     *  ProjectComponentsCacheService (Quality Pillar 6): the live list, else the list saved from an
+     *  earlier session, else none (`options` null), with its freshness. Never touches the network;
+     *  cheap enough for every frame. When nothing is cached the grid falls back to the catalog's own
+     *  components only if the catalog was fetched for that same project (IsFieldCatalogScopedToProject),
+     *  never to another project's list. */
+    struct ProjectComponentsLookup GetComponentOptionsForProject(const std::string& projectKey) const;
+
+    /** True when the focused context's field catalog was fetched for `projectKey` (compared without
+     *  case), so the catalog's component options are that project's own. Read under
+     *  availableFieldsMutex_. */
+    bool IsFieldCatalogScopedToProject(const std::string& projectKey) const;
 
     /** True when the focused context's field catalog was fetched for the Jira backend WITHOUT a
      *  project scope (#2146): the active view's JQL resolved to no single project, so createmeta
@@ -982,19 +1000,13 @@ class AppController : public IAppThreading,
      *  Reads the catalog's project key under availableFieldsMutex_. */
     bool FieldCatalogLacksProjectScope() const;
 
-    /** True once a component fetch for `projectKey` has SUCCEEDED (the key is present in
-     *  projectComponentOptions_), regardless of how many components it returned. Lets the editor
-     *  distinguish "not yet loaded" (show "Loading components…") from "loaded but genuinely empty"
-     *  (show "(no options)"). Read under availableFieldsMutex_. */
-    bool IsProjectComponentsLoaded(const std::string& projectKey) const;
-
-    /** Lazily fetch one Jira project's component options into projectComponentOptions_ when the
-     *  eager warm (WarmIssueTypeEditMetaAtStartAsync) missed it (race, or a project loaded after the
-     *  warm ran). Non-blocking: checks the per-project map + in-flight set under availableFieldsMutex_
-     *  and launches a background fetch; the HTTP runs on the worker. No-op when projectKey is empty,
-     *  already cached, or already in-flight. The components editor calls this instead of falling back
-     *  to the cross-project global catalog union. */
-    void EnsureProjectComponentsLoaded(const std::string& projectKey);
+    /** Start a background fetch of one Jira project's component options when one is allowed: not live
+     *  yet, not in flight, not offline, not inside the failure backoff. Non-blocking; the HTTP and the
+     *  lookup-cache write run on a worker, and the saved lists are loaded once per tracker. The
+     *  components editor and cells call it instead of falling back to another project's list. True
+     *  when this call changed the project's entry (a fetch started, or failed to start), so the caller
+     *  re-reads it. */
+    bool EnsureProjectComponentsLoaded(const std::string& projectKey);
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
@@ -1045,7 +1057,9 @@ class AppController : public IAppThreading,
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
-    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
+    /** Post-sync warm: per-issue-type edit permissions (EditMetaCacheService) and each active project's
+     * component options (ProjectComponentsCacheService); both load their saved copies first.
+     * @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
@@ -1178,6 +1192,11 @@ class AppController : public IAppThreading,
     /// EditMetaCacheService decomposition pattern. MUST be declared before `fieldEdit_` since
     /// FieldEditPipelineService holds a reference to it.
     std::unique_ptr<IssueTransitionsCacheService> transitions_;
+    /// Owns the per-project component options (one KeyedLookupCache keyed by tracker and project, saved
+    /// to the lookup cache for offline use). Constructed eagerly in `Initialize` on the focused-pane deps
+    /// adapter; GetComponentOptionsForProject / EnsureProjectComponentsLoaded forward to it, and the
+    /// post-sync warm (WarmIssueTypeEditMetaAtStartAsync) warms it next to the editmeta cache.
+    std::unique_ptr<ProjectComponentsCacheService> components_;
     /// Owns the field-edit network pipeline (SubmitFieldEdit / SubmitFieldEditNetworkOnly /
     /// TryPrepareOfflineFieldEdit / ApplyFieldEditResult + their branch helpers). Constructed
     /// eagerly in `Initialize` after `editMeta_` and `transitions_` (it holds an
@@ -1503,9 +1522,8 @@ class AppController : public IAppThreading,
     // access via `focusedContext()`.
     // The in-memory field-catalog block (TrackerFieldCatalogRevision / AvailableFields /
     // AvailableComponents / AvailableIssueTypeMeta / AvailableUsers / catalog error+warning /
-    // currentCatalogProjectKey_ / projectComponentOptions_ + in-flight/backoff sets and
-    // availableFieldsMutex_) moved into GridLiveContext::fieldCatalog (multi-grid Slice 3,
-    // plan item 17 + slice1-design § 3.1): it was semantically single-backend, so two live
+    // currentCatalogProjectKey_ and availableFieldsMutex_) moved into GridLiveContext::fieldCatalog
+    // (multi-grid Slice 3, plan item 17 + slice1-design § 3.1): it was semantically single-backend, so two live
     // different-backend panes would have overwritten each other's catalog. Access via the
     // fieldCatalog() accessor below (focused-context routing — same delegator semantics as
     // the rest of the engine state, ADR-0018).

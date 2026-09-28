@@ -24,11 +24,6 @@
 class ITrackerBackend;
 class ILookupCache;
 struct TrackerField;
-// GridContextFieldCatalog is defined in GridLiveContext.h (NOT its own header); forward-declared
-// here so the interface does not pull GridLiveContext.h. The #975 kick-time pointer is threaded
-// through as an opaque handle — only the service .cpp (which includes GridLiveContext.h) touches
-// its members.
-struct GridContextFieldCatalog;
 
 class IEditMetaDeps {
   public:
@@ -70,14 +65,6 @@ class IEditMetaDeps {
     /// as a reachable-backend signal). CONST — a distinct overload from the existing non-const
     /// `RequestDeferredLiveTrackerBackendSuccessNotify()` on the adapter; both are needed.
     virtual void RequestDeferredLiveTrackerBackendSuccessNotify() const = 0;
-
-    /// #975: the KICK-TIME per-context field catalog, captured on the UI thread when the warm
-    /// worker is kicked. Returns `&ctx_.fieldCatalog`. The warm worker writes
-    /// `projectComponentOptions_` / `projectComponentsInFlight_` / `projectComponentsRetryAfter_`
-    /// under the catalog's OWN `availableFieldsMutex_` (a different mutex than the editmeta mutex)
-    /// via this pointer — NEVER re-resolve the catalog at write time (that re-creates the
-    /// completion-time-resolve leak #975 fixed).
-    virtual GridContextFieldCatalog* KickTimeFieldCatalog() = 0;
 
     /// Last connectivity probe result (Pillar 6 offline gating). Safe on any thread.
     virtual TrackerConnectivityState TrackerConnectivity() const = 0;

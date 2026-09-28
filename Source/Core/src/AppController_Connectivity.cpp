@@ -1,7 +1,9 @@
 #include "AppController.h"
 
 #include "ConnectivityMonitorService.h"
+#include "EditMetaCacheService.h"
 #include "IssueTransitionsCacheService.h"
+#include "ProjectComponentsCacheService.h"
 
 #include <chrono>
 #include <string>
@@ -29,9 +31,17 @@ AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatal
 
 bool AppController::ConsumeTrackerConnectivityRecovery() {
     const bool recovered = connectivity_ ? connectivity_->ConsumeTrackerConnectivityRecovery() : false;
-    if (recovered && transitions_) {
-        // Pillar 6: clear the transitions failure backoff so the next status-combo open retries live.
-        transitions_->OnConnectivityRecovered();
+    if (recovered) {
+        // Pillar 6: clear every lookup's failure backoff so the next use retries live.
+        if (transitions_) {
+            transitions_->OnConnectivityRecovered();
+        }
+        if (components_) {
+            components_->OnConnectivityRecovered();
+        }
+        if (editMeta_) {
+            editMeta_->OnConnectivityRecovered();
+        }
     }
     return recovered;
 }

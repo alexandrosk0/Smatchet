@@ -95,6 +95,7 @@
 #include "ConnectivityMonitorService.h"
 #include "AttachmentAppUpdateService.h"
 #include "IssueTransitionsCacheService.h"
+#include "ProjectComponentsCacheService.h"
 
 #include "PaneSyncKickPolicy.h"
 
