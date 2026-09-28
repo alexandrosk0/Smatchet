@@ -954,6 +954,7 @@ class AppController : public IAppThreading,
      * Used so bulk-import update rows can show field diffs when keys are outside the current JQL.
      */
     void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
+    /// True while a prefetch of `issueKey` from the focused pane's tracker is in flight. UI thread, per row.
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
     const TrackerField* FindFieldById(const std::string& fieldId) const override;
@@ -1561,8 +1562,10 @@ class AppController : public IAppThreading,
     void PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend, const std::string& cacheBackendKey,
                                   const std::vector<std::string>& issueKeys);
     /// Background-task body of PrefetchIssueTicketsFrom: fetch the keys off the UI thread, clear
-    /// their in-flight markers, persist results under `cacheBackendKey`, and refresh local data.
+    /// their in-flight markers (`inFlightKeys`, as inserted), persist results under `cacheBackendKey`,
+    /// and refresh local data.
     void FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch,
+                                        const std::vector<std::string>& inFlightKeys,
                                         const std::shared_ptr<ITrackerBackend>& backend,
                                         const std::string& cacheBackendKey);
 
@@ -1647,6 +1650,7 @@ class AppController : public IAppThreading,
     // OfflineQueueService (item 12 extraction phases 1A / 1C). Accessed via offlineQueue_.
 
     mutable std::mutex bulkImportPrefetchKeysMutex_;
+    /// Prefetches in flight, keyed "<cache backend key>\x1f<issue key>" (the same key on two trackers is two tickets).
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
 
     PluginHost* runtimePluginHost_ = nullptr;

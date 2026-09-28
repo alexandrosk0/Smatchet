@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -350,8 +351,13 @@ PendingActionSubmitResult AppController::SubmitOrQueueWorklog(const PendingActio
     const PendingActionSubmitResult result = SubmitPendingAction(
         PendingActionKind::WorklogAdd, target, issueId, smatchet::pendingaction::BuildWorklogActionPayload(worklog));
     if (result.K == PendingActionSubmitResult::Kind::Sent) {
-        // Re-read the time-tracking fields the worklog changed, from the tracker that received it.
-        PrefetchIssueTicketsFrom(target.Backend, target.BackendKey, {issueId});
+        // Re-read the time-tracking fields the worklog changed, from the tracker that received it. Best
+        // effort: the worklog is already sent, so a failed start must not turn the result into Failed.
+        try {
+            PrefetchIssueTicketsFrom(target.Backend, target.BackendKey, {issueId});
+        } catch (const std::exception& ex) {
+            LOG_WARN("AppController: could not re-read %s after its worklog: %s", issueId.c_str(), ex.what());
+        }
     }
     return result;
 }
