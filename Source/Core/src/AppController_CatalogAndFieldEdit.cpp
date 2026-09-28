@@ -11,10 +11,13 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -120,6 +123,12 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
 }
 
 void AppController::UpdateTicket(const CachedTicket& ticket) {
+    GridLiveContext& ctx = focusedContext();
+    UpdateTicketInContext_(ctx, ctx.backendGeneration_.load(), ticket);
+}
+
+void AppController::UpdateTicketInContext_(GridLiveContext& ctx, std::uint64_t capturedGeneration,
+                                           const CachedTicket& ticket) {
     if (Cache) {
         // Latch key + generation TOGETHER (issue #1081): reading the key here and re-reading
         // it inside RefreshLocalData raced a backend swap — the save landed under the OLD key
@@ -128,8 +137,6 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
         // loads — it does NOT close the window before SaveTicket. A swap landing after the
         // check is benign: the write still lands under the CAPTURED key, which is exactly
         // where the row belongs; the checked refresh below then drops the stale grid replace.
-        GridLiveContext& ctx = focusedContext();
-        const std::uint64_t capturedGeneration = ctx.backendGeneration_.load();
         const std::string capturedKey = ctx.CacheBackendKeyCopy();
         if (ctx.backendGeneration_.load() != capturedGeneration) {
             // WARN, not INFO: callers reach UpdateTicket after the backend mutation already
@@ -164,6 +171,39 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
         // the last SYNCED id set, which cannot yet contain a row created/edited this instant.
         RefreshLocalDataCheckedImpl_(ctx, &capturedGeneration, ticket.id);
     }
+}
+
+GridLiveContext* AppController::liveContextForTarget_(const PendingActionTarget& target) const {
+    if (target.PaneId.empty()) {
+        return nullptr;
+    }
+    GridLiveContext* ctx = nullptr;
+    {
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        const auto it = gridContexts_.find(target.PaneId);
+        ctx = (it != gridContexts_.end()) ? it->second.get() : nullptr;
+    }
+    if (ctx == nullptr || ctx->backendGeneration_.load() != target.BackendGeneration) {
+        return nullptr;
+    }
+    return ctx;
+}
+
+std::shared_ptr<const std::vector<CachedTicket>>
+AppController::TicketsSnapshotForTarget_(const PendingActionTarget& target) const {
+    const GridLiveContext* ctx = liveContextForTarget_(target);
+    return ctx != nullptr ? ctx->ActiveTicketsSnapshot() : nullptr;
+}
+
+void AppController::UpdateTicketForTarget_(const PendingActionTarget& target, const CachedTicket& ticket) {
+    GridLiveContext* ctx = liveContextForTarget_(target);
+    if (ctx == nullptr) {
+        LOG_INFO("AppController::UpdateTicketForTarget_ pane '%s' was closed or switched tracker; ticket='%s' not "
+                 "saved locally",
+                 target.PaneId.c_str(), ticket.id.c_str());
+        return;
+    }
+    UpdateTicketInContext_(*ctx, target.BackendGeneration, ticket);
 }
 
 bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) { return RefreshFieldCatalog(cfg, std::string()); }
@@ -548,12 +588,10 @@ void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat)
                               cat.AvailableFields.end());
 }
 
-// FieldEditSupportsOfflineQueue + the field-edit network pipeline (TryBuildFieldEditPayloadForNetwork,
-// SubmitFieldEdit[Sprint/Timetracking/Regular], SubmitFieldEdit, SubmitFieldEditNetworkOnly + its
-// helpers, TryPrepareOfflineFieldEdit, CommitOrQueue, ApplyFieldEditResult) now live in
-// FieldEditPipelineService (god-object decomposition Phase 2). Only thin public delegators remain
-// here; see the delegator block below. The editmeta cache methods moved earlier (Phase 1,
-// EditMetaCacheService).
+// FieldEditSupportsOfflineQueue + the field-edit pipeline (CommitOrQueue and its network / offline-
+// prepare helpers, ApplyFieldEditResult) live in FieldEditPipelineService (god-object decomposition
+// Phase 2). Only thin public delegators remain here; see the delegator block below. The editmeta cache
+// methods moved earlier (Phase 1, EditMetaCacheService).
 
 std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
     const GridContextFieldCatalog& cat =
@@ -714,21 +752,65 @@ void AppController::InvalidateIssueTransitions(const std::string& issueId) {
 }
 
 // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
-// decomposition Phase 2). The service owns the SubmitFieldEditCtx struct + the branch helpers +
-// TryBuildFieldEditPayloadForNetwork (all service-private now). `fieldEdit_` is constructed eagerly
-// in Initialize, so it is non-null for every call after startup.
+// decomposition Phase 2). The service owns the network / offline-prepare helpers (all service-private).
+// `fieldEdit_` is constructed eagerly in Initialize, so it is non-null for every call after startup.
 
-VoidResult AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                          const std::vector<std::string>& rawValues) {
-    return fieldEdit_->SubmitFieldEdit(issueId, field, rawValues);
+PendingActionSubmitResult AppController::SubmitFieldEditOrQueue(const PendingActionTarget& target,
+                                                                const std::string& issueId, const TrackerField& field,
+                                                                const std::vector<std::string>& values) {
+    FieldEditCommitRequest req;
+    req.IssueId = issueId;
+    req.Field = field;
+    req.Values = values;
+    req.Target = target.PaneId.empty() ? LatchPendingActionTarget() : target;
+    // Conflict base + estimate / issue-type snapshots from the ticket as the edited pane shows it.
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = TicketsSnapshotForTarget_(req.Target);
+    if (tickets) {
+        const auto ticketIt = std::find_if(tickets->begin(), tickets->end(),
+                                           [&issueId](const CachedTicket& ticket) { return ticket.id == issueId; });
+        if (ticketIt != tickets->end()) {
+            FieldEditPipelineService::CaptureTicketSnapshots(*ticketIt, true, req);
+        }
+    }
+    FieldEditCommitOutcome outcome = fieldEdit_->CommitOrQueue(req);
+
+    PendingActionSubmitResult result;
+    result.QueueId = outcome.QueueId;
+    result.QueuedAfterNetworkFailure = outcome.QueuedAfterTransportFailure;
+    result.Error = outcome.Error;
+    if (outcome.Kind == FieldEditCommitKind::Failed) {
+        return result;
+    }
+    result.K = outcome.Kind == FieldEditCommitKind::QueuedOffline ? PendingActionSubmitResult::Kind::Queued
+                                                                  : PendingActionSubmitResult::Kind::Sent;
+    // The local update and the probe request touch UI-thread state: run them there.
+    const PendingActionTarget applyTarget = req.Target;
+    const bool probeNow = outcome.QueuedAfterTransportFailure;
+    std::function<void()> applyOnUi = [this, applyTarget, issueId, apply = std::move(outcome.Apply), probeNow]() {
+        const VoidResult applied = fieldEdit_->ApplyFieldEditResult(applyTarget, issueId, apply);
+        if (!applied.has_value()) {
+            LOG_WARN("AppController::SubmitFieldEditOrQueue local update failed issue=%s: %s", issueId.c_str(),
+                     applied.error().c_str());
+        }
+        if (probeNow) {
+            RequestTrackerProbeNow();
+        }
+    };
+    if (IsOnUiThread()) {
+        applyOnUi();
+    } else {
+        PostToMainThread(std::move(applyOnUi));
+    }
+    return result;
 }
 
 FieldEditCommitOutcome AppController::CommitOrQueueFieldEdit(const FieldEditCommitRequest& req) {
     return fieldEdit_->CommitOrQueue(req);
 }
 
-VoidResult AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
-    return fieldEdit_->ApplyFieldEditResult(issueId, result);
+VoidResult AppController::ApplyFieldEditResult(const PendingActionTarget& target, const std::string& issueId,
+                                               const FieldEditResult& result) {
+    return fieldEdit_->ApplyFieldEditResult(target, issueId, result);
 }
 Result<std::vector<TrackerUser>> AppController::FetchIssueWatchers(const std::string& issueKey) const {
     using WatchersResult = Result<std::vector<TrackerUser>>;

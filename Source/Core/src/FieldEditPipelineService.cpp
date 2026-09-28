@@ -15,6 +15,7 @@
 #include <iterator>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +27,7 @@
 #include "Logger.h"
 #include "OfflineFirstPure.h" // RouteWrite (CommitOrQueue)
 #include "SmatchetLocalization.h"
-#include "StringUtil.h" // TruncateForLog
+#include "StringUtil.h" // TruncateForLog, ToLowerAsciiCopy, TrimCopy
 #include "TrackerFieldSchema.h"
 #include "TrackerFieldValueUtils.h"
 
@@ -36,7 +37,6 @@ bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
     return TrackerFieldValueUtils::IsEditableTimetrackingEstimateFieldId(fieldId);
 }
 
-// MOVED (sole survivors of the field-edit pipeline) from AppController_CatalogAndFieldEdit.cpp.
 bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
     return TrackerFieldValueUtils::IsNonEditableTimetrackingFieldId(fieldId);
 }
@@ -49,6 +49,38 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
     return errorText.find(needle) != std::string::npos;
 }
 
+// The sprint an edit names: an option id or name, or a bare numeric id.
+Result<std::string> ResolveEditedSprintId(const TrackerField& field, const std::vector<std::string>& values) {
+    if (values.empty()) {
+        return Result<std::string>::Err("Clearing sprint is not supported by this action.");
+    }
+    std::string sprintId = TrackerFieldPayloadPure::ResolveSprintIdForAgile(field, values.front());
+    if (sprintId.empty()) {
+        return Result<std::string>::Err("Unknown sprint: " + values.front());
+    }
+    return Result<std::string>::Ok(std::move(sprintId));
+}
+
+// A sprint's display label: its option name, else the id.
+std::string SprintDisplayValue(const TrackerField& field, const std::string& sprintId) {
+    const TrackerFieldOption* option = TrackerFieldPayloadPure::FindOptionById(field.AllowedValueOptions, sprintId);
+    return option != nullptr ? option->Value : sprintId;
+}
+
+// Both estimates are sent together, so both displays change together.
+void PutEstimateDisplays(const TrackerFieldPayloadPure::TimetrackingEstimateEdit& edit,
+                         std::unordered_map<std::string, std::string>& displays) {
+    displays["timeoriginalestimate"] = edit.OriginalEstimate;
+    displays["timeestimate"] = edit.RemainingEstimate;
+}
+
+Result<TrackerFieldPayloadPure::TimetrackingEstimateEdit> BuildEstimateEdit(const FieldEditCommitRequest& req,
+                                                                            const std::vector<std::string>& values) {
+    return TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit(
+        req.Field.Id, values.empty() ? std::string() : values.front(), req.OriginalEstimateSnapshot,
+        req.RemainingEstimateSnapshot);
+}
+
 } // namespace
 
 FieldEditPipelineService::FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta,
@@ -56,10 +88,12 @@ FieldEditPipelineService::FieldEditPipelineService(IFieldEditDeps& deps, EditMet
     : deps_(deps), editMeta_(editMeta), transitions_(transitions) {}
 
 bool FieldEditPipelineService::FieldEditSupportsOfflineQueue(const TrackerField& field) {
-    if (TrackerFieldPayloadPure::IsSprintField(field)) {
-        return false;
+    // Sprint and estimate edits queue in their own payload shapes (TrackerFieldPayloadPure); the
+    // derived, worklog-backed time fields cannot be edited at all.
+    if (TrackerFieldPayloadPure::IsSprintField(field) || IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        return true;
     }
-    if (IsNonEditableTimetrackingFieldId(field.Id) || IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (IsNonEditableTimetrackingFieldId(field.Id)) {
         return false;
     }
     switch (field.Family) {
@@ -80,14 +114,41 @@ bool FieldEditPipelineService::FieldEditSupportsOfflineQueue(const TrackerField&
     }
 }
 
+void FieldEditPipelineService::CaptureTicketSnapshots(const CachedTicket& ticket, bool captureBase,
+                                                      FieldEditCommitRequest& req) {
+    req.OriginalEstimateSnapshot = ticket.GetFieldValue("timeoriginalestimate");
+    req.RemainingEstimateSnapshot = ticket.GetFieldValue("timeestimate");
+    req.IssueTypeKeySnapshot = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
+    if (!captureBase) {
+        return;
+    }
+    std::string rich = ticket.GetFieldRichValue(req.Field.Id);
+    if (!rich.empty()) {
+        req.OriginalRichValue = std::move(rich);
+        req.OriginalValue.clear();
+        req.HasOriginalValue = false;
+        return;
+    }
+    req.OriginalRichValue.clear();
+    req.OriginalValue = ticket.GetFieldValue(req.Field.Id);
+    req.HasOriginalValue = true; // a captured base, even when blank (ADR-0016)
+}
+
+PendingActionTarget FieldEditPipelineService::BindTarget(const PendingActionTarget& target) const {
+    if (!target.PaneId.empty()) {
+        return target;
+    }
+    PendingActionTarget focused = deps_.LatchFocusedPaneTarget();
+    focused.Connectivity = target.Connectivity;
+    return focused;
+}
+
 bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
-    const std::string& issueId, const TrackerField& field, const std::vector<std::string>& rawValues,
-    const std::string& originalEstimateSnapshot, const std::string& remainingEstimateSnapshot,
-    const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
-    std::unordered_map<std::string, std::string>& outDisplayValues, std::string& outError) {
-    std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    (void)originalEstimateSnapshot;
-    (void)remainingEstimateSnapshot;
+    const FieldEditCommitRequest& req, const std::shared_ptr<ITrackerBackend>& backend,
+    nlohmann::json& outFieldsPayload, std::unordered_map<std::string, std::string>& outDisplayValues,
+    std::string& outError) {
+    const std::string& issueId = req.IssueId;
+    const TrackerField& field = req.Field;
     outError.clear();
     outDisplayValues.clear();
     outFieldsPayload = nlohmann::json::object();
@@ -105,16 +166,9 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
         return false;
     }
 
-    std::vector<std::string> values;
-    values.reserve(rawValues.size());
-    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
-                 [](const std::string& value) { return !value.empty(); });
-
-    // No editmeta fetch here: SubmitFieldEditNetworkOnly loads it first, while a queued edit never
-    // waits on the network (Pillar 6), so this check uses whatever is loaded and is optimistic otherwise.
-    const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (!TrackerFieldPayloadPure::IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
-        !editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+    // No editmeta fetch here: the network path loads it first, while a queued edit never waits on the
+    // network (Pillar 6), so this check uses whatever is loaded and is optimistic otherwise.
+    if (!editMeta_.CanEditFieldForIssueWithType(issueId, field.Id, &field, req.IssueTypeKeySnapshot)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         return false;
     }
@@ -122,7 +176,7 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
     nlohmann::json valuePayload;
     bool built = false;
     if (backend->Mutations()) {
-        auto payloadResult = backend->Mutations()->BuildFieldPayload(field, rawValues);
+        auto payloadResult = backend->Mutations()->BuildFieldPayload(field, req.Values);
         if (payloadResult) {
             valuePayload = std::move(payloadResult.value());
             built = true;
@@ -139,403 +193,61 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
     outFieldsPayload = std::move(valuePayload);
 
     std::string displayValue;
-    if (!values.empty()) {
-        for (size_t i = 0; i < values.size(); ++i) {
-            if (i != 0) {
-                displayValue += ", ";
-            }
-            displayValue += backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
+    const std::vector<std::string> values = TrackerFieldPayloadPure::NonEmptyValues(req.Values);
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i != 0) {
+            displayValue += ", ";
         }
+        displayValue += backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
     }
     outDisplayValues[field.Id] = std::move(displayValue);
     return true;
 }
 
-VoidResult FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx) {
-    std::string outError;
-    const std::string& issueId = ctx.issueId;
-    const TrackerField& field = ctx.field;
-    const auto& values = ctx.values;
-    const auto& tickets = *ctx.ticketsSnap;
-    ITrackerIssueMutations* mutations = ctx.mutations;
-    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
-    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
-
-    if (values.empty()) {
-        outError = "Clearing sprint is not supported by this action.";
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit sprint clear not supported issue=%s field=%s",
-                 issueId.c_str(), field.Id.c_str());
-        return VoidResult::Err(outError);
-    }
-    const std::string sprintId = values.front();
-    auto ticketIt =
-        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
-                                   nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-    const TrackerError sprintErr = mutations->AddIssueToSprint(issueId, sprintId);
-    outError = sprintErr.Detail;
-    if (!sprintErr.IsOk()) {
-        LOG_ERROR("FieldEditPipelineService::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
-                  issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
-        BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-            nlohmann::json{{"field_id", field.Id},
-                           {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                           {"after", sprintId}});
-        return VoidResult::Err(outError);
-    }
-    if (ticketIt != tickets.end()) {
-        CachedTicket updatedTicket = *ticketIt;
-        std::string displayValue = sprintId;
-        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
-                                  [&](const auto& option) { return option.Id == sprintId; });
-        if (optIt != field.AllowedValueOptions.end()) {
-            displayValue = optIt->Value;
-        }
-        updatedTicket.fieldValues[field.Id] = displayValue;
-        deps_.UpdateTicket(updatedTicket);
-    } else {
-        deps_.RefreshLocalData();
-    }
-    BackendAuditTrail::AppendResult(
-        "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
-        nlohmann::json{{"field_id", field.Id},
-                       {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                       {"after", sprintId}});
-    deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return VoidOk();
-}
-
-VoidResult FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx) {
-    std::string outError;
-    const std::string& issueId = ctx.issueId;
-    const TrackerField& field = ctx.field;
-    const auto& values = ctx.values;
-    const auto& tickets = *ctx.ticketsSnap;
-    ITrackerIssueMutations* mutations = ctx.mutations;
-    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
-    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
-
-    const std::string editedValue = values.empty() ? std::string() : values.front();
-    if (editedValue.empty()) {
-        outError = "Clearing Jira timetracking estimates is not supported by this editor.";
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked timetracking clear issue=%s field=%s",
-                 issueId.c_str(), field.Id.c_str());
-        return VoidResult::Err(outError);
-    }
-
-    auto ticketIt =
-        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-
-    std::string originalEstimate =
-        (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
-    std::string remainingEstimate =
-        (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
-    const std::string beforeOriginalEstimate = originalEstimate;
-    const std::string beforeRemainingEstimate = remainingEstimate;
-    if (field.Id == "timeoriginalestimate") {
-        originalEstimate = editedValue;
-    } else {
-        remainingEstimate = editedValue;
-    }
-
-    nlohmann::json timetrackingPayload = nlohmann::json::object();
-    if (!originalEstimate.empty()) {
-        timetrackingPayload["originalEstimate"] = originalEstimate;
-    }
-    if (!remainingEstimate.empty()) {
-        timetrackingPayload["remainingEstimate"] = remainingEstimate;
-    }
-    if (timetrackingPayload.empty()) {
-        outError = "Timetracking update requires at least one estimate value.";
-        return VoidResult::Err(outError);
-    }
-
-    nlohmann::json fieldsPayload = nlohmann::json::object();
-    fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
-                                   nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
-    const TrackerError timetrackingErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
-    outError = timetrackingErr.Detail;
-    if (!timetrackingErr.IsOk()) {
-        std::string payloadForLog;
-        try {
-            payloadForLog = fieldsPayload.dump();
-        } catch (...) { // catch-all-ok: dump for logging
-            payloadForLog = "(payload dump failed)";
-        }
-        LOG_ERROR("FieldEditPipelineService::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
-                  issueId.c_str(), field.Id.c_str(), outError.c_str(), TruncateForLog(payloadForLog, 1200).c_str());
-        BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-            nlohmann::json{{"field_id", "timetracking"},
-                           {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
-                                                     {"timeestimate", beforeRemainingEstimate}}},
-                           {"after", fieldsPayload["timetracking"]}});
-        return VoidResult::Err(outError);
-    }
-
-    if (ticketIt != tickets.end()) {
-        CachedTicket updatedTicket = *ticketIt;
-        updatedTicket.fieldValues["timeoriginalestimate"] = originalEstimate;
-        updatedTicket.fieldValues["timeestimate"] = remainingEstimate;
-        deps_.UpdateTicket(updatedTicket);
-    } else {
-        deps_.RefreshLocalData();
-    }
-    BackendAuditTrail::AppendResult(
-        "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
-        nlohmann::json{{"field_id", "timetracking"},
-                       {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
-                                                 {"timeestimate", beforeRemainingEstimate}}},
-                       {"after", fieldsPayload["timetracking"]}});
-    deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return VoidOk();
-}
-
-VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx) {
-    std::string outError;
-    const std::string& issueId = ctx.issueId;
-    const TrackerField& field = ctx.field;
-    const auto& rawValues = ctx.rawValues;
-    const auto& values = ctx.values;
-    const auto& tickets = *ctx.ticketsSnap;
-    ITrackerIssueMutations* mutations = ctx.mutations;
-    const std::shared_ptr<ITrackerBackend>& backend = ctx.backend;
-    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
-    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
-
-    editMeta_.EnsureIssueEditMetaLoaded(issueId);
-
-    if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {
-        outError = "Field cannot be edited for this issue (Jira edit metadata).";
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
-                 field.Id.c_str());
-        return VoidResult::Err(outError);
-    }
-
-    auto fieldPayloadResult = mutations->BuildFieldPayload(field, rawValues);
-    if (!fieldPayloadResult) {
-        outError = fieldPayloadResult.error().Detail;
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
-                 field.Id.c_str(), outError.c_str());
-        return VoidResult::Err(outError);
-    }
-    nlohmann::json fieldsPayload = std::move(fieldPayloadResult.value());
-
-    auto ticketIt =
-        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-
-    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
-                                   nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
-    TrackerError updateErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
-    outError = updateErr.Detail;
-    bool updateOk = updateErr.IsOk();
-    bool didRetryAfter400 = false;
-    if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) {
-        didRetryAfter400 = true;
-        editMeta_.RefreshIssueEditMeta(issueId);
-        if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {
-            outError = "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
-            LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked after editmeta refresh issue=%s field=%s",
-                     issueId.c_str(), field.Id.c_str());
-            BackendAuditTrail::AppendResult(
-                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-                nlohmann::json{
-                    {"field_id", field.Id},
-                    {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                    {"after", rawValues}});
-            return VoidResult::Err(outError);
-        }
-        updateErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
-        outError = updateErr.Detail;
-        updateOk = updateErr.IsOk();
-    }
-    if (!updateOk) {
-        std::string payloadForLog;
-        try {
-            payloadForLog = fieldsPayload.dump();
-        } catch (...) { // catch-all-ok: best-effort payload dump for the adjacent LOG_ERROR; fallback string on any
-                        // json dump failure
-            payloadForLog = "(payload dump failed)";
-        }
-        LOG_ERROR("FieldEditPipelineService::SubmitFieldEdit failed issue=%s field=%s retried_after_400=%d "
-                  "tracker_error=%s request=%s",
-                  issueId.c_str(), field.Id.c_str(), didRetryAfter400 ? 1 : 0, outError.c_str(),
-                  TruncateForLog(payloadForLog, 1200).c_str());
-        BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-            nlohmann::json{{"field_id", field.Id},
-                           {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                           {"after", rawValues}});
-        return VoidResult::Err(outError);
-    }
-
-    // Invalidate cached transitions if a status field was updated (must come before cache update).
-    if (field.Id == "status") {
-        transitions_.InvalidateIssueTransitions(issueId);
-    }
-
-    // Keep local cache and in-memory model in sync with the successful backend update.
-    if (ticketIt != tickets.end()) {
-        CachedTicket updatedTicket = *ticketIt;
-
-        std::string displayValue;
-        if (!values.empty()) {
-            for (size_t i = 0; i < values.size(); ++i) {
-                if (i != 0) {
-                    displayValue += ", ";
-                }
-                displayValue += backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
-            }
-        }
-
-        updatedTicket.fieldValues[field.Id] = displayValue;
-        deps_.UpdateTicket(updatedTicket);
-        BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
-            nlohmann::json{
-                {"field_id", field.Id}, {"before", ticketIt->GetFieldValue(field.Id)}, {"after", displayValue}});
-    } else {
-        deps_.RefreshLocalData();
-        BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
-            nlohmann::json{{"field_id", field.Id}, {"before", "unknown"}, {"after", rawValues}});
-    }
-
-    deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return VoidOk();
-}
-
-VoidResult FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                                     const std::vector<std::string>& rawValues) {
-    std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked by read-only mode issue=%s field=%s",
-                 issueId.c_str(), field.Id.c_str());
-        return VoidResult::Err("Read-only mode is enabled in Preferences.");
-    }
-    if (!backend || !deps_.HasCache()) {
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(),
-                 field.Id.c_str(), "Backend or cache is not initialized.");
-        return VoidResult::Err("Backend or cache is not initialized.");
-    }
-    if (issueId.empty()) {
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(),
-                 "Issue id is empty.");
-        return VoidResult::Err("Issue id is empty.");
-    }
-
-    ITrackerIssueMutations* const mutations = backend->Mutations();
-    if (!mutations) {
-        return VoidResult::Err("Tracker backend does not support issue mutations.");
-    }
-
-    const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
-    const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
-    LOG_TRACE("SubmitFieldEdit: source=%s issue=%s field=%s raw_values=%zu", fieldEditAuditSource, issueId.c_str(),
-              field.Id.c_str(), rawValues.size());
-
-    std::vector<std::string> values;
-    values.reserve(rawValues.size());
-    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
-                 [](const std::string& value) { return !value.empty(); });
-
-    const std::shared_ptr<const std::vector<CachedTicket>> ticketsSnap = deps_.GetActiveTicketsSnapshot();
-
-    const SubmitFieldEditCtx ctx{
-        issueId, field, rawValues, values, mutations, backend, ticketsSnap, fieldEditAuditOp, fieldEditAuditSource};
-
-    if (TrackerFieldPayloadPure::IsSprintField(field)) {
-        return SubmitFieldEditSprint(ctx);
-    }
-
-    if (IsNonEditableTimetrackingFieldId(field.Id)) {
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked non-editable timetracking issue=%s field=%s",
-                 issueId.c_str(), field.Id.c_str());
-        return VoidResult::Err("This Jira time field is derived or worklog-backed and cannot be edited directly.");
-    }
-
-    if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        return SubmitFieldEditTimetracking(ctx);
-    }
-
-    return SubmitFieldEditRegular(ctx);
-}
-
-FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& issueId,
-                                                                     const TrackerField& field,
-                                                                     const std::vector<std::string>& rawValues,
-                                                                     const std::string& originalEstimateSnapshot,
-                                                                     const std::string& remainingEstimateSnapshot,
-                                                                     const std::string& issueTypeKeySnapshot) {
-    std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    // The FieldEditResult IS the outcome (its `Ok` flag replaces the old redundant bool return): on
-    // failure it still carries Error + ErrorTransient, which the grid pipeline reads to decide the
-    // offline-queue fallback. The branch helpers write into it by reference.
+FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const FieldEditCommitRequest& req,
+                                                                     const PendingActionTarget& target) {
+    // The FieldEditResult IS the outcome: on failure it carries Error + ErrorTransient, which
+    // CommitOrQueue reads to decide the offline-queue fallback.
     FieldEditResult result;
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu", FieldEditAuditSource::Current(),
-              issueId.c_str(), field.Id.c_str(), rawValues.size());
-    if (ConfigManager::Load().ReadOnlyMode) {
-        result.Error = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEditNetworkOnly blocked by read-only mode issue=%s field=%s",
-                 issueId.c_str(), field.Id.c_str());
-        return result;
-    }
-    if (issueId.empty()) {
+              req.IssueId.c_str(), req.Field.Id.c_str(), req.Values.size());
+    if (req.IssueId.empty()) {
         result.Error = "Issue id is empty.";
         return result;
     }
-
-    if (!backend) {
+    if (!target.Backend) {
         result.Error = "No tracker backend initialized.";
         return result;
     }
-    ITrackerIssueMutations* const mutations = backend->Mutations();
+    ITrackerIssueMutations* const mutations = target.Backend->Mutations();
     if (!mutations) {
         result.Error = "Tracker backend does not support issue mutations.";
         return result;
     }
-    std::vector<std::string> values;
-    values.reserve(rawValues.size());
-    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
-                 [](const std::string& value) { return !value.empty(); });
-
-    if (TrackerFieldPayloadPure::IsSprintField(field)) {
-        bool handled = false;
-        SubmitSprintFieldEditNetworkOnly(issueId, field, values, *mutations, result, handled);
-        if (handled) {
-            return result;
-        }
+    const std::vector<std::string> values = TrackerFieldPayloadPure::NonEmptyValues(req.Values);
+    if (TrackerFieldPayloadPure::IsSprintField(req.Field)) {
+        SubmitSprintFieldEditNetworkOnly(req, values, *mutations, result);
+        return result;
     }
-
-    if (IsNonEditableTimetrackingFieldId(field.Id)) {
+    if (IsNonEditableTimetrackingFieldId(req.Field.Id)) {
         result.Error = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
         return result;
     }
-
-    if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        bool handled = false;
-        SubmitTimetrackingFieldEditNetworkOnly(issueId, field, values, originalEstimateSnapshot,
-                                               remainingEstimateSnapshot, *mutations, result, handled);
-        if (handled) {
-            return result;
-        }
-    }
-
-    const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    // Sprint and timetracking returned above; this field is permission-checked against editmeta.
-    editMeta_.EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOpt);
-
-    nlohmann::json fieldsPayload;
-    std::unordered_map<std::string, std::string> displayValues;
-    if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
-                                            remainingEstimateSnapshot, issueTypeKeySnapshot, fieldsPayload,
-                                            displayValues, result.Error)) {
+    if (IsEditableTimetrackingEstimateFieldId(req.Field.Id)) {
+        SubmitTimetrackingFieldEditNetworkOnly(req, values, *mutations, result);
         return result;
     }
 
-    if (!ApplyFieldUpdateWithEditMetaRetry(issueId, field, fieldsPayload, issueTypeKeyOpt, *mutations, result)) {
+    // Sprint and timetracking returned above; this field is permission-checked against the editmeta of
+    // the edit's own backend.
+    editMeta_.EnsureIssueEditMetaLoadedFor(target.Backend, req.IssueId, req.IssueTypeKeySnapshot);
+
+    nlohmann::json fieldsPayload;
+    std::unordered_map<std::string, std::string> displayValues;
+    if (!TryBuildFieldEditPayloadForNetwork(req, target.Backend, fieldsPayload, displayValues, result.Error)) {
+        return result;
+    }
+    if (!ApplyFieldUpdateWithEditMetaRetry(req, target, fieldsPayload, *mutations, result)) {
         return result;
     }
 
@@ -545,11 +257,13 @@ FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::
     return result;
 }
 
-bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
+bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const FieldEditCommitRequest& req,
+                                                                 const PendingActionTarget& target,
                                                                  const nlohmann::json& fieldsPayload,
-                                                                 const std::string* issueTypeKeyOpt,
                                                                  ITrackerIssueMutations& mutations,
                                                                  FieldEditResult& outResult) {
+    const std::string& issueId = req.IssueId;
+    const TrackerField& field = req.Field;
     TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
     outResult.Error = updateErr.Detail;
     outResult.ErrorTransient = updateErr.IsRetryable();
@@ -557,8 +271,8 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
-        editMeta_.RefreshIssueEditMeta(issueId, issueTypeKeyOpt);
-        if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+        editMeta_.RefreshIssueEditMetaFor(target.Backend, issueId, req.IssueTypeKeySnapshot);
+        if (!editMeta_.CanEditFieldForIssueWithType(issueId, field.Id, &field, req.IssueTypeKeySnapshot)) {
             outResult.Error =
                 "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
             outResult.ErrorTransient = false;
@@ -589,98 +303,75 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
     return true;
 }
 
-bool FieldEditPipelineService::SubmitSprintFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+bool FieldEditPipelineService::SubmitSprintFieldEditNetworkOnly(const FieldEditCommitRequest& req,
                                                                 const std::vector<std::string>& values,
                                                                 ITrackerIssueMutations& mutations,
-                                                                FieldEditResult& outResult, bool& handled) {
-    handled = true;
-    if (values.empty()) {
-        outResult.Error = "Clearing sprint is not supported by this action.";
+                                                                FieldEditResult& outResult) {
+    const Result<std::string> sprintId = ResolveEditedSprintId(req.Field, values);
+    if (!sprintId) {
+        outResult.Error = sprintId.error();
         return false;
     }
-    const std::string sprintId = values.front();
-    const TrackerError sprintErr = mutations.AddIssueToSprint(issueId, sprintId);
+    const TrackerError sprintErr = mutations.AddIssueToSprint(req.IssueId, sprintId.value());
     if (!sprintErr.IsOk()) {
         outResult.Error = sprintErr.Detail;
         outResult.ErrorTransient = sprintErr.IsRetryable();
         return false;
     }
-    std::string displayValue = sprintId;
-    auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
-                              [&](const auto& option) { return option.Id == sprintId; });
-    if (optIt != field.AllowedValueOptions.end()) {
-        displayValue = optIt->Value;
-    }
     outResult.Ok = true;
-    outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+    outResult.UpdatedDisplayValues[req.Field.Id] = SprintDisplayValue(req.Field, sprintId.value());
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     return true;
 }
 
-bool FieldEditPipelineService::SubmitTimetrackingFieldEditNetworkOnly(
-    const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-    const std::string& originalEstimateSnapshot, const std::string& remainingEstimateSnapshot,
-    ITrackerIssueMutations& mutations, FieldEditResult& outResult, bool& handled) {
-    handled = true;
-    const std::string editedValue = values.empty() ? std::string() : values.front();
-    if (editedValue.empty()) {
-        outResult.Error = "Clearing Jira timetracking estimates is not supported by this editor.";
+bool FieldEditPipelineService::SubmitTimetrackingFieldEditNetworkOnly(const FieldEditCommitRequest& req,
+                                                                      const std::vector<std::string>& values,
+                                                                      ITrackerIssueMutations& mutations,
+                                                                      FieldEditResult& outResult) {
+    const Result<TrackerFieldPayloadPure::TimetrackingEstimateEdit> edit = BuildEstimateEdit(req, values);
+    if (!edit) {
+        outResult.Error = edit.error();
         return false;
     }
-    std::string originalEstimate = originalEstimateSnapshot;
-    std::string remainingEstimate = remainingEstimateSnapshot;
-    if (field.Id == "timeoriginalestimate") {
-        originalEstimate = editedValue;
-    } else {
-        remainingEstimate = editedValue;
-    }
-
-    nlohmann::json timetrackingPayload = nlohmann::json::object();
-    if (!originalEstimate.empty()) {
-        timetrackingPayload["originalEstimate"] = originalEstimate;
-    }
-    if (!remainingEstimate.empty()) {
-        timetrackingPayload["remainingEstimate"] = remainingEstimate;
-    }
-    if (timetrackingPayload.empty()) {
-        outResult.Error = "Timetracking update requires at least one estimate value.";
-        return false;
-    }
-
-    nlohmann::json fieldsPayload = nlohmann::json::object();
-    fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-    const TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
+    const TrackerError updateErr = mutations.UpdateIssueFields(req.IssueId, edit.value().FieldsPayload);
     if (!updateErr.IsOk()) {
         outResult.Error = updateErr.Detail;
         outResult.ErrorTransient = updateErr.IsRetryable();
         return false;
     }
     outResult.Ok = true;
-    outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
-    outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
+    PutEstimateDisplays(edit.value(), outResult.UpdatedDisplayValues);
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     return true;
 }
 
-bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
-                                                          const std::vector<std::string>& rawValues,
-                                                          const std::string& originalEstimateSnapshot,
-                                                          const std::string& remainingEstimateSnapshot,
-                                                          const std::string& issueTypeKeySnapshot,
-                                                          FieldEditResult& outResult, std::string& outFieldsPayloadJson,
-                                                          std::string& outError) {
+bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const FieldEditCommitRequest& req,
+                                                          const PendingActionTarget& target, FieldEditResult& outResult,
+                                                          std::string& outFieldsPayloadJson, std::string& outError) {
     outResult = FieldEditResult{};
     outFieldsPayloadJson.clear();
     outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        return false;
-    }
     nlohmann::json fieldsPayload;
     std::unordered_map<std::string, std::string> displayValues;
-    if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
-                                            remainingEstimateSnapshot, issueTypeKeySnapshot, fieldsPayload,
-                                            displayValues, outError)) {
+    const std::vector<std::string> values = TrackerFieldPayloadPure::NonEmptyValues(req.Values);
+    if (TrackerFieldPayloadPure::IsSprintField(req.Field)) {
+        // Replay sends {"sprint_add": id} with AddIssueToSprint, as the live edit does.
+        const Result<std::string> sprintId = ResolveEditedSprintId(req.Field, values);
+        if (!sprintId) {
+            outError = sprintId.error();
+            return false;
+        }
+        fieldsPayload = TrackerFieldPayloadPure::MakeSprintAddPayload(sprintId.value());
+        displayValues[req.Field.Id] = SprintDisplayValue(req.Field, sprintId.value());
+    } else if (IsEditableTimetrackingEstimateFieldId(req.Field.Id)) {
+        Result<TrackerFieldPayloadPure::TimetrackingEstimateEdit> edit = BuildEstimateEdit(req, values);
+        if (!edit) {
+            outError = edit.error();
+            return false;
+        }
+        PutEstimateDisplays(edit.value(), displayValues);
+        fieldsPayload = std::move(edit.value().FieldsPayload);
+    } else if (!TryBuildFieldEditPayloadForNetwork(req, target.Backend, fieldsPayload, displayValues, outError)) {
         return false;
     }
     try {
@@ -699,10 +390,27 @@ bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const std::string& iss
 }
 
 FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueue(const FieldEditCommitRequest& req) {
+    const PendingActionTarget target = BindTarget(req.Target);
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("field-edit");
+    const char* const auditSource = FieldEditAuditSource::Current();
+    BackendAuditTrail::AppendBegin("field_edit_diff", auditSource, req.IssueId, auditOp,
+                                   nlohmann::json{{"field_id", req.Field.Id}, {"backend_key", target.BackendKey}});
+    const FieldEditCommitOutcome out = CommitOrQueueBound(req, target);
+    BackendAuditTrail::AppendResult("field_edit_diff", auditSource, req.IssueId, auditOp,
+                                    out.Kind != FieldEditCommitKind::Failed, out.Error,
+                                    nlohmann::json{{"field_id", req.Field.Id},
+                                                   {"before", req.OriginalValue},
+                                                   {"after", req.Values},
+                                                   {"queued", out.Kind == FieldEditCommitKind::QueuedOffline}});
+    return out;
+}
+
+FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueueBound(const FieldEditCommitRequest& req,
+                                                                    const PendingActionTarget& target) {
     using smatchet::offline::WriteRoute;
     const bool queueable = FieldEditSupportsOfflineQueue(req.Field);
     const WriteRoute route =
-        smatchet::offline::RouteWrite(req.ConnectivityAtKick, queueable, ConfigManager::Load().ReadOnlyMode);
+        smatchet::offline::RouteWrite(target.Connectivity, queueable, ConfigManager::Load().ReadOnlyMode);
     if (route == WriteRoute::Reject) {
         FieldEditCommitOutcome rejected;
         rejected.Error = "Read-only mode is enabled in Preferences.";
@@ -711,12 +419,11 @@ FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueue(const FieldEditCo
     if (route == WriteRoute::QueueImmediately) {
         LOG_DEBUG("FieldEditPipelineService::CommitOrQueue tracker offline; queueing issue=%s field=%s",
                   req.IssueId.c_str(), req.Field.Id.c_str());
-        return QueuePreparedEdit(req, false);
+        return QueuePreparedEdit(req, target, false);
     }
 
     FieldEditCommitOutcome out;
-    out.Apply = SubmitFieldEditNetworkOnly(req.IssueId, req.Field, req.Values, req.OriginalEstimateSnapshot,
-                                           req.RemainingEstimateSnapshot, req.IssueTypeKeySnapshot);
+    out.Apply = SubmitFieldEditNetworkOnly(req, target);
     if (out.Apply.Ok) {
         out.Kind = FieldEditCommitKind::SavedOnline;
         return out;
@@ -727,7 +434,7 @@ FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueue(const FieldEditCo
     if (!out.Apply.ErrorTransient || !queueable) {
         return out;
     }
-    FieldEditCommitOutcome queued = QueuePreparedEdit(req, true);
+    FieldEditCommitOutcome queued = QueuePreparedEdit(req, target, true);
     if (queued.Kind == FieldEditCommitKind::QueuedOffline) {
         return queued;
     }
@@ -738,18 +445,22 @@ FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueue(const FieldEditCo
 }
 
 FieldEditCommitOutcome FieldEditPipelineService::QueuePreparedEdit(const FieldEditCommitRequest& req,
+                                                                   const PendingActionTarget& target,
                                                                    bool afterTransportFailure) {
     FieldEditCommitOutcome out;
+    if (target.BackendKey.empty()) {
+        // No queue namespace means replay could never pick the row up: refuse rather than orphan it.
+        out.Error = "This edit is not tied to a tracker, so it cannot be saved offline.";
+        return out;
+    }
     FieldEditResult prepared;
     std::string payloadJson;
-    if (!TryPrepareOfflineFieldEdit(req.IssueId, req.Field, req.Values, req.OriginalEstimateSnapshot,
-                                    req.RemainingEstimateSnapshot, req.IssueTypeKeySnapshot, prepared, payloadJson,
-                                    out.Error)) {
+    if (!TryPrepareOfflineFieldEdit(req, target, prepared, payloadJson, out.Error)) {
         return out;
     }
     const std::int64_t queueId =
-        deps_.EnqueueOfflineFieldEdit(req.IssueId, req.Field.Id, payloadJson, req.OriginalRichValue, req.OriginalValue,
-                                      req.HasOriginalValue, out.Error);
+        deps_.EnqueueOfflineFieldEdit(target.BackendKey, req.IssueId, req.Field.Id, payloadJson, req.OriginalRichValue,
+                                      req.OriginalValue, req.HasOriginalValue, out.Error);
     if (queueId <= 0) {
         if (out.Error.empty()) {
             out.Error = SmatchetLocalization::T("toast.offline_queue_failed", "Failed to queue offline field edit.");
@@ -764,7 +475,8 @@ FieldEditCommitOutcome FieldEditPipelineService::QueuePreparedEdit(const FieldEd
     return out;
 }
 
-VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
+VoidResult FieldEditPipelineService::ApplyFieldEditResult(const PendingActionTarget& target, const std::string& issueId,
+                                                          const FieldEditResult& result) {
     if (!result.Ok) {
         return VoidResult::Err(result.Error.empty() ? std::string("Failed to save field update.") : result.Error);
     }
@@ -776,25 +488,31 @@ VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& iss
     if (issueId.empty()) {
         return VoidResult::Err("Issue id is empty.");
     }
+    const PendingActionTarget bound = BindTarget(target);
 
     // Invalidate cached transitions if a status field was updated (must come before cache update).
     if (result.UpdatedDisplayValues.count("status") != 0) {
-        transitions_.InvalidateIssueTransitions(issueId);
+        transitions_.InvalidateIssueTransitions(bound.BackendKey, issueId);
     }
 
-    const auto ticketsSnapApply = deps_.GetActiveTicketsSnapshot();
-    const auto& ticketsApply = *ticketsSnapApply;
-    auto ticketIt = std::find_if(ticketsApply.begin(), ticketsApply.end(),
-                                 [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-    if (ticketIt == ticketsApply.end()) {
-        deps_.RefreshLocalData();
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = deps_.TicketsSnapshotFor(bound);
+    if (!tickets) {
+        // Saved or queued all the same; that pane's next sync shows the new value.
+        LOG_INFO("FieldEditPipelineService::ApplyFieldEditResult pane '%s' was closed or switched tracker; "
+                 "issue=%s is not updated locally",
+                 bound.PaneId.c_str(), issueId.c_str());
         return VoidOk();
+    }
+    const auto ticketIt = std::find_if(tickets->begin(), tickets->end(),
+                                       [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    if (ticketIt == tickets->end()) {
+        return VoidOk(); // not a row this pane shows: nothing to update in place
     }
 
     CachedTicket updatedTicket = *ticketIt;
     for (const auto& pair : result.UpdatedDisplayValues) {
         updatedTicket.fieldValues[pair.first] = pair.second;
     }
-    deps_.UpdateTicket(updatedTicket);
+    deps_.UpdateTicketFor(bound, updatedTicket);
     return VoidOk();
 }

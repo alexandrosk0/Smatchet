@@ -157,16 +157,18 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     TrackerConnectivityState TrackerConnectivity() const override;
 
     // ---- IFieldEditDeps ---------------------------------------------------------------
-    // BackendShared() / GetActiveTicketsSnapshot() (IEditMetaDeps), RefreshLocalData()
-    // (IOfflineQueueDeps), and the CONST RequestDeferredLiveTrackerBackendSuccessNotify()
-    // (IEditMetaDeps) are all already declared above — the single override of each satisfies
-    // IFieldEditDeps too (do NOT redeclare them). Only these three are genuinely new:
+    // The CONST RequestDeferredLiveTrackerBackendSuccessNotify() (IEditMetaDeps) is already declared
+    // above — its single override satisfies IFieldEditDeps too (do NOT redeclare it). The pane-scoped
+    // methods resolve the edit's latched pane, never ctx().
     bool HasCache() const override;
-    void UpdateTicket(const CachedTicket& ticket) override;
-    std::int64_t EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
-                                         const std::string& fieldsPayloadJson, const std::string& originalRichValue,
-                                         const std::string& originalValue, bool hasOriginalValue,
-                                         std::string& outError) override;
+    PendingActionTarget LatchFocusedPaneTarget() const override;
+    std::shared_ptr<const std::vector<CachedTicket>>
+    TicketsSnapshotFor(const PendingActionTarget& target) const override;
+    void UpdateTicketFor(const PendingActionTarget& target, const CachedTicket& ticket) override;
+    std::int64_t EnqueueOfflineFieldEdit(const std::string& backendKey, const std::string& issueKey,
+                                         const std::string& fieldId, const std::string& fieldsPayloadJson,
+                                         const std::string& originalRichValue, const std::string& originalValue,
+                                         bool hasOriginalValue, std::string& outError) override;
 
     // ---- IConnectivityDeps ------------------------------------------------------------
     // IsShuttingDown() is shared with IEditMetaDeps (same signature) — the override above

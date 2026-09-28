@@ -914,3 +914,143 @@ TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on string field stays
     CHECK(resolved["summary"].is_string());
     CHECK(resolved["summary"].get<std::string>() == "New summary");
 }
+
+// Quality Pillar 6 (offline-first S10): a sprint edit is queued as {"sprint_add": id} and replays
+// through the agile API (AddIssueToSprint), exactly like the live edit — never as a `fields` update.
+TEST_CASE("OfflineQueueServiceRuntime: a queued sprint_add replays through AddIssueToSprint" *
+          doctest::test_suite("[high-risk]")) {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"sprint_add", "42"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-60", "customfield_sprint", payload, err, std::string());
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    REQUIRE(deps.BackendImpl->AddIssueToSprintCallCount() == 1u);
+    CHECK(deps.BackendImpl->AddIssueToSprintCalls().front().IssueKey == "PROJ-60");
+    CHECK(deps.BackendImpl->AddIssueToSprintCalls().front().SprintId == "42");
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+TEST_CASE("OfflineQueueServiceRuntime: a rejected sprint_add archives like any rejected edit") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueAddIssueToSprintFailure("HTTP 400: sprint is closed");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"sprint_add", "42"}}.dump();
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-61", "customfield_sprint", payload, err, std::string()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().size() == 1u);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+TEST_CASE("OfflineQueueServiceRuntime: a queued estimate replays its timetracking payload") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-62", "timeoriginalestimate", payload.dump(), err, std::string()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields == payload);
+    CHECK(deps.BackendImpl->AddIssueToSprintCallCount() == 0u);
+}
+
+// The conflict dialog shows the user's queued value for a sprint / estimate edit, not the base.
+TEST_CASE("OfflineQueueServiceRuntime: a sprint conflict shows the queued sprint as mine") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    CachedTicket fresh;
+    fresh.id = "PROJ-63";
+    fresh.fieldValues["customfield_sprint"] = "Sprint 43"; // theirs moved from the captured base
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"sprint_add", "42"}}.dump();
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-63", "customfield_sprint", payload, err, std::string(), "Sprint 41", true) >
+            0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    REQUIRE(row.HasMergeConflict);
+    const nlohmann::json ctx = nlohmann::json::parse(row.ConflictContextJson);
+    CHECK(ctx["kind"] == "scalar");
+    CHECK(ctx["mine"] == "42");
+    CHECK(ctx["theirs"] == "Sprint 43");
+    CHECK(deps.BackendImpl->AddIssueToSprintCallCount() == 0u);
+}
+
+// Resolving a sprint / estimate conflict rebuilds the payload in its own shape; a value that names no
+// sprint leaves the edit suspended (and says so) instead of queueing a payload the tracker rejects.
+TEST_CASE("OfflineQueueServiceRuntime: resolving a sprint or estimate conflict keeps its payload shape" *
+          doctest::test_suite("[high-risk]")) {
+    OfflineQueueTestEnvGuard guard;
+    StructuredFieldDeps deps;
+    TrackerField sprint = MakeField("customfield_sprint", TrackerFieldFamily::Sprint);
+    TrackerFieldOption s42;
+    s42.Id = "42";
+    s42.Value = "Sprint 42";
+    TrackerFieldOption s43;
+    s43.Id = "43";
+    s43.Value = "Sprint 43";
+    sprint.AllowedValueOptions = {s42, s43};
+    deps.Fields = {sprint};
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const auto sprintId =
+        svc.QueueFieldEditOffline("PROJ-64", "customfield_sprint", nlohmann::json{{"sprint_add", "42"}}.dump(), err,
+                                  std::string(), "Sprint 41", true);
+    const nlohmann::json estimate = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    const auto estimateId =
+        svc.QueueFieldEditOffline("PROJ-65", "timeoriginalestimate", estimate.dump(), err, std::string(), "2d", true);
+    REQUIRE(sprintId > 0);
+    REQUIRE(estimateId > 0);
+
+    const auto payloadOf = [&svc](std::int64_t id) {
+        for (const PendingFieldEditRecord& row : svc.GetPendingFieldEdits()) {
+            if (row.Id == id) {
+                return nlohmann::json::parse(row.FieldsPayloadJson);
+            }
+        }
+        return nlohmann::json();
+    };
+
+    CHECK(svc.ResolveFieldEditConflict(sprintId, "Sprint 43", std::string(), "scalar")); // "Use Theirs"
+    CHECK(payloadOf(sprintId) == nlohmann::json{{"sprint_add", "43"}});
+
+    CHECK_FALSE(svc.ResolveFieldEditConflict(sprintId, "Sprint 99", std::string(), "scalar"));
+    CHECK(payloadOf(sprintId) == nlohmann::json{{"sprint_add", "43"}}); // unchanged: still waiting for the user
+
+    CHECK(svc.ResolveFieldEditConflict(estimateId, " 5d ", std::string(), "scalar"));
+    CHECK(payloadOf(estimateId) ==
+          nlohmann::json{{"timetracking", {{"originalEstimate", "5d"}, {"remainingEstimate", "1d"}}}});
+
+    CHECK_FALSE(svc.ResolveFieldEditConflict(estimateId, "", std::string(), "scalar")); // clearing is unsupported
+    CHECK_FALSE(svc.ResolveFieldEditConflict(999999, "x", std::string(), "scalar"));    // no such row
+}

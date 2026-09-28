@@ -1,20 +1,19 @@
 #pragma once
 
-// FieldEditPipelineService — owns the field-edit NETWORK pipeline extracted verbatim from
-// `AppController` per the AppController god-object decomposition plan (Phase 2), mirroring the
-// Phase-1 EditMetaCacheService extraction. The service holds an `IFieldEditDeps&` (typically
-// backed by `GridContextDepsAdapter`) for the AppController-side state it reaches (backend handle,
-// cache predicate, active-tickets snapshot, optimistic-update + refresh + deferred-notify hooks),
-// and an `EditMetaCacheService&` DIRECTLY (ctor-injected, NOT via deps) for the editmeta
-// ensure/can-edit/refresh checks the regular + network-only branches perform.
-// AppController's public surface keeps the same shape but its field-edit bodies are thin delegators
-// that forward into this service. The grid layer (SmatchetGridFieldEditPipeline.cpp) commits through
-// CommitOrQueue on a worker and applies the outcome with ApplyFieldEditResult, both via those
-// delegators. Quality Pillar 6 (offline-first): CommitOrQueue is the one commit-or-queue seam, so an
-// edit made while the tracker is unreachable reaches the offline queue without a network request.
-// Concurrency: the service holds no long-lived mutex. The SubmitFieldEditCtx is a call-frame-scoped
-// POD of references built on the stack inside SubmitFieldEdit; all mutation happens on the calling
-// (UI) thread inside one call frame.
+// FieldEditPipelineService — owns the field-edit pipeline extracted from `AppController` per the
+// AppController god-object decomposition plan (Phase 2), mirroring the Phase-1 EditMetaCacheService
+// extraction. The service holds an `IFieldEditDeps&` (typically backed by `GridContextDepsAdapter`)
+// for the AppController-side state it reaches (focused-pane fallback, per-pane tickets, optimistic
+// update + refresh, deferred-notify and offline-queue hooks), and an `EditMetaCacheService&` directly
+// (ctor-injected, not via deps) for the editmeta checks.
+// Every field edit — grid cell, command / MCP, Lua, Annotate — commits through CommitOrQueue on a
+// worker and is applied with ApplyFieldEditResult on the UI thread. Quality Pillar 6 (offline-first):
+// CommitOrQueue is the one commit-or-queue seam, so an edit made while the tracker is unreachable
+// reaches the offline queue without a network request.
+// Pane binding (#2260): each request's Target names the pane the user acted in. The send, the
+// editmeta checks, the queue row and the optimistic apply all use that pane's backend and cache key,
+// never whichever pane holds focus when the worker runs.
+// Concurrency: the service holds no long-lived mutex and no per-edit state between calls.
 // Lifetime contract mirrors EditMetaCacheService: AppController owns the service via
 // `std::unique_ptr` and outlives it; the `IFieldEditDeps&` (GridContextDepsAdapter) and the
 // `EditMetaCacheService&` both outlive this service (declared after it, destroyed after it).
@@ -27,10 +26,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "CachedTicketTypes.h"          // CachedTicket (SubmitFieldEditCtx ticketsSnap)
-#include "SmatchetResult.h"             // VoidResult (SubmitFieldEdit* branch helpers)
+#include "CachedTicketTypes.h"          // CachedTicket (CaptureTicketSnapshots)
+#include "PendingActionTypes.h"         // PendingActionTarget (the pane an edit is bound to)
+#include "SmatchetResult.h"             // VoidResult (ApplyFieldEditResult)
 #include "Tracker/TrackerFieldSchema.h" // TrackerField (FieldEditCommitRequest holds one by value)
-#include "Types/ConnectivityTypes.h"    // TrackerConnectivityState
 #include "Types/FieldEditTypes.h"       // FieldEditResult
 
 class IFieldEditDeps;
@@ -39,7 +38,7 @@ class IssueTransitionsCacheService;
 class ITrackerBackend;
 class ITrackerIssueMutations;
 
-/// One field edit to commit (or queue), captured on the UI thread with everything the worker needs.
+/// One field edit to commit (or queue), captured where the user acted, with everything the worker needs.
 struct FieldEditCommitRequest {
     std::string IssueId;
     TrackerField Field;
@@ -51,8 +50,11 @@ struct FieldEditCommitRequest {
     std::string OriginalEstimateSnapshot;
     std::string RemainingEstimateSnapshot;
     std::string IssueTypeKeySnapshot;
-    /// Last connectivity probe result when the edit was dispatched; decides queue-first vs network-first.
-    TrackerConnectivityState ConnectivityAtKick = TrackerConnectivityState::Unknown;
+    /// The pane the user edited, latched where they acted: the edit is sent to its backend, checked against
+    /// that backend's editmeta and queued under its cache key even if focus moves first. Its Connectivity (the
+    /// last probe when latched) decides queue-first vs network-first. An unbound request (empty PaneId: tests
+    /// and tools) binds to the focused pane once, when CommitOrQueue starts.
+    PendingActionTarget Target;
 };
 
 enum class FieldEditCommitKind : unsigned char { Failed, SavedOnline, QueuedOffline };
@@ -72,102 +74,70 @@ class FieldEditPipelineService {
     FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta,
                              IssueTransitionsCacheService& transitions);
 
-    /** Safe field families for offline-queued field edits (transport failures only). */
+    /** Field families whose edits the offline queue can hold (queued first offline, or after a retryable failure). */
     static bool FieldEditSupportsOfflineQueue(const TrackerField& field);
 
-    /// Online field-edit entry point (used by the Lua binding + legacy callers). Submits to the
-    /// backend and applies an optimistic local-cache update on success. Branches sprint /
-    /// timetracking / regular. Signature preserved verbatim — the Lua forwarder depends on it.
-    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                               const std::vector<std::string>& rawValues);
-
-    /// Network-only field edit (no local-cache write) — the grid pipeline calls this on a worker,
-    /// then applies the result on the UI thread via ApplyFieldEditResult.
-    FieldEditResult SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                               const std::vector<std::string>& rawValues,
-                                               const std::string& originalEstimateSnapshot,
-                                               const std::string& remainingEstimateSnapshot,
-                                               const std::string& issueTypeKeySnapshot);
-
-    /**
-     * Build the fields payload + optimistic display map for an offline-queued edit without any
-     * network request: no update and no editmeta fetch (the permission check uses whatever editmeta
-     * is already loaded and is optimistic otherwise; replay gets the tracker's verdict).
-     */
-    bool TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
-                                    const std::vector<std::string>& rawValues,
-                                    const std::string& originalEstimateSnapshot,
-                                    const std::string& remainingEstimateSnapshot,
-                                    const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
-                                    std::string& outFieldsPayloadJson, std::string& outError);
+    /// Fill `req`'s estimate and issue-type snapshots from the edited ticket as its pane shows it and, when
+    /// `captureBase`, the conflict base (ADR-0016): the rich value of an ADF / HTML field, else the display.
+    static void CaptureTicketSnapshots(const CachedTicket& ticket, bool captureBase, FieldEditCommitRequest& req);
 
     /// Worker-safe commit-or-queue seam (Quality Pillar 6). While the tracker is known to be offline
-    /// (per `req.ConnectivityAtKick`) a queueable edit goes straight to the offline queue with no
+    /// (per `req.Target.Connectivity`) a queueable edit goes straight to the offline queue with no
     /// network request. Otherwise it tries the network and queues after a retryable failure. Queueing
     /// never fetches editmeta. The caller applies a Saved/Queued outcome with ApplyFieldEditResult.
     FieldEditCommitOutcome CommitOrQueue(const FieldEditCommitRequest& req);
 
-    /// Apply a successful FieldEditResult (from SubmitFieldEditNetworkOnly or an offline replay) to
-    /// the local cache + grid model. UI thread.
-    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
+    /// Apply a saved or queued edit's display values to `target`'s pane: its cache namespace and grid. UI
+    /// thread. A no-op when that pane was retired or switched tracker since (its next sync shows the edit);
+    /// an unbound target applies to the focused pane.
+    VoidResult ApplyFieldEditResult(const PendingActionTarget& target, const std::string& issueId,
+                                    const FieldEditResult& result);
 
   private:
-    /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
-    /// lifetime is bounded to the SubmitFieldEdit call frame that builds the ctx on the stack.
-    struct SubmitFieldEditCtx {
-        const std::string& issueId;
-        const TrackerField& field;
-        const std::vector<std::string>& rawValues; ///< original, unfiltered
-        const std::vector<std::string>& values;    ///< filtered (non-empty entries only)
-        ITrackerIssueMutations* mutations;
-        const std::shared_ptr<ITrackerBackend>& backend;
-        const std::shared_ptr<const std::vector<CachedTicket>>& ticketsSnap;
-        const std::string& fieldEditAuditOp;
-        const char* fieldEditAuditSource;
-    };
+    /// `target`, or the focused pane latched once for an unbound target (empty PaneId); the target's
+    /// Connectivity is kept either way.
+    PendingActionTarget BindTarget(const PendingActionTarget& target) const;
 
-    /// Sprint-field branch of SubmitFieldEdit (AddIssueToSprint + local-cache sync).
-    VoidResult SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx);
-    /// Editable timetracking estimate branch of SubmitFieldEdit (UpdateIssueFields timetracking wrapper).
-    VoidResult SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx);
-    /// Regular field branch of SubmitFieldEdit (editmeta check + UpdateIssueFields + 400-retry).
-    VoidResult SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx);
+    /// CommitOrQueue body for an edit already bound to `target` (CommitOrQueue adds the audit pair).
+    FieldEditCommitOutcome CommitOrQueueBound(const FieldEditCommitRequest& req, const PendingActionTarget& target);
 
-    /// Build the network field payload (checked against the editmeta already loaded, backend
-    /// BuildFieldPayload) + optimistic display map. Makes no network request. Shared by
-    /// SubmitFieldEditNetworkOnly (which loads editmeta first) + TryPrepareOfflineFieldEdit.
-    bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
-                                            const std::vector<std::string>& rawValues,
-                                            const std::string& originalEstimateSnapshot,
-                                            const std::string& remainingEstimateSnapshot,
-                                            const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
+    /// Network commit on `target`'s backend. The result carries Error + ErrorTransient on failure.
+    FieldEditResult SubmitFieldEditNetworkOnly(const FieldEditCommitRequest& req, const PendingActionTarget& target);
+
+    /// Build the payload and optimistic display map of a queued edit without any network request:
+    /// no update and no editmeta fetch (the permission check uses whatever editmeta is loaded and is
+    /// optimistic otherwise; replay gets the tracker's verdict).
+    bool TryPrepareOfflineFieldEdit(const FieldEditCommitRequest& req, const PendingActionTarget& target,
+                                    FieldEditResult& outResult, std::string& outFieldsPayloadJson,
+                                    std::string& outError);
+
+    /// Build a plain `fields` payload (checked against the editmeta already loaded) + optimistic display map
+    /// on `backend`. Makes no network request.
+    bool TryBuildFieldEditPayloadForNetwork(const FieldEditCommitRequest& req,
+                                            const std::shared_ptr<ITrackerBackend>& backend,
+                                            nlohmann::json& outFieldsPayload,
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);
 
-    /// CommitOrQueue helper — prepare the payload (TryPrepareOfflineFieldEdit, no network) and
-    /// persist it to the offline queue through IFieldEditDeps::EnqueueOfflineFieldEdit.
-    FieldEditCommitOutcome QueuePreparedEdit(const FieldEditCommitRequest& req, bool afterTransportFailure);
+    /// CommitOrQueue helper — prepare the payload (no network) and persist it to the offline queue under
+    /// `target`'s cache key through IFieldEditDeps::EnqueueOfflineFieldEdit.
+    FieldEditCommitOutcome QueuePreparedEdit(const FieldEditCommitRequest& req, const PendingActionTarget& target,
+                                             bool afterTransportFailure);
 
     /// SubmitFieldEditNetworkOnly helper — push the built payload, retrying once after a 400 with
     /// a refreshed editmeta + edit-permission re-check. Returns true on a successful update.
-    bool ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
-                                           const nlohmann::json& fieldsPayload, const std::string* issueTypeKeyOpt,
-                                           ITrackerIssueMutations& mutations, FieldEditResult& outResult);
+    bool ApplyFieldUpdateWithEditMetaRetry(const FieldEditCommitRequest& req, const PendingActionTarget& target,
+                                           const nlohmann::json& fieldsPayload, ITrackerIssueMutations& mutations,
+                                           FieldEditResult& outResult);
 
-    /// SubmitFieldEditNetworkOnly helper — apply a sprint-field edit (add-to-sprint mutation +
-    /// optimistic display value). `handled` is set true when the field is a sprint field.
-    bool SubmitSprintFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                          const std::vector<std::string>& values, ITrackerIssueMutations& mutations,
-                                          FieldEditResult& outResult, bool& handled);
+    /// SubmitFieldEditNetworkOnly helper — add the issue to a sprint (agile API) + optimistic display value.
+    bool SubmitSprintFieldEditNetworkOnly(const FieldEditCommitRequest& req, const std::vector<std::string>& values,
+                                          ITrackerIssueMutations& mutations, FieldEditResult& outResult);
 
-    /// SubmitFieldEditNetworkOnly helper — apply a Jira timetracking-estimate edit. `handled` is
-    /// set true when the field is an editable timetracking estimate.
-    bool SubmitTimetrackingFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+    /// SubmitFieldEditNetworkOnly helper — update one Jira time-tracking estimate.
+    bool SubmitTimetrackingFieldEditNetworkOnly(const FieldEditCommitRequest& req,
                                                 const std::vector<std::string>& values,
-                                                const std::string& originalEstimateSnapshot,
-                                                const std::string& remainingEstimateSnapshot,
-                                                ITrackerIssueMutations& mutations, FieldEditResult& outResult,
-                                                bool& handled);
+                                                ITrackerIssueMutations& mutations, FieldEditResult& outResult);
 
     IFieldEditDeps& deps_;
     EditMetaCacheService& editMeta_;

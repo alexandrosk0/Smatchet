@@ -121,10 +121,15 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
 }
 
 void IssueTransitionsCacheService::InvalidateIssueTransitions(const std::string& issueId) {
+    InvalidateIssueTransitions(deps_.CacheBackendKey(), issueId);
+}
+
+void IssueTransitionsCacheService::InvalidateIssueTransitions(const std::string& backendKey,
+                                                              const std::string& issueId) {
     if (issueId.empty()) {
         return;
     }
-    live_.Invalidate(LiveKey(deps_.CacheBackendKey(), issueId));
+    live_.Invalidate(LiveKey(backendKey, issueId));
 }
 
 void IssueTransitionsCacheService::OnConnectivityRecovered() { live_.OnConnectivityRecovered(); }

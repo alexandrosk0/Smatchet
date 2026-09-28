@@ -19,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -99,6 +100,17 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
 
 std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft,
                                                                smatchet::ui::CancelToken cancel) {
+    return LaunchIssueCreate_(draft, std::move(cancel), false);
+}
+
+std::future<IssueCreateResult> AppController::CreateOrQueueIssueAsync(const IssueDraft& draft,
+                                                                      smatchet::ui::CancelToken cancel) {
+    return LaunchIssueCreate_(draft, std::move(cancel), true);
+}
+
+std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraft& draft,
+                                                                 smatchet::ui::CancelToken cancel,
+                                                                 bool queueOnNetworkFailure) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
     // DR6: copy AvailableFields under its guard — SetFieldCatalog reassigns the vector on a
     // background worker, so an unguarded copy-construct can read a half-reassigned / reallocated
@@ -161,34 +173,39 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
 
     // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
     // duration of the worker, per ADR 0012.
-    LaunchBackgroundTask(
-        [this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required, cancel]() {
-            // Cooperative cancel (WS-A): if the owner abandoned this create (bulk-import
-            // `.clear()` / window-close / shutdown) before the worker started, return a
-            // benign cancelled result without the network round-trip — and crucially
-            // without dereferencing `this` for the post-create refresh/hydration below.
-            if (cancel.IsCancelled()) {
-                IssueCreateResult cancelled;
-                cancelled.Error = "Cancelled.";
-                promise->set_value(std::move(cancelled));
-                return;
+    LaunchBackgroundTask([this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required,
+                          cancel, queueOnNetworkFailure]() {
+        // Cooperative cancel (WS-A): if the owner abandoned this create (bulk-import
+        // `.clear()` / window-close / shutdown) before the worker started, return a
+        // benign cancelled result without the network round-trip — and crucially
+        // without dereferencing `this` for the post-create refresh/hydration below.
+        if (cancel.IsCancelled()) {
+            IssueCreateResult cancelled;
+            cancelled.Error = "Cancelled.";
+            promise->set_value(std::move(cancelled));
+            return;
+        }
+        IssueCreateResult result =
+            IssueCreatePipeline::Run(*mutations, cache, cacheBackendKey, draftCopy, required, *catalogCopy);
+        if (queueOnNetworkFailure && IsOfflineQueueableFailure(result) && !cancel.IsCancelled() && offlineQueue_) {
+            // Pillar 6: unreachable tracker — queue the (pruned) draft for replay, off the UI thread,
+            // under the namespace latched at submit.
+            result.QueuedOfflineId = offlineQueue_->QueueCreateOffline(draftCopy, cacheBackendKey);
+        }
+        // Re-check after the (long) create before the expensive refresh + hydration:
+        // a cancel that landed while the create was in flight skips touching `this`
+        // again, so a signalled shutdown drains fast (the result is still reported).
+        if (result.Ok && !cancel.IsCancelled()) {
+            RefreshLocalData();
+            requestDeferredLiveTrackerBackendSuccessNotify_();
+            // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.
+            const std::string key = result.IssueKey;
+            if (!key.empty()) {
+                PrefetchIssueTicketsForKeys({key}, true);
             }
-            IssueCreateResult result =
-                IssueCreatePipeline::Run(*mutations, cache, cacheBackendKey, draftCopy, required, *catalogCopy);
-            // Re-check after the (long) create before the expensive refresh + hydration:
-            // a cancel that landed while the create was in flight skips touching `this`
-            // again, so a signalled shutdown drains fast (the result is still reported).
-            if (result.Ok && !cancel.IsCancelled()) {
-                RefreshLocalData();
-                requestDeferredLiveTrackerBackendSuccessNotify_();
-                // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.
-                const std::string key = result.IssueKey;
-                if (!key.empty()) {
-                    PrefetchIssueTicketsForKeys({key}, true);
-                }
-            }
-            promise->set_value(std::move(result));
-        });
+        }
+        promise->set_value(std::move(result));
+    });
     return future;
 }
 
@@ -255,12 +272,13 @@ std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() cons
     return offlineQueue_ ? offlineQueue_->GetDeadPendingFieldEdits() : std::vector<DeadPendingFieldEdit>{};
 }
 
-void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
+bool AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
                                              const std::string& richKind, const std::string& kind) {
-    if (offlineQueue_) {
-        offlineQueue_->ResolveFieldEditConflict(id, resolvedValue, richKind, kind);
-        offlineQueue_->RestartReplayTimersNow(std::chrono::steady_clock::now());
+    if (!offlineQueue_ || !offlineQueue_->ResolveFieldEditConflict(id, resolvedValue, richKind, kind)) {
+        return false;
     }
+    offlineQueue_->RestartReplayTimersNow(std::chrono::steady_clock::now());
+    return true;
 }
 
 AppController::PendingFieldEditDeleteSummary
@@ -301,14 +319,40 @@ void AppController::TickPendingActions() {
     }
 }
 
-PendingActionTarget AppController::LatchPendingActionTarget() const {
-    // One pane lookup, so the interface and the queue namespace always name the same backend.
-    const GridLiveContext& pane = focusedContext();
+namespace {
+
+// One pane lookup, so the interface, the queue namespace and the local update always name the same pane.
+PendingActionTarget LatchTargetFrom(const GridLiveContext& pane, TrackerConnectivityState connectivity) {
     PendingActionTarget target;
-    target.Backend = std::atomic_load(&pane.Backend); // a strong handle: alive while the action is in flight
+    // Generation first: a backend swap between the two loads reads as a moved pane, never a stale match.
+    target.BackendGeneration = pane.backendGeneration_.load();
+    target.Backend = std::atomic_load(&pane.Backend); // a strong handle: alive while the write is in flight
     target.BackendKey = pane.CacheBackendKeyCopy();
-    target.Connectivity = GetLastTrackerConnectivityState();
+    target.PaneId = pane.PaneId;
+    target.Connectivity = connectivity;
     return target;
+}
+
+} // namespace
+
+PendingActionTarget AppController::LatchPendingActionTarget() const {
+    return LatchTargetFrom(focusedContext(), GetLastTrackerConnectivityState());
+}
+
+PendingActionTarget AppController::LatchPendingActionTargetForPane(const std::string& paneId) const {
+    const GridLiveContext* pane = nullptr;
+    {
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        const auto it = gridContexts_.find(paneId);
+        pane = (it != gridContexts_.end()) ? it->second.get() : nullptr;
+    }
+    if (pane == nullptr) {
+        PendingActionTarget none;
+        none.PaneId = paneId;
+        none.Connectivity = GetLastTrackerConnectivityState();
+        return none;
+    }
+    return LatchTargetFrom(*pane, GetLastTrackerConnectivityState());
 }
 
 PendingActionSubmitResult AppController::SubmitPendingAction(PendingActionKind kind, const PendingActionTarget& target,

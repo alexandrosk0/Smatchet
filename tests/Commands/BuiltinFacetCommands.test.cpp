@@ -229,7 +229,7 @@ struct FakeAttachments : IAppAttachments {
 
 struct FakeMutations : IAppTicketMutations {
     TrackerField StatusField;
-    bool SubmitOk = true;
+    PendingActionSubmitResult::Kind EditOutcome = PendingActionSubmitResult::Kind::Sent;
     PendingActionSubmitResult::Kind CommentOutcome = PendingActionSubmitResult::Kind::Sent;
     PendingActionSubmitResult::Kind WorklogOutcome = PendingActionSubmitResult::Kind::Sent;
     std::int64_t QueuedId = 77;
@@ -246,12 +246,6 @@ struct FakeMutations : IAppTicketMutations {
     const TrackerField* FindFieldById(const std::string& fieldId) const override {
         return fieldId == "status" ? &StatusField : nullptr;
     }
-    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField&,
-                               const std::vector<std::string>& rawValues) override {
-        LastEditIssue = issueId;
-        LastEditValues = rawValues;
-        return SubmitOk ? VoidOk() : VoidResult::Err("edit rejected");
-    }
     static PendingActionSubmitResult Outcome(PendingActionSubmitResult::Kind kind, const char* rejection) {
         PendingActionSubmitResult r;
         r.K = kind;
@@ -260,6 +254,13 @@ struct FakeMutations : IAppTicketMutations {
         return r;
     }
     PendingActionTarget LatchPendingActionTarget() const override { return PendingActionTarget(); }
+    PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget&, const std::string& issueId,
+                                                     const TrackerField&,
+                                                     const std::vector<std::string>& values) override {
+        LastEditIssue = issueId;
+        LastEditValues = values;
+        return Outcome(EditOutcome, "edit rejected");
+    }
     PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget&, const std::string&,
                                                    const std::string&) override {
         return Outcome(CommentOutcome, "comment rejected");
@@ -651,12 +652,34 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
         CHECK(r.Error.Code == ErrorCode::NotFound);
     }
     {
-        mut.SubmitOk = false;
+        mut.EditOutcome = PendingActionSubmitResult::Kind::Failed;
         const nlohmann::json args = {{"id", "PROJ-1"}, {"field", "status"}, {"value", "Done"}};
         const CommandResult r = reg.Dispatch("ticket.set_field", args, yes);
         REQUIRE_FALSE(r.Ok);
         CHECK(r.Error.Code == ErrorCode::BackendError);
-        mut.SubmitOk = true;
+        CHECK(r.Error.Message.find("edit rejected") != std::string::npos);
+        mut.EditOutcome = PendingActionSubmitResult::Kind::Sent;
+    }
+    {
+        // Tracker unreachable: a field edit is saved to the offline queue and sent on reconnect —
+        // a success whose envelope says so, for set_field, transition and each set_fields entry.
+        mut.EditOutcome = PendingActionSubmitResult::Kind::Queued;
+        const nlohmann::json args = {{"id", "PROJ-1"}, {"field", "status"}, {"value", "Done"}};
+        const CommandResult s = reg.Dispatch("ticket.set_field", args, yes);
+        REQUIRE(s.Ok);
+        CHECK((*s.Data)["ok"] == true);
+        CHECK((*s.Data)["queued"] == true);
+        CHECK((*s.Data)["offlineId"] == 42);
+        const CommandResult t = reg.Dispatch("ticket.transition", {{"id", "PROJ-1"}, {"toStatus", "Done"}}, yes);
+        REQUIRE(t.Ok);
+        CHECK((*t.Data)["queued"] == true);
+        const nlohmann::json fields = {{"status", "Done"}};
+        const CommandResult m = reg.Dispatch("ticket.set_fields", {{"id", "PROJ-1"}, {"fields", fields}}, yes);
+        REQUIRE(m.Ok);
+        CHECK((*m.Data)["results"]["status"]["ok"] == true);
+        CHECK((*m.Data)["results"]["status"]["queued"] == true);
+        CHECK((*m.Data)["results"]["status"]["error"] == "");
+        mut.EditOutcome = PendingActionSubmitResult::Kind::Sent;
     }
     {
         const CommandResult r = reg.Dispatch("ticket.add_comment", {{"id", "PROJ-1"}, {"body", "hi"}}, yes);
@@ -748,6 +771,7 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
         const CommandResult r = reg.Dispatch("ticket.transition", {{"id", "PROJ-1"}, {"toStatus", "Done"}}, yes);
         REQUIRE(r.Ok);
         CHECK(mut.LastEditValues == std::vector<std::string>{"Done"});
+        CHECK_FALSE(r.Data->contains("queued"));
     }
     {
         const nlohmann::json fields = {{"status", "Done"}, {"nosuch", "x"}};

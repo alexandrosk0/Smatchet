@@ -85,7 +85,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
 
 /// Enqueue half of the grid field-edit pipeline — called once per visible PANE per
 /// frame; folds the pane's freshly committed edits into the session queue
-/// (latest-per-cell). No dispatch / chip decay (review MEDIUM-1 split).
+/// (latest-per-cell). No dispatch / chip decay (review MEDIUM-1 split). Each edit should
+/// carry its pane's target (AppController::LatchPendingActionTargetForPane) so it is sent
+/// to, queued for and applied in that pane even if focus moves first (#2260).
 void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
 
 /// Drop every queued, not-yet-dispatched grid edit when the tracker backend changes. The queue is
@@ -93,16 +95,15 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
 /// new backend (a tracker-error banner can hold them past the switch). Sets a visible error.
 void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d);
 
-/// Pump half — called ONCE per frame by the pane-window host with the FOCUSED
-/// pane's live ticket snapshot: dispatches the next queued edit to a worker and
-/// decays success chips.
-void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
-                        bool readOnlyMode);
+/// Pump half — called ONCE per frame by the pane-window host: dispatches the next queued
+/// edit to a worker, with the estimate / issue-type snapshots of the pane it was made in, and
+/// decays success chips. An edit queued without a pane is bound to the focused pane here.
+void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode);
 
 /// Composed enqueue+pump for single-shot callers outside the pane-window loop
-/// (perf.grid_edit_pump command).
-void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
-                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
+/// (perf.grid_edit_pump command, UI tests); their edits go to the focused pane.
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits,
+                           bool readOnlyMode);
 
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);

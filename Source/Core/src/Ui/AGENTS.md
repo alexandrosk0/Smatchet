@@ -27,6 +27,7 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 - **Keyed lookups go through `KeyedLookupCache` + `RunKeyedFetch`** (`Source/Core/include/KeyedLookupCache.h`): no fetch while `IsOfflineState`, a failure backs off and is never remembered as loaded, and the in-flight flag clears on every path including a throw.
 - **A tracker error banner never discards the user's edits.** Only the Read-only preference may drop not-yet-sent grid edits; a banner-driven read-only state holds them until the tracker is usable.
 - **Toasts say what happened.** "Queued" only after a real enqueue, "Posting…" while a request is in flight; never "Queued" for a direct post.
+- **A tracker write is bound to the pane the user acted in.** Latch a `PendingActionTarget` where the user acts (`LatchPendingActionTarget`, or `LatchPendingActionTargetForPane` for a grid pane) and carry it to the send, the queue row and the local update (`SubmitFieldEditOrQueue`, `SubmitOrQueueComment`, `PendingFieldEdit::Target`). Never re-read the focused pane on the worker: focus can move between the click and the send, and the write would reach another tracker (#2260).
 
 ## Steady-state perf (Pillar 1)
 

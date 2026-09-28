@@ -271,7 +271,7 @@ static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngi
         edit.Values = {"2"};
         edit.OriginalValue = ticketIt->GetFieldValue("status");
         edit.HasOriginalValue = true;
-        ProcessGridFieldEdits(*app, g_ui, *tickets, {edit}, false);
+        ProcessGridFieldEdits(*app, g_ui, {edit}, false);
 
         // Queued straight away, without trying the network first.
         IM_CHECK_NO_RET(YieldUntil(

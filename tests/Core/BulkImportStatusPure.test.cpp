@@ -1,0 +1,35 @@
+// BulkImportStatusPure — the Bulk Import Status column rules (pure). Quality Pillar 6: a row the tracker
+// could not be reached for is saved to the offline queue ("queued offline #<id>"); such a row is done and
+// must never be sent again by a re-run, or the issue would be created twice.
+
+#include "Ui/BulkImportStatusPure.h"
+
+#include <doctest/doctest.h>
+
+#include <string>
+
+using namespace smatchet::ui::bulkimport;
+
+TEST_CASE("BulkImportStatusPure: waiting rows are not terminal; every outcome is") {
+    CHECK_FALSE(IsStatusTerminal(""));
+    CHECK_FALSE(IsStatusTerminal(kQueuedStatus));
+    CHECK_FALSE(IsStatusTerminal(kWaitingForCacheStatus));
+    CHECK_FALSE(IsStatusTerminal(kSubmittingStatus));
+    CHECK(IsStatusTerminal("ok PROJ-1"));
+    CHECK(IsStatusTerminal("skipped (no changes)"));
+    CHECK(IsStatusTerminal(QueuedOfflineStatus(12)));
+    CHECK(IsStatusTerminal("Network/unreachable: timed out — retry when Jira is reachable."));
+    CHECK(IsStatusTerminal("stopped"));
+}
+
+TEST_CASE("BulkImportStatusPure: a re-run resends only failed, stopped and never-run rows") {
+    CHECK(QueuedOfflineStatus(12) == "queued offline #12");
+    CHECK(IsStatusHandedOff("ok PROJ-1"));
+    CHECK(IsStatusHandedOff("skipped (no changes)"));
+    CHECK(IsStatusHandedOff(QueuedOfflineStatus(12)));
+    CHECK_FALSE(IsStatusHandedOff(kQueuedStatus)); // waiting to be sent, not the offline queue
+    CHECK_FALSE(IsStatusHandedOff("stopped"));
+    CHECK_FALSE(IsStatusHandedOff("parse error: missing summary"));
+    CHECK_FALSE(IsStatusHandedOff("Network/unreachable: timed out — retry when Jira is reachable."));
+    CHECK_FALSE(IsStatusHandedOff(""));
+}

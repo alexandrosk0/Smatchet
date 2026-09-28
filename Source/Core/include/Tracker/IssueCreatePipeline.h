@@ -10,6 +10,7 @@
 // the full-json door is closed here; the .cpp that defines BuildFieldsPayload includes json.hpp.
 #include <nlohmann/json_fwd.hpp>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -21,8 +22,8 @@ class ISyncCache;
  */
 struct IssueCreateResult {
     bool Ok = false;
-    std::string IssueKey;                                                // populated on success
-    std::string Error;                                                   // single-line summary
+    std::string IssueKey; // populated on success
+    std::string Error;    // single-line summary
     /// Transport-shaped Error (retryable per TrackerError::IsRetryable), classified where the
     /// pipeline flattens the backend's TrackerError (N12 item 13b). Validation/payload-build
     /// failures keep the default false — never offline-queueable. Deliberately NOT set for the
@@ -32,7 +33,15 @@ struct IssueCreateResult {
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
     CachedTicket SeededTicket;
+    /// > 0 when the tracker could not be reached and the draft was saved to the offline queue instead
+    /// (AppController::CreateOrQueueIssueAsync, Quality Pillar 6): the queue row that creates it on reconnect.
+    std::int64_t QueuedOfflineId = 0;
 };
+
+/// True when a failed create / update may go to the offline queue: only when the tracker could not be
+/// reached (a retryable failure). A rejection the user must fix is reported instead, and the "created, key
+/// unknown" shape is never transient, so a create that reached the tracker is never queued a second time.
+inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) { return !result.Ok && result.ErrorTransient; }
 
 /**
  * Reusable create/update flow: validate draft -> build Jira payload -> POST (create) or PUT

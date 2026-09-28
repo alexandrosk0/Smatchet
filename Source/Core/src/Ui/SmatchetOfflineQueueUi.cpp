@@ -1160,6 +1160,10 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
 }
 
 // Clears modal state + closes the popup after a resolution / discard action.
+// Panel status when a conflict resolution did not re-queue the edit (it stays in the queue, suspended).
+static const char* const kConflictNotRequeued =
+    "The edit could not be re-queued and is still waiting for you. Open it again to retry.";
+
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
@@ -1213,8 +1217,8 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     ImGui::Spacing();
 
     auto doResolve = [&](const std::string& resolvedMd) {
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
-        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
+        FinishConflictModal(d, requeued ? "Conflict resolved — edit re-queued for replay." : kConflictNotRequeued);
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1273,8 +1277,10 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     ImGui::Spacing();
 
     auto doResolve = [&](const std::string& chosen) {
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
-        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
+        FinishConflictModal(d, requeued ? "Conflict resolved — edit re-queued for replay."
+                                        : "That value could not be used, so the edit is still waiting for you. For a "
+                                          "sprint, enter its name or id; for an estimate, a value such as 3d.");
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1310,8 +1316,8 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
 
     if (ImGui::Button("Force Mine", ImVec2(130, 0))) {
         // Replay the queued payload verbatim (no value change) and clear the conflict.
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
-        FinishConflictModal(d, "Forcing your edit — re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
+        FinishConflictModal(d, requeued ? "Forcing your edit — re-queued for replay." : kConflictNotRequeued);
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {

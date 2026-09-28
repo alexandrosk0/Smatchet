@@ -115,8 +115,8 @@ struct AppController::Impl {
     std::vector<CachedTicket> LuaGetActiveTicketsBind() override;
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) override;
     const TrackerField* FindFieldById(const std::string& fieldId) const override;
-    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                               const std::vector<std::string>& rawValues) override;
+    PendingActionSubmitResult SubmitFieldEditOrQueue(const std::string& issueId, const TrackerField& field,
+                                                     const std::vector<std::string>& values) override;
     std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override;
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) override;
     std::vector<smatchet::lua::McpToolDefinition> GetLuaMcpTools() const override;

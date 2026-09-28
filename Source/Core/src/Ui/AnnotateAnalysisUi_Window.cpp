@@ -20,11 +20,14 @@
 #include "Tracker/AnnotateContextCommentPure.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -825,39 +828,46 @@ std::string AnnotateContextCommentFor(const AnnotateRow& row) {
     return smatchet::tracker::BuildAnnotateContextCommentMarkdown(fields);
 }
 
-// Runs an Annotate comment write off the UI thread (Pillar 2) — sent now, or saved offline and posted
-// on reconnect (Quality Pillar 6) — and reports what actually happened in the status line.
-template <typename SubmitFn>
-void RunAnnotateCommentWrite(AppController& app, SubmitFn submit, const std::string& postedText,
-                             const std::string& queuedText, const std::string& failedFallback) {
+// Runs an Annotate tracker write — an assign, a comment, or both — off the UI thread (Pillar 2): sent
+// now, or saved offline and sent on reconnect (Quality Pillar 6). The status line says what actually
+// happened: `statusFor(result)` for a sent or queued result, the error for a failed one.
+template <typename SubmitFn, typename StatusFn>
+void RunAnnotateTrackerWrite(AppController& app, SubmitFn submit, StatusFn statusFor,
+                             const std::string& failedFallback) {
     State().assignCommitInFlight = true;
     State().lastUiStatus = "Posting...";
     try {
         smatchet::ui::SubmitPendingActionAsync(
-            app, submit, [postedText, queuedText, failedFallback](const PendingActionSubmitResult& result) {
+            app, submit, [statusFor, failedFallback](const PendingActionSubmitResult& result) {
                 if (!HasLiveStateInstance()) {
                     return;
                 }
                 State().assignCommitInFlight = false;
-                if (result.K == PendingActionSubmitResult::Kind::Sent) {
-                    State().lastUiStatus = postedText;
-                } else if (result.K == PendingActionSubmitResult::Kind::Queued) {
-                    State().lastUiStatus = queuedText;
-                } else {
+                if (result.K == PendingActionSubmitResult::Kind::Failed) {
                     State().lastUiStatus = "Error: " + (result.Error.empty() ? failedFallback : result.Error);
                     LOG_ERROR("Annotate UI: %s", State().lastUiStatus.c_str());
+                    return;
                 }
+                State().lastUiStatus = statusFor(result);
             });
     } catch (const std::exception& ex) {
-        LOG_WARN("Annotate UI: could not start posting the comment: %s", ex.what());
+        LOG_WARN("Annotate UI: could not start sending the change: %s", ex.what());
         State().assignCommitInFlight = false;
-        State().lastUiStatus = "Error: could not start posting the comment. Try again.";
+        State().lastUiStatus = "Error: could not start sending the change. Try again.";
     }
+}
+
+// Status for a single write: `sentText` when it reached the tracker, `queuedText` when it was saved offline.
+std::function<std::string(const PendingActionSubmitResult&)> SentOrQueuedStatus(const std::string& sentText,
+                                                                                const std::string& queuedText) {
+    return [sentText, queuedText](const PendingActionSubmitResult& result) {
+        return result.K == PendingActionSubmitResult::Kind::Sent ? sentText : queuedText;
+    };
 }
 
 const char* const kCommentQueuedStatus = "Saved offline; the comment will post when the tracker is reachable.";
 
-// "Assign issue to user" action row (off-UI SubmitFieldEdit dispatch).
+// "Assign issue to user" action row (off-UI dispatch; queued offline like a grid edit).
 void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitInFlight, bool hasJiraAccount) {
     AppController& app = ctx.App;
     const std::string& selectedJiraIssueKey = ctx.SelectedJiraIssueKey;
@@ -873,31 +883,21 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
             State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
                                    "(Preferences > Tracker > Save & Sync) and retry.";
         } else {
-            // Pillar 2 — finding #7: dispatch SubmitFieldEdit (cpr::Post) off the UI thread.
-            State().assignCommitInFlight = true;
-            State().lastUiStatus = "Posting...";
+            // Pillar 2 — finding #7: the assign blocks on the network, so it runs off the UI thread, bound
+            // to the pane latched here (#2260) and queued offline like any field edit (Quality Pillar 6).
+            AppController* appPtr = &app;
+            const PendingActionTarget target = app.LatchPendingActionTarget();
             const std::string capturedIssueKey = selectedJiraIssueKey;
             const std::string capturedAccountId = State().assignAccountId;
             const TrackerField fieldCopy = *f;
-            app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy]() {
-                const VoidResult r = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
-                const bool ok = r.has_value();
-                const std::string err = ok ? std::string() : r.error();
-                app.PostToMainThread([ok, err, capturedIssueKey]() {
-                    if (!HasLiveStateInstance()) {
-                        return;
-                    }
-                    State().assignCommitInFlight = false;
-                    if (ok) {
-                        LOG_INFO("Annotate UI: assignee set on %s", capturedIssueKey.c_str());
-                        State().lastUiStatus = "Assignee updated.";
-                    } else {
-                        LOG_ERROR("Annotate UI: assign failed: %s", err.c_str());
-                        State().lastUiStatus =
-                            "Error: " + (err.empty() ? std::string("the assignee update failed.") : err);
-                    }
-                });
-            });
+            RunAnnotateTrackerWrite(
+                app,
+                [appPtr, target, capturedIssueKey, capturedAccountId, fieldCopy]() {
+                    return appPtr->SubmitFieldEditOrQueue(target, capturedIssueKey, fieldCopy, {capturedAccountId});
+                },
+                SentOrQueuedStatus("Assignee updated.",
+                                   "Saved offline; the assignee will update when the tracker is reachable."),
+                "the assignee update failed.");
             ImGui::CloseCurrentPopup();
         }
     }
@@ -913,12 +913,13 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
         const PendingActionTarget target = app.LatchPendingActionTarget();
         const std::string capturedIssueKey = ctx.SelectedJiraIssueKey;
         const std::string body = AnnotateContextCommentFor(State().assignRow);
-        RunAnnotateCommentWrite(
+        RunAnnotateTrackerWrite(
             app,
             [appPtr, target, capturedIssueKey, body]() {
                 return appPtr->SubmitOrQueueComment(target, capturedIssueKey, body);
             },
-            "Annotate context comment posted.", kCommentQueuedStatus, "the comment failed to post.");
+            SentOrQueuedStatus("Annotate context comment posted.", kCommentQueuedStatus),
+            "the comment failed to post.");
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
@@ -946,12 +947,13 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                 const std::string capturedIssueKey = selectedJiraIssueKey;
                 const std::string commentBody = BuildAnnotateQuickCommentTemplate(
                     selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.AnnotateCommentTemplates);
-                RunAnnotateCommentWrite(
+                RunAnnotateTrackerWrite(
                     app,
                     [appPtr, target, capturedIssueKey, commentBody]() {
                         return appPtr->SubmitOrQueueComment(target, capturedIssueKey, commentBody);
                     },
-                    "Posted '" + t.Title + "' comment.", kCommentQueuedStatus, "failed to post the comment.");
+                    SentOrQueuedStatus("Posted '" + t.Title + "' comment.", kCommentQueuedStatus),
+                    "failed to post the comment.");
                 ImGui::CloseCurrentPopup();
             }
             ImGui::PopID();
@@ -979,34 +981,46 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
             State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
                                    "(Preferences > Tracker > Save & Sync) and retry.";
         } else {
-            // One worker runs the assign and then the comment (Pillar 2), so the user clicks once. The
-            // comment is queued offline like any other (Quality Pillar 6); the assign is still sent now.
+            // One worker runs the assign and then the comment (Pillar 2), so the user clicks once. Both go
+            // to the pane latched here (#2260), and each is queued offline when the tracker is unreachable
+            // (Quality Pillar 6). `assignQueued` tells the status line which of the two is still waiting.
             AppController* appPtr = &app;
             const PendingActionTarget target = app.LatchPendingActionTarget();
             const std::string capturedIssueKey = selectedJiraIssueKey;
             const std::string capturedAccountId = State().assignAccountId;
             const TrackerField fieldCopy = *f;
             const std::string body = AnnotateContextCommentFor(State().assignRow);
-            RunAnnotateCommentWrite(
+            const std::shared_ptr<std::atomic<bool>> assignQueued = std::make_shared<std::atomic<bool>>(false);
+            RunAnnotateTrackerWrite(
                 app,
-                [appPtr, target, capturedIssueKey, capturedAccountId, fieldCopy, body]() {
-                    // The field-edit pipeline still follows the focused pane, so send nothing if focus moved
-                    // to another tracker since the click: the assign and the comment must reach the same one.
-                    if (appPtr->FocusedCacheBackendKey() != target.BackendKey) {
-                        PendingActionSubmitResult moved;
-                        moved.Error = "the focused tracker changed after the click, so nothing was sent. Try again.";
-                        return moved;
+                [appPtr, target, capturedIssueKey, capturedAccountId, fieldCopy, body, assignQueued]() {
+                    const PendingActionSubmitResult assigned =
+                        appPtr->SubmitFieldEditOrQueue(target, capturedIssueKey, fieldCopy, {capturedAccountId});
+                    if (assigned.K == PendingActionSubmitResult::Kind::Failed) {
+                        return assigned;
                     }
-                    const VoidResult assigned =
-                        appPtr->SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
-                    if (!assigned.has_value()) {
-                        PendingActionSubmitResult failed;
-                        failed.Error = assigned.error();
-                        return failed;
+                    assignQueued->store(assigned.K == PendingActionSubmitResult::Kind::Queued);
+                    PendingActionSubmitResult commented = appPtr->SubmitOrQueueComment(target, capturedIssueKey, body);
+                    if (commented.K == PendingActionSubmitResult::Kind::Failed) {
+                        commented.Error =
+                            std::string(assignQueued->load()
+                                            ? "the assignment was saved offline, but the comment failed: "
+                                            : "assigned, but the comment failed: ") +
+                            (commented.Error.empty() ? std::string("the tracker did not accept it.") : commented.Error);
                     }
-                    return appPtr->SubmitOrQueueComment(target, capturedIssueKey, body);
+                    return commented;
                 },
-                "Assigned and commented.", "Assigned; the comment will post when the tracker is reachable.",
+                [assignQueued](const PendingActionSubmitResult& commented) {
+                    const bool commentQueued = commented.K == PendingActionSubmitResult::Kind::Queued;
+                    if (assignQueued->load()) {
+                        return std::string(commentQueued ? "Saved offline; the assignment and the comment are sent "
+                                                           "when the tracker is reachable."
+                                                         : "Commented; the assignment will be sent when the tracker "
+                                                           "is reachable.");
+                    }
+                    return std::string(commentQueued ? "Assigned; the comment will post when the tracker is reachable."
+                                                     : "Assigned and commented.");
+                },
                 "the assign-and-comment failed.");
             ImGui::CloseCurrentPopup();
         }
@@ -1025,14 +1039,14 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
     }
 }
 
-// The assign-modal body shown once a Jira issue is selected (all action rows). Assigns need the tracker
-// now; comment-only rows stay usable offline (they are queued), so only the Read-only preference blocks them.
-void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool assignReadOnly, bool commentReadOnly) {
+// The assign-modal body shown once a Jira issue is selected (all action rows). Assigns and comments stay
+// usable offline (they are queued), so only the Read-only preference blocks them.
+void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool readOnly) {
     const AnnotateUiThemeColors& theme = ctx.Theme;
     const bool hasJiraAccount = State().assignHasJiraAccount && !State().assignAccountId.empty();
     const bool commitInFlight = State().assignCommitInFlight;
     PushAnnotateLinkTextOnly(theme);
-    DrawAssignIssueAction(ctx, assignReadOnly, commitInFlight, hasJiraAccount);
+    DrawAssignIssueAction(ctx, readOnly, commitInFlight, hasJiraAccount);
     PopAnnotateLinkTextOnly();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::SetTooltip(
@@ -1040,9 +1054,9 @@ void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool as
             "the Annotate row you used (callstack table or Entry tab row menu).\n"
             "Requires a matching Jira account; otherwise an error is shown.");
     }
-    DrawAssignContextCommentAction(ctx, commentReadOnly, commitInFlight);
-    DrawAssignQuickCommentTemplates(ctx, cfg, commentReadOnly, commitInFlight);
-    DrawAssignAndContextAction(ctx, assignReadOnly, commitInFlight, hasJiraAccount);
+    DrawAssignContextCommentAction(ctx, readOnly, commitInFlight);
+    DrawAssignQuickCommentTemplates(ctx, cfg, readOnly, commitInFlight);
+    DrawAssignAndContextAction(ctx, readOnly, commitInFlight, hasJiraAccount);
 }
 
 } // namespace
@@ -1059,7 +1073,6 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     }
     const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool assignReadOnly = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
     ImGui::TextUnformatted(State().assignTitle.c_str());
     ImGui::Separator();
     if (cfg.ReadOnlyMode) {
@@ -1073,9 +1086,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
         ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
         ImGui::PopStyleColor();
-        ImGui::TextDisabled(
-            "Assign actions stay disabled until Jira is reachable. Comments still work: offline they are saved "
-            "and sent on reconnect.");
+        ImGui::TextDisabled("Assigns and comments still work: offline they are saved and sent on reconnect.");
         ImGui::Separator();
     } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
@@ -1086,7 +1097,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     if (ctx.SelectedJiraIssueKey.empty()) {
         ImGui::TextDisabled("Select a Jira issue in the grid.");
     } else {
-        DrawAssignModalBody(ctx, cfg, assignReadOnly, cfg.ReadOnlyMode);
+        DrawAssignModalBody(ctx, cfg, cfg.ReadOnlyMode);
     }
     PushAnnotateLinkButtonColors(theme);
     if (ImGui::Button("Close")) {

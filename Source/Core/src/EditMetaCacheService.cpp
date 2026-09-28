@@ -179,8 +179,22 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(
 bool EditMetaCacheService::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                                                 const TrackerField* fieldMeta,
                                                 const std::string* issueTypeKeyOverride) const {
-    std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    if (!backend || issueId.empty() || fieldId.empty()) {
+    if (!deps_.BackendShared()) {
+        return true;
+    }
+    const bool haveOverride = issueTypeKeyOverride != nullptr && !issueTypeKeyOverride->empty();
+    return CanEditFieldImpl(issueId, fieldId, fieldMeta, haveOverride ? issueTypeKeyOverride : nullptr);
+}
+
+bool EditMetaCacheService::CanEditFieldForIssueWithType(const std::string& issueId, const std::string& fieldId,
+                                                        const TrackerField* fieldMeta,
+                                                        const std::string& issueTypeKey) const {
+    return CanEditFieldImpl(issueId, fieldId, fieldMeta, &issueTypeKey);
+}
+
+bool EditMetaCacheService::CanEditFieldImpl(const std::string& issueId, const std::string& fieldId,
+                                            const TrackerField* fieldMeta, const std::string* explicitTypeKey) const {
+    if (issueId.empty() || fieldId.empty()) {
         return true;
     }
     if (IsEditableTimetrackingEstimateFieldId(fieldId)) {
@@ -196,12 +210,7 @@ bool EditMetaCacheService::CanEditFieldForIssue(const std::string& issueId, cons
     if (fieldKey == "status") {
         return true;
     }
-    std::string issueTypeKey;
-    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
-        issueTypeKey = *issueTypeKeyOverride;
-    } else {
-        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
-    }
+    const std::string issueTypeKey = explicitTypeKey ? *explicitTypeKey : ResolveIssueTypeKeyForIssue(issueId);
     std::lock_guard<std::mutex> lock(editMetaMutex_);
     const auto it = issueEditMeta_.find(issueId);
     if (it == issueEditMeta_.end() || !it->second.loaded) {
@@ -247,11 +256,25 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& is
             return VoidOk();
         }
     }
-    std::string issueTypeKey;
-    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
-        issueTypeKey = *issueTypeKeyOverride;
-    } else {
-        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    const std::string issueTypeKey = (issueTypeKeyOverride && !issueTypeKeyOverride->empty())
+                                         ? *issueTypeKeyOverride
+                                         : ResolveIssueTypeKeyForIssue(issueId);
+    return EnsureIssueEditMetaLoadedFor(backend, issueId, issueTypeKey, configSnapshot);
+}
+
+VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_ptr<ITrackerBackend>& backend,
+                                                              const std::string& issueId,
+                                                              const std::string& issueTypeKey,
+                                                              const TrackerConfig* configSnapshot) {
+    if (!backend || issueId.empty()) {
+        return VoidOk();
+    }
+    {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        const auto it = issueEditMeta_.find(issueId);
+        if (it != issueEditMeta_.end() && it->second.loaded) {
+            return VoidOk();
+        }
     }
     if (!issueTypeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
@@ -307,18 +330,20 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& is
 
 VoidResult EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId,
                                                       const std::string* issueTypeKeyOverride) {
-    std::string issueTypeKey;
-    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
-        issueTypeKey = *issueTypeKeyOverride;
-    } else {
-        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
-    }
+    const std::string issueTypeKey = (issueTypeKeyOverride && !issueTypeKeyOverride->empty())
+                                         ? *issueTypeKeyOverride
+                                         : ResolveIssueTypeKeyForIssue(issueId);
+    return RefreshIssueEditMetaFor(deps_.BackendShared(), issueId, issueTypeKey);
+}
+
+VoidResult EditMetaCacheService::RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend,
+                                                         const std::string& issueId, const std::string& issueTypeKey) {
     InvalidateIssueEditMeta(issueId);
     if (!issueTypeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueTypeEditMeta_.erase(issueTypeKey);
     }
-    return EnsureIssueEditMetaLoaded(issueId, &issueTypeKey);
+    return EnsureIssueEditMetaLoadedFor(backend, issueId, issueTypeKey);
 }
 
 void EditMetaCacheService::InvalidateIssueEditMeta(const std::string& issueId) {
