@@ -910,10 +910,14 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
     ImGui::BeginDisabled(readOnlyMode || commitInFlight);
     if (ImGui::Selectable("Add Annotate context comment", false)) {
         AppController* appPtr = &app;
+        const PendingActionTarget target = app.LatchPendingActionTarget();
         const std::string capturedIssueKey = ctx.SelectedJiraIssueKey;
         const std::string body = AnnotateContextCommentFor(State().assignRow);
         RunAnnotateCommentWrite(
-            app, [appPtr, capturedIssueKey, body]() { return appPtr->SubmitOrQueueComment(capturedIssueKey, body); },
+            app,
+            [appPtr, target, capturedIssueKey, body]() {
+                return appPtr->SubmitOrQueueComment(target, capturedIssueKey, body);
+            },
             "Annotate context comment posted.", kCommentQueuedStatus, "the comment failed to post.");
         ImGui::CloseCurrentPopup();
     }
@@ -938,13 +942,14 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
             }
             if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
                 AppController* appPtr = &app;
+                const PendingActionTarget target = app.LatchPendingActionTarget();
                 const std::string capturedIssueKey = selectedJiraIssueKey;
                 const std::string commentBody = BuildAnnotateQuickCommentTemplate(
                     selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.AnnotateCommentTemplates);
                 RunAnnotateCommentWrite(
                     app,
-                    [appPtr, capturedIssueKey, commentBody]() {
-                        return appPtr->SubmitOrQueueComment(capturedIssueKey, commentBody);
+                    [appPtr, target, capturedIssueKey, commentBody]() {
+                        return appPtr->SubmitOrQueueComment(target, capturedIssueKey, commentBody);
                     },
                     "Posted '" + t.Title + "' comment.", kCommentQueuedStatus, "failed to post the comment.");
                 ImGui::CloseCurrentPopup();
@@ -977,13 +982,14 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
             // One worker runs the assign and then the comment (Pillar 2), so the user clicks once. The
             // comment is queued offline like any other (Quality Pillar 6); the assign is still sent now.
             AppController* appPtr = &app;
+            const PendingActionTarget target = app.LatchPendingActionTarget();
             const std::string capturedIssueKey = selectedJiraIssueKey;
             const std::string capturedAccountId = State().assignAccountId;
             const TrackerField fieldCopy = *f;
             const std::string body = AnnotateContextCommentFor(State().assignRow);
             RunAnnotateCommentWrite(
                 app,
-                [appPtr, capturedIssueKey, capturedAccountId, fieldCopy, body]() {
+                [appPtr, target, capturedIssueKey, capturedAccountId, fieldCopy, body]() {
                     const VoidResult assigned =
                         appPtr->SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
                     if (!assigned.has_value()) {
@@ -991,7 +997,7 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                         failed.Error = assigned.error();
                         return failed;
                     }
-                    return appPtr->SubmitOrQueueComment(capturedIssueKey, body);
+                    return appPtr->SubmitOrQueueComment(target, capturedIssueKey, body);
                 },
                 "Assigned and commented.", "Assigned; the comment will post when the tracker is reachable.",
                 "the assign-and-comment failed.");

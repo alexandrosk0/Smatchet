@@ -96,7 +96,8 @@ static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations&
                             [&app](const nlohmann::json& args, const CommandContext&) {
                                 const std::string id = args.value("id", std::string());
                                 const std::string body = args.value("body", std::string());
-                                const PendingActionSubmitResult r = app.SubmitOrQueueComment(id, body);
+                                const PendingActionTarget target = app.LatchPendingActionTarget();
+                                const PendingActionSubmitResult r = app.SubmitOrQueueComment(target, id, body);
                                 if (r.K == PendingActionSubmitResult::Kind::Failed) {
                                     return CommandResult::Failure(ErrorCode::BackendError,
                                                                   "Comment failed: " + PendingActionError(r));
@@ -131,7 +132,9 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations&
             const std::string comment = args.value("comment", std::string());
             const std::string started = args.value("started", std::string());
             const std::string timeSpent = builtin_detail::FormatWorklogTimeSpent(seconds);
-            const PendingActionSubmitResult r = app.SubmitOrQueueWorklog(id, timeSpent, "", "auto", comment, started);
+            const PendingActionTarget target = app.LatchPendingActionTarget();
+            const PendingActionSubmitResult r =
+                app.SubmitOrQueueWorklog(target, id, timeSpent, "", "auto", comment, started);
             if (r.K == PendingActionSubmitResult::Kind::Failed) {
                 return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + PendingActionError(r));
             }

@@ -259,12 +259,14 @@ struct FakeMutations : IAppTicketMutations {
         r.Error = kind == PendingActionSubmitResult::Kind::Failed ? rejection : "";
         return r;
     }
-    PendingActionSubmitResult SubmitOrQueueComment(const std::string&, const std::string&) override {
+    PendingActionTarget LatchPendingActionTarget() const override { return PendingActionTarget(); }
+    PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget&, const std::string&,
+                                                   const std::string&) override {
         return Outcome(CommentOutcome, "comment rejected");
     }
-    PendingActionSubmitResult SubmitOrQueueWorklog(const std::string&, const std::string& timeSpent, const std::string&,
-                                                   const std::string&, const std::string&,
-                                                   const std::string&) override {
+    PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget&, const std::string&,
+                                                   const std::string& timeSpent, const std::string&, const std::string&,
+                                                   const std::string&, const std::string&) override {
         LastWorklogTimeSpent = timeSpent;
         return Outcome(WorklogOutcome, "worklog rejected");
     }

@@ -41,6 +41,15 @@ struct Rig {
     smatchet_tests::FakeSyncCache& Cache() { return *deps.CacheImpl; }
     smatchet_tests::FakeTrackerClient& Tracker() { return *deps.BackendImpl; }
 
+    // The target a UI click latches: the fake pane's collaboration interface and backend key.
+    PendingActionTarget Target(TrackerConnectivityState connectivity) const {
+        PendingActionTarget target;
+        target.Collab = deps.CollaborationShared();
+        target.BackendKey = deps.CacheBackendKey();
+        target.Connectivity = connectivity;
+        return target;
+    }
+
     std::int64_t QueueComment(const std::string& body, const char* state, const std::string& backendKey = "Jira") {
         return Cache().EnqueuePendingAction(backendKey, PendingActionKindWire(PendingActionKind::CommentAdd), "ABC-1",
                                             smatchet::pendingaction::BuildCommentActionPayload(body, kQueuedAt), state);
@@ -73,8 +82,9 @@ std::string CommentPayload(const std::string& body) {
 TEST_CASE("PendingActionQueueService::SubmitOrQueue offline saves the comment with no request") {
     OfflineQueueTestEnvGuard env;
     Rig rig;
-    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::CommentAdd, "ABC-1", CommentPayload("hi"), TrackerConnectivityState::TransportDown);
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("hi"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     CHECK(r.QueueId > 0);
     CHECK_FALSE(r.QueuedAfterNetworkFailure);
@@ -91,9 +101,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue offline saves the comment wi
 TEST_CASE("PendingActionQueueService::SubmitOrQueue online sends once and queues nothing") {
     OfflineQueueTestEnvGuard env;
     Rig rig;
-    const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, "ABC-1", CommentPayload("hello"),
-                              TrackerConnectivityState::AuthenticatedReachable);
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        CommentPayload("hello"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Sent);
     REQUIRE(rig.Tracker().AddCommentCalls().size() == 1);
     CHECK(rig.Tracker().AddCommentCalls()[0].Body == "hello");
@@ -105,9 +115,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue queues a send that may have 
     OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.Tracker().EnqueueAddCommentResult(TrackerErrorTransport("operation timed out"));
-    const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, "ABC-1", CommentPayload("maybe"),
-                              TrackerConnectivityState::AuthenticatedReachable);
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        CommentPayload("maybe"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     CHECK(r.QueuedAfterNetworkFailure);
     const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
@@ -119,9 +129,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue queues a rate-limited send a
     OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.Tracker().EnqueueAddCommentResult(TrackerErrorRateLimited("slow down"));
-    const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, "ABC-1", CommentPayload("later"),
-                              TrackerConnectivityState::AuthenticatedReachable);
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        CommentPayload("later"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     REQUIRE(rig.Cache().LoadPendingActions().size() == 1);
     CHECK(rig.Cache().LoadPendingActions()[0].State == PendingActionState::kPending);
@@ -132,7 +142,8 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue reports a rejection and queu
     Rig rig;
     rig.Tracker().EnqueueAddCommentResult(TrackerErrorInvalidRequest("Comment body is too long", 400));
     const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::CommentAdd, "ABC-1", CommentPayload("x"), TrackerConnectivityState::AuthenticatedReachable);
+        PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        CommentPayload("x"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
     CHECK(r.Error == "Comment body is too long");
     CHECK(rig.Cache().LoadPendingActions().empty());
@@ -143,8 +154,48 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue offline never queues for a b
     Rig rig;
     rig.Tracker().EnableCollaboration(false); // replay could never send it, so it must not wait in the queue
     const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
-                              TrackerConnectivityState::TransportDown);
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, rig.Target(TrackerConnectivityState::TransportDown), "ABC-1",
+                              smatchet::pendingaction::kWatchActionPayload);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
+    CHECK_FALSE(r.Error.empty());
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
+TEST_CASE("PendingActionQueueService::SubmitOrQueue uses the latched target, not the focused pane") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    // The user acted on another pane's tracker; focus (the deps) has since moved to "Jira".
+    const std::shared_ptr<smatchet_tests::FakeTrackerClient> other =
+        std::make_shared<smatchet_tests::FakeTrackerClient>();
+    other->EnableCollaboration(true);
+    PendingActionTarget target;
+    target.Collab = std::shared_ptr<ITrackerCollaboration>(other, other->Collaboration());
+    target.BackendKey = "Plane";
+    target.Connectivity = TrackerConnectivityState::AuthenticatedReachable;
+    const PendingActionSubmitResult sent =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, target, "PL-1", CommentPayload("to plane"));
+    CHECK(sent.K == PendingActionSubmitResult::Kind::Sent);
+    CHECK(other->AddCommentCalls().size() == 1);
+    CHECK(rig.Tracker().AddCommentCalls().empty());
+
+    target.Connectivity = TrackerConnectivityState::TransportDown;
+    const PendingActionSubmitResult queued = rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, target, "PL-1",
+                                                                   smatchet::pendingaction::kWatchActionPayload);
+    CHECK(queued.K == PendingActionSubmitResult::Kind::Queued);
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].BackendKey == "Plane"); // replays only when that backend's pane is the one ticking
+    CHECK(rig.Tracker().AddWatcherCalls().empty());
+    CHECK(other->AddWatcherCalls().empty());
+}
+
+TEST_CASE("PendingActionQueueService::SubmitOrQueue never queues a row with no backend namespace") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    PendingActionTarget target = rig.Target(TrackerConnectivityState::TransportDown);
+    target.BackendKey.clear(); // replay could never pick it up
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, target, "ABC-1", CommentPayload("x"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
     CHECK_FALSE(r.Error.empty());
     CHECK(rig.Cache().LoadPendingActions().empty());
@@ -159,8 +210,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue honours the Read-only prefer
     }
     ConfigManager::InvalidateCache();
     Rig rig;
-    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::CommentAdd, "ABC-1", CommentPayload("x"), TrackerConnectivityState::TransportDown);
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("x"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
     CHECK(rig.Cache().LoadPendingActions().empty());
     CHECK(rig.Tracker().AddCommentCalls().empty());
@@ -170,8 +222,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue reports a local database fai
     OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.Cache().EnqueuePendingActionThrows = true;
-    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::CommentAdd, "ABC-1", CommentPayload("x"), TrackerConnectivityState::TransportDown);
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("x"));
     CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
     CHECK_FALSE(r.Error.empty());
 }
@@ -347,8 +400,8 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue sends a worklog online with 
     OfflineQueueTestEnvGuard env;
     Rig rig;
     const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
-        TrackerConnectivityState::AuthenticatedReachable);
+        PendingActionKind::WorklogAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()));
     CHECK(r.K == PendingActionSubmitResult::Kind::Sent);
     REQUIRE(rig.Tracker().AddWorklogCalls().size() == 1);
     const smatchet_tests::FakeTrackerClient::AddWorklogCall& call = rig.Tracker().AddWorklogCalls()[0];
@@ -364,9 +417,9 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue sends a worklog online with 
 TEST_CASE("PendingActionQueueService a worklog queued offline is logged once on replay") {
     OfflineQueueTestEnvGuard env;
     Rig rig;
-    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
-        TrackerConnectivityState::TransportDown);
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::WorklogAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()));
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     CHECK(rig.Tracker().AddWorklogCalls().empty());
     rig.ReplayNow();
@@ -382,8 +435,8 @@ TEST_CASE("PendingActionQueueService a worklog send that may have landed is held
     Rig rig;
     rig.Tracker().EnqueueAddWorklogResult(TrackerErrorTransport("operation timed out"));
     const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
-        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
-        TrackerConnectivityState::AuthenticatedReachable);
+        PendingActionKind::WorklogAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()));
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     REQUIRE(rig.Cache().LoadPendingActions().size() == 1);
     CHECK(rig.Cache().LoadPendingActions()[0].State == PendingActionState::kAmbiguous);
@@ -399,8 +452,8 @@ TEST_CASE("PendingActionQueueService a watch queued offline is applied on replay
     OfflineQueueTestEnvGuard env;
     Rig rig;
     const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
-                              TrackerConnectivityState::TransportDown);
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, rig.Target(TrackerConnectivityState::TransportDown), "ABC-1",
+                              smatchet::pendingaction::kWatchActionPayload);
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     CHECK(rig.Tracker().AddWatcherCalls().empty());
     rig.ReplayNow();
@@ -414,8 +467,8 @@ TEST_CASE("PendingActionQueueService a failed watch is retried as pending — wa
     Rig rig;
     rig.Tracker().EnqueueAddWatcherResult(TrackerErrorTransport("operation timed out"));
     const PendingActionSubmitResult r =
-        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
-                              TrackerConnectivityState::AuthenticatedReachable);
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable),
+                              "ABC-1", smatchet::pendingaction::kWatchActionPayload);
     CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
     REQUIRE(rig.Cache().LoadPendingActions().size() == 1);
     CHECK(rig.Cache().LoadPendingActions()[0].State == PendingActionState::kPending);

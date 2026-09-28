@@ -897,16 +897,20 @@ class AppController : public IAppThreading,
 
     // Pending-action queue (comments, worklogs, watches; Quality Pillar 6) — PendingActionQueueService
     // delegators. Every tracker comment, worklog and watch goes through them: sent now, or saved and
-    // replayed on reconnect. They block on the network while online — call them from a worker.
+    // replayed on reconnect. They block on the network while online — call them from a worker, with a
+    // target latched where the user acted.
     /** Replay queued actions (rate-limited; called from UI tick next to TickOfflineFieldEdits). */
     void TickPendingActions();
-    PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) override;
-    PendingActionSubmitResult SubmitOrQueueWorklog(const std::string& issueId, const std::string& timeSpent,
-                                                   const std::string& timeRemaining, const std::string& adjustEstimate,
+    PendingActionTarget LatchPendingActionTarget() const override;
+    PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target, const std::string& issueKey,
+                                                   const std::string& body) override;
+    PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId,
+                                                   const std::string& timeSpent, const std::string& timeRemaining,
+                                                   const std::string& adjustEstimate,
                                                    const std::string& workDescription,
                                                    const std::string& startedDate) override;
     /// Add the current user as a watcher of `issueKey`.
-    PendingActionSubmitResult SubmitOrQueueWatch(const std::string& issueKey);
+    PendingActionSubmitResult SubmitOrQueueWatch(const PendingActionTarget& target, const std::string& issueKey);
     std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const override;
     /// Queue id of an action of `kind` for `issueKey` on the focused backend that still waits in the offline
     /// queue (including one saved in an earlier session), or 0. Reads the in-memory snapshot only (UI thread,
@@ -1121,8 +1125,8 @@ class AppController : public IAppThreading,
 
     /// The one path into PendingActionQueueService::SubmitOrQueue. A send that was queued after failing
     /// on the network also schedules a connectivity probe (posted: the probe schedule is UI-thread state).
-    PendingActionSubmitResult SubmitPendingAction(PendingActionKind kind, const std::string& issueKey,
-                                                  const std::string& payloadJson);
+    PendingActionSubmitResult SubmitPendingAction(PendingActionKind kind, const PendingActionTarget& target,
+                                                  const std::string& issueKey, const std::string& payloadJson);
 
   public:
     /// Retire a swapped-out backend into the defer-free graveyard (see `retiredBackends_`).

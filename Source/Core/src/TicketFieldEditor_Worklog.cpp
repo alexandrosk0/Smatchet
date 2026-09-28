@@ -227,6 +227,8 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
     }
 
     IAppTicketMutations* mutationsPtr = &mutations;
+    // Latched at Save: the worklog goes to this pane's tracker even if focus moves before the worker runs.
+    const PendingActionTarget target = mutations.LatchPendingActionTarget();
     const std::string issueId = s_ActiveWorklogState.IssueId;
     const std::string timeSpent = s_ActiveWorklogState.TimeSpent;
     const std::string timeRemaining = s_ActiveWorklogState.TimeRemaining;
@@ -242,9 +244,9 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
     try {
         smatchet::ui::SubmitPendingActionAsync(
             threading,
-            [mutationsPtr, issueId, timeSpent, timeRemaining, adjEst, description, startedDate]() {
-                return mutationsPtr->SubmitOrQueueWorklog(issueId, timeSpent, timeRemaining, adjEst, description,
-                                                          startedDate);
+            [mutationsPtr, target, issueId, timeSpent, timeRemaining, adjEst, description, startedDate]() {
+                return mutationsPtr->SubmitOrQueueWorklog(target, issueId, timeSpent, timeRemaining, adjEst,
+                                                          description, startedDate);
             },
             [gen, issueId](const PendingActionSubmitResult& result) { ApplyWorklogSaveResult(gen, issueId, result); });
     } catch (const std::exception& ex) {

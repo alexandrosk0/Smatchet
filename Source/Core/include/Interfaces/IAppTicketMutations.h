@@ -18,7 +18,7 @@
 
 #include "CachedTicketTypes.h"  // CachedTicket (rank-0) — snapshot element
 #include "CancelToken.h"        // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
-#include "PendingActionTypes.h" // PendingActionSubmitResult (rank-0) — comment / worklog outcome
+#include "PendingActionTypes.h" // PendingActionTarget / PendingActionSubmitResult (rank-0) — comment / worklog
 #include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — outError → Result flip)
 
 #include <cstdint>
@@ -38,16 +38,19 @@ class IAppTicketMutations {
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
     virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                        const std::vector<std::string>& rawValues) = 0;
-    /// Comment on `issueKey`: sent now, or saved and replayed on reconnect when the tracker is unreachable
-    /// (Quality Pillar 6). Blocks on the network while online — call it from a worker. Also declared on
-    /// IAppPendingActions; AppController's one override serves both.
-    virtual PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) = 0;
+    /// The focused pane's tracker, latched where the user acted; comments and worklogs go to it even if
+    /// focus moves before the worker submits. Also declared on IAppPendingActions, like the next one.
+    virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+    /// Comment on `issueKey` for `target`: sent now, or saved and replayed on reconnect when the tracker is
+    /// unreachable (Quality Pillar 6). Blocks on the network while online — call it from a worker. Also
+    /// declared on IAppPendingActions; AppController's one override serves both.
+    virtual PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target,
+                                                           const std::string& issueKey, const std::string& body) = 0;
     /// Worklog on `issueId`, sent now or queued the same way.
-    virtual PendingActionSubmitResult SubmitOrQueueWorklog(const std::string& issueId, const std::string& timeSpent,
-                                                           const std::string& timeRemaining,
-                                                           const std::string& adjustEstimate,
-                                                           const std::string& workDescription,
-                                                           const std::string& startedDate) = 0;
+    virtual PendingActionSubmitResult
+    SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId, const std::string& timeSpent,
+                         const std::string& timeRemaining, const std::string& adjustEstimate,
+                         const std::string& workDescription, const std::string& startedDate) = 0;
     virtual std::int64_t QueueCreateOffline(const IssueDraft& draft) = 0;
     // CancelToken default mirrored on the AppController override too: concrete-typed callers
     // (AppController_LuaBindings, SmatchetNewIssueDraftUi) use the 1-arg form via static binding.

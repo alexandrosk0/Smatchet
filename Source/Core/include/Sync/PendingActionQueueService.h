@@ -40,12 +40,13 @@ class PendingActionQueueService {
 
     using SubmitOutcome = PendingActionSubmitResult;
 
-    /// Worker-safe; blocks on the network when online. Routes by `connectivityAtKick` (RouteWrite):
-    /// the Read-only preference rejects; offline the action is queued without a request; online it
-    /// is sent, and a failure the tracker may still accept is queued (as `ambiguous` when the request
-    /// may have landed). A rejected send returns Failed with the tracker's message.
-    SubmitOutcome SubmitOrQueue(PendingActionKind kind, const std::string& issueKey, const std::string& payloadJson,
-                                TrackerConnectivityState connectivityAtKick);
+    /// Worker-safe; blocks on the network when online. Sends to, or queues for, `target` only (latched
+    /// where the user acted). Routes by `target.Connectivity` (RouteWrite): the Read-only preference
+    /// rejects; offline the action is queued without a request; online it is sent, and a failure the
+    /// tracker may still accept is queued (as `ambiguous` when the request may have landed). A rejected
+    /// send returns Failed with the tracker's message.
+    SubmitOutcome SubmitOrQueue(PendingActionKind kind, const PendingActionTarget& target, const std::string& issueKey,
+                                const std::string& payloadJson);
 
     /// UI thread, every frame. Loads the snapshot once a cache exists, then — when the snapshot holds
     /// a row this context can replay and the replay timer has passed — launches one replay pass.
@@ -76,8 +77,8 @@ class PendingActionQueueService {
         bool TransportDown = false; ///< a send failed on the network: the pass stops there
     };
 
-    SubmitOutcome Enqueue(PendingActionKind kind, const std::string& issueKey, const std::string& payloadJson,
-                          const char* state);
+    SubmitOutcome Enqueue(PendingActionKind kind, const std::string& backendKey, const std::string& issueKey,
+                          const std::string& payloadJson, const char* state);
     /// One replay pass over this context's rows (worker). Returns the delay before the next pass.
     std::chrono::seconds RunReplayPass(ISyncCache& cache, ITrackerCollaboration& collab, const std::string& backendKey);
     void ReplayOne(ISyncCache& cache, ITrackerCollaboration& collab, const TrackerConfig& cfg,

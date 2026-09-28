@@ -6,9 +6,14 @@
 // (no SQLite), rank 0 so the cache seam (ISyncCache), the Sync service and the UI facet can all
 // include it — the same placement as the create / field-edit queue rows in CachedTicketTypes.h.
 
+#include "Types/ConnectivityTypes.h"
+
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+class ITrackerCollaboration;
 
 enum class PendingActionKind : unsigned char { CommentAdd, WorklogAdd, WatchAdd };
 
@@ -81,6 +86,15 @@ struct DeadPendingAction {
 struct PendingActionsSnapshot {
     std::vector<PendingActionRecord> Pending;
     std::vector<DeadPendingAction> Dead;
+};
+
+/// The tracker an action is for, latched on the thread where the user acted. The worker that sends or
+/// queues it uses this, never the focused pane: focus may have moved to another backend by then, and
+/// the action must not be sent to (or queued for) that one.
+struct PendingActionTarget {
+    std::shared_ptr<ITrackerCollaboration> Collab; ///< null when the backend has no collaboration interface
+    std::string BackendKey;                        ///< the queue namespace: that pane's cache backend key
+    TrackerConnectivityState Connectivity = TrackerConnectivityState::Unknown; ///< last probe when latched
 };
 
 /// Outcome of submitting an action (PendingActionQueueService::SubmitOrQueue).

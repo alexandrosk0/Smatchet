@@ -397,7 +397,8 @@ static void RegisterOfflineFirstCommentsPostedOfflineReplays(ImGuiTestEngine* en
         IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
         smatchet_tests::GlobalFakeNetwork().ResetCounters();
         const std::size_t postsBefore = fake->AddCommentCalls().size();
-        const PendingActionSubmitResult queued = app->SubmitOrQueueComment("OFF-1", "offline hello");
+        const PendingActionSubmitResult queued =
+            app->SubmitOrQueueComment(app->LatchPendingActionTarget(), "OFF-1", "offline hello");
         IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.size() == 1);
         IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
@@ -467,9 +468,10 @@ static void RegisterOfflineFirstWorklogOfflineQueues(ImGuiTestEngine* engine) {
         const std::size_t worklogsBefore = fake->AddWorklogCalls().size();
         const std::size_t watchesBefore = fake->AddWatcherCalls().size();
         const PendingActionSubmitResult worklog =
-            app->SubmitOrQueueWorklog("OFF-1", "30m", "", "auto", "offline work", "2026-09-27T10:00:00.000+0000");
+            app->SubmitOrQueueWorklog(app->LatchPendingActionTarget(), "OFF-1", "30m", "", "auto", "offline work",
+                                      "2026-09-27T10:00:00.000+0000");
         IM_CHECK_NO_RET(worklog.K == PendingActionSubmitResult::Kind::Queued);
-        const PendingActionSubmitResult watch = app->SubmitOrQueueWatch("OFF-1");
+        const PendingActionSubmitResult watch = app->SubmitOrQueueWatch(app->LatchPendingActionTarget(), "OFF-1");
         IM_CHECK_NO_RET(watch.K == PendingActionSubmitResult::Kind::Queued);
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.size() == 2);
         // The grid's Watch button reads this: it hides while the queued watch waits, whichever session queued it.

@@ -294,13 +294,15 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
             ImGui::BeginDisabled();
         }
         if (ImGui::SmallButton(watchBtn.c_str())) {
+            // Latched on click: the watch goes to this pane's tracker even if focus moves before the worker runs.
+            const PendingActionTarget target = app.LatchPendingActionTarget();
             async.watchSelfPendingIssueKey = issueKey;
-            async.watchSelfPendingBackendKey = app.FocusedCacheBackendKey();
+            async.watchSelfPendingBackendKey = target.BackendKey;
             async.watchSelfInProgress = true;
             async.watchSelfError.clear();
             // Offline the watch is saved and applied on reconnect (pending-action queue, Pillar 6).
-            async.watchSelfFuture =
-                std::async(std::launch::async, [&app, issueKey]() { return app.SubmitOrQueueWatch(issueKey); });
+            async.watchSelfFuture = std::async(
+                std::launch::async, [&app, target, issueKey]() { return app.SubmitOrQueueWatch(target, issueKey); });
         }
         if (watchBusy) {
             ImGui::EndDisabled();

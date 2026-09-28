@@ -21,9 +21,14 @@ class IAppPendingActions {
   public:
     virtual ~IAppPendingActions() = default;
 
-    /// Comment on `issueKey`: sent now, or saved and replayed on reconnect when the tracker is
+    /// The focused pane's tracker, latched for an action the user is starting. Call it where the user
+    /// acted (UI thread), before launching the worker that submits.
+    virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+
+    /// Comment on `issueKey` for `target`: sent now, or saved and replayed on reconnect when the tracker is
     /// unreachable. Blocks on the network while online — call it from a worker.
-    virtual PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) = 0;
+    virtual PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target,
+                                                           const std::string& issueKey, const std::string& body) = 0;
 
     /// The queued and failed actions as last loaded; never null. No SQLite.
     virtual std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const = 0;

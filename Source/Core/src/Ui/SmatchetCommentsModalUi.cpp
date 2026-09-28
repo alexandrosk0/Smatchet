@@ -518,9 +518,11 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
 /// and the worker always posts a result, a throw included, so Post can never stay disabled.
 void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
     AppController* appPtr = &app;
+    // Latched at Post: the comment goes to this pane's tracker even if focus moves before the worker runs.
+    const PendingActionTarget target = app.LatchPendingActionTarget();
     try {
         smatchet::ui::SubmitPendingActionAsync(
-            app, [appPtr, issueId, body]() { return appPtr->SubmitOrQueueComment(issueId, body); },
+            app, [appPtr, target, issueId, body]() { return appPtr->SubmitOrQueueComment(target, issueId, body); },
             [appPtr, issueId, openGen](const PendingActionSubmitResult& result) {
                 ApplyCommentPostResult(*appPtr, issueId, openGen, result);
             });
