@@ -590,7 +590,7 @@ void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppCo
         return;
     }
 
-    const auto snap = app_.GetActiveTicketsSnapshot();
+    const auto tickets = app_.LuaGetActiveTicketsBind();
     std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
 
     // Issue #824: an empty selection must require explicit intent. Without process_all we refuse
@@ -602,15 +602,14 @@ void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppCo
         return;
     }
 
-    for (auto& ticket : *snap) {
+    for (const auto& ticket : tickets) {
         // processAll bypasses the selection filter and runs across every ticket in the snapshot.
         if (!job.processAll && selectedSet.find(ticket.id) == selectedSet.end()) {
             continue;
         }
 
-        // Copy ticket so we don't modify the snapshot elements in-place directly without protection
-        CachedTicket ticketCopy = ticket;
-        sol::protected_function_result pfr = process_func(&ticketCopy);
+        // Lua owns its copy, including the original target, if the script retains the ticket.
+        sol::protected_function_result pfr = process_func(sol::make_object(state, ticket));
         if (!pfr.valid()) {
             sol::error err = pfr;
             logErr("[LUA auto] ", err.what());

@@ -190,13 +190,13 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 4xx increments attempts,
 }
 
 // ---------------------------------------------------------------------------
-// Case 3 — Enqueue create-issue → 5xx (server error, transport-classified) → stays + attempts++.
+// Case 3 — Enqueue create-issue → 5xx may follow a committed create → archive for manual review.
 // ---------------------------------------------------------------------------
-TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx increments attempts, stays in queue") {
+TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx archives an ambiguous create") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
-    deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 503: service unavailable");
+    deps.BackendImpl->EnqueueCreateIssueFailure(TrackerErrorServer("HTTP 503: service unavailable", 503));
 
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
@@ -204,19 +204,21 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx increments attempts,
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();
 
-    REQUIRE(svc.GetPendingCreateCount() == 1u);
-    CHECK(svc.GetPendingCreates().front().Attempts == 1);
-    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    CHECK(svc.GetDeadPendingCreateCount() == 1u);
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+    CHECK(deps.BackendImpl->CreateIssueCallCount() == 1u);
 }
 
 // ---------------------------------------------------------------------------
-// Case 4 — Enqueue create-issue → timeout → stays + attempts++.
+// Case 4 — Enqueue create-issue → timeout may follow a committed create → archive without automatic resend.
 // ---------------------------------------------------------------------------
-TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout increments attempts, stays in queue") {
+TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout archives without resending") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
-    deps.BackendImpl->EnqueueCreateIssueFailure("Operation timed out after 30000 ms");
+    deps.BackendImpl->EnqueueCreateIssueFailure(TrackerErrorTransport("Operation timed out after 30000 ms"));
 
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
@@ -224,9 +226,11 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout increments attem
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();
 
-    REQUIRE(svc.GetPendingCreateCount() == 1u);
-    CHECK(svc.GetPendingCreates().front().Attempts == 1);
-    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    CHECK(svc.GetDeadPendingCreateCount() == 1u);
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+    CHECK(deps.BackendImpl->CreateIssueCallCount() == 1u);
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,4 +1057,20 @@ TEST_CASE("OfflineQueueServiceRuntime: resolving a sprint or estimate conflict k
 
     CHECK_FALSE(svc.ResolveFieldEditConflict(estimateId, "", std::string(), "scalar")); // clearing is unsupported
     CHECK_FALSE(svc.ResolveFieldEditConflict(999999, "x", std::string(), "scalar"));    // no such row
+}
+
+TEST_CASE("OfflineQueueServiceRuntime: confirmed pre-send create failure stays queued") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    TrackerError error = TrackerErrorTransport("Connection refused");
+    error.RequestNotSent = true;
+    deps.BackendImpl->EnqueueCreateIssueFailure(error);
+    OfflineQueueService svc(deps);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+    REQUIRE(svc.GetPendingCreateCount() == 1u);
+    CHECK(svc.GetPendingCreates().front().Attempts == 1);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
 }

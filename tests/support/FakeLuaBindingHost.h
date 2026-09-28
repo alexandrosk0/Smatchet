@@ -65,6 +65,7 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     /// tests can assert "Ticket:set_field forwarded `priority=High` exactly
     /// once".
     struct FieldEditCall {
+        PendingActionTarget Target;
         std::string IssueId;
         std::string FieldId;
         std::vector<std::string> Values;
@@ -84,7 +85,7 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     /// `LuaGetActiveTicketsBind` returns this verbatim.
     std::vector<CachedTicket> ActiveTickets;
 
-    /// `FindFieldById` resolves via this map. Missing -> nullptr.
+    /// `FindFieldById` resolves via this map. Missing -> false.
     std::unordered_map<std::string, TrackerField> FieldsById;
 
     /// What `SubmitFieldEditOrQueue` reports: sent (default), queued offline, or failed.
@@ -143,14 +144,21 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         return std::make_tuple(obj, std::string());
     }
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
-        auto it = FieldsById.find(fieldId);
-        return (it != FieldsById.end()) ? &it->second : nullptr;
+    bool FindFieldById(const PendingActionTarget& /*target*/, const std::string& fieldId,
+                       TrackerField& out) const override {
+        const auto it = FieldsById.find(fieldId);
+        if (it == FieldsById.end()) {
+            return false;
+        }
+        out = it->second;
+        return true;
     }
 
-    PendingActionSubmitResult SubmitFieldEditOrQueue(const std::string& issueId, const TrackerField& field,
+    PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target, const std::string& issueId,
+                                                     const TrackerField& field,
                                                      const std::vector<std::string>& values) override {
         FieldEditCall rec;
+        rec.Target = target;
         rec.IssueId = issueId;
         rec.FieldId = field.Id;
         rec.Values = values;

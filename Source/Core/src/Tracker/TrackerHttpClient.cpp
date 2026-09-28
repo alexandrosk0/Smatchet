@@ -51,7 +51,19 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
     }
 
     out.Error = TrackerErrorFromHttpStatus(status, std::move(detail));
+    out.Error.RequestNotSent = ClassifyRejectedTrackerResponse(response, std::string()).RequestNotSent;
     return out;
+}
+
+TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail) {
+    TrackerError error = ClassifyRejectedHttpStatus(response.status_code, detail);
+    // A timeout, send/receive error, or empty response can follow a committed POST.
+    // Only DNS and connection establishment failures prove that no request was sent.
+    error.RequestNotSent =
+        response.status_code <= 0 && (response.error.code == cpr::ErrorCode::HOST_RESOLUTION_FAILURE ||
+                                      response.error.code == cpr::ErrorCode::PROXY_RESOLUTION_FAILURE ||
+                                      response.error.code == cpr::ErrorCode::CONNECTION_FAILURE);
+    return error;
 }
 
 TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response) {

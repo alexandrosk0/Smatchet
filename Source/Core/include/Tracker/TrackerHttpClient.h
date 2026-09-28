@@ -48,6 +48,9 @@ struct TrackerHttpResult {
 /// body if non-empty, otherwise the cpr error message, otherwise a generic "HTTP <code>" string.
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 
+/// Preserve transmission certainty while retaining a backend-specific rejection message.
+TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail);
+
 /// Classify a reachability-probe response into a TrackerReachabilityProbeResult, shared by every
 /// backend's `ProbeReachability` so the HTTP-status → probe-kind matrix lives in one place:
 /// 2xx → AuthenticatedReachable, 401/403 → ReachableAuthOrConfigError, 404/429/other-4xx →

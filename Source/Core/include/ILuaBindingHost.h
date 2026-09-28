@@ -89,9 +89,11 @@ class ILuaBindingHost {
     virtual std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) = 0;
 
     // --- Field edits (Ticket:set_field / Ticket:transition) ---
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
-    /// Set a field on the focused pane's tracker: saved now, or queued offline and replayed on reconnect.
-    virtual PendingActionSubmitResult SubmitFieldEditOrQueue(const std::string& issueId, const TrackerField& field,
+    virtual bool FindFieldById(const PendingActionTarget& target, const std::string& fieldId,
+                               TrackerField& out) const = 0;
+    /// Set a field on the retained ticket's tracker: saved now, or queued offline and replayed on reconnect.
+    virtual PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target,
+                                                             const std::string& issueId, const TrackerField& field,
                                                              const std::vector<std::string>& values) = 0;
 
     // --- Issue create ---

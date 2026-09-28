@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "TrackerError.h"
 #include "TrackerFieldSchema.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>
@@ -48,7 +49,7 @@ const char* const kApiKeyMissingError = "Linear API key not configured (set Pref
 // Pillar-2: only reachable from the create/update/offline-replay worker paths.
 bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, const std::string& document,
                        const nlohmann::json& variables, const char* mutationName, nlohmann::json& outIssue,
-                       std::string& outError, long* outStatus = nullptr) {
+                       std::string& outError, long* outStatus = nullptr, TrackerError* outClassified = nullptr) {
     const std::string body = smatchet::linear::BuildGraphQLBody(document, variables);
     /* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
@@ -64,10 +65,17 @@ bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, con
         outError = !errorMessage.empty()
                        ? errorMessage
                        : smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        if (outClassified) {
+            *outClassified = resp.status_code == 200 ? TrackerErrorInvalidRequest(outError)
+                                                     : ClassifyRejectedTrackerResponse(resp, outError);
+        }
         return false;
     }
     if (!smatchet::linear::ParseMutationSucceeded(parsed, mutationName, outIssue)) {
         outError = std::string("Linear ") + mutationName + " returned success=false";
+        if (outClassified) {
+            *outClassified = TrackerErrorInvalidRequest(outError);
+        }
         return false;
     }
     return true;
@@ -206,11 +214,12 @@ Result<std::string, TrackerError> LinearClient::CreateIssue(const nlohmann::json
     variables["input"] = fields;
     nlohmann::json createdIssue;
     std::string outError;
+    TrackerError classified;
     if (!RunLinearMutation(auth.ApiUrl, auth.ApiKey, smatchet::linear::IssueCreateMutationDocument(), variables,
-                           "issueCreate", createdIssue, outError)) {
+                           "issueCreate", createdIssue, outError, nullptr, &classified)) {
         LOG_ERROR("LinearClient::CreateIssue: issueCreate failed — %s", outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "linear_client", std::string(), auditOp, false, outError);
-        return CreateResult::Err(TrackerErrorInvalidRequest(outError));
+        return CreateResult::Err(std::move(classified));
     }
 
     // issueCreate{ issue{ identifier } } — the identifier ("ENG-123") is the

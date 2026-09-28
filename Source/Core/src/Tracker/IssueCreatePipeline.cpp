@@ -281,6 +281,7 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, ISyncCache* 
         if (!updateErr.IsOk()) {
             result.Error = updateErr.Detail.empty() ? "Update failed." : updateErr.Detail;
             result.ErrorTransient = updateErr.IsRetryable(); // N12 item 13b — kind, not text
+            result.ErrorMayHaveReachedServer = false;        // Replaying a set-replace update is safe.
             LOG_ERROR("IssueCreatePipeline: UpdateIssue failed: %s", result.Error.c_str());
             return result;
         }
@@ -359,6 +360,7 @@ IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const s
         // "Created, key unknown" (Ok(empty)) stays non-transient: the issue exists server-side,
         // so an offline-queue retry would duplicate it (N12 item 13b).
         result.ErrorTransient = createResult ? false : createResult.error().IsRetryable();
+        result.ErrorMayHaveReachedServer = createResult || !createResult.error().RequestNotSent;
         LOG_ERROR("IssueCreatePipeline: CreateIssue failed: %s", result.Error.c_str());
         return result;
     }

@@ -44,6 +44,9 @@ struct TrackerError {
     /// HTTP status if applicable (0 for non-HTTP errors like Parse / Cancelled). Useful for
     /// logging and for the connectivity classifier.
     int HttpStatus = 0;
+    /// True only when the failed operation is known to precede request transmission.
+    /// Unknown transport failures and operation timeouts must retain the conservative default.
+    bool RequestNotSent = false;
 
     bool IsOk() const noexcept { return Kind == TrackerErrorKind::None; }
     bool IsTransport() const noexcept { return Kind == TrackerErrorKind::Transport; }
@@ -132,17 +135,10 @@ inline TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::strin
     return TrackerErrorFromHttpStatus(status, detail);
 }
 
-/// Retry decision for a non-idempotent POST (finding DR16 — the hole left by BACKLOG B2).
-/// A POST may only be re-sent when the request provably never reached the server: a pre-send
-/// transport failure such as a DNS-resolution error or a refused connection. A post-send
-/// operation timeout is different — the server may already have committed the create/comment and
-/// only the response was lost, so re-sending would double-create / double-comment. cpr reports
-/// both a connect-phase and a read-phase timeout as OPERATION_TIMEDOUT with status 0, and both
-/// land in TrackerErrorKind::Transport; the two cannot be told apart after the fact, so any
-/// operation timeout is treated as potentially post-send and left single-attempt. Genuine
-/// pre-send transport failures (not an operation timeout) still retry as before.
-inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool operationTimeout) noexcept {
-    return kind == TrackerErrorKind::Transport && !operationTimeout;
+/// Retry a non-idempotent POST only with positive evidence that no request was sent.
+/// A transport kind alone cannot distinguish DNS failure from a lost response.
+inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool requestNotSent) noexcept {
+    return kind == TrackerErrorKind::Transport && requestNotSent;
 }
 
 /// Convert a kind to a stable short string for logging. Not user-facing.

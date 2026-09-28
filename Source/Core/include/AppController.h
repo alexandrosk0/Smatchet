@@ -1360,6 +1360,10 @@ class AppController : public IAppThreading,
     void RecordPaneSyncKick(const std::string& paneId, const std::string& jql);
     /// Any pane's live published snapshot (null when the pane has no live context yet).
     std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
+    /// Snapshot only when the pane still has the target's captured backend generation.
+    std::shared_ptr<const std::vector<CachedTicket>> TicketsSnapshotForTarget(const PendingActionTarget& target) const {
+        return TicketsSnapshotForTarget_(target);
+    }
     /// Per-pane ActiveTickets revision (0 when the pane has no live context).
     std::uint64_t GetPaneTicketsRevision(const std::string& paneId) const;
     /// The pane context's OWN resolved ViewDefinition (from its backend bucket), published

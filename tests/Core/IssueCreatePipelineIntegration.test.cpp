@@ -611,3 +611,53 @@ TEST_CASE("ITrackerCollaboration migrated shapes: Result reads, bare-TrackerErro
         CHECK(e.Kind == TrackerErrorKind::InvalidRequest);
     }
 }
+
+namespace {
+class FailedCreateClient : public FakeTrackerClient {
+  public:
+    TrackerError Failure;
+    Result<std::string, TrackerError> CreateIssue(const nlohmann::json&) override {
+        return Result<std::string, TrackerError>::Err(Failure);
+    }
+    TrackerError UpdateIssueFields(const std::string&, const nlohmann::json&) override { return Failure; }
+};
+} // namespace
+
+TEST_CASE("IssueCreatePipeline: only confirmed pre-transmission create failures can queue") {
+    FailedCreateClient client;
+    client.Failure = TrackerErrorTransport("network failure");
+    bool queueable = false;
+    SUBCASE("unknown transport failure") {}
+    SUBCASE("operation timeout after server commit") { client.Failure = TrackerErrorTransport("Operation timed out"); }
+    SUBCASE("confirmed connection failure") {
+        client.Failure.RequestNotSent = true;
+        queueable = true;
+    }
+    SUBCASE("server error after possible commit") { client.Failure = TrackerErrorServer("HTTP 503", 503); }
+    SUBCASE("rate limited response") { client.Failure = TrackerErrorRateLimited("HTTP 429"); }
+    const auto result =
+        IssueCreatePipeline::Run(client, nullptr, "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    CHECK_FALSE(result.Ok);
+    CHECK(result.ErrorTransient);
+    CHECK(result.ErrorMayHaveReachedServer == !queueable);
+    CHECK(IsOfflineQueueableFailure(result) == queueable);
+}
+
+TEST_CASE("IssueCreatePipeline: a transient set-replace update can still queue") {
+    FailedCreateClient client;
+    client.Failure = TrackerErrorTransport("Operation timed out");
+    client.SetBuildUpdatePayloadResult(true, nlohmann::json{{"summary", "new"}});
+    IssueDraft draft = MakeBasicCreateDraft();
+    draft.ExistingIssueKey = "PROJ-1";
+    const auto result = IssueCreatePipeline::Run(client, nullptr, "Jira", draft, EmptyRequired(), BasicCatalog());
+    CHECK(IsOfflineQueueableFailure(result));
+}
+
+TEST_CASE("IssueCreatePipeline: created without a key must never queue") {
+    FakeTrackerClient client;
+    client.EnqueueCreateIssueSuccess("");
+    const auto result =
+        IssueCreatePipeline::Run(client, nullptr, "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    CHECK_FALSE(IsOfflineQueueableFailure(result));
+    CHECK(result.ErrorMayHaveReachedServer);
+}

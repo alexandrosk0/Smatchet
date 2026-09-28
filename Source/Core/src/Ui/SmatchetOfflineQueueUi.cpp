@@ -1159,18 +1159,28 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
     return out;
 }
 
-// Clears modal state + closes the popup after a resolution / discard action.
-// Panel status when a conflict resolution did not re-queue the edit (it stays in the queue, suspended).
+// A failed re-queue leaves the edit suspended and keeps the resolution available for retry.
 static const char* const kConflictNotRequeued =
-    "The edit could not be re-queued and is still waiting for you. Open it again to retry.";
+    "The edit could not be re-queued. Your resolution is still here; retry when ready.";
 
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
+    d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
     d.conflictResolveDbId = 0;
     ImGui::CloseCurrentPopup();
     if (statusMsg) {
         ArmOfflineQueuePanelStatus(d, statusMsg);
+    }
+}
+
+// Keep both the popup and its editor buffer intact until the queue accepts the resolution.
+static void HandleConflictRequeueResult(UiDrawSession& d, bool requeued, const char* successMsg,
+                                        const char* failureMsg) {
+    if (requeued) {
+        FinishConflictModal(d, successMsg);
+    } else {
+        d.conflictResolveError = failureMsg;
     }
 }
 
@@ -1218,7 +1228,8 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
 
     auto doResolve = [&](const std::string& resolvedMd) {
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
-        FinishConflictModal(d, requeued ? "Conflict resolved — edit re-queued for replay." : kConflictNotRequeued);
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
+                                    kConflictNotRequeued);
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1278,9 +1289,9 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
 
     auto doResolve = [&](const std::string& chosen) {
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
-        FinishConflictModal(d, requeued ? "Conflict resolved — edit re-queued for replay."
-                                        : "That value could not be used, so the edit is still waiting for you. For a "
-                                          "sprint, enter its name or id; for an estimate, a value such as 3d.");
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
+                                    "That value could not be re-queued. Your resolution is still here. For a "
+                                    "sprint, enter its name or id; for an estimate, a value such as 3d.");
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1317,7 +1328,7 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
     if (ImGui::Button("Force Mine", ImVec2(130, 0))) {
         // Replay the queued payload verbatim (no value change) and clear the conflict.
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
-        FinishConflictModal(d, requeued ? "Forcing your edit — re-queued for replay." : kConflictNotRequeued);
+        HandleConflictRequeueResult(d, requeued, "Forcing your edit — re-queued for replay.", kConflictNotRequeued);
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
@@ -1371,6 +1382,7 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         // Open + size the popup once per trigger.
         ImGui::OpenPopup("ResolveMergeConflict");
         d.showConflictResolveModal = false;
+        d.conflictResolveError.clear();
 
         // Seed the resolved buffer from the conflict context on open. Rich `text` seeds the
         // conflict-marker template; scalar seeds the editable value with "mine".
@@ -1404,6 +1416,9 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
             DrawConflictPaneUnverified(octx, cc);
         } else {
             DrawConflictPaneText(octx, cc);
+        }
+        if (!d.conflictResolveError.empty()) {
+            ImGui::TextWrapped("%s", d.conflictResolveError.c_str());
         }
         ImGui::EndPopup();
     } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {

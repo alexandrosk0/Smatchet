@@ -279,6 +279,47 @@ TEST_CASE("Lua bindings · smatchet.create_issue marshals its result on the call
 // Ticket:set_field + Ticket:transition
 // =============================================================================
 
+TEST_CASE("Lua bindings · retained Ticket edits keep their original tracker target" *
+          doctest::test_suite("[high-risk]")) {
+    CoreFixture fx;
+    CachedTicket ticket;
+    ticket.id = "ABC-5";
+    ticket.EditTarget.PaneId = "pane-a";
+    ticket.EditTarget.BackendKey = "tracker-a";
+    ticket.EditTarget.BackendGeneration = 7;
+    fx.host.TicketsById[ticket.id] = ticket;
+    fx.host.ActiveTickets = {ticket};
+    TrackerField field;
+    field.Id = "priority";
+    fx.host.FieldsById[field.Id] = field;
+    field.Id = "status";
+    fx.host.FieldsById[field.Id] = field;
+
+    Run(fx.state(), R"(
+        retained = smatchet.get_ticket("ABC-5")
+        retained_active = smatchet.get_active_tickets()[1]
+    )");
+    // Later reads reflect a different focused tracker, even with the same issue id.
+    ticket.EditTarget.PaneId = "pane-b";
+    ticket.EditTarget.BackendKey = "tracker-b";
+    ticket.EditTarget.BackendGeneration = 9;
+    fx.host.TicketsById[ticket.id] = ticket;
+    fx.host.ActiveTickets = {ticket};
+    auto result = Run(fx.state(), R"(
+        local edited = retained:set_field("priority", "High")
+        local transitioned = retained_active:transition("Done")
+        return edited and transitioned
+    )");
+    CHECK(result.get<bool>());
+    REQUIRE_EQ(fx.host.SubmitFieldEditCalls.size(), 2u);
+    for (const auto& call : fx.host.SubmitFieldEditCalls) {
+        CHECK_EQ(call.Target.PaneId, "pane-a");
+        CHECK_EQ(call.Target.BackendKey, "tracker-a");
+        CHECK_EQ(call.Target.BackendGeneration, 7u);
+        CHECK_EQ(call.IssueId, "ABC-5");
+    }
+}
+
 // * doctest::test_suite("[high-risk]") -- forces
 // `AppController_LuaBindingsCore.cpp::TicketSetFieldGlue` (~line 145) ->
 // `host->FindFieldById` + `host->SubmitFieldEditOrQueue`. If the glue stopped pushing

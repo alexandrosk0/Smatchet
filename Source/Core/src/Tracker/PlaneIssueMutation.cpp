@@ -386,8 +386,11 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
         }
         if (planeProjectId_.empty()) {
             // Classified at the resolve failure site (N12 slice 3) so a transport failure stays retryable.
-            return Result<std::string, TrackerError>::Err(resolveClassified.IsOk() ? TrackerErrorUnknown(outError)
-                                                                                   : resolveClassified);
+            if (resolveClassified.IsOk()) {
+                resolveClassified = TrackerErrorInvalidRequest(outError);
+            }
+            resolveClassified.RequestNotSent = true; // Project lookup failed before the create POST.
+            return Result<std::string, TrackerError>::Err(resolveClassified);
         }
         resolvedProjectId = planeProjectId_;
         projectIdentifier = planeProjectIdentifier_;
@@ -425,11 +428,7 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
             detail = response.text;
         }
         outError = "Plane API error: " + std::to_string(response.status_code) + " " + RedactHttpBodyForLog(detail);
-        // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
-        if (response.status_code >= 200 && response.status_code < 300) {
-            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
-        }
-        return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+        return Result<std::string, TrackerError>::Err(ClassifyRejectedTrackerResponse(response, outError));
     }
 
     try {

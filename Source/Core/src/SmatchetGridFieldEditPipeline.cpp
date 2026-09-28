@@ -265,8 +265,7 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode)
         req.OriginalValue = edit.OriginalValue;
         req.HasOriginalValue = edit.HasOriginalValue;
         req.Target = edit.Target;
-        const std::shared_ptr<const std::vector<CachedTicket>> paneTickets =
-            app.GetPaneTicketsSnapshot(edit.Target.PaneId);
+        const std::shared_ptr<const std::vector<CachedTicket>> paneTickets = app.TicketsSnapshotForTarget(edit.Target);
         if (paneTickets) {
             const auto snapshotIt =
                 std::find_if(paneTickets->begin(), paneTickets->end(),

@@ -1,4 +1,5 @@
 #pragma once
+#include "PendingActionTypes.h"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -24,6 +25,9 @@ struct CachedTicket {
     /// fidelity and avoid silent format loss when an unedited field is later re-saved. See
     /// docs/plans/rich-text-editing-v2-remaining.md.
     std::unordered_map<std::string, std::string> fieldRichValues;
+
+    /// Runtime-only origin for retained Lua Ticket objects; never persisted in the cache.
+    PendingActionTarget EditTarget;
 
     std::string GetFieldValue(const std::string& key) const {
         const auto it = fieldValues.find(key);

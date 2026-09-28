@@ -123,15 +123,29 @@ static bool BulkImportRowIsNoopUpdate(const IssueTableSerializer::ImportRow& row
  */
 void BulkImportAbandonFutures(UiDrawSession& d) { smatchet::ui::BulkImportAbandonFutures(d); }
 
-/** Parse the source text into preview rows + reset per-row status/future tracking. */
+/** Parse the source text, preserving completed handoffs for unchanged drafts. */
 void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {
+    // A create may already have reached the tracker or offline queue. Keep its future until reaped.
+    if (d.bulkImportRunning) {
+        return;
+    }
+    std::vector<std::string> previousDrafts;
+    for (const auto& row : d.bulkImportPreview.Rows) {
+        previousDrafts.push_back(IssueDraftHelpers::ToJson(row.Draft));
+    }
     const std::string text(d.bulkImportTextBuf.data());
     const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
     d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
                                                             d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
-    d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
+    std::vector<std::string> drafts;
+    for (const auto& row : d.bulkImportPreview.Rows) {
+        drafts.push_back(IssueDraftHelpers::ToJson(row.Draft));
+    }
+    d.bulkImportStatus =
+        smatchet::ui::bulkimport::PreserveHandedOffStatuses(previousDrafts, d.bulkImportStatus, drafts);
     d.bulkImportError = d.bulkImportPreview.Error;
-    d.bulkImportCompleted = 0;
+    d.bulkImportCompleted = static_cast<size_t>(std::count_if(d.bulkImportStatus.begin(), d.bulkImportStatus.end(),
+                                                              smatchet::ui::bulkimport::IsStatusHandedOff));
     d.bulkImportRunning = false;
     BulkImportAbandonFutures(d);
     d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
@@ -331,6 +345,7 @@ void DrawBulkImportSourceToolbar(AppController& app, UiDrawSession& d) {
 
 /** Parse-preview button + the target-project modal it opens when the view has no project scope. */
 void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
+    ImGui::BeginDisabled(d.bulkImportRunning);
     if (ImGui::Button("Parse preview")) {
         // If the active view has no project scope, ask the user before parsing — the parser
         // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
@@ -344,6 +359,7 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
             BulkImportRunParse(app, d, scopeProj);
         }
     }
+    ImGui::EndDisabled();
 
     // Target-project modal. Opened above when the active view has no project clause; the
     // user must pick a project before parse can run.

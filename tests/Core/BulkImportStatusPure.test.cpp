@@ -33,3 +33,25 @@ TEST_CASE("BulkImportStatusPure: a re-run resends only failed, stopped and never
     CHECK_FALSE(IsStatusHandedOff("Network/unreachable: timed out — retry when Jira is reachable."));
     CHECK_FALSE(IsStatusHandedOff(""));
 }
+
+TEST_CASE("BulkImportStatusPure: reparse preserves offline handoffs and retries changed drafts") {
+    const std::vector<std::string> previousDrafts = {"draft A", "draft B", "draft C"};
+    const std::vector<std::string> previousStatuses = {QueuedOfflineStatus(12), "ok PROJ-1", "network failure"};
+    const auto statuses = PreserveHandedOffStatuses(previousDrafts, previousStatuses,
+                                                    {"draft C", "draft B", "draft A", "changed draft A"});
+    REQUIRE(statuses.size() == 4);
+    CHECK(statuses[0].empty());
+    CHECK(statuses[1] == "ok PROJ-1");
+    CHECK(statuses[2] == QueuedOfflineStatus(12));
+    CHECK(IsStatusHandedOff(statuses[2])); // the next Run must skip this create
+    CHECK(statuses[3].empty());
+}
+
+TEST_CASE("BulkImportStatusPure: reparse consumes each completed identical draft only once") {
+    const auto statuses =
+        PreserveHandedOffStatuses({"same", "same"}, {QueuedOfflineStatus(12), "failed"}, {"same", "same", "same"});
+    REQUIRE(statuses.size() == 3);
+    CHECK(statuses[0] == QueuedOfflineStatus(12));
+    CHECK(statuses[1].empty());
+    CHECK(statuses[2].empty());
+}

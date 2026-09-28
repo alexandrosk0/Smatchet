@@ -374,7 +374,8 @@ class FakeTrackerClient : public ITrackerBackend,
         createIssueCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(createIssueQueue_, defaultCreateIssue_);
         if (!reply.Ok) {
-            return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(reply.Error));
+            return Result<std::string, TrackerError>::Err(
+                reply.StructuredError.IsOk() ? TrackerErrorInvalidRequest(reply.Error) : reply.StructuredError);
         }
         return Result<std::string, TrackerError>::Ok(reply.IssueKey);
     }
@@ -551,9 +552,13 @@ class FakeTrackerClient : public ITrackerBackend,
         createIssueQueue_.push_back(std::move(r));
     }
     void EnqueueCreateIssueFailure(const std::string& error) {
+        EnqueueCreateIssueFailure(TrackerErrorInvalidRequest(error));
+    }
+    void EnqueueCreateIssueFailure(const TrackerError& error) {
         ScriptedReply r;
         r.Ok = false;
-        r.Error = error;
+        r.Error = error.Detail;
+        r.StructuredError = error;
         createIssueQueue_.push_back(std::move(r));
     }
     void SetDefaultCreateIssueResult(bool ok, const std::string& issueKeyOrError) {

@@ -86,15 +86,15 @@ std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket
     }
     LOG_TRACE("Lua Ticket:set_field audit_source=%s issue=%s field=%s val_len=%zu", FieldEditAuditSource::Current(),
               t.id.c_str(), fieldId.c_str(), val.size());
-    const TrackerField* fieldMeta = host->FindFieldById(fieldId);
-    if (!fieldMeta) {
+    TrackerField fieldMeta;
+    if (!host->FindFieldById(t.EditTarget, fieldId, fieldMeta)) {
         return {false, "Field not found in tracker catalog: " + fieldId};
     }
     std::vector<std::string> vals;
     if (!val.empty()) {
         vals.push_back(val);
     }
-    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.id, *fieldMeta, vals));
+    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.EditTarget, t.id, fieldMeta, vals));
 }
 
 std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t, const std::string& statusName) {
@@ -104,11 +104,11 @@ std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTick
     }
     LOG_TRACE("Lua Ticket:transition audit_source=%s issue=%s status=%s", FieldEditAuditSource::Current(), t.id.c_str(),
               statusName.c_str());
-    const TrackerField* statusField = host->FindFieldById("status");
-    if (!statusField) {
+    TrackerField statusField;
+    if (!host->FindFieldById(t.EditTarget, "status", statusField)) {
         return {false, "Tracker 'status' field meta not found"};
     }
-    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.id, *statusField, {statusName}));
+    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.EditTarget, t.id, statusField, {statusName}));
 }
 
 void LuaLogInfoGlue(sol::this_state L, std::string msg) {

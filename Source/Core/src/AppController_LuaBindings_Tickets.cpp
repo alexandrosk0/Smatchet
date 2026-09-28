@@ -1,5 +1,6 @@
 #include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
+#include "GridLiveContext.h"
 #include "LuaAutomationHost.h"
 #include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls app_.Cache-> methods.
 
@@ -193,20 +194,47 @@ static void LuaMergeIssueCreateSpec(IssueDraft& draft, sol::table spec, const st
 
 // Sol-free interface methods kept on AppController (see AppController.h); Impl forwards to app_.
 std::vector<CachedTicket> AppController::LuaGetActiveTicketsBind() {
-    const auto snap = GetActiveTicketsSnapshot();
-    return std::vector<CachedTicket>(snap->begin(), snap->end());
+    const PendingActionTarget target = LatchPendingActionTarget();
+    const auto snap = TicketsSnapshotForTarget_(target);
+    if (!snap) {
+        return {};
+    }
+    std::vector<CachedTicket> tickets(snap->begin(), snap->end());
+    for (auto& ticket : tickets) {
+        ticket.EditTarget = target;
+    }
+    return tickets;
 }
 
 std::vector<CachedTicket> AppController::Impl::LuaGetActiveTicketsBind() { return app_.LuaGetActiveTicketsBind(); }
 
-const TrackerField* AppController::Impl::FindFieldById(const std::string& fieldId) const {
-    return app_.FindFieldById(fieldId);
+bool AppController::Impl::FindFieldById(const PendingActionTarget& target, const std::string& fieldId,
+                                        TrackerField& out) const {
+    const GridLiveContext* ctx = app_.liveContextForTarget_(target);
+    if (!ctx) {
+        return false;
+    }
+    const GridContextFieldCatalog& catalog = ctx->fieldCatalog;
+    std::lock_guard<std::mutex> lock(catalog.availableFieldsMutex_);
+    const auto it = std::find_if(catalog.AvailableFields.begin(), catalog.AvailableFields.end(),
+                                 [&fieldId](const TrackerField& field) { return field.Id == fieldId; });
+    if (it == catalog.AvailableFields.end()) {
+        return false;
+    }
+    out = *it;
+    return true;
 }
 
-PendingActionSubmitResult AppController::Impl::SubmitFieldEditOrQueue(const std::string& issueId,
+PendingActionSubmitResult AppController::Impl::SubmitFieldEditOrQueue(const PendingActionTarget& target,
+                                                                      const std::string& issueId,
                                                                       const TrackerField& field,
                                                                       const std::vector<std::string>& values) {
-    return app_.SubmitFieldEditOrQueue(app_.LatchPendingActionTarget(), issueId, field, values);
+    if (target.PaneId.empty()) {
+        PendingActionSubmitResult result;
+        result.Error = "Ticket has no retained tracker target";
+        return result;
+    }
+    return app_.SubmitFieldEditOrQueue(target, issueId, field, values);
 }
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::state_view sv,
@@ -215,6 +243,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
     // cross-thread lua_State access + a cross-state sol::object return. See
     // docs/plans/shipped/mcp-lua-fresh-state-race.md.
+    const PendingActionTarget target = app_.LatchPendingActionTarget();
     CachedTicket ticket;
     // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
     // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
@@ -223,7 +252,8 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // snapshot degrades to a nil return (missing ticket) rather than a crash (Pillar 3). Mirrors
     // the ADR-0012 Backend atomic_load reader pattern.
     auto cacheSnap = std::atomic_load(&app_.Cache);
-    if (cacheSnap && cacheSnap->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
+    if (cacheSnap && cacheSnap->TryGetTicket(target.BackendKey, issueId, ticket)) {
+        ticket.EditTarget = target;
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};

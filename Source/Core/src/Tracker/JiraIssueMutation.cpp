@@ -4,6 +4,7 @@
 #include "BackendAuditTrail.h"
 #include "JiraIssueMappingPure.h"
 #include "TrackerFieldValueParser.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 #include "Tracker/JiraErrorMessagePure.h"
 #include "Tracker/TrackerFieldPayloadPure.h"
@@ -468,12 +469,7 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
             "issue_create", "jira_client", std::string(), auditOp, false, detail,
             // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
-        // 2xx-but-not-200/201 (e.g. 202/204) reaches this failure branch; guard before FromHttpStatus
-        // (which maps 2xx → Ok() and drops the detail — plan FIX-1 / Slice-2 precedent).
-        if (response.status_code >= 200 && response.status_code < 300) {
-            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
-        }
-        return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+        return Result<std::string, TrackerError>::Err(ClassifyRejectedTrackerResponse(response, outError));
     }
 
     try {

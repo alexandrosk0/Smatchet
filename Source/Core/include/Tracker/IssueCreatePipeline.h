@@ -24,11 +24,11 @@ struct IssueCreateResult {
     bool Ok = false;
     std::string IssueKey; // populated on success
     std::string Error;    // single-line summary
-    /// Transport-shaped Error (retryable per TrackerError::IsRetryable), classified where the
-    /// pipeline flattens the backend's TrackerError (N12 item 13b). Validation/payload-build
-    /// failures keep the default false — never offline-queueable. Deliberately NOT set for the
-    /// "created, key unknown" shape (the create succeeded server-side; queueing would duplicate).
+    /// Retryable kind retained for diagnostics and idempotent updates.
     bool ErrorTransient = false;
+    /// A create may have committed even when its response was lost. Defaults to ambiguous;
+    /// only a confirmed pre-transmission failure or a set-replace update clears this flag.
+    bool ErrorMayHaveReachedServer = true;
     std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
@@ -38,10 +38,10 @@ struct IssueCreateResult {
     std::int64_t QueuedOfflineId = 0;
 };
 
-/// True when a failed create / update may go to the offline queue: only when the tracker could not be
-/// reached (a retryable failure). A rejection the user must fix is reported instead, and the "created, key
-/// unknown" shape is never transient, so a create that reached the tracker is never queued a second time.
-inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) { return !result.Ok && result.ErrorTransient; }
+/// Replay requires both a retryable failure and certainty that it cannot duplicate a create.
+inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) {
+    return !result.Ok && result.ErrorTransient && !result.ErrorMayHaveReachedServer;
+}
 
 /**
  * Reusable create/update flow: validate draft -> build Jira payload -> POST (create) or PUT

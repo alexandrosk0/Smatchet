@@ -325,6 +325,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     Both are real ThreadSanitizer surfaces. All TUs cpr/ImGui/GL-free; the only new
         #     ThirdParty link is md4c (pure stateless C Markdown parser — no threads).
         Core/OfflineQueueServiceRuntime.test.cpp
+        Core/IssueCreatePipelineIntegration.test.cpp
+        Core/TrackerPostTimeoutClassify.test.cpp
         Core/PendingActionQueueService.test.cpp
         Core/PendingActionPolicyPure.test.cpp
         Core/PendingActionSubmitAsync.test.cpp

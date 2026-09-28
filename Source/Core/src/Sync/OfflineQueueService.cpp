@@ -1343,7 +1343,9 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
         return;
     }
     const int nextAttempts = pc.Attempts + 1;
-    if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+    const bool ambiguousCreate = result.ErrorTransient && result.ErrorMayHaveReachedServer;
+    if (ambiguousCreate || OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+        const char* reason = ambiguousCreate ? "ambiguous_create" : "max_attempts";
         std::string trackerPart =
             result.Error.empty() ? std::string("Create pipeline returned failure with empty error on final attempt.")
                                  : std::string("Create pipeline error: ") + result.Error;
@@ -1351,19 +1353,22 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
         std::snprintf(headBuf, sizeof(headBuf), "Offline replay attempts went from %d to %d (cap=%d). ", pc.Attempts,
                       nextAttempts, kMaxReplayAttempts);
         const std::string terminalError = FormatOfflineQueueTerminalLine(
-            "offline_replay", "issue_create", "max_attempts", std::string(headBuf) + trackerPart);
+            "offline_replay", "issue_create", reason,
+            (ambiguousCreate ? std::string("Create outcome unknown; check the tracker before retrying. ")
+                             : std::string(headBuf)) +
+                trackerPart);
         const bool archivedOk = RunCreateCacheMutation(
             "archive_pending_create", pc.Id,
             [&]() {
                 cache->UpdatePendingCreate(pc.Id, nextAttempts, terminalError);
-                cache->ArchivePendingCreate(pc.Id, "max_attempts", terminalError);
+                cache->ArchivePendingCreate(pc.Id, reason, terminalError);
             },
             tally);
         if (archivedOk) {
             ++tally.Archived;
             BackendAuditTrail::AppendResult(
                 "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true, std::string(),
-                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}, {"error", result.Error}});
+                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", reason}, {"error", result.Error}});
         } else {
             ++tally.Failures;
         }
