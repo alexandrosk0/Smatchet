@@ -40,7 +40,7 @@
 #   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
 #                          nlohmann::json/sol::object param with no depth/budget token (WARN)
 #   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
-#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking, delta per file)
+#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking; absolute-0 / delta per file)
 #   (advisory)             offline-* heuristics (Pillar 6, WARN-first; 74-offline-heuristic.sh)
 #
 # Modes:
@@ -927,12 +927,16 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
     fi
 
-    # --- Quality Pillar 6 offline-first EXACT rules (changed files; BLOCKING, delta per file) ---
-    # offline-write-bypasses-queue + tracker-error-kind-collapsed (72-offline-exact.sh; ADR-0026). A
-    # changed file fails only when it has MORE hits than its merge-base copy (existing hits are
-    # grandfathered). A SMATCHET_DEVIATION(rule=<id>; ...) on the line above escapes.
+    # --- Quality Pillar 6 offline-first EXACT rules (BLOCKING; 72-offline-exact.sh; ADR-0026) ---
+    # offline-write-bypasses-queue is ABSOLUTE-0 over the whole tree: every tracker write goes through a
+    # queue, so any hit is a regression. tracker-error-kind-collapsed stays delta-gated: a changed file
+    # fails only when it has MORE hits than its merge-base copy (existing hits are grandfathered). A
+    # SMATCHET_DEVIATION(rule=<id>; ...) on the line above escapes either.
     ofx_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
-    ofx_out="$(offline_delta_hits scan_offline_exact_file "$ofx_mb" "${OFFLINE_EXACT_RULES[@]}" | grep -E . || true)"
+    ofx_out="$({
+        compute_offline_write_violations
+        offline_delta_hits scan_offline_exact_file "$ofx_mb" tracker-error-kind-collapsed
+    } | grep -E . || true)"
     if [ -n "$ofx_out" ]; then
         rc=1
         echo

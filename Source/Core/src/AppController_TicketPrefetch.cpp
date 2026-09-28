@@ -23,96 +23,103 @@
 #include <utility>
 #include <vector>
 
-void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
+namespace {
 
-    if (!Cache) {
+// In-flight prefetches are tracked per (cache backend key, issue key): the same issue key on two
+// trackers names two different tickets, and each must be re-read.
+std::string PrefetchInFlightKey(const std::string& cacheBackendKey, const std::string& issueKey) {
+    return cacheBackendKey + '\x1f' + issueKey;
+}
 
-        return;
+// Erases keys built when they were inserted, so this allocates nothing: it also runs in an exit guard's destructor.
+void ErasePrefetchInFlight(std::mutex& mutex, std::unordered_set<std::string>& inFlight,
+                           const std::vector<std::string>& inFlightKeys) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (const auto& k : inFlightKeys) {
+        inFlight.erase(k);
     }
+}
 
-    std::vector<std::string> toFetch;
+} // namespace
 
-    {
-
+void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
+    // Latch the focused pane once, here: the worker fetches from this pane's backend and saves into its
+    // cache namespace even if focus moves before it runs, so one tracker's tickets never land under
+    // another's key. Nothing is held across the fetch; the old pane may be retired meanwhile (ADR-0012).
+    const GridLiveContext& pane = focusedContext();
+    std::vector<std::string> keys;
+    if (includeAlreadyActive) {
+        keys = issueKeys;
+    } else {
         const auto snap = GetActiveTicketsSnapshot();
-
         std::unordered_set<std::string> have;
-
         if (snap) {
-
             for (const auto& t : *snap) {
-
                 have.insert(t.id);
             }
         }
-
-        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
-
         for (const auto& k : issueKeys) {
-
-            if (k.empty() || (!includeAlreadyActive && have.count(k) > 0)) {
-
-                continue;
+            if (have.count(k) == 0) {
+                keys.push_back(k);
             }
-
-            if (bulkImportPrefetchKeysInFlight_.count(k) > 0) {
-
-                continue;
-            }
-
-            bulkImportPrefetchKeysInFlight_.insert(k);
-
-            toFetch.push_back(k);
         }
     }
-
-    if (toFetch.empty()) {
-
-        return;
-    }
-
-    LaunchBackgroundTask([this, toFetch]() { FetchAndCachePrefetchedTickets(toFetch); });
+    PrefetchIssueTicketsFrom(std::atomic_load(&pane.Backend), pane.CacheBackendKeyCopy(), keys);
 }
 
-void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch) {
-    // Safety net for the in-flight keys that PrefetchIssueTicketsForKeys inserted: a key left in
+void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend,
+                                             const std::string& cacheBackendKey,
+                                             const std::vector<std::string>& issueKeys) {
+    if (!Cache || !backend) {
+        return;
+    }
+    std::vector<std::string> toFetch;
+    std::vector<std::string> inFlightKeys;
+    {
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        for (const auto& k : issueKeys) {
+            if (k.empty()) {
+                continue;
+            }
+            std::string inFlightKey = PrefetchInFlightKey(cacheBackendKey, k);
+            if (bulkImportPrefetchKeysInFlight_.insert(inFlightKey).second) {
+                toFetch.push_back(k);
+                inFlightKeys.push_back(std::move(inFlightKey));
+            }
+        }
+    }
+    if (toFetch.empty()) {
+        return;
+    }
+    try {
+        LaunchBackgroundTask([this, toFetch, inFlightKeys, backend, cacheBackendKey]() {
+            FetchAndCachePrefetchedTickets(toFetch, inFlightKeys, backend, cacheBackendKey);
+        });
+    } catch (...) {
+        // Nothing else would clear these, and a key left in flight blocks every later prefetch of it.
+        ErasePrefetchInFlight(bulkImportPrefetchKeysMutex_, bulkImportPrefetchKeysInFlight_, inFlightKeys);
+        throw;
+    }
+}
+
+void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch,
+                                                   const std::vector<std::string>& inFlightKeys,
+                                                   const std::shared_ptr<ITrackerBackend>& backend,
+                                                   const std::string& cacheBackendKey) {
+    // Safety net for the in-flight keys that PrefetchIssueTicketsFrom inserted: a key left in
     // the set blocks every future prefetch for it until restart, so it must be cleared on every
     // exit. The success path clears the keys inline below and disarms this guard; the guard exists
-    // only to cover the early-return and exception paths that would otherwise leak.
+    // only to cover the exception path that would otherwise leak.
     struct InFlightClearGuard {
         AppController* self;
         const std::vector<std::string>& keys;
         bool armed = true;
         ~InFlightClearGuard() {
-            if (!armed) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(self->bulkImportPrefetchKeysMutex_);
-            for (const auto& k : keys) {
-                self->bulkImportPrefetchKeysInFlight_.erase(k);
+            if (armed) {
+                ErasePrefetchInFlight(self->bulkImportPrefetchKeysMutex_, self->bulkImportPrefetchKeysInFlight_, keys);
             }
         }
-    } inFlightClearGuard{this, toFetch};
-
-    // Latch the focused context ONCE, up front: focusedContext() is re-pointed when the user
-    // switches panes, so reading it again after the blocking FetchIssuesForKeys() below could
-    // pair this pane's fetched tickets with a *different* pane's cache key (cross-pane data
-    // corruption). Bind the context here and read both the backend handle and the cache key from
-    // it before the fetch. The atomic_load latches a strong Backend handle: this worker reads
-    // Backend off the UI thread, which would race a live SetBackend swap on a plain .get(), and
-    // the shared_ptr also keeps the backend alive for the FetchIssuesForKeys call (ADR 0012).
-    GridLiveContext& ctx = focusedContext();
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
-
-    if (!backend) {
-
-        return;
-    }
-
-    // Capture the cache key from the SAME latched context, by value, so it survives the fetch
-    // without holding `ctx` across it — the old context may be retired (ADR-0012 graveyard) on a
-    // focus switch, which would dangle a held reference. `ctx` is not touched again after this.
-    const std::string cacheBackendKey = ctx.CacheBackendKeyCopy();
+    } inFlightClearGuard{this, inFlightKeys};
 
     TrackerConfig cfg = ConfigManager::Load();
 
@@ -130,15 +137,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
         err = fetchResult.error();
     }
 
-    {
-
-        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
-
-        for (const auto& k : toFetch) {
-
-            bulkImportPrefetchKeysInFlight_.erase(k);
-        }
-    }
+    ErasePrefetchInFlight(bulkImportPrefetchKeysMutex_, bulkImportPrefetchKeysInFlight_, inFlightKeys);
     inFlightClearGuard.armed = false;
 
     if (!ok) {
@@ -179,7 +178,15 @@ bool AppController::IsBulkImportPrefetchInFlight(const std::string& issueKey) co
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        if (bulkImportPrefetchKeysInFlight_.empty()) {
+            return false; // the common case: no key copy per row per frame
+        }
+    }
+    // The bulk-import rows belong to the focused pane. Its key is read outside the set's lock, so the
+    // two mutexes are never held together.
+    const std::string key = PrefetchInFlightKey(focusedContext().CacheBackendKeyCopy(), issueKey);
     std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
-
-    return bulkImportPrefetchKeysInFlight_.find(issueKey) != bulkImportPrefetchKeysInFlight_.end();
+    return bulkImportPrefetchKeysInFlight_.count(key) > 0;
 }

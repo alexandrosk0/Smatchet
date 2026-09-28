@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # 72-offline-exact.sh — Quality Pillar 6 (offline-first) EXACT rules (sourced by test-lint-rules.sh, not
-# run directly). BLOCKING, delta-gated per changed file: a file fails only when it has MORE hits of a
-# rule than its merge-base copy, so existing hits are grandfathered. ADR-0026.
+# run directly). Both BLOCKING (ADR-0026): offline-write-bypasses-queue is ABSOLUTE-0 over the whole
+# first-party tree (compute_offline_write_violations); tracker-error-kind-collapsed is delta-gated per
+# changed file (a file fails only when it has MORE hits than its merge-base copy; existing hits are
+# grandfathered).
 #
 # offline-write-bypasses-queue — a tracker write (comment, worklog, watcher, field update, create,
 # attach, sprint) called straight on the backend outside the queue seam. Offline, that write is lost;
-# route it through the offline queue so it replays on reconnect. Exempt: Source/Core/src/Tracker/ (the
-# clients), Source/Core/src/Sync/ (queue + replay), FieldEditPipelineService.cpp (commit-or-queue seam).
+# route it through the offline queue so it replays on reconnect. Headers are scanned too. Exempt: Tracker/
+# (the clients) and Sync/ (queue + replay), under both src/ and include/, and FieldEditPipelineService
+# (commit-or-queue seam). A call wrapped across two code lines still counts.
 #
 # tracker-error-kind-collapsed — TrackerErrorUnknown(<one variable>) in tracker code. It throws away the
 # Transport kind, so an offline failure reads as permanent and callers wipe cached data (the #21b
@@ -23,7 +26,9 @@
 # Escape: a comment-only line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker on a line that also holds code never hides that code.
 
-OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
+# The tracker write methods, shared by the rule regex and the whole-tree prefilter.
+OFFLINE_WRITE_METHODS='AddIssueCommentPlain|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint'
+OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
 # `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`).
@@ -119,10 +124,11 @@ scan_offline_exact_file() {
     [ -f "$f" ] || return 0
     case "$logical" in Source/*.cpp|Source/*.h|Source/*.hpp) ;; *) return 0 ;; esac
     case "$logical" in */ThirdParty/*) return 0 ;; esac
-    local write_scope=0 kind_scope=0
-    case "$logical" in *.cpp) write_scope=1 ;; esac
+    # Headers count too: an inline call in a header is as much a write as one in a .cpp.
+    local write_scope=1 kind_scope=0
     case "$logical" in
-        Source/Core/src/Tracker/*|Source/Core/src/Sync/*|*/FieldEditPipelineService.cpp) write_scope=0 ;;
+        Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/src/Sync/*|Source/Core/include/Sync/*) write_scope=0 ;;
+        */FieldEditPipelineService.cpp|*/FieldEditPipelineService.h) write_scope=0 ;;
     esac
     case "$logical" in
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
@@ -149,7 +155,11 @@ scan_offline_exact_file() {
             continue
         fi
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
-            && [[ "$code" =~ $OFFLINE_WRITE_RE ]]; then
+            && { [[ "$code" =~ $OFFLINE_WRITE_RE ]] \
+                || { ! [[ "$prev1" =~ $OFFLINE_WRITE_RE ]] && [[ "$prev1 $code" =~ $OFFLINE_WRITE_RE ]]; }; }; then
+            # The second test joins the previous code line: a match there spans the line break, i.e. a call that
+            # clang-format wrapped before or after its `->` / `.`, or before its `(` (the previous line on its
+            # own matched nothing, and this line on its own matched nothing).
             printf 'offline-write-bypasses-queue\t%s:%s\n' "$logical" "$lineno"
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
@@ -168,6 +178,19 @@ scan_offline_exact_file() {
 compute_offline_exact_violations() {
     local f
     while IFS= read -r f; do [ -n "$f" ] && scan_offline_exact_file "$f"; done < <(list_first_party_cpp_files)
+}
+
+compute_offline_write_violations() {
+    # Whole-tree offline-write-bypasses-queue hits (the absolute-0 gate). Only files that name a tracker
+    # write method at all are lexed, which keeps the sweep to a couple of seconds. The prefilter matches the
+    # bare method name (a whole word), never its `(`: a comment or a line break may sit between the two, and
+    # only the lexer can tell code from comments.
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        grep -qwE "${OFFLINE_WRITE_METHODS}" "$f" 2>/dev/null || continue
+        scan_offline_exact_file "$f"
+    done < <(list_first_party_cpp_files) | grep -F $'offline-write-bypasses-queue\t' || true
 }
 
 offline_delta_hits() {

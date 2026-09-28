@@ -12,6 +12,7 @@
 #include "PendingActionPolicyPure.h"
 #include "PendingActionTypes.h"
 #include "ScopeExit.h"
+#include "Ui/PendingActionSubmitAsync.h"
 #include "SmatchetLocalization.h"
 #include "Tracker/CommentBlobFormatPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
@@ -489,9 +490,6 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
             SmatchetLocalization::T("comments.queued_body", "Saved offline; it will be posted when the tracker is "
                                                             "reachable."),
             ToastType::Info);
-        if (result.QueuedAfterNetworkFailure) {
-            app.RequestTrackerProbeNow(); // the send just failed on the network: re-check connectivity now
-        }
         break;
     case PendingActionSubmitResult::Kind::Failed:
         SmatchetToastManager::Instance().Push(
@@ -520,27 +518,14 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
 /// and the worker always posts a result, a throw included, so Post can never stay disabled.
 void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
     AppController* appPtr = &app;
+    // Latched at Post: the comment goes to this pane's tracker even if focus moves before the worker runs.
+    const PendingActionTarget target = app.LatchPendingActionTarget();
     try {
-        app.LaunchBackgroundTask([appPtr, issueId, body, openGen]() {
-            bool posted = false;
-            smatchet::ScopeExit reportThrow([appPtr, &issueId, openGen, &posted]() {
-                if (posted) {
-                    return;
-                }
-                try {
-                    appPtr->PostToMainThread([appPtr, issueId, openGen]() {
-                        ApplyCommentPostResult(*appPtr, issueId, openGen, PendingActionSubmitResult());
-                    });
-                } catch (const std::exception& ex) {
-                    LOG_ERROR("CommentsModal: could not report the comment post for %s: %s", issueId.c_str(),
-                              ex.what());
-                }
+        smatchet::ui::SubmitPendingActionAsync(
+            app, [appPtr, target, issueId, body]() { return appPtr->SubmitOrQueueComment(target, issueId, body); },
+            [appPtr, issueId, openGen](const PendingActionSubmitResult& result) {
+                ApplyCommentPostResult(*appPtr, issueId, openGen, result);
             });
-            const PendingActionSubmitResult result = appPtr->SubmitOrQueueComment(issueId, body);
-            appPtr->PostToMainThread(
-                [appPtr, issueId, openGen, result]() { ApplyCommentPostResult(*appPtr, issueId, openGen, result); });
-            posted = true;
-        });
         s_CommentsState.PostInFlight = true;
     } catch (const std::exception& ex) {
         LOG_WARN("CommentsModal: could not start posting a comment on %s: %s", issueId.c_str(), ex.what());

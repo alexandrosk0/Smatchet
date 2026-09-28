@@ -18,6 +18,7 @@
 #include <cfloat>
 #include <exception>
 #include <future>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -166,6 +167,66 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
     }
 }
 
+namespace {
+
+enum class QueuedWatchState : unsigned char { Queued, Failed, Gone };
+
+// Where the watch saved as queue row `queueId` stands, from the in-memory queue snapshot (no SQLite). Gone
+// means it left the queue without failing: it was applied, or the user discarded it.
+QueuedWatchState ClassifyQueuedWatch(const AppController& app, std::int64_t queueId) {
+    const std::shared_ptr<const PendingActionsSnapshot> snap = app.GetPendingActionsSnapshot();
+    if (std::any_of(snap->Pending.begin(), snap->Pending.end(),
+                    [queueId](const PendingActionRecord& row) { return row.Id == queueId; })) {
+        return QueuedWatchState::Queued;
+    }
+    if (std::any_of(snap->Dead.begin(), snap->Dead.end(),
+                    [queueId](const DeadPendingAction& dead) { return dead.Row.Id == queueId; })) {
+        return QueuedWatchState::Failed;
+    }
+    return QueuedWatchState::Gone;
+}
+
+// Key of TrackerGridFieldAsyncState::watchSelfQueuedIds: a queued watch belongs to the backend it was
+// queued on.
+std::string QueuedWatchKey(const std::string& backendKey, const std::string& issueKey) {
+    return backendKey + '\x1f' + issueKey;
+}
+
+// A watch queued in an earlier session (or restored from the failed list) is adopted into the tracking
+// below, so a restart never lets the same watch be queued twice and its exit re-reads the issue too.
+bool AdoptPersistedWatch(AppController& app, const std::string& issueKey, TrackerGridFieldAsyncState& async) {
+    const std::int64_t persistedId = app.FindQueuedPendingActionId(PendingActionKind::WatchAdd, issueKey);
+    if (persistedId == 0) {
+        return false;
+    }
+    async.watchSelfQueuedIds[QueuedWatchKey(app.FocusedCacheBackendKey(), issueKey)] = persistedId;
+    return true;
+}
+
+// True while this issue's watch on the focused backend is still waiting in the offline queue. Once it
+// leaves the queue its entry is dropped so the Watch button can show again: a failed watch can be retried,
+// and after any other exit the issue is re-read so its watchers field says whether the watch was applied.
+bool WatchQueuedForIssue(AppController& app, const std::string& issueKey, TrackerGridFieldAsyncState& async) {
+    if (async.watchSelfQueuedIds.empty()) {
+        return AdoptPersistedWatch(app, issueKey, async); // the common case: no per-frame backend-key copy
+    }
+    const auto queued = async.watchSelfQueuedIds.find(QueuedWatchKey(app.FocusedCacheBackendKey(), issueKey));
+    if (queued == async.watchSelfQueuedIds.end()) {
+        return AdoptPersistedWatch(app, issueKey, async);
+    }
+    const QueuedWatchState state = ClassifyQueuedWatch(app, queued->second);
+    if (state == QueuedWatchState::Queued) {
+        return true;
+    }
+    async.watchSelfQueuedIds.erase(queued);
+    if (state == QueuedWatchState::Gone) {
+        app.PrefetchIssueTicketsForKeys({issueKey}, true);
+    }
+    return false;
+}
+
+} // namespace
+
 void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey,
                                                   const std::string& currentValue, float availWidth,
                                                   bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
@@ -216,7 +277,15 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
     }
 
     const bool alreadyWatchedThisSession = (async.watchSelfSucceededIssueKeys.count(issueKey) > 0);
-    if (model.parsed && !model.isWatching && !alreadyWatchedThisSession) {
+    const bool watchQueued = WatchQueuedForIssue(app, issueKey, async);
+    if (watchQueued && model.parsed && !model.isWatching) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(watch queued)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Queued \xE2\x80\x94 will apply when the tracker is reachable");
+        }
+    }
+    if (model.parsed && !model.isWatching && !alreadyWatchedThisSession && !watchQueued) {
         ImGui::SameLine();
         const std::string watchBtn = "Watch##wself_" + issueKey;
         const bool watchBusy = async.watchSelfInProgress && async.watchSelfFuture.valid() &&
@@ -225,13 +294,15 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
             ImGui::BeginDisabled();
         }
         if (ImGui::SmallButton(watchBtn.c_str())) {
+            // Latched on click: the watch goes to this pane's tracker even if focus moves before the worker runs.
+            const PendingActionTarget target = app.LatchPendingActionTarget();
             async.watchSelfPendingIssueKey = issueKey;
+            async.watchSelfPendingBackendKey = target.BackendKey;
             async.watchSelfInProgress = true;
             async.watchSelfError.clear();
-            async.watchSelfFuture = std::async(std::launch::async, [&app, issueKey]() {
-                const VoidResult r = app.AddIssueWatcher(issueKey);
-                return r.has_value() ? std::string() : r.error();
-            });
+            // Offline the watch is saved and applied on reconnect (pending-action queue, Pillar 6).
+            async.watchSelfFuture = std::async(
+                std::launch::async, [&app, target, issueKey]() { return app.SubmitOrQueueWatch(target, issueKey); });
         }
         if (watchBusy) {
             ImGui::EndDisabled();
@@ -352,13 +423,18 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
     if (d.watchSelfFuture.valid()) {
         if (d.watchSelfFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
-                std::string err = d.watchSelfFuture.get();
+                const PendingActionSubmitResult result = d.watchSelfFuture.get();
                 d.watchSelfInProgress = false;
-                if (err.empty()) {
+                if (result.K == PendingActionSubmitResult::Kind::Sent) {
                     d.watchSelfSucceededIssueKeys.insert(d.watchSelfPendingIssueKey);
                     d.watchSelfError.clear();
+                } else if (result.K == PendingActionSubmitResult::Kind::Queued) {
+                    // Saved, not applied: the button stays hidden only while the row is queued.
+                    d.watchSelfQueuedIds[QueuedWatchKey(d.watchSelfPendingBackendKey, d.watchSelfPendingIssueKey)] =
+                        result.QueueId;
+                    d.watchSelfError.clear();
                 } else {
-                    d.watchSelfError = std::move(err);
+                    d.watchSelfError = result.Error.empty() ? std::string("Watch failed.") : result.Error;
                     LOG_ERROR("TrackerGridFieldDisplay: watch self failed issue=%s err=%s",
                               d.watchSelfPendingIssueKey.c_str(), d.watchSelfError.c_str());
                 }

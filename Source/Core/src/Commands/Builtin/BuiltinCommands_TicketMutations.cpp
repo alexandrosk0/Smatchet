@@ -29,6 +29,22 @@ using builtin_detail::PString;
 
 namespace {
 
+// Success data of a comment / worklog write: {"ok": true}, plus "queued": true and the queue row id as
+// "offlineId" when the tracker was unreachable and the write was saved to post on reconnect
+// (pending-action queue, Quality Pillar 6).
+nlohmann::json PendingActionSuccessData(const PendingActionSubmitResult& result) {
+    nlohmann::json data = {{"ok", true}};
+    if (result.K == PendingActionSubmitResult::Kind::Queued) {
+        data["queued"] = true;
+        data["offlineId"] = result.QueueId;
+    }
+    return data;
+}
+
+std::string PendingActionError(const PendingActionSubmitResult& result) {
+    return result.Error.empty() ? std::string("the tracker did not accept it.") : result.Error;
+}
+
 static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c = MakeCommand(
         "ticket.set_field", "Update a single field on a ticket.",
@@ -76,17 +92,18 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& a
 }
 
 static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c =
-        MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
-                    [&app](const nlohmann::json& args, const CommandContext&) {
-                        const std::string id = args.value("id", std::string());
-                        const std::string body = args.value("body", std::string());
-                        const VoidResult r = app.AddIssueCommentPlain(id, body);
-                        if (!r.has_value()) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Comment failed: " + r.error());
-                        }
-                        return CommandResult::Success({{"ok", true}});
-                    });
+    Command c = MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
+                            [&app](const nlohmann::json& args, const CommandContext&) {
+                                const std::string id = args.value("id", std::string());
+                                const std::string body = args.value("body", std::string());
+                                const PendingActionTarget target = app.LatchPendingActionTarget();
+                                const PendingActionSubmitResult r = app.SubmitOrQueueComment(target, id, body);
+                                if (r.K == PendingActionSubmitResult::Kind::Failed) {
+                                    return CommandResult::Failure(ErrorCode::BackendError,
+                                                                  "Comment failed: " + PendingActionError(r));
+                                }
+                                return CommandResult::Success(PendingActionSuccessData(r));
+                            });
     c.Destructive = true;
     c.Idempotent = false;
     c.Params = {
@@ -97,30 +114,34 @@ static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations&
 }
 
 static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c =
-        MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
-                    [&app](const nlohmann::json& args, const CommandContext&) {
-                        const int seconds = args.value("seconds", 0);
-                        // Reject a non-positive duration HERE, not at the tracker. The registry's
-                        // Required check only catches an omitted `seconds`; 0 (the value.value()
-                        // default, and what a caller sending `"seconds": 0` means) and a negative
-                        // both used to reach SubmitWorklog as timeSpent="0s" / "-30s" and come back
-                        // as an opaque backend rejection the caller cannot act on (#2054).
-                        if (seconds <= 0) {
-                            return CommandResult::Failure(ErrorCode::ValidationError,
-                                                          "Argument 'seconds' for 'ticket.add_worklog' must be > 0.",
-                                                          "Pass --seconds=<positive integer>.");
-                        }
-                        const std::string id = args.value("id", std::string());
-                        const std::string comment = args.value("comment", std::string());
-                        const std::string started = args.value("started", std::string());
-                        const std::string timeSpent = builtin_detail::FormatWorklogTimeSpent(seconds);
-                        const VoidResult r = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started);
-                        if (!r.has_value()) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + r.error());
-                        }
-                        return CommandResult::Success({{"ok", true}, {"timeSpent", timeSpent}});
-                    });
+    Command c = MakeCommand(
+        "ticket.add_worklog", "Log time worked on a ticket.",
+        [&app](const nlohmann::json& args, const CommandContext&) {
+            const int seconds = args.value("seconds", 0);
+            // Reject a non-positive duration HERE, not at the tracker. The registry's
+            // Required check only catches an omitted `seconds`; 0 (the value.value()
+            // default, and what a caller sending `"seconds": 0` means) and a negative
+            // both used to reach the tracker as timeSpent="0s" / "-30s" and come back
+            // as an opaque backend rejection the caller cannot act on (#2054).
+            if (seconds <= 0) {
+                return CommandResult::Failure(ErrorCode::ValidationError,
+                                              "Argument 'seconds' for 'ticket.add_worklog' must be > 0.",
+                                              "Pass --seconds=<positive integer>.");
+            }
+            const std::string id = args.value("id", std::string());
+            const std::string comment = args.value("comment", std::string());
+            const std::string started = args.value("started", std::string());
+            const std::string timeSpent = builtin_detail::FormatWorklogTimeSpent(seconds);
+            const PendingActionTarget target = app.LatchPendingActionTarget();
+            const PendingActionSubmitResult r =
+                app.SubmitOrQueueWorklog(target, id, timeSpent, "", "auto", comment, started);
+            if (r.K == PendingActionSubmitResult::Kind::Failed) {
+                return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + PendingActionError(r));
+            }
+            nlohmann::json data = PendingActionSuccessData(r);
+            data["timeSpent"] = timeSpent;
+            return CommandResult::Success(std::move(data));
+        });
     // Destructive-from-automation (CLI/MCP/Lua) audit logging is centralized in
     // CommandRegistry::Dispatch (snapshot.Destructive && IsAutomationSource) — handlers do not log
     // it per-command (that would double-log).

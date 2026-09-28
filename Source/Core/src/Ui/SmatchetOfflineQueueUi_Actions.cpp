@@ -10,6 +10,7 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -68,17 +69,11 @@ const char* StateLabel(const std::string& state) {
     return "Waiting to sync";
 }
 
-// A comment's body on one line (at most ~80 characters); empty for other kinds.
-std::string ActionPreview(const std::string& wire, const std::string& payloadJson) {
-    std::string body;
-    std::int64_t queuedAt = 0;
-    if (wire != PendingActionKindWire(PendingActionKind::CommentAdd) ||
-        !smatchet::pendingaction::ParseCommentActionPayload(payloadJson, body, queuedAt)) {
-        return std::string();
-    }
+// `text` on one line, at most ~80 characters.
+std::string OneLinePreview(const std::string& text) {
     const std::size_t kMaxChars = 80;
     std::string oneLine;
-    for (const char c : body) {
+    for (const char c : text) {
         oneLine.push_back(c == '\n' || c == '\r' || c == '\t' ? ' ' : c);
         if (oneLine.size() >= kMaxChars) {
             oneLine += "...";
@@ -86,6 +81,27 @@ std::string ActionPreview(const std::string& wire, const std::string& payloadJso
         }
     }
     return oneLine;
+}
+
+// What the action says: a comment's body, a worklog's time and description; empty for a watch.
+std::string ActionPreview(const std::string& wire, const std::string& payloadJson) {
+    PendingActionKind kind;
+    if (!ParsePendingActionKind(wire, kind)) {
+        return std::string();
+    }
+    if (kind == PendingActionKind::CommentAdd) {
+        std::string body;
+        std::int64_t queuedAt = 0;
+        return smatchet::pendingaction::ParseCommentActionPayload(payloadJson, body, queuedAt) ? OneLinePreview(body)
+                                                                                               : std::string();
+    }
+    smatchet::pendingaction::WorklogActionPayload worklog;
+    if (kind == PendingActionKind::WorklogAdd &&
+        smatchet::pendingaction::ParseWorklogActionPayload(payloadJson, worklog)) {
+        return OneLinePreview(worklog.Description.empty() ? worklog.TimeSpent
+                                                          : worklog.TimeSpent + " \xE2\x80\x94 " + worklog.Description);
+    }
+    return std::string();
 }
 
 ActionRowView MakeRowView(const PendingActionRecord& row) {

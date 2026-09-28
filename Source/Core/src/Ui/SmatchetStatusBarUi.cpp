@@ -89,7 +89,7 @@ static const char* ConnectivityTooltip(AppController& app) {
 }
 
 // Offline work waiting to sync: queued creates, field edits (d.cachedPendingFieldEditCount, refreshed
-// once per frame in SmatchetUI) and pending actions such as comments (the in-memory snapshot). No
+// once per frame in SmatchetUI) and pending actions — comments, worklogs, watches (the in-memory snapshot). No
 // SQLite on the render thread.
 static size_t QueuedOfflineOps(AppController& app, const UiDrawSession& d) {
     return app.GetPendingCreateCount() + static_cast<size_t>(d.cachedPendingFieldEditCount) +
@@ -121,7 +121,7 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
         ImGui::SetTooltip("%s", ConnectivityTooltip(app));
     }
 
-    // Queued-ops count (pending creates, field edits and actions such as comments).
+    // Queued-ops count (pending creates, field edits, comments, worklogs and watches).
     {
         const size_t queuedOps = QueuedOfflineOps(app, d);
         if (queuedOps > 0) {
@@ -132,7 +132,8 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
             std::snprintf(buf, sizeof(buf), "%d queued", static_cast<int>(queuedOps));
             ImGui::TextUnformatted(buf);
             if (::ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Offline changes (new issues, field edits and comments) waiting to sync.\n"
+                ImGui::SetTooltip("Offline changes (new issues, field edits, comments, worklogs and watches) "
+                                  "waiting to sync.\n"
                                   "They are sent automatically when the backend is reachable.");
             }
         }

@@ -180,13 +180,6 @@ class JiraClient : public ITrackerBackend,
                             const std::string& timeRemaining, const std::string& adjustEstimate,
                             const std::string& workDescription, const std::string& startedDate) override;
 
-    /** Annotate-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
-    TrackerError AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
-                                                const std::string& p4User, const std::string& functionName,
-                                                const std::string& filePath, int lineNumber,
-                                                const std::string& changelist, const std::string& date,
-                                                bool approximated, const std::string& codeSnippet) override;
-
     /**
      * Best-effort group names for a user (Cloud may return 403; then the Ok list is empty).
      * ITrackerActivity override (relocated from ITrackerCollaboration — one home per capability).

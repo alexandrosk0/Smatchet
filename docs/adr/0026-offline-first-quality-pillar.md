@@ -29,15 +29,15 @@ Evidence:
 
 ## Consequences
 
-- **New gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` **block** (delta-gated per changed file; existing hits grandfathered); `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated` **WARN-first** → graduate independently per the trigger below.
+- **New gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` **block** — the first absolute-0 over the whole tree since every tracker write goes through a queue (S9), the second delta-gated per changed file (existing hits grandfathered); `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated` **WARN-first** → graduate independently per the trigger below.
 - **Gate infra**: `lint-rules.d/72-offline-exact.sh` (blocking rules) and `74-offline-heuristic.sh` (WARN heuristics), loader + `--scan-offline` in `test-lint-rules.sh`, bats coverage, enforcement-contract row in `AGENTS.md`, and `docs/agent-rules/cpp-rules.md` section.
 - **Shared primitives**: `Source/Core/include/OfflineFirstPure.h` (pure connectivity, freshness and write-route decisions), `KeyedLookupCache.h` (offline-gated keyed fetch with backoff, reset on reconnect), `DataFreshnessCue.h` (the one localized cue).
 - **Additive schema**: SQLite `lookup_cache` (S5) and `pending_actions` (S8) tables for offline reads and writes.
-- **Comments queue offline** (S8): a comment posted while the tracker is unreachable is saved to `pending_actions` through `PendingActionQueueService` and sent on reconnect, exactly once — a send whose response was lost is checked against the tracker before it is resent. The `docs/plans/shipped/issue-comments.md` risk "Comments bypass offline-queue" is resolved.
+- **Comments, worklogs and watches queue offline** (S8, S9): each is saved to `pending_actions` through `PendingActionQueueService` while the tracker is unreachable and sent on reconnect, exactly once — a comment whose response was lost is checked against the tracker before it is resent, a worklog in that state waits for the user's review, and a watch is simply retried. The `docs/plans/shipped/issue-comments.md` risk "Comments bypass offline-queue" is resolved.
 - **Graduation, per WARN rule, independent of the others:**
   - Whole-tree `--scan-offline` hits burned to 0 (fixed or deviation-marked).
   - Fewer than 10% false positives over ~20 PRs touching offline scope, tallied by `code-review` in `docs/high-integrity/offline-calibration.md` (created by the first PR that records a tally).
   - Or a maintainer decision.
-  - `offline-write-bypasses-queue` becomes absolute-0 (no exemptions) at the end of S9.
+  - `offline-write-bypasses-queue` graduated to absolute-0 in S9, once comments, worklogs and watches all went through the pending-action queue: any hit anywhere fails, with no grandfathered hits. Headers are scanned too, and a call wrapped across two code lines still counts. The queue seams stay out of scope (`Tracker/` and `Sync/` under `src/` and `include/`, and `FieldEditPipelineService`), and a single-line deviation still escapes a reviewed exception.
 - **Owners**: `offline-sync` is the implementer; `code-review` is the reviewer-of-record for blocking gates + WARN heuristic disposition.
 - Full design + slices + root causes: `docs/plans/active/offline-first.md`.

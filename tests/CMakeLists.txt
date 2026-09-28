@@ -325,12 +325,15 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/OfflineQueueServiceRuntime.test.cpp
         Core/PendingActionQueueService.test.cpp
         Core/PendingActionPolicyPure.test.cpp
+        Core/PendingActionSubmitAsync.test.cpp
+        Core/AnnotateContextCommentPure.test.cpp
         Core/OfflineQueueBackendSwap.test.cpp
         Core/ConfigSaveConcurrency.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
         # Pending-action queue (Pillar 6 offline comments): service + its pure policy.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/PendingActionQueueService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/PendingActionPolicyPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/AnnotateContextCommentPure.cpp"
         # OfflineQueueService link closure: the audit pair (BackendAuditTrail +
         # FieldEditAuditSource), 3-way rich-text merge (TextMerge), markdown<->ADF/HTML for
         # field-edit replay (MarkdownConvert -> md4c), and create-replay through the live
@@ -916,6 +919,8 @@ add_executable(SmatchetTests
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/PendingActionQueueService.test.cpp
     Core/PendingActionPolicyPure.test.cpp
+    Core/PendingActionSubmitAsync.test.cpp
+    Core/AnnotateContextCommentPure.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
     # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only
     # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
@@ -1462,6 +1467,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/PendingActionQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/PendingActionPolicyPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/AnnotateContextCommentPure.cpp"
     # ticket-change-monitor S1a (docs/plans/ticket-change-monitor.md) — three
     # backend-agnostic pure helpers behind the per-pane change monitor, each unit-tested
     # bucket-A with no backend / pane / toast manager. CachedTicketTypes.h-only (no

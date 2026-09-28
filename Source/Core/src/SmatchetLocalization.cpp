@@ -866,6 +866,9 @@ const TranslationEntry kEntries[] = {
      u8"Cliquez pour saisir le travail / modifier les estimations."},
     {"worklog.toast.saved_title", "Worklog saved", u8"Travail enregistré"},
     {"worklog.toast.failed_title", "Worklog failed", u8"Échec de l'enregistrement du travail"},
+    {"worklog.toast.queued_title", "Worklog queued offline", u8"Travail mis en file hors ligne"},
+    {"worklog.toast.queued_body", "Saved offline; it will be logged when the tracker is reachable.",
+     u8"Enregistré hors ligne ; il sera journalisé quand le tracker sera joignable."},
     {"worklog.cancel_inflight_tooltip",
      "The worklog request was already sent — closing this dialog won't cancel it. The result will appear as a "
      "notification.",

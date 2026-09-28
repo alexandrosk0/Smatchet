@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "IOfflineQueueDeps.h"
 #include "ISyncCache.h"
+#include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
@@ -49,13 +50,19 @@ TrackerError Dispatch(ITrackerCollaboration& collab, const TrackerConfig& cfg, P
         }
         return collab.AddIssueCommentPlain(cfg, issueKey, body);
     }
-    case PendingActionKind::WorklogAdd:
-    case PendingActionKind::WatchAdd:
-        break;
+    case PendingActionKind::WorklogAdd: {
+        pendingaction::WorklogActionPayload worklog;
+        if (!pendingaction::ParseWorklogActionPayload(payloadJson, worklog)) {
+            return TrackerErrorInvalidRequest("The saved worklog could not be read.");
+        }
+        return collab.AddWorklog(cfg, issueKey, worklog.TimeSpent, worklog.TimeRemaining, worklog.AdjustEstimate,
+                                 worklog.Description, worklog.Started);
     }
-    // A row written by a newer build: archived (restorable), never dropped.
-    return TrackerErrorInvalidRequest(std::string("This version of Smatchet cannot send '") +
-                                      PendingActionKindWire(kind) + "' actions.");
+    case PendingActionKind::WatchAdd:
+        return collab.AddIssueWatcher(cfg, issueKey);
+    }
+    // Every kind returns above; this only satisfies compilers that cannot prove the switch exhaustive.
+    return TrackerErrorInvalidRequest("Unknown action kind.");
 }
 
 } // namespace
@@ -67,28 +74,31 @@ std::shared_ptr<const PendingActionsSnapshot> PendingActionQueueService::Snapsho
     return std::atomic_load(&snapshot_);
 }
 
-PendingActionQueueService::SubmitOutcome
-PendingActionQueueService::SubmitOrQueue(PendingActionKind kind, const std::string& issueKey,
-                                         const std::string& payloadJson, TrackerConnectivityState connectivityAtKick) {
+PendingActionQueueService::SubmitOutcome PendingActionQueueService::SubmitOrQueue(PendingActionKind kind,
+                                                                                  const PendingActionTarget& target,
+                                                                                  const std::string& issueKey,
+                                                                                  const std::string& payloadJson) {
     SubmitOutcome out;
     if (issueKey.empty() || payloadJson.empty()) {
         out.Error = "Nothing to send (the action is incomplete).";
         return out;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    switch (smatchet::offline::RouteWrite(connectivityAtKick, /*queueSupported=*/true, cfg.ReadOnlyMode)) {
-    case smatchet::offline::WriteRoute::Reject:
+    const smatchet::offline::WriteRoute route =
+        smatchet::offline::RouteWrite(target.Connectivity, /*queueSupported=*/true, cfg.ReadOnlyMode);
+    if (route == smatchet::offline::WriteRoute::Reject) {
         out.Error = "Read-only mode is enabled in Preferences.";
         return out;
-    case smatchet::offline::WriteRoute::QueueImmediately:
-        return Enqueue(kind, issueKey, payloadJson, PendingActionState::kPending);
-    case smatchet::offline::WriteRoute::NetworkFirst:
-        break;
     }
-    const std::shared_ptr<ITrackerCollaboration> collab = deps_.CollaborationShared();
-    if (!collab) {
+    // Checked before queueing too: replay needs the same interface, so a row queued for a backend without it
+    // would wait forever. `target.Backend` keeps the interface alive for the whole call.
+    ITrackerCollaboration* const collab = target.Backend ? target.Backend->Collaboration() : nullptr;
+    if (collab == nullptr) {
         out.Error = "Tracker backend does not support collaboration features.";
         return out;
+    }
+    if (route == smatchet::offline::WriteRoute::QueueImmediately) {
+        return Enqueue(kind, target.BackendKey, issueKey, payloadJson, PendingActionState::kPending);
     }
     const TrackerError err = Dispatch(*collab, cfg, kind, issueKey, payloadJson);
     if (err.IsOk()) {
@@ -103,7 +113,7 @@ PendingActionQueueService::SubmitOrQueue(PendingActionKind kind, const std::stri
         out.Error = err.Detail.empty() ? std::string("The tracker rejected the action.") : err.Detail;
         return out;
     }
-    out = Enqueue(kind, issueKey, payloadJson, state);
+    out = Enqueue(kind, target.BackendKey, issueKey, payloadJson, state);
     out.QueuedAfterNetworkFailure = out.K == SubmitOutcome::Kind::Queued;
     if (out.K == SubmitOutcome::Kind::Failed) {
         out.Error = err.Detail + " " + out.Error;
@@ -111,11 +121,15 @@ PendingActionQueueService::SubmitOrQueue(PendingActionKind kind, const std::stri
     return out;
 }
 
-PendingActionQueueService::SubmitOutcome PendingActionQueueService::Enqueue(PendingActionKind kind,
-                                                                            const std::string& issueKey,
-                                                                            const std::string& payloadJson,
-                                                                            const char* state) {
+PendingActionQueueService::SubmitOutcome
+PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& backendKey, const std::string& issueKey,
+                                   const std::string& payloadJson, const char* state) {
     SubmitOutcome out;
+    if (backendKey.empty()) {
+        // Replay only sends rows of the pane's own backend namespace; a row without one would never be sent.
+        out.Error = "No tracker backend is set up, so this could not be saved offline.";
+        return out;
+    }
     // Latched once: the UI thread may swap the cache (RecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
@@ -124,7 +138,7 @@ PendingActionQueueService::SubmitOutcome PendingActionQueueService::Enqueue(Pend
     }
     const char* wire = PendingActionKindWire(kind);
     try {
-        out.QueueId = cache->EnqueuePendingAction(deps_.CacheBackendKey(), wire, issueKey, payloadJson, state);
+        out.QueueId = cache->EnqueuePendingAction(backendKey, wire, issueKey, payloadJson, state);
         out.K = SubmitOutcome::Kind::Queued;
     } catch (const std::exception& ex) {
         out.Error = "Saving it to the offline queue failed (local database error).";

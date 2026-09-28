@@ -88,13 +88,4 @@ class ITrackerCollaboration {
                                     const std::string& /*startedDate*/) {
         return TrackerErrorInvalidRequest("AddWorklog is not supported by this backend.");
     }
-
-    virtual TrackerError AddIssueCommentAnnotateContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
-                                                        const std::string& /*p4User*/,
-                                                        const std::string& /*functionName*/,
-                                                        const std::string& /*filePath*/, int /*lineNumber*/,
-                                                        const std::string& /*changelist*/, const std::string& /*date*/,
-                                                        bool /*approximated*/, const std::string& /*codeSnippet*/) {
-        return TrackerErrorInvalidRequest("AddIssueCommentAnnotateContext is not supported by this backend.");
-    }
 };

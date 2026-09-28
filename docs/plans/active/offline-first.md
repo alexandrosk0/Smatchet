@@ -2663,6 +2663,11 @@ and estimate edits cannot be queued; bulk import loses rows offline."
     and, on SavedOnline/QueuedOffline, applies `ApplyFieldEditResult` via `RunOnUiThread`.
   - `SubmitFieldEdit` keeps its signature and becomes a wrapper returning
     `VoidOk()` for Saved/Queued, else `Err`.
+  - Bind each edit to the pane the user acted on, as S9 did for comments/worklogs/watches
+    (`PendingActionTarget`): the request carries the latched backend and cache key, and the commit
+    uses them instead of re-reading the focused pane on the worker. Today every field-edit caller
+    re-resolves focus there; the Annotate "Assign and add context" action refuses to send when focus
+    moved since the click, and can drop that check once this lands.
 - **Callers:**
   - `BuiltinCommands_TicketMutations.cpp` (`ticket.set_field`, `ticket.transition`, `ticket.set_fields`):
     call `SubmitFieldEditOrQueue` and add `"queued":true` to the success envelope when queued.
@@ -2950,6 +2955,16 @@ This plan touches `Source/Core/`.
   - The UI reads only an in-memory snapshot published by workers, never SQLite. The comments modal lists this issue's queued and failed comments. The Offline Queue panel gets an "Other queued changes" table (discard, send again, retry, delete), and its "Retry now" restarts every queue's timers. The status bar counts queued comments.
 - Tests: `PendingActionPolicyPure`, `PendingActionQueueService` (fakes), `SyncCacheContract` (the queue API against the real cache and `FakeSyncCache`), `LocalCacheManagerPendingActionsPersist` (file-backed: restart, `sending` → `ambiguous`, old file gains the tables), and the bucket-E test `OfflineFirst/Comments_PostedOfflineReplays`.
 
+### S9 — [#2259](https://github.com/alexandrosk0/Smatchet/pull/2259)
+- Shipped:
+  - Every tracker comment, worklog and watch now goes through `PendingActionQueueService`: sent now, or saved and replayed on reconnect. The four direct `Collaboration()->Add*` writes left `AppController`, whose `SubmitOrQueueComment` / `SubmitOrQueueWorklog` / `SubmitOrQueueWatch` report Sent / Queued / Failed.
+  - The worklog dialog moved to `TicketFieldEditor_Worklog.cpp` (a verbatim move in its own commit). Save queues offline with a "Worklog queued offline" toast. A queued worklog whose send may have landed waits for review and is never resent blind.
+  - The grid's Watch button queues offline and shows "(watch queued)" until the watch is applied.
+  - Annotate comments (quick templates and the context comment) queue offline too. The context comment is Markdown from one shared builder (`Tracker/AnnotateContextCommentPure`), so it now posts on every backend.
+  - `ticket.add_comment` / `ticket.add_worklog` return `"queued": true, "offlineId": <id>` when saved offline.
+  - `offline-write-bypasses-queue` graduated to absolute-0 over the whole tree.
+- Tests: `AnnotateContextCommentPure` (through the real Markdown→ADF conversion), worklog payload round trip, `PendingActionQueueService` worklog and watch cases, the `ticket.*` queued envelopes (`BuiltinFacetCommands`), two bats cases for the absolute-0 gate, and the bucket-E test `OfflineFirst/Worklog_OfflineQueues`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -3011,6 +3026,18 @@ This plan touches `Source/Core/`.
   - The comments modal shows queued comments in every thread state, including while a load with nothing saved is running. When a queued comment leaves the queue without failing, the thread reloads to show the tracker's copy.
   - A snapshot read from a cache that was replaced meanwhile (`RecreateLocalCacheDatabase`) is never published.
   - `ISyncCache::TransitionPendingAction` is a compare-and-set on the stored row (CodeRabbit review on #2257). Replay claims each row with it (its loaded state → `sending`), so a comment discarded after a pass loaded its copy is never sent. "Send again" moves only a `needs_review` row back to `pending`, so an `ambiguous` comment is always looked up on the tracker before it is resent. No mutex is held across a pass: the check and the write are one SQL statement, and a request already in flight cannot be recalled anyway.
+
+- **S9:**
+  - The worklog dialog reaches the controller through the `IAppThreading` + `IAppTicketMutations` facets instead of `AppController&`, so the new TU adds no `AppController.h` includer. `DrawDurationFieldWithSuggestions` gets external linkage (declared in `TicketFieldEditor_detail.h`) because both TUs use it. `TicketFieldEditor.cpp` lands at 1,292 lines rather than the plan's ~1,390.
+  - The moved Save had no exit guard on its in-flight latch; the offline-first heuristic flagged it once the code sat in a new file. A failed launch now releases the latch, and the worker always posts a result, a throw included. The worker/post-back idiom is one helper, `Ui/PendingActionSubmitAsync.h`, shared by the comments modal, the worklog dialog and the Annotate actions.
+  - The Annotate context comment no longer has a Jira-only ADF builder. `ITrackerCollaboration::AddIssueCommentAnnotateContext` and `JiraClient`'s override are removed (nothing called them any more), along with their three HTTP tests. The comment is Markdown from `BuildAnnotateContextCommentMarkdown`, posted as a plain comment; on Jira that converts to the same paragraphs + `cpp` codeBlock, and other backends now accept it too.
+  - The `AppController` write methods are replaced, not wrapped: `AddIssueCommentPlain` / `SubmitWorklog` / `AddIssueWatcher` / `AddIssueCommentAnnotateContext` give way to `SubmitOrQueue*`, and `IAppTicketMutations` returns `PendingActionSubmitResult` for comments and worklogs. The now-unused write half of `CollaborationPreconditionPure.h` (`ClassifyCollaborationPrecondition`, `CollaborationErrorToVoidResult`) and its tests are removed, since the queue owns the read-only / backend / capability checks. With no backend the message is now "Tracker backend does not support collaboration features." instead of "Jira backend is not initialized."
+  - After a send is queued because it failed on the network, `AppController` itself posts the connectivity probe (the probe schedule is UI-thread state). The comments modal no longer does it separately.
+  - The queued command envelope keeps `"ok": true` next to `"queued"` and `"offlineId"`, so existing callers still see success. The envelope cases are in `BuiltinFacetCommands.test.cpp`, where the `ticket.*` commands are tested.
+  - The absolute-0 sweep is `compute_offline_write_violations`, which lexes only files that name a tracker write method (about 2 s), not `compute_offline_exact_violations | grep` (about 17 s over the whole tree); the result is the same.
+  - `OfflineFirst/Worklog_OfflineQueues` also covers the watch. `FakeTrackerClient` records worklog and watcher calls with scriptable replies. The queue panel previews a worklog as "<time spent> — <description>".
+  - Each action is bound to the tracker the user acted on: `PendingActionTarget` (backend, cache key, last probe) is latched in one pane lookup where the user acts and passed through `SubmitOrQueue` and `Enqueue`, so a focus change before the worker runs cannot send or queue it elsewhere. The re-read after a sent worklog uses the same backend (`PrefetchIssueTicketsFrom`); `PrefetchIssueTicketsForKeys` now latches its pane on the calling thread instead of on its worker. The field-edit pipeline still follows focus (S10 binds it); the Annotate assign-and-comment action refuses to send if focus moved since the click.
+  - Annotate's comment-only actions stay enabled under a tracker error banner (only the Read-only preference blocks them), since comments queue offline; assign actions still need the tracker.
 
 ## Verification (actual)
 

@@ -212,7 +212,7 @@ void AppController::WireCoreServices() {
     if (!offlineQueue_) {
         offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
     }
-    // PendingActionQueueService — comments (later worklogs and watch) saved while offline; ticked
+    // PendingActionQueueService — comments, worklogs and watches saved while offline; ticked
     // next to the offline queue and driven by the same replay-timer calls (GridContextDepsAdapter).
     if (!pendingActions_) {
         pendingActions_ = std::make_unique<PendingActionQueueService>(*depsAdapter_);

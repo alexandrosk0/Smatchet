@@ -753,30 +753,6 @@ Result<std::vector<TrackerUser>> AppController::FetchIssueWatchers(const std::st
     return outcome;
 }
 
-VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    // Shared, unit-tested preflight (read-only → backend → collaboration-capability, in that order).
-    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
-        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
-        backend && backend->Collaboration());
-    if (!pre.has_value()) {
-        LOG_WARN("AppController::AddIssueWatcher preflight blocked issue=%s err=%s", issueKey.c_str(),
-                 pre.error().c_str());
-        return pre;
-    }
-    const TrackerConfig cfg = ConfigManager::Load();
-    const TrackerError addWatcherErr = backend->Collaboration()->AddIssueWatcher(cfg, issueKey);
-    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(addWatcherErr);
-    if (!outcome.has_value()) {
-        LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outcome.error().c_str());
-        return outcome;
-    }
-    requestDeferredLiveTrackerBackendSuccessNotify_();
-    return VoidOk();
-}
-
 Result<TrackerIssueVotes> AppController::FetchIssueVotes(const std::string& issueKey) const {
     using VotesResult = Result<TrackerIssueVotes>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
@@ -848,32 +824,6 @@ AppController::FetchUsersByAccountIds(const std::vector<std::string>& accountIds
     return outcome;
 }
 
-VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    // Shared, unit-tested preflight; the "Jira backend is not initialized." wording is this call
-    // site's historical text, passed to stay behaviour-preserving through the flip.
-    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
-        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
-        backend && backend->Collaboration(), "Jira backend is not initialized.");
-    if (!pre.has_value()) {
-        LOG_WARN("AppController::AddIssueCommentPlain preflight blocked issue=%s err=%s", issueKey.c_str(),
-                 pre.error().c_str());
-        return pre;
-    }
-    const TrackerConfig cfg = ConfigManager::Load();
-    const TrackerError commentErr = backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText);
-    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(commentErr);
-    if (!outcome.has_value()) {
-        LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(),
-                  outcome.error().c_str());
-        return outcome;
-    }
-    requestDeferredLiveTrackerBackendSuccessNotify_();
-    return VoidOk();
-}
-
 Result<std::vector<TrackerIssueComment>> AppController::FetchIssueComments(const std::string& issueKey) {
     return smatchet::collab::CollaborationResultToResult<std::vector<TrackerIssueComment>>(
         FetchIssueCommentsTyped(issueKey));
@@ -943,66 +893,6 @@ void AppController::UpdateCachedCommentsFromThread(const std::string& issueId,
         UpdateTicket(updated);
         return;
     }
-}
-
-VoidResult AppController::SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
-                                        const std::string& timeRemaining, const std::string& adjustEstimate,
-                                        const std::string& workDescription, const std::string& startedDate) {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    // Shared, unit-tested preflight; the "Jira backend is not initialized." wording is this call
-    // site's historical text, passed to stay behaviour-preserving through the flip.
-    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
-        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
-        backend && backend->Collaboration(), "Jira backend is not initialized.");
-    if (!pre.has_value()) {
-        LOG_WARN("AppController::SubmitWorklog preflight blocked issue=%s err=%s", issueId.c_str(),
-                 pre.error().c_str());
-        return pre;
-    }
-    const TrackerConfig cfg = ConfigManager::Load();
-    const TrackerError worklogErr = backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining,
-                                                                         adjustEstimate, workDescription, startedDate);
-    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(worklogErr);
-    if (!outcome.has_value()) {
-        LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outcome.error().c_str());
-        return outcome;
-    }
-    requestDeferredLiveTrackerBackendSuccessNotify_();
-    PrefetchIssueTicketsForKeys({issueId}, true);
-    return VoidOk();
-}
-
-VoidResult AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
-                                                         const std::string& functionName, const std::string& filePath,
-                                                         const int lineNumber, const std::string& changelist,
-                                                         const std::string& date, const bool approximated,
-                                                         const std::string& codeSnippet) {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    // Shared, unit-tested preflight; the "Jira backend is not initialized." wording is this call
-    // site's historical text, passed to stay behaviour-preserving through the flip.
-    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
-        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
-        backend && backend->Collaboration(), "Jira backend is not initialized.");
-    if (!pre.has_value()) {
-        LOG_WARN("AppController::AddIssueCommentAnnotateContext preflight blocked issue=%s err=%s", issueKey.c_str(),
-                 pre.error().c_str());
-        return pre;
-    }
-    const TrackerConfig cfg = ConfigManager::Load();
-    const TrackerError annotateErr = backend->Collaboration()->AddIssueCommentAnnotateContext(
-        cfg, issueKey, p4User, functionName, filePath, lineNumber, changelist, date, approximated, codeSnippet);
-    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(annotateErr);
-    if (!outcome.has_value()) {
-        LOG_ERROR("AppController::AddIssueCommentAnnotateContext failed issue=%s err=%s", issueKey.c_str(),
-                  outcome.error().c_str());
-        return outcome;
-    }
-    requestDeferredLiveTrackerBackendSuccessNotify_();
-    return VoidOk();
 }
 
 Result<std::vector<std::string>> AppController::FetchUserGroupNames(const std::string& accountId) const {

@@ -473,31 +473,41 @@ class FakeTrackerClient : public ITrackerBackend,
         call.IssueKey = issueKey;
         call.Body = plainText;
         addCommentCalls_.push_back(std::move(call));
-        TrackerError reply = TrackerError::Ok();
-        if (!addCommentReplies_.empty()) {
-            reply = std::move(addCommentReplies_.front());
-            addCommentReplies_.pop_front();
-        }
-        return reply;
+        return PopWriteReply(addCommentReplies_);
     }
 
-    TrackerError AddWorklog(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
-                            const std::string& /*timeSpent*/, const std::string& /*timeRemaining*/,
-                            const std::string& /*adjustEstimate*/, const std::string& /*workDescription*/,
-                            const std::string& /*startedDate*/) override {
+    struct AddWorklogCall {
+        std::string IssueKey;
+        std::string TimeSpent;
+        std::string TimeRemaining;
+        std::string AdjustEstimate;
+        std::string Description;
+        std::string Started;
+    };
+
+    TrackerError AddWorklog(const TrackerConfig& /*cfg*/, const std::string& issueKey, const std::string& timeSpent,
+                            const std::string& timeRemaining, const std::string& adjustEstimate,
+                            const std::string& workDescription, const std::string& startedDate) override {
         if (NetworkDown()) {
             return network_->MakeError();
         }
-        ++addWorklogCalls_;
-        return TrackerError::Ok();
+        AddWorklogCall call;
+        call.IssueKey = issueKey;
+        call.TimeSpent = timeSpent;
+        call.TimeRemaining = timeRemaining;
+        call.AdjustEstimate = adjustEstimate;
+        call.Description = workDescription;
+        call.Started = startedDate;
+        addWorklogCalls_.push_back(std::move(call));
+        return PopWriteReply(addWorklogReplies_);
     }
 
-    TrackerError AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) override {
+    TrackerError AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& issueKey) override {
         if (NetworkDown()) {
             return network_->MakeError();
         }
-        ++addWatcherCalls_;
-        return TrackerError::Ok();
+        addWatcherCalls_.push_back(issueKey);
+        return PopWriteReply(addWatcherReplies_);
     }
 
     // --- Scripting helpers (call recording) --------------------------------------------------
@@ -779,6 +789,11 @@ class FakeTrackerClient : public ITrackerBackend,
 
     const std::vector<AddCommentCall>& AddCommentCalls() const { return addCommentCalls_; }
     void EnqueueAddCommentResult(TrackerError error) { addCommentReplies_.push_back(std::move(error)); }
+    const std::vector<AddWorklogCall>& AddWorklogCalls() const { return addWorklogCalls_; }
+    void EnqueueAddWorklogResult(TrackerError error) { addWorklogReplies_.push_back(std::move(error)); }
+    /// Issue keys AddIssueWatcher was called for, in order.
+    const std::vector<std::string>& AddWatcherCalls() const { return addWatcherCalls_; }
+    void EnqueueAddWatcherResult(TrackerError error) { addWatcherReplies_.push_back(std::move(error)); }
 
     // Whole-recorder reset (between test sub-cases that share a fixture).
     void ResetCalls() {
@@ -800,11 +815,23 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssueCommentsCalls_ = 0;
         addCommentCalls_.clear();
         addCommentReplies_.clear();
-        addWorklogCalls_ = 0;
-        addWatcherCalls_ = 0;
+        addWorklogCalls_.clear();
+        addWorklogReplies_.clear();
+        addWatcherCalls_.clear();
+        addWatcherReplies_.clear();
     }
 
   private:
+    /// The next scripted reply for a collaboration write, else success.
+    static TrackerError PopWriteReply(std::deque<TrackerError>& replies) {
+        if (replies.empty()) {
+            return TrackerError::Ok();
+        }
+        TrackerError reply = std::move(replies.front());
+        replies.pop_front();
+        return reply;
+    }
+
     static ScriptedReply NextOrDefault(std::deque<ScriptedReply>& queue, const ScriptedReply& fallback) {
         if (queue.empty())
             return fallback;
@@ -934,8 +961,10 @@ class FakeTrackerClient : public ITrackerBackend,
     // Collaboration scripting (Pillar 6)
     std::vector<AddCommentCall> addCommentCalls_;
     std::deque<TrackerError> addCommentReplies_;
-    std::size_t addWorklogCalls_ = 0;
-    std::size_t addWatcherCalls_ = 0;
+    std::vector<AddWorklogCall> addWorklogCalls_;
+    std::deque<TrackerError> addWorklogReplies_;
+    std::vector<std::string> addWatcherCalls_;
+    std::deque<TrackerError> addWatcherReplies_;
 };
 
 } // namespace smatchet_tests

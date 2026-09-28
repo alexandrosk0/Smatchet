@@ -1,7 +1,7 @@
 #ifndef SMATCHET_INTERFACES_IAPP_PENDING_ACTIONS_H
 #define SMATCHET_INTERFACES_IAPP_PENDING_ACTIONS_H
 
-// Narrow facet for the pending-action queue (Quality Pillar 6): comments (later worklogs and watch)
+// Narrow facet for the pending-action queue (Quality Pillar 6): comments, worklogs and watches
 // sent now or saved while the tracker is unreachable, and the queue-panel actions over them.
 // AppController implements it; the queue panel TU (Ui/SmatchetOfflineQueueUi_Actions.cpp) depends on
 // this instead of the full AppController.h. Rank-0 leaf (Interfaces/): the row and result types come
@@ -21,9 +21,14 @@ class IAppPendingActions {
   public:
     virtual ~IAppPendingActions() = default;
 
-    /// Comment on `issueKey`: sent now, or saved and replayed on reconnect when the tracker is
+    /// The focused pane's tracker, latched for an action the user is starting. Call it where the user
+    /// acted (UI thread), before launching the worker that submits.
+    virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+
+    /// Comment on `issueKey` for `target`: sent now, or saved and replayed on reconnect when the tracker is
     /// unreachable. Blocks on the network while online — call it from a worker.
-    virtual PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) = 0;
+    virtual PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target,
+                                                           const std::string& issueKey, const std::string& body) = 0;
 
     /// The queued and failed actions as last loaded; never null. No SQLite.
     virtual std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const = 0;

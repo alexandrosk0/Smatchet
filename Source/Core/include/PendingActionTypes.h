@@ -1,14 +1,19 @@
 #pragma once
 
 // PendingActionTypes — tracker actions saved while offline other than issue creates and field
-// edits (Quality Pillar 6): comments today, worklogs and watch next. One generic queue keyed by
+// edits (Quality Pillar 6): comments, worklogs and watching an issue. One generic queue keyed by
 // kind (DRY) in the pending_actions / pending_actions_dead tables. Plain data and wire names only
 // (no SQLite), rank 0 so the cache seam (ISyncCache), the Sync service and the UI facet can all
 // include it — the same placement as the create / field-edit queue rows in CachedTicketTypes.h.
 
+#include "Types/ConnectivityTypes.h"
+
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+class ITrackerBackend;
 
 enum class PendingActionKind : unsigned char { CommentAdd, WorklogAdd, WatchAdd };
 
@@ -81,6 +86,15 @@ struct DeadPendingAction {
 struct PendingActionsSnapshot {
     std::vector<PendingActionRecord> Pending;
     std::vector<DeadPendingAction> Dead;
+};
+
+/// The tracker an action is for, latched on the thread where the user acted. The worker that sends or
+/// queues it uses this, never the focused pane: focus may have moved to another backend by then, and
+/// the action must not be sent to (or queued for) that one.
+struct PendingActionTarget {
+    std::shared_ptr<ITrackerBackend> Backend; ///< that pane's backend (sends, and re-reads after a send); may be null
+    std::string BackendKey;                   ///< the queue namespace: that pane's cache backend key
+    TrackerConnectivityState Connectivity = TrackerConnectivityState::Unknown; ///< last probe when latched
 };
 
 /// Outcome of submitting an action (PendingActionQueueService::SubmitOrQueue).
