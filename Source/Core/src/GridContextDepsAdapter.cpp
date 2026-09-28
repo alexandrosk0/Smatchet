@@ -214,8 +214,8 @@ void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
         ctx().lastSyncedJql.clear();
         // Storm damping (issue #1081): the re-arm above + the per-frame kick site retried a
         // fast-failing backend at FRAME RATE. Open a 30 s retry window instead — the kick
-        // site bails while now < syncRetryAfter (PaneSyncKickPolicy.h; mirrors the
-        // projectComponentsRetryAfter_ backoff). UI thread — same discipline as the latch.
+        // site bails while now < syncRetryAfter (PaneSyncKickPolicy.h; same 30 s as the lookup
+        // backoff). UI thread — same discipline as the latch.
         ctx().syncRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     }
 }
@@ -281,11 +281,6 @@ const TrackerField* GridContextDepsAdapter::FindFieldById(const std::string& fie
 void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() const {
     app_.requestDeferredLiveTrackerBackendSuccessNotify_();
 }
-
-// #975: THIS context's catalog, captured on the UI thread at kick time. The warm worker writes
-// projectComponentOptions_/InFlight_/RetryAfter_ under cat.availableFieldsMutex_ via this pointer —
-// never a completion-time fieldCatalog() re-resolve.
-GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx().fieldCatalog; }
 
 TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
     return app_.GetLastTrackerConnectivityState();

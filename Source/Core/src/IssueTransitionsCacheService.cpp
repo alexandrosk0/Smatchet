@@ -8,10 +8,10 @@
 #include "LearnedWorkflowPure.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
-#include "ScopeExit.h"
 #include "Tracker/TrackerError.h"
 
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,7 +22,7 @@ IssueTransitionsCacheService::IssueTransitionsCacheService(IEditMetaDeps& deps) 
 
 // Composite keys escape each free-text part (EscapeKeyPart) so two backends or issues never collide.
 std::string IssueTransitionsCacheService::LiveKey(const std::string& backendKey, const std::string& issueId) {
-    return smatchet::workflow::EscapeKeyPart(backendKey) + "|" + smatchet::workflow::EscapeKeyPart(issueId);
+    return smatchet::workflow::BuildScopedKey(backendKey, issueId);
 }
 
 std::string IssueTransitionsCacheService::LearnedMemoryKey(const std::string& backendKey,
@@ -132,51 +132,29 @@ void IssueTransitionsCacheService::InvalidateIssueTransitions(const std::string&
     live_.Invalidate(LiveKey(backendKey, issueId));
 }
 
-void IssueTransitionsCacheService::OnConnectivityRecovered() { live_.OnConnectivityRecovered(); }
+void IssueTransitionsCacheService::OnConnectivityRecovered() {
+    live_.OnConnectivityRecovered();
+    learnedLoad_.ClearBackoff();
+}
 
 void IssueTransitionsCacheService::EnsureLearnedLoaded(const std::string& backendKey) {
-    const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
-    if (!store) {
-        return; // no local store yet; try again on the next call
-    }
-    {
-        std::lock_guard<std::mutex> lock(learnedMutex_);
-        if (!learnedLoadedBackends_.insert(backendKey).second) {
-            return;
-        }
-    }
-    try {
-        // SQLite read on a worker; never hold learnedMutex_ across it or across the launch.
-        deps_.LaunchBackgroundTask([this, backendKey, store]() {
-            // Un-latch on every early exit (a throw included) so a later call retries the load.
-            bool loaded = false;
-            smatchet::ScopeExit unlatchOnFailure([this, &backendKey, &loaded]() {
-                if (!loaded) {
-                    std::lock_guard<std::mutex> lock(learnedMutex_);
-                    learnedLoadedBackends_.erase(backendKey);
-                }
-            });
-            const std::vector<LookupCacheRow> rows =
-                store->LoadLookups(backendKey, smatchet::workflow::kLearnedTransitionsKind);
+    // SQLite read on a worker; never hold learnedMutex_ across it or across the launch.
+    smatchet::offline::LoadSavedRowsOnce(
+        deps_, learnedLoad_, backendKey, smatchet::workflow::kLearnedTransitionsKind, "the saved workflow",
+        [this](const std::string& key, const std::vector<LookupCacheRow>& rows) {
             std::vector<std::pair<std::string, std::vector<TrackerFieldOption>>> parsed;
             parsed.reserve(rows.size());
             for (const LookupCacheRow& row : rows) {
                 std::vector<TrackerFieldOption> opts;
                 if (smatchet::workflow::ParseTransitionTargets(row.PayloadJson, opts) && !opts.empty()) {
-                    parsed.emplace_back(LearnedMemoryKey(backendKey, row.CacheKey), std::move(opts));
+                    parsed.emplace_back(LearnedMemoryKey(key, row.CacheKey), std::move(opts));
                 }
             }
             std::lock_guard<std::mutex> lock(learnedMutex_);
             for (auto& kv : parsed) {
                 learned_.emplace(std::move(kv.first), std::move(kv.second)); // never overwrite a newer edge
             }
-            loaded = true;
         });
-    } catch (const std::exception& ex) {
-        LOG_WARN("IssueTransitionsCacheService: loading the saved workflow did not complete: %s", ex.what());
-        std::lock_guard<std::mutex> lock(learnedMutex_);
-        learnedLoadedBackends_.erase(backendKey);
-    }
 }
 
 void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey, const TransitionsQuery& q,

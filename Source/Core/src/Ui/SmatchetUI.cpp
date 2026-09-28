@@ -28,6 +28,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Logger.h"
+#include "LookupPayloadsPure.h"
 #include "NavigationHistory.h"
 #include "ProjectResolver.h"
 #include "TicketGridModel.h"
@@ -296,9 +297,11 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
     // runs (multi-grid Slice 3 — focus moves to a freshly spun-up pane before its sync swaps
     // a backend in). FetchFieldCatalog re-reads focusedContext() and would fail spuriously.
     const std::shared_ptr<ITrackerBackend> latchedBackend = app.BackendShared();
-    return std::async(std::launch::async, [fetchCfg, activeViewJql, latchedBackend]() {
+    const std::string cacheBackendKey = app.FocusedCacheBackendKey();
+    return std::async(std::launch::async, [fetchCfg, activeViewJql, latchedBackend, cacheBackendKey]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
+        result.CacheBackendKey = cacheBackendKey;
         std::string projectKey;
         const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
         // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
@@ -338,6 +341,13 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
         result.IssueTypeMeta = std::move(catalog.IssueTypeMeta);
         result.Users = std::move(catalog.Users);
         result.Warning = std::move(catalog.Warning);
+        // Serialized here, off the UI thread, for the offline copy of the roster (Pillar 6).
+        if (!result.Users.empty()) {
+            result.UsersPayloadJson = smatchet::lookup::SerializeUsers(result.Users);
+            if (result.UsersPayloadJson.empty()) {
+                LOG_WARN("SmatchetUI: user roster too large to save for offline use (%zu users)", result.Users.size());
+            }
+        }
         return result;
     });
 }
@@ -1448,6 +1458,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
+        // Pillar 6: a pane with no users yet shows the roster saved by an earlier session until (or
+        // unless) this fetch brings a live one.
+        app.SeedAvailableUsersFromStoreAsync();
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
@@ -1478,6 +1491,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 // Push the fetched user list into the AppController cache so JQL
                 // autocomplete can suggest assignees / reporters by display name.
                 app.SetAvailableUsers(std::move(result.Users));
+                app.SaveAvailableUsersForOfflineAsync(result.CacheBackendKey, std::move(result.UsersPayloadJson));
                 d.fieldCatalogWarning = result.Warning;
             } else if (result.Error.find("Tracker backend is not initialized") != std::string::npos) {
                 d.fieldCatalogLoading = false;

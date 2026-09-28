@@ -234,6 +234,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/LearnedWorkflowPure.cpp"
+        # Offline lookups (offline-first S11): EditMetaCacheService saves per-type permissions
+        # (LookupPayloadsPure); the component cache service + its option codec.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/LookupPayloadsPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldOptionsJsonPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/ProjectComponentsCacheService.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -311,6 +316,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/OfflineFirstPure.test.cpp
         Core/KeyedLookupCache.test.cpp
         Core/CatalogOfflinePolicyPure.test.cpp
+        # Quality Pillar 6 lookups (offline-first S11): option / roster / permission payloads and the
+        # per-project component cache on fakes.
+        Core/FieldOptionsJsonPure.test.cpp
+        Core/LookupPayloadsPure.test.cpp
+        Core/ProjectComponentsCacheService.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -1222,6 +1232,9 @@ add_executable(SmatchetTests
     Core/OfflineFirstPure.test.cpp
     Core/KeyedLookupCache.test.cpp
     Core/CatalogOfflinePolicyPure.test.cpp
+    Core/FieldOptionsJsonPure.test.cpp
+    Core/LookupPayloadsPure.test.cpp
+    Core/ProjectComponentsCacheService.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
@@ -1430,6 +1443,11 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/LearnedWorkflowPure.cpp"
+    # Offline lookups (offline-first S11): the lookup payload codecs (EditMetaCacheService, the
+    # component cache, FieldCatalogCache's option codec) + the per-project component cache service.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/LookupPayloadsPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldOptionsJsonPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/ProjectComponentsCacheService.cpp"
     # ConnectivityMonitorService (AppController god-object decomposition Phase 3). Pulls
     # ConfigManager + ITrackerConnectivity (header-only) + RedactHttpBodyForLog / ResolveSslConfig
     # (TrackerHttpPure.cpp / TrackerHttpUtils.cpp, both already linked into this target). cpr/ImGui/
@@ -2055,9 +2073,10 @@ set(_smatchet_pure_sync_test_files
     # state + a std::async probe future; no LocalCacheManager. Replay-timer pushes route through the
     # deps interface (recorded in the fake), never a Cache*.
     Core/ConnectivityMonitorService.test.cpp
-    # IssueTransitionsCacheService (Pillar 6 status combo) reaches its lookup store through
-    # ILookupCache/FakeLookupCache only.
+    # IssueTransitionsCacheService (Pillar 6 status combo) and ProjectComponentsCacheService (S11)
+    # reach their lookup store through ILookupCache/FakeLookupCache only.
     Core/IssueTransitionsCacheService.test.cpp
+    Core/ProjectComponentsCacheService.test.cpp
     support/FakeEditMetaDeps.h
     support/FakeLookupCache.h
     support/FakeFieldEditDeps.h

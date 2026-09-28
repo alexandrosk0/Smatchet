@@ -65,6 +65,7 @@
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
 #include "IssueTransitionsCacheService.h"
+#include "ProjectComponentsCacheService.h"
 #include "ConnectivityMonitorService.h"
 #include "AttachmentAppUpdateService.h"
 #include "TicketSyncService.h"
@@ -222,6 +223,11 @@ void AppController::WireCoreServices() {
     // InvalidateIssueTransitions after a field edit). Holds the deps adapter by reference.
     if (!transitions_) {
         transitions_ = std::make_unique<IssueTransitionsCacheService>(*depsAdapter_);
+    }
+    // ProjectComponentsCacheService — per-project component options for the grid's components editor
+    // (Pillar 6: saved for offline use). The editor and the post-sync warm reach it from the first tick.
+    if (!components_) {
+        components_ = std::make_unique<ProjectComponentsCacheService>(*depsAdapter_);
     }
     // FieldEditPipelineService — every field-edit delegator (SubmitFieldEdit, SubmitFieldEditNetworkOnly,
     // TryPrepareOfflineFieldEdit, ApplyFieldEditResult) needs a live target from the first tick (Phase 2).

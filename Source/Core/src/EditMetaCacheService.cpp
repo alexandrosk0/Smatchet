@@ -3,11 +3,12 @@
 #include "TrackerFieldPayloadPure.h"
 
 #include "IEditMetaDeps.h"
-#include "GridLiveContext.h" // full GridContextFieldCatalog definition (#975 per-project component write)
+#include "ILookupCache.h"
 #include "ITrackerBackend.h"
-#include "ITrackerFieldCatalog.h" // full def: FetchIssueEditMeta / FetchProjectComponents
+#include "ITrackerFieldCatalog.h" // full def: FetchIssueEditMeta
+#include "LearnedWorkflowPure.h"  // BuildScopedKey (in-flight key)
+#include "LookupPayloadsPure.h"   // kEditMetaTypeKind + the permissions payload codec
 #include "Config/ConfigManager.h"
-#include "Tracker/ProjectResolver.h" // smatchet::ExtractIssueKeyPrefix
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldSchema.h"
 #include "CachedTicketTypes.h"
@@ -20,6 +21,8 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,127 +55,113 @@ std::string EditMetaCacheService::ResolveIssueTypeKeyForIssue(const std::string&
     return ToLowerAsciiCopy(TrimCopy(it->GetFieldValue("issuetype")));
 }
 
+const EditMetaCacheService::IssueEditMetaCache*
+EditMetaCacheService::FindLoaded(const EditMetaByBackend& maps, const std::string& backendKey, const std::string& id) {
+    const auto backendIt = maps.find(backendKey);
+    if (backendIt == maps.end()) {
+        return nullptr;
+    }
+    const auto it = backendIt->second.find(id);
+    return (it != backendIt->second.end() && it->second.loaded) ? &it->second : nullptr;
+}
+
+std::string EditMetaCacheService::InFlightKey(const std::string& backendKey, const std::string& issueId) {
+    return smatchet::workflow::BuildScopedKey(backendKey, issueId);
+}
+
 void EditMetaCacheService::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
     std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
     if (!backend) {
         return;
     }
+    const std::string backendKey = deps_.CacheBackendKey();
+    EnsureSavedTypesLoaded(backendKey);
     const auto ticketsSnap = deps_.GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
     std::vector<std::pair<std::string, std::string>> representatives;
     std::unordered_set<std::string> seenTypes;
     seenTypes.reserve(tickets.size());
-    // Distinct Jira project keys (issue-key prefixes) across the active tickets — warmed below into
-    // fieldCatalog().projectComponentOptions_ so the components MultiSelect editor can scope per row's own project.
-    std::vector<std::string> componentProjectKeys;
-    std::unordered_set<std::string> seenProjectKeys;
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         for (const auto& ticket : tickets) {
             if (ticket.id.empty()) {
                 continue;
             }
-            const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-            if (!projectKey.empty() && seenProjectKeys.insert(projectKey).second) {
-                componentProjectKeys.push_back(projectKey);
-            }
             const std::string typeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
-            if (typeKey.empty()) {
+            if (typeKey.empty() || !seenTypes.insert(typeKey).second) {
                 continue;
             }
-            if (seenTypes.find(typeKey) != seenTypes.end()) {
+            // A restored (not live) entry still gets one live fetch per session.
+            const IssueEditMetaCache* typeMeta = FindLoaded(issueTypeEditMeta_, backendKey, typeKey);
+            if (typeMeta != nullptr && typeMeta->live) {
                 continue;
             }
-            const auto typeIt = issueTypeEditMeta_.find(typeKey);
-            if (typeIt != issueTypeEditMeta_.end() && typeIt->second.loaded) {
-                seenTypes.insert(typeKey);
-                continue;
-            }
-            seenTypes.insert(typeKey);
             representatives.push_back({typeKey, ticket.id});
         }
     }
-    if (representatives.empty() && componentProjectKeys.empty()) {
+    if (representatives.empty()) {
         return;
     }
-    // Capture the KICK-TIME catalog by pointer (#975, sibling of EnsureProjectComponentsLoaded):
-    // the worker warms projectComponentsInFlight_ markers (one per project key), so a
-    // completion-time fieldCatalog() re-resolve under a focus switch would leak the kick-time
-    // context's markers ("Loading components…" forever) and write the completion-time context.
-    // Dangle-safety is identical to the lazy path: the catalog is a subobject of a GridLiveContext
-    // that the husk graveyard (retiredContexts_) keeps alive until ~AppController.
-    GridContextFieldCatalog* catPtr = deps_.KickTimeFieldCatalog();
-    deps_.LaunchBackgroundTask([this, representatives, componentProjectKeys, backend, catPtr,
-                                trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
-        WarmIssueTypeEditMetaWorker(representatives, componentProjectKeys, backend, catPtr,
-                                    std::move(trackerCfgForWorker));
-    });
+    try {
+        deps_.LaunchBackgroundTask(
+            [this, representatives, backend, backendKey, cfg = std::move(trackerCfgForWorker)]() {
+                WarmIssueTypeEditMetaWorker(representatives, backend, backendKey, cfg);
+            });
+    } catch (const std::exception& ex) {
+        LOG_WARN("EditMetaCacheService: issue-type editmeta warm did not start: %s", ex.what());
+    }
 }
 
 void EditMetaCacheService::WarmIssueTypeEditMetaWorker(
     const std::vector<std::pair<std::string, std::string>>& representatives,
-    const std::vector<std::string>& componentProjectKeys, const std::shared_ptr<ITrackerBackend>& backend,
-    GridContextFieldCatalog* catPtr, TrackerConfig trackerCfgForWorker) {
+    const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
+    const TrackerConfig& trackerCfgForWorker) {
     for (const auto& pair : representatives) {
         if (deps_.IsShuttingDown()) {
             break;
         }
         // Fire-and-forget warmup: an editmeta fetch failure here is intentionally ignored (the
         // issue stays optimistic) — discard the VoidResult.
-        EnsureIssueEditMetaLoaded(pair.second, nullptr, &trackerCfgForWorker);
+        EnsureIssueEditMetaLoadedFor(backend, backendKey, pair.second, pair.first, &trackerCfgForWorker);
     }
+}
 
-    ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
-    if (catalog == nullptr) {
+void EditMetaCacheService::EnsureSavedTypesLoaded(const std::string& backendKey) {
+    // SQLite read and JSON parse on a worker; editMetaMutex_ is taken only to apply the parsed rows.
+    smatchet::offline::LoadSavedRowsOnce(
+        deps_, savedTypesLoad_, backendKey, smatchet::lookup::kEditMetaTypeKind, "saved edit permissions",
+        [this](const std::string& key, const std::vector<LookupCacheRow>& rows) {
+            EditMetaById restored;
+            restored.reserve(rows.size());
+            for (const LookupCacheRow& row : rows) {
+                IssueEditMetaCache entry;
+                entry.loaded = !row.CacheKey.empty() &&
+                               smatchet::lookup::ParseEditPermissions(row.PayloadJson, entry.fieldCanEdit);
+                if (entry.loaded) {
+                    restored.emplace(row.CacheKey, std::move(entry)); // live stays false: a saved copy
+                }
+            }
+            std::lock_guard<std::mutex> lock(editMetaMutex_);
+            EditMetaById& byType = issueTypeEditMeta_[key];
+            for (auto& kv : restored) {
+                // emplace never replaces an entry fetched live meanwhile.
+                byType.emplace(kv.first, std::move(kv.second));
+            }
+        });
+}
+
+void EditMetaCacheService::SaveTypeEditMeta(const std::string& backendKey, const std::string& issueTypeKey,
+                                            const std::unordered_map<std::string, bool>& fieldCanEdit) {
+    const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
+    if (!store) {
         return;
     }
-    // Operate on the KICK-TIME catalog captured by the caller (#975) — NOT a completion-time
-    // fieldCatalog() re-resolve, which would target whatever context is focused when the worker
-    // finishes and leak this run's projectComponentsInFlight_ markers on the kick-time context.
-    // The retired-context husk graveyard (retiredContexts_) keeps catPtr valid for the whole run.
-    GridContextFieldCatalog& cat = *catPtr;
-    for (const auto& projectKey : componentProjectKeys) {
-        if (deps_.IsShuttingDown()) {
-            break;
-        }
-        {
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            if (cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end()) {
-                continue; // already warmed
-            }
-            // Respect a backoff recorded by a previous failed fetch (lazy or warm).
-            const auto retryIt = cat.projectComponentsRetryAfter_.find(projectKey);
-            if (retryIt != cat.projectComponentsRetryAfter_.end() &&
-                std::chrono::steady_clock::now() < retryIt->second) {
-                continue;
-            }
-            // Join the in-flight set so a concurrent lazy EnsureProjectComponentsLoaded for the
-            // same project skips its own fetch (and vice-versa). Marker erased on EVERY exit
-            // below (shutdown, fetch-fail, success), mirroring the lazy path's discipline.
-            if (!cat.projectComponentsInFlight_.insert(projectKey).second) {
-                continue; // a lazy fetch for this project is already running
-            }
-        }
-        if (deps_.IsShuttingDown()) {
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            cat.projectComponentsInFlight_.erase(projectKey);
-            break;
-        }
-        // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
-        auto componentsResult = catalog->FetchProjectComponents(trackerCfgForWorker, projectKey);
-        if (!componentsResult) {
-            LOG_DEBUG("EditMetaCacheService: per-project component warm skipped for %s: %s", projectKey.c_str(),
-                      componentsResult.error().Detail.c_str());
-            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-            // Same backoff as the lazy path so a later open doesn't immediately re-hammer.
-            cat.projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-            cat.projectComponentsInFlight_.erase(projectKey); // allow a later lazy open to retry
-            continue;
-        }
-        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-        cat.projectComponentOptions_[projectKey] = std::move(componentsResult.value().Options);
-        cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
-        cat.projectComponentsInFlight_.erase(projectKey);
+    try {
+        store->UpsertLookup(backendKey, smatchet::lookup::kEditMetaTypeKind, issueTypeKey,
+                            smatchet::lookup::SerializeEditPermissions(fieldCanEdit));
+    } catch (const std::exception& ex) {
+        LOG_WARN("EditMetaCacheService: saving edit permissions for type %s failed: %s", issueTypeKey.c_str(),
+                 ex.what());
     }
 }
 
@@ -183,17 +172,19 @@ bool EditMetaCacheService::CanEditFieldForIssue(const std::string& issueId, cons
         return true;
     }
     const bool haveOverride = issueTypeKeyOverride != nullptr && !issueTypeKeyOverride->empty();
-    return CanEditFieldImpl(issueId, fieldId, fieldMeta, haveOverride ? issueTypeKeyOverride : nullptr);
+    return CanEditFieldImpl(deps_.CacheBackendKey(), issueId, fieldId, fieldMeta,
+                            haveOverride ? issueTypeKeyOverride : nullptr);
 }
 
-bool EditMetaCacheService::CanEditFieldForIssueWithType(const std::string& issueId, const std::string& fieldId,
-                                                        const TrackerField* fieldMeta,
+bool EditMetaCacheService::CanEditFieldForIssueWithType(const std::string& backendKey, const std::string& issueId,
+                                                        const std::string& fieldId, const TrackerField* fieldMeta,
                                                         const std::string& issueTypeKey) const {
-    return CanEditFieldImpl(issueId, fieldId, fieldMeta, &issueTypeKey);
+    return CanEditFieldImpl(backendKey, issueId, fieldId, fieldMeta, &issueTypeKey);
 }
 
-bool EditMetaCacheService::CanEditFieldImpl(const std::string& issueId, const std::string& fieldId,
-                                            const TrackerField* fieldMeta, const std::string* explicitTypeKey) const {
+bool EditMetaCacheService::CanEditFieldImpl(const std::string& backendKey, const std::string& issueId,
+                                            const std::string& fieldId, const TrackerField* fieldMeta,
+                                            const std::string* explicitTypeKey) const {
     if (issueId.empty() || fieldId.empty()) {
         return true;
     }
@@ -212,32 +203,20 @@ bool EditMetaCacheService::CanEditFieldImpl(const std::string& issueId, const st
     }
     const std::string issueTypeKey = explicitTypeKey ? *explicitTypeKey : ResolveIssueTypeKeyForIssue(issueId);
     std::lock_guard<std::mutex> lock(editMetaMutex_);
-    const auto it = issueEditMeta_.find(issueId);
-    if (it == issueEditMeta_.end() || !it->second.loaded) {
-        if (!issueTypeKey.empty()) {
-            const auto byType = issueTypeEditMeta_.find(issueTypeKey);
-            if (byType != issueTypeEditMeta_.end() && byType->second.loaded) {
-                const auto typeFieldIt = byType->second.fieldCanEdit.find(fieldKey);
-                if (typeFieldIt == byType->second.fieldCanEdit.end()) {
-                    // Jira often omits `priority` (e.g. Epic) and `components` (cross-project / filter-id
-                    // views) from editmeta while PUT still accepts them; force-editable carve-out. See
-                    // AppController::CanEditFieldForIssue doc comment.
-                    if (fieldKey == "priority" || fieldKey == "components") {
-                        return true;
-                    }
-                    return false;
-                }
-                return typeFieldIt->second;
-            }
-        }
+    // The issue's own editmeta, else its issue type's (live or restored), else optimistic.
+    const IssueEditMetaCache* loaded = FindLoaded(issueEditMeta_, backendKey, issueId);
+    if (loaded == nullptr && !issueTypeKey.empty()) {
+        loaded = FindLoaded(issueTypeEditMeta_, backendKey, issueTypeKey);
+    }
+    if (loaded == nullptr) {
         return true;
     }
-    const auto fieldIt = it->second.fieldCanEdit.find(fieldKey);
-    if (fieldIt == it->second.fieldCanEdit.end()) {
-        if (fieldKey == "priority" || fieldKey == "components") {
-            return true;
-        }
-        return false;
+    const auto fieldIt = loaded->fieldCanEdit.find(fieldKey);
+    if (fieldIt == loaded->fieldCanEdit.end()) {
+        // Jira often omits `priority` (e.g. Epic) and `components` (cross-project / filter-id views)
+        // from editmeta while PUT still accepts them; force-editable carve-out. See
+        // AppController::CanEditFieldForIssue doc comment.
+        return fieldKey == "priority" || fieldKey == "components";
     }
     return fieldIt->second;
 }
@@ -249,21 +228,21 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& is
     if (!backend || issueId.empty()) {
         return VoidOk();
     }
+    const std::string backendKey = deps_.CacheBackendKey();
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        const auto it = issueEditMeta_.find(issueId);
-        if (it != issueEditMeta_.end() && it->second.loaded) {
-            return VoidOk();
+        if (FindLoaded(issueEditMeta_, backendKey, issueId) != nullptr) {
+            return VoidOk(); // skip the issue-type scan below
         }
     }
     const std::string issueTypeKey = (issueTypeKeyOverride && !issueTypeKeyOverride->empty())
                                          ? *issueTypeKeyOverride
                                          : ResolveIssueTypeKeyForIssue(issueId);
-    return EnsureIssueEditMetaLoadedFor(backend, issueId, issueTypeKey, configSnapshot);
+    return EnsureIssueEditMetaLoadedFor(backend, backendKey, issueId, issueTypeKey, configSnapshot);
 }
 
 VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_ptr<ITrackerBackend>& backend,
-                                                              const std::string& issueId,
+                                                              const std::string& backendKey, const std::string& issueId,
                                                               const std::string& issueTypeKey,
                                                               const TrackerConfig* configSnapshot) {
     if (!backend || issueId.empty()) {
@@ -271,16 +250,15 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_
     }
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        const auto it = issueEditMeta_.find(issueId);
-        if (it != issueEditMeta_.end() && it->second.loaded) {
+        if (FindLoaded(issueEditMeta_, backendKey, issueId) != nullptr) {
             return VoidOk();
         }
-    }
-    if (!issueTypeKey.empty()) {
-        std::lock_guard<std::mutex> lock(editMetaMutex_);
-        const auto typeIt = issueTypeEditMeta_.find(issueTypeKey);
-        if (typeIt != issueTypeEditMeta_.end() && typeIt->second.loaded) {
-            issueEditMeta_[issueId] = typeIt->second;
+        // A type entry fetched this session stands in for the issue. A restored one does not: it keeps
+        // answering CanEdit* offline, but a reachable tracker is asked for the issue's own editmeta.
+        const IssueEditMetaCache* typeMeta =
+            issueTypeKey.empty() ? nullptr : FindLoaded(issueTypeEditMeta_, backendKey, issueTypeKey);
+        if (typeMeta != nullptr && typeMeta->live) {
+            issueEditMeta_[backendKey][issueId] = *typeMeta;
             return VoidOk();
         }
     }
@@ -306,6 +284,7 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_
     // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
     // CanEditFieldForIssue deny every field (missing keys) instead of staying optimistic offline.
     cache.loaded = ok;
+    cache.live = ok;
     if (ok) {
         cache.fieldCanEdit = std::move(meta);
     } else {
@@ -314,15 +293,18 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_
     }
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        issueEditMeta_[issueId] = cache;
+        issueEditMeta_[backendKey][issueId] = cache;
         if (ok && !issueTypeKey.empty()) {
-            issueTypeEditMeta_[issueTypeKey] = cache;
+            issueTypeEditMeta_[backendKey][issueTypeKey] = cache;
         }
     }
 
     if (!ok) {
         LOG_WARN("EditMetaCacheService: editmeta fetch failed issue=%s err=%s", issueId.c_str(), fetchError.c_str());
         return VoidResult::Err(fetchError);
+    }
+    if (!issueTypeKey.empty()) {
+        SaveTypeEditMeta(backendKey, issueTypeKey, cache.fieldCanEdit); // this thread made a network call: a worker
     }
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     return VoidOk();
@@ -333,25 +315,36 @@ VoidResult EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId
     const std::string issueTypeKey = (issueTypeKeyOverride && !issueTypeKeyOverride->empty())
                                          ? *issueTypeKeyOverride
                                          : ResolveIssueTypeKeyForIssue(issueId);
-    return RefreshIssueEditMetaFor(deps_.BackendShared(), issueId, issueTypeKey);
+    return RefreshIssueEditMetaFor(deps_.BackendShared(), deps_.CacheBackendKey(), issueId, issueTypeKey);
 }
 
 VoidResult EditMetaCacheService::RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend,
-                                                         const std::string& issueId, const std::string& issueTypeKey) {
-    InvalidateIssueEditMeta(issueId);
+                                                         const std::string& backendKey, const std::string& issueId,
+                                                         const std::string& issueTypeKey) {
+    InvalidateIssueEditMetaFor(backendKey, issueId);
     if (!issueTypeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        issueTypeEditMeta_.erase(issueTypeKey);
+        const auto backendIt = issueTypeEditMeta_.find(backendKey);
+        if (backendIt != issueTypeEditMeta_.end()) {
+            backendIt->second.erase(issueTypeKey);
+        }
     }
-    return EnsureIssueEditMetaLoadedFor(backend, issueId, issueTypeKey);
+    return EnsureIssueEditMetaLoadedFor(backend, backendKey, issueId, issueTypeKey);
 }
 
 void EditMetaCacheService::InvalidateIssueEditMeta(const std::string& issueId) {
+    InvalidateIssueEditMetaFor(deps_.CacheBackendKey(), issueId);
+}
+
+void EditMetaCacheService::InvalidateIssueEditMetaFor(const std::string& backendKey, const std::string& issueId) {
     if (issueId.empty()) {
         return;
     }
     std::lock_guard<std::mutex> lock(editMetaMutex_);
-    issueEditMeta_.erase(issueId);
+    const auto backendIt = issueEditMeta_.find(backendKey);
+    if (backendIt != issueEditMeta_.end()) {
+        backendIt->second.erase(issueId);
+    }
 }
 
 void EditMetaCacheService::PruneEditMetaCacheToActiveTickets() {
@@ -380,19 +373,23 @@ void EditMetaCacheService::PruneEditMetaCacheToActiveTickets() {
         }
     }
 
+    // The union holds bare ids (the snapshots do not carry their pane's backend namespace), so an id
+    // is kept in every namespace where it is active in some pane: a prune may keep a little extra,
+    // never drop an entry an open editor uses.
     std::lock_guard<std::mutex> lock(editMetaMutex_);
-    for (auto it = issueEditMeta_.begin(); it != issueEditMeta_.end();) {
-        if (keep.find(it->first) == keep.end()) {
-            it = issueEditMeta_.erase(it);
-        } else {
-            ++it;
+    for (auto& byBackend : issueEditMeta_) {
+        EditMetaById& byId = byBackend.second;
+        for (auto it = byId.begin(); it != byId.end();) {
+            it = keep.find(it->first) == keep.end() ? byId.erase(it) : std::next(it);
         }
     }
-    for (auto it = issueTypeEditMeta_.begin(); it != issueTypeEditMeta_.end();) {
-        if (keepTypes.find(it->first) == keepTypes.end()) {
-            it = issueTypeEditMeta_.erase(it);
-        } else {
-            ++it;
+    for (auto& byBackend : issueTypeEditMeta_) {
+        EditMetaById& byType = byBackend.second;
+        for (auto it = byType.begin(); it != byType.end();) {
+            // A restored entry is kept: it is loaded once per backend, so pruning it would lose the
+            // type's saved permissions for the rest of the session.
+            const bool drop = it->second.live && keepTypes.find(it->first) == keepTypes.end();
+            it = drop ? byType.erase(it) : std::next(it);
         }
     }
 }
@@ -405,35 +402,54 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
     if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
         return; // Pillar 6: no fetch while offline; the issue stays optimistic
     }
+    const std::string backendKey = deps_.CacheBackendKey();
+    const std::string inFlightKey = InFlightKey(backendKey, issueId);
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        const auto it = issueEditMeta_.find(issueId);
-        if (it != issueEditMeta_.end() && it->second.loaded) {
+        const auto backendIt = issueEditMeta_.find(backendKey);
+        if (backendIt != issueEditMeta_.end()) {
+            const auto it = backendIt->second.find(issueId);
+            if (it != backendIt->second.end() && it->second.loaded) {
+                return;
+            }
+            if (it != backendIt->second.end() && std::chrono::steady_clock::now() < it->second.retryAfter) {
+                return; // failed recently — back off instead of refetching every frame
+            }
+        }
+        if (!issueEditMetaWarmupInFlight_.insert(inFlightKey).second) {
             return;
         }
-        if (it != issueEditMeta_.end() && std::chrono::steady_clock::now() < it->second.retryAfter) {
-            return; // failed recently — back off instead of refetching every frame
-        }
-        if (issueEditMetaWarmupInFlight_.find(issueId) != issueEditMetaWarmupInFlight_.end()) {
-            return;
-        }
-        issueEditMetaWarmupInFlight_.insert(issueId);
     }
 
+    // Resolved now, on the UI thread, with the backend and namespace above: the worker loads the
+    // pane that kicked it even if focus moves before it runs.
+    const std::string issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
     const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
     try {
-        deps_.LaunchBackgroundTask([this, issueId, warmupTrackerCfg]() {
+        deps_.LaunchBackgroundTask([this, backend, backendKey, issueId, issueTypeKey, inFlightKey, warmupTrackerCfg]() {
             // Clear the in-flight marker on every exit, a throw included, so a later frame can retry.
-            smatchet::ScopeExit clearInFlight([this, &issueId]() {
+            smatchet::ScopeExit clearInFlight([this, &inFlightKey]() {
                 std::lock_guard<std::mutex> lock(editMetaMutex_);
-                issueEditMetaWarmupInFlight_.erase(issueId);
+                issueEditMetaWarmupInFlight_.erase(inFlightKey);
             });
             // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
-            EnsureIssueEditMetaLoaded(issueId, nullptr, &warmupTrackerCfg);
+            EnsureIssueEditMetaLoadedFor(backend, backendKey, issueId, issueTypeKey, &warmupTrackerCfg);
         });
     } catch (const std::exception& ex) {
         LOG_WARN("EditMetaCacheService: editmeta warmup for %s did not start: %s", issueId.c_str(), ex.what());
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        issueEditMetaWarmupInFlight_.erase(issueId);
+        issueEditMetaWarmupInFlight_.erase(inFlightKey);
     }
+}
+
+void EditMetaCacheService::OnConnectivityRecovered() {
+    {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        for (auto& byBackend : issueEditMeta_) {
+            for (auto& kv : byBackend.second) {
+                kv.second.retryAfter = std::chrono::steady_clock::time_point();
+            }
+        }
+    }
+    savedTypesLoad_.ClearBackoff();
 }

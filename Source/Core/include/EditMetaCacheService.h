@@ -10,10 +10,11 @@
 // Lifetime contract mirrors OfflineQueueService: AppController owns the service via
 // `std::unique_ptr` and outlives it; background warm workers launched via
 // `deps_.LaunchBackgroundTask` are joined in `~AppController` before the deps adapter dies.
-// #975: the warm worker captures the KICK-TIME `GridContextFieldCatalog*` (via
-// `deps_.KickTimeFieldCatalog()` on the UI thread at kick time) and writes the per-project
-// component-option maps under that catalog's OWN `availableFieldsMutex_` — a different mutex than
-// `editMetaMutex_`. It never re-resolves the catalog at write time.
+// Quality Pillar 6 (offline-first): both caches are keyed by the backend namespace (two trackers
+// never share an issue id's or an issue type's permissions), and every per-type result a fetch
+// produces is saved to the lookup cache (kind `editmeta_type`). The saved rows are loaded once per
+// backend by the warm, so edit permissions still apply while the tracker is unreachable. A restored
+// entry answers CanEdit* but never stands in for a live fetch when the tracker is reachable.
 
 #include <chrono>
 #include <memory>
@@ -26,11 +27,11 @@
 
 #include "Config/ConfigManager.h" // for TrackerConfig (by-value parameters + ConfigManager::Load)
 #include "SmatchetResult.h"       // VoidResult (editmeta load/refresh — #21 outError → Result flip)
+#include "StoreLoadLatch.h"
 
 class IEditMetaDeps;
 class ITrackerBackend;
 struct TrackerField;
-struct GridContextFieldCatalog;
 
 class EditMetaCacheService {
   public:
@@ -67,53 +68,76 @@ class EditMetaCacheService {
                                          const TrackerConfig* configSnapshot = nullptr);
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
 
-    // Pane-bound variants for a field edit (#2260): the edit's own backend and issue type, never the
-    // focused pane's. An empty `issueTypeKey` skips the per-issue-type fallback.
-    VoidResult EnsureIssueEditMetaLoadedFor(const std::shared_ptr<ITrackerBackend>& backend, const std::string& issueId,
+    // Pane-bound variants for a field edit (#2260): the edit's own backend, backend namespace and issue
+    // type, never the focused pane's. An empty `issueTypeKey` skips the per-issue-type fallback.
+    VoidResult EnsureIssueEditMetaLoadedFor(const std::shared_ptr<ITrackerBackend>& backend,
+                                            const std::string& backendKey, const std::string& issueId,
                                             const std::string& issueTypeKey,
                                             const TrackerConfig* configSnapshot = nullptr);
-    VoidResult RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend, const std::string& issueId,
-                                       const std::string& issueTypeKey);
-    bool CanEditFieldForIssueWithType(const std::string& issueId, const std::string& fieldId,
-                                      const TrackerField* fieldMeta, const std::string& issueTypeKey) const;
+    VoidResult RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
+                                       const std::string& issueId, const std::string& issueTypeKey);
+    bool CanEditFieldForIssueWithType(const std::string& backendKey, const std::string& issueId,
+                                      const std::string& fieldId, const TrackerField* fieldMeta,
+                                      const std::string& issueTypeKey) const;
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
-    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
+    /** Load the saved per-type permissions once per backend, then fetch one representative issue per
+     * issue type that has no live entry yet.
+     * @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. Called
      * every frame for the active row, so it does nothing while the tracker is offline and backs off
      * after a failed fetch (Quality Pillar 6). */
     void WarmIssueEditMetaAsync(const std::string& issueId);
+    /// Connectivity came back: clear every failure backoff so the next warm retries.
+    void OnConnectivityRecovered();
 
   private:
     struct IssueEditMetaCache {
         bool loaded = false;
+        /// Fetched in this session. False for a per-type entry restored from the lookup cache.
+        bool live = false;
         /** Field id -> backend allows an update operation (set/add/remove). */
         std::unordered_map<std::string, bool> fieldCanEdit;
         /** After a failed fetch: the per-frame warmup waits until this time before trying again. */
         std::chrono::steady_clock::time_point retryAfter{};
     };
+    /// Issue id (or lower-cased issue type) -> editmeta, for one backend namespace.
+    using EditMetaById = std::unordered_map<std::string, IssueEditMetaCache>;
+    /// Backend namespace -> EditMetaById.
+    using EditMetaByBackend = std::unordered_map<std::string, EditMetaById>;
 
-    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the
-    /// representative issues, then warm per-project component options. Runs off the UI thread.
-    /// `catPtr` is the KICK-TIME context catalog captured by the caller (#975) — the worker must
-    /// mutate THAT context's projectComponentsInFlight_ markers, not a completion-time re-resolve.
+    /// The loaded entry for (backendKey, id), or null. Caller holds editMetaMutex_.
+    static const IssueEditMetaCache* FindLoaded(const EditMetaByBackend& maps, const std::string& backendKey,
+                                                const std::string& id);
+    static std::string InFlightKey(const std::string& backendKey, const std::string& issueId);
+    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the representative
+    /// issues ({issue type, issue id} pairs). Runs off the UI thread.
     void WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
-                                     const std::vector<std::string>& componentProjectKeys,
-                                     const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
-                                     TrackerConfig trackerCfgForWorker);
+                                     const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
+                                     const TrackerConfig& trackerCfgForWorker);
+    /// Seed issueTypeEditMeta_ from the lookup cache once per backend, on a worker; never overrides an
+    /// entry fetched meanwhile.
+    void EnsureSavedTypesLoaded(const std::string& backendKey);
+    /// Save one issue type's permissions to the lookup cache. Worker threads only (disk write).
+    void SaveTypeEditMeta(const std::string& backendKey, const std::string& issueTypeKey,
+                          const std::unordered_map<std::string, bool>& fieldCanEdit);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
+    void InvalidateIssueEditMetaFor(const std::string& backendKey, const std::string& issueId);
     /// CanEditFieldForIssue body. `explicitTypeKey` null → the issue type is resolved from the focused pane.
-    bool CanEditFieldImpl(const std::string& issueId, const std::string& fieldId, const TrackerField* fieldMeta,
-                          const std::string* explicitTypeKey) const;
+    bool CanEditFieldImpl(const std::string& backendKey, const std::string& issueId, const std::string& fieldId,
+                          const TrackerField* fieldMeta, const std::string* explicitTypeKey) const;
 
     IEditMetaDeps& deps_;
 
     // editMetaMutex_ guards exactly the three containers below; the four move together as a unit.
     // mutable because CanEditFieldForIssue is const and only reads the maps.
     mutable std::mutex editMetaMutex_;
-    std::unordered_map<std::string, IssueEditMetaCache> issueEditMeta_;
-    std::unordered_map<std::string, IssueEditMetaCache> issueTypeEditMeta_;
+    EditMetaByBackend issueEditMeta_;
+    EditMetaByBackend issueTypeEditMeta_;
+    /// InFlightKey(backend, issue) of every running per-issue warmup.
     std::unordered_set<std::string> issueEditMetaWarmupInFlight_;
+    /// Backends whose saved per-type rows were loaded (or are loading).
+    smatchet::offline::StoreLoadLatch savedTypesLoad_;
 };

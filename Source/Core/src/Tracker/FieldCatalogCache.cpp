@@ -1,5 +1,6 @@
 #include "FieldCatalogCache.h"
 
+#include "FieldOptionsJsonPure.h"
 #include "TimeNowPure.h"
 
 #include "ConfigManager.h"
@@ -77,42 +78,6 @@ std::string FieldCatalogCachePath() {
     return base + "smatchet_field_catalog_cache.json";
 }
 
-nlohmann::json OptionToJson(const TrackerFieldOption& o) {
-    nlohmann::json j = nlohmann::json::object();
-    j["id"] = o.Id;
-    j["value"] = o.Value;
-    j["secondary"] = o.SecondaryValue;
-    j["payload_json"] = o.PayloadJson;
-    j["disabled"] = o.Disabled;
-    nlohmann::json ch = nlohmann::json::array();
-    std::transform(o.Children.begin(), o.Children.end(), std::back_inserter(ch),
-                   [](const auto& c) { return OptionToJson(c); });
-    j["children"] = std::move(ch);
-    return j;
-}
-
-bool OptionFromJson(const nlohmann::json& j, TrackerFieldOption& out) {
-    if (!j.is_object()) {
-        return false;
-    }
-    out.Id = j.value("id", std::string());
-    out.Value = j.value("value", std::string());
-    out.SecondaryValue = j.value("secondary", std::string());
-    out.PayloadJson = j.value("payload_json", std::string());
-    out.Disabled = j.value("disabled", false);
-    out.Children.clear();
-    const auto it = j.find("children");
-    if (it != j.end() && it->is_array()) {
-        for (const auto& el : *it) {
-            TrackerFieldOption child;
-            if (OptionFromJson(el, child)) {
-                out.Children.push_back(std::move(child));
-            }
-        }
-    }
-    return true;
-}
-
 nlohmann::json FieldToJson(const TrackerField& f) {
     nlohmann::json j = nlohmann::json::object();
     j["id"] = f.Id;
@@ -129,7 +94,7 @@ nlohmann::json FieldToJson(const TrackerField& f) {
     j["allowed_values"] = f.AllowedValues;
     nlohmann::json opts = nlohmann::json::array();
     std::transform(f.AllowedValueOptions.begin(), f.AllowedValueOptions.end(), std::back_inserter(opts),
-                   [](const auto& o) { return OptionToJson(o); });
+                   [](const auto& o) { return smatchet::fieldoptions::FieldOptionToJson(o); });
     j["allowed_value_options"] = std::move(opts);
     j["raw_field_definition_json"] = f.RawFieldDefinitionJson;
     return j;
@@ -165,7 +130,7 @@ bool FieldFromJson(const nlohmann::json& j, TrackerField& out) {
     if (ao != j.end() && ao->is_array()) {
         for (const auto& el : *ao) {
             TrackerFieldOption o;
-            if (OptionFromJson(el, o)) {
+            if (smatchet::fieldoptions::FieldOptionFromJson(el, o)) {
                 out.AllowedValueOptions.push_back(std::move(o));
             }
         }

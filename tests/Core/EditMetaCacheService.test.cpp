@@ -13,11 +13,12 @@
 // EditMetaCacheService. No statics, no shared world state, no order dependencies.
 
 #include "../support/FakeEditMetaDeps.h"
+#include "../support/FakeLookupCache.h"
 #include "../support/FakeTrackerClient.h"
 
 #include "CachedTicketTypes.h"
 #include "EditMetaCacheService.h"
-#include "GridLiveContext.h"
+#include "LookupPayloadsPure.h"
 #include "Tracker/TrackerFieldSchema.h"
 
 #include <doctest/doctest.h>
@@ -248,54 +249,31 @@ TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets drops absent 
 }
 
 // ---------------------------------------------------------------------------
-// WarmIssueTypeEditMetaAtStartAsync — #975 kick-time catalog write proof.
+// WarmIssueTypeEditMetaAtStartAsync — one representative per issue type.
 // ---------------------------------------------------------------------------
 
-TEST_CASE(
-    "EditMetaCacheService::WarmIssueTypeEditMetaAtStartAsync populates type cache + kick-time component options") {
+TEST_CASE("EditMetaCacheService::WarmIssueTypeEditMetaAtStartAsync populates the issue-type cache") {
     FakeEditMetaDeps deps; // inline-synchronous LaunchBackgroundTask → warm completes in-call
-    // Two active tickets across two projects (key prefixes ABC / XYZ), distinct issuetypes.
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-9", "bug"));
     EditMetaCacheService svc(deps);
-
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
-    // Per-project components scripted for both project keys.
-    TrackerFieldOption optAbc;
-    optAbc.Id = "100";
-    optAbc.Value = "Backend";
-    TrackerFieldOption optXyz;
-    optXyz.Id = "200";
-    optXyz.Value = "Frontend";
-    deps.Fake()->SetProjectComponentsSuccess("ABC", {optAbc});
-    deps.Fake()->SetProjectComponentsSuccess("XYZ", {optXyz});
 
     TrackerConfig cfg;
     svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
 
-    // #975 proof: the warm worker wrote the per-project options into the KICK-TIME catalog
-    // (CatalogImpl, returned by KickTimeFieldCatalog) — not a re-resolved completion-time one.
-    {
-        std::lock_guard<std::mutex> lock(deps.CatalogImpl.availableFieldsMutex_);
-        REQUIRE(deps.CatalogImpl.projectComponentOptions_.count("ABC") == 1u);
-        REQUIRE(deps.CatalogImpl.projectComponentOptions_.count("XYZ") == 1u);
-        REQUIRE(deps.CatalogImpl.projectComponentOptions_["ABC"].size() == 1u);
-        CHECK(deps.CatalogImpl.projectComponentOptions_["ABC"][0].Value == "Backend");
-        CHECK(deps.CatalogImpl.projectComponentOptions_["XYZ"][0].Value == "Frontend");
-        // In-flight markers erased on success (every exit path erases — no "Loading…" leak).
-        CHECK(deps.CatalogImpl.projectComponentsInFlight_.empty());
-        // Success clears any prior backoff.
-        CHECK(deps.CatalogImpl.projectComponentsRetryAfter_.empty());
-    }
-
-    // The issuetype-level editmeta cache was warmed for both representatives: an unloaded
-    // sibling issue of type "story" now answers from the type cache (labels denied).
+    // One representative per issue type was fetched; an unloaded sibling of type "story" now answers
+    // from the type cache (labels denied).
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
     CHECK_FALSE(svc.CanEditFieldForIssue("ABC-2", "labels"));
     CHECK(svc.CanEditFieldForIssue("ABC-2", "summary"));
+    // Component options are not this service's job any more (ProjectComponentsCacheService).
+    CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
 
-    // Both per-project component fetches happened exactly once.
-    CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+    // A second warm skips the types that are already live.
+    svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
 }
 
 // ---------------------------------------------------------------------------
@@ -354,4 +332,138 @@ TEST_CASE("EditMetaCacheService::WarmIssueEditMetaAsync retries after a warmup t
     svc.WarmIssueEditMetaAsync("ABC-1");
     CHECK(deps.LaunchBackgroundTaskCalls == 2);
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+}
+
+// ---------------------------------------------------------------------------
+// Quality Pillar 6 (offline-first S11): per-type permissions saved for offline use, keyed by tracker.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::unordered_map<std::string, bool> SavedPermissions(FakeLookupCache& store, const std::string& backendKey,
+                                                       const std::string& issueType) {
+    LookupCacheRow row;
+    std::unordered_map<std::string, bool> permissions;
+    if (store.TryGetLookup(backendKey, smatchet::lookup::kEditMetaTypeKind, issueType, row)) {
+        smatchet::lookup::ParseEditPermissions(row.PayloadJson, permissions);
+    }
+    return permissions;
+}
+
+} // namespace
+
+TEST_CASE("EditMetaCacheService saves each fetched issue type's permissions to the lookup cache") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+
+    CHECK(store->UpsertCalls.load() == 1);
+    const std::unordered_map<std::string, bool> saved = SavedPermissions(*store, "Jira", "story");
+    REQUIRE(saved.size() == 2u);
+    CHECK(saved.at("summary"));
+    CHECK_FALSE(saved.at("labels"));
+
+    // A failed fetch saves nothing.
+    deps.Fake()->SetIssueEditMetaFailure("ABC-3", "HTTP 503");
+    CHECK_FALSE(svc.EnsureIssueEditMetaLoaded("ABC-3", nullptr).has_value());
+    CHECK(store->UpsertCalls.load() == 1);
+}
+
+TEST_CASE("EditMetaCacheService: saved permissions answer offline but never stand in for a live fetch") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+                        smatchet::lookup::SerializeEditPermissions({{"summary", true}, {"labels", false}}));
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", true}});
+    EditMetaCacheService svc(deps);
+
+    // The warm loads the saved rows, then skips the network while offline.
+    TrackerConfig cfg;
+    svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels")); // the saved answer, not optimistic
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "summary"));
+
+    // Reachable again: the restored entry does not satisfy a load, so the issue's own editmeta is
+    // fetched, and the live answer replaces the saved one.
+    deps.ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels"));
+    CHECK(SavedPermissions(*store, "Jira", "story").at("labels"));
+}
+
+TEST_CASE("EditMetaCacheService: the saved copy never overrides permissions fetched meanwhile") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"labels", true}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // live "story": labels allowed
+    // An older saved copy that disagrees, loaded by the next warm.
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+    TrackerConfig cfg;
+    svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
+
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    CHECK(svc.CanEditFieldForIssue("ABC-2", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService: two trackers never share an issue's or an issue type's permissions") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-7", "labels", nullptr, "story"));
+
+    // The same id and type on another Jira site: nothing is known there, so both stay optimistic.
+    CHECK(svc.CanEditFieldForIssueWithType("Jira:other.example", "ABC-1", "labels", nullptr, "story"));
+    deps.CacheBackendKeyImpl = "Jira:other.example";
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets keeps saved (restored) issue types") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "epic",
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+    EditMetaCacheService svc(deps);
+    TrackerConfig cfg;
+    svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
+
+    svc.PruneEditMetaCacheToActiveTickets(); // no active "epic"
+
+    // Restored entries load once per tracker, so a prune must not lose them for the session.
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-9", "labels", nullptr, "epic"));
+}
+
+TEST_CASE("EditMetaCacheService::OnConnectivityRecovered lets the per-frame warmup retry at once") {
+    FakeEditMetaDeps deps;
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503: backend unreachable");
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    svc.WarmIssueEditMetaAsync("ABC-1"); // inside the backoff
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+
+    svc.OnConnectivityRecovered();
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
 }

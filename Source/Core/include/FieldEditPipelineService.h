@@ -111,10 +111,9 @@ class FieldEditPipelineService {
                                     FieldEditResult& outResult, std::string& outFieldsPayloadJson,
                                     std::string& outError);
 
-    /// Build a plain `fields` payload (checked against the editmeta already loaded) + optimistic display map
-    /// on `backend`. Makes no network request.
-    bool TryBuildFieldEditPayloadForNetwork(const FieldEditCommitRequest& req,
-                                            const std::shared_ptr<ITrackerBackend>& backend,
+    /// Build a plain `fields` payload (checked against the editmeta already loaded for `target`'s backend
+    /// namespace) + optimistic display map on `target`'s backend. Makes no network request.
+    bool TryBuildFieldEditPayloadForNetwork(const FieldEditCommitRequest& req, const PendingActionTarget& target,
                                             nlohmann::json& outFieldsPayload,
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);

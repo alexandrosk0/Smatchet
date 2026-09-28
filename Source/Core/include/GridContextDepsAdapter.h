@@ -47,7 +47,6 @@ class ITrackerIssueMutations;
 class ITrackerIssueReader;
 class ITrackerBackendFactory;
 struct GridLiveContext;
-struct GridContextFieldCatalog;
 struct HostCallbacks;
 struct TrackerConfig;
 struct TrackerField;
@@ -151,9 +150,6 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // above (shared by IOfflineQueueDeps + ITicketSyncDeps). Both are needed; they forward to the
     // same AppController method.
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override;
-    // #975: hand back THIS context's kick-time catalog so the warm worker writes the per-project
-    // component options under the catalog's own lock without a completion-time re-resolve.
-    GridContextFieldCatalog* KickTimeFieldCatalog() override;
     TrackerConnectivityState TrackerConnectivity() const override;
 
     // ---- IFieldEditDeps ---------------------------------------------------------------

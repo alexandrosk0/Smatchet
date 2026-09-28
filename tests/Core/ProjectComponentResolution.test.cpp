@@ -90,7 +90,7 @@ TEST_CASE("Distinct project-key extraction over a ticket vector yields the uniqu
 }
 
 TEST_CASE("Per-project option map returns the right list and empty for unknown keys") {
-    // Models AppController::projectComponentOptions_ lookup (GetComponentOptionsForProject):
+    // Models the per-project component lookup (ProjectComponentsCacheService / GetComponentOptionsForProject):
     // a hit returns the project's own list; a miss returns an empty vector.
     std::unordered_map<std::string, std::vector<std::string>> projectComponentOptions;
     projectComponentOptions["PROJ"] = {"Backend", "Frontend"};

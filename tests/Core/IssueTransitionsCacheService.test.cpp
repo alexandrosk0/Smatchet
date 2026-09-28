@@ -291,7 +291,7 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 2);
     }
 
-    TEST_CASE("a failed saved-workflow load is retried on the next use") {
+    TEST_CASE("a failed saved-workflow load backs off, then is retried") {
         FirewalledEditMetaDeps deps;
         deps.Fake()->SetSupportsIssueTransitions(true);
         const auto store = std::make_shared<ThrowOnceLookupCache>();
@@ -305,7 +305,11 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(deps.FirewalledThrows == 1);
         CHECK(svc.GetAvailableTransitions(Query("PROJ-1")).options.empty());
 
-        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // un-latched: loads again, succeeds
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // inside the backoff: no reload
+        CHECK(svc.GetAvailableTransitions(Query("PROJ-1")).options.empty());
+
+        svc.OnConnectivityRecovered();                     // clears the backoff
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // loads again, succeeds
         const TransitionsLookup lookup = svc.GetAvailableTransitions(Query("PROJ-1"));
         CHECK(lookup.fromLearned);
         CHECK(lookup.options.size() == 1);

@@ -4,21 +4,17 @@
 // FakeEditMetaDeps — header-only in-memory implementation of `IEditMetaDeps` for the doctest
 // rig. Backs the backend with a `FakeTrackerClient` held by shared_ptr (so BackendShared()
 // hands back a latched strong handle, exactly as the production adapter's atomic_load does and
-// as the off-thread warm workers require), exposes a real default-constructed
-// `GridContextFieldCatalog` so warm tests can inspect projectComponentOptions_ after a kick
-// (#975 proof), and keeps the rest of the AppController-side state in plain members tests read
-// directly.
+// as the off-thread warm workers require), and keeps the rest of the AppController-side state in
+// plain members tests read directly.
 //
 // This fixture is the test-side counterpart of `GridContextDepsAdapter`. Any new method added
 // to `IEditMetaDeps` MUST be implemented here too — the override list mirrors the production
 // adapter.
 //
 // SQLite/ImGui/cpr-free by construction (ADR-0020 sync-cache purity): it pulls only the narrow
-// interface headers + FakeTrackerClient + GridLiveContext (plain structs/atomics/mutex). No
-// LocalCacheManager, no SqliteMemFixture.
+// interface headers + FakeTrackerClient. No LocalCacheManager, no SqliteMemFixture.
 
 #include "FakeTrackerClient.h"
-#include "GridLiveContext.h" // GridContextFieldCatalog (real, default-constructed CatalogImpl)
 #include "IEditMetaDeps.h"
 #include "ILookupCache.h"
 #include "ITrackerBackend.h"
@@ -53,10 +49,6 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// remembered workflow install a FakeLookupCache.
     std::shared_ptr<ILookupCache> LookupCacheImpl;
     std::string CacheBackendKeyImpl = "Jira";
-
-    /// Real per-context field catalog the #975 kick-time pointer threads through. Warm tests
-    /// inspect CatalogImpl.projectComponentOptions_ / projectComponentsInFlight_ after a kick.
-    GridContextFieldCatalog CatalogImpl;
 
     /// LaunchBackgroundTask mode. Default INLINE-SYNCHRONOUS (runs the task on the calling
     /// thread immediately) so logic-coverage cases stay deterministic and single-threaded.
@@ -115,8 +107,6 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     }
 
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
-
-    GridContextFieldCatalog* KickTimeFieldCatalog() override { return &CatalogImpl; }
 
     TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
 };

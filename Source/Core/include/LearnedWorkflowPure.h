@@ -20,6 +20,10 @@ constexpr const char* kLearnedTransitionsKind = "workflow_transitions";
 /// (("a|b", "c") and ("a", "b|c") yield different keys).
 std::string EscapeKeyPart(const std::string& part);
 
+/// `scope|key` with both parts escaped (EscapeKeyPart): one key namespaced by another, e.g. an issue id
+/// by its tracker's backend key, that never collides with another pair.
+std::string BuildScopedKey(const std::string& scope, const std::string& key);
+
 /// `projectKey|issueTypeKey|fromStatusKey` with each part escaped (EscapeKeyPart), or "" when any
 /// part is empty (nothing to learn under).
 std::string BuildLearnedTransitionsKey(const std::string& projectKey, const std::string& issueTypeKey,

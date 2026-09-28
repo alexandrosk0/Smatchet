@@ -23,7 +23,16 @@
     ],
     "components": [],
     "issueTypeMeta": [],
-    "users": []
+    "users": [
+      {"accountId": "acc-ana", "displayName": "Ana Offline", "email": "ana@example.test"},
+      {"accountId": "acc-bob", "displayName": "Bob Offline"}
+    ]
+  },
+  "projectComponents": {
+    "OFF": [
+      {"id": "100", "name": "Backend", "description": "Server side"},
+      {"id": "101", "name": "Frontend"}
+    ]
   },
   "fetches": [
     {

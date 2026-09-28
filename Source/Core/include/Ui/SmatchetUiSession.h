@@ -159,6 +159,11 @@ struct FieldCatalogFetchResult {
     std::vector<TrackerComponent> Components;
     std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;
     std::vector<TrackerUser> Users;
+    /// Users serialized for the lookup cache on the fetch worker (Pillar 6), so the UI thread only
+    /// hands the string to a save worker; empty when there is nothing to save.
+    std::string UsersPayloadJson;
+    /// Cache backend namespace of the pane that started the fetch (where the users are saved).
+    std::string CacheBackendKey;
     std::string Error;
     /// Transport-shaped failure per the fetch TrackerError's IsRetryable() — drives the
     /// snapshot-restore vs hard-clear branch in HandleFieldCatalogError. Stays false for the

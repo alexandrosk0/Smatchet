@@ -198,6 +198,33 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
                 fixture.fields_.push_back(std::move(field));
             }
         }
+        if (catalog.contains("users") && catalog["users"].is_array()) {
+            for (const auto& userJson : catalog["users"]) {
+                TrackerUser user;
+                user.AccountId = userJson.value("accountId", std::string());
+                user.DisplayName = userJson.value("displayName", std::string());
+                user.EmailAddress = userJson.value("email", std::string());
+                fixture.users_.push_back(std::move(user));
+            }
+        }
+    }
+
+    // Per-project component options (optional): {"PROJ": [{"id", "name", "description"}]}.
+    if (root.contains("projectComponents") && root["projectComponents"].is_object()) {
+        for (auto it = root["projectComponents"].begin(); it != root["projectComponents"].end(); ++it) {
+            if (!it.value().is_array()) {
+                continue;
+            }
+            std::vector<TrackerFieldOption> options;
+            for (const auto& componentJson : it.value()) {
+                TrackerFieldOption option;
+                option.Id = componentJson.value("id", std::string());
+                option.Value = componentJson.value("name", std::string());
+                option.SecondaryValue = componentJson.value("description", std::string());
+                options.push_back(std::move(option));
+            }
+            fixture.projectComponentsByKey_[it.key()] = std::move(options);
+        }
     }
 
     // Issue transitions (optional)
@@ -292,7 +319,11 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
     if (!fields_.empty()) {
         TrackerFieldCatalogResult catalogResult;
         catalogResult.Fields = fields_;
+        catalogResult.Users = users_;
         client.SetFieldCatalogResult(catalogResult);
+    }
+    for (const auto& entry : projectComponentsByKey_) {
+        client.SetProjectComponentsSuccess(entry.first, entry.second);
     }
 
     // Scripted transitions also turn on the SupportsIssueTransitions capability, as JiraClient reports

@@ -1,11 +1,16 @@
 #include "KeyedLookupCache.h"
 #include "SmatchetResult.h"
+#include "StoreLoadLatch.h"
 #include "Tracker/TrackerError.h"
 
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -23,6 +28,38 @@ struct ThrowOnMoveAssign {
     ThrowOnMoveAssign(ThrowOnMoveAssign&&) = default;
     ThrowOnMoveAssign& operator=(const ThrowOnMoveAssign&) = default;
     ThrowOnMoveAssign& operator=(ThrowOnMoveAssign&&) { throw std::runtime_error("move-assign"); }
+};
+
+// Duck-typed store + deps for LoadSavedRowsOnce: rows are plain strings, tasks run inline, and a throw
+// from a task is contained the way AppController::LaunchBackgroundTask's firewall contains it.
+struct FakeRowsStore {
+    bool FailNextRead = false;
+    int Reads = 0;
+    std::vector<std::string> LoadLookups(const std::string& /*backendKey*/, const std::string& /*kind*/) {
+        ++Reads;
+        if (FailNextRead) {
+            FailNextRead = false;
+            throw std::runtime_error("store read failed");
+        }
+        return {"row-1", "row-2"};
+    }
+};
+
+struct FakeRowsDeps {
+    std::shared_ptr<FakeRowsStore> Store;
+    bool LaunchThrows = false;
+    int Contained = 0;
+    std::shared_ptr<FakeRowsStore> LookupCacheShared() { return Store; }
+    void LaunchBackgroundTask(std::function<void()> task) {
+        if (LaunchThrows) {
+            throw std::runtime_error("no thread");
+        }
+        try {
+            task();
+        } catch (const std::exception&) {
+            ++Contained;
+        }
+    }
 };
 
 } // namespace
@@ -195,5 +232,77 @@ TEST_SUITE("KeyedLookupCache") {
         CHECK_FALSE(entry.HasValue);
         cache.OnConnectivityRecovered();
         CHECK(cache.TryBeginFetch("key1", TrackerConnectivityState::AuthenticatedReachable, now, t));
+    }
+} // TEST_SUITE
+
+TEST_SUITE("StoreLoadLatch") {
+    TEST_CASE("a key is claimed once; a failed load releases it after a backoff") {
+        StoreLoadLatch latch(30);
+        const Clock::time_point now = Clock::now();
+
+        CHECK(latch.TryClaim("Jira", now));
+        CHECK_FALSE(latch.TryClaim("Jira", now)); // loading
+        CHECK(latch.TryClaim("Plane", now));      // keys are independent
+
+        latch.MarkFailed("Jira", now);
+        CHECK_FALSE(latch.TryClaim("Jira", now + std::chrono::seconds(29)));
+        CHECK(latch.TryClaim("Jira", now + std::chrono::seconds(31)));
+
+        latch.MarkLoaded("Jira");
+        CHECK_FALSE(latch.TryClaim("Jira", now + std::chrono::seconds(3600))); // loaded: never again
+    }
+
+    TEST_CASE("ClearBackoff lets a released key be claimed at once") {
+        StoreLoadLatch latch(30);
+        const Clock::time_point now = Clock::now();
+        REQUIRE(latch.TryClaim("Jira", now));
+        latch.MarkFailed("Jira", now);
+        CHECK_FALSE(latch.TryClaim("Jira", now));
+
+        latch.ClearBackoff();
+        CHECK(latch.TryClaim("Jira", now));
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: loads once; a failed read backs off; no store claims nothing") {
+        FakeRowsDeps deps;
+        StoreLoadLatch latch(30);
+        int applied = 0;
+        const auto apply = [&applied](const std::string& key, const std::vector<std::string>& rows) {
+            CHECK(key == "Jira");
+            applied += static_cast<int>(rows.size());
+        };
+
+        // No store yet: nothing is claimed, so the call after the store appears loads at once.
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 0);
+
+        deps.Store = std::make_shared<FakeRowsStore>();
+        deps.Store->FailNextRead = true;
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(deps.Contained == 1); // the read threw on the worker
+        CHECK(applied == 0);
+        // Released, but backing off: an immediate retry does not read again.
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(deps.Store->Reads == 1);
+
+        latch.ClearBackoff();
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 2);
+        // Loaded: later calls do nothing.
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(deps.Store->Reads == 2);
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: a launch that throws returns false and releases the claim") {
+        FakeRowsDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        deps.LaunchThrows = true;
+        StoreLoadLatch latch(30);
+
+        CHECK_FALSE(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows",
+                                      [](const std::string&, const std::vector<std::string>&) {}));
+        CHECK_FALSE(latch.TryClaim("Jira", Clock::now())); // backing off, not stuck claimed forever
+        latch.ClearBackoff();
+        CHECK(latch.TryClaim("Jira", Clock::now()));
     }
 } // TEST_SUITE

@@ -753,8 +753,7 @@ class FakeTrackerClient : public ITrackerBackend,
         issueEditMetaDefault_.Error = error;
     }
 
-    // Per-project component scripting (Options is what EditMetaCacheService stores into
-    // GridContextFieldCatalog::projectComponentOptions_).
+    // Per-project component scripting (Options is what ProjectComponentsCacheService caches and saves).
     void SetProjectComponentsSuccess(const std::string& projectKey, std::vector<TrackerFieldOption> options,
                                      std::vector<TrackerComponent> components = {}) {
         ScriptedComponents s;
