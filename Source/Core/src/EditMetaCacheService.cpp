@@ -326,7 +326,12 @@ VoidResult EditMetaCacheService::RefreshIssueEditMetaFor(const std::shared_ptr<I
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         const auto backendIt = issueTypeEditMeta_.find(backendKey);
         if (backendIt != issueTypeEditMeta_.end()) {
-            backendIt->second.erase(issueTypeKey);
+            // Only a live entry is dropped. A restored one never stands in for the fetch below, and it
+            // must still answer offline if that fetch fails.
+            const auto typeIt = backendIt->second.find(issueTypeKey);
+            if (typeIt != backendIt->second.end() && typeIt->second.live) {
+                backendIt->second.erase(typeIt);
+            }
         }
     }
     return EnsureIssueEditMetaLoadedFor(backend, backendKey, issueId, issueTypeKey);

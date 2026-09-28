@@ -401,6 +401,28 @@ TEST_CASE("EditMetaCacheService: saved permissions answer offline but never stan
     CHECK(SavedPermissions(*store, "Jira", "story").at("labels"));
 }
 
+TEST_CASE("EditMetaCacheService: a refresh that fails keeps the saved type permissions") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+    EditMetaCacheService svc(deps);
+    TrackerConfig cfg;
+    svc.WarmIssueTypeEditMetaAtStartAsync(cfg); // loads the saved "story" row
+    REQUIRE_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-1", "labels", nullptr, "story"));
+
+    // A 400 triggers a refresh; the tracker drops before it answers.
+    deps.ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503");
+    CHECK_FALSE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-1", "labels", nullptr, "story"));
+}
+
 TEST_CASE("EditMetaCacheService: the saved copy never overrides permissions fetched meanwhile") {
     FakeEditMetaDeps deps;
     const auto store = std::make_shared<FakeLookupCache>();

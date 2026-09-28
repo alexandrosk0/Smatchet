@@ -3078,6 +3078,7 @@ This plan touches `Source/Core/`.
   - `StoreLoadLatch` / `LoadSavedRowsOnce` back off 30 s after a failed read of saved rows, where the S5 loader retried on every call (a worker per frame while the store kept failing). The S5 test for a failed load now clears the backoff through `OnConnectivityRecovered`.
   - No `offline-cache-cleared` deviation marker on the pane-retirement roster swap: that line does not match the rule; the only matching line (`projectComponentOptions_.clear()`) is gone.
   - The offline fixture gains `catalog.users` and `projectComponents` keys. `Components_OfflineShowsSavedOptions` covers the in-app offline behaviour; the next-session restore of a saved list is pinned in `ProjectComponentsCacheService.test.cpp`, since bucket E cannot restart the app. `Users_RestoredFromSavedRoster` exercises the save and restore through the real SQLite cache. The `GridLiveContext` #975 model test is removed with the maps it modelled.
+  - CodeRabbit review on #2265: the editmeta refresh after a 400 drops only a live type entry, so a restored one still answers if the refresh fails; a catalog result is also discarded (and refetched) when focus moved to a pane on another site of the same tracker kind, so one site's catalog and users never land on another's pane.
 
 ## Verification (actual)
 

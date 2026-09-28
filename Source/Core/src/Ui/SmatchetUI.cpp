@@ -1475,7 +1475,10 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.fieldCatalogFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         try {
             FieldCatalogFetchResult result = d.fieldCatalogFuture.get();
-            if (result.BackendKey != ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType)) {
+            // Same tracker kind is not enough: focus may have moved to a pane on another site of that
+            // kind, whose catalog and users these are not.
+            if (result.BackendKey != ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType) ||
+                result.CacheBackendKey != app.FocusedCacheBackendKey()) {
                 d.fieldCatalogLoading = false;
                 d.triggerCatalogRefetch = true;
                 return;
