@@ -138,6 +138,18 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue reports a rejection and queu
     CHECK(rig.Cache().LoadPendingActions().empty());
 }
 
+TEST_CASE("PendingActionQueueService::SubmitOrQueue offline never queues for a backend without collaboration") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.Tracker().EnableCollaboration(false); // replay could never send it, so it must not wait in the queue
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
+                              TrackerConnectivityState::TransportDown);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Failed);
+    CHECK_FALSE(r.Error.empty());
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
 TEST_CASE("PendingActionQueueService::SubmitOrQueue honours the Read-only preference") {
     OfflineQueueTestEnvGuard env;
     {

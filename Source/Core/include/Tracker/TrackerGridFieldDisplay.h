@@ -42,8 +42,10 @@ struct TrackerGridFieldAsyncState {
     std::string watchSelfError;
     std::string watchSelfPendingIssueKey;
     std::set<std::string> watchSelfSucceededIssueKeys; ///< sent this session: the Watch button hides
-    /// Issue key -> offline-queue id of a watch saved offline (Pillar 6). The Watch button hides only while
-    /// that row is still queued, so a watch that later fails or is discarded can be retried.
+    std::string watchSelfPendingBackendKey;            ///< focused backend when Watch was clicked
+    /// (backend key, issue key) -> offline-queue id of a watch saved offline (Pillar 6). The Watch button hides
+    /// only while that row is still queued, so a watch that later fails or is discarded can be retried; the
+    /// backend part keeps one backend's queued watch from hiding another backend's issue with the same key.
     std::map<std::string, std::int64_t> watchSelfQueuedIds;
 
     bool votesPanelOpen = false;

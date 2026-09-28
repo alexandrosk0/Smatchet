@@ -912,6 +912,9 @@ class AppController : public IAppThreading,
     /// queue (including one saved in an earlier session), or 0. Reads the in-memory snapshot only (UI thread,
     /// per frame).
     std::int64_t FindQueuedPendingActionId(PendingActionKind kind, const std::string& issueKey) const;
+    /// Cache key of the focused backend; it namespaces the offline queues, so UI state tied to a queued row is
+    /// scoped by it too.
+    std::string FocusedCacheBackendKey() const;
     void DiscardPendingActions(const std::vector<std::int64_t>& ids) override;
     void RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) override;
     void DeleteDeadPendingActions(const std::vector<std::int64_t>& deadIds) override;

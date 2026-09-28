@@ -82,19 +82,21 @@ PendingActionQueueService::SubmitOrQueue(PendingActionKind kind, const std::stri
         return out;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    switch (smatchet::offline::RouteWrite(connectivityAtKick, /*queueSupported=*/true, cfg.ReadOnlyMode)) {
-    case smatchet::offline::WriteRoute::Reject:
+    const smatchet::offline::WriteRoute route =
+        smatchet::offline::RouteWrite(connectivityAtKick, /*queueSupported=*/true, cfg.ReadOnlyMode);
+    if (route == smatchet::offline::WriteRoute::Reject) {
         out.Error = "Read-only mode is enabled in Preferences.";
         return out;
-    case smatchet::offline::WriteRoute::QueueImmediately:
-        return Enqueue(kind, issueKey, payloadJson, PendingActionState::kPending);
-    case smatchet::offline::WriteRoute::NetworkFirst:
-        break;
     }
+    // Checked before queueing too: replay needs the same interface, so a row queued for a backend without it
+    // would wait forever.
     const std::shared_ptr<ITrackerCollaboration> collab = deps_.CollaborationShared();
     if (!collab) {
         out.Error = "Tracker backend does not support collaboration features.";
         return out;
+    }
+    if (route == smatchet::offline::WriteRoute::QueueImmediately) {
+        return Enqueue(kind, issueKey, payloadJson, PendingActionState::kPending);
     }
     const TrackerError err = Dispatch(*collab, cfg, kind, issueKey, payloadJson);
     if (err.IsOk()) {

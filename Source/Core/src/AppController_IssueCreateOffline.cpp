@@ -357,13 +357,15 @@ std::int64_t AppController::FindQueuedPendingActionId(PendingActionKind kind, co
     if (snap->Pending.empty()) {
         return 0; // the common case: no backend-key copy per frame
     }
-    const std::string backendKey = focusedContext().CacheBackendKeyCopy();
+    const std::string backendKey = FocusedCacheBackendKey();
     const std::string wire = PendingActionKindWire(kind);
     const auto row = std::find_if(snap->Pending.begin(), snap->Pending.end(), [&](const PendingActionRecord& r) {
         return r.BackendKey == backendKey && r.Kind == wire && r.IssueKey == issueKey;
     });
     return row == snap->Pending.end() ? 0 : row->Id;
 }
+
+std::string AppController::FocusedCacheBackendKey() const { return focusedContext().CacheBackendKeyCopy(); }
 
 void AppController::DiscardPendingActions(const std::vector<std::int64_t>& ids) {
     if (pendingActions_) {
