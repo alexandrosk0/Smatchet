@@ -484,6 +484,7 @@ void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std
         // its failures are forgotten and the ids are looked up again as soon as the tracker is back.
         st.jqlIdResolveFailures = 0;
         st.jqlIdResolveRetryAt = 0.0;
+        st.jqlIdResolveAttempted.clear();
         st.jqlIdResolveScanValid = false;
         return;
     }

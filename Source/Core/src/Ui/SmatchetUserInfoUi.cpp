@@ -301,6 +301,7 @@ void SmatchetUserInfoUi::launchMembersFetch(AppController& app, const std::strin
     membersLoading_ = true;
     membersFetchGroup_ = groupName;
     const int gen = generation_;
+    membersFetchGeneration_ = gen;
     const std::string paneId = paneId_;
     AppController* appPtr = &app;
     const smatchet::ui::CancelToken cancel = cancelGate_.Token();
@@ -434,10 +435,14 @@ void SmatchetUserInfoUi::pollMembersFuture() {
     } catch (const std::exception& ex) {
         LOG_WARN("UserInfoUi: group members fetch threw: %s", ex.what());
         // Recorded like any failure: without an entry the group would relaunch the fetch every frame.
-        membersErrors_[membersFetchGroup_] = std::string("Member lookup failed: ") + ex.what();
+        if (membersFetchGeneration_ == generation_) {
+            membersErrors_[membersFetchGroup_] = std::string("Member lookup failed: ") + ex.what();
+        }
     } catch (...) { // catch-all-ok: worker exceptions become the group's error, never crash the UI thread
         LOG_WARN("UserInfoUi: group members fetch threw (unknown error)");
-        membersErrors_[membersFetchGroup_] = "Member lookup failed.";
+        if (membersFetchGeneration_ == generation_) {
+            membersErrors_[membersFetchGroup_] = "Member lookup failed.";
+        }
     }
     membersLoading_ = false;
     membersFetchGroup_.clear();

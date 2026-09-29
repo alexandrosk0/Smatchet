@@ -41,7 +41,8 @@ std::string UniqueTempSuffix() {
 
 // Temp file then rename, so a reader never sees a half-written file. ghc streams take UTF-8 paths on
 // Windows too.
-bool WriteFileAtomically(const std::string& path, const std::string& bytes, std::string& errOut) {
+bool WriteFileAtomically(const std::string& path, const std::string& bytes, bool isAttachmentData,
+                         std::string& errOut) {
     const std::string temp = path + UniqueTempSuffix();
     {
         fs::ofstream out(fs::path(temp), std::ios::binary | std::ios::trunc);
@@ -66,9 +67,10 @@ bool WriteFileAtomically(const std::string& path, const std::string& bytes, std:
     std::error_code rmEc;
     fs::remove(fs::path(temp), rmEc);
     // Windows refuses to replace a file a viewer holds open. The entry's content never changes for a
-    // URL, so an existing file of the same size is the same attachment.
+    // URL, so an existing file of the same size is the same attachment. Metadata can change and
+    // must be replaced successfully.
     std::error_code sizeEc;
-    if (fs::is_regular_file(fs::path(path), sizeEc) &&
+    if (isAttachmentData && fs::is_regular_file(fs::path(path), sizeEc) &&
         fs::file_size(fs::path(path), sizeEc) == static_cast<std::uintmax_t>(bytes.size()) && !sizeEc) {
         return true;
     }
@@ -185,8 +187,8 @@ Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::stri
         fs::create_directories(fs::path(dataPath).parent_path(), ec);
         std::string writeErr;
         // The file first, entry.json last: an entry without entry.json never counts as a hit.
-        if (ec || !WriteFileAtomically(dataPath, fetched.Bytes, writeErr) ||
-            !WriteFileAtomically(metaPath, metaJson, writeErr)) {
+        if (ec || !WriteFileAtomically(dataPath, fetched.Bytes, true, writeErr) ||
+            !WriteFileAtomically(metaPath, metaJson, false, writeErr)) {
             return StoreResult::Err(TrackerErrorUnknown("The attachment could not be saved to the cache: " +
                                                         (ec ? ec.message() : writeErr)));
         }
