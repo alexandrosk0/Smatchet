@@ -81,9 +81,11 @@ std::string TrackerQueryAcp_CanonicalQueryForApply(const std::string& trackerTyp
 /** Resolve account ids the query carries but no catalog / prior search has named, via the
  *  backend's by-accountId lookup (worker thread, polled per frame). Results land in the
  *  editor's retained-user store, which the echo reads. Skips ids already attempted this
- *  session. `catalogUsers` is the app-owned user catalog. */
+ *  session. `catalogUsers` is the app-owned user catalog. While `trackerOffline` no lookup is
+ *  sent, and the outage resets the retry limit and the attempted set (ids given up on included),
+ *  so the ids still resolve once the tracker is back (Quality Pillar 6). */
 void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
-                                          JqlEditorState& st);
+                                          bool trackerOffline, JqlEditorState& st);
 
 /** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors.
  *  userSearch is the narrow user-query facet of the app object. */

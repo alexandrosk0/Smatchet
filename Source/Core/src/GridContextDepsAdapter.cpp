@@ -381,3 +381,5 @@ const HostCallbacks& GridContextDepsAdapter::Host() const { return app_.hostCall
 void GridContextDepsAdapter::OpenUrl(const std::string& url) const { app_.OpenUrl(url); }
 
 void GridContextDepsAdapter::RequestAppQuit() const { app_.RequestAppQuit(); }
+
+bool GridContextDepsAdapter::IsTrackerOffline() const { return app_.IsTrackerOffline(); }

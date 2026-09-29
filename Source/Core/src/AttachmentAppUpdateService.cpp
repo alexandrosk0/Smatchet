@@ -20,11 +20,13 @@
 #include <nlohmann/json.hpp>
 
 #include "AttachmentMimeUtils.h"
+#include "CappedBodyAccumulator.h"
 #include "ConfigManager.h"
 #include "EnvUtil.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SemanticVersionPure.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
 
@@ -119,103 +121,75 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 }
 #endif
 
-// The local temp file + resolved mime produced by a successful attachment download. The two
-// values are only ever meaningful together (both set on success, neither on failure), so they
-// collapse into one Result payload instead of the former pair of out-params.
-struct DownloadedAttachment {
-    std::string filePath;
-    std::string mime;
-};
-
-Result<DownloadedAttachment> DownloadAttachmentToLocalFile(const std::string& url, const std::string& filename,
-                                                           const std::string& mimeType) {
-    if (url.empty()) {
-        return Result<DownloadedAttachment>::Err("Attachment URL is empty.");
+// The bytes of an allowlisted attachment. The caller has checked the URL (HTTPS, allowlisted host); this
+// adds the size cap, the check of the host the redirects landed on, and the error kind (an unreachable
+// host is Transport, so the attachment reads as unavailable offline).
+Result<smatchet::attachments::FetchedAttachment, TrackerError> FetchAllowlistedAttachment(const TrackerConfig& cfg,
+                                                                                          const std::string& url,
+                                                                                          const std::string& jiraDomain,
+                                                                                          const std::string& mimeType) {
+    using FetchResult = Result<smatchet::attachments::FetchedAttachment, TrackerError>;
+    if (cfg.ApiToken.empty()) {
+        return FetchResult::Err(TrackerErrorInvalidRequest("Missing Jira credentials/domain."));
     }
-
-    TrackerConfig cfg = ConfigManager::Load();
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        return Result<DownloadedAttachment>::Err("Missing Jira credentials/domain.");
+    const cpr::Header headers{{"Accept", "*/*"},
+                              {"Authorization", BuildTrackerBasicAuthHeader(cfg)},
+                              {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
+    constexpr std::size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
+    constexpr long kAttachmentDownloadTimeoutMs = 120000;
+    TrackerDownloadResult download =
+        TrackerDownloadLogged("Attachment", url, headers, kMaxAttachmentDownloadBytes, kAttachmentDownloadTimeoutMs);
+    if (download.SizeExceeded) {
+        return FetchResult::Err(TrackerErrorInvalidRequest("Attachment exceeds max allowed size."));
     }
-    if (url.rfind("https://", 0) != 0) {
-        return Result<DownloadedAttachment>::Err("Attachment URL must use HTTPS.");
+    if (download.Http.Error.Kind == TrackerErrorKind::Transport) {
+        return FetchResult::Err(download.Http.Error);
     }
-    const std::string jiraDomain = NormalizeDomain(cfg.Domain);
-    const std::string targetHost = ExtractHostFromUrl(url);
-    if (!IsAllowedJiraAttachmentHost(targetHost, jiraDomain)) {
-        return Result<DownloadedAttachment>::Err("Attachment host is not allowlisted.");
-    }
-
-    cpr::Header headers{{"Accept", "*/*"},
-                        {"Authorization", BuildTrackerBasicAuthHeader(cfg)},
-                        {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
-    cpr::Redirect redirect(true, false);
-
-    // SMATCHET_DEVIATION(rule=duplication; reason=capped cpr::WriteCallback body-writer is deliberately
-    // inlined per download site so each cap and error string stays local and tunable, per ADR-0015,
-    // rather than folded into a shared helper — twin of the marked sites at :513 and the Tracker
-    // attachment proxy in McpPlugin.cpp; owner=security-audit; revisit=2026-09-30)
-    constexpr size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
-    bool sizeExceeded = false;
-    std::string bodyAccum;
-    bodyAccum.reserve(64 * 1024);
-    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
-        if (bodyAccum.size() + data.size() > kMaxAttachmentDownloadBytes) {
-            sizeExceeded = true;
-            return false;
-        }
-        bodyAccum.append(data);
-        return true;
-    }};
-    const auto resp =
-        cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
-    if (sizeExceeded) {
-        return Result<DownloadedAttachment>::Err("Attachment exceeds max allowed size.");
-    }
-    // cpr followed redirects (Redirect(true,false)) but only the INITIAL url was allowlisted above.
-    // A tracker 30x to an internal host would otherwise be fetched and written to a local file
-    // (limited SSRF). Re-validate the effective url libcurl actually landed on before persisting
-    // anything, mirroring the post-redirect host recheck in Whisper/ModelDownloader.cpp.
-    const std::string finalHost = ExtractHostFromUrl(resp.url.str());
+    // Only the INITIAL url was allowlisted. A tracker 30x to an internal host must not be persisted
+    // (limited SSRF), so re-validate the effective url libcurl landed on, mirroring the post-redirect host
+    // recheck in Whisper/ModelDownloader.cpp. An empty or unparseable host fails closed.
+    const std::string finalHost = ExtractHostFromUrl(download.Http.Response.url.str());
     if (finalHost.empty() || !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
-        // Fail closed: an unparseable/empty effective host is as suspect as a non-allowlisted one.
-        return Result<DownloadedAttachment>::Err("Attachment redirected to a non-allowlisted host.");
+        return FetchResult::Err(TrackerErrorInvalidRequest("Attachment redirected to a non-allowlisted host."));
     }
-    if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
-        return Result<DownloadedAttachment>::Err("Download failed: HTTP " +
-                                                 std::to_string(static_cast<int>(resp.status_code)));
+    if (!download.Http.IsOk()) {
+        TrackerError failed = download.Http.Error;
+        failed.Detail = "Download failed: HTTP " + std::to_string(download.Http.Status());
+        return FetchResult::Err(failed);
     }
+    smatchet::attachments::FetchedAttachment fetched;
+    const auto contentType = download.Http.Response.header.find("Content-Type");
+    fetched.Mime = (contentType != download.Http.Response.header.end() && !contentType->second.empty())
+                       ? contentType->second
+                       : mimeType;
+    if (fetched.Mime.empty()) {
+        fetched.Mime = "application/octet-stream";
+    }
+    fetched.Bytes = std::move(download.Body);
+    return FetchResult::Ok(std::move(fetched));
+}
 
-    std::string mime = mimeType;
-    try {
-        auto it = resp.header.find("Content-Type");
-        if (it != resp.header.end() && !it->second.empty()) {
-            mime = it->second;
-        }
-    } catch (...) {
-        LOG_DEBUG("DownloadAttachmentToLocalFile: response header parse failed; using provided mime type.");
-    }
-    if (mime.empty()) {
-        mime = "application/octet-stream";
-    }
-
-    const std::string extension = ExtensionFromMime(mime);
-    const std::string filePath = MakeUniqueTempFilePath(filename, extension);
+// The pre-cache behaviour, kept for when the cache cannot be written (disk full, no user data folder):
+// the attachment still opens from a uniquely named temp file.
+Result<smatchet::attachments::LocalAttachment, TrackerError>
+WriteUncachedAttachment(const std::string& filename, const smatchet::attachments::FetchedAttachment& fetched) {
+    using WriteResult = Result<smatchet::attachments::LocalAttachment, TrackerError>;
+    const std::string filePath = MakeUniqueTempFilePath(filename, ExtensionFromMime(fetched.Mime));
     std::ofstream ofs(filePath, std::ios::binary);
     if (!ofs.is_open()) {
-        return Result<DownloadedAttachment>::Err("Failed to open local temp file.");
+        return WriteResult::Err(TrackerErrorUnknown("Failed to open local temp file."));
     }
-
-    ofs.write(bodyAccum.data(), static_cast<std::streamsize>(bodyAccum.size()));
+    ofs.write(fetched.Bytes.data(), static_cast<std::streamsize>(fetched.Bytes.size()));
     if (!ofs.good()) {
         ofs.close();
         std::remove(filePath.c_str()); // don't leak the partially-written temp file on write failure
-        return Result<DownloadedAttachment>::Err("Failed to write downloaded attachment bytes.");
+        return WriteResult::Err(TrackerErrorUnknown("Failed to write downloaded attachment bytes."));
     }
     ofs.close();
-    LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s", bodyAccum.size(), mime.c_str(),
-             filePath.c_str());
-    return Result<DownloadedAttachment>::Ok(DownloadedAttachment{filePath, mime});
+    smatchet::attachments::LocalAttachment local;
+    local.FilePath = filePath;
+    local.Mime = fetched.Mime;
+    return WriteResult::Ok(std::move(local));
 }
 
 std::string GetTempDir() {
@@ -230,20 +204,6 @@ std::string GetTempDir() {
     return ".";
 }
 
-std::string SanitizeFilename(const std::string& name) {
-    std::string out = name;
-    std::replace_if(
-        out.begin(), out.end(),
-        [](char ch) {
-            return ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' || ch == '<' ||
-                   ch == '>' || ch == '|';
-        },
-        '_');
-    if (out.empty())
-        return std::string("attachment");
-    return out;
-}
-
 std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension) {
     // Mix time + thread-id + monotonic counter so concurrent downloads from different threads
     // cannot collide even when time resolution is coarser than the download rate.
@@ -252,13 +212,8 @@ std::string MakeUniqueTempFilePath(const std::string& filename, const std::strin
     const std::size_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
     const std::uint64_t unique = static_cast<std::uint64_t>(now) ^ (static_cast<std::uint64_t>(tid) << 16) ^
                                  s_counter.fetch_add(1, std::memory_order_relaxed);
-    const std::string safe = SanitizeFilename(filename);
-    std::string base = safe;
-
-    // If caller didn't include an extension, append our derived one.
-    if (base.find_last_of('.') == std::string::npos) {
-        base += extension;
-    }
+    // Sanitized, with our derived extension appended when the caller's name has none.
+    const std::string base = smatchet::attachments::StoredFileName(filename, extension);
 
     const std::string tempDir = GetTempDir();
     if (tempDir.empty())
@@ -342,6 +297,53 @@ bool IsUpdateUnsignedOverrideSet() {
 
 AttachmentAppUpdateService::AttachmentAppUpdateService(IAttachmentAppUpdateDeps& deps) : deps_(deps) {}
 
+smatchet::attachments::AttachmentDiskCache& AttachmentAppUpdateService::AttachmentCache() {
+    // Created on first use: the host may still be setting the user data folder when the service is built.
+    std::call_once(attachmentCacheOnce_, [this]() {
+        attachmentCache_ =
+            std::make_unique<smatchet::attachments::AttachmentDiskCache>(ConfigManager::GetUserDataDirectory());
+    });
+    return *attachmentCache_;
+}
+
+Result<smatchet::attachments::LocalAttachment>
+AttachmentAppUpdateService::ResolveLocalAttachment(const std::string& url, const std::string& filename,
+                                                   const std::string& mimeType) {
+    using LocalResult = Result<smatchet::attachments::LocalAttachment>;
+    if (url.empty()) {
+        return LocalResult::Err("Attachment URL is empty.");
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.Domain.empty()) {
+        return LocalResult::Err("Missing Jira credentials/domain.");
+    }
+    if (url.rfind("https://", 0) != 0) {
+        return LocalResult::Err("Attachment URL must use HTTPS.");
+    }
+    // Checked before the cache too, so a saved copy is only ever served for the tracker now configured.
+    const std::string jiraDomain = NormalizeDomain(cfg.Domain);
+    if (!IsAllowedJiraAttachmentHost(ExtractHostFromUrl(url), jiraDomain)) {
+        return LocalResult::Err("Attachment host is not allowlisted.");
+    }
+    smatchet::attachments::AttachmentRequest request;
+    request.Url = url;
+    request.FileName = filename;
+    request.Offline = deps_.IsTrackerOffline();
+    request.OfflineMissMessage = SmatchetLocalization::T("attachment.unavailable_offline",
+                                                         "Not downloaded yet \xE2\x80\x94 available once online");
+    Result<smatchet::attachments::LocalAttachment, TrackerError> local = smatchet::attachments::ResolveAttachment(
+        AttachmentCache(), request,
+        [&cfg, &url, &jiraDomain, &mimeType]() { return FetchAllowlistedAttachment(cfg, url, jiraDomain, mimeType); },
+        [&filename](const smatchet::attachments::FetchedAttachment& fetched) {
+            return WriteUncachedAttachment(filename, fetched);
+        });
+    if (!local.has_value()) {
+        return LocalResult::Err(local.error().Detail);
+    }
+    LOG_INFO("ResolveLocalAttachment: mime=%s path=%s", local.value().Mime.c_str(), local.value().FilePath.c_str());
+    return LocalResult::Ok(std::move(local.value()));
+}
+
 void AttachmentAppUpdateService::ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments) {
     if (attachments.empty()) {
         return;
@@ -370,14 +372,14 @@ void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const st
         return;
     }
 
-    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    Result<smatchet::attachments::LocalAttachment> downloaded = ResolveLocalAttachment(url, filename, mimeType);
     if (!downloaded.has_value()) {
         LOG_WARN("OpenAttachment: %s; falling back to URL open.", downloaded.error().c_str());
         deps_.OpenUrl(url);
         return;
     }
-    const std::string& outFilePath = downloaded.value().filePath;
-    const std::string& outMime = downloaded.value().mime;
+    const std::string& outFilePath = downloaded.value().FilePath;
+    const std::string& outMime = downloaded.value().Mime;
     if (deps_.Host().AttachmentViewer) {
         LOG_INFO("OpenAttachment: dispatching to host attachment viewer.");
         deps_.Host().AttachmentViewer(outFilePath, outMime, filename);
@@ -411,7 +413,7 @@ bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
         setError("Attachment has no URL.");
         return false;
     }
-    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    Result<smatchet::attachments::LocalAttachment> downloaded = ResolveLocalAttachment(url, filename, mimeType);
     if (!downloaded.has_value()) {
         LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", downloaded.error().c_str());
         setError(downloaded.error());
@@ -421,7 +423,7 @@ bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
         deps_.OpenUrl(url);
         return false;
     }
-    const std::string& outFilePath = downloaded.value().filePath;
+    const std::string& outFilePath = downloaded.value().FilePath;
     bool launchOk = false;
 #if defined(_WIN32)
     const HINSTANCE shellResult = ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -459,13 +461,13 @@ bool AttachmentAppUpdateService::DownloadAttachmentForPreview(const std::string&
         return fail(!deps_.Host().AttachmentPreview ? std::string("Preview handler is unavailable.")
                                                     : std::string("Attachment is not a supported image type."));
     }
-    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    Result<smatchet::attachments::LocalAttachment> downloaded = ResolveLocalAttachment(url, filename, mimeType);
     if (!downloaded.has_value()) {
         LOG_WARN("DownloadAttachmentForPreview: %s", downloaded.error().c_str());
         return fail(downloaded.error());
     }
-    const std::string& outFilePath = downloaded.value().filePath;
-    const std::string& outMime = downloaded.value().mime;
+    const std::string& outFilePath = downloaded.value().FilePath;
+    const std::string& outMime = downloaded.value().Mime;
     if (!deps_.Host().AttachmentPreview(outFilePath, outMime, filename, url)) {
         LOG_WARN("DownloadAttachmentForPreview: preview handler rejected file=%s mime=%s", filename.c_str(),
                  outMime.c_str());
@@ -510,27 +512,15 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
 
     // Bound the response body before it is buffered: a hostile / misconfigured endpoint could
     // otherwise stream an unbounded body straight into memory (OOM) before ParseBounded ever
-    // runs. Abort the transfer once the cap is exceeded (mirrors the capped download at :155 and
-    // the Tracker attachment proxy in McpPlugin.cpp).
-    // SMATCHET_DEVIATION(rule=duplication; reason=capped cpr::WriteCallback body-writer is deliberately
-    // inlined per download site so each cap and error string stays local and tunable, per ADR-0015,
-    // rather than folded into a shared helper; owner=security-audit; revisit=2026-09-30)
+    // runs. The transfer aborts once the cap would be crossed (same accumulator as the attachment
+    // download in TrackerDownloadLogged).
     constexpr size_t kMaxUpdateCheckBytes = 8u * 1024u * 1024u;
-    bool sizeExceeded = false;
-    std::string bodyAccum;
-    bodyAccum.reserve(64 * 1024);
-    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
-        if (bodyAccum.size() + data.size() > kMaxUpdateCheckBytes) {
-            sizeExceeded = true;
-            return false;
-        }
-        bodyAccum.append(data);
-        return true;
-    }};
+    CappedBodyAccumulator body(kMaxUpdateCheckBytes);
+    cpr::WriteCallback writeCb{[&body](const std::string& data, intptr_t) { return body.Append(data); }};
 
     cpr::Response response = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, writeCb,
                                       cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
-    if (sizeExceeded) {
+    if (body.Exceeded()) {
         out.Error = "Update check failed: GitHub response exceeds the maximum allowed size.";
         return out;
     }
@@ -547,7 +537,7 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     // depth/node-bounded helper so a hostile / oversized body can't crash the process.
     // ParseBounded never throws; failure is a non-empty parseErr (stable, input-free).
     std::string parseErr;
-    nlohmann::json releases = smatchet::json_safe::ParseBounded(bodyAccum, parseErr);
+    nlohmann::json releases = smatchet::json_safe::ParseBounded(body.Body(), parseErr);
     if (!parseErr.empty()) {
         out.Error = std::string("Update check failed to parse GitHub response: ") + parseErr;
         return out;

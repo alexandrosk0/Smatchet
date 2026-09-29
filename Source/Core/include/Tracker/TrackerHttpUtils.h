@@ -1,10 +1,12 @@
 #pragma once
 
 #include "ConfigManager.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpPure.h"
 
 #include <cpr/cpr.h>
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
@@ -63,6 +65,22 @@ cpr::Response TrackerDeleteLogged(const char* clientName, const std::string& url
                                   const std::function<bool()>& cancelled = nullptr);
 void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
                           const cpr::Response& response);
+
+/// The outcome of TrackerDownloadLogged. `Http.Response.text` stays empty: the body is in `Body`.
+struct TrackerDownloadResult {
+    TrackerHttpResult Http; ///< classified like every tracker call (an unreachable host is Transport)
+    std::string Body;
+    bool SizeExceeded = false; ///< the transfer was aborted at the cap; `Body` is empty
+};
+
+/// One GET for a file download (an attachment). A single attempt, so a large body is never fetched
+/// twice. Redirects are followed (a tracker serves attachment bytes from its media host) with
+/// cont_send_cred=false, so libcurl sends the credentials to the original host only; the caller checks
+/// the host it landed on (`Http.Response.url`) before using the body. The body is capped at `maxBytes`
+/// (the transfer aborts past it). The tracker TLS options, the traffic count and the request log apply
+/// as for every other tracker request.
+TrackerDownloadResult TrackerDownloadLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                            std::size_t maxBytes, long overallTimeoutMs);
 
 // Transport classification travels as the structured TrackerError kind; there is deliberately no
 // text-based transport classifier declared here.

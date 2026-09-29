@@ -5,6 +5,7 @@
 #include "Ui/SmatchetUserInfoUi.h"
 
 #include "AppController.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "Tracker/ProjectResolver.h"
@@ -164,11 +165,15 @@ void SmatchetUserInfoUi::drawActivitySection(AppController& app, UiDrawSession& 
         const float fraction = total > 0 ? static_cast<float>(current) / static_cast<float>(total) : 0.0f;
         const std::string overlay = std::to_string(current) + " / " + std::to_string(total);
         ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay.c_str());
-        return;
-    }
-    if (!activity_.Error.empty()) {
+        // Pillar 6: a reload keeps the activity already on screen under its progress bar.
+        if (activity_.Entries.empty()) {
+            return;
+        }
+    } else if (!activity_.Error.empty()) {
         ImGui::TextColored(kSectionErrorColor, "%s", activity_.Error.c_str());
-        return;
+        if (activity_.Entries.empty()) {
+            return;
+        }
     }
     // Tightening the day filter re-filters the already-fetched window per frame
     // (string compare on the ISO prefix); widening past the fetch needs Reload.
@@ -216,11 +221,22 @@ void SmatchetUserInfoUi::drawGroupsSection(AppController& app, UiDrawSession& d)
     }
     if (groupsLoading_) {
         ImGui::TextDisabled("Loading groups...");
-        return;
-    }
-    if (!groups_.Error.empty()) {
+        // Pillar 6: a refresh keeps the groups already on screen under its loading line.
+        if (groups_.Names.empty()) {
+            return;
+        }
+    } else if (!groups_.Error.empty()) {
         ImGui::TextColored(kSectionErrorColor, "%s", groups_.Error.c_str());
-        return;
+        ImGui::PushID("groups_retry");
+        if (ImGui::SmallButton(SmatchetLocalization::T("user_info.retry", "Retry"))) {
+            groups_.Error.clear();
+            groupsLoaded_ = false;
+            launchGroupsFetch(app);
+        }
+        ImGui::PopID();
+        if (groups_.Names.empty()) {
+            return;
+        }
     }
     if (groups_.Names.empty()) {
         if (groupsLoaded_) {
@@ -265,6 +281,10 @@ void SmatchetUserInfoUi::drawGroupMembers(AppController& app, const std::string&
     const std::map<std::string, std::string>::const_iterator errHit = membersErrors_.find(groupName);
     if (errHit != membersErrors_.end()) {
         ImGui::TextColored(kSectionErrorColor, "%s", errHit->second.c_str());
+        // The caller's PushID(i) keeps this button's id apart from the other groups'.
+        if (ImGui::SmallButton(SmatchetLocalization::T("user_info.retry", "Retry"))) {
+            membersErrors_.erase(errHit); // the next frame launches the fetch again
+        }
         return;
     }
     // One members fetch at a time — other expanded groups queue until it drains

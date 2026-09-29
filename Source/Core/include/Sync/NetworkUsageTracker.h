@@ -32,6 +32,10 @@ class NetworkUsageTracker {
     static NetworkUsageTracker& Instance();
 
     void Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r);
+    /// For a response whose body was streamed through a write callback (`r.text` stays empty), with the
+    /// bytes the callback received.
+    void Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r,
+                std::uint64_t downloadBodyBytes);
 
     NetworkUsageSnapshot GetSnapshot() const;
 

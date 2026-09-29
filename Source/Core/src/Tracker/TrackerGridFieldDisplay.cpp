@@ -1,10 +1,13 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "TrackerGridFieldDisplay.h"
 #include "UiPerfMonitor.h"
 #include "AppController.h"
 #include "ConfigManager.h"
 
+#include "DataFreshnessCue.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
 #include "TrackerGridFieldDisplayPure.h"
 
@@ -16,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <chrono>
 #include <exception>
 #include <future>
 #include <memory>
@@ -186,9 +190,9 @@ QueuedWatchState ClassifyQueuedWatch(const AppController& app, std::int64_t queu
     return QueuedWatchState::Gone;
 }
 
-// Key of TrackerGridFieldAsyncState::watchSelfQueuedIds: a queued watch belongs to the backend it was
-// queued on.
-std::string QueuedWatchKey(const std::string& backendKey, const std::string& issueKey) {
+// Key of the per-issue maps in TrackerGridFieldAsyncState (queued watches, saved watchers / votes lists):
+// an entry belongs to one backend, so another backend's issue with the same key never sees it.
+std::string BackendIssueKey(const std::string& backendKey, const std::string& issueKey) {
     return backendKey + '\x1f' + issueKey;
 }
 
@@ -199,7 +203,7 @@ bool AdoptPersistedWatch(AppController& app, const std::string& issueKey, Tracke
     if (persistedId == 0) {
         return false;
     }
-    async.watchSelfQueuedIds[QueuedWatchKey(app.FocusedCacheBackendKey(), issueKey)] = persistedId;
+    async.watchSelfQueuedIds[BackendIssueKey(app.FocusedCacheBackendKey(), issueKey)] = persistedId;
     return true;
 }
 
@@ -210,7 +214,7 @@ bool WatchQueuedForIssue(AppController& app, const std::string& issueKey, Tracke
     if (async.watchSelfQueuedIds.empty()) {
         return AdoptPersistedWatch(app, issueKey, async); // the common case: no per-frame backend-key copy
     }
-    const auto queued = async.watchSelfQueuedIds.find(QueuedWatchKey(app.FocusedCacheBackendKey(), issueKey));
+    const auto queued = async.watchSelfQueuedIds.find(BackendIssueKey(app.FocusedCacheBackendKey(), issueKey));
     if (queued == async.watchSelfQueuedIds.end()) {
         return AdoptPersistedWatch(app, issueKey, async);
     }
@@ -223,6 +227,99 @@ bool WatchQueuedForIssue(AppController& app, const std::string& issueKey, Tracke
         app.PrefetchIssueTicketsForKeys({issueKey}, true);
     }
     return false;
+}
+
+// A watchers / votes load is starting: the list saved this session (when there is one) stays on screen
+// until the tracker answers. Offline no request is sent and the saved list is marked as offline.
+// Returns true when the caller should launch the request. A finished result the window has not read yet
+// belongs to the previously clicked issue, so it is dropped (the Load button is disabled while a load
+// runs, so that future is already ready and dropping it never waits).
+template <typename LoadResult>
+bool BeginListLoad(AppController& app, std::future<LoadResult>& future, bool& inProgress, CollabListStatus& status,
+                   bool haveSaved) {
+    future = std::future<LoadResult>();
+    inProgress = false;
+    status = CollabListStatus();
+    status.HaveData = haveSaved;
+    if (!app.IsTrackerOffline()) {
+        return true;
+    }
+    status.LastLoadFailed = true;
+    status.LastErrorKind = TrackerErrorKind::Transport;
+    status.Error = SmatchetLocalization::T("collab_list.offline", "The tracker is offline.");
+    return false;
+}
+
+void FinishListLoad(CollabListStatus& status, bool ok, TrackerErrorKind kind, const std::string& error) {
+    status.LastLoadFailed = !ok;
+    status.LastErrorKind = ok ? TrackerErrorKind::None : kind;
+    status.Error = ok ? std::string() : error;
+    if (ok) {
+        status.HaveData = true;
+        status.DataLive = true;
+    }
+}
+
+// Runs `fetch` on a worker. The in-flight flag is set only once the worker exists, so a failed launch
+// shows an error instead of a load that never finishes.
+template <typename LoadResult, typename FetchFn>
+void LaunchListLoad(std::future<LoadResult>& future, bool& inProgress, CollabListStatus& status, const char* what,
+                    FetchFn fetch) {
+    try {
+        future = std::async(std::launch::async, std::move(fetch));
+        inProgress = true;
+    } catch (const std::exception& ex) {
+        FinishListLoad(status, false, TrackerErrorKind::Unknown,
+                       std::string("Failed to load ") + what + ": " + ex.what());
+        LOG_ERROR("TrackerGridFieldDisplay: could not start the %s load: %s", what, ex.what());
+    }
+}
+
+// Above a watchers / votes list: the freshness cue (nothing when the list is live), or, when a load the
+// tracker refused left nothing to show, that error. True when the list itself should be drawn.
+bool DrawListStatus(const CollabListStatus& status, bool loading) {
+    if (!status.HaveData && !loading && status.LastLoadFailed && status.LastErrorKind != TrackerErrorKind::Transport) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", status.Error.c_str());
+        ImGui::PopStyleColor();
+        return false;
+    }
+    smatchet::offline::FreshnessInputs in;
+    in.HasCache = status.HaveData;
+    in.Live = status.DataLive;
+    in.InFlight = loading;
+    in.LastAttemptFailed = status.LastLoadFailed;
+    in.Connectivity = status.LastErrorKind == TrackerErrorKind::Transport
+                          ? TrackerConnectivityState::TransportDown
+                          : TrackerConnectivityState::AuthenticatedReachable;
+    const smatchet::offline::DataFreshness freshness = smatchet::offline::ClassifyFreshness(in);
+    DataFreshnessCue::Draw(freshness, status.Error.empty() ? nullptr : status.Error.c_str());
+    return smatchet::offline::ShouldRenderContent(freshness);
+}
+
+// Takes a finished watchers / votes load off its future (true when one finished this frame). A worker
+// exception becomes the load's error, never a crash, and the in-flight flag clears on every path.
+template <typename LoadResult>
+bool TakeFinishedLoad(std::future<LoadResult>& future, bool& inProgress, const char* what, const std::string& issueKey,
+                      LoadResult& out) {
+    if (!future.valid() || future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return false;
+    }
+    inProgress = false;
+    try {
+        out = future.get();
+    } catch (const std::exception& ex) {
+        out = LoadResult();
+        out.Error = std::string("Failed to load ") + what + ": " + ex.what();
+        out.ErrorKind = TrackerErrorKind::Unknown;
+        LOG_ERROR("TrackerGridFieldDisplay: %s future exception issue=%s err=%s", what, issueKey.c_str(), ex.what());
+    } catch (...) { // catch-all-ok: a worker exception becomes the load's error, never a crash
+        out = LoadResult();
+        out.Error = std::string("Failed to load ") + what + ".";
+        out.ErrorKind = TrackerErrorKind::Unknown;
+        LOG_ERROR("TrackerGridFieldDisplay: %s future unknown exception issue=%s", what, issueKey.c_str());
+    }
+    return true;
 }
 
 } // namespace
@@ -251,23 +348,30 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
         ImGui::BeginDisabled();
     }
     if (ImGui::SmallButton(loadBtn.c_str())) {
+        // Pillar 6: the list loaded earlier this session shows at once and stays while the tracker answers
+        // (or while it is offline, when no request is sent).
         async.watchersPopupIssueKey = issueKey;
         async.watchersPanelOpen = true;
-        async.watchersLoadInProgress = true;
-        async.watchersLoadedList.clear();
-        async.watchersLoadedError.clear();
-        async.watchersFuture = std::async(std::launch::async, [&app, issueKey]() {
-            WatchersLoadResult r;
-            Result<std::vector<TrackerUser>> res = app.FetchIssueWatchers(issueKey);
-            if (res.has_value()) {
-                r.Watchers = std::move(res.value());
-                r.Ok = true;
-            } else {
-                r.Ok = false;
-                r.Error = res.error();
-            }
-            return r;
-        });
+        async.watchersSessionKey = BackendIssueKey(app.FocusedCacheBackendKey(), issueKey);
+        const auto saved = async.watchersSessionCache.find(async.watchersSessionKey);
+        const bool haveSaved = saved != async.watchersSessionCache.end();
+        async.watchersLoadedList = haveSaved ? saved->second : std::vector<TrackerUser>();
+        if (BeginListLoad(app, async.watchersFuture, async.watchersLoadInProgress, async.watchersStatus, haveSaved)) {
+            LaunchListLoad(async.watchersFuture, async.watchersLoadInProgress, async.watchersStatus, "watchers",
+                           [&app, issueKey]() {
+                               WatchersLoadResult r;
+                               Result<std::vector<TrackerUser>, TrackerError> res =
+                                   app.FetchIssueWatchersTyped(issueKey);
+                               r.Ok = res.has_value();
+                               if (r.Ok) {
+                                   r.Watchers = std::move(res.value());
+                               } else {
+                                   r.Error = res.error().Detail;
+                                   r.ErrorKind = res.error().Kind;
+                               }
+                               return r;
+                           });
+        }
     }
     if (watchersBusy) {
         ImGui::EndDisabled();
@@ -343,30 +447,32 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
         ImGui::BeginDisabled();
     }
     if (ImGui::SmallButton(loadBtn.c_str())) {
+        // Pillar 6: as for watchers, the votes loaded earlier this session show while the tracker answers.
         async.votesPopupIssueKey = issueKey;
         async.votesPanelOpen = true;
-        async.votesLoadInProgress = true;
-        async.votesLoadedList.clear();
-        async.votesLoadedError.clear();
-        async.votesLoadedVoteCount = 0;
-        async.votesLoadedHasVoted = false;
-        async.votesLoadedVotersArrayInResponse = false;
-        async.votesFuture = std::async(std::launch::async, [&app, issueKey]() {
-            VotesLoadResult r;
-            Result<TrackerIssueVotes> res = app.FetchIssueVotes(issueKey);
-            if (res.has_value()) {
-                const TrackerIssueVotes& v = res.value();
-                r.Voters = v.Voters;
-                r.VoteCount = v.VoteCount;
-                r.HasVoted = v.HasVoted;
-                r.VotersArrayInResponse = v.VotersArrayInResponse;
-                r.Ok = true;
-            } else {
-                r.Ok = false;
-                r.Error = res.error();
-            }
-            return r;
-        });
+        async.votesSessionKey = BackendIssueKey(app.FocusedCacheBackendKey(), issueKey);
+        const auto saved = async.votesSessionCache.find(async.votesSessionKey);
+        const bool haveSaved = saved != async.votesSessionCache.end();
+        async.votesLoaded = haveSaved ? saved->second : VotesLoadResult();
+        if (BeginListLoad(app, async.votesFuture, async.votesLoadInProgress, async.votesStatus, haveSaved)) {
+            LaunchListLoad(async.votesFuture, async.votesLoadInProgress, async.votesStatus, "votes",
+                           [&app, issueKey]() {
+                               VotesLoadResult r;
+                               Result<TrackerIssueVotes, TrackerError> res = app.FetchIssueVotesTyped(issueKey);
+                               r.Ok = res.has_value();
+                               if (r.Ok) {
+                                   TrackerIssueVotes& v = res.value();
+                                   r.Voters = std::move(v.Voters);
+                                   r.VoteCount = v.VoteCount;
+                                   r.HasVoted = v.HasVoted;
+                                   r.VotersArrayInResponse = v.VotersArrayInResponse;
+                               } else {
+                                   r.Error = res.error().Detail;
+                                   r.ErrorKind = res.error().Kind;
+                               }
+                               return r;
+                           });
+        }
     }
     if (votesBusy) {
         ImGui::EndDisabled();
@@ -430,7 +536,7 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
                     d.watchSelfError.clear();
                 } else if (result.K == PendingActionSubmitResult::Kind::Queued) {
                     // Saved, not applied: the button stays hidden only while the row is queued.
-                    d.watchSelfQueuedIds[QueuedWatchKey(d.watchSelfPendingBackendKey, d.watchSelfPendingIssueKey)] =
+                    d.watchSelfQueuedIds[BackendIssueKey(d.watchSelfPendingBackendKey, d.watchSelfPendingIssueKey)] =
                         result.QueueId;
                     d.watchSelfError.clear();
                 } else {
@@ -450,31 +556,12 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
         }
     }
 
-    if (d.watchersFuture.valid()) {
-        if (d.watchersFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            try {
-                WatchersLoadResult r = d.watchersFuture.get();
-                d.watchersLoadInProgress = false;
-                if (r.Ok) {
-                    d.watchersLoadedList = std::move(r.Watchers);
-                    d.watchersLoadedError.clear();
-                } else {
-                    d.watchersLoadedList.clear();
-                    d.watchersLoadedError = std::move(r.Error);
-                }
-            } catch (const std::exception& ex) {
-                d.watchersLoadInProgress = false;
-                d.watchersLoadedList.clear();
-                d.watchersLoadedError = std::string("Failed to load watchers: ") + ex.what();
-                LOG_ERROR("TrackerGridFieldDisplay: watchers future exception issue=%s err=%s",
-                          d.watchersPopupIssueKey.c_str(), ex.what());
-            } catch (...) {
-                d.watchersLoadInProgress = false;
-                d.watchersLoadedList.clear();
-                d.watchersLoadedError = "Failed to load watchers.";
-                LOG_ERROR("TrackerGridFieldDisplay: watchers future unknown exception issue=%s",
-                          d.watchersPopupIssueKey.c_str());
-            }
+    WatchersLoadResult watchers;
+    if (TakeFinishedLoad(d.watchersFuture, d.watchersLoadInProgress, "watchers", d.watchersPopupIssueKey, watchers)) {
+        FinishListLoad(d.watchersStatus, watchers.Ok, watchers.ErrorKind, watchers.Error);
+        if (watchers.Ok) {
+            d.watchersLoadedList = watchers.Watchers;
+            d.watchersSessionCache[d.watchersSessionKey] = std::move(watchers.Watchers);
         }
     }
 
@@ -488,13 +575,7 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
         ImGui::SameLine();
         ImGui::TextUnformatted(d.watchersPopupIssueKey.c_str());
         ImGui::Separator();
-        if (d.watchersLoadInProgress) {
-            ImGui::TextDisabled("Loading...");
-        } else if (!d.watchersLoadedError.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", d.watchersLoadedError.c_str());
-            ImGui::PopStyleColor();
-        } else {
+        if (DrawListStatus(d.watchersStatus, d.watchersLoadInProgress)) {
             if (d.watchersLoadedList.empty()) {
                 ImGui::TextDisabled("No watchers.");
             } else {
@@ -514,43 +595,12 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
 }
 
 void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d) {
-    if (d.votesFuture.valid()) {
-        if (d.votesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            try {
-                VotesLoadResult r = d.votesFuture.get();
-                d.votesLoadInProgress = false;
-                if (r.Ok) {
-                    d.votesLoadedList = std::move(r.Voters);
-                    d.votesLoadedError.clear();
-                    d.votesLoadedVoteCount = r.VoteCount;
-                    d.votesLoadedHasVoted = r.HasVoted;
-                    d.votesLoadedVotersArrayInResponse = r.VotersArrayInResponse;
-                } else {
-                    d.votesLoadedList.clear();
-                    d.votesLoadedError = std::move(r.Error);
-                    d.votesLoadedVoteCount = 0;
-                    d.votesLoadedHasVoted = false;
-                    d.votesLoadedVotersArrayInResponse = false;
-                }
-            } catch (const std::exception& ex) {
-                d.votesLoadInProgress = false;
-                d.votesLoadedList.clear();
-                d.votesLoadedError = std::string("Failed to load votes: ") + ex.what();
-                d.votesLoadedVoteCount = 0;
-                d.votesLoadedHasVoted = false;
-                d.votesLoadedVotersArrayInResponse = false;
-                LOG_ERROR("TrackerGridFieldDisplay: votes future exception issue=%s err=%s",
-                          d.votesPopupIssueKey.c_str(), ex.what());
-            } catch (...) {
-                d.votesLoadInProgress = false;
-                d.votesLoadedList.clear();
-                d.votesLoadedError = "Failed to load votes.";
-                d.votesLoadedVoteCount = 0;
-                d.votesLoadedHasVoted = false;
-                d.votesLoadedVotersArrayInResponse = false;
-                LOG_ERROR("TrackerGridFieldDisplay: votes future unknown exception issue=%s",
-                          d.votesPopupIssueKey.c_str());
-            }
+    VotesLoadResult votes;
+    if (TakeFinishedLoad(d.votesFuture, d.votesLoadInProgress, "votes", d.votesPopupIssueKey, votes)) {
+        FinishListLoad(d.votesStatus, votes.Ok, votes.ErrorKind, votes.Error);
+        if (votes.Ok) {
+            d.votesLoaded = votes;
+            d.votesSessionCache[d.votesSessionKey] = std::move(votes);
         }
     }
 
@@ -564,33 +614,28 @@ void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d)
         ImGui::SameLine();
         ImGui::TextUnformatted(d.votesPopupIssueKey.c_str());
         ImGui::Separator();
-        if (d.votesLoadInProgress) {
-            ImGui::TextDisabled("Loading...");
-        } else if (!d.votesLoadedError.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", d.votesLoadedError.c_str());
-            ImGui::PopStyleColor();
-        } else {
-            std::string summary = std::to_string(d.votesLoadedVoteCount) + " vote";
-            if (d.votesLoadedVoteCount != 1) {
+        if (DrawListStatus(d.votesStatus, d.votesLoadInProgress)) {
+            const VotesLoadResult& shown = d.votesLoaded;
+            std::string summary = std::to_string(shown.VoteCount) + " vote";
+            if (shown.VoteCount != 1) {
                 summary += "s";
             }
-            if (d.votesLoadedHasVoted) {
+            if (shown.HasVoted) {
                 summary += " (you voted)";
             }
             ImGui::TextUnformatted(summary.c_str());
             ImGui::Spacing();
-            if (d.votesLoadedList.empty()) {
-                if (d.votesLoadedVoteCount == 0) {
+            if (shown.Voters.empty()) {
+                if (shown.VoteCount == 0) {
                     ImGui::TextDisabled("No votes.");
-                } else if (!d.votesLoadedVotersArrayInResponse) {
+                } else if (!shown.VotersArrayInResponse) {
                     ImGui::TextDisabled("Voter names are hidden by Tracker permissions (View voters and watchers).");
                 } else {
                     ImGui::TextDisabled("No voters to list.");
                 }
             } else {
                 ImGui::BeginChild("VotesList", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), true);
-                for (const auto& w : d.votesLoadedList) {
+                for (const auto& w : shown.Voters) {
                     const std::string label = w.DisplayName.empty() ? w.AccountId : w.DisplayName;
                     ImGui::BulletText("%s", label.c_str());
                 }

@@ -2991,6 +2991,26 @@ This plan touches `Source/Core/`.
   - A pane whose own catalog fetch fails loads the catalog snapshot saved for its tracker, applied only to a pane with no catalog and marked so the next sync still tries the live fetch.
 - Tests: `ListProjectsTyped` for Jira, Plane, GitHub and Linear over the loopback fixtures; `ProjectListLookup`; the `projects` codec in `LookupPayloadsPure`; `ClassifyUserLookupOutcome` and `FindRosterUserForP4User`; the fixture's `projects` key; the bucket-E test `OfflineFirst/ProjectPicker_OfflineShowsSavedProjects`.
 
+### S13 — fixes [#2269](https://github.com/alexandrosk0/Smatchet/issues/2269)
+- Shipped:
+  - **Attachments.** Every previewed or opened attachment is kept on disk at `attachment_cache/<sha256 of the URL>/` (`AttachmentDiskCache`, rules in `AttachmentCachePure`).
+    - Eviction is least-recently-used with a 256 MB cap. An entry used in the last 10 minutes is never evicted, and an interrupted download is removed once that window passes.
+    - A cached copy opens with no request, online or offline. Offline, a miss says "Not downloaded yet — available once online".
+    - The download goes through `TrackerDownloadLogged` rather than a direct `cpr::Get`: one attempt, a 50 MB cap (`CappedBodyAccumulator`, now shared with the update check), a 120 s timeout, recorded traffic, and the redirect host re-checked against the allowlist. Both duplication deviations it carried are gone.
+    - Stored file names are sanitized (reserved characters, Windows device names, a 120-byte cap on a UTF-8 boundary). `entry.json` is parsed bounded and its file name re-validated, so a tampered entry cannot point outside its directory.
+  - **Watchers / votes.** The windows keep the list loaded earlier this session and draw a `DataFreshnessCue` while a refresh runs, while the tracker is offline and after a failed load. Offline, Load sends no request. The loads keep the error kind (`FetchIssueWatchersTyped` / `FetchIssueVotesTyped`).
+  - **User Info.** Offline, the groups, members and activity lookups send no request and say why; groups and members get a Retry. A members worker that throws records its error, which ends the per-frame relaunch. A failed or offline reload keeps the activity and groups already shown.
+  - **Calibration.** The review fixed the tracker defects the sweep found:
+    - `ITrackerIssueReader`'s default changed-since and membership fetches now keep `Transport`.
+    - The JQL account-id resolver sends no lookup offline, and an outage no longer uses up its retry limit.
+    - The ticket prefetch is skipped while offline.
+  - Both exact rules now read 0 over the whole tree. The per-hit record is `docs/high-integrity/offline-calibration.md`, with graduation proposals for `offline-cache-cleared` and `tracker-error-kind-collapsed`. The Perforce finding is filed as [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270).
+- Tests:
+  - `CappedBodyAccumulator`, `AttachmentCachePure` and `AttachmentDiskCache` (temp dir, fake fetch, tamper, prune, grace, interrupted entry, 4-thread concurrency).
+  - `TrackerIssueReaderDefaults`.
+  - The fixture's `watchers`, `userGroups` and `groupMembers` keys.
+  - The bucket-E tests `OfflineFirst/Watchers_OfflineKeepsSavedList` and `OfflineFirst/UserInfo_GroupsOfflineOfferRetry`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -3095,7 +3115,34 @@ This plan touches `Source/Core/`.
   - The pane snapshot fallback sets the pane's catalog warning with the shared `Last fetch failed:` marker and leaves `fieldCatalogEverLoaded_` false. A pane's own live catalog is still not saved as a snapshot: the focused catalog fetch saves one per tracker, and the per-pane path was left unchanged.
   - GitHub's typed cases are subcases of the existing `ListProjects` case, and Linear's are in `LinearIssueMutationHttp.test.cpp`, reusing its loopback-config helpers; the S6 unreachable case now shares `SaveUnreachableLinearConfig`. The fake tracker gains a scriptable, down-gated `ListProjectsTyped`, and the offline fixture gains a `projects` key.
   - CodeRabbit review on #2267: Linear's listing classifies a rejected response with `ClassifyRejectedTrackerResponse`, like the other clients (a throttled 403 is `RateLimited`, `RequestNotSent` is kept). A user search that was refused or never ran (auth, a local failure) reads "Unknown" (`LookupFailed`) with its error, so only a live answer with no match reads "Past Employee". A picker load superseded by a tracker switch is discarded through a per-load generation, and the focused tracker's list loads at once instead of after the old load finishes. The second review moved the failure-text formatting into the pure `DescribeRejectedHttpStatus`, so its test needs no cpr types and runs in the Linux TSan subset (`Tracker2xxErrorGuard.test.cpp`, now in both lists). The third review found that a profile or assign lookup still running when another row was selected filled the new dialog (the assign dialog could pick the earlier user's account): each open now starts a lookup generation from one process-wide counter, a post-back applies only while its generation is current, and a new selection no longer waits out the earlier lookup. Its other finding — the local cache is keyed by tracker kind rather than site or account, so saved lookups, cached tickets and queued offline writes carry over when the Jira site or a workspace changes — predates S12 (the key namespaces the whole cache, including the offline queues) and needs a migration, so it is tracked in #2268 instead of widening this slice.
+- **S13:**
+  - **Cache key.** The attachment cache is keyed by the hash of the full URL, with no `<backendKey>` directory. The URL already names the site, so two Jira sites never share an entry, and #2268's kind-keyed namespace cannot reach the cache.
+  - **String key.** The offline string is `attachment.unavailable_offline`, singular like the existing `attachment.*` keys.
+  - **Download helper.** The download does not use the retrying JSON request helpers. It uses a new one-attempt streamed entry point, `TrackerDownloadLogged` (`TrackerHttpUtils`), because retrying a 50 MB transfer would multiply the wait on a dead connection. It keeps the tracker SSL options and the traffic record.
+  - **Eviction grace.** The grace window protects recently used entries even over the cap, so an attachment on screen is never deleted under its viewer.
+  - **Shared collaboration helper.** One private helper, `AppController::callFocusedCollaboration_`, carries the latch, the capability check, the failure log and the success notify for watchers, votes, the typed user search and comments. The comments "not initialized" text now says "Tracker" rather than "Jira".
+  - **Watchers / votes state.** Instead of the plan's bare `Draw(UnavailableNoCache, err)`, the windows track a `CollabListStatus` and classify it with `ClassifyFreshness`. A load the tracker refused (auth, invalid request) with nothing to show keeps its red error, since that is not an offline state. A failed launch never latches "loading", and an unread result from the previously clicked issue is dropped.
+  - **User Info scope.** Beyond the planned Retry buttons and the `pollMembersFuture` fix, User Info also gates its groups, members and activity lookups offline and keeps what it showed across a failed reload.
+  - **Calibration scope.** The review went beyond recording. It fixed the tracker true positives it found (reader defaults, JQL resolver, prefetch), rewrote GitHub's equivalent fallback as the sanctioned `IsOk()` idiom, and deviation-marked the backend-switch roster reset. The Perforce true positives are filed as #2270, and the bulk-import prefetch's missing online backoff is a debt entry. No gate is flipped here; the proposals wait for the maintainer.
+  - **Fake tracker.** The fake gains scriptable, down-gated watchers and an activity role (groups, members). This closes the fixture-activity gap `user_info_window.test.cpp` documents, for the offline-first lane.
+  - **Residual.** There is no bucket-E test for opening a cached attachment offline. The download is a real cpr request that the fake network switch cannot intercept. `ResolveAttachment`'s unit tests cover the hit, the offline miss, the transport failure and the uncached fallback instead.
+  - **CodeRabbit review on #2271.** Its autofix commit, reviewed and kept, made three changes:
+    - A members lookup that throws after User Info switched target no longer records its error on the new target.
+    - `entry.json` must be really replaced; only the data file keeps the same-size fallback for a viewer's lock.
+    - An outage also forgets the account ids the resolver had given up on.
+
+    Two findings outside the diff were fixed on top. A failed groups refresh keeps the names already shown. The activity and groups sections keep their rows on screen while a refresh runs, instead of showing only its progress line.
 
 ## Verification (actual)
+
+End to end, after S13. Each slice's own verification is in its PR.
+
+- **Linux (cloud container):**
+  - `bash scripts/dev/pre-ship.sh origin/develop` passes. The only output besides passes is advisory WARNs: the TU line ceiling, the comment ratio of an untouched header, and the offline heuristics listed in `docs/high-integrity/offline-calibration.md`.
+  - `posix-core-check` compiles every core TU.
+  - `SmatchetTsanTests`: 823 of 823 pass with no ThreadSanitizer report. That run temporarily included `JiraFakeTrackerFixture.test.cpp`, which is Windows-only, so the new fixture keys ran here too. The new `TrackerIssueReaderDefaults` suite passes 3 of 3.
+  - The whole-tree `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, down from 35. Each hit is classified in the calibration record.
+- **Windows CI:** `SmatchetTests`, ASan/UBSan and the bucket-E lanes (`JiraDeterministic`, `OfflineFirst` with the two new S13 tests) gate the S13 merge.
+- **Manual (hosts-file block of the tracker, restart offline, reconnect):** not run. It needs a Windows desktop session, which the cloud container does not have. It stays with the user.
 
 ## Archive

@@ -21,16 +21,19 @@
 #include "PendingActionTypes.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
-#include "SmatchetCommentsModalUi.h" // OpenCommentsModal + GetCommentsModalSnapshotForTests
-#include "SmatchetGridUiSupport.h"   // ProcessGridFieldEdits — the real grid commit pipeline
-#include "SmatchetProjectPicker.h"   // StartAllProjectsFetch — the picker's "All projects" load
-#include "SmatchetUiSession.h"       // g_ui, PendingFieldEdit
+#include "SmatchetCommentsModalUi.h"         // OpenCommentsModal + GetCommentsModalSnapshotForTests
+#include "SmatchetGridUiSupport.h"           // ProcessGridFieldEdits — the real grid commit pipeline
+#include "SmatchetProjectPicker.h"           // StartAllProjectsFetch — the picker's "All projects" load
+#include "SmatchetUiSession.h"               // g_ui, PendingFieldEdit
+#include "Tracker/TrackerGridFieldDisplay.h" // the watchers cell + window, driven with a test-owned state
 #include "Types/ConnectivityTypes.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "Types/TransitionsTypes.h"
+#include "Ui/SmatchetToast.h" // SmatchetToastManager — clear live toasts before a click
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
 
 #include "imgui.h"
+#include "imgui_internal.h" // FindWindowByName — the real-window probe
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
@@ -710,6 +713,203 @@ static void RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(ImGuiTest
     };
 }
 
+namespace {
+
+const char* kWatchersTestWindow = "SmatchetTest::OfflineWatchers";
+
+// The watchers cell's async state for Watchers_OfflineKeepsSavedList. The test owns it (not g_ui), so
+// the production grid's own watchers window is never touched.
+TrackerGridFieldAsyncState& WatchersTestState() {
+    static TrackerGridFieldAsyncState state;
+    return state;
+}
+
+bool WindowIsLive(const char* title) {
+    const ImGuiWindow* window = ImGui::FindWindowByName(title);
+    return window != nullptr && window->Active;
+}
+
+// Click an issue's watchers "Load" button, then wait until the window's load has settled (true when it
+// has): a finished request, or an offline click that sends none.
+bool ClickWatchersLoad(ImGuiTestContext* ctx, const char* issueKey) {
+    SmatchetToastManager::Instance().DismissAllLive();
+    ctx->SetRef(kWatchersTestWindow);
+    ctx->ItemClick((std::string("Load##watch_") + issueKey).c_str());
+    return YieldUntil(ctx, 300, []() { return !WatchersTestState().watchersLoadInProgress; });
+}
+
+bool WatchersListHas(const char* displayName) {
+    const std::vector<TrackerUser>& list = WatchersTestState().watchersLoadedList;
+    return std::any_of(list.begin(), list.end(),
+                       [displayName](const TrackerUser& user) { return user.DisplayName == displayName; });
+}
+
+} // namespace
+
+// OfflineFirst/Watchers_OfflineKeepsSavedList: the watchers window keeps the list it loaded this session.
+// Offline, Load sends no request and the saved list stays on screen marked offline (freshness cue);
+// an issue with no saved list reads "not available" with the offline reason, never a stuck "Loading...".
+// Back online, Load shows the live list again.
+static void RegisterOfflineFirstWatchersOfflineKeepsSavedList(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Watchers_OfflineKeepsSavedList");
+    t->GuiFunc = [](ImGuiTestContext*) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            return;
+        }
+        TrackerGridFieldAsyncState& state = WatchersTestState();
+        ImGui::SetNextWindowSize(ImVec2(360, 90), ImGuiCond_Appearing);
+        if (ImGui::Begin(kWatchersTestWindow)) {
+            TrackerGridFieldDisplay::RenderWatchersField(*app, "OFF-1", std::string(), 200.0f, false, state);
+            TrackerGridFieldDisplay::RenderWatchersField(*app, "OFF-2", std::string(), 200.0f, false, state);
+        }
+        ImGui::End();
+        TrackerGridFieldDisplay::DrawWatchersListWindow(state);
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        TrackerGridFieldAsyncState& state = WatchersTestState();
+        state.watchersPanelOpen = false;
+        state.watchersSessionCache.clear();
+
+        // Online: the live list shows, with no cue.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        IM_CHECK_NO_RET(ClickWatchersLoad(ctx, "OFF-1"));
+        IM_CHECK_NO_RET(state.watchersStatus.DataLive);
+        IM_CHECK_NO_RET(!state.watchersStatus.LastLoadFailed);
+        IM_CHECK_NO_RET(WatchersListHas("Wes Watcher"));
+        IM_CHECK_NO_RET(WindowIsLive("Watchers"));
+
+        // Offline: no request; the saved list stays, marked as offline.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        IM_CHECK_NO_RET(ClickWatchersLoad(ctx, "OFF-1"));
+        IM_CHECK_NO_RET(state.watchersStatus.HaveData);
+        IM_CHECK_NO_RET(!state.watchersStatus.DataLive);
+        IM_CHECK_NO_RET(state.watchersStatus.LastLoadFailed);
+        IM_CHECK_NO_RET(state.watchersStatus.LastErrorKind == TrackerErrorKind::Transport);
+        IM_CHECK_NO_RET(!state.watchersStatus.Error.empty());
+        IM_CHECK_NO_RET(WatchersListHas("Wes Watcher"));
+
+        // Offline with nothing saved for the issue: nothing to show, and the reason instead of a spinner.
+        IM_CHECK_NO_RET(ClickWatchersLoad(ctx, "OFF-2"));
+        IM_CHECK_NO_RET(!state.watchersStatus.HaveData);
+        IM_CHECK_NO_RET(state.watchersStatus.LastErrorKind == TrackerErrorKind::Transport);
+        IM_CHECK_NO_RET(state.watchersLoadedList.empty());
+        ctx->Yield(2); // the window draws the cue for the offline state
+        IM_CHECK_NO_RET(WindowIsLive("Watchers"));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // Back online: Load brings the live list back.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        IM_CHECK_NO_RET(ClickWatchersLoad(ctx, "OFF-1"));
+        IM_CHECK_NO_RET(state.watchersStatus.DataLive);
+        IM_CHECK_NO_RET(WatchersListHas("Wes Watcher"));
+        state.watchersPanelOpen = false;
+    };
+}
+
+namespace {
+
+const char* kUserInfoGroupsRetry = "//User Info/groups_retry/Retry";
+
+// Restores the g_ui User Info fields the test sets; closing first lets the window run its close cleanup
+// against the live app.
+struct UserInfoSessionGuard {
+    bool ShowUserInfo = g_ui.showUserInfo;
+    bool RequestPending = g_ui.userInfoRequestPending;
+    std::string PaneId = g_ui.userInfoSourcePaneId;
+    std::string DisplayName = g_ui.userInfoDisplayName;
+    std::string Email = g_ui.userInfoEmail;
+    std::string AccountId = g_ui.userInfoAccountId;
+    ~UserInfoSessionGuard() {
+        g_ui.showUserInfo = false;
+        g_ui.userInfoRequestPending = RequestPending;
+        g_ui.userInfoSourcePaneId = PaneId;
+        g_ui.userInfoDisplayName = DisplayName;
+        g_ui.userInfoEmail = Email;
+        g_ui.userInfoAccountId = AccountId;
+        g_ui.showUserInfo = ShowUserInfo;
+    }
+};
+
+bool ItemPresent(ImGuiTestContext* ctx, const char* ref) {
+    return ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError).ID != 0;
+}
+
+} // namespace
+
+// OfflineFirst/UserInfo_GroupsOfflineOfferRetry: opened offline, the User Info window sends no tracker
+// request for groups or activity; the Groups section says why and offers Retry, which loads the groups
+// once the tracker is back. A group expanded offline gets the same reason and Retry for its members.
+static void RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "UserInfo_GroupsOfflineOfferRetry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        UserInfoSessionGuard guard;
+        SmatchetToastManager::Instance().DismissAllLive();
+
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+
+        // Open the window the way the grid's user-cell menu does (acc-offline-user is in "offline-devs").
+        g_ui.userInfoSourcePaneId = "main";
+        g_ui.userInfoDisplayName = "Offline User";
+        g_ui.userInfoEmail = "offline.user@example.com";
+        g_ui.userInfoAccountId = "acc-offline-user";
+        g_ui.userInfoRequestPending = true;
+        g_ui.showUserInfo = true;
+        const bool live = YieldUntil(ctx, 300, []() {
+            g_ui.requestUserInfoFocus = true;
+            return WindowIsLive("User Info");
+        });
+        IM_CHECK_NO_RET(live);
+        if (!live) {
+            return;
+        }
+        IM_CHECK_NO_RET(YieldUntil(ctx, 60, [ctx]() { return ItemPresent(ctx, kUserInfoGroupsRetry); }));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // Back online, Retry loads the groups and the error (with its Retry) goes away.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        SmatchetToastManager::Instance().DismissAllLive();
+        ctx->ItemClick(kUserInfoGroupsRetry);
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, [ctx]() {
+            return !ItemPresent(ctx, kUserInfoGroupsRetry) && ItemPresent(ctx, "//User Info/$$0/offline-devs");
+        }));
+
+        // Offline again, expanding the group sends no members request and offers Retry.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        SmatchetToastManager::Instance().DismissAllLive();
+        ctx->ItemClick("//User Info/$$0/offline-devs");
+        IM_CHECK_NO_RET(
+            YieldUntil(ctx, 60, [ctx]() { return ItemPresent(ctx, "//User Info/$$0/offline-devs/Retry"); }));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -720,6 +920,8 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstComponentsOfflineShowsSavedOptions(engine);
     RegisterOfflineFirstUsersRestoredFromSavedRoster(engine);
     RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(engine);
+    RegisterOfflineFirstWatchersOfflineKeepsSavedList(engine);
+    RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -12,20 +12,22 @@
 // same tiny dependency surface (the host callbacks + OpenUrl + RequestAppQuit) and neither owns a
 // long-lived mutex, so a single service keeps one interface, one adapter base, one fake, and one
 // test file — splitting would double the wiring for no behavioural or testability gain.
-// Concurrency: the service holds no mutex and no member state. Every method is a pure function of its
-// arguments plus the host callbacks read live through the deps interface. The cpr HTTP downloads run
-// synchronously on the calling thread (callers already dispatch the blocking installer download via
-// LaunchBackgroundTask). The file-local download / temp-path / semantic-version helpers move with the
-// methods into the service .cpp (they were used only by these eight methods).
+// Concurrency: the only member state is the attachment disk cache (thread-safe, created on first use).
+// Every other method is a function of its arguments plus the host callbacks read live through the deps
+// interface. The cpr HTTP downloads run synchronously on the calling thread (callers already dispatch
+// the blocking downloads via LaunchBackgroundTask). The file-local download / temp-path /
+// semantic-version helpers live in the service .cpp.
 // Lifetime contract mirrors the sibling services: AppController owns the service via std::unique_ptr
 // and outlives it; the IAttachmentAppUpdateDeps& (GridContextDepsAdapter) outlives this service
 // (declared after it, destroyed after it).
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
+#include "AttachmentDiskCache.h"   // attachment disk cache (Pillar 6)
 #include "SmatchetResult.h"        // VoidResult (DownloadAndLaunchInstallerUpdate)
 #include "Types/AppUpdateTypes.h"  // AppUpdateInfo
 #include "Types/AttachmentTypes.h" // AttachmentDescriptor
@@ -41,18 +43,18 @@ class AttachmentAppUpdateService {
     void ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments);
 
     /// Open one attachment without leaking Basic-Auth headers to a browser: when a viewer/preview
-    /// handler exists, download to a temp file then dispatch to the viewer (or in-app image preview);
-    /// otherwise fall back to OpenUrl. Download failure also falls back to OpenUrl.
+    /// handler exists, fetch a local copy (ResolveLocalAttachment) then dispatch to the viewer (or in-app
+    /// image preview); otherwise fall back to OpenUrl. Download failure also falls back to OpenUrl.
     void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
 
-    /// Download to a temp file then open it in the OS default app (matches the Unreal attachment
+    /// Fetch a local copy (ResolveLocalAttachment) then open it in the OS default app (matches the Unreal attachment
     /// viewer). Download failure falls back to OpenUrl (reported via *outFellBackToUrl so the UI
     /// can say so — P2-H8). Returns true only when the local viewer launch succeeded; failure
     /// detail lands in *outError when provided.
     bool OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError = nullptr, bool* outFellBackToUrl = nullptr);
 
-    /// Download a supported image attachment to a temp file and hand it to the in-app preview handler.
+    /// Fetch a local copy of a supported image attachment and hand it to the in-app preview handler.
     /// Returns false (with an optional reason via outError) when no preview handler is set, the mime
     /// is unsupported, the download fails, or the handler rejects the file.
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
@@ -82,7 +84,16 @@ class AttachmentAppUpdateService {
                                                 std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
   private:
+    /// A local copy of the attachment: the cached one when it was downloaded before (so it opens
+    /// offline), else a fresh download, saved to the cache. The host allowlist, the size cap and the
+    /// redirect check apply before anything is read or written. Blocking; call it from a worker.
+    Result<smatchet::attachments::LocalAttachment>
+    ResolveLocalAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
+    smatchet::attachments::AttachmentDiskCache& AttachmentCache();
+
     IAttachmentAppUpdateDeps& deps_;
+    std::once_flag attachmentCacheOnce_;
+    std::unique_ptr<smatchet::attachments::AttachmentDiskCache> attachmentCache_;
 };
 
 namespace smatchet {

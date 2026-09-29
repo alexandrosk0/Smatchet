@@ -6,9 +6,10 @@
 // template: AppController constructs GridContextDepsAdapter (which implements this interface
 // alongside the five existing ones) and hands it to AttachmentAppUpdateService. The service holds an
 // IAttachmentAppUpdateDeps& reference and never touches AppController internals directly.
-// The surface is deliberately tiny. The attachment + app-update bodies only need three host-side
+// The surface is deliberately tiny. The attachment + app-update bodies only need four host-side
 // capabilities: read the optional host attachment callbacks (the HostCallbacks struct grouped in
-// Phase 0), invoke the URL-open fallback, and request app quit after a successful installer launch.
+// Phase 0), invoke the URL-open fallback, request app quit after a successful installer launch, and
+// ask whether the tracker is offline.
 // HostCallbacks is surfaced by const reference so the service reads AttachmentViewer /
 // AttachmentPreview / AttachmentCollection exactly as the prior in-class bodies read hostCallbacks_,
 // preserving the publish-once UI-thread discipline (the host assigns each callback once at setup and
@@ -42,4 +43,9 @@ class IAttachmentAppUpdateDeps {
     /// the running instance exits before the installer replaces it. No-op when the host set no quit
     /// handler.
     virtual void RequestAppQuit() const = 0;
+
+    /// True while the last connectivity probe says the tracker is unreachable: an attachment that was
+    /// never downloaded is then reported as unavailable offline instead of waiting out the network
+    /// (Pillar 6). Safe on any thread.
+    virtual bool IsTrackerOffline() const = 0;
 };

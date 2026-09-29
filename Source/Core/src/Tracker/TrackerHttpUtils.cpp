@@ -1,12 +1,14 @@
 #include "TrackerHttpUtils.h"
 
 #include "AiErrorRedact.h"
+#include "CappedBodyAccumulator.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpPure.h"
 
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
@@ -283,4 +285,24 @@ cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url,
         },
         kTrackerHttpDefaultMaxAttempts, cancelled);
     return std::move(result.Response);
+}
+
+TrackerDownloadResult TrackerDownloadLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                            std::size_t maxBytes, long overallTimeoutMs) {
+    TrackerDownloadResult out;
+    CappedBodyAccumulator body(maxBytes);
+    cpr::WriteCallback writeCb{[&body](const std::string& data, intptr_t) { return body.Append(data); }};
+    const cpr::Redirect redirect(true, false);
+    const cpr::Response response =
+        cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                 cpr::Timeout{std::chrono::milliseconds(overallTimeoutMs)}, MakeTrackerSslOptions());
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
+                                           response, static_cast<std::uint64_t>(body.Body().size()));
+    LogTrackerHttpResult(clientName, "GET", url, response);
+    out.Http = ClassifyTrackerResponse(response);
+    out.SizeExceeded = body.Exceeded();
+    if (!out.SizeExceeded) {
+        out.Body = body.TakeBody();
+    }
+    return out;
 }

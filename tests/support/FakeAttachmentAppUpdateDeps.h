@@ -27,6 +27,8 @@ class FakeAttachmentAppUpdateDeps : public IAttachmentAppUpdateDeps {
     /// Recorded side effects.
     std::vector<std::string> OpenUrlCalls;
     int RequestAppQuitCalls = 0;
+    /// Scripted connectivity: what IsTrackerOffline reports.
+    bool OfflineImpl = false;
 
     // --- IAttachmentAppUpdateDeps overrides ---------------------------------------------------
 
@@ -37,9 +39,9 @@ class FakeAttachmentAppUpdateDeps : public IAttachmentAppUpdateDeps {
         const_cast<FakeAttachmentAppUpdateDeps*>(this)->OpenUrlCalls.push_back(url);
     }
 
-    void RequestAppQuit() const override {
-        const_cast<FakeAttachmentAppUpdateDeps*>(this)->RequestAppQuitCalls++;
-    }
+    void RequestAppQuit() const override { const_cast<FakeAttachmentAppUpdateDeps*>(this)->RequestAppQuitCalls++; }
+
+    bool IsTrackerOffline() const override { return OfflineImpl; }
 };
 
 } // namespace smatchet_tests

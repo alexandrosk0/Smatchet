@@ -373,6 +373,65 @@ TEST_CASE("JiraFakeTrackerFixture::Offline — comments enable Collaboration and
     CHECK(comments.value()[0].UpdatedAtSec == 1700000000);
 }
 
+TEST_CASE("JiraFakeTrackerFixture::Offline — watchers enable Collaboration and are down-gated") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json =
+        std::string(R"({"watchers": {"OFF-1": [{"accountId": "acc-wes", "displayName": "Wes Watcher"}]}, )") +
+        kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+    TrackerConfig cfg;
+
+    ITrackerCollaboration* collab = client->Collaboration();
+    REQUIRE(collab != nullptr);
+    const auto watchers = collab->FetchIssueWatchers(cfg, "OFF-1");
+    REQUIRE(static_cast<bool>(watchers));
+    REQUIRE(watchers.value().size() == 1);
+    CHECK(watchers.value()[0].AccountId == "acc-wes");
+    CHECK(watchers.value()[0].DisplayName == "Wes Watcher");
+    const auto none = collab->FetchIssueWatchers(cfg, "OFF-2");
+    REQUIRE(static_cast<bool>(none));
+    CHECK(none.value().empty());
+    CHECK(client->Activity() == nullptr); // no groups scripted
+
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    const auto offline = collab->FetchIssueWatchers(cfg, "OFF-1");
+    REQUIRE_FALSE(static_cast<bool>(offline));
+    CHECK(offline.error().Kind == TrackerErrorKind::Transport);
+    CHECK(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 1);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — userGroups and groupMembers enable Activity and are down-gated") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"userGroups": {"acc-1": ["devs", 7]},
+        "groupMembers": {"devs": [{"accountId": "acc-ana", "displayName": "Ana Offline", "email": "ana@x"}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+    TrackerConfig cfg;
+
+    ITrackerActivity* activity = client->Activity();
+    REQUIRE(activity != nullptr);
+    const auto groups = activity->FetchUserGroupNames(cfg, "acc-1");
+    REQUIRE(static_cast<bool>(groups));
+    REQUIRE(groups.value().size() == 1); // the non-string entry is skipped
+    CHECK(groups.value()[0] == "devs");
+    const auto members = activity->FetchGroupMembers(cfg, "devs");
+    REQUIRE(static_cast<bool>(members));
+    REQUIRE(members.value().size() == 1);
+    CHECK(members.value()[0].DisplayName == "Ana Offline");
+    CHECK(members.value()[0].EmailAddress == "ana@x");
+    TrackerActivityProgress progress;
+    const auto entries = activity->FetchUserActivity(cfg, "acc-1", "2026-01-01", "2026-01-31", "OFF", progress);
+    REQUIRE(static_cast<bool>(entries));
+    CHECK(entries.value().empty());
+
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    CHECK(activity->FetchUserGroupNames(cfg, "acc-1").error().Kind == TrackerErrorKind::Transport);
+    CHECK(activity->FetchGroupMembers(cfg, "devs").error().Kind == TrackerErrorKind::Transport);
+    CHECK(activity->FetchUserActivity(cfg, "acc-1", "2026-01-01", "2026-01-31", "OFF", progress).error().Kind ==
+          TrackerErrorKind::Transport);
+    CHECK(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 3);
+}
+
 TEST_CASE("JiraFakeTrackerFixture::Offline — no network key leaves the switch up") {
     smatchet_tests::ScopedFakeNetworkReset reset;
     const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();

@@ -96,9 +96,12 @@ class ITrackerIssueReader {
         bool full = false;
         std::string err;
         std::string warn;
-        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn);
+        TrackerError classified;
+        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn, &classified);
         if (!err.empty()) {
-            return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorUnknown(err));
+            // Keep the kind the backend classified: an unreachable tracker stays Transport (retryable).
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(classified.IsOk() ? TrackerErrorUnknown(err)
+                                                                                          : classified);
         }
         // A capped/partial or warned fetch is NOT an authoritative view snapshot; treating it as
         // one would let the membership reconcile raise spurious LeftView removals. Bail instead.
@@ -117,9 +120,11 @@ class ITrackerIssueReader {
         bool full = false;
         std::string err;
         std::string warn;
-        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn);
+        TrackerError classified;
+        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn, &classified);
         if (!err.empty()) {
-            return Result<std::vector<std::string>, TrackerError>::Err(TrackerErrorUnknown(err));
+            return Result<std::vector<std::string>, TrackerError>::Err(classified.IsOk() ? TrackerErrorUnknown(err)
+                                                                                         : classified);
         }
         // Partial/warned fetch → not an authoritative membership set; refuse rather than feed the
         // reconcile a truncated key list that would look like tickets having left the view.

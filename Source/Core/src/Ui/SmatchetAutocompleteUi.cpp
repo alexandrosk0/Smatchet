@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <string>
 #include <unordered_set>
@@ -423,42 +424,68 @@ std::string TrackerQueryAcp_CanonicalQueryForApply(const std::string& trackerTyp
     return TrackerQueryAcp_QueryWithAccountIds(fields, catalogUsers, st, query);
 }
 
-void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
-                                          JqlEditorState& st) {
-    // Consume a completed lookup first. On success, ids the backend did not return stay
-    // attempted — an UNKNOWN id costs one call per session. On FAILURE the whole batch is
-    // un-attempted and retried with backoff: the first tick races backend init at startup,
-    // and a permanent skip there would leave a restored view's ids unnamed all session
-    // (Bugbot, #2149). Bounded so a broken config stops costing HTTP calls.
+namespace {
+
+// Consume a completed account-id lookup. On success, ids the backend did not return stay
+// attempted — an UNKNOWN id costs one call per session. On FAILURE the whole batch is
+// un-attempted and retried with backoff: the first tick races backend init at startup,
+// and a permanent skip there would leave a restored view's ids unnamed all session
+// (Bugbot, #2149). Bounded so a broken config stops costing HTTP calls.
+void ConsumeAccountIdResolve(JqlEditorState& st) {
     constexpr int kJqlIdResolveMaxFailures = 5;
-    if (st.jqlIdResolveFuture.valid() &&
-        st.jqlIdResolveFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-        JqlEditorState::JqlUserSearchResult result = st.jqlIdResolveFuture.get();
-        st.jqlIdResolveInFlight = false;
-        if (result.Ok) {
-            st.jqlIdResolveFailures = 0;
-            for (const auto& u : result.Users) {
-                if (!u.AccountId.empty()) {
-                    RememberResolvedUser(st, u);
-                }
-            }
-        } else {
-            ++st.jqlIdResolveFailures;
-            if (st.jqlIdResolveFailures <= kJqlIdResolveMaxFailures) {
-                auto& attempted = st.jqlIdResolveAttempted;
-                for (const auto& id : st.jqlIdResolveInFlightIds) {
-                    attempted.erase(std::remove(attempted.begin(), attempted.end(), id), attempted.end());
-                }
-                // 2s, 4s, ... capped at 60s; invalidate the scan memo so the retry fires
-                // even when the buffer has not changed since.
-                const double delay = (std::min)(60.0, std::pow(2.0, st.jqlIdResolveFailures));
-                st.jqlIdResolveRetryAt = ImGui::GetTime() + delay;
-                st.jqlIdResolveScanValid = false;
+    if (!st.jqlIdResolveFuture.valid() ||
+        st.jqlIdResolveFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    JqlEditorState::JqlUserSearchResult result;
+    try {
+        result = st.jqlIdResolveFuture.get();
+    } catch (const std::exception& ex) {
+        // A worker exception is a failed lookup like any other (retried with backoff), never a
+        // throw on the UI thread.
+        result.Ok = false;
+        result.Error = ex.what();
+    }
+    st.jqlIdResolveInFlight = false;
+    if (result.Ok) {
+        st.jqlIdResolveFailures = 0;
+        for (const auto& u : result.Users) {
+            if (!u.AccountId.empty()) {
+                RememberResolvedUser(st, u);
             }
         }
-        st.jqlIdResolveInFlightIds.clear();
+    } else {
+        ++st.jqlIdResolveFailures;
+        if (st.jqlIdResolveFailures <= kJqlIdResolveMaxFailures) {
+            auto& attempted = st.jqlIdResolveAttempted;
+            for (const auto& id : st.jqlIdResolveInFlightIds) {
+                attempted.erase(std::remove(attempted.begin(), attempted.end(), id), attempted.end());
+            }
+            // 2s, 4s, ... capped at 60s; invalidate the scan memo so the retry fires
+            // even when the buffer has not changed since.
+            const double delay = (std::min)(60.0, std::pow(2.0, st.jqlIdResolveFailures));
+            st.jqlIdResolveRetryAt = ImGui::GetTime() + delay;
+            st.jqlIdResolveScanValid = false;
+        }
     }
+    st.jqlIdResolveInFlightIds.clear();
+}
+
+} // namespace
+
+void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
+                                          bool trackerOffline, JqlEditorState& st) {
+    ConsumeAccountIdResolve(st);
     if (st.jqlIdResolveInFlight) {
+        return;
+    }
+    if (trackerOffline) {
+        // Pillar 6: no lookup while the tracker is unreachable. An outage is not a broken config, so
+        // its failures are forgotten and the ids are looked up again as soon as the tracker is back.
+        st.jqlIdResolveFailures = 0;
+        st.jqlIdResolveRetryAt = 0.0;
+        st.jqlIdResolveAttempted.clear();
+        st.jqlIdResolveScanValid = false;
         return;
     }
     if (st.jqlIdResolveRetryAt > 0.0 && ImGui::GetTime() < st.jqlIdResolveRetryAt) {
@@ -493,14 +520,16 @@ void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std
     if (pending.empty()) {
         return;
     }
-    st.jqlIdResolveAttempted.insert(st.jqlIdResolveAttempted.end(), pending.begin(), pending.end());
-    st.jqlIdResolveInFlightIds = pending;
-    st.jqlIdResolveInFlight = true;
+    // The worker first: if it cannot start, nothing is marked attempted or in flight and the next
+    // scan tries again.
     st.jqlIdResolveFuture = std::async(std::launch::async, [&userSearch, pending]() {
         JqlEditorState::JqlUserSearchResult r;
         UnpackResult(userSearch.FetchUsersByAccountIds(pending), r.Ok, r.Users, r.Error);
         return r;
     });
+    st.jqlIdResolveAttempted.insert(st.jqlIdResolveAttempted.end(), pending.begin(), pending.end());
+    st.jqlIdResolveInFlightIds = pending;
+    st.jqlIdResolveInFlight = true;
 }
 
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
