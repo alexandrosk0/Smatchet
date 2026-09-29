@@ -3129,4 +3129,14 @@ This plan touches `Source/Core/`.
 
 ## Verification (actual)
 
+End to end, after S13. Each slice's own verification is in its PR.
+
+- **Linux (cloud container):**
+  - `bash scripts/dev/pre-ship.sh origin/develop` passes. The only output besides passes is advisory WARNs: the TU line ceiling, the comment ratio of an untouched header, and the offline heuristics listed in `docs/high-integrity/offline-calibration.md`.
+  - `posix-core-check` compiles every core TU.
+  - `SmatchetTsanTests`: 823 of 823 pass with no ThreadSanitizer report. That run temporarily included `JiraFakeTrackerFixture.test.cpp`, which is Windows-only, so the new fixture keys ran here too. The new `TrackerIssueReaderDefaults` suite passes 3 of 3.
+  - The whole-tree `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, down from 35. Each hit is classified in the calibration record.
+- **Windows CI:** `SmatchetTests`, ASan/UBSan and the bucket-E lanes (`JiraDeterministic`, `OfflineFirst` with the two new S13 tests) gate the S13 merge.
+- **Manual (hosts-file block of the tracker, restart offline, reconnect):** not run. It needs a Windows desktop session, which the cloud container does not have. It stays with the user.
+
 ## Archive
