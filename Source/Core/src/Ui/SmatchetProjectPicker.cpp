@@ -21,6 +21,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -172,24 +173,31 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
 } // namespace
 
 void StartAllProjectsFetch(State& state, AppController& app) {
-    if (state.fetchInFlight.load()) {
-        return;
-    }
     const std::string backendKey = app.FocusedCacheBackendKey();
     const bool offline = app.IsTrackerOffline();
-    if (state.fetchDone.load()) {
+    {
         std::lock_guard<std::mutex> lk(state.fetchMutex);
-        if (state.fetchBackendKey != backendKey) {
-            // The focused tracker changed since this list was loaded: never show one tracker's
-            // projects under another; load the new tracker's list (live or saved).
+        const bool requested = state.fetchInFlight.load() || state.fetchDone.load();
+        if (requested && state.fetchBackendKey != backendKey) {
+            // The focused tracker changed since this list was requested: never show one tracker's
+            // projects under another. A load still running for the old tracker is superseded (the
+            // generation bump discards its result) and the focused tracker's list loads now.
+            ++state.fetchGeneration;
             state.fetchedAll.clear();
             state.fetchError.clear();
             state.fetchFailed = false;
             state.fetchFromSaved = false;
-        } else if (!(state.fetchSkippedOffline && !offline)) {
-            return; // loaded; a list skipped offline reloads once the tracker is reachable
+            state.fetchSkippedOffline = false;
+            state.fetchInFlight.store(false);
+            state.fetchDone.store(false);
+        } else if (state.fetchInFlight.load()) {
+            return;
+        } else if (state.fetchDone.load()) {
+            if (!(state.fetchSkippedOffline && !offline)) {
+                return; // loaded; a list skipped offline reloads once the tracker is reachable
+            }
+            state.fetchDone.store(false);
         }
-        state.fetchDone.store(false);
     }
     // Strong handle to the active backend: the off-thread load captures it, so a live tracker swap
     // that frees AppController::Backend cannot dangle the client mid-listing (ADR 0012).
@@ -198,21 +206,33 @@ void StartAllProjectsFetch(State& state, AppController& app) {
         return;
     }
     const std::shared_ptr<ILookupCache> store = app.LookupCacheShared();
-    state.fetchBackendKey = backendKey;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lk(state.fetchMutex);
+        state.fetchBackendKey = backendKey;
+        generation = ++state.fetchGeneration;
+        state.fetchInFlight.store(true);
+    }
     // `statePtr` is app-lifetime window state (heap-owned by the caller's draw session), safe to hold
     // as a raw pointer. The load runs on the app-owned joined pool (never a detached thread).
     State* statePtr = &state;
-    state.fetchInFlight.store(true);
     try {
-        app.LaunchBackgroundTask([statePtr, backend, store, backendKey, offline]() {
-            // Settle the flags on every exit, so a throw can never leave the list on "Loading".
-            smatchet::ScopeExit settle([statePtr]() {
-                statePtr->fetchDone.store(true);
-                statePtr->fetchInFlight.store(false);
+        app.LaunchBackgroundTask([statePtr, backend, store, backendKey, offline, generation]() {
+            // Settle the flags on every exit, so a throw can never leave the list on "Loading". A
+            // superseded load leaves them alone: they belong to the load that replaced it.
+            smatchet::ScopeExit settle([statePtr, generation]() {
+                std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
+                if (statePtr->fetchGeneration == generation) {
+                    statePtr->fetchDone.store(true);
+                    statePtr->fetchInFlight.store(false);
+                }
             });
             smatchet::projects::ProjectListOutcome outcome =
                 smatchet::projects::LoadProjectList(backend->Connectivity(), store, backendKey, offline);
             std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
+            if (statePtr->fetchGeneration != generation) {
+                return; // superseded (the focused tracker changed): another tracker's list, dropped
+            }
             // A failed retry with nothing saved keeps the rows already shown (now marked stale):
             // a failure never wipes a list the user has.
             if (!outcome.Failed || outcome.FromSaved || statePtr->fetchedAll.empty()) {
@@ -226,11 +246,9 @@ void StartAllProjectsFetch(State& state, AppController& app) {
     } catch (const std::exception& ex) {
         // The load never started: show the failure and a Retry instead of loading forever.
         LOG_WARN("SmatchetProjectPicker: loading the project list did not start: %s", ex.what());
-        {
-            std::lock_guard<std::mutex> lk(state.fetchMutex);
-            state.fetchFailed = true;
-            state.fetchError = ex.what();
-        }
+        std::lock_guard<std::mutex> lk(state.fetchMutex);
+        state.fetchFailed = true;
+        state.fetchError = ex.what();
         state.fetchDone.store(true);
         state.fetchInFlight.store(false);
     }

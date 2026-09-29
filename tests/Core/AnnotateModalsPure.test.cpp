@@ -157,8 +157,10 @@ TEST_CASE("ClassifyUserLookupOutcome — an unreachable tracker is never read as
     CHECK(ClassifyUserLookupOutcome(false, false, true, true) == UserLookupOutcome::FoundInRoster);
     CHECK(ClassifyUserLookupOutcome(false, false, false, true) == UserLookupOutcome::FoundInRoster);
     CHECK(ClassifyUserLookupOutcome(false, false, true, false) == UserLookupOutcome::UnknownOffline);
-    // A refused search (auth, bad request) with no saved match keeps the old answer, error shown.
-    CHECK(ClassifyUserLookupOutcome(false, false, false, false) == UserLookupOutcome::NotFound);
+    // A search that was refused (auth, bad request) or never ran (a local failure) is not an answer either:
+    // unknown, with the error — never "Past Employee".
+    CHECK(ClassifyUserLookupOutcome(false, false, false, false) == UserLookupOutcome::LookupFailed);
+    CHECK(ClassifyUserLookupOutcome(false, true, false, false) == UserLookupOutcome::LookupFailed);
 }
 
 TEST_CASE("FindRosterUserForP4User — exact email local part, then display name; never a guess") {

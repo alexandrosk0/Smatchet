@@ -351,3 +351,22 @@ TEST_CASE("Create failures preserve transmission certainty from the HTTP respons
     CHECK(classified.RequestNotSent == notSent);
     CHECK(TrackerShouldRetryPost(classified.Kind, classified.RequestNotSent) == notSent);
 }
+
+TEST_CASE("DescribeRejectedResponse — names the call and the status; adds cpr's reason when nothing answered") {
+    // Offline-first S12: the project picker shows this text as its failure tooltip, so an unreachable
+    // host must read differently from a refusal.
+    cpr::Response unreachable;
+    unreachable.status_code = 0;
+    unreachable.error.message = "Couldn't connect to server";
+    CHECK(DescribeRejectedResponse("Listing Jira projects", unreachable) ==
+          "Listing Jira projects failed: HTTP 0 (Couldn't connect to server)");
+
+    cpr::Response refused;
+    refused.status_code = 401;
+    refused.error.message = "ignored when the tracker answered";
+    CHECK(DescribeRejectedResponse("Listing Jira projects", refused) == "Listing Jira projects failed: HTTP 401");
+
+    cpr::Response silent;
+    silent.status_code = 0;
+    CHECK(DescribeRejectedResponse("Listing Plane projects", silent) == "Listing Plane projects failed: HTTP 0");
+}

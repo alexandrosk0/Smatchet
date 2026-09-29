@@ -65,12 +65,15 @@ enum class UserLookupOutcome : unsigned char {
     Found,          ///< the tracker's user search matched
     FoundInRoster,  ///< the search did not answer; the saved user list matched
     UnknownOffline, ///< the tracker was unreachable and the saved list has no match — never "Past Employee"
-    NotFound,       ///< the tracker answered with no match, or refused the search: "Past Employee"
+    LookupFailed,   ///< the search was refused or never ran (auth, local failure) and the saved list has no
+                    ///< match: unknown, with the error — never "Past Employee"
+    NotFound,       ///< the tracker answered the search with no match: "Past Employee"
 };
 
 /** `searchOk`: the user search answered; `liveMatch`: it returned users; `trackerUnreachable`: the search was
  *  skipped offline or the tracker could not answer (transport failure or service outage); `rosterMatch`:
- *  the saved user list matched. A live answer always wins over the saved list. */
+ *  the saved user list matched. A live answer always wins over the saved list, and only a live answer
+ *  with no match reads as NotFound. */
 UserLookupOutcome ClassifyUserLookupOutcome(bool searchOk, bool liveMatch, bool trackerUnreachable, bool rosterMatch);
 
 /** The saved-roster user for a Perforce login: an exact, case-insensitive match of the email's local part,

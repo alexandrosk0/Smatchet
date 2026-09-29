@@ -139,7 +139,7 @@ UserLookupOutcome ClassifyUserLookupOutcome(bool searchOk, bool liveMatch, bool 
     if (rosterMatch) {
         return UserLookupOutcome::FoundInRoster;
     }
-    return trackerUnreachable ? UserLookupOutcome::UnknownOffline : UserLookupOutcome::NotFound;
+    return trackerUnreachable ? UserLookupOutcome::UnknownOffline : UserLookupOutcome::LookupFailed;
 }
 
 const TrackerUser* FindRosterUserForP4User(const std::vector<TrackerUser>& roster, const std::string& p4User) {

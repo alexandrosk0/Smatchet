@@ -912,6 +912,7 @@ const TranslationEntry kEntries[] = {
     {"annotate.reload_settings", "Reload settings", u8"Recharger les paramètres"},
     {"annotate.ask_ai", "Ask AI", u8"Demander à l'IA"},
     {"annotate.user_unknown_offline", "Unknown (offline)", u8"Inconnu (hors ligne)"},
+    {"annotate.user_unknown", "Unknown", u8"Inconnu"},
     {"annotate.assign_unknown_offline",
      "The tracker is offline and the saved user list has no match for this Perforce user.",
      u8"Le tracker est hors ligne et la liste d'utilisateurs enregistrée ne contient pas cet utilisateur Perforce."},

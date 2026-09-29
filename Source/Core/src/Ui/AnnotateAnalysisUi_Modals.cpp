@@ -94,6 +94,8 @@ const char* UnknownOfflineLabel() {
     return SmatchetLocalization::T("annotate.user_unknown_offline", "Unknown (offline)");
 }
 
+const char* UnknownLabel() { return SmatchetLocalization::T("annotate.user_unknown", "Unknown"); }
+
 // What the profile worker found: the search, and for a live match the best user and its groups.
 struct ProfileLookup {
     P4UserSearch Search;
@@ -125,6 +127,11 @@ void ApplyProfileLookup(const AppController& app, const std::string& p4User, con
         return;
     case AnnotateUiPure::UserLookupOutcome::UnknownOffline:
         State().profileName = UnknownOfflineLabel();
+        State().profileEmail = p4User;
+        State().profileErr = lookup.Search.Error;
+        return;
+    case AnnotateUiPure::UserLookupOutcome::LookupFailed:
+        State().profileName = UnknownLabel();
         State().profileEmail = p4User;
         State().profileErr = lookup.Search.Error;
         return;
@@ -161,6 +168,10 @@ void ApplyAssignLookup(const AppController& app, const std::string& p4User, cons
             "annotate.assign_unknown_offline", "The tracker is offline and the saved user list has no match for this "
                                                "Perforce user.");
         State().assignTitle = std::string(UnknownOfflineLabel()) + " (" + p4User + ")";
+        return;
+    case AnnotateUiPure::UserLookupOutcome::LookupFailed:
+        State().assignNoAccountReason = search.Error.empty() ? std::string("The user search failed.") : search.Error;
+        State().assignTitle = std::string(UnknownLabel()) + " (" + p4User + ")";
         return;
     case AnnotateUiPure::UserLookupOutcome::NotFound:
         break;

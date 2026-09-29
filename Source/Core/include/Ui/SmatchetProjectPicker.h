@@ -17,6 +17,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -48,17 +49,19 @@ struct State {
     std::atomic<bool> fetchInFlight{false};
     std::atomic<bool> fetchDone{false}; // true once a fetch returned (even if empty)
     std::string fetchError;
-    bool fetchFailed = false;         // guarded by fetchMutex: the last listing failed or was skipped offline
-    bool fetchFromSaved = false;      // guarded by fetchMutex: fetchedAll is the saved list, not a live one
-    bool fetchSkippedOffline = false; // guarded by fetchMutex: the last load sent no request (offline)
-    std::string fetchBackendKey;      // UI thread only: the tracker the list was loaded for
+    bool fetchFailed = false;          // guarded by fetchMutex: the last listing failed or was skipped offline
+    bool fetchFromSaved = false;       // guarded by fetchMutex: fetchedAll is the saved list, not a live one
+    bool fetchSkippedOffline = false;  // guarded by fetchMutex: the last load sent no request (offline)
+    std::string fetchBackendKey;       // guarded by fetchMutex: the tracker the list was requested for
+    std::uint64_t fetchGeneration = 0; // guarded by fetchMutex: bumped per load; a stale load publishes nothing
 };
 
 /** Start loading the "All projects" list for `state` on the app's background-task pool, unless a load is
  *  already running or has finished (Retry clears `fetchDone`). Offline it reads the saved list only; once
- *  the tracker is reachable again, a list that was skipped offline reloads. A list loaded for another
- *  tracker than the focused one is dropped and reloaded. UI thread. Draw calls it on every frame the
- *  section is open; tests call it directly. */
+ *  the tracker is reachable again, a list that was skipped offline reloads. When the focused tracker is
+ *  not the one the list was requested for, the rows are dropped, a load still running for the old
+ *  tracker is superseded (its result is discarded), and the focused tracker's list loads. UI thread.
+ *  Draw calls it on every frame the section is open; tests call it directly. */
 void StartAllProjectsFetch(State& state, AppController& app);
 
 /** Draw the picker combobox.

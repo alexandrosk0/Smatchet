@@ -247,13 +247,15 @@ ProjectListResult LinearClient::ListProjectsTyped() {
                 ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text)
                 : errorMessage;
         LOG_ERROR("LinearClient::ListProjects: HTTP %ld — %s", resp.status_code, msg.c_str());
-        // A 200 carrying GraphQL errors is a refusal, not a success: ClassifyRejectedHttpStatus keeps
-        // it non-Ok, and an unreachable host (status 0) stays Transport.
         std::string detail = DescribeRejectedResponse("Listing Linear teams", resp);
         if (!msg.empty()) {
             detail += " — " + msg;
         }
-        return ProjectListResult::Err(ClassifyRejectedHttpStatus(resp.status_code, detail));
+        // A rejected response is classified like every other client's (unreachable host → Transport, 403
+        // with Retry-After → RateLimited, RequestNotSent kept). A 200 carrying GraphQL errors is a refusal,
+        // not a success: ClassifyRejectedHttpStatus keeps it non-Ok.
+        return ProjectListResult::Err(resp.status_code != 200 ? ClassifyRejectedTrackerResponse(resp, detail)
+                                                              : ClassifyRejectedHttpStatus(resp.status_code, detail));
     }
     if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
         !parsed["data"].contains("teams") || !parsed["data"]["teams"].is_object()) {
