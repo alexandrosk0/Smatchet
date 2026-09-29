@@ -82,8 +82,8 @@ std::string TrackerQueryAcp_CanonicalQueryForApply(const std::string& trackerTyp
  *  backend's by-accountId lookup (worker thread, polled per frame). Results land in the
  *  editor's retained-user store, which the echo reads. Skips ids already attempted this
  *  session. `catalogUsers` is the app-owned user catalog. While `trackerOffline` no lookup is
- *  sent, and failures from the outage stop counting against the retry limit, so the ids still
- *  resolve once the tracker is back (Quality Pillar 6). */
+ *  sent, and the outage resets the retry limit and the attempted set (ids given up on included),
+ *  so the ids still resolve once the tracker is back (Quality Pillar 6). */
 void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
                                           bool trackerOffline, JqlEditorState& st);
 

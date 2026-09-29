@@ -140,6 +140,7 @@ class SmatchetUserInfoUi {
     bool membersLoading_ = false;
     /// Group the in-flight members fetch targets (for the per-node loading label).
     std::string membersFetchGroup_;
+    /// Generation that fetch was launched in: a worker exception is recorded only for that target.
     int membersFetchGeneration_ = 0;
     // Retarget arrived while the matching future was in flight — relaunch after drain.
     bool vcsRelaunch_ = false;

@@ -401,6 +401,10 @@ void SmatchetUserInfoUi::pollGroupsFuture(AppController& app) {
     try {
         GroupsPayload p = groupsFuture_.get();
         if (p.Gen == generation_) {
+            // Pillar 6: a failed refresh keeps the groups already on screen (same target), under its error.
+            if (!p.Error.empty() && p.Names.empty()) {
+                p.Names = std::move(groups_.Names);
+            }
             groups_ = std::move(p);
             groupsLoaded_ = true;
         }

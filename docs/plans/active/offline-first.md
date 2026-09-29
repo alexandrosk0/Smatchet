@@ -3126,6 +3126,12 @@ This plan touches `Source/Core/`.
   - **Calibration scope.** The review went beyond recording. It fixed the tracker true positives it found (reader defaults, JQL resolver, prefetch), rewrote GitHub's equivalent fallback as the sanctioned `IsOk()` idiom, and deviation-marked the backend-switch roster reset. The Perforce true positives are filed as #2270, and the bulk-import prefetch's missing online backoff is a debt entry. No gate is flipped here; the proposals wait for the maintainer.
   - **Fake tracker.** The fake gains scriptable, down-gated watchers and an activity role (groups, members). This closes the fixture-activity gap `user_info_window.test.cpp` documents, for the offline-first lane.
   - **Residual.** There is no bucket-E test for opening a cached attachment offline. The download is a real cpr request that the fake network switch cannot intercept. `ResolveAttachment`'s unit tests cover the hit, the offline miss, the transport failure and the uncached fallback instead.
+  - **CodeRabbit review on #2271.** Its autofix commit, reviewed and kept, made three changes:
+    - A members lookup that throws after User Info switched target no longer records its error on the new target.
+    - `entry.json` must be really replaced; only the data file keeps the same-size fallback for a viewer's lock.
+    - An outage also forgets the account ids the resolver had given up on.
+
+    Two findings outside the diff were fixed on top. A failed groups refresh keeps the names already shown. The activity and groups sections keep their rows on screen while a refresh runs, instead of showing only its progress line.
 
 ## Verification (actual)
 
