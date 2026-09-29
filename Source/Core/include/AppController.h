@@ -129,6 +129,7 @@ class AiAssistantController;
 #include "Interfaces/IAppFields.h"
 
 class ITrackerBackendFactory;
+class ILookupCache;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
                          // Cache` member is fine with the incomplete type since ~AppController is out-of-line. Defining
                          // TUs include LocalCacheManager.h directly.
@@ -938,6 +939,9 @@ class AppController : public IAppThreading,
     /// Cache key of the focused backend; it namespaces the offline queues, so UI state tied to a queued row is
     /// scoped by it too.
     std::string FocusedCacheBackendKey() const;
+    /// Latched strong handle to the lookup cache (the offline copies of tracker lookups), or null before the
+    /// cache exists. For workers: its reads and writes hit disk.
+    std::shared_ptr<ILookupCache> LookupCacheShared() const;
     void DiscardPendingActions(const std::vector<std::int64_t>& ids) override;
     void RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) override;
     void DeleteDeadPendingActions(const std::vector<std::int64_t>& deadIds) override;
@@ -1073,6 +1077,9 @@ class AppController : public IAppThreading,
     Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
 
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
+    /// SearchUsersByQuery with the error kind kept (Transport when the tracker is unreachable), so a lookup can
+    /// say "offline" instead of "no such user" (Quality Pillar 6). Blocks on the network: workers only.
+    Result<std::vector<TrackerUser>, TrackerError> SearchUsersByQueryTyped(const std::string& query) const;
     Result<std::vector<TrackerUser>> FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const override;
 
     /// issue-comments PR-A — off-UI read wrapper around
@@ -1483,10 +1490,14 @@ class AppController : public IAppThreading,
                                        const std::string& projectKey, std::uint64_t capturedGeneration);
     /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch: re-validate the
     /// captured context is still current (present + generation unchanged), then write the fields
-    /// into ITS fieldCatalog under the context mutex and bump the per-context revision.
+    /// into ITS fieldCatalog under the context mutex and bump the per-context revision. A non-empty
+    /// `restoredWarning` marks the saved snapshot the worker fell back to after a failed fetch
+    /// (Quality Pillar 6): it is applied only to a pane with no catalog, becomes the pane's catalog
+    /// warning, and leaves the catalog "not loaded" so the next sync kick retries the live fetch.
     void applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
                                        std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
-                                       std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta);
+                                       std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
+                                       const std::string& restoredWarning);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);

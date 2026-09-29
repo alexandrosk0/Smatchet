@@ -213,13 +213,13 @@ class JiraClient : public ITrackerBackend,
 
     /**
      * GET /rest/api/3/project — list projects visible to the current credentials.
-     * Caches result in-memory for 5 minutes (per-instance). Errors/parse failures
-     * log WARN and return an empty vector without poisoning the cache.
+     * Caches result in-memory for 5 minutes (per-instance). A failure logs WARN, returns its
+     * classified error (Transport when the host is unreachable) and never poisons the cache.
      * If the API returns >200 entries, only the first 200 are kept.
      */
-    std::vector<RemoteProject> ListProjects() override;
+    ProjectListResult ListProjectsTyped() override;
 
-    /** Drop the cached project list so the next ListProjects() refetches. */
+    /** Drop the cached project list so the next ListProjectsTyped() refetches. */
     void InvalidateListProjectsCache();
 
     // Per-instance project-list cache (5 min TTL). Mutated under listProjectsMutex_.

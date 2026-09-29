@@ -7,6 +7,7 @@
 #include "LinearQueryFromJql.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>
@@ -224,14 +225,13 @@ std::string LinearClient::ExtractProjectFromQuery(const std::string& query) cons
     return "";
 }
 
-std::vector<RemoteProject> LinearClient::ListProjects() {
+ProjectListResult LinearClient::ListProjectsTyped() {
     // Linear "projects" in Smatchet's draft-scope sense ARE Linear teams (plan §
     // Approach). cfg-less interface — resolve from the settled on-disk config.
     const smatchet::linear::LinearRequestAuth auth = ResolveAuth(nullptr);
-    std::vector<RemoteProject> out;
     if (auth.ApiKey.empty()) {
         LOG_WARN("LinearClient::ListProjects: no API key configured");
-        return out;
+        return ProjectListResult::Err(TrackerErrorAuth(kApiKeyMissingError));
     }
     const std::string body = smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
                                                                 nlohmann::json::object());
@@ -241,23 +241,29 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
     // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
     nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
-    if (resp.status_code != 200 || parsed.is_discarded() ||
-        smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {
-        LOG_ERROR(
-            "LinearClient::ListProjects: HTTP %ld — %s", resp.status_code,
+    if (resp.status_code != 200 || smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {
+        const std::string msg =
             errorMessage.empty()
-                ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text).c_str()
-                : errorMessage.c_str());
-        return out;
+                ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text)
+                : errorMessage;
+        LOG_ERROR("LinearClient::ListProjects: HTTP %ld — %s", resp.status_code, msg.c_str());
+        // A 200 carrying GraphQL errors is a refusal, not a success: ClassifyRejectedHttpStatus keeps
+        // it non-Ok, and an unreachable host (status 0) stays Transport.
+        std::string detail = DescribeRejectedResponse("Listing Linear teams", resp);
+        if (!msg.empty()) {
+            detail += " — " + msg;
+        }
+        return ProjectListResult::Err(ClassifyRejectedHttpStatus(resp.status_code, detail));
     }
-    if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
+    if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
         !parsed["data"].contains("teams") || !parsed["data"]["teams"].is_object()) {
         LOG_ERROR("LinearClient::ListProjects: response missing data.teams");
-        return out;
+        return ProjectListResult::Err(TrackerErrorParse("The Linear team list response had no data.teams."));
     }
+    std::vector<RemoteProject> out;
     const nlohmann::json& nodes = parsed["data"]["teams"].value("nodes", nlohmann::json::array());
     if (!nodes.is_array()) {
-        return out;
+        return ProjectListResult::Err(TrackerErrorParse("The Linear team list was not an array."));
     }
     for (nlohmann::json::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
         if (!it->is_object()) {
@@ -270,7 +276,7 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
         out.push_back(p);
     }
     LOG_INFO("LinearClient::ListProjects: %zu teams", out.size());
-    return out;
+    return ProjectListResult::Ok(std::move(out));
 }
 
 std::vector<CachedTicket> LinearClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,

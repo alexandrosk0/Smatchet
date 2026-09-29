@@ -1,8 +1,12 @@
 #include "AnnotateAnalysisUi_Internal.h"
 
 #include "AppController.h"
+#include "DataFreshnessCue.h"
 #include "Logger.h"
+#include "OfflineFirstPure.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerError.h"
 #include "TrackerFieldSchema.h"
 #include "Ui/AnnotateAnalysisUi_Modals_detail.h"
 #include "Ui/P4ClPreview.h"
@@ -13,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <sstream>
 #include <string>
@@ -35,25 +40,143 @@ AnnotateUiPure::AnnotateRowView RowView(const AnnotateRow& row) {
     return v;
 }
 
+// One Perforce-user search, run on a worker and carried to the UI thread by the post-back.
+struct P4UserSearch {
+    bool Answered = false;    // the tracker answered the search
+    bool Unreachable = false; // skipped offline, or the tracker could not answer (transport or service down)
+    std::vector<TrackerUser> Users;
+    std::string Error;
+};
+
+// Worker: search the tracker for `p4User`, keeping the error kind (Quality Pillar 6: an unreachable
+// tracker is not "no such user"). Never throws, so the caller's post-back always clears its flag.
+P4UserSearch SearchTrackerForP4User(const AppController& app, const std::string& p4User) {
+    P4UserSearch out;
+    try {
+        Result<std::vector<TrackerUser>, TrackerError> found = app.SearchUsersByQueryTyped(p4User);
+        if (found.has_value()) {
+            out.Answered = true;
+            out.Users = std::move(found.value());
+        } else {
+            // The connectivity probe treats a service outage as offline too (IsOfflineState).
+            out.Unreachable = found.error().Kind == TrackerErrorKind::Transport ||
+                              found.error().Kind == TrackerErrorKind::ServerError;
+            out.Error = found.error().Detail;
+        }
+    } catch (const std::exception& ex) {
+        out.Error = ex.what();
+    } catch (...) { // catch-all-ok: reported as the lookup's error
+        out.Error = "The user search failed.";
+    }
+    return out;
+}
+
+// Offline no search is sent: the lookup answers from the saved user list right away.
+P4UserSearch SkippedBecauseOffline() {
+    P4UserSearch out;
+    out.Unreachable = true;
+    out.Error = "The tracker is offline.";
+    return out;
+}
+
+// UI thread only (GetAvailableUsers is a UI-thread reference): the saved-roster user for `p4User` when
+// the search did not answer.
+const TrackerUser* SavedRosterMatch(const AppController& app, const P4UserSearch& search, const std::string& p4User) {
+    return search.Answered ? nullptr : AnnotateUiPure::FindRosterUserForP4User(app.GetAvailableUsers(), p4User);
+}
+
+AnnotateUiPure::UserLookupOutcome ClassifyLookup(const P4UserSearch& search, const TrackerUser* rosterUser) {
+    return AnnotateUiPure::ClassifyUserLookupOutcome(search.Answered, !search.Users.empty(), search.Unreachable,
+                                                     rosterUser != nullptr);
+}
+
+const char* UnknownOfflineLabel() {
+    return SmatchetLocalization::T("annotate.user_unknown_offline", "Unknown (offline)");
+}
+
+// What the profile worker found: the search, and for a live match the best user and its groups.
+struct ProfileLookup {
+    P4UserSearch Search;
+    std::string Name;
+    std::string Email;
+    std::vector<std::string> Groups;
+    std::string GroupsError;
+};
+
+// UI thread: fill the profile dialog from a finished lookup.
+void ApplyProfileLookup(const AppController& app, const std::string& p4User, const ProfileLookup& lookup) {
+    State().profileInFlight = false;
+    const TrackerUser* rosterUser = SavedRosterMatch(app, lookup.Search, p4User);
+    switch (ClassifyLookup(lookup.Search, rosterUser)) {
+    case AnnotateUiPure::UserLookupOutcome::Found:
+        State().profileName = lookup.Name;
+        State().profileEmail = lookup.Email;
+        State().profileGroups = lookup.Groups;
+        if (State().profileGroups.empty() && !lookup.GroupsError.empty()) {
+            State().profileErr = lookup.GroupsError;
+        }
+        return;
+    case AnnotateUiPure::UserLookupOutcome::FoundInRoster:
+        State().profileName = rosterUser->DisplayName;
+        State().profileEmail = rosterUser->EmailAddress;
+        State().profileErr =
+            DataFreshnessCue::CueText(lookup.Search.Unreachable ? smatchet::offline::DataFreshness::CachedOffline
+                                                                : smatchet::offline::DataFreshness::CachedStale);
+        return;
+    case AnnotateUiPure::UserLookupOutcome::UnknownOffline:
+        State().profileName = UnknownOfflineLabel();
+        State().profileEmail = p4User;
+        State().profileErr = lookup.Search.Error;
+        return;
+    case AnnotateUiPure::UserLookupOutcome::NotFound:
+        State().profileName = "Past Employee";
+        State().profileEmail = p4User;
+        State().profileErr = lookup.Search.Error;
+        return;
+    }
+}
+
+// UI thread: fill the assign dialog from a finished lookup.
+void ApplyAssignLookup(const AppController& app, const std::string& p4User, const P4UserSearch& search) {
+    State().assignInFlight = false;
+    const TrackerUser* rosterUser = SavedRosterMatch(app, search, p4User);
+    std::string accountId;
+    std::string displayName;
+    switch (ClassifyLookup(search, rosterUser)) {
+    case AnnotateUiPure::UserLookupOutcome::Found: {
+        std::string pickError;
+        if (AnnotateUiPure::PickJiraAccountForP4User(search.Users, p4User, accountId, pickError)) {
+            const auto it = std::find_if(search.Users.begin(), search.Users.end(),
+                                         [&accountId](const TrackerUser& u) { return u.AccountId == accountId; });
+            displayName = (it != search.Users.end()) ? it->DisplayName : search.Users.front().DisplayName;
+        }
+        break;
+    }
+    case AnnotateUiPure::UserLookupOutcome::FoundInRoster:
+        accountId = rosterUser->AccountId;
+        displayName = rosterUser->DisplayName + " " + SmatchetLocalization::T("freshness.badge_cached", "(saved)");
+        break;
+    case AnnotateUiPure::UserLookupOutcome::UnknownOffline:
+        State().assignNoAccountReason = SmatchetLocalization::T(
+            "annotate.assign_unknown_offline", "The tracker is offline and the saved user list has no match for this "
+                                               "Perforce user.");
+        State().assignTitle = std::string(UnknownOfflineLabel()) + " (" + p4User + ")";
+        return;
+    case AnnotateUiPure::UserLookupOutcome::NotFound:
+        break;
+    }
+    if (accountId.empty()) {
+        State().assignTitle = std::string("Past Employee (") + p4User + ")";
+        return;
+    }
+    State().assignAccountId = accountId;
+    State().assignHasJiraAccount = true;
+    State().assignTitle = displayName + " (" + p4User + ")";
+}
+
 } // namespace
 
 namespace AnnotateInternal {
-
-bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User, std::string& accountId,
-                            std::string& err) {
-    accountId.clear();
-    err.clear();
-    if (p4User.empty() || p4User == "-") {
-        err = "No Perforce user.";
-        return false;
-    }
-    Result<std::vector<TrackerUser>> usersResult = app.SearchUsersByQuery(p4User);
-    if (!usersResult.has_value()) {
-        err = usersResult.error();
-        return false;
-    }
-    return AnnotateUiPure::PickJiraAccountForP4User(usersResult.value(), p4User, accountId, err);
-}
 
 std::string BuildAiExport() {
     std::lock_guard<std::mutex> lk(State().displayMutex);
@@ -239,69 +362,61 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
     if (State().profileInFlight) {
         return;
     }
-    // Pillar 2 — finding #5: dispatch the back-to-back SearchUsersByQuery + FetchUserGroupNames
-    // pair to a worker. The modal renders "Loading..." until the post-back populates fields.
+    if (app.IsTrackerOffline()) {
+        ProfileLookup offline;
+        offline.Search = SkippedBecauseOffline();
+        ApplyProfileLookup(app, p4User, offline);
+        return;
+    }
+    // Pillar 2 — finding #5: dispatch the back-to-back user search + FetchUserGroupNames pair to a
+    // worker. The modal renders "Loading..." until the post-back populates fields.
     State().profileInFlight = true;
     State().profileName = "Loading...";
     const std::string capturedUser = p4User;
     AppController& appMut = const_cast<AppController&>(app);
-    appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
-        std::vector<TrackerUser> users;
-        std::string qerr;
-        bool searchOk = false;
-        UnpackResult(appMut.SearchUsersByQuery(capturedUser), searchOk, users, qerr);
-        std::string bestDisplayName;
-        std::string bestEmail;
-        std::string bestAccountId;
-        if (searchOk && !users.empty()) {
-            auto it =
-                std::find_if(users.begin(), users.end(), [](const TrackerUser& u) { return !u.EmailAddress.empty(); });
-            const TrackerUser& best = (it != users.end()) ? *it : users[0];
-            bestDisplayName = best.DisplayName;
-            bestEmail = best.EmailAddress;
-            bestAccountId = best.AccountId;
-        }
-        std::vector<std::string> groups;
-        std::string gerr;
-        if (!bestAccountId.empty()) {
-            Result<std::vector<std::string>> r = appMut.FetchUserGroupNames(bestAccountId);
-            if (r.has_value()) {
-                groups = std::move(r.value());
-            } else {
-                // An empty Detail must not render as "no groups, no error" — the post-back only
-                // shows `gerr` when it is non-empty (Issue #2064).
-                gerr = AnnotateUiPure::GroupLookupErrorMessage(r.error());
-            }
-        }
-        const bool found = searchOk && !users.empty();
-        appMut.PostToMainThread([capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
-            if (!HasLiveStateInstance()) {
-                return;
-            }
-            State().profileInFlight = false;
-            if (!found) {
-                State().profileName = "Past Employee";
-                State().profileEmail = capturedUser;
-                if (!qerr.empty()) {
-                    State().profileErr = qerr;
+    try {
+        appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
+            ProfileLookup lookup;
+            lookup.Search = SearchTrackerForP4User(appMut, capturedUser);
+            if (lookup.Search.Answered && !lookup.Search.Users.empty()) {
+                const std::vector<TrackerUser>& users = lookup.Search.Users;
+                auto it = std::find_if(users.begin(), users.end(),
+                                       [](const TrackerUser& u) { return !u.EmailAddress.empty(); });
+                const TrackerUser& best = (it != users.end()) ? *it : users[0];
+                lookup.Name = best.DisplayName;
+                lookup.Email = best.EmailAddress;
+                if (!best.AccountId.empty()) {
+                    Result<std::vector<std::string>> r = appMut.FetchUserGroupNames(best.AccountId);
+                    if (r.has_value()) {
+                        lookup.Groups = std::move(r.value());
+                    } else {
+                        // An empty Detail must not render as "no groups, no error" — the post-back only
+                        // shows the message when it is non-empty (Issue #2064).
+                        lookup.GroupsError = AnnotateUiPure::GroupLookupErrorMessage(r.error());
+                    }
                 }
-                return;
             }
-            State().profileName = bestDisplayName;
-            State().profileEmail = bestEmail;
-            State().profileGroups = groups;
-            if (State().profileGroups.empty() && !gerr.empty()) {
-                State().profileErr = gerr;
-            }
+            appMut.PostToMainThread([&appMut, capturedUser, lookup]() {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
+                ApplyProfileLookup(appMut, capturedUser, lookup);
+            });
         });
-    });
+    } catch (const std::exception& ex) {
+        LOG_WARN("Annotate UI: the user profile lookup did not start: %s", ex.what());
+        ProfileLookup failed;
+        failed.Search.Error = ex.what();
+        ApplyProfileLookup(app, p4User, failed);
+    }
 }
 
 void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell) {
     State().assignRow = row;
-    const std::string& pu = p4UserCell.empty() ? row.Annotate.User : p4UserCell;
+    const std::string pu = p4UserCell.empty() ? row.Annotate.User : p4UserCell;
     State().assignAccountId.clear();
     State().assignHasJiraAccount = false;
+    State().assignNoAccountReason.clear();
     if (pu.empty() || pu == "-" || pu == "...") {
         State().assignTitle = "Past Employee";
         return;
@@ -309,51 +424,31 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
     if (State().assignInFlight) {
         return;
     }
-    // Pillar 2 — finding #5/#6: dispatch SearchUsersByQuery (and ResolveP4UserForAssign's own
-    // SearchUsersByQuery) to a worker. Both share the same annotate-row, so a single dispatch
-    // sequentialises them.
+    if (app.IsTrackerOffline()) {
+        ApplyAssignLookup(app, pu, SkippedBecauseOffline());
+        return;
+    }
+    // Pillar 2 — finding #5/#6: the user search runs on a worker; its result both titles the dialog and
+    // picks the account to assign (one request, not a second search to resolve the account).
     State().assignInFlight = true;
     State().assignTitle = "Loading...";
-    const std::string capturedUser = pu;
     AppController& appMut = const_cast<AppController&>(app);
-    appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
-        std::vector<TrackerUser> users;
-        std::string err;
-        bool searchOk = false;
-        UnpackResult(appMut.SearchUsersByQuery(capturedUser), searchOk, users, err);
-        std::string accountId;
-        std::string resolveErr;
-        bool hasJiraAccount = false;
-        if (searchOk && !users.empty()) {
-            if (ResolveP4UserForAssign(appMut, capturedUser, accountId, resolveErr) && !accountId.empty()) {
-                hasJiraAccount = true;
-            }
-        }
-        std::string displayName;
-        if (hasJiraAccount) {
-            auto it = std::find_if(users.begin(), users.end(),
-                                   [&accountId](const TrackerUser& u) { return u.AccountId == accountId; });
-            displayName = (it != users.end()) ? it->DisplayName : users[0].DisplayName;
-        }
-        const bool foundAny = searchOk && !users.empty();
-        appMut.PostToMainThread([capturedUser, foundAny, hasJiraAccount, accountId, displayName]() {
-            if (!HasLiveStateInstance()) {
-                return;
-            }
-            State().assignInFlight = false;
-            if (!foundAny) {
-                State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
-                return;
-            }
-            if (hasJiraAccount) {
-                State().assignAccountId = accountId;
-                State().assignHasJiraAccount = true;
-                State().assignTitle = displayName + " (" + capturedUser + ")";
-            } else {
-                State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
-            }
+    try {
+        appMut.LaunchBackgroundTask([&appMut, pu]() {
+            const P4UserSearch search = SearchTrackerForP4User(appMut, pu);
+            appMut.PostToMainThread([&appMut, pu, search]() {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
+                ApplyAssignLookup(appMut, pu, search);
+            });
         });
-    });
+    } catch (const std::exception& ex) {
+        LOG_WARN("Annotate UI: the assign user lookup did not start: %s", ex.what());
+        P4UserSearch failed;
+        failed.Error = ex.what();
+        ApplyAssignLookup(app, pu, failed);
+    }
 }
 
 std::string BuildCallstackRowTsv(const AnnotateRow& row, size_t displayIndex) {

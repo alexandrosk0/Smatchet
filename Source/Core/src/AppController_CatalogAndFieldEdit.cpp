@@ -354,6 +354,8 @@ void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
     cat.AvailableUsers = std::move(users);
 }
 
+std::shared_ptr<ILookupCache> AppController::LookupCacheShared() const { return std::atomic_load(&Cache); }
+
 void AppController::SaveAvailableUsersForOfflineAsync(const std::string& cacheBackendKey,
                                                       std::string usersPayloadJson) {
     const std::shared_ptr<LocalCacheManager> store = std::atomic_load(&Cache);
@@ -839,24 +841,27 @@ Result<TrackerIssueVotes> AppController::FetchIssueVotes(const std::string& issu
 }
 
 Result<std::vector<TrackerUser>> AppController::SearchUsersByQuery(const std::string& query) const {
-    using UsersResult = Result<std::vector<TrackerUser>>;
+    return smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(SearchUsersByQueryTyped(query));
+}
+
+Result<std::vector<TrackerUser>, TrackerError> AppController::SearchUsersByQueryTyped(const std::string& query) const {
+    using UsersResult = Result<std::vector<TrackerUser>, TrackerError>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
         // Backend-agnostic wording (issue #2065): this delegator is reached on Linear / GitHub /
         // Plane too, and its siblings (FetchIssueWatchers / FetchIssueVotes) already say "Tracker".
-        return UsersResult::Err("Tracker backend is not initialized.");
+        return UsersResult::Err(TrackerErrorInvalidRequest("Tracker backend is not initialized."));
     }
     if (!backend->Collaboration()) {
-        return UsersResult::Err("Tracker backend does not support collaboration features.");
+        return UsersResult::Err(TrackerErrorInvalidRequest("Tracker backend does not support collaboration features."));
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    UsersResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(
-        backend->Collaboration()->SearchUsersByQuery(cfg, query));
+    UsersResult outcome = backend->Collaboration()->SearchUsersByQuery(cfg, query);
     if (!outcome.has_value()) {
-        LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
-                  outcome.error().c_str());
+        LOG_ERROR("AppController::SearchUsersByQuery failed query=%s kind=%s err=%s",
+                  TruncateForLog(query, 120).c_str(), ToString(outcome.error().Kind), outcome.error().Detail.c_str());
         return outcome;
     }
     requestDeferredLiveTrackerBackendSuccessNotify_();

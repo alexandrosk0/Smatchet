@@ -51,6 +51,7 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig
 namespace {
 
 constexpr std::int64_t kJiraListProjectsTtlSeconds = 300; // 5 minutes
+constexpr const char* kJiraProjectListUnreadable = "The Jira project list could not be read";
 // SMATCHET_DEVIATION(rule=duplication; reason=the Jira and Plane adapters share the ListProjects TTL-cache skeleton by necessity (parallel provider adapters, different mutex types); the clone re-entered the delta scan when the file-local NowUnixSeconds copies were folded into TimeNowPure.h; owner=tracker-adapters; revisit=2027-03-01)
 constexpr size_t kJiraListProjectsCap = 200;
 
@@ -62,13 +63,13 @@ void JiraClient::InvalidateListProjectsCache() {
     cachedProjectsAtUnix_ = 0;
 }
 
-std::vector<RemoteProject> JiraClient::ListProjects() {
+ProjectListResult JiraClient::ListProjectsTyped() {
     // Fast path: serve from cache when still warm.
     {
         std::lock_guard<std::mutex> lock(listProjectsMutex_);
         const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (!cachedProjects_.empty() && (now - cachedProjectsAtUnix_) < kJiraListProjectsTtlSeconds) {
-            return cachedProjects_;
+            return ProjectListResult::Ok(cachedProjects_);
         }
     }
 
@@ -77,7 +78,7 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
     std::string authErr;
     if (!EnsureTrackerAuthConfig(cfg, authErr)) {
         LOG_WARN("JiraClient::ListProjects: auth/config missing: %s", authErr.c_str());
-        return {};
+        return ProjectListResult::Err(TrackerErrorInvalidRequest(authErr));
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -87,7 +88,8 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
     const cpr::Response resp = TrackerGetLogged("JiraClient", url, headers);
     if (resp.status_code != 200) {
         LOG_WARN("JiraClient::ListProjects: HTTP %ld on %s", resp.status_code, url.c_str());
-        return {};
+        return ProjectListResult::Err(
+            ClassifyRejectedTrackerResponse(resp, DescribeRejectedResponse("Listing Jira projects", resp)));
     }
 
     std::vector<RemoteProject> projects;
@@ -97,7 +99,7 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
         const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (!j.is_array()) {
             LOG_WARN("JiraClient::ListProjects: unexpected response shape (not an array).");
-            return {};
+            return ProjectListResult::Err(TrackerErrorParse("The Jira project list was not a JSON array."));
         }
         projects.reserve(j.size() < kJiraListProjectsCap ? j.size() : kJiraListProjectsCap);
         for (const auto& p : j) {
@@ -126,10 +128,10 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
         }
     } catch (const std::exception& ex) {
         LOG_WARN("JiraClient::ListProjects: parse error: %s", ex.what());
-        return {};
-    } catch (...) {
+        return ProjectListResult::Err(TrackerErrorParse(std::string(kJiraProjectListUnreadable) + ": " + ex.what()));
+    } catch (...) { // catch-all-ok: reported as a Parse failure, not swallowed
         LOG_WARN("JiraClient::ListProjects: parse error (unknown)");
-        return {};
+        return ProjectListResult::Err(TrackerErrorParse(std::string(kJiraProjectListUnreadable) + "."));
     }
 
     {
@@ -137,7 +139,7 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
         cachedProjects_ = projects;
         cachedProjectsAtUnix_ = TimeNowPure::NowUnixSeconds();
     }
-    return projects;
+    return ProjectListResult::Ok(std::move(projects));
 }
 
 std::string JiraClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {

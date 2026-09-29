@@ -1,10 +1,15 @@
 #include "SmatchetProjectPicker.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include-list boilerplate: quote includes, the SmatchetLocalizedImGui define and the std includes normalize to the same tokens as other Ui TUs' lists, so the offline load's extra includes made the run long enough to match; nothing behavioural to factor out; owner=ui; revisit=2027-06-30)
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "DataFreshnessCue.h"
 #include "FieldCatalogCache.h"
 #include "ITrackerBackend.h"
 #include "Logger.h"
+#include "OfflineFirstPure.h"
+#include "ProjectListLookup.h"
+#include "ScopeExit.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "SmatchetProjectPicker_detail.h"
@@ -17,8 +22,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace SmatchetProjectPicker {
@@ -70,95 +78,89 @@ bool DrawRecentSection(const std::string& backendKind, const std::string& endpoi
     return changed;
 }
 
-// "All projects" collapsible section of the combo popup: kicks the lazy off-thread fetch on first
-// expand, shows a loading state, then renders filtered rows. Owns its own TreeNodeEx/TreePop pair.
-// Sets selectedKey + returns true when a row is picked. Runs inside the active BeginCombo scope.
-bool DrawAllProjectsSection(State& state, AppController& app, const std::string& backendKind,
-                            const std::shared_ptr<ITrackerBackend>& backend, const std::string& filter,
+// Rows of the "All projects" list that pass the filter; sets selectedKey + returns true when one is
+// picked. `freshness` decides whether an empty list reads "No projects found." (only a live list does).
+bool DrawAllProjectRows(const std::vector<RemoteProject>& projects, const std::string& backendKind,
+                        const std::string& filter, smatchet::offline::DataFreshness freshness,
+                        std::string& selectedKey) {
+    bool changed = false;
+    int allShown = 0;
+    for (const auto& p : projects) {
+        const std::string key = detail::AllProjectKey(p, backendKind);
+        if (!detail::AllProjectPasses(key, p, filter)) {
+            continue;
+        }
+        const std::string label = detail::MakeRowLabel(p, backendKind);
+        const bool selected = (key == selectedKey);
+        ImGui::PushID(static_cast<int>(allShown));
+        if (ImGui::Selectable(label.c_str(), selected)) {
+            selectedKey = key;
+            changed = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopID();
+        ++allShown;
+    }
+    if (allShown == 0 && !filter.empty()) {
+        ImGui::TextDisabled("  %s",
+                            SmatchetLocalization::T("draft.project.none_filtered", "No projects match the filter."));
+    } else if (allShown == 0 && freshness == smatchet::offline::DataFreshness::Fresh) {
+        ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.none", "No projects found."));
+    }
+    return changed;
+}
+
+// "All projects" collapsible section of the combo popup: kicks the lazy off-thread load on first
+// expand, then renders the live or saved rows under a freshness cue. Owns its own TreeNodeEx/TreePop
+// pair. Sets selectedKey + returns true when a row is picked. Runs inside the active BeginCombo scope.
+bool DrawAllProjectsSection(State& state, AppController& app, const std::string& backendKind, const std::string& filter,
                             std::string& selectedKey) {
     bool changed = false;
     ImGui::Separator();
     const char* allLabel = SmatchetLocalization::T("draft.project.section.all", "All projects");
     if (ImGui::TreeNodeEx(allLabel, state.allExpanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         state.allExpanded = true;
+        StartAllProjectsFetch(state, app);
 
-        // Kick the lazy fetch on first expand. Routed through the app-owned joined
-        // background-task pool (not a raw detached thread — forbidden by the
-        // no-detach lint) so it is joined at shutdown. The lambda captures the
-        // `backend` shared_ptr (a strong copy), so a live tracker swap that frees
-        // AppController::Backend cannot dangle the client mid-ListProjects() — the
-        // old backend stays alive until this task drops its copy (ADR 0012).
-        // `statePtr` is app-lifetime window state (heap-owned by the caller's draw
-        // session), safe to hold as a raw pointer.
-        if (!state.fetchDone.load() && !state.fetchInFlight.load() && backend != nullptr) {
-            state.fetchInFlight.store(true);
-            State* statePtr = &state;
-            app.LaunchBackgroundTask([statePtr, backend]() {
-                std::vector<RemoteProject> projects;
-                std::string err;
-                try {
-                    projects = backend->Connectivity().ListProjects();
-                } catch (const std::exception& ex) {
-                    err = ex.what();
-                } catch (...) { // catch-all-ok: surfaced via statePtr->fetchError, not swallowed
-                    err = "unknown exception";
-                }
-                {
-                    std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
-                    statePtr->fetchedAll = std::move(projects);
-                    statePtr->fetchError = std::move(err);
-                }
-                statePtr->fetchDone.store(true);
-                statePtr->fetchInFlight.store(false);
-            });
+        std::vector<RemoteProject> snapshot;
+        std::string fetchError;
+        bool failed = false;
+        bool fromSaved = false;
+        {
+            std::lock_guard<std::mutex> lk(state.fetchMutex);
+            snapshot = state.fetchedAll;
+            fetchError = state.fetchError;
+            failed = state.fetchFailed;
+            fromSaved = state.fetchFromSaved;
         }
-
-        if (state.fetchInFlight.load() && !state.fetchDone.load()) {
-            ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.loading", "Loading..."));
-        } else {
-            std::vector<RemoteProject> snapshot;
-            std::string fetchError;
-            {
-                std::lock_guard<std::mutex> lk(state.fetchMutex);
-                snapshot = state.fetchedAll;
-                fetchError = state.fetchError;
-            }
-            // P2-M11: the worker stored the failure but nothing rendered it — a bad or
-            // expired token made the picker permanently, inexplicably empty for the
-            // session (fetchDone latches). Show the error and let Retry re-kick.
-            if (!fetchError.empty()) {
+        const bool inFlight = state.fetchInFlight.load();
+        const bool done = state.fetchDone.load();
+        smatchet::offline::FreshnessInputs in;
+        in.HasCache = !snapshot.empty() || fromSaved || (done && !failed);
+        in.Live = done && !failed && !fromSaved;
+        in.InFlight = inFlight;
+        in.LastAttemptFailed = failed;
+        in.Connectivity = app.GetLastTrackerConnectivityState();
+        const smatchet::offline::DataFreshness freshness = smatchet::offline::ClassifyFreshness(in);
+        const bool showRows = smatchet::offline::ShouldRenderContent(freshness);
+        // Pillar 6: saved or stale rows stay visible under the cue; the failure is its tooltip.
+        DataFreshnessCue::Draw(freshness, fetchError.empty() ? nullptr : fetchError.c_str());
+        if (failed && !inFlight) {
+            // P2-M11: with nothing to show, the error itself is the content — a bad or expired token
+            // must never read as an empty project list. Retry re-kicks the load next frame.
+            if (!showRows && !fetchError.empty()) {
                 ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
                 ImGui::TextWrapped("%s",
                                    SmatchetLocalization::Format("draft.project.fetch_failed",
                                                                 "Couldn't load projects: %s", fetchError.c_str()));
                 ImGui::PopStyleColor();
-                if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
-                    state.fetchDone.store(false); // next frame re-kicks the fetch
-                }
             }
-            int allShown = 0;
-            for (const auto& p : snapshot) {
-                const std::string key = detail::AllProjectKey(p, backendKind);
-                if (!detail::AllProjectPasses(key, p, filter)) {
-                    continue;
-                }
-                const std::string label = detail::MakeRowLabel(p, backendKind);
-                const bool selected = (key == selectedKey);
-                ImGui::PushID(static_cast<int>(allShown));
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    selectedKey = key;
-                    changed = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopID();
-                ++allShown;
+            if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
+                state.fetchDone.store(false);
             }
-            if (allShown == 0 && fetchError.empty()) {
-                ImGui::TextDisabled("  %s", filter.empty()
-                                                ? SmatchetLocalization::T("draft.project.none", "No projects found.")
-                                                : SmatchetLocalization::T("draft.project.none_filtered",
-                                                                          "No projects match the filter."));
-            }
+        }
+        if (showRows && DrawAllProjectRows(snapshot, backendKind, filter, freshness, selectedKey)) {
+            changed = true;
         }
         ImGui::TreePop();
     } else {
@@ -169,13 +171,75 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
 
 } // namespace
 
+void StartAllProjectsFetch(State& state, AppController& app) {
+    if (state.fetchInFlight.load()) {
+        return;
+    }
+    const std::string backendKey = app.FocusedCacheBackendKey();
+    const bool offline = app.IsTrackerOffline();
+    if (state.fetchDone.load()) {
+        std::lock_guard<std::mutex> lk(state.fetchMutex);
+        if (state.fetchBackendKey != backendKey) {
+            // The focused tracker changed since this list was loaded: never show one tracker's
+            // projects under another; load the new tracker's list (live or saved).
+            state.fetchedAll.clear();
+            state.fetchError.clear();
+            state.fetchFailed = false;
+            state.fetchFromSaved = false;
+        } else if (!(state.fetchSkippedOffline && !offline)) {
+            return; // loaded; a list skipped offline reloads once the tracker is reachable
+        }
+        state.fetchDone.store(false);
+    }
+    // Strong handle to the active backend: the off-thread load captures it, so a live tracker swap
+    // that frees AppController::Backend cannot dangle the client mid-listing (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
+    if (!backend) {
+        return;
+    }
+    const std::shared_ptr<ILookupCache> store = app.LookupCacheShared();
+    state.fetchBackendKey = backendKey;
+    // `statePtr` is app-lifetime window state (heap-owned by the caller's draw session), safe to hold
+    // as a raw pointer. The load runs on the app-owned joined pool (never a detached thread).
+    State* statePtr = &state;
+    state.fetchInFlight.store(true);
+    try {
+        app.LaunchBackgroundTask([statePtr, backend, store, backendKey, offline]() {
+            // Settle the flags on every exit, so a throw can never leave the list on "Loading".
+            smatchet::ScopeExit settle([statePtr]() {
+                statePtr->fetchDone.store(true);
+                statePtr->fetchInFlight.store(false);
+            });
+            smatchet::projects::ProjectListOutcome outcome =
+                smatchet::projects::LoadProjectList(backend->Connectivity(), store, backendKey, offline);
+            std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
+            // A failed retry with nothing saved keeps the rows already shown (now marked stale):
+            // a failure never wipes a list the user has.
+            if (!outcome.Failed || outcome.FromSaved || statePtr->fetchedAll.empty()) {
+                statePtr->fetchedAll = std::move(outcome.Projects);
+                statePtr->fetchFromSaved = outcome.FromSaved;
+            }
+            statePtr->fetchFailed = outcome.Failed;
+            statePtr->fetchSkippedOffline = offline;
+            statePtr->fetchError = outcome.Failed ? outcome.Error.Detail : std::string();
+        });
+    } catch (const std::exception& ex) {
+        // The load never started: show the failure and a Retry instead of loading forever.
+        LOG_WARN("SmatchetProjectPicker: loading the project list did not start: %s", ex.what());
+        {
+            std::lock_guard<std::mutex> lk(state.fetchMutex);
+            state.fetchFailed = true;
+            state.fetchError = ex.what();
+        }
+        state.fetchDone.store(true);
+        state.fetchInFlight.store(false);
+    }
+}
+
 bool Draw(const char* idScope, State& state, AppController& app, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey) {
     ImGui::PushID(idScope);
     bool changed = false;
-    // Strong handle to the active backend (kept as a local arity to preserve the function key).
-    // The OFF-THREAD fetch captures this shared_ptr so it survives a live tracker swap (ADR 0012).
-    std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
 
     const char* placeholder = SmatchetLocalization::T("draft.project.placeholder", "(pick one)");
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
@@ -193,7 +257,7 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
         }
 
         // --- All projects (collapsible, lazy). ---
-        if (DrawAllProjectsSection(state, app, backendKind, backend, filter, selectedKey)) {
+        if (DrawAllProjectsSection(state, app, backendKind, filter, selectedKey)) {
             changed = true;
         }
 

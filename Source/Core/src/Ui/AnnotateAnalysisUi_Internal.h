@@ -140,6 +140,9 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string assignTitle;
     std::string assignAccountId;
     bool assignHasJiraAccount = false;
+    /// Why the assign actions are disabled when it is not the usual "no matching account" (e.g. the tracker
+    /// is offline and the saved user list has no match); "" for the usual reason.
+    std::string assignNoAccountReason;
     AnnotateRow assignRow;
 
     /** Opened via grid "Annotate…" with callstack; auto-process + compact UI until raw view. */
@@ -217,8 +220,6 @@ void PushAnnotateLinkButtonColors(const AnnotateUiThemeColors& theme);
 void PopAnnotateLinkButtonColors();
 void PushAnnotateLinkTextOnly(const AnnotateUiThemeColors& theme);
 void PopAnnotateLinkTextOnly();
-bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User, std::string& accountId,
-                            std::string& err);
 void CloseAnnotateModal(bool* pOpen);
 void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User);
 void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell);

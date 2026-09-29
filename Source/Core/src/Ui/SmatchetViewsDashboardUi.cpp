@@ -13,11 +13,13 @@
 #include "ViewColumnsPure.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "DataFreshnessCue.h"
 #include "JiraBackendInstancesPure.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetTheme.h"
 #include "Ui/SmatchetDestructiveButton.h"
 #include "SmatchetDragCheckbox.h"
 #include "StringUtil.h"
@@ -598,6 +600,28 @@ void ApplyFieldSelectionToDraftColumns(const std::unordered_set<std::string>& se
     }
 }
 
+// Catalog state above the Fields tab (Quality Pillar 6). Cached fields stay usable while the catalog
+// refreshes — offline that can take a whole retry window (~90 s) — so only an empty catalog waits on
+// the fetch. With no fields and a failed fetch, the error and a Retry replace the silent empty list.
+void DrawFieldsTabCatalogState(AppController& app, UiDrawSession& d, bool noFields) {
+    if (d.fieldCatalogLoading) {
+        DataFreshnessCue::Draw(noFields ? smatchet::offline::DataFreshness::LoadingNoCache
+                                        : smatchet::offline::DataFreshness::Refreshing);
+        return;
+    }
+    const std::string& error = app.GetFieldCatalogError();
+    if (!noFields || error.empty()) {
+        return;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+    ImGui::TextWrapped("%s", SmatchetLocalization::Format("views.fields.catalog_failed",
+                                                          "Couldn't load the field catalog: %s", error.c_str()));
+    ImGui::PopStyleColor();
+    if (ImGui::SmallButton(SmatchetLocalization::T("views.fields.retry", "Retry"))) {
+        d.triggerCatalogRefetch = true;
+    }
+}
+
 } // namespace
 
 void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
@@ -608,9 +632,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
         d.viewsActiveTab = Tab_Fields;
         ImGui::Spacing();
 
-        if (d.fieldCatalogLoading) {
-            ImGui::TextDisabled("Loading available fields...");
-        }
+        const auto& availableFields = app.GetAvailableFields();
+        DrawFieldsTabCatalogState(app, d, availableFields.empty());
 
         // Per-frame LOCAL working set, derived from d.viewDraft.Columns (the source of
         // truth) — the toggle handlers / select-all / clear mutate it, and
@@ -623,7 +646,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                 selectedFieldSet.insert(col.Key.substr(6));
             }
         }
-        const auto& availableFields = app.GetAvailableFields();
 
         // Single pane: the column-order list lives in the Columns tab.
         const float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
@@ -643,7 +665,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             const std::vector<const TrackerField*>& customFields = categorized.custom;
             const std::vector<const TrackerField*>& basicFields = categorized.basic;
 
-            const bool disableEditing = d.fieldCatalogLoading;
+            // Only an empty catalog that is still loading has nothing to edit yet.
+            const bool disableEditing = d.fieldCatalogLoading && availableFields.empty();
             if (disableEditing) {
                 ImGui::BeginDisabled();
             }
@@ -671,8 +694,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
 
             if (availableFields.empty()) {
                 ImGui::TextDisabled("No field catalog loaded yet.");
-            } else if (d.fieldCatalogLoading) {
-                ImGui::TextDisabled("Refreshing field catalog...");
             } else if (visibleFields.empty()) {
                 ImGui::TextDisabled("No fields match current search.");
             } else {

@@ -142,6 +142,19 @@ class FakeTrackerClient : public ITrackerBackend,
         return reachabilityResult_;
     }
 
+    // Project listing: SetProjects scripts the list, SetListProjectsError a failure; unscripted it is Ok
+    // and empty, like the interface default. Down-gated like every network call.
+    ProjectListResult ListProjectsTyped() override {
+        if (NetworkDown()) {
+            return ProjectListResult::Err(network_->MakeError());
+        }
+        ++listProjectsCalls_;
+        if (!listProjectsError_.IsOk()) {
+            return ProjectListResult::Err(listProjectsError_);
+        }
+        return ProjectListResult::Ok(projects_);
+    }
+
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* /*configOverride*/ = nullptr,
                                           const ViewsStore* /*viewsOverride*/ = nullptr,
@@ -769,6 +782,10 @@ class FakeTrackerClient : public ITrackerBackend,
         projectComponentsByKey_[projectKey] = std::move(s);
     }
 
+    void SetProjects(std::vector<RemoteProject> projects) { projects_ = std::move(projects); }
+    void SetListProjectsError(TrackerError error) { listProjectsError_ = std::move(error); }
+    std::size_t ListProjectsCalls() const { return listProjectsCalls_; }
+
     void SetReachabilityResult(TrackerReachabilityProbeKind kind, const std::string& diagnostic = std::string()) {
         reachabilityResult_.Kind = kind;
         reachabilityResult_.Diagnostic = diagnostic;
@@ -817,6 +834,7 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchFieldCatalogCalls_ = 0;
         fetchIssueTransitionsCalls_ = 0;
         fetchIssueCommentsCalls_ = 0;
+        listProjectsCalls_ = 0;
         addCommentCalls_.clear();
         addCommentReplies_.clear();
         addWorklogCalls_.clear();
@@ -946,6 +964,11 @@ class FakeTrackerClient : public ITrackerBackend,
     std::string projectComponentsDefaultError_ = "FetchProjectComponents not scripted";
     std::size_t fetchProjectComponentsCalls_ = 0;
     std::vector<std::string> fetchProjectComponentsKeys_;
+
+    // ListProjectsTyped (Pillar 6)
+    std::vector<RemoteProject> projects_;
+    TrackerError listProjectsError_;
+    std::size_t listProjectsCalls_ = 0;
 
     // FetchFieldCatalog (Pillar 6)
     Optional<TrackerFieldCatalogResult> fieldCatalogResult_;

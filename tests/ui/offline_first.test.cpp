@@ -23,6 +23,7 @@
 #include "FakeTrackerClient.h"
 #include "SmatchetCommentsModalUi.h" // OpenCommentsModal + GetCommentsModalSnapshotForTests
 #include "SmatchetGridUiSupport.h"   // ProcessGridFieldEdits — the real grid commit pipeline
+#include "SmatchetProjectPicker.h"   // StartAllProjectsFetch — the picker's "All projects" load
 #include "SmatchetUiSession.h"       // g_ui, PendingFieldEdit
 #include "Types/ConnectivityTypes.h"
 #include "Types/ProjectComponentsTypes.h"
@@ -39,6 +40,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -626,6 +628,88 @@ static void RegisterOfflineFirstUsersRestoredFromSavedRoster(ImGuiTestEngine* en
     };
 }
 
+namespace {
+
+// True when `state` lists a project with `key`, read under the picker's own lock.
+bool PickerListsProject(SmatchetProjectPicker::State& state, const std::string& key) {
+    std::lock_guard<std::mutex> lk(state.fetchMutex);
+    return std::any_of(state.fetchedAll.begin(), state.fetchedAll.end(),
+                       [&key](const RemoteProject& p) { return p.key == key; });
+}
+
+// Wait until the picker's load has fully settled; the worker holds a raw pointer to `state`, so a test
+// must not destroy it before the in-flight flag drops.
+bool WaitForPickerLoad(ImGuiTestContext* ctx, SmatchetProjectPicker::State& state) {
+    return YieldUntil(ctx, 600, [&state]() { return state.fetchDone.load() && !state.fetchInFlight.load(); });
+}
+
+} // namespace
+
+// OfflineFirst/ProjectPicker_OfflineShowsSavedProjects: the project picker's "All projects" list, once
+// listed online, is saved (lookup_cache kind `projects`). Offline, a fresh picker (as after a restart)
+// shows that saved list, marked as saved and carrying the offline failure for its cue and Retry, and
+// sends no request — never "No projects found.".
+static void RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "ProjectPicker_OfflineShowsSavedProjects");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+
+        // Online: the live list comes back and is saved on the worker.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        auto online = std::make_unique<SmatchetProjectPicker::State>();
+        SmatchetProjectPicker::StartAllProjectsFetch(*online, *app);
+        IM_CHECK_NO_RET(WaitForPickerLoad(ctx, *online));
+        {
+            std::lock_guard<std::mutex> lk(online->fetchMutex);
+            IM_CHECK_NO_RET(!online->fetchFailed);
+            IM_CHECK_NO_RET(!online->fetchFromSaved);
+        }
+        IM_CHECK_NO_RET(PickerListsProject(*online, "OFF"));
+
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+
+        auto offline = std::make_unique<SmatchetProjectPicker::State>();
+        SmatchetProjectPicker::StartAllProjectsFetch(*offline, *app);
+        IM_CHECK_NO_RET(WaitForPickerLoad(ctx, *offline));
+        {
+            std::lock_guard<std::mutex> lk(offline->fetchMutex);
+            IM_CHECK_NO_RET(offline->fetchFailed);
+            IM_CHECK_NO_RET(offline->fetchFromSaved);
+            IM_CHECK_NO_RET(!offline->fetchError.empty());
+        }
+        IM_CHECK_NO_RET(PickerListsProject(*offline, "OFF"));
+        IM_CHECK_NO_RET(PickerListsProject(*offline, "SIDE"));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // Back online, the same picker reloads the list it skipped offline (the section asks every frame
+        // it is open), and the rows are live again.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        const bool reloaded = YieldUntil(ctx, 600, [app, &offline]() {
+            SmatchetProjectPicker::StartAllProjectsFetch(*offline, *app);
+            std::lock_guard<std::mutex> lk(offline->fetchMutex);
+            return offline->fetchDone.load() && !offline->fetchInFlight.load() && !offline->fetchFailed;
+        });
+        IM_CHECK_NO_RET(reloaded);
+        IM_CHECK_NO_RET(WaitForPickerLoad(ctx, *offline));
+        {
+            std::lock_guard<std::mutex> lk(offline->fetchMutex);
+            IM_CHECK_NO_RET(!offline->fetchFromSaved);
+        }
+        IM_CHECK_NO_RET(PickerListsProject(*offline, "OFF"));
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -635,6 +719,7 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstWorklogOfflineQueues(engine);
     RegisterOfflineFirstComponentsOfflineShowsSavedOptions(engine);
     RegisterOfflineFirstUsersRestoredFromSavedRoster(engine);
+    RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

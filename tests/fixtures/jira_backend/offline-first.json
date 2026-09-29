@@ -28,6 +28,10 @@
       {"accountId": "acc-bob", "displayName": "Bob Offline"}
     ]
   },
+  "projects": [
+    {"id": "10000", "key": "OFF", "name": "Offline First"},
+    {"id": "10001", "key": "SIDE", "name": "Side Project"}
+  ],
   "projectComponents": {
     "OFF": [
       {"id": "100", "name": "Backend", "description": "Server side"},
