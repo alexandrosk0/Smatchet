@@ -211,7 +211,7 @@ struct PlaneIssuePageFetch {
     // (retire-transport-error-text item 12).
     TrackerError Classified;
     nlohmann::json Body;
-    std::string RawBody;  // raw HTTP response text for size tracking
+    std::string RawBody; // raw HTTP response text for size tracking
 };
 
 // Phase 4: HTTP GET one work-items page + classify the response body. Reproduces the original
@@ -344,8 +344,8 @@ struct PlanePageLoopResult {
     bool HardFailed = false;
     bool EndedCleanly = false;
     int PageCount = 0;
-    size_t TotalFetchedBytes = 0;  // cumulative response size (bytes) across all pages
-    bool TotalSizeLimitHit = false; // true if total fetch size exceeded the cap
+    size_t TotalFetchedBytes = 0;     // cumulative response size (bytes) across all pages
+    bool TotalSizeLimitHit = false;   // true if total fetch size exceeded the cap
     bool ResultCountLimitHit = false; // true if result count exceeded the cap
 };
 
@@ -367,7 +367,7 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
     // and matches the per-server safety limit in JiraIssueSearch.cpp.
     constexpr int kMaxPlanePages = 50;
     constexpr size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
-    constexpr size_t kMaxResultCount = 10000u;                    // hard cap on issue count
+    constexpr size_t kMaxResultCount = 10000u;                   // hard cap on issue count
     std::string listCursor;
 
     while (true) {
@@ -403,8 +403,9 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         // Track cumulative response size for total-fetch guard.
         result.TotalFetchedBytes += page.RawBody.size();
         if (result.TotalFetchedBytes > kMaxTotalFetchBytes) {
-            LOG_WARN("PlaneClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
-                     result.TotalFetchedBytes, kMaxTotalFetchBytes);
+            LOG_WARN(
+                "PlaneClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
+                result.TotalFetchedBytes, kMaxTotalFetchBytes);
             result.TotalSizeLimitHit = true;
             result.EndedCleanly = false;
             break;
@@ -728,20 +729,20 @@ void PlaneClient::InvalidateListProjectsCache() {
     cachedProjectsAtUnix_ = 0;
 }
 
-std::vector<RemoteProject> PlaneClient::ListProjects() {
+ProjectListResult PlaneClient::ListProjectsTyped() {
     // Fast path: serve from cache when still warm.
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (!cachedProjects_.empty() && (now - cachedProjectsAtUnix_) < kPlaneListProjectsTtlSeconds) {
-            return cachedProjects_;
+            return ProjectListResult::Ok(cachedProjects_);
         }
     }
 
     const TrackerConfig cfg = ConfigManager::Load();
     if (cfg.PlaneWorkspaceSlug.empty()) {
         LOG_WARN("PlaneClient::ListProjects: PlaneWorkspaceSlug is empty.");
-        return {};
+        return ProjectListResult::Err(TrackerErrorInvalidRequest("No Plane workspace is configured."));
     }
 
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
@@ -765,19 +766,21 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
         const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, params);
         if (resp.status_code != 200) {
             LOG_WARN("PlaneClient::ListProjects: HTTP %ld on %s", resp.status_code, url.c_str());
-            return {};
+            return ProjectListResult::Err(
+                ClassifyRejectedTrackerResponse(resp, DescribeRejectedResponse("Listing Plane projects", resp)));
         }
         try {
             std::string parseErr;
             const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
             if (!parseErr.empty()) {
                 LOG_WARN("PlaneClient::ListProjects: invalid JSON in response: %s", parseErr.c_str());
-                return {};
+                return ProjectListResult::Err(
+                    TrackerErrorParse("The Plane project list was not valid JSON: " + parseErr));
             }
             const auto& arr = (j.is_object() && j.contains("results")) ? j["results"] : j;
             if (!arr.is_array()) {
                 LOG_WARN("PlaneClient::ListProjects: response has no results array.");
-                return {};
+                return ProjectListResult::Err(TrackerErrorParse("The Plane project list had no results array."));
             }
             projects.reserve(projects.size() + arr.size());
             for (const auto& p : arr) {
@@ -796,10 +799,11 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
             cursor = smatchet::plane::NextPaginationCursor(j);
         } catch (const std::exception& ex) {
             LOG_WARN("PlaneClient::ListProjects: parse error: %s", ex.what());
-            return {};
-        } catch (...) {
+            return ProjectListResult::Err(
+                TrackerErrorParse(std::string("The Plane project list could not be read: ") + ex.what()));
+        } catch (...) { // catch-all-ok: reported as a Parse failure, not swallowed
             LOG_WARN("PlaneClient::ListProjects: parse error (unknown)");
-            return {};
+            return ProjectListResult::Err(TrackerErrorParse("The Plane project list could not be read."));
         }
         if (cursor.empty()) {
             break;
@@ -811,5 +815,5 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
         cachedProjects_ = projects;
         cachedProjectsAtUnix_ = TimeNowPure::NowUnixSeconds();
     }
-    return projects;
+    return ProjectListResult::Ok(std::move(projects));
 }

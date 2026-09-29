@@ -30,15 +30,21 @@ std::string LoopbackGraphQlUrl(const JiraCatalogHttpFixture& fx) {
     return "http://127.0.0.1:" + std::to_string(fx.Port()) + kGraphQlPath;
 }
 
-// The cfg-less mutation paths read ConfigManager::Load() per request — persist the
-// loopback config into the TestEnvGuard-redirected dir so they resolve to the fixture.
-void SaveLoopbackLinearConfig(const JiraCatalogHttpFixture& fx) {
+// The cfg-less paths read ConfigManager::Load() per request — persist a Linear config pointed at
+// `baseUrl` into the TestEnvGuard-redirected dir so they resolve to it.
+TrackerConfig SaveLinearConfig(const std::string& baseUrl) {
     TrackerConfig cfg = ConfigManager::Load();
     cfg.TrackerType = "Linear";
-    cfg.LinearBaseUrl = LoopbackGraphQlUrl(fx);
+    cfg.LinearBaseUrl = baseUrl;
     cfg.LinearApiKey = "fixture-key";
     ConfigManager::Save(cfg);
+    return cfg;
 }
+
+void SaveLoopbackLinearConfig(const JiraCatalogHttpFixture& fx) { SaveLinearConfig(LoopbackGraphQlUrl(fx)); }
+
+// A closed port: cpr fails to connect (status 0), which is how an unreachable Linear looks.
+TrackerConfig SaveUnreachableLinearConfig() { return SaveLinearConfig("http://127.0.0.1:1/graphql"); }
 
 // One handler for the whole GraphQL surface: branch on the posted document so the
 // resolve hop and the mutation land distinct scripted responses. Captures every body
@@ -141,11 +147,7 @@ TEST_CASE("Linear update — a failure keeps its HTTP kind so an offline edit ca
     smatchet_tests::TestEnvGuard env;
 
     SUBCASE("unreachable host is Transport (retryable)") {
-        TrackerConfig cfg = ConfigManager::Load();
-        cfg.TrackerType = "Linear";
-        cfg.LinearBaseUrl = "http://127.0.0.1:1/graphql";
-        cfg.LinearApiKey = "fixture-key";
-        ConfigManager::Save(cfg);
+        const TrackerConfig cfg = SaveUnreachableLinearConfig();
         LinearClient client(cfg.LinearBaseUrl, cfg.LinearApiKey);
         const TrackerError err = client.UpdateIssueFields("ENG-123", nlohmann::json{{"title", "x"}});
         CHECK(err.Kind == TrackerErrorKind::Transport);
@@ -232,5 +234,50 @@ TEST_CASE("Linear comment — resolve hop + commentCreate wire shape (markdown v
         const TrackerError err = client.AddIssueCommentPlain(cfg, "ENG-123", "text");
         CHECK(err.Kind == TrackerErrorKind::Auth);
         CHECK(fx.RequestCount(kGraphQlPath) == 0);
+    }
+}
+
+TEST_CASE("Linear ListProjectsTyped — teams on success; a failure keeps its kind") {
+    // Quality Pillar 6 (offline-first S12): the project picker lists Linear teams; a failure used to be
+    // an empty list, so an unreachable Linear read as "No projects found.".
+    JiraCatalogHttpFixture fx;
+    smatchet_tests::TestEnvGuard env;
+
+    SUBCASE("teams become picker rows") {
+        SaveLoopbackLinearConfig(fx);
+        fx.ScriptJson(
+            kGraphQlPath,
+            nlohmann::json{{"data", {{"teams", {{"nodes", {{{"id", "t-1"}, {"key", "ENG"}, {"name", "Eng"}}}}}}}}},
+            "POST");
+        LinearClient client(LoopbackGraphQlUrl(fx), "fixture-key");
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE(static_cast<bool>(listed));
+        REQUIRE(listed.value().size() == 1u);
+        CHECK(listed.value()[0].key == "ENG");
+        CHECK(listed.value()[0].displayName == "Eng");
+    }
+    SUBCASE("GraphQL errors on a 200 are a failure carrying Linear's message, never an empty success") {
+        SaveLoopbackLinearConfig(fx);
+        fx.ScriptJson(kGraphQlPath, nlohmann::json{{"errors", {{{"message", "teams: forbidden"}}}}}, "POST");
+        LinearClient client(LoopbackGraphQlUrl(fx), "fixture-key");
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Detail.find("teams: forbidden") != std::string::npos);
+    }
+    SUBCASE("401 is Auth") {
+        SaveLoopbackLinearConfig(fx);
+        fx.ScriptStatus(kGraphQlPath, 401, "POST");
+        LinearClient client(LoopbackGraphQlUrl(fx), "fixture-key");
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Auth);
+    }
+    SUBCASE("an unreachable host is Transport") {
+        const TrackerConfig cfg = SaveUnreachableLinearConfig();
+        LinearClient client(cfg.LinearBaseUrl, cfg.LinearApiKey);
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Transport);
+        CHECK(listed.error().IsRetryable());
     }
 }

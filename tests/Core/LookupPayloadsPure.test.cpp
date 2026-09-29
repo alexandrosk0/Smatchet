@@ -1,5 +1,5 @@
-// LookupPayloadsPure — the user-roster and edit-permission payloads of the offline lookup rows
-// (Quality Pillar 6). Pure: no I/O.
+// LookupPayloadsPure — the user-roster, project-list and edit-permission payloads of the offline
+// lookup rows (Quality Pillar 6). Pure: no I/O.
 
 #include "LookupPayloadsPure.h"
 
@@ -76,6 +76,49 @@ TEST_SUITE("LookupPayloadsPure") {
     TEST_CASE("a roster too large to store serializes to nothing") {
         TrackerUser huge = User("acc-1", std::string(smatchet::lookup::kMaxUsersPayloadBytes, 'x'));
         CHECK(smatchet::lookup::SerializeUsers({huge}).empty());
+    }
+
+    TEST_CASE("a project list round-trips; entries with neither id nor key are skipped") {
+        RemoteProject jira;
+        jira.id = "10000";
+        jira.key = "OFF";
+        jira.displayName = "Offline First";
+        RemoteProject plane; // Plane rows carry a UUID and may have no identifier
+        plane.id = "5f0c-uuid";
+        plane.displayName = "Plane Project";
+        std::vector<RemoteProject> parsed;
+        REQUIRE(smatchet::lookup::ParseProjects(smatchet::lookup::SerializeProjects({jira, plane}), parsed));
+        REQUIRE(parsed.size() == 2u);
+        CHECK(parsed[0].id == "10000");
+        CHECK(parsed[0].key == "OFF");
+        CHECK(parsed[0].displayName == "Offline First");
+        CHECK(parsed[1].id == "5f0c-uuid");
+        CHECK(parsed[1].key.empty());
+
+        REQUIRE(smatchet::lookup::ParseProjects(R"([{"name":"No id or key"},{"key":"K","name":3},"x"])", parsed));
+        REQUIRE(parsed.size() == 1u);
+        CHECK(parsed[0].key == "K");
+        CHECK(parsed[0].displayName.empty());
+    }
+
+    TEST_CASE("an unreadable or oversized project list is rejected, and a capped one still parses") {
+        std::vector<RemoteProject> parsed(1);
+        CHECK_FALSE(smatchet::lookup::ParseProjects("[", parsed));
+        CHECK(parsed.empty());
+        CHECK_FALSE(smatchet::lookup::ParseProjects(R"({"key":"K"})", parsed));
+        CHECK_FALSE(smatchet::lookup::ParseProjects(R"([{"key":"K","nested":[1]}])", parsed));
+
+        std::vector<RemoteProject> many(smatchet::lookup::kMaxStoredProjects + 2);
+        for (std::size_t i = 0; i < many.size(); ++i) {
+            many[i].key = "P" + std::to_string(i);
+        }
+        const std::string capped = smatchet::lookup::SerializeProjects(many);
+        REQUIRE(smatchet::lookup::ParseProjects(capped, parsed));
+        CHECK(parsed.size() == smatchet::lookup::kMaxStoredProjects);
+
+        RemoteProject huge;
+        huge.key = std::string(smatchet::lookup::kMaxProjectsPayloadBytes, 'k');
+        CHECK(smatchet::lookup::SerializeProjects({huge}).empty());
     }
 
     TEST_CASE("edit permissions round-trip; non-bool members are skipped") {

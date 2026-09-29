@@ -12,6 +12,7 @@
 // resolves them across the new TUs without ODR collisions against any other
 // file's anon namespace.
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include-list boilerplate: quote includes, the SmatchetLocalizedImGui define and the std includes normalize to the same tokens as other Ui TUs' lists, so adding <cstdint> for the lookup generations made the run long enough to match; nothing behavioural to factor out; owner=ui; revisit=2027-06-30)
 #include "AnnotateAnalysisUi.h"
 
 #include "CallstackParser.h"
@@ -24,6 +25,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <future>
 #include <memory>
@@ -115,11 +117,14 @@ struct AnnotateAnalysisUi::AnnotateState {
     /// to a different id than BeginPopupModal at the parent scope, so the modal never
     /// appeared. This flag defers the OpenPopup to the same scope as BeginPopupModal.
     bool openAssignModal = false;
-    /// Pillar 2 — finding #5: profile + assign-modal HTTP runs on a worker. These gates
-    /// suppress duplicate dispatches while a fetch is in flight, and the modal renders a
-    /// "Loading..." status until the post-back populates the fields.
+    /// Pillar 2 — finding #5: profile + assign-modal HTTP runs on a worker, and the modal renders a
+    /// "Loading..." status until the post-back populates the fields. Each open starts a new lookup
+    /// generation; a post-back applies only while its generation is current, so a slow lookup for an
+    /// earlier row never fills the dialog, or picks the account, for the row selected since.
     bool profileInFlight = false;
     bool assignInFlight = false;
+    std::uint64_t profileLookupGeneration = 0;
+    std::uint64_t assignLookupGeneration = 0;
     bool assignCommitInFlight = false;
 
     std::string lastUiStatus;
@@ -140,6 +145,9 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string assignTitle;
     std::string assignAccountId;
     bool assignHasJiraAccount = false;
+    /// Why the assign actions are disabled when it is not the usual "no matching account" (e.g. the tracker
+    /// is offline and the saved user list has no match); "" for the usual reason.
+    std::string assignNoAccountReason;
     AnnotateRow assignRow;
 
     /** Opened via grid "Annotate…" with callstack; auto-process + compact UI until raw view. */
@@ -217,8 +225,6 @@ void PushAnnotateLinkButtonColors(const AnnotateUiThemeColors& theme);
 void PopAnnotateLinkButtonColors();
 void PushAnnotateLinkTextOnly(const AnnotateUiThemeColors& theme);
 void PopAnnotateLinkTextOnly();
-bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User, std::string& accountId,
-                            std::string& err);
 void CloseAnnotateModal(bool* pOpen);
 void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User);
 void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell);

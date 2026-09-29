@@ -322,6 +322,30 @@ TEST_CASE("JiraFakeTrackerFixture::Offline — catalog.users and projectComponen
     CHECK_FALSE(static_cast<bool>(client->FetchProjectComponents(cfg, "OTHER")));
 }
 
+TEST_CASE("JiraFakeTrackerFixture::Offline — projects script ListProjectsTyped, down-gated") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"projects": [{"id": "10000", "key": "OFF", "name": "Offline First"},
+        {"id": "10001", "key": "SIDE", "name": "Side Project"}], )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    const auto listed = client->Connectivity().ListProjectsTyped();
+    REQUIRE(static_cast<bool>(listed));
+    REQUIRE(listed.value().size() == 2);
+    CHECK(listed.value()[0].id == "10000");
+    CHECK(listed.value()[0].key == "OFF");
+    CHECK(listed.value()[0].displayName == "Offline First");
+    CHECK(listed.value()[1].key == "SIDE");
+
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    const auto offline = client->Connectivity().ListProjectsTyped();
+    REQUIRE_FALSE(static_cast<bool>(offline));
+    CHECK(offline.error().Kind == TrackerErrorKind::Transport);
+    CHECK(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 1);
+    // The best-effort wrapper reads a failure as an empty list.
+    CHECK(client->Connectivity().ListProjects().empty());
+}
+
 TEST_CASE("JiraFakeTrackerFixture::Offline — an empty catalog keeps the not-supported default") {
     smatchet_tests::ScopedFakeNetworkReset reset;
     const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();

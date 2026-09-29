@@ -148,3 +148,41 @@ TEST_CASE("GroupLookupErrorMessage — a failure is never silent, even with no d
     // Whitespace is not emptiness: no guessing about what a backend considers blank.
     CHECK(GroupLookupErrorMessage(" ") == " ");
 }
+
+TEST_CASE("ClassifyUserLookupOutcome — an unreachable tracker is never read as \"Past Employee\"") {
+    // A live answer is authoritative, whatever the saved roster says.
+    CHECK(ClassifyUserLookupOutcome(true, true, false, false) == UserLookupOutcome::Found);
+    CHECK(ClassifyUserLookupOutcome(true, false, false, true) == UserLookupOutcome::NotFound);
+    // No answer: the saved roster decides, and without it the tracker's reachability does.
+    CHECK(ClassifyUserLookupOutcome(false, false, true, true) == UserLookupOutcome::FoundInRoster);
+    CHECK(ClassifyUserLookupOutcome(false, false, false, true) == UserLookupOutcome::FoundInRoster);
+    CHECK(ClassifyUserLookupOutcome(false, false, true, false) == UserLookupOutcome::UnknownOffline);
+    // A search that was refused (auth, bad request) or never ran (a local failure) is not an answer either:
+    // unknown, with the error — never "Past Employee".
+    CHECK(ClassifyUserLookupOutcome(false, false, false, false) == UserLookupOutcome::LookupFailed);
+    CHECK(ClassifyUserLookupOutcome(false, true, false, false) == UserLookupOutcome::LookupFailed);
+}
+
+TEST_CASE("FindRosterUserForP4User — exact email local part, then display name; never a guess") {
+    std::vector<TrackerUser> roster(3);
+    roster[0].AccountId = "acc-ana";
+    roster[0].DisplayName = "Ana Offline";
+    roster[0].EmailAddress = "ana@example.test";
+    roster[1].AccountId = "acc-bob";
+    roster[1].DisplayName = "bsmith";
+    roster[1].EmailAddress = "robert@example.test";
+    roster[2].AccountId = "acc-jdoe";
+    roster[2].DisplayName = "J Doe";
+    roster[2].EmailAddress = "JDoe@example.test";
+
+    const TrackerUser* byEmail = FindRosterUserForP4User(roster, "jdoe");
+    REQUIRE(byEmail != nullptr);
+    CHECK(byEmail->AccountId == "acc-jdoe");
+    const TrackerUser* byName = FindRosterUserForP4User(roster, "BSmith");
+    REQUIRE(byName != nullptr);
+    CHECK(byName->AccountId == "acc-bob");
+    // Unlike PickJiraAccountForP4User, no first-entry fallback: a whole roster's first user is a stranger.
+    CHECK(FindRosterUserForP4User(roster, "nobody") == nullptr);
+    CHECK(FindRosterUserForP4User(roster, "") == nullptr);
+    CHECK(FindRosterUserForP4User({}, "jdoe") == nullptr);
+}

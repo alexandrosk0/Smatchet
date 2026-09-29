@@ -1125,16 +1125,16 @@ std::string GitHubClient::ExtractProjectFromQuery(const std::string& query) cons
     return smatchet::github::ExtractGitHubProjectAnchor(query);
 }
 
-std::vector<RemoteProject> GitHubClient::ListProjects() {
+ProjectListResult GitHubClient::ListProjectsTyped() {
     // Repos the PAT can see (owner / collaborator / org member) via GET /user/repos —
     // GitHub's "project" for Smatchet is a repository, and the picker row's key feeds
     // IssueDraft::ProjectKey ("owner/repo") straight into BuildCreatePayload's split.
-    // Best-effort like PlaneClient::ListProjects: any failure returns {} and the
-    // picker falls back to the manually configured owner/repo.
+    // A failure keeps its kind (Transport when GitHub is unreachable) so the picker can show the
+    // saved list; ListProjects() stays the best-effort empty-on-failure view.
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
     if (auth.Pat.empty()) {
         LOG_WARN("GitHubClient::ListProjects: PAT not configured.");
-        return {};
+        return ProjectListResult::Err(TrackerErrorInvalidRequest("No GitHub personal access token is configured."));
     }
     const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
     std::vector<RemoteProject> projects;
@@ -1148,13 +1148,17 @@ std::vector<RemoteProject> GitHubClient::ListProjects() {
             const std::string msg =
                 smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             LOG_WARN("GitHubClient::ListProjects: HTTP %ld on page %d — %s", resp.status_code, page, msg.c_str());
-            return {};
+            std::string detail = DescribeRejectedResponse("Listing GitHub repositories", resp);
+            if (!msg.empty()) {
+                detail += " — " + msg;
+            }
+            return ProjectListResult::Err(ClassifyRejectedTrackerResponse(resp, detail));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
         const nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (parsed.is_discarded() || !parsed.is_array()) {
             LOG_WARN("GitHubClient::ListProjects: page %d response was not a JSON array.", page);
-            return {};
+            return ProjectListResult::Err(TrackerErrorParse("The GitHub repository list was not a JSON array."));
         }
         smatchet::github::AppendGitHubReposAsRemoteProjects(parsed, projects);
         if (parsed.size() < static_cast<std::size_t>(kPerPage)) {
@@ -1162,5 +1166,5 @@ std::vector<RemoteProject> GitHubClient::ListProjects() {
         }
     }
     LOG_INFO("GitHubClient::ListProjects: %zu repo(s) visible to the PAT.", projects.size());
-    return projects;
+    return ProjectListResult::Ok(std::move(projects));
 }

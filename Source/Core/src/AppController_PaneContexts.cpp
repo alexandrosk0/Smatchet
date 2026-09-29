@@ -11,9 +11,11 @@
 // clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining AppController pane-context methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
+#include "CatalogOfflinePolicyPure.h"
 // clang-format on
 
 #include "ConfigManager.h"
+#include "FieldCatalogCache.h"
 #include "GridContextDepsAdapter.h"
 #include "GridPaneEvictionPolicy.h"
 #include "ITrackerBackend.h"      // per-pane catalog fetch: backend->FieldCatalog()->FetchFieldCatalog
@@ -307,19 +309,34 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
     LaunchBackgroundTask([this, paneId, backend, cfgForFetch, projectKey, capturedGeneration]() mutable {
         /* PILLAR2_WORKER_ONLY */ // est-latency: catalog HTTP fetch off the UI thread
         auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(cfgForFetch, projectKey);
-        if (!catalogResult) {
-            // Non-fatal: the pane keeps rendering against the focused-catalog fallback and the
-            // next focus/refresh retries. Logged, not swallowed (policy). No context write.
+        std::string restoredWarning;
+        TrackerFieldCatalogResult catalog;
+        if (catalogResult) {
+            catalog = std::move(catalogResult.value());
+        } else {
+            // Pillar 6: the pane falls back to the catalog snapshot saved for its tracker (the file read
+            // stays on this worker); the apply marks it as saved, so the next sync still tries the live
+            // fetch. Without a snapshot the pane keeps the focused-catalog fallback and the next
+            // focus/refresh retries. Logged, not swallowed (policy).
             LOG_WARN("AppController::populatePaneCatalogAfterSync_ fetch failed pane='%s' err=%s", paneId.c_str(),
                      catalogResult.error().Detail.c_str());
-            return;
+            std::string snapErr;
+            if (!FieldCatalogCache::TryLoadFieldCatalogSnapshot(
+                    FieldCatalogCache::BuildFieldCatalogCacheKey(cfgForFetch, projectKey), catalog.Fields,
+                    catalog.Components, catalog.IssueTypeMeta, snapErr)) {
+                LOG_INFO("AppController::populatePaneCatalogAfterSync_ pane='%s' has no saved catalog: %s",
+                         paneId.c_str(), snapErr.c_str());
+                return;
+            }
+            restoredWarning = std::string("Offline: restored the field catalog from local snapshot.") +
+                              smatchet::catalogoffline::kLastFetchFailedMarker + catalogResult.error().Detail;
         }
-        TrackerFieldCatalogResult catalog = std::move(catalogResult.value());
         mainThreadDispatcher.PostToMainThread([this, paneId, capturedGeneration, fields = std::move(catalog.Fields),
                                                components = std::move(catalog.Components),
-                                               issueTypeMeta = std::move(catalog.IssueTypeMeta)]() mutable {
+                                               issueTypeMeta = std::move(catalog.IssueTypeMeta),
+                                               restoredWarning = std::move(restoredWarning)]() mutable {
             applyPaneCatalogOnMainThread_(paneId, capturedGeneration, std::move(fields), std::move(components),
-                                          std::move(issueTypeMeta));
+                                          std::move(issueTypeMeta), restoredWarning);
         });
     });
 }
@@ -327,7 +344,8 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
 void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
                                                   std::vector<TrackerField> fields,
                                                   std::vector<TrackerComponent> components,
-                                                  std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta) {
+                                                  std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
+                                                  const std::string& restoredWarning) {
     // UI thread. Re-validate the CAPTURED context (issue #1457 / #1081 discipline): write ONLY
     // when the pane's context still exists AND its backend generation is unchanged since the
     // fetch was kicked. A swap/retirement between kick and apply means this snapshot belongs to
@@ -345,21 +363,28 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
                  paneId.c_str());
         return;
     }
+    const bool restored = !restoredWarning.empty();
     {
         std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
+        if (restored && !ctx.fieldCatalog.AvailableFields.empty()) {
+            return; // a saved catalog never replaces the one the pane already has
+        }
         ctx.fieldCatalog.AvailableFields = std::move(fields);
         ctx.fieldCatalog.AvailableComponents = std::move(components);
         ctx.fieldCatalog.AvailableIssueTypeMeta = std::move(issueTypeMeta);
-        ctx.fieldCatalog.fieldCatalogEverLoaded_ = true;
+        // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch.
+        ctx.fieldCatalog.fieldCatalogEverLoaded_ = !restored;
         ctx.fieldCatalog.LastTrackerFieldCatalogError.clear();
         ctx.fieldCatalog.LastTrackerFieldCatalogErrorTransient = false;
+        ctx.fieldCatalog.LastTrackerFieldCatalogWarning = restoredWarning;
     }
     // Bump AFTER the write is visible so a read-routing consumer that observes the new revision
     // also observes the new fields (the read-routing cache keys on this revision — the
     // same-backend staleness invalidation path).
     ctx.fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
-    LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' populated own catalog (%zu fields).",
-             paneId.c_str(), static_cast<size_t>(ctx.fieldCatalog.AvailableFields.size()));
+    LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' populated own catalog (%zu fields%s).",
+             paneId.c_str(), static_cast<size_t>(ctx.fieldCatalog.AvailableFields.size()),
+             restored ? ", from the saved snapshot" : "");
 }
 
 GridLiveContext& AppController::paneContextOrFocused_(const std::string& paneId) {

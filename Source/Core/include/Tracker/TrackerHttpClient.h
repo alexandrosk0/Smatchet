@@ -54,6 +54,10 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 /// non-idempotent write consults before it is resent or queued.
 TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail);
 
+/// DescribeRejectedHttpStatus (TrackerError.h) for a cpr response: cpr's error message is added only
+/// when no response arrived.
+std::string DescribeRejectedResponse(const std::string& what, const cpr::Response& response);
+
 /// Classify a reachability-probe response into a TrackerReachabilityProbeResult, shared by every
 /// backend's `ProbeReachability` so the HTTP-status → probe-kind matrix lives in one place:
 /// 2xx → AuthenticatedReachable, 401/403 → ReachableAuthOrConfigError, 404/429/other-4xx →

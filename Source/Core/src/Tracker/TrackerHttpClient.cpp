@@ -74,6 +74,10 @@ TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, cons
     return error;
 }
 
+std::string DescribeRejectedResponse(const std::string& what, const cpr::Response& response) {
+    return DescribeRejectedHttpStatus(what, response.status_code, response.error.message);
+}
+
 TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response) {
     const TrackerHttpResult classified = ClassifyTrackerResponse(response);
     TrackerReachabilityProbeResult out;

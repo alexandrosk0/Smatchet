@@ -100,7 +100,7 @@ class GitHubClient : public ITrackerBackend,
                                     const std::string& value) const override;
     Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override;
     std::string ExtractProjectFromQuery(const std::string& query) const override;
-    std::vector<RemoteProject> ListProjects() override;
+    ProjectListResult ListProjectsTyped() override;
     // GitHub issues have no per-issue editmeta concept (no field-level permission API like
     // Jira's `/issue/{key}/editmeta`). All 6 native fields are editable when the PAT has
     // repo write scope. Return an all-`true` map for the static catalog so AppController

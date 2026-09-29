@@ -4,10 +4,12 @@
 // Hybrid surface (OQ-2):
 //   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
 //     current backend+endpoint, ordered by lastUsedUnix desc.
-//   - All projects: collapsible. First expand fires ITrackerConnectivity::ListProjects() on the
-//     app-owned joined background-task pool; subsequent renders use the cached vector on the picker
+//   - All projects: collapsible. First expand loads the list on the app-owned joined background-task
+//     pool (smatchet::projects::LoadProjectList); subsequent renders use the vector on the picker
 //     state. The fetch captures a shared_ptr to the backend so a live tracker swap (which frees the
-//     old backend) can't dangle it mid-fetch — see ADR 0012.
+//     old backend) can't dangle it mid-fetch — see ADR 0012. Offline, or when the listing fails, the
+//     list saved by the last successful listing is shown with a DataFreshnessCue and a Retry
+//     (Quality Pillar 6); "No projects found." only ever describes a live, empty list.
 // Pure UI helper: no global state, no allocations beyond what the search/render naturally needs.
 // Renders inside the current ImGui scope — caller is responsible for ImGui::SetNextItemWidth
 // upstream if a specific width is desired.
@@ -15,6 +17,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -46,7 +49,20 @@ struct State {
     std::atomic<bool> fetchInFlight{false};
     std::atomic<bool> fetchDone{false}; // true once a fetch returned (even if empty)
     std::string fetchError;
+    bool fetchFailed = false;          // guarded by fetchMutex: the last listing failed or was skipped offline
+    bool fetchFromSaved = false;       // guarded by fetchMutex: fetchedAll is the saved list, not a live one
+    bool fetchSkippedOffline = false;  // guarded by fetchMutex: the last load sent no request (offline)
+    std::string fetchBackendKey;       // guarded by fetchMutex: the tracker the list was requested for
+    std::uint64_t fetchGeneration = 0; // guarded by fetchMutex: bumped per load; a stale load publishes nothing
 };
+
+/** Start loading the "All projects" list for `state` on the app's background-task pool, unless a load is
+ *  already running or has finished (Retry clears `fetchDone`). Offline it reads the saved list only; once
+ *  the tracker is reachable again, a list that was skipped offline reloads. When the focused tracker is
+ *  not the one the list was requested for, the rows are dropped, a load still running for the old
+ *  tracker is superseded (its result is discarded), and the focused tracker's list loads. UI thread.
+ *  Draw calls it on every frame the section is open; tests call it directly. */
+void StartAllProjectsFetch(State& state, AppController& app);
 
 /** Draw the picker combobox.
  *

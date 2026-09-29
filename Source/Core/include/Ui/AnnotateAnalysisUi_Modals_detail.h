@@ -60,6 +60,27 @@ std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln);
 bool PickJiraAccountForP4User(const std::vector<TrackerUser>& users, const std::string& p4User,
                               std::string& outAccountId, std::string& outError);
 
+/** How a Perforce-user lookup ended, for the profile and assign dialogs (Quality Pillar 6). */
+enum class UserLookupOutcome : unsigned char {
+    Found,          ///< the tracker's user search matched
+    FoundInRoster,  ///< the search did not answer; the saved user list matched
+    UnknownOffline, ///< the tracker was unreachable and the saved list has no match — never "Past Employee"
+    LookupFailed,   ///< the search was refused or never ran (auth, local failure) and the saved list has no
+                    ///< match: unknown, with the error — never "Past Employee"
+    NotFound,       ///< the tracker answered the search with no match: "Past Employee"
+};
+
+/** `searchOk`: the user search answered; `liveMatch`: it returned users; `trackerUnreachable`: the search was
+ *  skipped offline or the tracker could not answer (transport failure or service outage); `rosterMatch`:
+ *  the saved user list matched. A live answer always wins over the saved list, and only a live answer
+ *  with no match reads as NotFound. */
+UserLookupOutcome ClassifyUserLookupOutcome(bool searchOk, bool liveMatch, bool trackerUnreachable, bool rosterMatch);
+
+/** The saved-roster user for a Perforce login: an exact, case-insensitive match of the email's local part,
+ *  else of the display name. Null when neither matches — never a guess (PickJiraAccountForP4User, by
+ *  contrast, falls back to the first search result, which on a whole roster would be a stranger). */
+const TrackerUser* FindRosterUserForP4User(const std::vector<TrackerUser>& roster, const std::string& p4User);
+
 /** User-facing message for a failed group lookup. A backend `Result` error can legitimately
  *  carry an empty Detail (CollaborationPreconditionPure maps an empty-Detail failure to
  *  `Err("")`), and the profile modal only shows a message when it is non-empty — so passing the

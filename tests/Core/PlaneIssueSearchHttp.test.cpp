@@ -10,6 +10,7 @@
 
 #include "JiraCatalogHttpFixture.h"
 #include "PlaneClient.h"
+#include "TestEnvGuard.h"
 
 #include <doctest/doctest.h>
 
@@ -257,5 +258,45 @@ TEST_CASE("Plane probe — status → reachability-kind classification matrix") 
         const TrackerReachabilityProbeResult r = client.ProbeReachability(cfg);
         CHECK(r.Kind == TrackerReachabilityProbeKind::ReachableAuthOrConfigError);
         CHECK(fx.RequestCount(mePath) == 0);
+    }
+}
+
+TEST_CASE("Plane ListProjectsTyped — rows on success; a failure keeps its kind") {
+    // Quality Pillar 6 (offline-first S12): cfg-less, so the loopback config is saved into the guard's dir.
+    smatchet_tests::TestEnvGuard guard;
+    JiraCatalogHttpFixture fx;
+    TrackerConfig cfg = PlaneConfig(fx);
+    ConfigManager::Save(cfg);
+
+    SUBCASE("200: the workspace's projects") {
+        fx.ScriptJson(kProjectsPath, ProjectsBody());
+        PlaneClient client;
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE(static_cast<bool>(listed));
+        REQUIRE(listed.value().size() == 1u);
+        CHECK(listed.value()[0].id == kProjectUuid);
+        CHECK(listed.value()[0].key == "SMT");
+    }
+    SUBCASE("401 is Auth") {
+        fx.ScriptStatus(kProjectsPath, 401);
+        PlaneClient client;
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Auth);
+    }
+    SUBCASE("a response with no results array is Parse") {
+        fx.ScriptJson(kProjectsPath, nlohmann::json{{"detail", "odd"}});
+        PlaneClient client;
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Parse);
+    }
+    SUBCASE("an unreachable host is Transport") {
+        cfg.PlaneUrl = "http://127.0.0.1:9";
+        ConfigManager::Save(cfg);
+        PlaneClient client;
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Transport);
     }
 }

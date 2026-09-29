@@ -211,4 +211,19 @@ TEST_CASE("GitHub ListProjects — paginated /user/repos → owner/repo picker r
         CHECK(client.ListProjects().empty());
         CHECK(fx.RequestCount("/user/repos") == 0);
     }
+    SUBCASE("typed: a 401 keeps Auth and GitHub's message; the picker can tell it from no repos") {
+        fx.ScriptStatus("/user/repos", 401);
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Auth);
+        CHECK(listed.error().Detail.find("HTTP 401") != std::string::npos);
+    }
+    SUBCASE("typed: an unreachable host is Transport (offline, not empty)") {
+        TrackerConfig cfg = ConfigManager::Load();
+        cfg.GitHubBaseUrl = "http://127.0.0.1:9";
+        ConfigManager::Save(cfg);
+        const auto listed = client.ListProjectsTyped();
+        REQUIRE_FALSE(static_cast<bool>(listed));
+        CHECK(listed.error().Kind == TrackerErrorKind::Transport);
+    }
 }

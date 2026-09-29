@@ -11,6 +11,17 @@
 
 namespace AnnotateUiPure {
 
+namespace {
+
+// True when the local part of `user`'s email equals `lowerP4User` (already lower-cased), ignoring case.
+bool EmailLocalPartIs(const TrackerUser& user, const std::string& lowerP4User) {
+    const std::size_t at = user.EmailAddress.find('@');
+    const std::string local = at == std::string::npos ? user.EmailAddress : user.EmailAddress.substr(0, at);
+    return !local.empty() && ToLowerAsciiCopy(local) == lowerP4User;
+}
+
+} // namespace
+
 std::string CsvEscape(const std::string& s) {
     bool needsQuotes =
         std::any_of(s.begin(), s.end(), [](char c) { return c == ',' || c == '"' || c == '\n' || c == '\r'; });
@@ -108,9 +119,7 @@ bool PickJiraAccountForP4User(const std::vector<TrackerUser>& users, const std::
     outError.clear();
     const std::string pl = ToLowerAsciiCopy(p4User);
     for (const auto& u : users) {
-        size_t at = u.EmailAddress.find('@');
-        const std::string local = at == std::string::npos ? u.EmailAddress : u.EmailAddress.substr(0, at);
-        if (!local.empty() && ToLowerAsciiCopy(local) == pl) {
+        if (EmailLocalPartIs(u, pl)) {
             outAccountId = u.AccountId;
             return true;
         }
@@ -121,6 +130,34 @@ bool PickJiraAccountForP4User(const std::vector<TrackerUser>& users, const std::
     }
     outError = "No Jira user match.";
     return false;
+}
+
+UserLookupOutcome ClassifyUserLookupOutcome(bool searchOk, bool liveMatch, bool trackerUnreachable, bool rosterMatch) {
+    if (searchOk) {
+        return liveMatch ? UserLookupOutcome::Found : UserLookupOutcome::NotFound;
+    }
+    if (rosterMatch) {
+        return UserLookupOutcome::FoundInRoster;
+    }
+    return trackerUnreachable ? UserLookupOutcome::UnknownOffline : UserLookupOutcome::LookupFailed;
+}
+
+const TrackerUser* FindRosterUserForP4User(const std::vector<TrackerUser>& roster, const std::string& p4User) {
+    if (p4User.empty()) {
+        return nullptr;
+    }
+    const std::string pl = ToLowerAsciiCopy(p4User);
+    for (const auto& u : roster) {
+        if (EmailLocalPartIs(u, pl)) {
+            return &u;
+        }
+    }
+    for (const auto& u : roster) {
+        if (!u.DisplayName.empty() && ToLowerAsciiCopy(u.DisplayName) == pl) {
+            return &u;
+        }
+    }
+    return nullptr;
 }
 
 std::string GroupLookupErrorMessage(const std::string& detail) {

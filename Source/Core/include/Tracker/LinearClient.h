@@ -47,7 +47,7 @@ class LinearClient : public ITrackerBackend,
     std::string GetTrackerType() const override; // "Linear"
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     std::string ExtractProjectFromQuery(const std::string& query) const override;
-    std::vector<RemoteProject> ListProjects() override; // Linear teams
+    ProjectListResult ListProjectsTyped() override; // Linear teams
 
     // === ITrackerIssueReader ===
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,

@@ -227,6 +227,17 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
         }
     }
 
+    // Project list (optional): [{"id", "key", "name"}] — what ListProjectsTyped returns.
+    if (root.contains("projects") && root["projects"].is_array()) {
+        for (const auto& projectJson : root["projects"]) {
+            RemoteProject project;
+            project.id = projectJson.value("id", std::string());
+            project.key = projectJson.value("key", std::string());
+            project.displayName = projectJson.value("name", std::string());
+            fixture.projects_.push_back(std::move(project));
+        }
+    }
+
     // Issue transitions (optional)
     if (root.contains("transitions") && root["transitions"].is_object()) {
         for (auto it = root["transitions"].begin(); it != root["transitions"].end(); ++it) {
@@ -324,6 +335,9 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
     }
     for (const auto& entry : projectComponentsByKey_) {
         client.SetProjectComponentsSuccess(entry.first, entry.second);
+    }
+    if (!projects_.empty()) {
+        client.SetProjects(projects_);
     }
 
     // Scripted transitions also turn on the SupportsIssueTransitions capability, as JiraClient reports

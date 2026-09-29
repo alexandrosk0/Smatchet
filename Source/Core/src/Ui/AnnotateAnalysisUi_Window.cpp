@@ -877,7 +877,10 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
         if (!hasJiraAccount) {
             LOG_ERROR("Annotate UI: assign skipped — no Jira account match for this Perforce user.");
             State().lastUiStatus =
-                "Error: couldn't match this Perforce user to a Jira account - assign the issue manually in the grid.";
+                State().assignNoAccountReason.empty()
+                    ? std::string("Error: couldn't match this Perforce user to a Jira account - assign the issue "
+                                  "manually in the grid.")
+                    : "Error: " + State().assignNoAccountReason;
         } else if (!f) {
             LOG_ERROR("Annotate UI: assignee field not in catalog.");
             State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
@@ -1033,6 +1036,8 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
         if (hasJiraAccount) {
             ImGui::SetTooltip("Assign the issue, then add a Jira comment summarizing Annotate context "
                               "(user, function, path, line, CL, date).");
+        } else if (!State().assignNoAccountReason.empty()) {
+            ImGui::SetTooltip("%s", State().assignNoAccountReason.c_str());
         } else {
             ImGui::SetTooltip("Enable this action by matching the Perforce user to a Jira account.");
         }

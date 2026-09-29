@@ -10,7 +10,8 @@
 // The HTTP-fixture end-to-end assertions live with the cpr-linked client tests
 // (mirrors tests/Core/TrackerCatalogBuild.test.cpp). This TU pins the pure
 // classifier contract the guard depends on, so a future refactor of
-// TrackerErrorFromHttpStatus can't quietly reintroduce the swallow.
+// TrackerErrorFromHttpStatus can't quietly reintroduce the swallow. It also pins
+// DescribeRejectedHttpStatus, the failure text every client builds for a rejected response.
 
 #include "Tracker/TrackerError.h"
 
@@ -64,4 +65,16 @@ TEST_CASE("#1785 — ClassifyRejectedHttpStatus guards 2xx-other on a rejected p
     CHECK(ClassifyRejectedHttpStatus(404, "x").Kind == TrackerErrorKind::NotFound);
     CHECK(ClassifyRejectedHttpStatus(500, "x").Kind == TrackerErrorKind::ServerError);
     CHECK(ClassifyRejectedHttpStatus(0, "x").Kind == TrackerErrorKind::Transport);
+}
+
+TEST_CASE("DescribeRejectedHttpStatus — adds the transport reason only when nothing answered") {
+    // The project picker shows this text as its failure tooltip, so an unreachable host must read
+    // differently from a refusal (Quality Pillar 6).
+    CHECK(DescribeRejectedHttpStatus("Listing Jira projects", 0, "Couldn't connect to server") ==
+          "Listing Jira projects failed: HTTP 0 (Couldn't connect to server)");
+    CHECK(DescribeRejectedHttpStatus("Listing Jira projects", -1, "Timeout was reached") ==
+          "Listing Jira projects failed: HTTP -1 (Timeout was reached)");
+    CHECK(DescribeRejectedHttpStatus("Listing Jira projects", 401, "ignored when the tracker answered") ==
+          "Listing Jira projects failed: HTTP 401");
+    CHECK(DescribeRejectedHttpStatus("Listing Plane projects", 0, "") == "Listing Plane projects failed: HTTP 0");
 }
