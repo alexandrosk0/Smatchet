@@ -717,6 +717,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             // pump run): queued edits target the previous backend and must not be sent to this one.
             DiscardQueuedGridFieldEditsOnBackendSwitch(d);
             app.SetFieldCatalog({}, {}, {}, std::string());
+            // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=backend switch, not a failed fetch: the previous tracker's users must not show under this one, and the saved roster (lookup_cache kind users) restores this tracker's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
             app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
             d.fieldCatalogFetchStarted = false;

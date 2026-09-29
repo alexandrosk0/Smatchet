@@ -1,3 +1,4 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "TrackerGridFieldDisplay.h"
 #include "UiPerfMonitor.h"
 #include "AppController.h"

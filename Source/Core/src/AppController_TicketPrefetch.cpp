@@ -73,6 +73,12 @@ void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBacke
     if (!Cache || !backend) {
         return;
     }
+    if (IsTrackerOffline()) {
+        // Pillar 6: best-effort, so offline it is skipped rather than spending a worker's whole retry
+        // window on a request that cannot succeed; the cached tickets stay as they are.
+        LOG_DEBUG("AppController::PrefetchIssueTicketsFrom: tracker offline, skipped %zu key(s)", issueKeys.size());
+        return;
+    }
     std::vector<std::string> toFetch;
     std::vector<std::string> inFlightKeys;
     {

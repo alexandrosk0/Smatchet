@@ -397,8 +397,7 @@ GitHubClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore
         auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery, &fullSync, &fetchError, &fetchWarning,
         /*onPage=*/nullptr, &structured, qualifier);
     if (!fetchError.empty()) {
-        return FetchResult::Err(structured.Kind != TrackerErrorKind::None ? structured
-                                                                          : TrackerErrorUnknown(fetchError));
+        return FetchResult::Err(structured.IsOk() ? TrackerErrorUnknown(fetchError) : structured);
     }
     // A capped (warning) or incomplete walk is not an authoritative changed-since snapshot — refuse
     // it so the membership reconcile never acts on a truncated view (mirrors the default impl).

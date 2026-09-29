@@ -332,6 +332,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/AttachmentCachePure.test.cpp
         Core/AttachmentDiskCache.test.cpp
         Core/CappedBodyAccumulator.test.cpp
+        # The reader's default change / membership fetches keep the backend's error kind (S13).
+        Core/TrackerIssueReaderDefaults.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -1250,6 +1252,7 @@ add_executable(SmatchetTests
     Core/AttachmentCachePure.test.cpp
     Core/AttachmentDiskCache.test.cpp
     Core/CappedBodyAccumulator.test.cpp
+    Core/TrackerIssueReaderDefaults.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.

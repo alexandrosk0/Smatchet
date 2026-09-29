@@ -346,7 +346,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     // the search above only fires while typing a value token, so it never covers these.
     // Jira-only: it is the one backend with a by-accountId lookup.
     if (smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType) == smatchet::tracker::kBackendJira) {
-        TrackerQueryAcp_TickAccountIdResolve(app, app.GetAvailableUsers(), st);
+        TrackerQueryAcp_TickAccountIdResolve(app, app.GetAvailableUsers(), app.IsTrackerOffline(), st);
     }
 
     std::vector<QuerySuggestion> merged = jqlSuggestBuild.Items;
