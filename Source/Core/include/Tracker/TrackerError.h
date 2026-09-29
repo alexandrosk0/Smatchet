@@ -153,6 +153,18 @@ inline TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::strin
     return TrackerErrorFromHttpStatus(status, detail);
 }
 
+/// "<what> failed: HTTP <status>", plus the transport's own message when no response arrived (status <= 0),
+/// so a log line or a UI tooltip can tell "the host was unreachable" from "the tracker refused". A status
+/// the tracker answered with never carries the transport message.
+inline std::string DescribeRejectedHttpStatus(const std::string& what, long statusCode,
+                                              const std::string& transportMessage) {
+    std::string detail = what + " failed: HTTP " + std::to_string(statusCode);
+    if (statusCode <= 0 && !transportMessage.empty()) {
+        detail += " (" + transportMessage + ")";
+    }
+    return detail;
+}
+
 /// Retry a non-idempotent POST only with positive evidence that no request was sent.
 /// A transport kind alone cannot distinguish DNS failure from a lost response.
 inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool requestNotSent) noexcept {

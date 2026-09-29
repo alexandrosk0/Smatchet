@@ -75,11 +75,7 @@ TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, cons
 }
 
 std::string DescribeRejectedResponse(const std::string& what, const cpr::Response& response) {
-    std::string detail = what + " failed: HTTP " + std::to_string(response.status_code);
-    if (response.status_code <= 0 && !response.error.message.empty()) {
-        detail += " (" + response.error.message + ")";
-    }
-    return detail;
+    return DescribeRejectedHttpStatus(what, response.status_code, response.error.message);
 }
 
 TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response) {

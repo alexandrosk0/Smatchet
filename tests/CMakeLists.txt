@@ -303,6 +303,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/Tracker2xxErrorGuard.test.cpp
         Core/BulkImportStatusPure.test.cpp
         Core/TrackerFieldPayloadPure.test.cpp
         # Quality Pillar 6 comments (offline-first S7): sync carry-forward of the saved thread and
