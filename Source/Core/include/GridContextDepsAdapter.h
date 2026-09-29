@@ -184,11 +184,13 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void RestartReplayTimers(std::chrono::steady_clock::time_point now) override;
 
     // ---- IAttachmentAppUpdateDeps -----------------------------------------------------
-    // All three are genuinely-new signatures (no sibling interface declares them): the host-callback
-    // struct read + the const OpenUrl / RequestAppQuit forwards the attachment + installer paths use.
+    // All four are genuinely-new signatures (no sibling interface declares them): the host-callback
+    // struct read + the const OpenUrl / RequestAppQuit forwards the attachment + installer paths use, and
+    // the offline check the attachment cache consults.
     const HostCallbacks& Host() const override;
     void OpenUrl(const std::string& url) const override;
     void RequestAppQuit() const override;
+    bool IsTrackerOffline() const override;
 
   private:
     /// The context every per-context method resolves against: `*ctx_` in pane-frozen mode,

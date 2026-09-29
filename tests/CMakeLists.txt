@@ -241,6 +241,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldOptionsJsonPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/ProjectComponentsCacheService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/ProjectListLookup.cpp"
+        # The attachment disk cache (offline-first S13): its pure rules and the file store.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -325,6 +328,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/LookupPayloadsPure.test.cpp
         Core/ProjectComponentsCacheService.test.cpp
         Core/ProjectListLookup.test.cpp
+        # The attachment disk cache (S13) and the shared download body cap.
+        Core/AttachmentCachePure.test.cpp
+        Core/AttachmentDiskCache.test.cpp
+        Core/CappedBodyAccumulator.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -1240,6 +1247,9 @@ add_executable(SmatchetTests
     Core/LookupPayloadsPure.test.cpp
     Core/ProjectComponentsCacheService.test.cpp
     Core/ProjectListLookup.test.cpp
+    Core/AttachmentCachePure.test.cpp
+    Core/AttachmentDiskCache.test.cpp
+    Core/CappedBodyAccumulator.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
@@ -1466,6 +1476,8 @@ add_executable(SmatchetTests
     # cpr dependency is why this TU is linked ONLY into this cpr-linked rig (not the TSan / pure-sync
     # rigs); Core/AttachmentAppUpdateService.test.cpp drives it via the header-only fake.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentAppUpdateService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine

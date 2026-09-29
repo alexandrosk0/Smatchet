@@ -8,7 +8,12 @@ NetworkUsageTracker& NetworkUsageTracker::Instance() {
 }
 
 void NetworkUsageTracker::Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r) {
-    const std::uint64_t down = static_cast<std::uint64_t>(r.text.size());
+    Record(kind, uploadBodyBytes, r, static_cast<std::uint64_t>(r.text.size()));
+}
+
+void NetworkUsageTracker::Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r,
+                                 std::uint64_t downloadBodyBytes) {
+    const std::uint64_t down = downloadBodyBytes;
     const bool isError = (r.status_code < 200 || r.status_code >= 300);
     switch (kind) {
     case HttpTrafficKind::Tracker:
