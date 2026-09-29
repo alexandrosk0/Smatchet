@@ -777,6 +777,8 @@ const TranslationEntry kEntries[] = {
     {"attachment.image", "Image", u8"Image"},
     {"attachment.file", "File", u8"Fichier"},
     {"attachment.preview_failed", "preview failed", u8"échec de l'aperçu"},
+    {"attachment.unavailable_offline", "Not downloaded yet \xE2\x80\x94 available once online",
+     u8"Pas encore téléchargé — disponible une fois en ligne"},
 
     {"new_issue.add", "+ New issue", u8"+ Nouveau ticket"},
     {"new_issue.new", "[new]", u8"[nouveau]"},
@@ -792,6 +794,10 @@ const TranslationEntry kEntries[] = {
     {"tracker.no_voters", "No voters to list.", u8"Aucun votant à afficher."},
     {"tracker.loading_watchers", "Loading watchers...", u8"Chargement des observateurs..."},
     {"tracker.loading_votes", "Loading votes...", u8"Chargement des votes..."},
+    {"collab_list.offline", "The tracker is offline.", u8"Le tracker est hors ligne."},
+    {"user_info.offline", "Not available offline \xE2\x80\x94 the tracker is unreachable.",
+     u8"Indisponible hors ligne — le tracker est injoignable."},
+    {"user_info.retry", "Retry", u8"Réessayer"},
 
     // issue-comments PR-A — backend-agnostic comments read/post modal + grid cell.
     {"comments.title", "Comments", u8"Commentaires"},

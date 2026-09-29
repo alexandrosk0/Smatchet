@@ -7,6 +7,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "P4Annotate.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "Ui/P4ClPreview.h"
@@ -21,6 +22,16 @@
 #include <chrono>
 #include <ctime>
 #include <utility>
+
+namespace {
+
+// The groups / members error while the tracker is offline (no request is sent; Retry tries again).
+std::string OfflineLookupError() {
+    return SmatchetLocalization::T("user_info.offline",
+                                   "Not available offline \xE2\x80\x94 the tracker is unreachable.");
+}
+
+} // namespace
 
 std::string SmatchetUserInfoUi::IsoDateUtcDaysAgo(int daysBack) {
     const std::time_t t = std::time(nullptr) - static_cast<std::time_t>(daysBack) * 86400;
@@ -205,6 +216,13 @@ void SmatchetUserInfoUi::launchActivityFetch(AppController& app) {
     if (activityLoading_ || !supportsActivity_) {
         return;
     }
+    if (app.IsTrackerOffline()) {
+        // Pillar 6: no request while offline. Activity already on screen stays under the error; Reload
+        // tries again.
+        activity_.Error = OfflineLookupError();
+        activityLoaded_ = true;
+        return;
+    }
     activityLoading_ = true;
     // Previous worker has drained (activityLoading_ was false) — safe to reset.
     activityProgress_.Current.store(0);
@@ -244,6 +262,12 @@ void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
     if (groupsLoading_ || !supportsActivity_) {
         return;
     }
+    if (app.IsTrackerOffline()) {
+        // Pillar 6: no request while offline; the section offers Retry.
+        groups_.Error = OfflineLookupError();
+        groupsLoaded_ = true;
+        return;
+    }
     groupsLoading_ = true;
     const int gen = generation_;
     const std::string accountId = accountId_;
@@ -268,6 +292,10 @@ void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
 
 void SmatchetUserInfoUi::launchMembersFetch(AppController& app, const std::string& groupName) {
     if (membersLoading_ || membersCache_.count(groupName) != 0 || membersErrors_.count(groupName) != 0) {
+        return;
+    }
+    if (app.IsTrackerOffline()) {
+        membersErrors_[groupName] = OfflineLookupError(); // Pillar 6: no request; the group offers Retry
         return;
     }
     membersLoading_ = true;
@@ -343,6 +371,11 @@ void SmatchetUserInfoUi::pollActivityFuture(AppController& app) {
     try {
         ActivityPayload p = activityFuture_.get();
         if (p.Gen == generation_) {
+            // Pillar 6: a failed reload keeps the activity already on screen (same target: a retarget
+            // bumps the generation and resets it); the error shows above it.
+            if (!p.Error.empty() && p.Entries.empty()) {
+                p.Entries = std::move(activity_.Entries);
+            }
             activity_ = std::move(p);
             activityLoaded_ = true;
         }
@@ -400,8 +433,11 @@ void SmatchetUserInfoUi::pollMembersFuture() {
         }
     } catch (const std::exception& ex) {
         LOG_WARN("UserInfoUi: group members fetch threw: %s", ex.what());
-    } catch (...) { // catch-all-ok: worker exceptions degrade to a missing roster, never crash the UI thread
+        // Recorded like any failure: without an entry the group would relaunch the fetch every frame.
+        membersErrors_[membersFetchGroup_] = std::string("Member lookup failed: ") + ex.what();
+    } catch (...) { // catch-all-ok: worker exceptions become the group's error, never crash the UI thread
         LOG_WARN("UserInfoUi: group members fetch threw (unknown error)");
+        membersErrors_[membersFetchGroup_] = "Member lookup failed.";
     }
     membersLoading_ = false;
     membersFetchGroup_.clear();

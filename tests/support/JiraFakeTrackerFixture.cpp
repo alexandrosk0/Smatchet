@@ -29,6 +29,31 @@ TrackerReachabilityProbeKind ParseReachabilityKind(const std::string& kind) {
     throw std::runtime_error("JiraFakeTrackerFixture: unknown reachability kind: " + kind);
 }
 
+// {"accountId", "displayName", "email"} -> TrackerUser (missing keys stay empty).
+TrackerUser ParseFixtureUser(const nlohmann::json& userJson) {
+    TrackerUser user;
+    user.AccountId = userJson.value("accountId", std::string());
+    user.DisplayName = userJson.value("displayName", std::string());
+    user.EmailAddress = userJson.value("email", std::string());
+    return user;
+}
+
+// {"<key>": [user, ...]} -> key -> users; entries that are not arrays are skipped.
+std::unordered_map<std::string, std::vector<TrackerUser>> ParseUsersByKey(const nlohmann::json& object) {
+    std::unordered_map<std::string, std::vector<TrackerUser>> out;
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        if (!it.value().is_array()) {
+            continue;
+        }
+        std::vector<TrackerUser> users;
+        for (const auto& userJson : it.value()) {
+            users.push_back(ParseFixtureUser(userJson));
+        }
+        out[it.key()] = std::move(users);
+    }
+    return out;
+}
+
 FakeNetworkMode ParseNetworkMode(const std::string& mode) {
     if (mode == "Up")
         return FakeNetworkMode::Up;
@@ -200,11 +225,7 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
         }
         if (catalog.contains("users") && catalog["users"].is_array()) {
             for (const auto& userJson : catalog["users"]) {
-                TrackerUser user;
-                user.AccountId = userJson.value("accountId", std::string());
-                user.DisplayName = userJson.value("displayName", std::string());
-                user.EmailAddress = userJson.value("email", std::string());
-                fixture.users_.push_back(std::move(user));
+                fixture.users_.push_back(ParseFixtureUser(userJson));
             }
         }
     }
@@ -273,6 +294,31 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
                 fixture.issueCommentsByIssueKey_[issueKey] = std::move(comments);
             }
         }
+    }
+
+    // Issue watchers (optional): {"KEY-1": [user, ...]}.
+    if (root.contains("watchers") && root["watchers"].is_object()) {
+        fixture.issueWatchersByIssueKey_ = ParseUsersByKey(root["watchers"]);
+    }
+
+    // The activity role's groups (optional): {"<accountId>": ["group", ...]} and
+    // {"<group>": [user, ...]}.
+    if (root.contains("userGroups") && root["userGroups"].is_object()) {
+        for (auto it = root["userGroups"].begin(); it != root["userGroups"].end(); ++it) {
+            if (!it.value().is_array()) {
+                continue;
+            }
+            std::vector<std::string> names;
+            for (const auto& name : it.value()) {
+                if (name.is_string()) {
+                    names.push_back(name.get<std::string>());
+                }
+            }
+            fixture.userGroupNamesByAccountId_[it.key()] = std::move(names);
+        }
+    }
+    if (root.contains("groupMembers") && root["groupMembers"].is_object()) {
+        fixture.groupMembersByGroup_ = ParseUsersByKey(root["groupMembers"]);
     }
 
     return fixture;
@@ -349,12 +395,26 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         client.SetIssueTransitions(entry.first, entry.second);
     }
 
-    // Comments live on ITrackerCollaboration, so scripting them turns that role on.
-    if (!issueCommentsByIssueKey_.empty()) {
+    // Comments and watchers live on ITrackerCollaboration, so scripting either turns that role on.
+    if (!issueCommentsByIssueKey_.empty() || !issueWatchersByIssueKey_.empty()) {
         client.EnableCollaboration(true);
-        for (const auto& entry : issueCommentsByIssueKey_) {
-            client.SetIssueComments(entry.first, entry.second);
-        }
+    }
+    for (const auto& entry : issueCommentsByIssueKey_) {
+        client.SetIssueComments(entry.first, entry.second);
+    }
+    for (const auto& entry : issueWatchersByIssueKey_) {
+        client.SetIssueWatchers(entry.first, entry.second);
+    }
+
+    // Groups live on ITrackerActivity (the User Info window's Activity and Groups sections).
+    if (!userGroupNamesByAccountId_.empty() || !groupMembersByGroup_.empty()) {
+        client.EnableActivity(true);
+    }
+    for (const auto& entry : userGroupNamesByAccountId_) {
+        client.SetUserGroupNames(entry.first, entry.second);
+    }
+    for (const auto& entry : groupMembersByGroup_) {
+        client.SetGroupMembers(entry.first, entry.second);
     }
 }
 

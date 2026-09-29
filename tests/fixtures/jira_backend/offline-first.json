@@ -100,6 +100,15 @@
       }
     ]
   },
+  "watchers": {
+    "OFF-1": [{"accountId": "acc-wes", "displayName": "Wes Watcher"}]
+  },
+  "userGroups": {
+    "acc-offline-user": ["offline-devs"]
+  },
+  "groupMembers": {
+    "offline-devs": [{"accountId": "acc-ana", "displayName": "Ana Offline"}]
+  },
   "mutations": {
     "updateIssueFields": [{"ok": true}],
     "createIssue": [{"ok": true, "issueKey": "OFF-99"}]

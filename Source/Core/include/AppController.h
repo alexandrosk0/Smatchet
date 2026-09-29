@@ -1073,8 +1073,13 @@ class AppController : public IAppThreading,
     void InvalidateIssueTransitions(const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
+    /// FetchIssueWatchers with the error kind kept (Transport when the tracker is unreachable), so the
+    /// watchers window can keep the list it has and say "offline" (Quality Pillar 6). Workers only.
+    Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchersTyped(const std::string& issueKey) const;
 
     Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
+    /// FetchIssueVotes with the error kind kept, like FetchIssueWatchersTyped. Workers only.
+    Result<TrackerIssueVotes, TrackerError> FetchIssueVotesTyped(const std::string& issueKey) const;
 
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
     /// SearchUsersByQuery with the error kind kept (Transport when the tracker is unreachable), so a lookup can
@@ -1689,6 +1694,15 @@ class AppController : public IAppThreading,
     // the adapter's CONST RequestDeferredLiveTrackerBackendSuccessNotify override) stay one-line; it
     // forwards into the global connectivity service.
     void requestDeferredLiveTrackerBackendSuccessNotify_() const;
+    /// Runs `call` on the focused tracker's collaboration surface with the error kind kept. The backend is
+    /// latched for the call (a live tracker swap must not free it mid-call, ADR 0012); a missing backend
+    /// or collaboration support is InvalidRequest; a failure is logged with `what` and `subject`; a
+    /// success tells the connectivity service the tracker answered. Defined and used only in
+    /// AppController_CatalogAndFieldEdit.cpp.
+    template <typename T>
+    Result<T, TrackerError>
+    callFocusedCollaboration_(const char* what, const std::string& subject,
+                              const std::function<Result<T, TrackerError>(ITrackerCollaboration&)>& call) const;
     // Kept as a delegator: the adapter's ITicketSyncDeps::PushOfflineReplayTimersDuringTransportOutage
     // override forwards here, and AppController routes it on into the connectivity service (which adds
     // the transport-down delay + the null-queue-guarded deps push).

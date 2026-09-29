@@ -17,6 +17,7 @@
 // CMake glue beyond `target_include_directories(... tests/support)`.
 
 #include "FakeNetworkSwitch.h"
+#include "ITrackerActivity.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -96,7 +97,8 @@ class FakeTrackerClient : public ITrackerBackend,
                           public ITrackerConnectivity,
                           public ITrackerIssueMutations,
                           public ITrackerFieldCatalog,
-                          public ITrackerCollaboration {
+                          public ITrackerCollaboration,
+                          public ITrackerActivity {
   public:
     FakeTrackerClient() = default;
     explicit FakeTrackerClient(std::string trackerType) : trackerType_(std::move(trackerType)) {}
@@ -110,11 +112,12 @@ class FakeTrackerClient : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override { return this; }
     ITrackerIssueMutations* Mutations() override { return this; }
     ITrackerCollaboration* Collaboration() override { return collaborationEnabled_ ? this : nullptr; }
-    ITrackerActivity* Activity() override { return nullptr; }
+    ITrackerActivity* Activity() override { return activityEnabled_ ? this : nullptr; }
 
     // --- Network switch (Quality Pillar 6 offline-first harness) --------------------------------
     void AttachNetwork(FakeNetworkSwitch* net) { network_ = net; }
     void EnableCollaboration(bool on) { collaborationEnabled_ = on; }
+    void EnableActivity(bool on) { activityEnabled_ = on; }
 
     // --- Capability interface surface --------------------------------------------------------
 
@@ -473,6 +476,49 @@ class FakeTrackerClient : public ITrackerBackend,
         return Result<std::vector<TrackerIssueComment>, TrackerError>::Ok({});
     }
 
+    // Read-only scripted maps below: set before the app starts using the client (the fixture's
+    // Configure), then read from worker threads, so they need no lock.
+    Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& /*cfg*/,
+                                                                      const std::string& issueKey) override {
+        if (NetworkDown()) {
+            return Result<std::vector<TrackerUser>, TrackerError>::Err(network_->MakeError());
+        }
+        const auto it = issueWatchersByIssueKey_.find(issueKey);
+        return Result<std::vector<TrackerUser>, TrackerError>::Ok(
+            it != issueWatchersByIssueKey_.end() ? it->second : std::vector<TrackerUser>());
+    }
+
+    // --- ITrackerActivity (off unless EnableActivity) -------------------------------------------
+    Result<std::vector<TrackerActivityEntry>, TrackerError>
+    FetchUserActivity(const TrackerConfig& /*cfg*/, const std::string& /*accountId*/, const std::string& /*dayFrom*/,
+                      const std::string& /*dayTo*/, const std::string& /*projectScope*/,
+                      TrackerActivityProgress& /*progress*/) override {
+        if (NetworkDown()) {
+            return Result<std::vector<TrackerActivityEntry>, TrackerError>::Err(network_->MakeError());
+        }
+        return Result<std::vector<TrackerActivityEntry>, TrackerError>::Ok({});
+    }
+
+    Result<std::vector<TrackerUser>, TrackerError> FetchGroupMembers(const TrackerConfig& /*cfg*/,
+                                                                     const std::string& groupName) override {
+        if (NetworkDown()) {
+            return Result<std::vector<TrackerUser>, TrackerError>::Err(network_->MakeError());
+        }
+        const auto it = groupMembersByGroup_.find(groupName);
+        return Result<std::vector<TrackerUser>, TrackerError>::Ok(
+            it != groupMembersByGroup_.end() ? it->second : std::vector<TrackerUser>());
+    }
+
+    Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& /*cfg*/,
+                                                                       const std::string& accountId) override {
+        if (NetworkDown()) {
+            return Result<std::vector<std::string>, TrackerError>::Err(network_->MakeError());
+        }
+        const auto it = userGroupNamesByAccountId_.find(accountId);
+        return Result<std::vector<std::string>, TrackerError>::Ok(
+            it != userGroupNamesByAccountId_.end() ? it->second : std::vector<std::string>());
+    }
+
     struct AddCommentCall {
         std::string IssueKey;
         std::string Body;
@@ -807,6 +853,15 @@ class FakeTrackerClient : public ITrackerBackend,
     void SetIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment> comments) {
         issueCommentsByIssueKey_[issueKey] = std::move(comments);
     }
+    void SetIssueWatchers(const std::string& issueKey, std::vector<TrackerUser> watchers) {
+        issueWatchersByIssueKey_[issueKey] = std::move(watchers);
+    }
+    void SetUserGroupNames(const std::string& accountId, std::vector<std::string> groupNames) {
+        userGroupNamesByAccountId_[accountId] = std::move(groupNames);
+    }
+    void SetGroupMembers(const std::string& groupName, std::vector<TrackerUser> members) {
+        groupMembersByGroup_[groupName] = std::move(members);
+    }
 
     const std::vector<AddCommentCall>& AddCommentCalls() const { return addCommentCalls_; }
     void EnqueueAddCommentResult(TrackerError error) { addCommentReplies_.push_back(std::move(error)); }
@@ -984,6 +1039,12 @@ class FakeTrackerClient : public ITrackerBackend,
     // FetchIssueComments (Pillar 6)
     std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
     std::size_t fetchIssueCommentsCalls_ = 0;
+
+    // Watchers + the activity role's groups (Pillar 6)
+    std::unordered_map<std::string, std::vector<TrackerUser>> issueWatchersByIssueKey_;
+    bool activityEnabled_ = false;
+    std::unordered_map<std::string, std::vector<std::string>> userGroupNamesByAccountId_;
+    std::unordered_map<std::string, std::vector<TrackerUser>> groupMembersByGroup_;
 
     // Collaboration scripting (Pillar 6)
     std::vector<AddCommentCall> addCommentCalls_;

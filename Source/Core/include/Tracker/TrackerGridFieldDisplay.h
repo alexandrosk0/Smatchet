@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PendingActionTypes.h"
+#include "TrackerError.h"
 #include "TrackerFieldSchema.h"
 
 #include <cstdint>
@@ -16,16 +17,28 @@ struct WatchersLoadResult {
     bool Ok = false;
     std::vector<TrackerUser> Watchers;
     std::string Error;
+    TrackerErrorKind ErrorKind = TrackerErrorKind::None; ///< Transport when the tracker was unreachable
 };
 
 struct VotesLoadResult {
     bool Ok = false;
     std::vector<TrackerUser> Voters;
     std::string Error;
+    TrackerErrorKind ErrorKind = TrackerErrorKind::None; ///< Transport when the tracker was unreachable
     int VoteCount = 0;
     bool HasVoted = false;
     /** True when JSON contained a `voters` array (may be empty); false when key absent (often permissions). */
     bool VotersArrayInResponse = false;
+};
+
+/// What a watchers / votes window shows (Quality Pillar 6): the list loaded earlier this session stays on
+/// screen, with a freshness cue, while a refresh runs, while the tracker is offline and after a failed load.
+struct CollabListStatus {
+    bool HaveData = false;       ///< a list is shown: the one this load returned or the one saved this session
+    bool DataLive = false;       ///< it came from the load that just finished
+    bool LastLoadFailed = false; ///< the last load failed, or was skipped because the tracker is offline
+    TrackerErrorKind LastErrorKind = TrackerErrorKind::None;
+    std::string Error; ///< why the last load failed (the cue's tooltip)
 };
 
 /** Async UI state for watchers/votes side panels (owned by the main UI session). */
@@ -35,7 +48,10 @@ struct TrackerGridFieldAsyncState {
     bool watchersLoadInProgress = false;
     std::future<WatchersLoadResult> watchersFuture;
     std::vector<TrackerUser> watchersLoadedList;
-    std::string watchersLoadedError;
+    CollabListStatus watchersStatus;
+    /// (backend key, issue key) -> the last watchers list loaded this session.
+    std::map<std::string, std::vector<TrackerUser>> watchersSessionCache;
+    std::string watchersSessionKey; ///< the entry the open window's load belongs to
 
     bool watchSelfInProgress = false;
     std::future<PendingActionSubmitResult> watchSelfFuture;
@@ -52,11 +68,11 @@ struct TrackerGridFieldAsyncState {
     std::string votesPopupIssueKey;
     bool votesLoadInProgress = false;
     std::future<VotesLoadResult> votesFuture;
-    std::vector<TrackerUser> votesLoadedList;
-    std::string votesLoadedError;
-    int votesLoadedVoteCount = 0;
-    bool votesLoadedHasVoted = false;
-    bool votesLoadedVotersArrayInResponse = false;
+    VotesLoadResult votesLoaded; ///< the votes shown (their Ok / Error are unused; the status says)
+    CollabListStatus votesStatus;
+    /// (backend key, issue key) -> the last votes loaded this session.
+    std::map<std::string, VotesLoadResult> votesSessionCache;
+    std::string votesSessionKey; ///< the entry the open window's load belongs to
 };
 
 /**

@@ -5,6 +5,7 @@
 #include "Ui/SmatchetUserInfoUi.h"
 
 #include "AppController.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "Tracker/ProjectResolver.h"
@@ -168,7 +169,9 @@ void SmatchetUserInfoUi::drawActivitySection(AppController& app, UiDrawSession& 
     }
     if (!activity_.Error.empty()) {
         ImGui::TextColored(kSectionErrorColor, "%s", activity_.Error.c_str());
-        return;
+        if (activity_.Entries.empty()) {
+            return;
+        }
     }
     // Tightening the day filter re-filters the already-fetched window per frame
     // (string compare on the ISO prefix); widening past the fetch needs Reload.
@@ -220,7 +223,16 @@ void SmatchetUserInfoUi::drawGroupsSection(AppController& app, UiDrawSession& d)
     }
     if (!groups_.Error.empty()) {
         ImGui::TextColored(kSectionErrorColor, "%s", groups_.Error.c_str());
-        return;
+        ImGui::PushID("groups_retry");
+        if (ImGui::SmallButton(SmatchetLocalization::T("user_info.retry", "Retry"))) {
+            groups_.Error.clear();
+            groupsLoaded_ = false;
+            launchGroupsFetch(app);
+        }
+        ImGui::PopID();
+        if (groups_.Names.empty()) {
+            return;
+        }
     }
     if (groups_.Names.empty()) {
         if (groupsLoaded_) {
@@ -265,6 +277,10 @@ void SmatchetUserInfoUi::drawGroupMembers(AppController& app, const std::string&
     const std::map<std::string, std::string>::const_iterator errHit = membersErrors_.find(groupName);
     if (errHit != membersErrors_.end()) {
         ImGui::TextColored(kSectionErrorColor, "%s", errHit->second.c_str());
+        // The caller's PushID(i) keeps this button's id apart from the other groups'.
+        if (ImGui::SmallButton(SmatchetLocalization::T("user_info.retry", "Retry"))) {
+            membersErrors_.erase(errHit); // the next frame launches the fetch again
+        }
         return;
     }
     // One members fetch at a time — other expanded groups queue until it drains
