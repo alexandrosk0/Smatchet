@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -69,6 +70,13 @@ P4UserSearch SearchTrackerForP4User(const AppController& app, const std::string&
         out.Error = "The user search failed.";
     }
     return out;
+}
+
+// UI thread only. One counter for both dialogs and every window instance, so a lookup started by a
+// closed window can never carry the generation of a later selection.
+std::uint64_t NextLookupGeneration() {
+    static std::uint64_t next = 0;
+    return ++next;
 }
 
 // Offline no search is sent: the lookup answers from the saved user list right away.
@@ -361,6 +369,10 @@ void CloseAnnotateModal(bool* pOpen) {
 }
 
 void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User) {
+    // A new selection supersedes any lookup still running for an earlier one.
+    const std::uint64_t generation = NextLookupGeneration();
+    State().profileLookupGeneration = generation;
+    State().profileInFlight = false;
     State().openProfileModal = true;
     State().profileErr.clear();
     State().profileName.clear();
@@ -368,9 +380,6 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
     State().profileGroups.clear();
     if (p4User.empty() || p4User == "-" || p4User == "...") {
         State().profileName = "Past Employee";
-        return;
-    }
-    if (State().profileInFlight) {
         return;
     }
     if (app.IsTrackerOffline()) {
@@ -386,7 +395,7 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
     const std::string capturedUser = p4User;
     AppController& appMut = const_cast<AppController&>(app);
     try {
-        appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
+        appMut.LaunchBackgroundTask([&appMut, capturedUser, generation]() {
             ProfileLookup lookup;
             lookup.Search = SearchTrackerForP4User(appMut, capturedUser);
             if (lookup.Search.Answered && !lookup.Search.Users.empty()) {
@@ -407,8 +416,8 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
                     }
                 }
             }
-            appMut.PostToMainThread([&appMut, capturedUser, lookup]() {
-                if (!HasLiveStateInstance()) {
+            appMut.PostToMainThread([&appMut, capturedUser, generation, lookup]() {
+                if (!HasLiveStateInstance() || State().profileLookupGeneration != generation) {
                     return;
                 }
                 ApplyProfileLookup(appMut, capturedUser, lookup);
@@ -423,6 +432,11 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
 }
 
 void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell) {
+    // A new selection supersedes any lookup still running for an earlier one, so that lookup can
+    // never pick the account assigned to this row.
+    const std::uint64_t generation = NextLookupGeneration();
+    State().assignLookupGeneration = generation;
+    State().assignInFlight = false;
     State().assignRow = row;
     const std::string pu = p4UserCell.empty() ? row.Annotate.User : p4UserCell;
     State().assignAccountId.clear();
@@ -430,9 +444,6 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
     State().assignNoAccountReason.clear();
     if (pu.empty() || pu == "-" || pu == "...") {
         State().assignTitle = "Past Employee";
-        return;
-    }
-    if (State().assignInFlight) {
         return;
     }
     if (app.IsTrackerOffline()) {
@@ -445,10 +456,10 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
     State().assignTitle = "Loading...";
     AppController& appMut = const_cast<AppController&>(app);
     try {
-        appMut.LaunchBackgroundTask([&appMut, pu]() {
+        appMut.LaunchBackgroundTask([&appMut, pu, generation]() {
             const P4UserSearch search = SearchTrackerForP4User(appMut, pu);
-            appMut.PostToMainThread([&appMut, pu, search]() {
-                if (!HasLiveStateInstance()) {
+            appMut.PostToMainThread([&appMut, pu, generation, search]() {
+                if (!HasLiveStateInstance() || State().assignLookupGeneration != generation) {
                     return;
                 }
                 ApplyAssignLookup(appMut, pu, search);
