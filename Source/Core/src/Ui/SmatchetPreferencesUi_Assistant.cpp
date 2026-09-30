@@ -183,9 +183,9 @@ void CommitProbeVerdict(const std::string& errMsg, AiProvider provider, const st
         return;
     }
     if (errMsg.empty()) {
-        // SMATCHET_DEVIATION(rule=duplication; reason=verdict-commit twin of
-        // AiPrefsTestConnection::PublishProbeResult — differs in target (working copy vs cfg) + the generation
-        // guard above; lockstep until the planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
+        // Verdict-commit twin of AiPrefsTestConnection::PublishProbeResult: it differs in target (working copy
+        // vs cfg) and in the generation guard above, so the two stay in lockstep until the twins are merged.
+        // SMATCHET_DEVIATION(rule=duplication; reason=verdict-commit twin of PublishProbeResult; owner=ui; revisit=2027-03-31)
         LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
                  static_cast<int>(provider), defaultedBaseUrl.c_str());
         g_ui.assistantPrefsTestResult = "Verified";

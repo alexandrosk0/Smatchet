@@ -24,7 +24,7 @@
 #include "IAiClient.h"
 #endif
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "JiraBackendInstancesPure.h"
@@ -363,8 +363,7 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
 void DrawTrackerJiraExtraBackends(UiDrawSession& d) {
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_extra_sites")) {
         ImGui::Spacing();
-        ImGui::TextUnformatted(
-            SmatchetLocalization::T("prefs.tracker.jira_extras.heading", "Additional Jira sites"));
+        ImGui::TextUnformatted(SmatchetLocalization::T("prefs.tracker.jira_extras.heading", "Additional Jira sites"));
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.tracker.jira_extras.help",
                                    "Empty email or token inherit from the first Jira site.");

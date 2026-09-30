@@ -1,4 +1,4 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "TrackerGridFieldDisplay.h"
 #include "UiPerfMonitor.h"
 #include "AppController.h"

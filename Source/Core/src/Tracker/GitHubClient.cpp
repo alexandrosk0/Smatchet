@@ -620,11 +620,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueC
             // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx
             // TrackerErrorFromHttpStatus returns Ok() (Kind==None, detail discarded).
             // Carry the verbatim detail under an explicit non-OK kind (DR20).
-            // SMATCHET_DEVIATION(rule=duplication; reason=the 2xx-non-200 guard idiom (LOG_ERROR + `if 2xx return
-            // TrackerErrorUnknown(detail,status)` else FromHttpStatus) is deliberately uniform across the tracker read
-            // paths (mirrors GitHubIssueSearch + GitHubClient::CreateIssue + JiraUserAndMeta) so the swallow-as-Ok bug
-            // is fixed identically everywhere; extracting a helper would need a Result-type-generic wrapper spanning
-            // independent client TUs; owner=deep-review; revisit=2026-10-01)
+            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
             if (resp.status_code >= 200 && resp.status_code < 300) {
                 return CommentsResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
             }

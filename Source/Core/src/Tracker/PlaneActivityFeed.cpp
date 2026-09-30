@@ -29,18 +29,11 @@ cpr::Header ToCprHeader(const std::unordered_map<std::string, std::string>& head
     return out;
 }
 
-/// Display key for a discovered work item: "PROJ-123" when the project identifier
-/// and sequence are known, "#123" with sequence only, the raw UUID otherwise.
+/// Display key for a discovered work item — the same key the grid shows for it.
 std::string IssueKeyForWorkItem(const nlohmann::json& item, const std::string& projectIdentifier,
                                 const std::string& issueId) {
-    const std::string sequence = smatchet::plane_detail::JsonFieldToString(item, "sequence_id");
-    if (!projectIdentifier.empty() && !sequence.empty()) {
-        return projectIdentifier + "-" + sequence;
-    }
-    if (!sequence.empty()) {
-        return "#" + sequence;
-    }
-    return issueId;
+    return smatchet::plane::PlaneVisualIssueKey(
+        projectIdentifier, smatchet::plane_detail::JsonFieldToString(item, "sequence_id"), issueId);
 }
 
 /// Paginated per-issue /activities/ scan appending the actor's in-window entries.
@@ -160,10 +153,7 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
         std::string parseErr;
-        // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded + parseErr-check + is_object guard is the shared
-        // bounded-ingress shape surfaced across independent tracker clients by the security sweep; de-duping into a
-        // shared helper would couple unrelated Jira/Plane subsystems and is DRY-CRITICAL to avoid;
-        // owner=security-audit; revisit=2026-09-30)
+        // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
         nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
             outError = std::string("activity discovery parse error: ") + parseErr;

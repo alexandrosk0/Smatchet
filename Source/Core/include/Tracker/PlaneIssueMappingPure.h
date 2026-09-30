@@ -62,6 +62,12 @@ MapPlaneWorkItemsArrayToCachedTickets(const nlohmann::json& results, const std::
                                       const std::vector<UserDisplayLookup>& users,
                                       std::unordered_map<std::string, std::string>* outKeyToId);
 
+/// The visual key Plane work items are shown under: `<projectIdentifier>-<sequenceId>` when both are
+/// known, `#<sequenceId>` with the sequence only, else `uuid`. The one rule for every Plane surface
+/// (search mapping, create response, activity feed), so a key never differs between them.
+std::string PlaneVisualIssueKey(const std::string& projectIdentifier, const std::string& sequenceId,
+                                const std::string& uuid);
+
 /// Pure-logic header builder. Mirrors `PlaneClient::BuildPlaneHeaders` so the
 /// header shape is testable without instantiating a PlaneClient (which would
 /// pull a recursive_mutex into the test rig).

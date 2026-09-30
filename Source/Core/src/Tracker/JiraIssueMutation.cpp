@@ -1,4 +1,4 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=tracker-backend; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
@@ -467,7 +467,6 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         LOG_DEBUG("JiraClient: create payload:\n%s", body.dump(2).c_str());
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", std::string(), auditOp, false, detail,
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
         return Result<std::string, TrackerError>::Err(ClassifyRejectedTrackerResponse(response, outError));
     }

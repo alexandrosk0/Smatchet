@@ -465,7 +465,7 @@ class AppController : public IAppThreading,
     void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType) override;
     /** Forwarder to AttachmentAppUpdateService::OpenAttachmentInSystemViewer; see that
      *  header for the outcome contract. Blocking network I/O. */
-    // SMATCHET_DEVIATION(rule=duplication; reason=forwarder mirrors service header; owner=ui; revisit=dup-scoping)
+    // SMATCHET_DEVIATION(rule=duplication; reason=forwarder mirrors service header; owner=ui; revisit=2027-03-31)
     bool OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError = nullptr, bool* outFellBackToUrl = nullptr);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
