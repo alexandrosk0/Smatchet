@@ -18,6 +18,7 @@ using smatchet::plane::ExtractKeyFromPlaneQuery;
 using smatchet::plane::MapPlaneWorkItemJsonToCachedTicket;
 using smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets;
 using smatchet::plane::NextPaginationCursor;
+using smatchet::plane::PlaneVisualIssueKey;
 using smatchet::plane::UserDisplayLookup;
 
 namespace {
@@ -70,6 +71,14 @@ TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — visual key falls back to #seq 
     issue2["name"] = "only-uuid";
     const CachedTicket onlyUuid = MapPlaneWorkItemJsonToCachedTicket(issue2, "SMT", {});
     CHECK(onlyUuid.id == "uuid-only");
+}
+
+TEST_CASE("PlaneVisualIssueKey — identifier-sequence, then #sequence, then uuid") {
+    CHECK(PlaneVisualIssueKey("SMT", "42", "uuid-1") == "SMT-42");
+    CHECK(PlaneVisualIssueKey("", "42", "uuid-1") == "#42");
+    CHECK(PlaneVisualIssueKey("SMT", "", "uuid-1") == "uuid-1");
+    CHECK(PlaneVisualIssueKey("", "", "uuid-1") == "uuid-1");
+    CHECK(PlaneVisualIssueKey("", "", "").empty());
 }
 
 TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — state nesting variants all map to status") {

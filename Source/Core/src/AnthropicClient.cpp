@@ -227,12 +227,11 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
         DispatchAnthropicEvent(ev, onDelta, sawFinal, pendingFinishReason);
     };
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=the Anthropic + OpenAi SSE streaming skeletons (WriteCallback
-    // cancel-poll + cpr::Post + post-response cancel/transport/HTTP/eof dispatch) are a long-standing near-verbatim
-    // pair by necessity — both speak the same SSE wire shape while the token-delta decoders differ; the DR20
-    // mid-stream-error fix edits inside that shared skeleton, re-bounding the pre-existing clone. Folding the skeleton
-    // into one helper would couple two independent provider adapters (DRY Pillar 5 per ADR-0015); owner=deep-review;
-    // revisit=2026-10-01)
+    // The Anthropic and OpenAI SSE streaming skeletons (write-callback cancel poll, cpr::Post, then the
+    // cancel / transport / HTTP / EOF dispatch) are a near-verbatim pair: both speak the same SSE wire shape
+    // while their token-delta decoders differ. One shared helper would couple two independent provider
+    // adapters, which the DRY pillar forbids (ADR-0015).
+    // SMATCHET_DEVIATION(rule=duplication; reason=SSE streaming skeleton twin of OpenAiClient; owner=ai-clients; revisit=2027-03-31)
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
                                if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;

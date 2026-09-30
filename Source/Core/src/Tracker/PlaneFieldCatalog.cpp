@@ -1,6 +1,4 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=header-prelude/include-block clone with the sibling Plane tracker TUs
-// (PlaneIssueMutation), surfaced by DR25 touching that file; the Plane client TUs share the same include boilerplate by
-// design; owner=deep-review; revisit=2026-10-01)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=tracker-backend; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 #include "PlaneFieldCatalogPure.h"

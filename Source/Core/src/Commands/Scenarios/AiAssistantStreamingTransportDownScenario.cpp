@@ -92,13 +92,12 @@ std::unique_ptr<IAiClient> StubTransportDownFactory(AiProvider /*provider*/) {
 
 class AiAssistantStreamingTransportDownScenario : public IScenario {
   public:
-    // SMATCHET_DEVIATION(rule=duplication; reason=DR7 joining destructor + stub-factory boilerplate is intentionally
-    // identical teardown (signal cancel, join worker, clear AiClientFactory override) across the streaming scenario
-    // stubs so no scenario can leak a joinable thread on replace; owner=deep-review; revisit=2026-10-01) DR7 joining
-    // destructor. If this scenario is destroyed while its worker is still joinable (e.g. the runner replaces the active
-    // scenario), signal the cancel token, join the thread, and clear the factory override here so ~std::thread never
-    // runs on a joinable thread (std::terminate) and the stub-backed AiClientFactory override never dangles into freed
-    // state.
+    // DR7 joining destructor, deliberately identical across the streaming scenario stubs so no scenario can
+    // leak a joinable thread on replace. If this scenario is destroyed while its worker is still joinable (e.g. the
+    // runner replaces the active scenario), signal the cancel token, join the thread, and clear the factory override
+    // here so ~std::thread never runs on a joinable thread (std::terminate) and the stub-backed AiClientFactory
+    // override never dangles into freed state.
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR7 joining destructor shared by the streaming scenario stubs; owner=command-system; revisit=2027-03-31)
     ~AiAssistantStreamingTransportDownScenario() override {
         if (cancel_) {
             cancel_->store(true, std::memory_order_release);

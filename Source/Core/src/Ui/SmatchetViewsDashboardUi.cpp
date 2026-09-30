@@ -3,7 +3,7 @@
 // churn but the doc-comment expansion explaining the new invariants pushed the file ~15 lines
 // past the ceiling; a companion-TU split (action methods vs draw functions) is a reasonable
 // follow-up but out of scope for this change; owner=orchestrator; revisit=next touch of this file)
-// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"

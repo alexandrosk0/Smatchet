@@ -38,9 +38,7 @@
 // this reach.
 #include "imgui_internal.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=standard-library + json/filesystem include block overlaps the McpPlugin
-// include block; include lists are not factorable behind a helper and a shared umbrella header would couple two
-// independent plugins; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=plugins; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>

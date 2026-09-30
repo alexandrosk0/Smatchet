@@ -302,11 +302,11 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
 
 // Outcome of driving the /search/jql pagination loop for a prebuilt search URL.
 struct JiraPageLoopResult {
-    bool endedCleanly = false;     // every page consumed with a clean isLast (no abort / cap / error)
-    int fetchedPages = 0;          // pages that returned HTTP 200 and were mapped
-    bool tokenLeftover = false;    // a next-page token remained when the loop stopped (cap hit)
-    size_t totalFetchedBytes = 0;  // cumulative response size (bytes) across all pages
-    bool totalSizeLimitHit = false; // true if total fetch size exceeded the cap
+    bool endedCleanly = false;        // every page consumed with a clean isLast (no abort / cap / error)
+    int fetchedPages = 0;             // pages that returned HTTP 200 and were mapped
+    bool tokenLeftover = false;       // a next-page token remained when the loop stopped (cap hit)
+    size_t totalFetchedBytes = 0;     // cumulative response size (bytes) across all pages
+    bool totalSizeLimitHit = false;   // true if total fetch size exceeded the cap
     bool resultCountLimitHit = false; // true if result count exceeded the cap
 };
 
@@ -325,7 +325,7 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
     std::string nextPageToken;
     const int kMaxPages = 50;
     const size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
-    const size_t kMaxResultCount = 10000u;                    // hard cap on issue count
+    const size_t kMaxResultCount = 10000u;                   // hard cap on issue count
 
     for (int page = 1; page <= kMaxPages; ++page) {
         if (shouldCancel && shouldCancel()) {
@@ -527,7 +527,7 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         if (response.status_code != 200) {
             outError =
                 "Fetch by key failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
+            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
             // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to
             // Ok() and yield an Err(Kind::None) with empty Detail (FIX-1 / Slice-2). Detail is

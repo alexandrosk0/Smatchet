@@ -109,16 +109,7 @@ std::string ResolvePlaneLabelsString(const nlohmann::json& issue) {
 // Identity + key fields: uuid, visual key, summary.
 void MapPlaneIdentityFields(const nlohmann::json& issue, const std::string& projectIdentifier, CachedTicket& ticket) {
     const std::string uuid = JsonFieldToString(issue, "id");
-    const std::string seqId = JsonFieldToString(issue, "sequence_id");
-
-    std::string visualKey;
-    if (!projectIdentifier.empty() && !seqId.empty()) {
-        visualKey = projectIdentifier + "-" + seqId;
-    } else if (!seqId.empty()) {
-        visualKey = "#" + seqId;
-    } else {
-        visualKey = uuid;
-    }
+    const std::string visualKey = PlaneVisualIssueKey(projectIdentifier, JsonFieldToString(issue, "sequence_id"), uuid);
 
     ticket.id = visualKey;
     ticket.fieldValues["uuid"] = uuid;
@@ -141,6 +132,17 @@ void MapPlaneDescriptionAndTimestamps(const nlohmann::json& issue, CachedTicket&
 }
 
 } // namespace
+
+std::string PlaneVisualIssueKey(const std::string& projectIdentifier, const std::string& sequenceId,
+                                const std::string& uuid) {
+    if (!projectIdentifier.empty() && !sequenceId.empty()) {
+        return projectIdentifier + "-" + sequenceId;
+    }
+    if (!sequenceId.empty()) {
+        return "#" + sequenceId;
+    }
+    return uuid;
+}
 
 CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, const std::string& projectIdentifier,
                                                 const std::vector<UserDisplayLookup>& users) {

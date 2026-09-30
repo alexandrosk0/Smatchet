@@ -72,8 +72,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
             }
             if (!usersJson.is_array()) {
                 outError = "Invalid users response format.";
-                LOG_ERROR("JiraClient: %s body=%s", outError.c_str(),
-                          RedactHttpBodyForLog(usersResponse.text).c_str());
+                LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
                 return false;
             }
 
@@ -117,9 +116,8 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
         // return, so a truncated-but-nonempty list would silently publish an incomplete catalog
         // instead of the degraded-but-honest empty one the caller expects on failure.
         outUsers.clear();
-        outError = "Failed to fetch users: exceeded " + std::to_string(kMaxPages) +
-                   " pages (" + std::to_string(kMaxPages * kPageSize) +
-                   " users) without reaching the end of the roster.";
+        outError = "Failed to fetch users: exceeded " + std::to_string(kMaxPages) + " pages (" +
+                   std::to_string(kMaxPages * kPageSize) + " users) without reaching the end of the roster.";
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
@@ -407,7 +405,6 @@ namespace {
 bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr::Header& headers, const char* valuesKey,
                         bool keepInactive, std::vector<TrackerUser>& outUsers, std::unordered_set<std::string>& seen,
                         TrackerError& outErr, bool* outIsLast = nullptr, size_t* outPageCount = nullptr) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
     auto resp = TrackerGetLogged("JiraClient", url, headers);
     std::string outError;
     if (resp.status_code != 200) {
@@ -502,7 +499,7 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(c
 
     const std::string url =
         base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
-    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+    // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
     auto resp = TrackerGetLogged("JiraClient", url, headers);
     if (resp.status_code != 200) {
         outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
@@ -633,7 +630,6 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(con
         bool isLast = true;
         try {
             std::string parseErr;
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
             auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
             if (!parseErr.empty()) {
                 outError = std::string("group/member parse error: ") + parseErr;

@@ -159,7 +159,7 @@ void EnrichFromCreateMeta(const TrackerConfig& cfg, const std::string& projectKe
     auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     if (metaResponse.status_code == 200) {
         try {
-            // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
+            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
             std::string parseErr;
             auto metaJson = smatchet::json_safe::ParseBounded(metaResponse.text, parseErr);
             if (!parseErr.empty()) {
@@ -326,7 +326,6 @@ void EnrichSprintFields(const std::vector<std::string>& sprintFieldIds, const st
 bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers, std::vector<TrackerField>& outFields,
                             std::vector<std::string>& outSprintFieldIds, std::string& outError,
                             TrackerError& outClassified) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
     const std::string fieldsListUrl = base + "/rest/api/3/field";
     auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
     if (fieldsResponse.status_code != 200) {

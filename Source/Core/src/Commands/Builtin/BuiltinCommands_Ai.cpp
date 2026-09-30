@@ -61,24 +61,6 @@ namespace {
 
 bool ResolveProvider(const std::string& key, AiProvider& out) { return AiClientFactory::ProviderFromString(key, out); }
 
-// Pre-existing mapper; token-run re-bounded by the BuildClientConfigForProvider deletion, not a new copy-paste.
-// SMATCHET_DEVIATION(rule=duplication; reason=unrelated enum-name mappers; owner=orchestrator; revisit=2026-10-01)
-const char* AiProviderDisplayName(AiProvider p) {
-    switch (p) {
-    case AiProvider::OpenAi:
-        return "openai";
-    case AiProvider::Anthropic:
-        return "anthropic";
-    case AiProvider::OllamaOpenAiCompat:
-        return "ollama-openai";
-    case AiProvider::OllamaNative:
-        return "ollama-native";
-    case AiProvider::DeepSeek:
-        return "deepseek";
-    }
-    return "unknown";
-}
-
 std::string ResolveModelId(const TrackerConfig& cfg, AiProvider provider) {
     switch (provider) {
     case AiProvider::Anthropic:
@@ -450,7 +432,7 @@ void RegisterValidatePrefsCommand(CommandRegistry& reg) {
                 // Single source of truth (AiTypes.h) — do not re-implement the
                 // kind->enum switch here; that duplication is what let DR19 drift.
                 const AiProvider effective = AiProviderFromKind(cfg.AiProviderKind);
-                out["active_provider"] = AiProviderDisplayName(effective);
+                out["active_provider"] = AiClientFactory::ProviderToString(effective);
                 return CommandResult::Success(std::move(out));
             });
         c.Idempotent = true;

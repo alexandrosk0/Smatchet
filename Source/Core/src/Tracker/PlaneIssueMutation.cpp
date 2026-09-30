@@ -440,18 +440,9 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
             // then fall through to an empty key so the caller treats it as "created, key unknown".
             LOG_WARN("PlaneClient::CreateIssue: issue created but response JSON failed to parse: %s", parseErr.c_str());
         } else {
-            // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #9; owner=cpp-audit; revisit=2026-09-30)
             const std::string uuid = JsonFieldToString(j, "id");
-            const std::string seqId = JsonFieldToString(j, "sequence_id");
-
-            std::string visualKey;
-            if (!projectIdentifier.empty() && !seqId.empty()) {
-                visualKey = projectIdentifier + "-" + seqId;
-            } else if (!seqId.empty()) {
-                visualKey = "#" + seqId;
-            } else {
-                visualKey = uuid;
-            }
+            const std::string visualKey =
+                smatchet::plane::PlaneVisualIssueKey(projectIdentifier, JsonFieldToString(j, "sequence_id"), uuid);
 
             if (!uuid.empty() && !visualKey.empty()) {
                 std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
@@ -612,9 +603,9 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
     }
 
     std::vector<TrackerIssueComment> mapped;
-    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom
-    // (mirrors PlaneIssueSearch/PlaneActivityFeed); the per-page bodies differ, so a shared callback helper across
-    // independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
+    // The Plane cursor-pagination loop is the uniform tracker idiom; the per-page bodies differ, so a
+    // shared callback helper across independent fetches is not worth the coupling.
+    // SMATCHET_DEVIATION(rule=duplication; reason=Plane cursor-pagination idiom; owner=tracker-backend; revisit=2027-03-31)
     std::string cursor;
     // Follow Plane's cursor pagination so comments beyond the first page are returned (DR25).
     // The page cap bounds a cursor that never signals end-of-list.

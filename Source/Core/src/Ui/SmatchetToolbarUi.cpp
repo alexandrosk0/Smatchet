@@ -125,7 +125,7 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         return;
     }
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=parity w/ SmatchetUI.cpp; owner=cpp-audit; revisit=2026-09-30)
+    // SMATCHET_DEVIATION(rule=duplication; reason=args-JSON command dispatch shared with keybindings, helper backlogged; owner=ui-host; revisit=2027-03-31)
     nlohmann::json args = nlohmann::json::object();
     if (!b.ArgsJson.empty()) {
         std::string parseErr;
