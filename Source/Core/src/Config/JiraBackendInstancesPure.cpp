@@ -102,8 +102,7 @@ const JiraBackendInstance* FindByHost(const TrackerConfig& cfg, const std::strin
 
 void ApplyActiveLiveFields(TrackerConfig& cfg) {
     EnsureHydrated(cfg);
-    const std::string want =
-        cfg.ActiveJiraDomain.empty() ? cfg.JiraBackends[0].Domain : cfg.ActiveJiraDomain;
+    const std::string want = cfg.ActiveJiraDomain.empty() ? cfg.JiraBackends[0].Domain : cfg.ActiveJiraDomain;
     const JiraBackendInstance* inst = FindByHost(cfg, want);
     if (!inst) {
         inst = &cfg.JiraBackends[0];
@@ -188,22 +187,6 @@ bool RemoveExtraAt(TrackerConfig& cfg, std::size_t extraIndex) {
         ApplyActiveLiveFields(cfg);
     }
     return true;
-}
-
-std::string TrackerCacheBackendKey(const TrackerConfig& cfg) {
-    const std::string kind = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
-    if (kind != "Jira") {
-        return kind;
-    }
-    if (cfg.JiraBackends.empty()) {
-        return "Jira";
-    }
-    const std::string live = NormalizeJiraHost(cfg.Domain.empty() ? cfg.ActiveJiraDomain : cfg.Domain);
-    const std::string first = NormalizeJiraHost(cfg.JiraBackends[0].Domain);
-    if (live.empty() || live == first) {
-        return "Jira";
-    }
-    return std::string("Jira:") + live;
 }
 
 } // namespace jira_backends

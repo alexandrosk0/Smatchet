@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "CachedTicketTypes.h"
@@ -85,6 +86,14 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
      * flag so it runs at most once per database file; no-op (flag untouched) when
      * `backendKey` is empty. @return total number of rows stamped. */
     size_t RunOneTimePendingQueueBackendKeyStamp(const std::string& backendKey);
+
+    /** One-time move to the site-and-account cache keys (#2268): for each (legacy key, site key) pair, every
+     * row of the ticket tables, `lookup_cache` and the six pending-queue tables moves from the legacy key to
+     * the site key. A cache-table primary-key collision keeps the row already under the site key; queued
+     * writes are never dropped. One transaction, gated on a `cache_meta` flag so it runs at most once per
+     * database file; an empty list only sets the flag. Throws on a database error (flag left unset, so the
+     * next start retries). @return rows moved. */
+    size_t RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std::string, std::string>>& fromTo);
 
     /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     bool HasCacheMetaFlag(const std::string& key) override;

@@ -19,7 +19,6 @@ using smatchet::jira_backends::PrepareForPersist;
 using smatchet::jira_backends::RemoveExtraAt;
 using smatchet::jira_backends::ReplaceExtras;
 using smatchet::jira_backends::SelectActive;
-using smatchet::jira_backends::TrackerCacheBackendKey;
 
 TEST_CASE("NormalizeJiraHost strips scheme, path, port, and case") {
     CHECK(NormalizeJiraHost("https://Foo.Atlassian.Net/wiki") == "foo.atlassian.net");
@@ -194,27 +193,6 @@ TEST_CASE("PrepareForPersist writes first instance onto live Domain, not the ext
     CHECK(cfg.Email == "a@example.com");
     CHECK(cfg.ApiToken == "tok-a");
     CHECK(cfg.ActiveJiraDomain == "second.atlassian.net");
-}
-
-TEST_CASE("TrackerCacheBackendKey is Jira for first and Jira:<host> for extras") {
-    TrackerConfig cfg;
-    cfg.TrackerType = "Jira";
-    cfg.Domain = "first.atlassian.net";
-    EnsureHydrated(cfg);
-    CHECK(TrackerCacheBackendKey(cfg) == "Jira");
-    JiraBackendInstance extra;
-    extra.Domain = "Second.Atlassian.Net";
-    REQUIRE(AddExtra(cfg, extra));
-    REQUIRE(SelectActive(cfg, "second.atlassian.net"));
-    CHECK(TrackerCacheBackendKey(cfg) == "Jira:second.atlassian.net");
-    extra.Domain = "[2001:db8::2]";
-    cfg.ActiveJiraDomain = cfg.JiraBackends[0].Domain;
-    ApplyActiveLiveFields(cfg);
-    REQUIRE(AddExtra(cfg, extra));
-    REQUIRE(SelectActive(cfg, "[2001:db8::2]"));
-    CHECK(TrackerCacheBackendKey(cfg) == "Jira:[2001:db8::2]");
-    cfg.TrackerType = "Plane";
-    CHECK(TrackerCacheBackendKey(cfg) == "Plane");
 }
 
 TEST_CASE("SanitizeHeaderBoundConfigKeys strips CR/LF from jira_backends[].domain") {

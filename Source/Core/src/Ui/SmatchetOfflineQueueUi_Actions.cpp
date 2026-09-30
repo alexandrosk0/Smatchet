@@ -1,6 +1,7 @@
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
 
 #include "AiChatTimestamp.h"
+#include "CacheBackendKeyPure.h"
 #include "Interfaces/IAppPendingActions.h"
 #include "PendingActionPolicyPure.h"
 #include "PendingActionTypes.h"
@@ -28,7 +29,8 @@ struct ActionRowView {
     std::int64_t DeadId = 0; ///< pending_actions_dead.dead_id (failed rows)
     std::string Kind;        ///< display name
     std::string IssueKey;
-    std::string State; ///< display text
+    std::string BackendKey; ///< the tracker site the action was written for
+    std::string State;      ///< display text
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtSec = 0;
@@ -39,6 +41,7 @@ std::shared_ptr<const PendingActionsSnapshot> s_viewSource;
 std::vector<ActionRowView> s_views;
 std::int64_t s_discardId = 0;           ///< queued row awaiting the discard confirmation, or 0
 bool s_discardConfirmRequested = false; ///< open the confirmation at the popup's own ID scope
+int s_heldRowsDrawn = 0;                ///< held rows drawn since the last test reset
 
 const char* KindLabel(const std::string& wire) {
     PendingActionKind kind;
@@ -109,6 +112,7 @@ ActionRowView MakeRowView(const PendingActionRecord& row) {
     v.Id = row.Id;
     v.Kind = KindLabel(row.Kind);
     v.IssueKey = row.IssueKey;
+    v.BackendKey = row.BackendKey;
     v.Attempts = row.Attempts;
     v.LastError = row.LastError;
     v.CreatedAtSec = row.CreatedAtEpochSec;
@@ -162,13 +166,19 @@ void DrawRowActions(IAppPendingActions& app, const ActionRowView& v) {
     }
 }
 
-void DrawRow(IAppPendingActions& app, const ActionRowView& v, std::int64_t nowMs) {
+void DrawRow(IAppPendingActions& app, const ActionRowView& v, bool held, std::int64_t nowMs) {
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(v.Kind.c_str());
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(v.IssueKey.c_str());
     ImGui::TableNextColumn();
-    if (v.Dead) {
+    if (held) {
+        ImGui::TextDisabled("%s", SmatchetOfflineQueueActionsUi::HeldStateLabel());
+        if (ImGui::IsItemHovered()) {
+            SmatchetOfflineQueueActionsUi::ShowHeldTooltip(v.BackendKey);
+        }
+        SmatchetOfflineQueueActionsUi::NoteHeldRowDrawn();
+    } else if (v.Dead) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
         ImGui::TextUnformatted(v.State.c_str());
         ImGui::PopStyleColor();
@@ -219,6 +229,20 @@ void DrawDiscardConfirm(IAppPendingActions& app) {
 
 namespace SmatchetOfflineQueueActionsUi {
 
+const char* HeldStateLabel() { return "Held"; }
+
+void ShowHeldTooltip(const std::string& backendKey) {
+    const std::string site = smatchet::cache_keys::DescribeCacheBackendKey(backendKey);
+    ImGui::SetTooltip("Queued for %s.\nIt is sent only when that site is the active tracker again; Discard deletes it.",
+                      site.empty() ? "an unknown site" : site.c_str());
+}
+
+void NoteHeldRowDrawn() { ++s_heldRowsDrawn; }
+
+int HeldRowsDrawnForTests() { return s_heldRowsDrawn; }
+
+void ResetHeldRowsDrawnForTests() { s_heldRowsDrawn = 0; }
+
 bool HasRows(const IAppPendingActions& app) {
     const std::shared_ptr<const PendingActionsSnapshot> snap = app.GetPendingActionsSnapshot();
     return !snap->Pending.empty() || !snap->Dead.empty();
@@ -253,10 +277,14 @@ void Draw(IAppPendingActions& app) {
         }
         ImGui::TableHeadersRow();
         const std::int64_t nowMs = smatchet::ai::NowUnixMs();
+        // Held-ness follows the live panes, which change without a queue change: read once per draw.
+        const std::vector<std::string> liveKeys = app.LiveCacheBackendKeys();
         for (size_t i = 0; i < s_views.size(); ++i) {
+            const ActionRowView& v = s_views[i];
+            const bool held = !v.Dead && smatchet::cache_keys::IsHeldCacheKey(v.BackendKey, liveKeys);
             ImGui::PushID(static_cast<int>(i));
             ImGui::TableNextRow();
-            DrawRow(app, s_views[i], nowMs);
+            DrawRow(app, v, held, nowMs);
             ImGui::PopID();
         }
         ImGui::EndTable();

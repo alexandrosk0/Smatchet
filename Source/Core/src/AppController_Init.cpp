@@ -90,7 +90,7 @@
 #endif
 
 #include "AiTypes.h"
-#include "JiraBackendInstancesPure.h"
+#include "CacheBackendKeyPure.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
 #include "AiAssistantUiStateAdapter.h"
@@ -415,7 +415,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     GridLiveContext& ctx = focusedContext();
     // Re-stamp the cache namespace with the RESOLVED tracker — an env fixture hook above may
     // have overridden the configured type (multi-grid Slice 1b).
-    ctx.SetCacheBackendKey(smatchet::jira_backends::TrackerCacheBackendKey(cfg));
+    ctx.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(cfg));
     // One-time legacy migrations run HERE, against the authoritative resolved key (CR-948-1):
     // this is the same key every live read/write path queries (mirrors what
     // RecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
@@ -440,6 +440,15 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
             // Same graceful-degradation contract as the copy migration above: the
             // transactional stamp leaves the flag unset on failure, so the next launch retries.
             LOG_ERROR("AppController::InitBackends pending-queue backend_key stamp failed: %s", ex.what());
+        }
+        // #2268: move rows keyed by tracker kind ("Jira", "Plane", ...) to the site-and-account keys the
+        // cache now uses, once, after the stamps above and before the first ticket read or replay tick.
+        try {
+            (void)Cache->RunOneTimeCacheIdentityRekey(smatchet::cache_keys::LegacyCacheKeyRekeys(cfg));
+        } catch (const std::exception& ex) {
+            // Same contract: the transaction leaves the flag unset on failure, so the next launch retries.
+            // Until then the legacy rows sit under keys no context uses: hidden and held, never replayed.
+            LOG_ERROR("AppController::InitBackends cache site-key re-key failed: %s", ex.what());
         }
     }
     std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker, cfg)));

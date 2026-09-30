@@ -11,6 +11,7 @@
 // clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining AppController pane-context methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
+#include "CacheBackendKeyPure.h"
 #include "CatalogOfflinePolicyPure.h"
 // clang-format on
 
@@ -52,6 +53,18 @@ namespace {
 /// plan item 17). Long enough that tab-flipping never churns contexts; short enough that a
 /// pane parked behind another all session frees its sync worker + ticket memory.
 const std::chrono::milliseconds kHiddenContextGrace(30000);
+
+// A pane names its tracker by kind ("Jira", "Plane"); the cache is namespaced by that tracker's site and
+// account. Resolves the kind against the in-memory config (ConfigManager::Load is served from its cache).
+// A key that already names a site is kept as is.
+std::string ResolvePaneCacheKey(const std::string& paneBackendKey) {
+    if (paneBackendKey.empty() || paneBackendKey.find_first_of("@:") != std::string::npos) {
+        return paneBackendKey;
+    }
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = paneBackendKey;
+    return smatchet::cache_keys::TrackerCacheBackendKey(cfg);
+}
 } // namespace
 
 void AppController::refreshFocusedContextPtr_() {
@@ -82,15 +95,18 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
         ctx->PaneId = paneId; // keys this pane's owned-ticket-id set — set BEFORE the sync service starts
         std::unique_ptr<GridContextDepsAdapter> adapter = std::make_unique<GridContextDepsAdapter>(*this, *ctx);
         ctx->ticketSync_ = std::make_unique<TicketSyncService>(*adapter);
-        if (!backendKey.empty()) {
-            ctx->SetCacheBackendKey(backendKey); // namespaced cache writes before the first swap re-stamps
+        // Stamp the site key (#2268) before the first sync re-stamps it, so cache writes made in between
+        // land in the site's namespace, never in the bare tracker kind's.
+        const std::string siteKey = ResolvePaneCacheKey(backendKey);
+        if (!siteKey.empty()) {
+            ctx->SetCacheBackendKey(siteKey);
         }
         // Same-backend seed: copy the default context's catalog so a duplicated / same-backend
         // pane renders dropdown-eligible cells immediately (one-time, pane-show — off any per
         // cell or steady-state path). Cross-backend panes start empty and fill via the focused
         // backend-switch catalog refetch.
         GridLiveContext& defaultCtx = *gridContexts_.find(kDefaultPaneId)->second;
-        if (!backendKey.empty() && backendKey == defaultCtx.CacheBackendKeyCopy()) {
+        if (!siteKey.empty() && siteKey == defaultCtx.CacheBackendKeyCopy()) {
             std::lock_guard<std::mutex> srcLock(defaultCtx.fieldCatalog.availableFieldsMutex_);
             ctx->fieldCatalog.AvailableFields = defaultCtx.fieldCatalog.AvailableFields;
             ctx->fieldCatalog.AvailableComponents = defaultCtx.fieldCatalog.AvailableComponents;
@@ -924,6 +940,32 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
         paneAdapters_.erase(it->first);
         it = gridContexts_.erase(it);
     }
+}
+
+std::vector<std::string> AppController::LiveCacheBackendKeys() const {
+    std::vector<GridLiveContext*> contexts;
+    {
+        // Issue #1457 lock order: snapshot under the map mutex, release it before any per-context
+        // mutex (CacheBackendKeyCopy takes backendKeyMutex_). Retired contexts stay alive in
+        // retiredContexts_ until ~AppController, so a snapshotted pointer never dangles.
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        contexts.reserve(gridContexts_.size());
+        for (std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.begin();
+             it != gridContexts_.end(); ++it) {
+            if (it->second) {
+                contexts.push_back(it->second.get());
+            }
+        }
+    }
+    std::vector<std::string> keys;
+    keys.reserve(contexts.size());
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        std::string key = contexts[i]->CacheBackendKeyCopy();
+        if (!key.empty() && std::find(keys.begin(), keys.end(), key) == keys.end()) {
+            keys.push_back(std::move(key));
+        }
+    }
+    return keys;
 }
 
 std::vector<std::string> AppController::CollectTicketIdsRetainedByOtherContexts(const GridLiveContext& self) const {

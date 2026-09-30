@@ -39,7 +39,7 @@ _Avoid_: "driver", "adapter"
 One Jira origin with optional per-instance email/token. Index 0 is the first site; extras inherit empty credentials from it. Not a separate tracker kind.
 
 **Active Jira domain**:
-The instance Views - Jira, the live `JiraClient`, and the ticket cache namespace currently talk to. Extra hosts use `Jira:<host>`; the first stays `"Jira"`.
+The instance Views - Jira, the live `JiraClient`, and the ticket cache namespace currently talk to. Its cache namespace is the site-and-account key `Jira@<host>#<account hash>` (`Config/CacheBackendKeyPure.h`, #2268).
 
 **Fixture backend**:
 A read-only backend (`GitHubFixtureBackend`, `PlaneFixtureBackend`) that loads canned JSON from disk instead of a live API; writes are logged no-ops.

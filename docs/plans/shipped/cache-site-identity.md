@@ -2,7 +2,7 @@
 
 > **Slug**: `cache-site-identity` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — one PR. Fixes #2268. A Pillar 6 follow-up to [offline-first](../offline-first.md).
+> **Status**: `shipped` — one PR. Fixes #2268. A Pillar 6 follow-up to [offline-first](../offline-first.md).
 
 ## Context
 
@@ -181,8 +181,55 @@ N/A — nothing is extracted or split.
 
 ## Implementation log
 
+- **Site keys.** `Config/CacheBackendKeyPure.{h,cpp}` replaces `jira_backends::TrackerCacheBackendKey`. It
+  provides:
+  - `TrackerCacheBackendKey`;
+  - `LegacyCacheKeyRekeys`;
+  - `CacheBackendKeyKind`;
+  - `DescribeCacheBackendKey`;
+  - `IsHeldCacheKey`.
+
+  The two callers (`AppController_Init`, `TicketSyncService`) switched over.
+- **One-time re-key.** `LocalCacheManager_CacheIdentity.cpp` implements `RunOneTimeCacheIdentityRekey`,
+  run at init after the two older stamp migrations, and flag-only after a database rebuild.
+- **Backend switch.** `TicketSyncService` tracks `lastAppliedCacheKey_` in place of
+  `lastAppliedJiraHost_`. A same-kind key change recreates the client and clears the in-memory tickets.
+- **Session reset.** `SmatchetUI::ResetOnCacheSiteChange` discards unsent grid edits, clears the catalog
+  and users, and refetches the catalog. The sync latches are left alone.
+- **Pane creation.** `EnsurePaneContextLive` stamps new contexts with the site key via
+  `ResolvePaneCacheKey`.
+- **Held rows.** `AppController::LiveCacheBackendKeys` (also on `IAppPendingActions`) feeds a "Held" state
+  and a site tooltip in both Offline Queue tables.
+- **Tests:**
+  - `CacheBackendKeyPure.test.cpp`;
+  - `LocalCacheIdentityRekey.test.cpp`;
+  - a same-kind site-change case in `TrackerBackendFactoryConfig.test.cpp`;
+  - bucket E `OfflineFirst/Queue_HeldForAnotherSiteIsNeverSent`.
+
 ## Deviations from plan
+
+- **Module name.** The key logic lives in a new `CacheBackendKeyPure` module rather than
+  `JiraBackendInstancesPure`: it is not Jira-specific.
+- **Re-key input.** `LegacyCacheKeyRekeys` returns `(from, to)` pairs, which is what the SQLite re-key
+  takes, so no conversion type is needed.
+- **`TicketSyncService` generalization.** The Jira-only host check became the site-key check for every
+  kind, so a Plane workspace or GitHub repo change also rebuilds the client (Plane's key-to-id map is
+  per workspace).
+- **Held-row UI.** The label is a one-word "Held", to fit the existing State column. A test hook
+  (`HeldRowsDrawnForTests`) gives bucket E a signal that does not depend on pixels.
+- **API-level bucket-E test.** The planned "change the Jira account in the live config" test became a
+  row queued under another site's key. It exercises the same replay filter and panel path without
+  mutating the shared fixture config.
 
 ## Verification (actual)
 
+- **Local, Linux:**
+  - `SmatchetTsanTests`: 817/817 cases pass, including the new key, re-key and site-switch cases;
+  - `posix-core-check` compiles every core TU;
+  - the bucket-E file passes a syntax check;
+  - `pre-ship.sh` passes.
+- **CI:** Windows `SmatchetTests`, sanitizers and the `OfflineFirst` bucket-E lane (see the PR).
+
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
+
+Moved to `docs/plans/shipped/` in the shipping PR.

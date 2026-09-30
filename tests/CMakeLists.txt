@@ -172,12 +172,14 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
+        Core/LocalCacheIdentityRekey.test.cpp
         # ISyncCache dual-impl contract (real LocalCacheManager + FakeSyncCache), incl. the pending-action
         # queue — runs here too so the Linux lane covers the real SQLite half.
         Core/SyncCacheContract.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
         # Logger.cpp now routes the file sink through RedactLogLine (audit
@@ -198,6 +200,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/GridLiveContext.test.cpp
         Core/TicketSyncService.test.cpp
         Core/JiraBackendInstancesPure.test.cpp
+        Core/CacheBackendKeyPure.test.cpp
         # TestEnvGuard extras persist. Same lane as ConfigSaveConcurrency already
         # in this subset. Bucket-E is UI-only; Linux ninja-test-linux needs this.
         Core/JiraBackendInstancesPersist.test.cpp
@@ -265,6 +268,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/CacheBackendKeyPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0
@@ -773,6 +777,7 @@ add_executable(SmatchetTests
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
     # already pulled in below.
     Core/LocalCacheTicketsV2Migration.test.cpp
+    Core/LocalCacheIdentityRekey.test.cpp
     Core/LocalCacheManagerLookup.test.cpp
     Core/LocalCacheManagerLookupPersist.test.cpp
     Core/LocalCacheManagerPendingActionsPersist.test.cpp
@@ -954,6 +959,7 @@ add_executable(SmatchetTests
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
     Core/JiraBackendInstancesPure.test.cpp
+    Core/CacheBackendKeyPure.test.cpp
     # TestEnvGuard extras persist. Same contract as ConfigManager.test.cpp and
     # ConfigSecretPersist.test.cpp in this target. Not a bucket-E UI case.
     Core/JiraBackendInstancesPersist.test.cpp
@@ -1430,6 +1436,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -1438,6 +1445,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/CacheBackendKeyPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0

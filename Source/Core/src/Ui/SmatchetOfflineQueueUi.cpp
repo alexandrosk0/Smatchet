@@ -14,6 +14,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
+#include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
@@ -579,6 +580,8 @@ struct OfflineDrawCtx {
     UiDrawSession& d;
     std::vector<UnifiedOfflineRow>& rows;
     std::string hoveredKey;
+    /// Cache keys of the live panes, read once per draw: a queued row under any other key is held (#2268).
+    std::vector<std::string> liveCacheKeys;
 };
 
 struct OfflineQueueData {
@@ -985,8 +988,19 @@ static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineR
 
 static void DrawOfflineRowStateCell(OfflineDrawCtx& ctx, const UnifiedOfflineRow& row) {
     UiDrawSession& d = ctx.d;
-    ImGui::Selectable(row.state.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+    // A queued (not failed) row written for a site no live pane uses is held: replay keeps it (#2268).
+    const bool queued =
+        row.kind == UnifiedOfflineKind::PendingCreate || row.kind == UnifiedOfflineKind::PendingFieldEdit;
+    const bool held = queued && smatchet::cache_keys::IsHeldCacheKey(row.backendKey, ctx.liveCacheKeys);
+    ImGui::Selectable(held ? SmatchetOfflineQueueActionsUi::HeldStateLabel() : row.state.c_str(), false,
+                      ImGuiSelectableFlags_SpanAllColumns);
+    if (held) {
+        SmatchetOfflineQueueActionsUi::NoteHeldRowDrawn();
+    }
     if (ImGui::IsItemHovered()) {
+        if (held) {
+            SmatchetOfflineQueueActionsUi::ShowHeldTooltip(row.backendKey);
+        }
         ctx.hoveredKey = row.key;
         if (ImGui::IsMouseDoubleClicked(0) && row.hasMergeConflict &&
             row.kind == UnifiedOfflineKind::PendingFieldEdit) {
@@ -1487,7 +1501,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     PruneOfflineSelectionToLiveRows(rows);
     ExpireOfflinePanelStatus(d);
 
-    OfflineDrawCtx ctx{app, d, rows, std::string()};
+    OfflineDrawCtx ctx{app, d, rows, std::string(), app.LiveCacheBackendKeys()};
 
     ImGui::PushID("unifiedOfflineQueues");
     DrawOfflineQueueHeader(ctx);

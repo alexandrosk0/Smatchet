@@ -21,6 +21,7 @@
 #include "PendingActionTypes.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
+#include "LocalCacheManager.h"               // enqueue rows for another site directly
 #include "SmatchetCommentsModalUi.h"         // OpenCommentsModal + GetCommentsModalSnapshotForTests
 #include "SmatchetGridUiSupport.h"           // ProcessGridFieldEdits — the real grid commit pipeline
 #include "SmatchetProjectPicker.h"           // StartAllProjectsFetch — the picker's "All projects" load
@@ -29,8 +30,9 @@
 #include "Types/ConnectivityTypes.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "Types/TransitionsTypes.h"
-#include "Ui/SmatchetToast.h" // SmatchetToastManager — clear live toasts before a click
-#include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
+#include "Ui/SmatchetOfflineQueueActionsUi.h" // HeldRowsDrawnForTests
+#include "Ui/SmatchetToast.h"                 // SmatchetToastManager — clear live toasts before a click
+#include "UiTestWriteScope.h"                 // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
 
 #include "imgui.h"
 #include "imgui_internal.h" // FindWindowByName — the real-window probe
@@ -910,6 +912,81 @@ static void RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(ImGuiTestEngine*
     };
 }
 
+// OfflineFirst/Queue_HeldForAnotherSiteIsNeverSent (#2268): the cache is namespaced by tracker site and
+// account. A queued comment and a queued create written for another site (here: another Jira host and
+// account) are held — never sent to the active site, not dead-lettered — and the Offline Queue panel draws
+// them as held.
+static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Queue_HeldForAnotherSiteIsNeverSent");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        // The lookup-cache handle is the app's LocalCacheManager: write the other site's rows through it.
+        const std::shared_ptr<LocalCacheManager> cache =
+            std::dynamic_pointer_cast<LocalCacheManager>(app->LookupCacheShared());
+        IM_CHECK_NO_RET(fake != nullptr);
+        IM_CHECK_NO_RET(cache != nullptr);
+        if (!fake || !cache) {
+            return;
+        }
+        const std::string otherSite = "Jira@other-site.atlassian.net#000000000000";
+        const std::vector<std::string> live = app->LiveCacheBackendKeys();
+        IM_CHECK_NO_RET(std::find(live.begin(), live.end(), otherSite) == live.end());
+
+        const std::size_t postsBefore = fake->AddCommentCalls().size();
+        const std::size_t createsBefore = fake->CreateIssueCalls().size();
+        const std::int64_t actionId = cache->EnqueuePendingAction(
+            otherSite, "comment_add", "OFF-1", R"({"body":"for the other site","created":1700000000})", "pending");
+        const std::int64_t createId = cache->EnqueuePendingCreate(otherSite, R"({"fields":{"summary":"other site"}})");
+        IM_CHECK_NO_RET(actionId > 0);
+        IM_CHECK_NO_RET(createId > 0);
+
+        // Online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        app->RetryOfflineQueuesNow();
+        const auto actionListed = [app, actionId]() {
+            const auto snap = app->GetPendingActionsSnapshot();
+            return std::any_of(snap->Pending.begin(), snap->Pending.end(),
+                               [actionId](const PendingActionRecord& r) { return r.Id == actionId; });
+        };
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, actionListed));
+        ctx->Yield(60);
+        app->RetryOfflineQueuesNow();
+        ctx->Yield(60);
+        IM_CHECK_NO_RET(actionListed());
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
+        const std::vector<PendingCreate> creates = app->GetPendingCreates();
+        IM_CHECK_NO_RET(std::any_of(creates.begin(), creates.end(),
+                                    [createId](const PendingCreate& c) { return c.Id == createId; }));
+        IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
+        IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
+
+        // The Offline Queue panel (inline in the Active Project pane) draws both rows as held.
+        SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
+        const bool drawnHeld = YieldUntil(ctx, 600, []() {
+            g_ui.requestActiveProjectFocus = true;
+            return WindowIsLive("Smatchet - Active Project") &&
+                   SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests() >= 2;
+        });
+        IM_CHECK_NO_RET(drawnHeld);
+
+        // Never leak the rows into a later test.
+        app->DiscardPendingActions({actionId});
+        app->DeletePendingCreates({createId});
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -922,6 +999,7 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(engine);
     RegisterOfflineFirstWatchersOfflineKeepsSavedList(engine);
     RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(engine);
+    RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

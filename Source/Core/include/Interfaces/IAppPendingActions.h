@@ -42,6 +42,10 @@ class IAppPendingActions {
 
     /// Restart every offline queue's replay timer and replay now (the queue panel's retry button).
     virtual void RetryOfflineQueuesNow() = 0;
+
+    /// Distinct cache keys (tracker site and account) of the live pane contexts. A queued row whose key is
+    /// not among them is held: replay never sends it to another site (#2268). UI thread.
+    virtual std::vector<std::string> LiveCacheBackendKeys() const = 0;
 };
 
 #endif // SMATCHET_INTERFACES_IAPP_PENDING_ACTIONS_H

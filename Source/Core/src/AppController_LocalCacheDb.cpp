@@ -27,6 +27,8 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -144,6 +146,8 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
         // Same for the pending-queue backend_key stamp (Slice 1c) — fresh DB, nothing to stamp,
         // but consume the one-time flag so it never runs against rows written after this point.
         (void)Cache->RunOneTimePendingQueueBackendKeyStamp(focusedContext().CacheBackendKeyCopy());
+        // And the site-key re-key (#2268): a fresh file holds no legacy rows; an empty list only sets the flag.
+        (void)Cache->RunOneTimeCacheIdentityRekey(std::vector<std::pair<std::string, std::string>>());
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
     } catch (...) {
