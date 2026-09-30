@@ -346,6 +346,39 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     }
 }
 
+void AppController::RunOneTimeCacheMigrations(const TrackerConfig& cfg, const std::string& resolvedCacheKey) {
+    if (!Cache) {
+        return;
+    }
+    try {
+        // Legacy rows were necessarily cached against the then-only configured backend.
+        (void)Cache->RunOneTimeTicketsV2CopyMigration(resolvedCacheKey);
+    } catch (const std::exception& ex) {
+        // Pillar 3 graceful degradation — a failed copy leaves the flag unset
+        // (transactional), so the next launch retries; the session continues with
+        // whatever v2 already holds.
+        LOG_ERROR("AppController: tickets_v2 copy migration failed: %s", ex.what());
+    }
+    // Multi-grid Slice 1c: backfill the pending-queue backend_key columns once — legacy
+    // queue rows were necessarily queued against the then-only configured backend.
+    try {
+        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(resolvedCacheKey);
+    } catch (const std::exception& ex) {
+        // Same graceful-degradation contract as the copy migration above: the
+        // transactional stamp leaves the flag unset on failure, so the next launch retries.
+        LOG_ERROR("AppController: pending-queue backend_key stamp failed: %s", ex.what());
+    }
+    // #2268: move rows keyed by tracker kind ("Jira", "Plane", ...) to the site-and-account keys the
+    // cache now uses, once, after the stamps above and before the first ticket read or replay tick.
+    try {
+        (void)Cache->RunOneTimeCacheIdentityRekey(smatchet::cache_keys::LegacyCacheKeyRekeys(cfg));
+    } catch (const std::exception& ex) {
+        // Same contract: the transaction leaves the flag unset on failure, so the next launch retries.
+        // Until then the legacy rows sit under keys no context uses: hidden and held, never replayed.
+        LOG_ERROR("AppController: cache site-key re-key failed: %s", ex.what());
+    }
+}
+
 std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     TrackerConfig cfg = ConfigManager::Load();
 
@@ -421,36 +454,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     // RecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
     // archives pending rows — archived rows must carry stamped keys) and BEFORE the first
     // ticket read (RefreshLocalData in InitFieldCatalog) / any replay tick.
-    if (Cache) {
-        const std::string resolvedCacheKey = ctx.CacheBackendKeyCopy();
-        try {
-            // Legacy rows were necessarily cached against the then-only configured backend.
-            (void)Cache->RunOneTimeTicketsV2CopyMigration(resolvedCacheKey);
-        } catch (const std::exception& ex) {
-            // Pillar 3 graceful degradation — a failed copy leaves the flag unset
-            // (transactional), so the next launch retries; the session continues with
-            // whatever v2 already holds.
-            LOG_ERROR("AppController::InitBackends tickets_v2 copy migration failed: %s", ex.what());
-        }
-        // Multi-grid Slice 1c: backfill the pending-queue backend_key columns once — legacy
-        // queue rows were necessarily queued against the then-only configured backend.
-        try {
-            (void)Cache->RunOneTimePendingQueueBackendKeyStamp(resolvedCacheKey);
-        } catch (const std::exception& ex) {
-            // Same graceful-degradation contract as the copy migration above: the
-            // transactional stamp leaves the flag unset on failure, so the next launch retries.
-            LOG_ERROR("AppController::InitBackends pending-queue backend_key stamp failed: %s", ex.what());
-        }
-        // #2268: move rows keyed by tracker kind ("Jira", "Plane", ...) to the site-and-account keys the
-        // cache now uses, once, after the stamps above and before the first ticket read or replay tick.
-        try {
-            (void)Cache->RunOneTimeCacheIdentityRekey(smatchet::cache_keys::LegacyCacheKeyRekeys(cfg));
-        } catch (const std::exception& ex) {
-            // Same contract: the transaction leaves the flag unset on failure, so the next launch retries.
-            // Until then the legacy rows sit under keys no context uses: hidden and held, never replayed.
-            LOG_ERROR("AppController::InitBackends cache site-key re-key failed: %s", ex.what());
-        }
-    }
+    RunOneTimeCacheMigrations(cfg, ctx.CacheBackendKeyCopy());
     std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker, cfg)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());

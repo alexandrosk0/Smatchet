@@ -255,6 +255,10 @@ class AppController : public IAppThreading,
     /// InitBackends helper — run the one-time legacy-project / legacy-Plane-view
     /// sweeps for the resolved backend, each guarded by its own cache_meta marker.
     void RunLegacyStartupSweeps(const std::string& activeTrackerType);
+    /// InitBackends helper — the one-time cache migrations (tickets_v2 copy, queue key stamp, site-key
+    /// re-key), run before the first ticket read or replay tick. Each is transactional: a failure is logged
+    /// and retried at the next start.
+    void RunOneTimeCacheMigrations(const TrackerConfig& cfg, const std::string& resolvedCacheKey);
 
     /// Phase 3 — resolve the Lua scripts directory, probe script files, refresh
     /// local data, and restore the field catalog from a local snapshot when present.

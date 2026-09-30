@@ -47,9 +47,7 @@ std::size_t
 LocalCacheManager::RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std::string, std::string>>& fromTo) {
     try {
         SQLite::Transaction transaction(db);
-        SQLite::Statement probe(db, "SELECT 1 FROM cache_meta WHERE key = ? LIMIT 1");
-        probe.bind(1, kCacheIdentityRekeyFlag);
-        if (probe.executeStep()) {
+        if (HasCacheMetaFlag(kCacheIdentityRekeyFlag)) {
             transaction.commit();
             return 0;
         }
@@ -71,9 +69,7 @@ LocalCacheManager::RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std:
                                    to, from);
             }
         }
-        SQLite::Statement flag(db, "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, '1')");
-        flag.bind(1, kCacheIdentityRekeyFlag);
-        flag.exec();
+        SetCacheMetaFlag(kCacheIdentityRekeyFlag); // same connection: part of this transaction
         transaction.commit();
         if (moved > 0) {
             LOG_INFO("LocalCacheManager::RunOneTimeCacheIdentityRekey moved rows=%zu across %zu key(s)", moved,
