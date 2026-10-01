@@ -313,7 +313,7 @@ class AppController : public IAppThreading,
     /** Path passed to `Initialize` (may be relative to the process working directory). */
     const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
     /** Absolute path for display; falls back to the raw path if resolution fails. */
-    std::string GetResolvedLocalCacheDbPath() const;
+    std::string GetResolvedLocalCacheDbPath() const override;
     /**
      * UI thread: closes SQLite, deletes the cache file (and WAL sidecars), opens a new empty database,
      * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`

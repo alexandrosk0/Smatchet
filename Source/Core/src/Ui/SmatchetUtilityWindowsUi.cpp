@@ -121,31 +121,17 @@ void DrawLogScrollRegion(UiDrawSession& d) {
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d, bool embedded) {
     Logger& logger = Logger::Instance();
-    const bool wantFocus = d.requestLogFocus;
     // In embedded mode (dual-ui slice 4) the mobile Log page draws this body straight into the
     // mobile page child, so the surrounding dock-window chrome is bypassed. The desktop path
     // below stays unchanged from the pre-slice-4 flow.
     if (!embedded) {
-        // Pass wantFocus as 4th arg so prepareTopLevelWindow calls SetNextWindowFocus before Begin —
-        // this is what activates a docked tab. The post-Begin SetWindowFocus below is belt-and-braces
-        // for floating-window state (mirrors SmatchetViewsDashboardUi.cpp pattern).
-        // SMATCHET_DEVIATION(rule=duplication; reason=window-open prologue idiom; owner=ui; revisit=2026-12-01)
-        prepareTopLevelWindow(d, "log", 900.0f, 320.0f, wantFocus);
-        SmatchetWindowExpand::BeginWindow(d, "Log");
-        if (!ImGui::Begin("Log", &d.showLogWindow)) {
-            if (wantFocus) {
-                d.requestLogFocus = false;
-            }
-            ImGui::End();
+        // A focus request also sets SetNextWindowFocus before Begin, which raises the window when
+        // it floats.
+        prepareTopLevelWindow(d, "log", 900.0f, 320.0f, d.requestLogFocus);
+        if (!SmatchetWindowExpand::BeginWindowWithToggle(d, "Log", &d.showLogWindow, d.requestLogFocus)) {
             return;
         }
-        SmatchetWindowExpand::DrawToggle(d);
         repairTopLevelWindow(d, "log", 360.0f, 220.0f);
-        if (wantFocus) {
-            ImGui::SetWindowFocus();
-            d.requestLogFocus = false;
-            LOG_DEBUG("Log window: focused via menu request");
-        }
     }
 
     DrawLogWindowPreferences(d);

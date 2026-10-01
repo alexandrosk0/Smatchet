@@ -602,24 +602,14 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     }
     d.bulkImportWasOpen = true;
 
-    const bool wantFocus = d.requestBulkImportFocus;
-    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
-    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
-    SmatchetWindowExpand::BeginWindow(d, "Bulk Import Issues");
-    if (!ImGui::Begin("Bulk Import Issues", &d.showBulkImport)) { // P2-M15: one name everywhere
-        if (wantFocus) {
-            d.requestBulkImportFocus = false;
-        }
-        ImGui::End();
+    // A focus request also sets SetNextWindowFocus before Begin (see drawLogWindow).
+    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, d.requestBulkImportFocus);
+    // P2-M15: one window name everywhere.
+    if (!SmatchetWindowExpand::BeginWindowWithToggle(d, "Bulk Import Issues", &d.showBulkImport,
+                                                     d.requestBulkImportFocus)) {
         return;
     }
-    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestBulkImportFocus = false;
-        LOG_DEBUG("Bulk Import window: focused via menu request");
-    }
 
     if (d.bulkImportTextBuf.empty())
         d.bulkImportTextBuf.assign(1, '\0');
@@ -722,24 +712,13 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkExport)
         return;
 
-    const bool wantFocus = d.requestBulkExportFocus;
-    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
-    prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f, wantFocus);
-    SmatchetWindowExpand::BeginWindow(d, "Bulk export tickets");
-    if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
-        if (wantFocus) {
-            d.requestBulkExportFocus = false;
-        }
-        ImGui::End();
+    // A focus request also sets SetNextWindowFocus before Begin (see drawLogWindow).
+    prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f, d.requestBulkExportFocus);
+    if (!SmatchetWindowExpand::BeginWindowWithToggle(d, "Bulk export tickets", &d.showBulkExport,
+                                                     d.requestBulkExportFocus)) {
         return;
     }
-    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "bulk_export", 420.0f, 320.0f);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestBulkExportFocus = false;
-        LOG_DEBUG("Bulk Export window: focused via menu request");
-    }
 
     ImGui::TextUnformatted("Destination path (for Save):");
     ImGui::SameLine();

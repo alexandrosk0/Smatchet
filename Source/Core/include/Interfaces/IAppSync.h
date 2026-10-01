@@ -32,6 +32,9 @@ class IAppSync {
     virtual void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                                  const ViewsStore* viewsOverride = nullptr) = 0;
     virtual VoidResult RecreateLocalCacheDatabase() = 0;
+    /// Absolute path of the local cache database, for display; the raw configured path when it
+    /// cannot be resolved.
+    virtual std::string GetResolvedLocalCacheDbPath() const = 0;
     virtual void RefreshLocalData() = 0;
     virtual TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                            const ViewsStore* viewsOverride = nullptr) = 0;

@@ -116,6 +116,14 @@ void BeginWindow(UiDrawSession& d, const char* windowName);
 /// window is docked, in its title bar when it is floating — and applies a click.
 void DrawToggle(UiDrawSession& d);
 
+/// The standard begin of a closable secondary window: BeginWindow, ImGui::Begin(windowName,
+/// open), then DrawToggle. `focusRequest` is the window's one-shot focus latch: when it is set
+/// and Begin succeeds the window takes focus, and the latch is cleared either way. Returns
+/// false when Begin returned false; End has then already been called and the caller returns
+/// without drawing. Raising a window behind a sibling dock tab needs
+/// SmatchetUI::selectDockedTab as well — focus alone does not change the selected tab.
+bool BeginWindowWithToggle(UiDrawSession& d, const char* windowName, bool* open, bool& focusRequest);
+
 /// True when `windowName` is the expanded window. Callable BEFORE its Begin (unlike
 /// IsCurrentWindowExpanded), so a window can drop ImGuiWindowFlags_NoTitleBar for the
 /// expanded frames — without a title bar there is nowhere to draw the minimize half.

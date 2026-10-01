@@ -55,7 +55,7 @@ TARGET_BASENAME = "AppController.h"
 # on drift (it broke twice as a hard assert: 113->114 at authoring, then 114->115 when the omnibar
 # feature #1261 landed a new includer right after). Bump opportunistically (e.g. after a phase that
 # reduces fan-in) together with the AGENTS.md row.
-BASELINE_FAN_IN = 115
+BASELINE_FAN_IN = 71
 
 # Quote-form include whose spelling's BASENAME is AppController.h (bare `"AppController.h"` or a
 # path-qualified `"../include/AppController.h"`). Excludes AppControllerImpl.h etc. by basename.

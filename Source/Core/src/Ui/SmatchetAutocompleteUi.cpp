@@ -5,7 +5,7 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing UI-TU include-block boilerplate clone re-surfaced by adding one include here; de-duping independent UI subsystems' include lists is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling UI TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "Tracker/JqlSuggestEnginePure.h"
 #include "Tracker/JqlUserDisplayPure.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"

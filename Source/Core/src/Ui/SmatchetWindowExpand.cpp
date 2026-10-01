@@ -6,6 +6,7 @@
 
 #include "Logger.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetLocalizedImGui.h"
 #include "SmatchetUiSession.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -340,6 +341,24 @@ void DrawToggle(UiDrawSession& d) {
         return;
     }
     DrawTitleBarToggle(s, window, id, s.ExpandedId == id, current);
+}
+
+bool BeginWindowWithToggle(UiDrawSession& d, const char* windowName, bool* open, bool& focusRequest) {
+    const bool wantFocus = focusRequest;
+    focusRequest = false;
+    BeginWindow(d, windowName);
+    // The callers' TUs route ImGui through SmatchetLocalizedImGui: the same Begin keeps the localized
+    // title (the window's real name) and the shared panel flags.
+    if (!SmatchetLocalizedImGui::Begin(windowName, open)) {
+        ImGui::End();
+        return false;
+    }
+    DrawToggle(d);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        LOG_DEBUG("%s window: focused on request", windowName);
+    }
+    return true;
 }
 
 bool IsCurrentWindowExpanded(const UiDrawSession& d) {

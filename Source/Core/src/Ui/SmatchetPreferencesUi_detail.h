@@ -16,6 +16,8 @@ class AppController;
 class IAppCommands;        // fan-in Phase 6: keybindings tab takes the narrow registry facet
 class IAppThreading;       // fan-in Phase 6 T4: whisper tab only launches workers + posts back
 class IAppTicketMutations; // Scope A: templates tab forwards the field-lookup facet to Annotate prefs
+class IAppMeta;            // General tab: update check + quit
+class IAppSync;            // General tab: local-cache path, recreate + resync
 struct TrackerField;
 struct UiDrawSession;
 enum class PreferencesCategory : std::uint8_t; // full definition in SmatchetUiSession.h
@@ -75,7 +77,8 @@ inline bool ResolvePrefsNavUseCombo(bool mobileUi, float availWidth, float fontS
 /// TU / behind SMATCHET_WITH_AI). Defined in SmatchetPreferencesUi_Shell.cpp.
 /// The SmatchetUI reference is needed to invoke onPreferencesSaveAndSync on the
 /// Save & Sync button click.
-void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight);
+void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty,
+                  float bodyHeight);
 
 /// Drop any armed hotkey-capture state in the Keybindings page. Called by the
 /// dispatch in drawPreferencesWindow whenever the page is not drawn (category
@@ -268,7 +271,7 @@ void DrawQuickCreatePreferencesTab(UiDrawSession& d);
 
 /// General category page: Updates, Language & region, Storage, Local database.
 /// Defined in SmatchetPreferencesUi_General.cpp.
-void DrawGeneralPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
+void DrawGeneralPreferencesTab(SmatchetUI& ui, const IAppMeta& meta, IAppSync& sync, UiDrawSession& d);
 
 void DrawAppearancePreferencesTab(UiDrawSession& d);
 

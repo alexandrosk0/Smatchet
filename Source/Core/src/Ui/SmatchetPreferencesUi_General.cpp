@@ -29,15 +29,11 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetUI.h"
-// Not a new dependency: the Updates / Storage / Local-database bodies moved here verbatim from
-// SmatchetPreferencesUi_Local.cpp, which dropped its own AppController.h include in the same
-// change, so tree-wide fan-in is net-unchanged. They call app.CheckForAppUpdate / RequestAppQuit /
-// GetResolvedLocalCacheDbPath / RecreateLocalCacheDatabase / SyncWithBackend — no narrower header.
-// clang-format off
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=include relocated from SmatchetPreferencesUi_Local.cpp which dropped its own, net fan-in unchanged; owner=prefs-ia; revisit=2026-12-01)
-// clang-format on
-#include "AppController.h"
+// AppController fan-in: these sections need only the update/quit (IAppMeta) and local-cache
+// (IAppSync) facets.
 #include "ConfigManager.h"
+#include "Interfaces/IAppMeta.h"
+#include "Interfaces/IAppSync.h"
 #include "SmatchetHelpMarker.h"
 #include "Ui/SmatchetDestructiveButton.h"
 #include "Ui/SmatchetStorageSnapshotPure.h"
@@ -116,7 +112,7 @@ bool LaunchDetachedSelf() {
 namespace {
 
 // Updates section: auto-check + prerelease toggles, manual check, skip-version.
-void DrawGeneralUpdatesSection(AppController& app, UiDrawSession& d) {
+void DrawGeneralUpdatesSection(const IAppMeta& meta, UiDrawSession& d) {
     if (d.prefsFilter.ShowSetting("general.updates.check_enabled")) {
         if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
             MarkPrefsDirty(d);
@@ -134,8 +130,8 @@ void DrawGeneralUpdatesSection(AppController& app, UiDrawSession& d) {
             d.appUpdateActionStatus.clear();
             d.appUpdateCheckManual = true;
             d.appUpdateCheckInFlight = true;
-            d.appUpdateFuture = std::async(std::launch::async, [&app, cfg = d.cfg]() {
-                return app.CheckForAppUpdate(cfg.UpdateIncludePrerelease);
+            d.appUpdateFuture = std::async(std::launch::async, [&meta, cfg = d.cfg]() {
+                return meta.CheckForAppUpdate(cfg.UpdateIncludePrerelease);
             });
         }
         if (d.appUpdateCheckInFlight) {
@@ -220,10 +216,10 @@ void DrawGeneralLanguageRegionSection(UiDrawSession& d) {
 }
 
 // Storage: Portable/Shared storage-mode combo and the restart prompt.
-void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
-    // `app` (RequestAppQuit) is only reached on the non-Unreal restart path below; in the
+void DrawGeneralStorageSection(const IAppMeta& meta, UiDrawSession& d) {
+    // `meta` (RequestAppQuit) is only reached on the non-Unreal restart path below; in the
     // SMATCHET_EMBEDDED_IN_UNREAL build that block is compiled out, leaving it unreferenced.
-    (void)app;
+    (void)meta;
     if (!d.prefsFilter.ShowSetting("general.storage.mode")) {
         return;
     }
@@ -301,7 +297,7 @@ void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
         if (ImGui::Button("Restart Smatchet now")) {
             if (LaunchDetachedSelf()) {
                 s_storageModeChanged = false;
-                app.RequestAppQuit();
+                meta.RequestAppQuit();
             } else {
                 SmatchetToastManager::Instance().Push(
                     SmatchetLocalization::T("toast.storage", "Storage"),
@@ -320,7 +316,7 @@ void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
 
 // Local database: intro blurb, resolved cache path, the "Recreate database..."
 // button and its confirm modal (modal stays whole with its opener).
-void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSession& d) {
     if (!d.prefsFilter.ShowSetting("general.local_database.recreate")) {
         return;
     }
@@ -331,7 +327,7 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawS
                                "local SQLite file. Recreating it clears that data only; tracker credentials "
                                "and views are not removed. A full issue refresh runs afterward.");
     ImGui::Spacing();
-    const std::string resolved = app.GetResolvedLocalCacheDbPath();
+    const std::string resolved = sync.GetResolvedLocalCacheDbPath();
     if (!resolved.empty()) {
         ImGui::TextDisabled("Cache file:");
         ImGui::SameLine();
@@ -359,14 +355,14 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawS
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            const VoidResult recreated = app.RecreateLocalCacheDatabase();
+            const VoidResult recreated = sync.RecreateLocalCacheDatabase();
             if (recreated.has_value()) {
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.success", "Success")),
                     std::string(SmatchetLocalization::T("toast.local_db_recreated",
                                                         "Local database recreated; refreshing issues.")),
                     ToastType::Success, 4000);
-                app.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
+                sync.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
                 ImGui::CloseCurrentPopup();
             } else {
                 const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
@@ -382,11 +378,11 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawS
 
 } // namespace
 
-void DrawGeneralPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] { DrawGeneralUpdatesSection(app, d); });
+void DrawGeneralPreferencesTab(SmatchetUI& ui, const IAppMeta& meta, IAppSync& sync, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] { DrawGeneralUpdatesSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region",
                                               [&] { DrawGeneralLanguageRegionSection(d); });
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] { DrawGeneralStorageSection(app, d); });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] { DrawGeneralStorageSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database",
-                                              [&] { DrawGeneralLocalDatabaseSection(ui, app, d); });
+                                              [&] { DrawGeneralLocalDatabaseSection(ui, sync, d); });
 }
