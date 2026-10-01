@@ -912,13 +912,54 @@ static void RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(ImGuiTestEngine*
     };
 }
 
+namespace {
+
+const char* kHeldQueueTestWindow = "SmatchetTest::HeldQueue";
+
+// Shared by Queue_HeldForAnotherSiteIsNeverSent's GuiFunc (draws) and TestFunc (asserts). The engine hands
+// control between the two, so they never run at the same time.
+struct HeldQueueProbe {
+    bool Draw = false;         ///< draw the Offline Queue panel in the test window this frame
+    int HeldRowsLastDraw = -1; ///< held rows that panel drew on the last frame; -1 before the first draw
+};
+
+HeldQueueProbe& HeldQueueProbeState() {
+    static HeldQueueProbe probe;
+    return probe;
+}
+
+} // namespace
+
 // OfflineFirst/Queue_HeldForAnotherSiteIsNeverSent (#2268): the cache is namespaced by tracker site and
 // account. A queued comment and a queued create written for another site (here: another Jira host and
 // account) are held — never sent to the active site, not dead-lettered — and the Offline Queue panel draws
 // them as held.
 static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Queue_HeldForAnotherSiteIsNeverSent");
+    // The real Offline Queue panel, drawn in a test-owned window that fills the work area. The grid pane
+    // that normally hosts it is sized and shown by the dock layout, and a hidden or clipped table draws no
+    // rows, so the check must not depend on where that pane ended up.
+    t->GuiFunc = [](ImGuiTestContext*) {
+        HeldQueueProbe& probe = HeldQueueProbeState();
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!probe.Draw || !app) {
+            return;
+        }
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+        if (ImGui::Begin(kHeldQueueTestWindow, nullptr,
+                         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing)) {
+            // Count only this draw: the grid pane may draw the same panel in the same frame.
+            SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
+            const bool drawn = DrawUnifiedOfflineQueuesPanel(*app, g_ui);
+            probe.HeldRowsLastDraw = drawn ? SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests() : 0;
+        }
+        ImGui::End();
+    };
     t->TestFunc = [](ImGuiTestContext* ctx) {
+        HeldQueueProbeState() = HeldQueueProbe();
         if (!OfflineFirstFixtureActive(ctx)) {
             return;
         }
@@ -980,15 +1021,18 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
         IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
 
-        // The Offline Queue panel (inline in the Active Project pane) draws both rows as held in one frame:
-        // the counter is read and reset every frame.
-        SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
-        const bool drawnHeld = YieldUntil(ctx, 600, []() {
-            g_ui.requestActiveProjectFocus = true;
-            const int heldThisFrame = SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests();
-            SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
-            return WindowIsLive("Smatchet - Active Project") && heldThisFrame >= 2;
-        });
+        // The Offline Queue panel draws both rows as held in a single draw (see the GuiFunc).
+        HeldQueueProbe& probe = HeldQueueProbeState();
+        probe.Draw = true;
+        bool drawnHeld = false;
+        for (int frame = 0; frame < 120 && !drawnHeld; ++frame) {
+            ctx->Yield();
+            drawnHeld = probe.HeldRowsLastDraw >= 2;
+        }
+        probe.Draw = false;
+        if (!drawnHeld) {
+            ctx->LogError("held rows in the last panel draw: %d (want >= 2)", probe.HeldRowsLastDraw);
+        }
         IM_CHECK_NO_RET(drawnHeld);
 
         // Never leak the rows into a later test.
