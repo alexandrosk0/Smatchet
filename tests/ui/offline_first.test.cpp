@@ -945,13 +945,22 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
 
         const std::size_t postsBefore = fake->AddCommentCalls().size();
         const std::size_t createsBefore = fake->CreateIssueCalls().size();
-        const std::int64_t actionId = cache->EnqueuePendingAction(
-            otherSite, "comment_add", "OFF-1", R"({"body":"for the other site","created":1700000000})", "pending");
+        // A comment written offline for the other site (its pane latched that site's key), and a create
+        // queued for it.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        PendingActionTarget otherTarget = app->LatchPendingActionTarget();
+        otherTarget.BackendKey = otherSite;
+        const PendingActionSubmitResult queued = app->SubmitOrQueueComment(otherTarget, "OFF-1", "for the other site");
+        IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
+        const std::int64_t actionId = queued.QueueId;
         const std::int64_t createId = cache->EnqueuePendingCreate(otherSite, R"({"fields":{"summary":"other site"}})");
         IM_CHECK_NO_RET(actionId > 0);
         IM_CHECK_NO_RET(createId > 0);
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
 
-        // Online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
+        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
         IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
         app->RetryOfflineQueuesNow();
         const auto actionListed = [app, actionId]() {
@@ -971,19 +980,25 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
         IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
 
-        // The Offline Queue panel (inline in the Active Project pane) draws both rows as held.
+        // The Offline Queue panel (inline in the Active Project pane) draws both rows as held in one frame:
+        // the counter is read and reset every frame.
         SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
         const bool drawnHeld = YieldUntil(ctx, 600, []() {
             g_ui.requestActiveProjectFocus = true;
-            return WindowIsLive("Smatchet - Active Project") &&
-                   SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests() >= 2;
+            const int heldThisFrame = SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests();
+            SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
+            return WindowIsLive("Smatchet - Active Project") && heldThisFrame >= 2;
         });
         IM_CHECK_NO_RET(drawnHeld);
 
         // Never leak the rows into a later test.
-        app->DiscardPendingActions({actionId});
-        app->DeletePendingCreates({createId});
-        IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+        if (actionId > 0) {
+            app->DiscardPendingActions({actionId});
+            IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+        }
+        if (createId > 0) {
+            app->DeletePendingCreates({createId});
+        }
     };
 }
 

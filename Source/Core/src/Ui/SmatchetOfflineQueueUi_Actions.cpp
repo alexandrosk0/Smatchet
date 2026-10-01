@@ -233,7 +233,7 @@ const char* HeldStateLabel() { return "Held"; }
 
 void ShowHeldTooltip(const std::string& backendKey) {
     const std::string site = smatchet::cache_keys::DescribeCacheBackendKey(backendKey);
-    ImGui::SetTooltip("Queued for %s.\nIt is sent only when that site is the active tracker again; Discard deletes it.",
+    ImGui::SetTooltip("Queued for %s.\nIt is sent once a grid for that site is open again; Discard deletes it.",
                       site.empty() ? "an unknown site" : site.c_str());
 }
 
