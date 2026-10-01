@@ -47,6 +47,11 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8) {
     for (const auto& f : paths) {
         ec.clear();
         if (!fs::exists(f, ec)) {
+            if (ec) {
+                // A file that cannot be inspected is not known to be gone. Reopening it as the "fresh"
+                // database would mark its one-time migrations done without moving its rows.
+                return VoidResult::Err("Could not inspect " + f.string() + ": " + ec.message());
+            }
             continue;
         }
         fs::remove(f, ec);

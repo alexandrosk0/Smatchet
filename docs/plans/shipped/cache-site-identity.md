@@ -218,6 +218,10 @@ N/A — nothing is extracted or split.
 
   The test now draws the real panel in a test-owned window that fills the work area, and polls the held
   count of that one draw.
+- **CodeRabbit round 2.** `RemoveLocalCacheDbFiles` treated a file it could not inspect as already
+  removed. "Recreate database" could then reopen the old file as the fresh one and mark its one-time
+  migrations (the re-key included) done without moving its rows. An inspection error now fails the
+  recreate instead.
 
 ## Deviations from plan
 
