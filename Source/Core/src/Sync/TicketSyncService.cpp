@@ -1,8 +1,8 @@
 #include "TicketSyncService.h"
 
 #include "AppController.h"
+#include "CacheBackendKeyPure.h"
 #include "ConfigManager.h"
-#include "JiraBackendInstancesPure.h"
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ISyncCache.h"
@@ -719,6 +719,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     // Issue #979: pass the live cfgCopy into every Create — the factory must build the
     // new client from the caller's in-memory config, not a disk re-read that races the
     // debounced prefs save.
+    const std::string newCacheKey = smatchet::cache_keys::TrackerCacheBackendKey(cfgCopy);
     bool backendSwapped = false;
     if (trackerLower == "plane" && !isCurrentlyPlane) {
         deps_.SetBackend(deps_.BackendFactory()->Create("Plane", cfgCopy));
@@ -736,29 +737,30 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
         deps_.SetBackend(deps_.BackendFactory()->Create("Linear", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to Linear.");
         backendSwapped = true;
-    } else if (trackerLower == "jira" && isCurrentlyJira) {
-        const std::string jiraHost = smatchet::jira_backends::NormalizeJiraHost(cfgCopy.Domain);
-        if (!lastAppliedJiraHost_.empty() && jiraHost != lastAppliedJiraHost_) {
-            deps_.SetBackend(deps_.BackendFactory()->Create("Jira", cfgCopy));
-            LOG_INFO("TicketSyncService: Recreated Jira client for domain '%s'.", jiraHost.c_str());
-            backendSwapped = true;
-        }
+    } else if (!lastAppliedCacheKey_.empty() && newCacheKey != lastAppliedCacheKey_) {
+        // Same tracker kind, another site or account (#2268): a Jira host or account, a Plane
+        // workspace, a GitHub repo, a Linear team. Build the client fresh (it may hold per-site
+        // state such as Plane's key-to-id map) and treat it as a backend switch below.
+        const std::string kind = ConfigManager::NormalizeViewsBackendKey(newTracker);
+        deps_.SetBackend(deps_.BackendFactory()->Create(kind, cfgCopy));
+        LOG_INFO("TicketSyncService: Recreated %s client for site '%s'.", kind.c_str(),
+                 smatchet::cache_keys::DescribeCacheBackendKey(newCacheKey).c_str());
+        backendSwapped = true;
     }
+    lastAppliedCacheKey_ = newCacheKey;
 
-    lastAppliedJiraHost_ =
-        (trackerLower == "jira") ? smatchet::jira_backends::NormalizeJiraHost(cfgCopy.Domain) : std::string();
+    // Re-stamp the cache namespace to match the requested tracker site (multi-grid Slice 1b,
+    // #2268). Unconditional + idempotent: also covers a context whose key was never wired (e.g.
+    // a test fixture) so the first sync writes under the right namespace, not under "".
+    deps_.SetCacheBackendKey(newCacheKey);
 
-    // Re-stamp the cache namespace to match the requested tracker (multi-grid Slice 1b).
-    // Unconditional + idempotent: also covers a context whose key was never wired (e.g. a
-    // test fixture) so the first sync writes under the right namespace, not under "".
-    deps_.SetCacheBackendKey(smatchet::jira_backends::TrackerCacheBackendKey(cfgCopy));
-
-    // Backend-kind switch: clear in-memory tickets so the old backend's items don't
-    // linger in the grid while the new backend's first fetch is in flight. Without this,
-    // switching Jira → GitHub (or any cross-kind swap) leaves stale tickets visible and
-    // the per-row update path tries to mutate them against the new backend, which fails
-    // or silently writes to the wrong tracker. SQLite cache rows survive — switching
-    // back later re-populates ActiveTickets via the cache hydrate path.
+    // Backend switch (another kind, or another site of the same kind): clear in-memory tickets
+    // so the old backend's items don't linger in the grid while the new backend's first fetch
+    // is in flight. Without this, switching Jira → GitHub (or site A → site B) leaves stale
+    // tickets visible and the per-row update path tries to mutate them against the new
+    // backend, which fails or silently writes to the wrong tracker. SQLite cache rows survive
+    // under their own key — switching back later re-populates ActiveTickets via the cache
+    // hydrate path.
     if (backendSwapped) {
         {
             // Clear + publish under ONE ActiveTicketsMutex scope (issue #1081). Publishing
@@ -776,7 +778,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
         // flips the Lua-window-bump flag so downstream Lua-side window state stays
         // synchronised with the grid.
         deps_.SetPendingLuaWindowBump(true);
-        LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend-kind change.");
+        LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend change.");
     }
 }
 

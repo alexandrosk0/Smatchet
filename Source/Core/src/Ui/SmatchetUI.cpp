@@ -17,6 +17,7 @@
 #include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
+#include "CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "Json/BoundedJsonParse.h"
@@ -697,6 +698,31 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     }
 }
 
+// Same tracker kind, another site or account (#2268): the previous site's catalog, users and not-yet-sent
+// grid edits must not carry over. Tickets are swapped by TicketSyncService when the sync that changed the
+// key starts, so the sync latches are left alone (resetting them would start a second sync).
+static void ResetOnCacheSiteChange(AppController& app, UiDrawSession& d) {
+    const std::string siteKey = app.FocusedCacheBackendKey();
+    std::string& last = d.lastCacheSiteKey;
+    const bool sameKindNewSite =
+        !last.empty() && siteKey != last &&
+        smatchet::cache_keys::CacheBackendKeyKind(siteKey) == smatchet::cache_keys::CacheBackendKeyKind(last);
+    last = siteKey;
+    if (!sameKindNewSite) {
+        return;
+    }
+    LOG_INFO("SmatchetUI: tracker site changed to '%s' — resetting site-specific session state",
+             smatchet::cache_keys::DescribeCacheBackendKey(siteKey).c_str());
+    DiscardQueuedGridFieldEditsOnBackendSwitch(d);
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site switch, not a failed fetch: the previous site's users must not show under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+    app.SetAvailableUsers({});
+    d.fieldCatalogWarning.clear();
+    d.fieldCatalogFetchStarted = false;
+    d.fieldCatalogLoading = false;
+    d.triggerCatalogRefetch = true;
+}
+
 // ViewState load + backend-key change reset, view-command registration, connectivity
 // monitor tick, first-launch unlock latch, stale-banner clears, dispatcher drain,
 // catalog/initial-sync, and the per-frame catalog+column cache rebuild.
@@ -733,6 +759,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             d.viewDraftId.clear();
         }
         lastViewsBackendKey = bk;
+        ResetOnCacheSiteChange(app, d);
     }
     // Register view.* commands once ViewState is loaded (idempotent — skips on 2nd+ call).
     smatchet::cmd::RegisterViewCommands(app, ViewState);

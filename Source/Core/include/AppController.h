@@ -255,6 +255,10 @@ class AppController : public IAppThreading,
     /// InitBackends helper — run the one-time legacy-project / legacy-Plane-view
     /// sweeps for the resolved backend, each guarded by its own cache_meta marker.
     void RunLegacyStartupSweeps(const std::string& activeTrackerType);
+    /// InitBackends helper — the one-time cache migrations (tickets_v2 copy, queue key stamp, site-key
+    /// re-key), run before the first ticket read or replay tick. Each is transactional: a failure is logged
+    /// and retried at the next start.
+    void RunOneTimeCacheMigrations(const TrackerConfig& cfg, const std::string& resolvedCacheKey);
 
     /// Phase 3 — resolve the Lua scripts directory, probe script files, refresh
     /// local data, and restore the field catalog from a local snapshot when present.
@@ -939,6 +943,7 @@ class AppController : public IAppThreading,
     /// Cache key of the focused backend; it namespaces the offline queues, so UI state tied to a queued row is
     /// scoped by it too.
     std::string FocusedCacheBackendKey() const;
+    std::vector<std::string> LiveCacheBackendKeys() const override;
     /// Latched strong handle to the lookup cache (the offline copies of tracker lookups), or null before the
     /// cache exists. For workers: its reads and writes hit disk.
     std::shared_ptr<ILookupCache> LookupCacheShared() const;

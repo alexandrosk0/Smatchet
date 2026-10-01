@@ -881,6 +881,11 @@ struct UiDrawSession {
     /// the returning pane's own key never changed (review HIGH-4). Fires on host pane
     /// focus switches too, since a switch re-points cfg.TrackerType.
     std::string lastViewsBackendKey;
+    /// Cache key (tracker site and account, #2268) of the focused context when the session last
+    /// looked. A change that keeps the tracker kind (another Jira host or account, Plane workspace,
+    /// GitHub repo, Linear team) resets the site-specific session state: the kind-keyed reset above
+    /// does not fire for it.
+    std::string lastCacheSiteKey;
     /// Consume-once latch set by the pane focus-switch path when it re-points
     /// cfg.TrackerType at a pane whose own GridLiveContext is already sync-live
     /// (Slice 3): the lastViewsBackendKey session reset above must still fire

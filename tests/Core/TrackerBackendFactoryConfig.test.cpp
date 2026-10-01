@@ -17,6 +17,7 @@
 #include "../support/FakeTrackerClient.h"
 #include "../support/TestEnvGuard.h"
 
+#include "CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "ITrackerBackendFactory.h"
 #include "JiraBackendInstancesPure.h"
@@ -138,7 +139,7 @@ TEST_CASE("issue #979: factory Create carries live Jira + Plane + Linear credent
     svc.CancelAndJoinActiveStreamingSync();
 }
 
-TEST_CASE("Jira same-kind host change recreates the client and stamps Jira:<host>") {
+TEST_CASE("Jira same-kind host change recreates the client and stamps the new site key") {
     smatchet_tests::TestEnvGuard env;
 
     FakeTicketSyncDeps deps;
@@ -160,7 +161,9 @@ TEST_CASE("Jira same-kind host change recreates the client and stamps Jira:<host
 
     svc.SyncWithBackend(&cfg, &views);
     REQUIRE(factory->CreateCalls == 1);
-    CHECK(deps.CacheBackendKeyImpl == "Jira");
+    // The cache namespace names the site and a hash of the account (#2268), never the email itself.
+    CHECK(deps.CacheBackendKeyImpl == smatchet::cache_keys::TrackerCacheBackendKey(cfg));
+    CHECK(deps.CacheBackendKeyImpl.rfind("Jira@first.atlassian.net#", 0) == 0);
     REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
 
     REQUIRE(smatchet::jira_backends::SelectActive(cfg, "second.atlassian.net"));
@@ -168,7 +171,53 @@ TEST_CASE("Jira same-kind host change recreates the client and stamps Jira:<host
     REQUIRE(factory->CreateCalls == 2);
     CHECK(factory->LastTrackerType == "Jira");
     CHECK(factory->LastCfg.Domain == "second.atlassian.net");
-    CHECK(deps.CacheBackendKeyImpl == "Jira:second.atlassian.net");
+    CHECK(deps.CacheBackendKeyImpl.rfind("Jira@second.atlassian.net#", 0) == 0);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("#2268: a same-kind site change recreates the client, re-keys the cache and drops the old site's tickets") {
+    smatchet_tests::TestEnvGuard env;
+
+    FakeTicketSyncDeps deps;
+    auto ownedFactory = std::make_unique<RecordingTrackerBackendFactory>();
+    RecordingTrackerBackendFactory* factory = ownedFactory.get();
+    deps.Factory = std::move(ownedFactory);
+    TicketSyncService svc(deps);
+
+    ViewsStore views;
+    TrackerConfig cfg;
+    cfg.TrackerType = "Plane";
+    cfg.PlaneUrl = "https://api.plane.so";
+    cfg.PlaneWorkspaceSlug = "alpha";
+
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(factory->CreateCalls == 1);
+    CHECK(deps.CacheBackendKeyImpl == "Plane@api.plane.so/alpha");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    // Syncing the same site again keeps the client.
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(factory->CreateCalls == 1);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    {
+        std::lock_guard<std::mutex> lk(deps.ActiveTicketsMutex());
+        CachedTicket t;
+        t.id = "ALPHA-1";
+        deps.ActiveTickets().push_back(t);
+    }
+    cfg.PlaneWorkspaceSlug = "beta";
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(factory->CreateCalls == 2);
+    CHECK(factory->LastTrackerType == "Plane");
+    CHECK(factory->LastCfg.PlaneWorkspaceSlug == "beta");
+    CHECK(deps.CacheBackendKeyImpl == "Plane@api.plane.so/beta");
+    {
+        // Cleared synchronously by the swap, before the new site's first fetch is applied.
+        std::lock_guard<std::mutex> lk(deps.ActiveTicketsMutex());
+        CHECK(deps.ActiveTickets().empty());
+    }
 
     svc.CancelAndJoinActiveStreamingSync();
 }

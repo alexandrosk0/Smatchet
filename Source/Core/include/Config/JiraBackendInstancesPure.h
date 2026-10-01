@@ -49,10 +49,6 @@ bool RemoveExtraAt(TrackerConfig& cfg, std::size_t extraIndex);
 /// live Domain (Preferences Test connection probes instance 0).
 bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras);
 
-/// `"Jira"` for the first instance; `"Jira:<host>"` for an extra. Other tracker
-/// kinds use NormalizeViewsBackendKey.
-std::string TrackerCacheBackendKey(const TrackerConfig& cfg);
-
 const JiraBackendInstance* FindByHost(const TrackerConfig& cfg, const std::string& domain);
 
 } // namespace jira_backends

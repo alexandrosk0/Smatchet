@@ -21,6 +21,7 @@
 #include "PendingActionTypes.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
+#include "LocalCacheManager.h"               // enqueue rows for another site directly
 #include "SmatchetCommentsModalUi.h"         // OpenCommentsModal + GetCommentsModalSnapshotForTests
 #include "SmatchetGridUiSupport.h"           // ProcessGridFieldEdits — the real grid commit pipeline
 #include "SmatchetProjectPicker.h"           // StartAllProjectsFetch — the picker's "All projects" load
@@ -29,8 +30,9 @@
 #include "Types/ConnectivityTypes.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "Types/TransitionsTypes.h"
-#include "Ui/SmatchetToast.h" // SmatchetToastManager — clear live toasts before a click
-#include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
+#include "Ui/SmatchetOfflineQueueActionsUi.h" // HeldRowsDrawnForTests
+#include "Ui/SmatchetToast.h"                 // SmatchetToastManager — clear live toasts before a click
+#include "UiTestWriteScope.h"                 // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
 
 #include "imgui.h"
 #include "imgui_internal.h" // FindWindowByName — the real-window probe
@@ -910,6 +912,140 @@ static void RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(ImGuiTestEngine*
     };
 }
 
+namespace {
+
+const char* kHeldQueueTestWindow = "SmatchetTest::HeldQueue";
+
+// Shared by Queue_HeldForAnotherSiteIsNeverSent's GuiFunc (draws) and TestFunc (asserts). The engine hands
+// control between the two, so they never run at the same time.
+struct HeldQueueProbe {
+    bool Draw = false;         ///< draw the Offline Queue panel in the test window this frame
+    int HeldRowsLastDraw = -1; ///< held rows that panel drew on the last frame; -1 before the first draw
+};
+
+HeldQueueProbe& HeldQueueProbeState() {
+    static HeldQueueProbe probe;
+    return probe;
+}
+
+} // namespace
+
+// OfflineFirst/Queue_HeldForAnotherSiteIsNeverSent (#2268): the cache is namespaced by tracker site and
+// account. A queued comment and a queued create written for another site (here: another Jira host and
+// account) are held — never sent to the active site, not dead-lettered — and the Offline Queue panel draws
+// them as held.
+static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Queue_HeldForAnotherSiteIsNeverSent");
+    // The real Offline Queue panel, drawn in a test-owned window that fills the work area. The grid pane
+    // that normally hosts it is sized and shown by the dock layout, and a hidden or clipped table draws no
+    // rows, so the check must not depend on where that pane ended up.
+    t->GuiFunc = [](ImGuiTestContext*) {
+        HeldQueueProbe& probe = HeldQueueProbeState();
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!probe.Draw || !app) {
+            return;
+        }
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+        if (ImGui::Begin(kHeldQueueTestWindow, nullptr,
+                         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing)) {
+            // Count only this draw: the grid pane may draw the same panel in the same frame.
+            SmatchetOfflineQueueActionsUi::ResetHeldRowsDrawnForTests();
+            const bool drawn = DrawUnifiedOfflineQueuesPanel(*app, g_ui);
+            probe.HeldRowsLastDraw = drawn ? SmatchetOfflineQueueActionsUi::HeldRowsDrawnForTests() : 0;
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        HeldQueueProbeState() = HeldQueueProbe();
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        // The lookup-cache handle is the app's LocalCacheManager: write the other site's rows through it.
+        const std::shared_ptr<LocalCacheManager> cache =
+            std::dynamic_pointer_cast<LocalCacheManager>(app->LookupCacheShared());
+        IM_CHECK_NO_RET(fake != nullptr);
+        IM_CHECK_NO_RET(cache != nullptr);
+        if (!fake || !cache) {
+            return;
+        }
+        const std::string otherSite = "Jira@other-site.atlassian.net#000000000000";
+        const std::vector<std::string> live = app->LiveCacheBackendKeys();
+        IM_CHECK_NO_RET(std::find(live.begin(), live.end(), otherSite) == live.end());
+
+        const std::size_t postsBefore = fake->AddCommentCalls().size();
+        const std::size_t createsBefore = fake->CreateIssueCalls().size();
+        // A comment written offline for the other site (its pane latched that site's key), and a create
+        // queued for it.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        PendingActionTarget otherTarget = app->LatchPendingActionTarget();
+        otherTarget.BackendKey = otherSite;
+        const PendingActionSubmitResult queued = app->SubmitOrQueueComment(otherTarget, "OFF-1", "for the other site");
+        IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
+        const std::int64_t actionId = queued.QueueId;
+        const std::int64_t createId = cache->EnqueuePendingCreate(otherSite, R"({"fields":{"summary":"other site"}})");
+        IM_CHECK_NO_RET(actionId > 0);
+        IM_CHECK_NO_RET(createId > 0);
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+
+        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        app->RetryOfflineQueuesNow();
+        const auto actionListed = [app, actionId]() {
+            const auto snap = app->GetPendingActionsSnapshot();
+            return std::any_of(snap->Pending.begin(), snap->Pending.end(),
+                               [actionId](const PendingActionRecord& r) { return r.Id == actionId; });
+        };
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, actionListed));
+        ctx->Yield(60);
+        app->RetryOfflineQueuesNow();
+        ctx->Yield(60);
+        IM_CHECK_NO_RET(actionListed());
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
+        const std::vector<PendingCreate> creates = app->GetPendingCreates();
+        IM_CHECK_NO_RET(std::any_of(creates.begin(), creates.end(),
+                                    [createId](const PendingCreate& c) { return c.Id == createId; }));
+        IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
+        IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
+
+        // The Offline Queue panel draws both rows as held in a single draw (see the GuiFunc).
+        HeldQueueProbe& probe = HeldQueueProbeState();
+        probe.Draw = true;
+        bool drawnHeld = false;
+        for (int frame = 0; frame < 120 && !drawnHeld; ++frame) {
+            ctx->Yield();
+            drawnHeld = probe.HeldRowsLastDraw >= 2;
+        }
+        probe.Draw = false;
+        if (!drawnHeld) {
+            ctx->LogError("held rows in the last panel draw: %d (want >= 2)", probe.HeldRowsLastDraw);
+        }
+        IM_CHECK_NO_RET(drawnHeld);
+
+        // Never leak the rows into a later test.
+        if (actionId > 0) {
+            app->DiscardPendingActions({actionId});
+            IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+        }
+        if (createId > 0) {
+            app->DeletePendingCreates({createId});
+        }
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -922,6 +1058,7 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstProjectPickerOfflineShowsSavedProjects(engine);
     RegisterOfflineFirstWatchersOfflineKeepsSavedList(engine);
     RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(engine);
+    RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
