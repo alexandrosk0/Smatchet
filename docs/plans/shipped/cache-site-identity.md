@@ -207,6 +207,10 @@ N/A — nothing is extracted or split.
   - a same-kind site-change case in `TrackerBackendFactoryConfig.test.cpp`;
   - bucket E `OfflineFirst/Queue_HeldForAnotherSiteIsNeverSent`.
 
+- **CodeRabbit round 1.** The restored-pane snapshot read in `EnsurePaneLiveSyncStarted` (tickets and
+  owned ids) still used the bare tracker kind, so a restored pane would not have found its saved rows.
+  It now reads under the pane's site key, the key the sync stamps and the owned ids are recorded with.
+
 ## Deviations from plan
 
 - **Module name.** The key logic lives in a new `CacheBackendKeyPure` module rather than

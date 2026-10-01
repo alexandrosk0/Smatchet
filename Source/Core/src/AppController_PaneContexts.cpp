@@ -177,7 +177,7 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
         }
         // Durable cross-restart pane snapshot (multi-grid Slice 5a, plan item 21, Deliverable 1):
         // read this pane's LAST-synced rows from tickets_v2 off the UI thread, namespaced by the
-        // pane's OWN backend key (backend-key isolation — a GitHub pane reads only GitHub rows).
+        // pane's OWN site key (isolation — a GitHub pane reads only its repo's rows).
         // Seeded into ActiveTickets on the main-thread hop below so the grid renders the cached
         // snapshot instantly, before the live fetch completes (a restored pane is no longer a
         // cold blank grid). GetAllTickets uses non-cached local statements, safe under the LCM's
@@ -195,7 +195,9 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
         // first edit, when the refresh finally applied the filter.
         std::vector<CachedTicket> seedTickets;
         if (Cache) {
-            const std::string seedKey = ConfigManager::NormalizeViewsBackendKey(cfgCopy.TrackerType);
+            // The pane's site key (#2268): the namespace its rows were saved under and its owned ids recorded
+            // with (the sync stamps the same key from this config). Never the bare tracker kind.
+            const std::string seedKey = smatchet::cache_keys::TrackerCacheBackendKey(cfgCopy);
             if (!seedKey.empty()) {
                 try {
                     seedTickets = Cache->GetAllTickets(seedKey);
