@@ -210,6 +210,14 @@ N/A — nothing is extracted or split.
 - **CodeRabbit round 1.** The restored-pane snapshot read in `EnsurePaneLiveSyncStarted` (tickets and
   owned ids) still used the bare tracker kind, so a restored pane would not have found its saved rows.
   It now reads under the pane's site key, the key the sync stamps and the owned ids are recorded with.
+- **Bucket-E held-rows check.** The first CI run held both rows correctly but never counted them as
+  drawn, for two reasons in the test:
+  - it read the panel inside the docked Active Project pane, which the dock layout can hide or clip
+    (a clipped table draws no rows);
+  - its poll re-ran a counter-resetting predicate after success.
+
+  The test now draws the real panel in a test-owned window that fills the work area, and polls the held
+  count of that one draw.
 
 ## Deviations from plan
 
