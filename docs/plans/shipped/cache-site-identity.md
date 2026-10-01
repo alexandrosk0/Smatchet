@@ -1,4 +1,5 @@
 # Plan — namespace the local cache by tracker site and account
+<!-- plan-date: 2026-09-30 -->
 
 > **Slug**: `cache-site-identity` (matches this file's basename without `.md`).
 >
