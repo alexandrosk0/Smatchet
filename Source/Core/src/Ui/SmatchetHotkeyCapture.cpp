@@ -102,6 +102,10 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, b
             "##rebind" + (idSuffix != nullptr ? idSuffix : "");
         if (ImGui::SmallButton(btnId.c_str())) {
             capturing = true;
+            // Stamp now: dispatchKeybindings runs before this widget next frame, and
+            // HotkeyCaptureArmedRecently must suppress Ctrl+wheel zoom so capture
+            // can read the delta (otherwise the zoom binding clears MouseWheel first).
+            g_hotkeyCaptureArmedFrame = ImGui::GetFrameCount();
             s_showNeedsModifierWarning = false; // fresh capture, fresh slate
         }
     } else {

@@ -1029,12 +1029,11 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
             continue;
         }
-        // Wheel bindings own the delta for this frame — clear so ImGui / grid /
+        // Wheel bindings own the delta for this frame — mark now, clear after the
+        // loop so every wheel binding can MatchHotkey against the live sign (Up vs
+        // Down and distinct actions on the same notch). Clear below so ImGui / grid /
         // tooltip scroll do not also run (browser-like Ctrl+wheel = zoom only).
-        if (pk.hk.wheelDir != 0 && !consumedWheel) {
-            ::ImGuiIO& mutIo = ::ImGui::GetIO();
-            mutIo.MouseWheel = 0.0f;
-            mutIo.MouseWheelH = 0.0f;
+        if (pk.hk.wheelDir != 0) {
             consumedWheel = true;
         }
         // P2-M4: combos that plain typing can produce (no Ctrl/Alt/Win, non-F-key —
@@ -1086,6 +1085,11 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         if (!r.Ok) {
             LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
         }
+    }
+    if (consumedWheel) {
+        ::ImGuiIO& mutIo = ::ImGui::GetIO();
+        mutIo.MouseWheel = 0.0f;
+        mutIo.MouseWheelH = 0.0f;
     }
 }
 
