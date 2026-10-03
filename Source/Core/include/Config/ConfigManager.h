@@ -312,11 +312,11 @@ struct TrackerConfig {
     // the post-V1 (pre-wheel) default alias set. Same "leave customised rows alone"
     // contract as V1.
     bool MigratedMultiHotkeyZoomV2 = false;
-    // One-shot migration flag: for zoom rows whose combos are still a subset of the
-    // shipped Defaults() set, append any missing default aliases (incl. mouse-wheel).
-    // Covers configs left on a partial default set after V1/V2 already flagged done
-    // (e.g. only Ctrl+= with migrated_multi_hotkey_zoom_v1=true — V2 expects the full
-    // pre-wheel 3-combo and skips). Custom keys outside Defaults stay untouched.
+    // One-shot migration flag: retry after V2's exact-match miss. V2 only widens the
+    // full pre-wheel snapshot and still sets its flag when it skips, so rows that
+    // kept just the legacy primary (Ctrl+= / Ctrl+-) never got mouse-wheel. V3
+    // appends missing Defaults() aliases when every existing combo is still in the
+    // shipped set (non-empty). Custom / cleared / missing rows stay untouched.
     bool MigratedMultiHotkeyZoomV3 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---

@@ -750,18 +750,21 @@ TEST_CASE("ConfigMigration zoom wheel aliases: a rebound zoom row is left alone"
 }
 
 // --- default-family zoom catch-up (MigrateZoomHotkeyAliasesV3) -------------------
-// V1/V2 only rewrite exact legacy snapshots. A config already flagged done that still
-// holds a partial default set (only Ctrl+=, or pre-wheel aliases after an older save
-// stripped the wheel combos) needs V3 to append the missing Defaults() aliases.
+// #2276's V2 only widens an exact pre-wheel default snapshot, then sets its flag
+// even when it skipped. The common on-disk shape — zoom in = only Ctrl+=, zoom out
+// = only Ctrl+- — is not an exact match, so V2 skips forever. V3 appends missing
+// Defaults() aliases for those partial default-family rows.
 
-TEST_CASE("ConfigMigration zoom default-family: appends missing aliases when V1+V2 already flagged") {
+TEST_CASE("ConfigMigration zoom default-family: upgrades sole legacy primary after V2 skipped") {
     smatchet_tests::TestEnvGuard env;
+    // Exact shape reported for an existing smatchet_config.json after #2276: V1+V2
+    // already flagged, rows still hold only the original single-combo defaults.
     const std::string pre =
         R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
         "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
         "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
         {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true},
-        {"command_id":"ui.zoom.out","hotkeys":["Ctrl+-","Ctrl+NumSubtract"],"args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkey":"Ctrl+-","args_json":"{}","enabled":true},
         {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
     ]}})json";
     WriteConfigRaw(env, pre);
@@ -776,16 +779,37 @@ TEST_CASE("ConfigMigration zoom default-family: appends missing aliases when V1+
     REQUIRE(zoomIn.Hotkeys.size() == 4);
     CHECK(zoomIn.HasHotkey("Ctrl+MouseWheelUp"));
     CHECK(zoomIn.HasHotkey("Ctrl+NumAdd"));
+    CHECK(zoomIn.HasHotkey("Ctrl+Shift+="));
 
     const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
     REQUIRE(zo >= 0);
     const Keybinding& zoomOut = cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)];
     REQUIRE(zoomOut.Hotkeys.size() == 3);
+    CHECK(zoomOut.HasHotkey("Ctrl+-"));
+    CHECK(zoomOut.HasHotkey("Ctrl+NumSubtract"));
     CHECK(zoomOut.HasHotkey("Ctrl+MouseWheelDown"));
 
     const int zr = cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}");
     REQUIRE(zr >= 0);
     CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zr)].Hotkeys.size() == 2);
+}
+
+TEST_CASE("ConfigMigration zoom default-family: cleared empty row stays cleared") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.out","hotkey":"","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.empty());
 }
 
 TEST_CASE("ConfigMigration zoom default-family: custom keys outside Defaults stay untouched") {

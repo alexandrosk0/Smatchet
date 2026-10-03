@@ -450,15 +450,19 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
 }
 
 // One-shot migration: bring default-family zoom rows up to the current Defaults()
-// alias set by appending any missing combos. Needed because V1/V2 only rewrite exact
-// legacy snapshots — a config already flagged done that still holds a *partial*
-// default set (sole legacy primary combo, or pre-wheel aliases after an older build
-// stripped the wheel aliases on save) would otherwise never receive the mouse-wheel
-// zoom aliases.
+// alias set by appending any missing combos.
 //
-// A row is touched only when every existing combo is still a member of Defaults()
-// for that action (subset of the shipped set). Any custom key outside Defaults
-// leaves the row alone; missing rows stay missing.
+// Why V2 is not enough (#2276): it widens ONLY an exact match of the pre-wheel
+// default snapshot (zoom-in: three keyboard aliases; zoom-out: two). A common
+// on-disk shape is just the legacy primary for each action, which is not an
+// exact match, so V2 skips. It still marks migrated_multi_hotkey_zoom_v2 done,
+// so those rows never retry and never get the mouse-wheel aliases. Fresh
+// configs are fine (Defaults() already has wheel); existing partial-default
+// configs are not.
+//
+// V3 retries once for rows whose every existing combo is still a member of
+// Defaults() (non-empty subset of the shipped set). Custom keys outside Defaults,
+// empty/cleared rows, and missing rows stay untouched.
 void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = j.value("migrated_multi_hotkey_zoom_v3", false);
     if (cfg.MigratedMultiHotkeyZoomV3) {
@@ -475,6 +479,10 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
         }
         Keybinding& row = cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)];
         const Keybinding& def = defaults.Bindings[static_cast<std::size_t>(di)];
+        // Cleared on purpose — do not resurrect the full default set into an empty row.
+        if (row.Hotkeys.empty()) {
+            continue;
+        }
         bool defaultFamily = true;
         for (const std::string& hk : row.Hotkeys) {
             if (!def.HasHotkey(hk)) {
