@@ -45,9 +45,9 @@ incident it then reports.
 
 1. **Before 2026-09-30**, re-evaluate the 25-marker cohort (they are listed in the audit's retarget
    table) and give each an outcome: retire it, or re-date it to a *staggered* date, or convert it to
-   `revisit=never` where the exemption is genuinely standing. Most are the include-prologue class in
-   [`2026-08-16-dup-auditor-flags-include-prologues.md`](../tooling/2026-08-16-dup-auditor-flags-include-prologues.md)
-   and should be retired by fixing the auditor, not re-dated.
+   `revisit=never` where the exemption is genuinely standing. Most are the include-prologue class
+   (tooling entry "`dup_audit.py` flags shared include prologues", archived in [`applied.md`](../applied.md))
+   and should be retired by fixing the auditor, not re-dated. The auditor fix landed 2026-10-03.
 2. **Stop the class regenerating**: a sweep that stamps N markers must not give them all one date.
    Add a check to the deviation well-formedness gate proposed in
    [`2026-08-16-wrapped-deviation-markers-invisible-to-gate.md`](../tooling/2026-08-16-wrapped-deviation-markers-invisible-to-gate.md)

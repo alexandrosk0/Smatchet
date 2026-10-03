@@ -9,7 +9,6 @@
 // hold across this run.
 // Default frames = 600 (10 s at 60 fps). For a CI smoke job, raise to 3600.
 
-// SMATCHET_DEVIATION(rule=duplication; reason=plain include-prologue clone shared with the sibling perf scenarios — re-entered the delta scan by the UiPerfRowsJson.h include added for the shared rows serializer; owner=scenarios; revisit=2027-03-01)
 #include "Commands/Scenarios/IScenario.h"
 #include "Ui/UiPerfRowsJson.h"
 
@@ -20,6 +19,7 @@
 #include <algorithm>
 #include <string>
 
+// SMATCHET_DEVIATION(rule=duplication; reason=IScenario class skeleton (namespace open, Name/OnStart heads, frames/pixPerFrame arg reads) shared with the sibling perf scenarios; owner=scenarios; revisit=2027-03-01)
 namespace smatchet {
 namespace cmd {
 

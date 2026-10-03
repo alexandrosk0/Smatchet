@@ -5,7 +5,6 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling UI TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "Tracker/JqlSuggestEnginePure.h"
 #include "Tracker/JqlUserDisplayPure.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"

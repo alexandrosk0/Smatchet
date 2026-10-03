@@ -199,3 +199,54 @@ _mk_repo() {
     [[ "$output" == *"[dup] FAIL"* ]]
     [[ "$output" != *"[dup] hint:"* ]]
 }
+
+# ---------- preprocessor prologues (tooling 2026-08-16) ----------
+
+# Emit a 40-line include block cycling five line shapes, as real prologues do (one repeated shape
+# would be skipped as ubiquitous by MAX_FP_OCCURRENCES whatever the prologue filter does).
+_includes() {
+    "$PY" - <<'PY'
+shapes = ('#include "Dir%d/File.h"', "#include <lib%d/sub/file.hpp>", "#include <cstd%d>",
+          '#include "Gen%d.inc" // generated', "#include <a%d/b.h>")
+for i in range(40):
+    print(shapes[i % 5] % i)
+PY
+}
+
+@test "--diff is silent when two sibling TUs share only an include block" {
+    repo="$BATS_TEST_TMPDIR/prologue"
+    _mk_repo "$repo"
+    { _includes; echo "void a(){ int x=1; x+=2; }"; } > "$repo/Source/Core/src/Tracker/A.cpp"
+    { _includes; echo "void b(){ float y=3; y-=4; }"; } > "$repo/Source/Core/src/Tracker/B.cpp"
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"[dup] FAIL"* ]]
+}
+
+# The guard against over-correction: only the directives leave the stream, so a clone that runs on
+# past a shared include block into real logic still FAILs, reported at its first line of logic.
+@test "--diff still FAILs a clone that continues past a shared include block, at the logic line" {
+    repo="$BATS_TEST_TMPDIR/prologue-logic"
+    _mk_repo "$repo"
+    { _includes; _block clone v; } > "$repo/Source/Core/src/Tracker/A.cpp"
+    { _includes; _block clone v; } > "$repo/Source/Core/src/Tracker/B.cpp"
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[dup] FAIL A.cpp:41 <-> B.cpp:41"* ]]
+}
+
+@test "--dead-markers lists a marker that exempts no clone, never one that does" {
+    repo="$BATS_TEST_TMPDIR/dead"
+    _mk_repo "$repo"
+    marker="// SMATCHET_DEVIATION(rule=duplication; reason=test; owner=t; revisit=never)"
+    { echo "$marker"; _block clone v; echo "$marker"; echo "int lone(){ return 7; }"; } > "$repo/Source/Core/src/Tracker/A.cpp"
+    _block clone v > "$repo/Source/Core/src/Tracker/B.cpp"
+    git -C "$repo" add -A && git -C "$repo" commit -qm markers
+    cd "$repo"
+    run "$PY" "$AUD" --dead-markers
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Source/Core/src/Tracker/A.cpp:3"* ]]
+    [[ "$output" != *"Source/Core/src/Tracker/A.cpp:1"* ]]
+}

@@ -1,4 +1,3 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=tracker-backend; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"

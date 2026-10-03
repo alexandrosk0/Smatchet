@@ -12,7 +12,6 @@
 // resolves them across the new TUs without ODR collisions against any other
 // file's anon namespace.
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include-list boilerplate: quote includes, the SmatchetLocalizedImGui define and the std includes normalize to the same tokens as other Ui TUs' lists, so adding <cstdint> for the lookup generations made the run long enough to match; nothing behavioural to factor out; owner=ui; revisit=2027-06-30)
 #include "AnnotateAnalysisUi.h"
 
 #include "CallstackParser.h"

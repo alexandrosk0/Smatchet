@@ -11,9 +11,6 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "Ui/SmatchetSecretInput.h"
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the WIN32 lean-and-mean preamble + AI-cluster include run is grandfathered boilerplate shared with SmatchetPreferencesUi_Whisper.cpp and SmatchetAiAssistantUi.cpp; adding the Commands/IMainThreadPoster.h include (fan-in Phase 6 T4 dispatcher de-publicizing) re-hashed the clone windows vs both siblings — not a real copy-paste; owner=orchestrator; revisit=when the AI-surface include prologue is factored into a shared header)
-// clang-format on
 #include "SmatchetUI.h"
 #include "ConfigManager.h"
 #include "SmatchetToast.h"

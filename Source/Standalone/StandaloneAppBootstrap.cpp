@@ -12,13 +12,6 @@
 
 #include "StandaloneBoot_detail.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=plain include boilerplate — this TU's core-header
-// list overlaps AppController_Init.cpp / AppController_McpActivity.cpp because they compose the
-// same subsystems, and the clone only became contiguous enough to trip the token threshold when
-// the stb_image_write impl block that used to split this run moved to StandaloneBoot_detail.cpp
-// (#2092 de-dup of the screenshot-write tail); there is nothing behavioural to factor out and a
-// shared mega-include header would be strictly worse coupling, which the DRY gate doc endorses
-// exempting; owner=orchestrator; revisit=if a shared standalone-boot prologue header lands)
 #include "AppController.h"
 #include "Dx12Bootstrap.h"
 #include "GridContextDepsAdapter.h"

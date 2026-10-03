@@ -73,7 +73,6 @@
 
 #include <ghc/filesystem.hpp>
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with SmatchetUI.cpp; owner=orchestrator; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "DefaultTrackerBackendFactory.h"
 
 #include "GitHubFixtureBackend.h"

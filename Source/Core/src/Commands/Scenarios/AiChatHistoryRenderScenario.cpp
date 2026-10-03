@@ -19,9 +19,6 @@
 // neither registers nor compiles the scenario.
 
 #if defined(SMATCHET_WITH_AI)
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone (AI gate + shared include block) across scenario TUs; owner=command-system; revisit=2026-12-31)
-// clang-format on
 
 #include "Commands/Scenarios/IScenario.h"
 

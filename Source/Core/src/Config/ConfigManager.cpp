@@ -18,9 +18,6 @@
 // public header (ConfigManager.h) only pulls <nlohmann/json_fwd.hpp> — every consumer pays the
 // 75-LOC fwd-decl parse cost instead of the full 30k-LOC json.hpp.
 #include <nlohmann/json.hpp>
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared ConfigManager-TU include block + config_detail using-prologue is grandfathered across the god-file-split siblings (ConfigManager.cpp / _Save / _Load / _Secrets) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared ConfigManager TU prologue header is introduced)
-// clang-format on
 
 #include <algorithm>
 #include <cstdlib>

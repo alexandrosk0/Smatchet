@@ -1,4 +1,3 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetJqlProjectPill_detail.h"
 

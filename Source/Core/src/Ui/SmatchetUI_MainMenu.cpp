@@ -8,9 +8,6 @@
 // consumers. Order matters: `imgui_internal.h` must be pulled BEFORE the
 // macro redefinition.
 
-// The marker below must stay the nearest non-blank line above the include block (the
-// dup auditor only honours it there); CommentPragmas in .clang-format keeps it one line.
-// SMATCHET_DEVIATION(rule=duplication; reason=dup gate flags this TU's #include list as a clone of SmatchetUI.cpp's — sibling UI TUs sharing a common include set; directive overlap not copy-pasted logic; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "Commands/CommandPaletteUi.h"

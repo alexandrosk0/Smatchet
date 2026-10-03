@@ -36,9 +36,6 @@
 #include <iterator>
 
 #include <nlohmann/json.hpp>
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared AppController_LuaBindings-TU include prologue is grandfathered across the god-file-split siblings (AppController_LuaBindings.cpp / _Ui / _Ai / _Tickets) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared AppController_LuaBindings TU prologue header is introduced)
-// clang-format on
 
 #include "Json/BoundedJsonParse.h"
 

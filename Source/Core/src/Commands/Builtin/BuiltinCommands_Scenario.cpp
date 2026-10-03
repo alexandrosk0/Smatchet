@@ -10,9 +10,6 @@
 // fan-in Phase 5: depend on the narrow IAppScenarios facet, not the full AppController.h
 // (ScenarioRunner's full definition comes from Commands/Scenarios/IScenario.h, included above).
 #include "Interfaces/IAppScenarios.h"
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared per-category command-TU include + namespace-open boilerplate (Command.h / CommandRegistry.h / json.hpp / std headers) is grandfathered across the BuiltinCommands_*.cpp siblings; migrating this TU off AppController.h perturbed the block enough to re-hash the boilerplate clone vs BuiltinCommands_Users.cpp — not a real copy-paste; owner=orchestrator; revisit=when the builtin-command include boilerplate is factored into a shared prologue)
-// clang-format on
 #include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <string>

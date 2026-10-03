@@ -2,7 +2,6 @@
 // Dual-target: no GL/GLFW here; the engine-context prefill degrades to an empty
 // description when no host snapshot exists (standalone build).
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetQuickCreateIssueUi.h"
 
 // clang-format off

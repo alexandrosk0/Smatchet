@@ -13,9 +13,6 @@
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared CliCommandRunner-TU include block + cli::detail using-prologue is grandfathered across the god-file-split siblings (CliCommandRunner.cpp / CliArgs / CliSpawn / CliDispatch / CliHelpAndAttach) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared CliCommandRunner TU prologue header is introduced)
-// clang-format on
 
 #if defined(SMATCHET_WITH_MCP)
 #if defined(_WIN32)
@@ -34,9 +31,6 @@
 #endif // SMATCHET_WITH_MCP
 
 #include <ghc/filesystem.hpp>
-// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
-// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
-// CliCommandRunner TU prologue header is introduced)
 
 #include <chrono>
 #include <cstdint>
@@ -51,9 +45,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h> // waitpid(WNOHANG) — PollSpawnedChild liveness probe
-// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
-// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
-// CliCommandRunner TU prologue header is introduced)
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
@@ -299,8 +290,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, SpawnedChild*
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outChild)
         outChild->logPath = logPath;
-        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;

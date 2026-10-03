@@ -14,7 +14,6 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
-// SMATCHET_DEVIATION(rule=duplication; reason=incidental-includes; owner=tracker-backend; revisit=2026-12-31)
 #include <chrono>
 #include <cstdint>
 #include <functional>

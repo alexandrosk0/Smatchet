@@ -11,7 +11,6 @@
 
 namespace {
 
-// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block; owner=tracker-backend; revisit=2026-12-31)
 using tracker_query_suggest::AppendFieldCatalog;
 using tracker_query_suggest::AppendTerms;
 using tracker_query_suggest::AppendValueSuggestions;
