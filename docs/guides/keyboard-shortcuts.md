@@ -160,6 +160,10 @@ to the full set in the table above (including `Ctrl+MouseWheelUp` /
 cleared — is left exactly as you set it; use **Reset all to defaults** if you want
 the alias set instead.
 
+Configs that already ran an earlier zoom migration but still hold only a *partial*
+default set (for example just `Ctrl+=`) also pick up the missing aliases on the next
+launch — again only while every existing combo is still one of the shipped defaults.
+
 If you run an older Smatchet build against the same config file, it reads the first
 combo of each binding and ignores the rest, so shortcuts keep working there. Saving
 from that older build drops the extra combos.
