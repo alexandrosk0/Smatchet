@@ -302,7 +302,7 @@ TEST_CASE("AddBindingHotkey / RemoveBindingHotkey manage one alias at a time") {
     CHECK(c.Bindings[static_cast<size_t>(zi)].Enabled);
 
     CHECK(c.RemoveBindingHotkey("ui.zoom.out", "{}", "Ctrl+Down"));
-    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 3);
+    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 4); // 3 defaults + Ctrl+PageDown
     CHECK_FALSE(c.Bindings[static_cast<size_t>(zi)].HasHotkey("Ctrl+Down"));
     CHECK_FALSE(c.RemoveBindingHotkey("ui.zoom.out", "{}", "Ctrl+Down")); // already gone
     CHECK_FALSE(c.RemoveBindingHotkey("nope", "{}", "Ctrl+Down"));        // unknown action
