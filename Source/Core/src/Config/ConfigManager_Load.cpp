@@ -452,8 +452,9 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
 // One-shot migration: bring default-family zoom rows up to the current Defaults()
 // alias set by appending any missing combos. Needed because V1/V2 only rewrite exact
 // legacy snapshots — a config already flagged done that still holds a *partial*
-// default set (only Ctrl+=, or pre-wheel 3-combo after an older build stripped the
-// wheel aliases on save) would otherwise never receive Ctrl+MouseWheelUp/Down.
+// default set (sole legacy primary combo, or pre-wheel aliases after an older build
+// stripped the wheel aliases on save) would otherwise never receive the mouse-wheel
+// zoom aliases.
 //
 // A row is touched only when every existing combo is still a member of Defaults()
 // for that action (subset of the shipped set). Any custom key outside Defaults
