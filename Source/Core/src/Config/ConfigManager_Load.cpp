@@ -394,6 +394,61 @@ void MigrateZoomHotkeyAliasesV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV1 = true;
 }
 
+// One-shot migration: widen zoom bindings with Ctrl+MouseWheelUp/Down. Same
+// replace-not-merge rationale as V1 — a config saved before the wheel aliases
+// would otherwise keep the pre-wheel set forever.
+//
+// Widen ONLY while the combo set is exactly the post-V1 (pre-wheel) default, so a
+// user who rebound or cleared Zoom keeps their choice. Missing rows stay missing.
+void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedMultiHotkeyZoomV2 = j.value("migrated_multi_hotkey_zoom_v2", false);
+    if (cfg.MigratedMultiHotkeyZoomV2) {
+        return;
+    }
+    struct ZoomPreWheel {
+        const char* commandId;
+        const char* const* preWheel;
+        std::size_t preWheelCount;
+    };
+    static const char* const kZoomInPre[] = {"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd"};
+    static const char* const kZoomOutPre[] = {"Ctrl+-", "Ctrl+NumSubtract"};
+    static const ZoomPreWheel kZoom[] = {
+        {"ui.zoom.in", kZoomInPre, sizeof(kZoomInPre) / sizeof(kZoomInPre[0])},
+        {"ui.zoom.out", kZoomOutPre, sizeof(kZoomOutPre) / sizeof(kZoomOutPre[0])},
+    };
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int widened = 0;
+    for (const ZoomPreWheel& z : kZoom) {
+        const int idx = cfg.Keybindings.FindBindingIndex(z.commandId, "{}");
+        const int di = defaults.FindBindingIndex(z.commandId, "{}");
+        if (idx < 0 || di < 0) {
+            continue;
+        }
+        Keybinding& row = cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)];
+        if (row.Hotkeys.size() != z.preWheelCount) {
+            continue;
+        }
+        bool exact = true;
+        for (std::size_t i = 0; i < z.preWheelCount; ++i) {
+            if (row.Hotkeys[i] != z.preWheel[i]) {
+                exact = false;
+                break;
+            }
+        }
+        if (!exact) {
+            continue; // customised or cleared — leave the user's choice alone
+        }
+        row.Hotkeys = defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys;
+        ++widened;
+    }
+    if (widened > 0) {
+        LOG_INFO("ConfigManager: widened %d zoom keybinding(s) with mouse-wheel aliases "
+                 "(migrated_multi_hotkey_zoom_v2)",
+                 widened);
+    }
+    cfg.MigratedMultiHotkeyZoomV2 = true;
+}
+
 // First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
 // LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
 void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -523,6 +578,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // carries the alias sets, so a freshly-seeded row arrives complete and this one's
     // exact-legacy-match guard correctly skips it.
     MigrateZoomHotkeyAliasesV1(j, cfg);
+    MigrateZoomHotkeyAliasesV2(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

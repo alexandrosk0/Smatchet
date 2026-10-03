@@ -308,6 +308,10 @@ struct TrackerConfig {
     // to the full alias set once a binding can hold several. Only a row still carrying
     // exactly the legacy default is widened, so a user's own zoom key survives.
     bool MigratedMultiHotkeyZoomV1 = false;
+    // One-shot migration flag: adds Ctrl+MouseWheelUp/Down to zoom bindings still on
+    // the post-V1 (pre-wheel) default alias set. Same "leave customised rows alone"
+    // contract as V1.
+    bool MigratedMultiHotkeyZoomV2 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---
     // Which host-engine snapshot fields (pushed by the Unreal plugin) are folded into the

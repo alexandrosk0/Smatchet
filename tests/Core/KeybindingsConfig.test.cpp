@@ -17,7 +17,8 @@ namespace {
 struct ExpectedBinding {
     // Nullptr-terminated alias set. C++14 aggregate init zero-fills the tail, so a
     // single-combo row still writes just {"Ctrl+B"} and the rest read back as nullptr.
-    const char* hotkeys[4];
+    // Cap 5 so zoom.in's four aliases still leave a nullptr terminator for the counter.
+    const char* hotkeys[5];
     const char* commandId;
     const char* argsJson;
 };
@@ -43,9 +44,10 @@ const ExpectedBinding kExpectedDefaults[] = {
     {{"Ctrl+Shift+B"}, "app.bug_report.open", "{}"},
     // Menu-bar shortcuts wired by keybindings-menu-shortcuts-fix.md.
     // Zoom carries alias combos (docs/plans/keybindings-multi-combo.md): "Ctrl and +"
-    // is Ctrl+Shift+= on a US layout, and the keypad variants are layout-independent.
-    {{"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd"}, "ui.zoom.in", "{}"},
-    {{"Ctrl+-", "Ctrl+NumSubtract"}, "ui.zoom.out", "{}"},
+    // is Ctrl+Shift+= on a US layout, keypad variants are layout-independent, and
+    // Ctrl+MouseWheelUp/Down match the browser zoom habit.
+    {{"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd", "Ctrl+MouseWheelUp"}, "ui.zoom.in", "{}"},
+    {{"Ctrl+-", "Ctrl+NumSubtract", "Ctrl+MouseWheelDown"}, "ui.zoom.out", "{}"},
     {{"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"},
     {{"Ctrl+Shift+V"}, "ui.open_view", "{}"},
     {{"Ctrl+Shift+G"}, "grid.clear_selection", "{}"},
@@ -72,7 +74,7 @@ TEST_CASE("KeybindingsConfig::Defaults() reproduces the migrated hardcoded set")
         const Keybinding& b = c.Bindings[i];
         const ExpectedBinding& e = kExpectedDefaults[i];
         std::size_t expectedCombos = 0;
-        while (expectedCombos < 4U && e.hotkeys[expectedCombos] != nullptr) {
+        while (expectedCombos < 5U && e.hotkeys[expectedCombos] != nullptr) {
             ++expectedCombos;
         }
         REQUIRE_MESSAGE(b.Hotkeys.size() == expectedCombos, e.hotkeys[0]);
@@ -259,7 +261,7 @@ TEST_CASE("SetBindingHotkey REPLACES the alias set, it does not append") {
     KeybindingsConfig c = KeybindingsConfig::Defaults();
     const int zi = c.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
-    REQUIRE(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 3);
+    REQUIRE(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 4);
 
     c.SetBindingHotkey("ui.zoom.in", "{}", "Ctrl+Up");
     REQUIRE(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 1);
@@ -276,15 +278,15 @@ TEST_CASE("AddBindingHotkey / RemoveBindingHotkey manage one alias at a time") {
     const int zi = c.FindBindingIndex("ui.zoom.out", "{}");
     REQUIRE(zi >= 0);
     const size_t rows = c.Bindings.size();
-    REQUIRE(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 2);
+    REQUIRE(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 3);
 
     CHECK(c.AddBindingHotkey("ui.zoom.out", "{}", "Ctrl+Down") == zi);
-    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 3);
+    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 4);
     CHECK(c.Bindings.size() == rows); // adds a combo, not a row
 
     // Duplicate add is a no-op on the set.
     c.AddBindingHotkey("ui.zoom.out", "{}", "Ctrl+Down");
-    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 3);
+    CHECK(c.Bindings[static_cast<size_t>(zi)].Hotkeys.size() == 4);
 
     // Empty is rejected outright.
     CHECK(c.AddBindingHotkey("ui.zoom.out", "{}", "") == -1);
@@ -414,8 +416,10 @@ TEST_CASE("BoundHotkeyDisplay* surface the PRIMARY combo, BoundHotkeyDisplayAll 
     CHECK(BoundHotkeyDisplayForArgs(c.Bindings, "ui.zoom.in", "{}") == "Ctrl+=");
 
     // Roomy surfaces (toolbar tooltip, quick-bind "also bound" line) get everything.
-    CHECK(BoundHotkeyDisplayAll(c.Bindings, "ui.zoom.in", "{}") == "Ctrl+= / Ctrl+Shift+= / Ctrl+NumAdd");
-    CHECK(BoundHotkeyDisplayAll(c.Bindings, "ui.zoom.out", "{}", ", ") == "Ctrl+-, Ctrl+NumSubtract");
+    CHECK(BoundHotkeyDisplayAll(c.Bindings, "ui.zoom.in", "{}") ==
+          "Ctrl+= / Ctrl+Shift+= / Ctrl+NumAdd / Ctrl+MouseWheelUp");
+    CHECK(BoundHotkeyDisplayAll(c.Bindings, "ui.zoom.out", "{}", ", ") ==
+          "Ctrl+-, Ctrl+NumSubtract, Ctrl+MouseWheelDown");
 
     // A single-combo action reads the same through both doors.
     CHECK(BoundHotkeyDisplayAll(c.Bindings, "app.fullscreen.toggle", "{}") == "F11");

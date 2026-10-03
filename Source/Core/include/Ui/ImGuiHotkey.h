@@ -21,18 +21,24 @@ struct ImGuiBugHotkey {
     bool alt = false;
     bool super = false;
     ImGuiKey key = ImGuiKey_None;
+    // Mouse-wheel direction when key is ImGuiKey_MouseWheelY: +1 = up, -1 = down,
+    // 0 = not a wheel binding. Wheel is a continuous delta on io.MouseWheel, not an
+    // IsKeyPressed edge — MatchHotkey checks the sign instead. Distinct from the
+    // shared ImGuiKey_MouseWheelY enum value so Up and Down do not collide.
+    int wheelDir = 0;
 };
 
 /// Parse "Ctrl+Shift+B" (case-insensitive, '+'-separated). Recognises modifiers
 /// ctrl/control, shift, alt, super/win/cmd, and a single main key: A-Z, 0-9,
 /// F1-F12; punctuation = - , . / ; ' ` [ ] backslash; named keys space,
 /// enter/return, tab, backspace, delete/del, escape/esc, insert/ins, home, end,
-/// pageup/pgup, pagedown/pgdn, up, down, left, right; and the keypad tokens
+/// pageup/pgup, pagedown/pgdn, up, down, left, right; the keypad tokens
 /// num0-num9, numadd/keypadadd, numsubtract/keypadsubtract, nummultiply,
 /// numdivide, numdecimal, numenter, numequal (punctuation-free by necessity —
-/// '+' is the separator). Returns false (and leaves `out` partial) when no main
-/// key resolves or the string is empty. At most one main key; extra main keys ->
-/// the last one wins.
+/// '+' is the separator); and mouse-wheel tokens MouseWheelUp / MouseWheelDown
+/// (aliases WheelUp / WheelDown). Returns false (and leaves `out` partial) when
+/// no main key resolves or the string is empty. At most one main key; extra main
+/// keys -> the last one wins.
 /// Two shifted spellings are accepted as INPUT and normalise to {shift, base key}
 /// on a US/ANSI layout, because that is the physical keystroke ImGui reports:
 /// '+' / "plus" -> Shift+'=' and '_' / "underscore" -> Shift+'-'. So "Ctrl++"
@@ -47,17 +53,19 @@ bool ParseImGuiHotkey(const std::string& spec, ImGuiBugHotkey& out);
 /// every key the parser recognises (letters upper-cased: 'b' -> "B").
 /// The shifted input spellings are deliberately NOT round-tripped verbatim: the
 /// canonical rendering of {ctrl, shift, Equal} is "Ctrl+Shift+=", not "Ctrl++".
+/// Wheel bindings stringify as MouseWheelUp / MouseWheelDown.
 /// Store canonical strings (this function's output) in config, so the round-trip
 /// stays a fixed point.
 std::string StringifyImGuiHotkey(const ImGuiBugHotkey& hk);
 
 /// True when the current ImGui frame matches `hk`: modifier state equals the
-/// spec exactly and the main key was just pressed (no auto-repeat).
+/// spec exactly and the main key was just pressed (no auto-repeat). Wheel
+/// bindings match on io.MouseWheel sign instead of IsKeyPressed.
 bool MatchHotkey(const ImGuiIO& io, const ImGuiBugHotkey& hk);
 
 /// True when two parsed combos are the same keystroke (all four modifiers + the
-/// main key). Comparing parsed structs rather than spec strings is what makes
-/// "Ctrl++" and "Ctrl+Shift+=" collide as they should.
+/// main key + wheelDir). Comparing parsed structs rather than spec strings is
+/// what makes "Ctrl++" and "Ctrl+Shift+=" collide as they should.
 bool SameCombo(const ImGuiBugHotkey& a, const ImGuiBugHotkey& b);
 
 /// Pure conflict check (no ImGui-IO dependency): returns the index of the first

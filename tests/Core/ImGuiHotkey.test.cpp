@@ -298,6 +298,46 @@ TEST_CASE("ParseImGuiHotkey: keypad tokens (layout-independent zoom aliases)") {
     CHECK(StringifyImGuiHotkey(padAdd) == "Ctrl+NumAdd");
 }
 
+TEST_CASE("ParseImGuiHotkey: mouse-wheel tokens (Ctrl+wheel zoom aliases)") {
+    ImGuiBugHotkey up;
+    REQUIRE(ParseImGuiHotkey("Ctrl+MouseWheelUp", up));
+    CHECK(up.ctrl);
+    CHECK_FALSE(up.shift);
+    CHECK(up.key == ImGuiKey_MouseWheelY);
+    CHECK(up.wheelDir == 1);
+    CHECK(StringifyImGuiHotkey(up) == "Ctrl+MouseWheelUp");
+
+    ImGuiBugHotkey down;
+    REQUIRE(ParseImGuiHotkey("Ctrl+MouseWheelDown", down));
+    CHECK(down.ctrl);
+    CHECK(down.key == ImGuiKey_MouseWheelY);
+    CHECK(down.wheelDir == -1);
+    CHECK(StringifyImGuiHotkey(down) == "Ctrl+MouseWheelDown");
+
+    // Short aliases parse; stringify always emits the canonical MouseWheel* form.
+    ImGuiBugHotkey shortUp;
+    REQUIRE(ParseImGuiHotkey("Ctrl+WheelUp", shortUp));
+    CHECK(SameCombo(up, shortUp));
+    CHECK(StringifyImGuiHotkey(shortUp) == "Ctrl+MouseWheelUp");
+
+    ImGuiBugHotkey shortDown;
+    REQUIRE(ParseImGuiHotkey("wheeldown", shortDown));
+    CHECK(shortDown.wheelDir == -1);
+    CHECK(StringifyImGuiHotkey(shortDown) == "MouseWheelDown");
+
+    // Up and Down share ImGuiKey_MouseWheelY but must not collide — wheelDir differs.
+    CHECK_FALSE(SameCombo(up, down));
+    std::vector<ImGuiBugHotkey> existing;
+    existing.push_back(up);
+    CHECK(FindShortcutConflict(existing, down) == -1);
+    CHECK(FindShortcutConflict(existing, shortUp) == 0);
+
+    // Case / whitespace tolerant.
+    ImGuiBugHotkey messy;
+    REQUIRE(ParseImGuiHotkey("  ctrl + mousewheelup ", messy));
+    CHECK(SameCombo(up, messy));
+}
+
 TEST_CASE("BindableImGuiKeys: every capturable key survives Stringify -> Parse") {
     const std::vector<ImGuiKey>& keys = BindableImGuiKeys();
     REQUIRE_FALSE(keys.empty());

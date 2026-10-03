@@ -308,6 +308,7 @@ void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
     j["migrated_menu_shortcuts_v2"] = config.MigratedMenuShortcutsV2;
     j["migrated_quick_create_hotkey_v1"] = config.MigratedQuickCreateHotkeyV1;
     j["migrated_multi_hotkey_zoom_v1"] = config.MigratedMultiHotkeyZoomV1;
+    j["migrated_multi_hotkey_zoom_v2"] = config.MigratedMultiHotkeyZoomV2;
     j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;

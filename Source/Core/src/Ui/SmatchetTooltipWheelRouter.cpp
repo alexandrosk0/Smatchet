@@ -96,8 +96,14 @@ bool RouteWheelToScrollableTooltip() {
         return false;
     }
 
-    bool consumed = false;
     ImGuiIO& io = ImGui::GetIO();
+    // Ctrl+wheel is owned by the keybinding zoom path (ui.zoom.in/out). Leave the
+    // delta alone so dispatchKeybindings can match Ctrl+MouseWheel* after NewFrame.
+    if (io.KeyCtrl) {
+        return false;
+    }
+
+    bool consumed = false;
     if (std::abs(io.MouseWheel) > 0.0f || std::abs(io.MouseWheelH) > 0.0f) {
         RestoreWheelFromNonTooltipWindow(g, tooltipOwner, io.MouseWheel);
         ApplyVerticalWheelToTooltip(tooltipOwner, io.MouseWheel);

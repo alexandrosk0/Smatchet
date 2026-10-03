@@ -1023,10 +1023,19 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         return;
     }
     const int frame = ::ImGui::GetFrameCount();
+    bool consumedWheel = false;
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
             continue;
+        }
+        // Wheel bindings own the delta for this frame — clear so ImGui / grid /
+        // tooltip scroll do not also run (browser-like Ctrl+wheel = zoom only).
+        if (pk.hk.wheelDir != 0 && !consumedWheel) {
+            ::ImGuiIO& mutIo = ::ImGui::GetIO();
+            mutIo.MouseWheel = 0.0f;
+            mutIo.MouseWheelH = 0.0f;
+            consumedWheel = true;
         }
         // P2-M4: combos that plain typing can produce (no Ctrl/Alt/Win, non-F-key —
         // e.g. a legacy bare "K" binding) must not fire while a text field is active.
