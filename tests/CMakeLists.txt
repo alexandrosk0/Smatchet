@@ -310,6 +310,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/StringUtilTrim.test.cpp
+        Core/TrackerIssueExistsProbe.test.cpp
         Core/Tracker2xxErrorGuard.test.cpp
         Core/BulkImportStatusPure.test.cpp
         Core/TrackerFieldPayloadPure.test.cpp
@@ -859,6 +861,7 @@ add_executable(SmatchetTests
     # WS2 / Issue #1068 — runtime TLS-trust seam (ResolveSslConfig + process-global CA-path
     # holder). Pure + cpr-free; links Source/Core/src/Tracker/TrackerHttpPure.cpp below.
     Core/TrackerHttpSslPure.test.cpp
+    Core/TrackerIssueExistsProbe.test.cpp
     Core/TrackerDateTimePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
     Core/TicketFieldEditorOptionFilterPure.test.cpp
@@ -1301,6 +1304,13 @@ add_executable(SmatchetTests
     # pulls cpr). Same shape as the GitHub PR12 split above.
     Core/PlaneIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMappingPure.cpp"
+    # Fixture backends: the shared fixture loader's read/parse caps and the shared fixture factory.
+    # The mappers they call (Linear / Plane / GitHub) are already linked above.
+    Core/TrackerFixtureBackends.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFixtureBackendBase.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearFixtureBackend.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFixtureBackend.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubFixtureBackend.cpp"
     # Monoliths Phase A (decompose-top-20-monoliths.md) — pure Plane field-catalog
     # property → TrackerField mapper extracted out of PlaneFieldCatalog.cpp (which
     # pulls cpr). Same pure-seam shape as PlaneIssueMappingPure above.
@@ -1623,6 +1633,7 @@ add_executable(SmatchetTests
     # allow-listing and ModelDownloadPolicy's download-domain check, both of which compare
     # lowercased hosts. Header-only; no production .cpp to link.
     Core/StringUtilAsciiCase.test.cpp
+    Core/StringUtilTrim.test.cpp
     # Function-size decomposition (PR A7-A8) — deterministic dispatch coverage for
     # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
     # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).

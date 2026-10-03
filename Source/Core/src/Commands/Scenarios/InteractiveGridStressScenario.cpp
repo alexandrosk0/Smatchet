@@ -39,9 +39,6 @@ namespace smatchet {
 namespace cmd {
 
 namespace {
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=deliberate ACTIVE-load sibling of the side-by-side-grids / concurrent-sync perf family — intentionally mirrors their synthetic-pane purge + EnsurePaneContextLive pane-build loop + OnFinish perf-rows JSON so the measured render path is byte-identical to the passive baseline; folding into a shared helper would couple independent perf probes (a Pillar-5 CRITICAL per ADR-0015); owner=perf-tooling; revisit=2026-12-31)
-// clang-format on
 
 // Synthetic-pane id prefix (distinct from side-by-side-grids so the two never
 // collide). A crashed prior run leaves these behind; OnStart purges any match.

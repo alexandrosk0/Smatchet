@@ -291,6 +291,24 @@ TEST_CASE("IssueDraftHelpers::FromJson reports parse errors gracefully") {
     CHECK_FALSE(err.empty());
 }
 
+TEST_CASE("IssueDraftHelpers::FromJson rejects a depth bomb but still loads a draft over 4 MiB") {
+    // Drafts are stored offline-queue payloads: the parse is bounded against a depth bomb, but its byte cap
+    // is the config reader's 64 MiB, so a draft with a long description keeps loading.
+    IssueDraft d;
+    std::string err;
+    CHECK_FALSE(IssueDraftHelpers::FromJson(std::string(100000, '[') + std::string(100000, ']'), d, err));
+    CHECK_FALSE(err.empty());
+
+    IssueDraft big;
+    big.ProjectKey = "PROJ";
+    big.FieldValues["description"] = std::string(5u * 1024u * 1024u, 'x');
+    IssueDraft loaded;
+    REQUIRE(IssueDraftHelpers::FromJson(IssueDraftHelpers::ToJson(big), loaded, err));
+    CHECK(err.empty());
+    CHECK(loaded.ProjectKey == "PROJ");
+    CHECK(loaded.FieldValues["description"].size() == 5u * 1024u * 1024u);
+}
+
 TEST_CASE("IssueDraftHelpers::ComputeFieldChanges reports only differing fields, trimmed") {
     IssueDraft d;
     d.FieldValues["summary"] = "  new summary  ";

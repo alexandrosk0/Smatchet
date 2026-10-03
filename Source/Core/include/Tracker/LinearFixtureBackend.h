@@ -23,7 +23,7 @@
 #include <vector>
 
 // Below is per-backend declaration shell only — shared behaviour lives in TrackerFixtureBackendBase.
-// SMATCHET_DEVIATION(rule=duplication; reason=fixture decl shell; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture declaration shell; shared behaviour is already in TrackerFixtureBackendBase; owner=tracker; revisit=never)
 class ITrackerBackendFactory;
 class ITrackerFieldCatalog;
 class ITrackerCollaboration;

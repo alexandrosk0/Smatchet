@@ -46,33 +46,6 @@ const nlohmann::json* FindNodesArray(const nlohmann::json& root) {
     return nullptr;
 }
 
-// Per-backend fixture-factory boilerplate — the standing per-backend factory / *Client exemption class
-// in ADR-0015. Differs only in the backend type and its log strings; folding it would couple two
-// otherwise-independent tracker backends, which the double-edged-DRY guardrail treats as a regression.
-// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture factory; owner=tracker; revisit=2026-12-31)
-class LinearFixtureBackendFactory : public ITrackerBackendFactory {
-  public:
-    explicit LinearFixtureBackendFactory(std::string fixturePath) : fixturePath_(std::move(fixturePath)) {}
-
-    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& /*cfg*/) override {
-        if (!trackerType.empty() && trackerType != "Linear") {
-            LOG_WARN("LinearFixtureBackendFactory: requested type '%s' but serving 'Linear' fixture from %s",
-                     trackerType.c_str(), fixturePath_.c_str());
-        }
-        auto backend = std::make_unique<LinearFixtureBackend>(fixturePath_);
-        if (!backend->LoadError().empty()) {
-            LOG_ERROR("LinearFixtureBackend: failed to load fixture '%s': %s", fixturePath_.c_str(),
-                      backend->LoadError().c_str());
-        } else {
-            LOG_INFO("LinearFixtureBackend: loaded fixture '%s'", fixturePath_.c_str());
-        }
-        return std::unique_ptr<ITrackerBackend>(backend.release());
-    }
-
-  private:
-    std::string fixturePath_;
-};
-
 } // namespace
 
 LinearFixtureBackend::LinearFixtureBackend(const std::string& fixturePath)
@@ -102,7 +75,7 @@ TrackerReachabilityProbeResult LinearFixtureBackend::ProbeReachability(const Tra
 }
 
 std::unique_ptr<ITrackerBackendFactory> MakeLinearFixtureBackendFactory(const std::string& fixturePath) {
-    return std::make_unique<LinearFixtureBackendFactory>(fixturePath);
+    return tracker_fixture::MakeFixtureBackendFactoryFor<LinearFixtureBackend>(fixturePath, "Linear");
 }
 
 } // namespace linear

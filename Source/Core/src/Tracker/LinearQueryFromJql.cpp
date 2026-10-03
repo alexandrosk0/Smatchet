@@ -1,5 +1,7 @@
 #include "LinearQueryFromJql.h"
 
+#include "StringUtil.h"
+
 #include <cctype>
 #include <string>
 #include <vector>
@@ -8,18 +10,6 @@ namespace smatchet {
 namespace linear {
 
 namespace {
-
-std::string Trim(const std::string& s) {
-    std::string::size_type b = 0;
-    std::string::size_type e = s.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) {
-        ++b;
-    }
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {
-        --e;
-    }
-    return s.substr(b, e - b);
-}
 
 std::string ToLower(const std::string& s) {
     std::string out = s;
@@ -92,7 +82,7 @@ void SplitTopLevelAnd(const std::string& s, std::vector<std::string>& out) {
 }
 
 void ParseInList(const std::string& raw, std::vector<std::string>& out) {
-    std::string inner = Trim(raw);
+    std::string inner = TrimCopyIsspace(raw);
     if (!inner.empty() && inner.front() == '(') {
         inner.erase(inner.begin());
     }
@@ -102,7 +92,7 @@ void ParseInList(const std::string& raw, std::vector<std::string>& out) {
     std::string::size_type start = 0;
     for (std::string::size_type i = 0; i <= inner.size(); ++i) {
         if (i == inner.size() || inner[i] == ',') {
-            const std::string item = StripQuotes(Trim(inner.substr(start, i - start)));
+            const std::string item = StripQuotes(TrimCopyIsspace(inner.substr(start, i - start)));
             if (!item.empty()) {
                 out.push_back(item);
             }
@@ -239,7 +229,7 @@ bool IsTextField(const std::string& field) {
 // per-field dispatch are kept thin (the heavy lifting lives in the Handle*
 // helpers) so this stays under the size/branch caps.
 void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
-    const std::string clause = Trim(clauseRaw);
+    const std::string clause = TrimCopyIsspace(clauseRaw);
     if (clause.empty()) {
         return;
     }
@@ -253,8 +243,8 @@ void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
         return;
     }
 
-    field = ToLower(Trim(field));
-    const std::string value = StripQuotes(Trim(valueRaw));
+    field = ToLower(TrimCopyIsspace(field));
+    const std::string value = StripQuotes(TrimCopyIsspace(valueRaw));
     const std::string valueLower = ToLower(value);
 
     // Reject an OR buried inside a single clause rather than guess its meaning.
@@ -301,7 +291,7 @@ JqlToLinearResult TranslateJqlToLinearFilter(const std::string& jql) {
     JqlToLinearResult r;
     r.Ok = true;
 
-    std::string s = Trim(jql);
+    std::string s = TrimCopyIsspace(jql);
     if (s.empty()) {
         return r;
     }
@@ -313,7 +303,7 @@ JqlToLinearResult TranslateJqlToLinearFilter(const std::string& jql) {
     const std::string::size_type ob = FindTopLevel(lower, " order by ");
     if (ob != std::string::npos) {
         AddWarning(r, "ORDER BY ignored");
-        s = Trim(s.substr(0, ob));
+        s = TrimCopyIsspace(s.substr(0, ob));
     }
 
     std::vector<std::string> clauses;

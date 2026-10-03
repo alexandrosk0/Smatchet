@@ -46,7 +46,7 @@ cpr::Header BuildLinearHeaders(const std::string& apiKey);
 /// `onPage` fires `isLast == true` exactly once for any non-empty fetch (zero
 /// pages → no callback invocations); a terminal empty page is emitted on a
 /// fatal/zero-source path so the stream always closes.
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API declaration symmetry with GitHubIssueSearch.h; owner=tracker; revisit=never)
 std::vector<CachedTicket>
 FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, const std::string& teamId,
                       const std::string& teamKey, const std::string& viewQuery, bool* outFullSyncCompleted,
