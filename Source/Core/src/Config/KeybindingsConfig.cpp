@@ -300,8 +300,10 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     // Specs are the CANONICAL StringifyImGuiHotkey forms — "Ctrl++" parses to the
     // same combo but canonicalises to "Ctrl+Shift+=", so storing it would break the
     // round-trip fixed point.
-    c.Bindings.push_back(MakeBindingMulti({"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd"}, "ui.zoom.in", "{}"));
-    c.Bindings.push_back(MakeBindingMulti({"Ctrl+-", "Ctrl+NumSubtract"}, "ui.zoom.out", "{}"));
+    c.Bindings.push_back(
+        MakeBindingMulti({"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd", "Ctrl+MouseWheelUp"}, "ui.zoom.in", "{}"));
+    c.Bindings.push_back(
+        MakeBindingMulti({"Ctrl+-", "Ctrl+NumSubtract", "Ctrl+MouseWheelDown"}, "ui.zoom.out", "{}"));
     c.Bindings.push_back(MakeBindingMulti({"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+V", "ui.open_view", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+G", "grid.clear_selection", "{}"));

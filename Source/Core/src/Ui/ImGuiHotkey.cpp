@@ -160,6 +160,7 @@ ImGuiKey ShiftedKeyFromToken(const std::string& tok) {
 
 // Inverse of KeyFromToken: render an ImGuiKey as a canonical display token.
 // Letters upper-cased so the round-tripped string is human-presentable.
+// Wheel keys are NOT here — they need wheelDir and go through WheelToToken.
 std::string KeyToToken(ImGuiKey key) {
     if (key >= ImGuiKey_A && key <= ImGuiKey_Z) {
         const char c = static_cast<char>('A' + (key - ImGuiKey_A));
@@ -177,6 +178,29 @@ std::string KeyToToken(ImGuiKey key) {
         if (nk.canonical && nk.key == key) {
             return std::string(nk.token);
         }
+    }
+    return std::string();
+}
+
+// Mouse-wheel tokens map to ImGuiKey_MouseWheelY + a signed direction. Kept out of
+// kNamedKeys so BindableImGuiKeys() (IsKeyPressed scan) never offers them — capture
+// reads io.MouseWheel instead.
+int WheelDirFromToken(const std::string& tok) {
+    if (tok == "mousewheelup" || tok == "wheelup") {
+        return 1;
+    }
+    if (tok == "mousewheeldown" || tok == "wheeldown") {
+        return -1;
+    }
+    return 0;
+}
+
+std::string WheelToToken(int wheelDir) {
+    if (wheelDir > 0) {
+        return "MouseWheelUp";
+    }
+    if (wheelDir < 0) {
+        return "MouseWheelDown";
     }
     return std::string();
 }
@@ -232,16 +256,25 @@ bool ParseImGuiHotkey(const std::string& spec, ImGuiBugHotkey& out) {
         } else if (tok == "super" || tok == "win" || tok == "cmd") {
             out.super = true;
         } else {
+            const int wheelDir = WheelDirFromToken(tok);
+            if (wheelDir != 0) {
+                out.key = ImGuiKey_MouseWheelY; // last main key wins
+                out.wheelDir = wheelDir;
+                gotKey = true;
+                continue;
+            }
             const ImGuiKey shifted = ShiftedKeyFromToken(tok);
             if (shifted != ImGuiKey_None) {
                 out.key = shifted; // last main key wins
                 out.shift = true;  // the shifted spelling IS Shift + the base key
+                out.wheelDir = 0;
                 gotKey = true;
                 continue;
             }
             const ImGuiKey k = KeyFromToken(tok);
             if (k != ImGuiKey_None) {
                 out.key = k; // last main key wins
+                out.wheelDir = 0;
                 gotKey = true;
             }
         }
@@ -250,7 +283,8 @@ bool ParseImGuiHotkey(const std::string& spec, ImGuiBugHotkey& out) {
 }
 
 std::string StringifyImGuiHotkey(const ImGuiBugHotkey& hk) {
-    const std::string main = KeyToToken(hk.key);
+    const std::string main =
+        (hk.key == ImGuiKey_MouseWheelY && hk.wheelDir != 0) ? WheelToToken(hk.wheelDir) : KeyToToken(hk.key);
     if (main.empty()) {
         return std::string();
     }
@@ -278,11 +312,20 @@ bool MatchHotkey(const ImGuiIO& io, const ImGuiBugHotkey& hk) {
     if (io.KeyCtrl != hk.ctrl || io.KeyShift != hk.shift || io.KeyAlt != hk.alt || io.KeySuper != hk.super) {
         return false;
     }
+    // Wheel: continuous delta on io.MouseWheel, not an IsKeyPressed edge. Up and Down
+    // share ImGuiKey_MouseWheelY; wheelDir selects the sign.
+    if (hk.key == ImGuiKey_MouseWheelY && hk.wheelDir != 0) {
+        if (hk.wheelDir > 0) {
+            return io.MouseWheel > 0.0f;
+        }
+        return io.MouseWheel < 0.0f;
+    }
     return ImGui::IsKeyPressed(hk.key, /*repeat*/ false);
 }
 
 bool SameCombo(const ImGuiBugHotkey& a, const ImGuiBugHotkey& b) {
-    return a.key == b.key && a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt && a.super == b.super;
+    return a.key == b.key && a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt && a.super == b.super &&
+           a.wheelDir == b.wheelDir;
 }
 
 int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing, const ImGuiBugHotkey& candidate) {

@@ -87,6 +87,11 @@ grammar is worth knowing:
   the zoom defaults include them alongside the main-row combos. With NumLock off,
   some keyboards report `Num0`–`Num9` as navigation keys instead; the `NumAdd` /
   `NumSubtract` keys are unaffected.
+- **Mouse wheel**: `MouseWheelUp` / `MouseWheelDown` (aliases `WheelUp` /
+  `WheelDown`). These match the current frame's wheel delta sign (not a key
+  press). The zoom defaults bind `Ctrl+MouseWheelUp` / `Ctrl+MouseWheelDown`.
+  Bare wheel stays unbound so ordinary scrolling is unchanged; capture requires
+  Ctrl, Alt, or Win like any other non-F-key combo.
 
 An unparseable combo is skipped with a warning in the log — the rest of your
 bindings still load.
@@ -135,8 +140,8 @@ These are multi-key or modal-local and are out of scope for v1 rebinding.
 | Full Screen | `F11` | `app.fullscreen.toggle` |
 | Command Palette | `Ctrl+Shift+P` | `ui.command_palette` |
 | Report a bug | `Ctrl+Shift+B` | `app.bug_report.open` |
-| Zoom In | `Ctrl+=`, `Ctrl+Shift+=` (i.e. `Ctrl++`), `Ctrl+NumAdd` | `ui.zoom.in` |
-| Zoom Out | `Ctrl+-`, `Ctrl+NumSubtract` | `ui.zoom.out` |
+| Zoom In | `Ctrl+=`, `Ctrl+Shift+=` (i.e. `Ctrl++`), `Ctrl+NumAdd`, `Ctrl+MouseWheelUp` | `ui.zoom.in` |
+| Zoom Out | `Ctrl+-`, `Ctrl+NumSubtract`, `Ctrl+MouseWheelDown` | `ui.zoom.out` |
 | Reset Zoom | `Ctrl+0`, `Ctrl+Num0` | `ui.zoom.reset` |
 
 ## Upgrading from an older build
@@ -150,9 +155,10 @@ shortcut.
 
 The zoom shortcuts gained their alternative combos the same way. On first launch
 after upgrading, a zoom binding **still sitting on its shipped default** is widened
-to the full set in the table above. A zoom binding you had already rebound — or
-deliberately cleared — is left exactly as you set it; use **Reset all to defaults**
-if you want the alias set instead.
+to the full set in the table above (including `Ctrl+MouseWheelUp` /
+`Ctrl+MouseWheelDown`). A zoom binding you had already rebound — or deliberately
+cleared — is left exactly as you set it; use **Reset all to defaults** if you want
+the alias set instead.
 
 If you run an older Smatchet build against the same config file, it reads the first
 combo of each binding and ignores the rest, so shortcuts keep working there. Saving

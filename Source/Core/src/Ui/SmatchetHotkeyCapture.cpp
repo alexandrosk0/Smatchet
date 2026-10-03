@@ -49,17 +49,30 @@ bool HotkeyNeedsModifier(const ImGuiBugHotkey& hk) {
 bool HotkeyCaptureArmedRecently() { return ImGui::GetFrameCount() - g_hotkeyCaptureArmedFrame <= 1; }
 
 bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
+    const ImGuiIO& io = ImGui::GetIO();
+    // Wheel is a continuous delta, not an IsKeyPressed edge — prefer it over a
+    // simultaneous key so Ctrl+wheel rebinds cleanly during capture.
+    if (io.MouseWheel > 0.0f || io.MouseWheel < 0.0f) {
+        out = ImGuiBugHotkey{};
+        out.ctrl = io.KeyCtrl;
+        out.shift = io.KeyShift;
+        out.alt = io.KeyAlt;
+        out.super = io.KeySuper;
+        out.key = ImGuiKey_MouseWheelY;
+        out.wheelDir = (io.MouseWheel > 0.0f) ? 1 : -1;
+        return true;
+    }
     const ImGuiKey pressed = FirstBindableKeyPressedThisFrame();
     if (pressed == ImGuiKey_None) {
         return false;
     }
-    const ImGuiIO& io = ImGui::GetIO();
     out = ImGuiBugHotkey{};
     out.ctrl = io.KeyCtrl;
     out.shift = io.KeyShift;
     out.alt = io.KeyAlt;
     out.super = io.KeySuper;
     out.key = pressed;
+    out.wheelDir = 0;
     return true;
 }
 
@@ -89,6 +102,10 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, b
             "##rebind" + (idSuffix != nullptr ? idSuffix : "");
         if (ImGui::SmallButton(btnId.c_str())) {
             capturing = true;
+            // Stamp now: dispatchKeybindings runs before this widget next frame, and
+            // HotkeyCaptureArmedRecently must suppress Ctrl+wheel zoom so capture
+            // can read the delta (otherwise the zoom binding clears MouseWheel first).
+            g_hotkeyCaptureArmedFrame = ImGui::GetFrameCount();
             s_showNeedsModifierWarning = false; // fresh capture, fresh slate
         }
     } else {

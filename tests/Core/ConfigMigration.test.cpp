@@ -387,7 +387,7 @@ TEST_CASE("ConfigMigration menu shortcuts: seeds the new bindings into a pre-exi
     CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].PrimaryHotkey() == "Ctrl+=");
     // V1 seeds whole rows straight from Defaults(), so a row seeded here arrives with the
     // full alias set already — the later zoom-alias migration has nothing left to widen.
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 3);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 4);
 
     // Pre-existing bindings survive the seed (append-only — the migration never clobbers the table).
     CHECK(cfg.Keybindings.FindBindingIndex("app.dock_debug.toggle", "{}") >= 0);
@@ -594,14 +594,16 @@ TEST_CASE("ConfigMigration zoom aliases: widens the legacy single-combo zoom def
     const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
     const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
-    REQUIRE(zoomIn.Hotkeys.size() == 3);
+    // V1 copies Defaults() wholesale, which now includes the mouse-wheel alias.
+    REQUIRE(zoomIn.Hotkeys.size() == 4);
     CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
     CHECK(zoomIn.Hotkeys[1] == "Ctrl+Shift+="); // "Ctrl and +" on a US layout
     CHECK(zoomIn.Hotkeys[2] == "Ctrl+NumAdd");  // layout-independent keypad
+    CHECK(zoomIn.Hotkeys[3] == "Ctrl+MouseWheelUp");
 
     const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
     REQUIRE(zo >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 2);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 3);
 
     const int zr = cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}");
     REQUIRE(zr >= 0);
@@ -678,7 +680,64 @@ TEST_CASE("ConfigMigration zoom aliases: survive a Save -> Load round-trip witho
     const int zi = reloaded.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
     const Keybinding& zoomIn = reloaded.Keybindings.Bindings[static_cast<std::size_t>(zi)];
-    REQUIRE(zoomIn.Hotkeys.size() == 3);
+    REQUIRE(zoomIn.Hotkeys.size() == 4);
     CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
     CHECK(zoomIn.Hotkeys[2] == "Ctrl+NumAdd");
+    CHECK(zoomIn.Hotkeys[3] == "Ctrl+MouseWheelUp");
+}
+
+// --- mouse-wheel zoom aliases (MigrateZoomHotkeyAliasesV2) ----------------------
+// Configs that already ran V1 keep the post-V1 (pre-wheel) 3/2-combo sets. V2 widens
+// those exact sets with Ctrl+MouseWheelUp/Down; customised rows stay untouched.
+
+TEST_CASE("ConfigMigration zoom wheel aliases: widens the post-V1 pre-wheel default sets") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkeys":["Ctrl+=","Ctrl+Shift+=","Ctrl+NumAdd"],"args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkeys":["Ctrl+-","Ctrl+NumSubtract"],"args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV2 == true);
+
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 4);
+    CHECK(zoomIn.Hotkeys[3] == "Ctrl+MouseWheelUp");
+
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    const Keybinding& zoomOut = cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)];
+    REQUIRE(zoomOut.Hotkeys.size() == 3);
+    CHECK(zoomOut.Hotkeys[2] == "Ctrl+MouseWheelDown");
+}
+
+TEST_CASE("ConfigMigration zoom wheel aliases: a rebound zoom row is left alone") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+Up","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkeys":["Ctrl+-","Ctrl+NumSubtract"],"args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV2 == true);
+
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    REQUIRE(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 1);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys[0] == "Ctrl+Up");
+
+    // Zoom Out still on the pre-wheel default — widened.
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 3);
 }
