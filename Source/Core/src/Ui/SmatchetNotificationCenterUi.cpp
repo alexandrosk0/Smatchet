@@ -29,24 +29,13 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
         return;
     }
 
-    const bool wantFocus = d.requestNotificationCenterFocus;
-    if (wantFocus) {
+    if (d.requestNotificationCenterFocus) {
         ImGui::SetNextWindowFocus();
     }
     ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
-    // SMATCHET_DEVIATION(rule=duplication; reason=window-open prologue idiom; owner=ui; revisit=2026-12-01)
-    SmatchetWindowExpand::BeginWindow(d, "Notifications");
-    if (!ImGui::Begin("Notifications", &d.showNotificationCenterWindow)) {
-        ImGui::End();
-        if (wantFocus) {
-            d.requestNotificationCenterFocus = false;
-        }
+    if (!SmatchetWindowExpand::BeginWindowWithToggle(d, "Notifications", &d.showNotificationCenterWindow,
+                                                     d.requestNotificationCenterFocus)) {
         return;
-    }
-    SmatchetWindowExpand::DrawToggle(d);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestNotificationCenterFocus = false;
     }
 
     SmatchetToastManager& mgr = SmatchetToastManager::Instance();

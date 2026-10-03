@@ -590,7 +590,7 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
             startAt += pageCount;
         }
     }
-    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing cross-backend FetchGroupMembers prologue similarity vs GitHubActivityFeed.cpp re-exposed by line shifts in this TU; de-duping independent backend clients is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)
+    // SMATCHET_DEVIATION(rule=duplication; reason=FetchGroupMembers opening (signature, result alias, auth guard) shared with GitHubClient; a helper would couple independent backend clients; owner=tracker-backend; revisit=2027-03-31)
     return UsersResult::Ok(std::move(outUsers));
 }
 

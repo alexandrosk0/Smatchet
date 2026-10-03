@@ -73,7 +73,7 @@
 
 #include <ghc/filesystem.hpp>
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include-prologue overlap with SmatchetUI.cpp is unavoidable for per-TU include requirements; owner=~; revisit=2026-11-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with SmatchetUI.cpp; owner=orchestrator; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "DefaultTrackerBackendFactory.h"
 
 #include "GitHubFixtureBackend.h"

@@ -2,7 +2,7 @@
 
 #if defined(SMATCHET_WITH_MCP)
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue, not copy-paste; owner=ui; revisit=2026-12-01)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling UI TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "McpServerStatus.h"
@@ -265,22 +265,12 @@ void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
 
     PrepareMcpWindowLayout(d);
 
-    const bool wantFocus = d.requestMcpServerFocus;
-    if (wantFocus) {
+    if (d.requestMcpServerFocus) {
         ImGui::SetNextWindowFocus();
     }
-    SmatchetWindowExpand::BeginWindow(d, "MCP Server");
-    if (!ImGui::Begin("MCP Server", &d.showMcpServerWindow)) {
-        ImGui::End();
-        if (wantFocus) {
-            d.requestMcpServerFocus = false;
-        }
+    if (!SmatchetWindowExpand::BeginWindowWithToggle(d, "MCP Server", &d.showMcpServerWindow,
+                                                     d.requestMcpServerFocus)) {
         return;
-    }
-    SmatchetWindowExpand::DrawToggle(d);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestMcpServerFocus = false;
     }
     RepairMcpWindowLayout(d);
 

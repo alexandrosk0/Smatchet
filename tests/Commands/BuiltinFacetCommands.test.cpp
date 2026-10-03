@@ -137,6 +137,7 @@ struct FakeSync : IAppSync {
         ++RecreateCalls;
         return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
     }
+    std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
     void RefreshLocalData() override { ++RefreshCalls; }
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig*, const ViewsStore*) override { return Pack; }
     TrackerConnectivityState GetLastTrackerConnectivityState() const override { return State; }

@@ -1,4 +1,4 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue, not copy-paste; owner=ui; revisit=2026-12-01)
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling UI TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetUI.h"
 #include "BackendAuditTrail.h"
 #include "Logger.h"

@@ -10,7 +10,7 @@
 // endorses an exemption over cross-context abstraction. dup_audit._suppressed accepts a marker on the nearest
 // non-blank line above the clone start OR anywhere inside the span — this one sits directly above, since the
 // token-run start drifts and only that position is stable for a prologue clone that begins at the includes.
-// SMATCHET_DEVIATION(rule=duplication; reason=shared panel/plugin TU prologue; owner=orchestrator; revisit=2026-12-01)
+// SMATCHET_DEVIATION(rule=duplication; reason=shared panel/plugin TU prologue; owner=orchestrator; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
@@ -96,11 +96,11 @@ void RepairLuaWindowLayout(UiDrawSession& d) {
     // An expanded window is deliberately undocked, and it is pinned fullscreen every frame
     // by SmatchetWindowExpand::BeginWindow. Arming the re-dock latch here would fight that
     // pin and also strand a forced redock that fires after the minimize.
-    // The re-dock-latch + off-screen-rect repair below is the same shape every dockable panel carries
-    // (RepairMcpWindowLayout, RepairPlanDocWindowLayout, …) with per-window ids and clamps; adding the guard
-    // above re-flagged that long-standing run. Consolidation is tracked as the EnsureDockSlotAlive audit item —
-    // factoring it here would couple a plugin TU to Core's UI layer for no behavioural gain.
-    // SMATCHET_DEVIATION(rule=duplication; reason=per-window dock-repair shape; owner=orchestrator; revisit=2026-12-01)
+    // The re-dock-latch + off-screen-rect repair below has the same shape as RepairMcpWindowLayout and
+    // SmatchetUI::repairTopLevelWindow, with per-window ids, sizes and clamps that differ, so merging them
+    // changes window geometry. Tracked in
+    // docs/self-improvement/categories/debt/2026-10-01-dock-window-layout-repair-helpers.md.
+    // SMATCHET_DEVIATION(rule=duplication; reason=per-window dock-repair shape, consolidation backlogged; owner=orchestrator; revisit=2027-03-31)
     if (ImGui::IsWindowDocked() || SmatchetWindowExpand::IsCurrentWindowExpanded(d)) {
         return;
     }

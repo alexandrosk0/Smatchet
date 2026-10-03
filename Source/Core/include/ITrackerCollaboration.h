@@ -75,7 +75,7 @@ class ITrackerCollaboration {
     /// display text only — an id pasted into a query or restored with a saved view has no
     /// text a search can find. Ids the backend does not know are simply absent from the
     /// result; that is not an error.
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface default-stub boilerplate — every not-supported virtual across the role interfaces deliberately shares this exact shape; owner=tracker-backend; revisit=2026-11-30)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface default-stub shape shared by every role interface, structural not copy-paste; owner=tracker-backend; revisit=2027-09-01)
     virtual Result<std::vector<TrackerUser>, TrackerError>
     FetchUsersByAccountIds(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*accountIds*/) {
         return Result<std::vector<TrackerUser>, TrackerError>::Err(
