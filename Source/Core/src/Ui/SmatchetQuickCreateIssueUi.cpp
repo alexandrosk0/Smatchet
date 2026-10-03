@@ -4,10 +4,8 @@
 
 #include "SmatchetQuickCreateIssueUi.h"
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=popup needs the create pipeline (CreateIssueAsync/QueueCreateOffline/GetRequiredFieldSet/BuildDraftFromLastTicket) plus SmatchetProjectPicker::Draw which takes AppController&, same facet set as the grandfathered SmatchetNewIssueDraftUi.cpp; owner=quick-create-issue-unreal-context; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=popup needs the create pipeline (CreateIssueAsync/QueueCreateOffline/GetRequiredFieldSet/BuildDraftFromLastTicket) plus SmatchetProjectPicker::Draw which takes AppController&, same facet set as the grandfathered SmatchetNewIssueDraftUi.cpp; owner=quick-create-issue-unreal-context; revisit=2027-11-30)
 #include "AppController.h"
-// clang-format on
 #include "ConfigManager.h"
 #include "Diagnostics/EngineContextFormat.h"
 #include "Diagnostics/EngineHostContext.h"

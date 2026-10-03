@@ -1,5 +1,6 @@
 #include "IssueDraft.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "Tracker/ParentHierarchyPure.h"
@@ -248,9 +249,16 @@ std::string ToJson(const IssueDraft& draft) {
 bool FromJson(const std::string& json, IssueDraft& outDraft, std::string& outError) {
     outDraft = IssueDraft{};
     outError.clear();
+    // The blob is a stored offline-queue payload, so parse bounded (this never throws). A queued create
+    // can carry a long description: allow the config reader's 64 MiB, not the 4 MiB default, so it loads.
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(json, parseErr, 64u * 1024u * 1024u);
+    if (!parseErr.empty()) {
+        outError = parseErr;
+        return false;
+    }
+    // SMATCHET_DEVIATION(rule=duplication; reason=the `out.X = j.value("k", std::string())` run token-matches ParseTrackerUserObject in JiraUserAndMeta.cpp; same nlohmann idiom, unrelated structs; owner=tracker; revisit=if a declarative json-to-struct helper lands)
     try {
-        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=draft blob is app-serialised by ToJson in this TU and stored locally, not external ingress; owner=security-audit; revisit=2026-12-31)
-        auto j = nlohmann::json::parse(json);
         outDraft.ProjectKey = j.value("projectKey", std::string());
         outDraft.IssueTypeId = j.value("issueTypeId", std::string());
         outDraft.IssueTypeName = j.value("issueTypeName", std::string());

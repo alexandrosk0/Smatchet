@@ -583,7 +583,6 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
 }
 
 // Standard Jira API fetch method; error handling patterns match other fetch methods.
-// SMATCHET_DEVIATION(rule=duplication; reason=shared error-handling structure; owner=tracker-backend; revisit=2027-09-01)
 Result<std::vector<TrackerFieldOption>, TrackerError>
 JiraClient::FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
     std::string outError;

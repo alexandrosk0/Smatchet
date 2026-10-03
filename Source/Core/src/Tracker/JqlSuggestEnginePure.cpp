@@ -24,6 +24,7 @@ using tracker_query_suggest::FindTrackerField;
 using tracker_query_suggest::IsQueryDateField;
 using tracker_query_suggest::IsQueryIdChar;
 using tracker_query_suggest::IsQueryUserField;
+using tracker_query_suggest::QuerySuggestPass;
 using tracker_query_suggest::SortAndCapQuerySuggestions;
 
 // Jira's wording for the display-name variant of a user-field value suggestion. The sole
@@ -476,20 +477,16 @@ std::string BuildJqlUserInsert(const TrackerUser& user) {
 void BuildJqlSuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                              const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,
                              QuerySuggestBuild& out, QuerySuggestMeta* metaOut) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=engine entry scaffolding; owner=tracker-backend; revisit=2026-12-31)
-    std::unordered_set<std::string> seen;
-    int replaceStart = 0;
-    int replaceEnd = 0;
-    std::string prefix;
-    if (!BeginQuerySuggestPass(buf, bufLen, cursor, selStart, selEnd, out, metaOut, replaceStart, replaceEnd, prefix)) {
+    QuerySuggestPass pass;
+    if (!BeginQuerySuggestPass(buf, bufLen, cursor, selStart, selEnd, out, metaOut, pass)) {
         return;
     }
     const TrackerField* valueField = nullptr;
 
-    const std::vector<JqlToken> leftTokens = TokenizeJqlPrefix(buf, replaceStart);
-    const JqlSuggestMode mode = DetermineJqlSuggestMode(leftTokens, prefix, fields, &valueField);
+    const std::vector<JqlToken> leftTokens = TokenizeJqlPrefix(buf, pass.ReplaceStart);
+    const JqlSuggestMode mode = DetermineJqlSuggestMode(leftTokens, pass.Prefix, fields, &valueField);
 
-    AppendJqlSuggestionsForMode(mode, fields, users, prefix, valueField, out, seen, metaOut);
+    AppendJqlSuggestionsForMode(mode, fields, users, pass.Prefix, valueField, out, pass.Seen, metaOut);
 
     SortAndCapQuerySuggestions(out.Items);
 }

@@ -1,4 +1,5 @@
 #include "CompactDateFormat.h"
+#include "StringUtil.h"
 #include "UiPerfMonitor.h"
 #include "imgui.h"
 
@@ -21,18 +22,6 @@
 #endif
 
 namespace {
-
-std::string TrimCopy(const std::string& s) {
-    size_t start = 0;
-    size_t end = s.size();
-    while (start < end && std::isspace(static_cast<unsigned char>(s[start]))) {
-        ++start;
-    }
-    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
-        --end;
-    }
-    return s.substr(start, end - start);
-}
 
 // NOTE: TryParseJiraDateTime / FormatJiraDateOrDateTimeForApi and their dedicated
 // helpers (IsDigit / ParseTimeZone / SkipFractional / AppendOffsetJira) now live in
@@ -152,7 +141,7 @@ ParsedDisplayTimePoint ParseDisplayTimePointCached(const std::string& raw) {
     }
 
     ParsedDisplayTimePoint cp;
-    const std::string s = TrimCopy(raw);
+    const std::string s = TrimCopyIsspace(raw);
     if (!s.empty()) {
         ParsedJiraDateTime p;
         if (TryParseJiraDateTime(s, p)) {

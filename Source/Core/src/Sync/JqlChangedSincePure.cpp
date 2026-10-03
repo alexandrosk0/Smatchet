@@ -1,5 +1,7 @@
 #include "Sync/JqlChangedSincePure.h"
 
+#include "StringUtil.h"
+
 #include <cctype>
 #include <cstdio>
 
@@ -18,20 +20,6 @@ int ChangedSinceWindowMinutes(std::chrono::seconds window) {
 }
 
 namespace {
-
-// Trim ASCII whitespace from both ends. Returns the trimmed substring.
-std::string Trim(const std::string& s) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=idiomatic STL Trim boilerplate; owner=sync; revisit=2026-12-31)
-    std::size_t begin = 0;
-    std::size_t end = s.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(s[begin]))) {
-        ++begin;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
-        --end;
-    }
-    return s.substr(begin, end - begin);
-}
 
 // True when `c` is JQL token whitespace.
 bool IsWs(char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; }
@@ -109,7 +97,7 @@ std::string WrapJqlChangedWithin(const std::string& baseJql, int minutes) {
     const int m = minutes > 0 ? minutes : 1;
     const std::string clause = "updated >= -" + std::to_string(m) + "m";
 
-    const std::string trimmed = Trim(baseJql);
+    const std::string trimmed = TrimCopyIsspace(baseJql);
     if (trimmed.empty()) {
         return clause;
     }
@@ -119,8 +107,8 @@ std::string WrapJqlChangedWithin(const std::string& baseJql, int minutes) {
         return "(" + trimmed + ") AND " + clause;
     }
 
-    const std::string body = Trim(trimmed.substr(0, orderPos));
-    const std::string orderBy = Trim(trimmed.substr(orderPos));
+    const std::string body = TrimCopyIsspace(trimmed.substr(0, orderPos));
+    const std::string orderBy = TrimCopyIsspace(trimmed.substr(orderPos));
     if (body.empty()) {
         // Degenerate: base was ORDER-BY-only. Keep the window, re-append the sort.
         return clause + " " + orderBy;

@@ -25,8 +25,6 @@
 // live (LinearIssueMutation.cpp). Collaboration() now self-returns (comment
 // posting); Activity() stays nullptr (the activity-feed role is out of MVP scope).
 
-// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
-// clients; owner=tracker-backend; revisit=2026-12-31)
 class LinearClient : public ITrackerBackend,
                      public ITrackerIssueReader,
                      public ITrackerConnectivity,
@@ -57,8 +55,7 @@ class LinearClient : public ITrackerBackend,
     TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
                                                  const TrackerConfig* configOverride = nullptr,
                                                  const ViewsStore* viewsOverride = nullptr) override;
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& views) override;
@@ -79,19 +76,15 @@ class LinearClient : public ITrackerBackend,
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override;
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,
                                                             const std::vector<TrackerField>& catalog) override;
     Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override;
 
     // === ITrackerCollaboration overrides (slice 3: commentCreate) ===
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
     TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
                                       const std::string& plainText) override;
 
