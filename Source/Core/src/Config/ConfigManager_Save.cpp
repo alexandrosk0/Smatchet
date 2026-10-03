@@ -45,9 +45,9 @@ using smatchet::config_detail::ProtectSecretForConfig;
 using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 #endif
 
+using smatchet::config_detail::SaveJiraBackendExtras;
 using smatchet::config_detail::SaveScalarFields;
 using smatchet::config_detail::SaveSecretsAndPurgeLegacy;
-using smatchet::config_detail::SaveJiraBackendExtras;
 
 namespace {
 

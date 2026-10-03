@@ -38,9 +38,9 @@ using smatchet::config_detail::ProtectSecretForConfig;
 using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 #endif
 
+using smatchet::config_detail::LoadJiraBackendExtras;
 using smatchet::config_detail::LoadScalarFields;
 using smatchet::config_detail::LoadSecretFields;
-using smatchet::config_detail::LoadJiraBackendExtras;
 using smatchet::config_detail::SecretMigrationFlags;
 
 namespace {
