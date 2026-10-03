@@ -6600,3 +6600,43 @@ Triggered-follow-up: when=date:2026-09-20; action=confirm the 25-marker 2026-09-
 1. The 2026-09-30 / 10-01, 11-30 / 12-01 and 2026-12-31 cohorts were each re-evaluated in their own PR (#2272, #2275, #2280). Markers were retired where they exempted nothing, folded where the clone could be folded, set to `revisit=never` where standing, and otherwise staggered with a debt entry. Unwrapping the wrapped markers showed the 2026-12-31 cohort had been larger than the gate could see.
 2. The `deviation-cohort` WARN in `test-lint-rules.sh --diff` fires when a diff adds a marker on a date more than 8 markers already share (`SMATCHET_DEVIATION_COHORT_MAX`). The `--scan-revisit-cohorts` sweep lists every crowded date. The last such date, 2027-03-31 with 21 markers, was spread by group so that no date holds more than 8.
 3. `cpp-rules.md` states that `deviation-overdue` is a strict, whole-tree, merge-blocking rule, and the AGENTS.md contract-card row lists it as absolute.
+- 2026-10-03 · deviation renewal (markers expiring 2026-12-31) · [debt] · P3 — the HTML and ADF Markdown engines each keep their own copy of the image-span and text-skip logic
+
+Details:
+md4c reports an image's alt text as ordinary text events between the image span's enter and leave
+callbacks, so both engines collect it instead of emitting it. `MarkdownToHtml.cpp` and
+`MarkdownToAdf.cpp` each repeat that logic:
+- the `MD_SPAN_IMG` enter (push the src, raise the depth, clear the alt buffer);
+- the leave tail (pop the src, clear the alt, lower the depth);
+- the text-callback preamble (skip NUL chars, skip and log once on raw HTML under `MD_FLAG_NOHTML`,
+  route text inside an image span into the alt buffer).
+
+`dup_audit.py` reports these as clones, exempted by three markers in `MarkdownToHtml.cpp`. The markers
+used to say that folding would couple two independent engines. It would not: both engines already
+share `MarkdownConvert_Internal.h`, which holds their builder structs and `MdAttrToString`.
+
+Concrete next action:
+In `MarkdownConvert_Internal.h`:
+- Add a `MdImageSpan` struct (depth, alt, src stack) and give both builders one in place of
+  `imgSpanDepth` / `imgAltBuf` / `imgAltAccum` / `imgSrcStack`.
+- Add inline helpers to enter an image span, pop its src, leave it, and absorb alt text, plus one for
+  the NUL/raw-HTML skip that takes the engine name for its debug log.
+
+Then move both engines onto the helpers and run the MarkdownConvert tests. Delete the three exemptions
+(`revisit=2027-08-31`).
+
+Applied 2026-10-03:
+- Both builders now derive from `MdEngineState` (code-block depth, `MdImageSpan`, raw-HTML log flag).
+- The engines call `EnterImageSpan` / `PopImageSrc` / `LeaveImageSpan`, `MdLinkHref` and
+  `ConsumeNonEmittedMdText`, all in `MarkdownConvert_Internal.h`. Text events also build their string
+  only after the line-break early returns.
+- The three dated exemptions are gone. One `revisit=never` marker remains for the md4c callback
+  skeleton (the end of the span switch and the start of the text callback), which both engines
+  implement in the same order.
+- A differential run of 16 image cases gives byte-identical HTML and ADF before and after. New
+  `MarkdownToHtml: images` goldens pin the correct cases.
+- The run also exposed three pre-existing alt-text bugs, filed as alexandrosk0/Smatchet#2284: empty
+  `<em></em>` before an image, double-escaped entities, and nested images.
+
+Status: applied
+Last-reviewed: 2026-10-03
