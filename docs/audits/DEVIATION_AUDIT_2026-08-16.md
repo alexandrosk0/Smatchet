@@ -149,7 +149,7 @@ drift stays invisible until someone touches one of those 12 files. Per-file clan
 there is 3–12 lines and is essentially *only* the marker lines.
 
 This is the open P2 finding
-[`2026-08-05-clang-format-reflows-deviation-comments.md`](../self-improvement/categories/tooling/2026-08-05-clang-format-reflows-deviation-comments.md),
+[`2026-08-05-clang-format-reflows-deviation-comments.md`](../self-improvement/categories/applied.md),
 still unimplemented a fortnight later.
 
 **Fixed in this change**: its option 2 — `CommentPragmas: '^ *SMATCHET_DEVIATION'`. Verified across

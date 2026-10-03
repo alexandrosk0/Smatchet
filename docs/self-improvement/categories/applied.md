@@ -6375,3 +6375,228 @@ without the fix: removing a comment leaves the token stream unchanged, so the cl
 grandfathered. The new `--dead-markers` mode answers the question instead: it lists every marker
 that exempts no clone the detector reports today. 10 remain: the `ViewCommands.cpp` one above and 9
 that are not prologue markers, left for their own revisit dates.
+
+# `clang-format` reflows a long `SMATCHET_DEVIATION` comment and silently breaks its parser
+
+- **Category**: tooling
+- **Priority**: P2
+- **Date**: 2026-08-05
+- **Status**: applied — option 2 on 2026-08-16, option 3 on 2026-10-03
+
+## What happened
+
+`.clang-format` sets `ColumnLimit: 120`. A `SMATCHET_DEVIATION(rule=…; reason=…; owner=…;
+revisit=…)` comment with a descriptive `reason=` exceeds that, so `clang-format -i` wraps it
+onto a second `//` line. Every deviation consumer (`dup_audit.py`, `test-lint-rules.sh`, the
+`deviation-overdue` gate) matches the directive on a **single line**, so the wrapped form is
+not a syntax error — it simply stops being a deviation, and the rule it was escaping fires
+again with no explanation of why the comment above it exists.
+
+Hit while adding the four duplication exemptions for the window-expand feature: the reason
+strings had to be shortened to fit rather than written for the reader.
+
+## Why it matters
+
+Two gates disagree about the same line — the formatter, which every pre-push hook runs, and
+the lint gates, which block the merge. The failure is silent in the direction that matters
+(escape lost, not escape wrongly granted), and the fix pressure lands on comment prose
+instead of on the tooling.
+
+## Proposed fix
+
+Pick one:
+
+1. Teach the deviation parsers to join a `//` continuation line before matching, so wrapping
+   is harmless. Cheapest, keeps `ColumnLimit` untouched.
+2. Add `CommentPragmas: '^ SMATCHET_DEVIATION'` to `.clang-format` so the formatter leaves
+   these comments alone. One line, but the long comment then visibly overruns the column
+   limit.
+3. Add a gate that fails on a wrapped `SMATCHET_DEVIATION(` with no closing `)` on the same
+   line — turns the silent loss into a loud one without changing either tool's behaviour.
+
+Option 2 plus option 3 is the smallest combination that is both correct and self-policing.
+
+## Update — 2026-08-16 (deviation re-evaluation)
+
+Measured rather than predicted. 73 live markers exceed `ColumnLimit`; 58 survive only because
+someone hand-wrapped them in `// clang-format off` / `// clang-format on`. The remaining **15 are
+rewritten by `clang-format` today** — 8 `duplication`, 4 `bare-json-parse-untrusted`, 3
+`app-controller-fan-in`. Proof end-to-end on `Source/Core/src/Tracker/PlaneProjectScope.cpp` using
+the real `scan_bare_json_parse_file`: in-tree → clean, after `clang-format` →
+`bare-json-parse-untrusted`, gate FAILS. `scripts/dev/pre-ship.sh:429` runs `clang-format -i` on
+every changed first-party TU before the gate, and no CI job checks formatting, so the drift is
+invisible until someone touches one of those 12 files.
+
+**Option 2 applied**: `.clang-format` now carries `CommentPragmas: '^ *SMATCHET_DEVIATION'`.
+Verified across all 110 marker-holding TUs — marker lines clang-format would rewrite goes 15 → 0,
+with no other formatting change attributable to the pragma.
+
+**Option 3 deliberately deferred**, and the reason matters: 47 markers in the tree are *already*
+wrapped and already invisible to every gate (see
+[`2026-08-16-wrapped-deviation-markers-invisible-to-gate.md`](applied.md)).
+A wrapped-marker gate added today red-walls CI on all 47 at once. Sequence is: un-wrap the 47, then
+add the gate. This entry stays open until option 3 lands.
+
+Separately, the same audit found and fixed a second parser defect the original entry did not
+anticipate: `DEV_RE`'s `[^)]*` body capture truncates at the first `)`, so a `reason=` containing a
+parenthetical hid `revisit=` from `deviation-overdue` on 40 markers while still granting the
+suppression — see [`docs/audits/DEVIATION_AUDIT_2026-08-16.md`](../../audits/DEVIATION_AUDIT_2026-08-16.md) § S1.
+
+**Option 3 applied 2026-10-03**: once the 2026-12-31 deviation batch had unwrapped every marker, the
+absolute `deviation-malformed` rule (`dev_marker_malformed` in `lint-rules.d/00-common.sh`, emitted
+by `scan_file_rules`, enforced whole-tree by `compute_wide_violations`) landed. It fails any
+`SMATCHET_DEVIATION(` that does not close on its own line or lacks `rule=` / `reason=` / `owner=` /
+`revisit=`. Covered by `tests/fixtures/lint_rules/deviation-malformed.cpp` and four `lint_rules.bats`
+cases, each field check pinned by a mutation that fails them.
+
+# 47 `SMATCHET_DEVIATION` markers are wrapped across lines and invisible to every gate
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-16
+- **Observed on**: the full deviation re-evaluation, [`docs/audits/DEVIATION_AUDIT_2026-08-16.md`](../../audits/DEVIATION_AUDIT_2026-08-16.md) § S2
+- **Status**: applied 2026-10-03
+
+## What happened
+
+The bash gate matches `DEV_RE='SMATCHET_DEVIATION\(([^)]*)\)'`, which requires the closing paren on
+the **same line**. 47 live first-party markers open on one line and close on a later one, so
+`DEV_RE` never matches them: the line is treated as ordinary prose, and **both the suppression and
+the expiry are lost**. The Python auditors (`dup_audit`, `function_size_audit`,
+`appcontroller_fan_in_audit`, `include_cycle_audit`) are per-line too — their "nearest non-blank
+line above the target" is the marker's trailing prose, which carries no token, so a wrapped marker
+survives only via `dup_audit._suppressed`'s "anywhere within the clone span" fallback, which
+[`cpp-rules.md`](../../agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
+
+Where they are: `Source/Core/include/Tracker/{GitHub,Jira,Linear,Plane}Client.h` (21),
+`Source/Core/src/Tracker/*` (8), the three AI provider clients (5), `Source/Standalone/Cli*` (4),
+9 others.
+
+Two sibling fixture backends make it legible — same rule, same reason, same code:
+
+```
+Source/Core/src/Tracker/TrackerFixtureBackendBase.cpp:25   marker on ONE line  -> suppressed, clean
+Source/Core/src/Tracker/GitHubFixtureBackend.cpp:26        marker WRAPPED      -> NOT suppressed
+```
+
+Running the project's own `scan_file_slurp_file` over the tree today emits
+`unbounded-file-slurp  Source/Core/src/Tracker/GitHubFixtureBackend.cpp:28`.
+
+## Why it matters
+
+`unbounded-file-slurp` is WARN-first, so nothing blocks today. A whole-tree sweep with every bash
+scanner confirms `bare-json-parse-untrusted` and `catch-all-swallow` are currently clean — i.e. no
+*blocking* rule is defeated right now. That is luck. The same wrap on a `bare-json-parse-untrusted`
+or `no-detach` escape fails the merge gate for reasons unrelated to the author's change, and a wrap
+on any marker removes it from `deviation-overdue` permanently and silently.
+
+This is the tail of [`2026-08-05-clang-format-reflows-deviation-comments.md`](applied.md):
+that entry's option 2 (`CommentPragmas`) shipped 2026-08-16 and stops *new* wrapping, but it does
+not un-wrap the 47 already in the tree.
+
+**Update 2026-10-03 — step 1 is done.** The 2026-11-30 / 12-01 and 2026-12-31 deviation batches
+unwrapped every remaining wrapped marker: `git grep -n "SMATCHET_DEVIATION(" -- 'Source/**'` now finds
+none without `revisit=` on the same line. Each one was resolved rather than just re-flowed:
+- 5 that exempted no clone were deleted (`JiraClient.h`, `LinearClient.h` ×2, `AppController.h`,
+  `LinearIssueMutation.cpp`);
+- the `Tracker/*Client.h` override-signature ones became one-line `revisit=never`;
+- the rest got one-line, staggered dates backed by debt entries.
+
+The wrap had also hidden 24 markers dated 2026-12-31 from `deviation-overdue`, so the 2027-01-01 cliff
+was larger than the gate could see.
+
+**Update 2026-10-03 — step 2 is done.** `deviation-malformed` is an absolute, whole-tree rule next to
+`deviation-overdue`. It fails a `SMATCHET_DEVIATION(` that does not close on its own line, that has a
+missing or blank `rule=` / `reason=` / `owner=`, or that has no `revisit=` at all. A blank `revisit=`
+stays `deviation-overdue`'s to report. A prose mention of the token in a C++ comment fails too, because
+`DEV_RE` would read it as a marker. Run against develop before the batch, it reports 30 lines: the 28
+wrapped markers, the wrapped `GitHubFixtureBackend.cpp` slurp marker, and
+`ITrackerFieldCatalog.h:42` (no `reason=`).
+
+## Concrete next action
+
+Two steps, in order — the second is unsafe before the first.
+
+1. **Sweep**: re-word each of the 47 markers so the whole `SMATCHET_DEVIATION(...)` fits one line
+   directly above its target, moving overflow prose to lines *above* the marker (the shape
+   `cpp-rules.md` § "One line, directly above" prescribes). 47 judgement calls about `reason=`
+   prose, not a mechanical edit — do it per-subsystem, `Tracker/*Client.h` first (21 of the 47, all
+   the same "interface-mandated override-signature symmetry" text).
+2. **Gate it**: add the well-formedness rule that option 3 of the 2026-08-05 entry proposed —
+   fail on a `SMATCHET_DEVIATION(` with no balanced `)` on the same line, and on a marker missing
+   `reason=` / `owner=` / `revisit=`. Enumerator: every line matching `SMATCHET_DEVIATION(` in
+   `git ls-files 'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**'` filtered to
+   `.cpp/.h/.hpp` — the same file set `compute_wide_violations` already walks. Replaying the
+   motivating case against that enumerator: `Source/Core/src/Tracker/GitHubFixtureBackend.cpp:26`
+   appears in it, has no balanced `)` on the line, and would trip the gate — as would
+   `Source/Core/include/AppController.h:989`, which has no `owner=` or `revisit=`. Run step 2 only
+   after step 1, or CI red-walls on all 47 at once.
+
+Triggered-follow-up: when=date:2026-09-15; action=re-run the wrapped-marker count and confirm the sweep landed before the 2026-10-01 overdue cliff; baseline=47 wrapped markers on 2026-08-16; fired=2026-10-03 (0 wrapped markers left after the 2026-12-31 batch)
+
+# 25 deviations expire on the same day and block every merge when they do
+
+- **Category**: process
+- **Priority**: P1
+- **Date**: 2026-08-16
+- **Observed on**: the full deviation re-evaluation, [`docs/audits/DEVIATION_AUDIT_2026-08-16.md`](../../audits/DEVIATION_AUDIT_2026-08-16.md) § S5
+- **Status**: applied 2026-10-04
+
+## What happened
+
+`deviation-overdue` is an **absolute, whole-tree** rule: `compute_wide_violations()` scans every
+first-party C++ file (not the diff), and any hit sets `rc=1` at
+`agents/scripts/project/test-lint-rules.sh:705`. One overdue marker anywhere fails the gate for
+every open PR until it is re-dated or removed.
+
+The live `revisit=` dates are not spread out — they were stamped in bulk by sweeps. Stubbing
+`today_ymd()` and re-running the real `compute_wide_violations`:
+
+| date | markers overdue | gate |
+|---|---|---|
+| 2026-08-16 (today) | 0 | green |
+| **2026-10-01** | **25** | **RED — all merges blocked** |
+| 2026-10-02 | 27 | RED |
+| 2026-12-02 | 34 | RED |
+| **2027-01-01** | **94** | **RED** |
+
+**Update 2026-08-16** — retiring the 20 markers that suppress no live clone (audit § Retire) cuts
+the near cliff from **25 to 15** and the 2027-01-01 cohort from **94 to 77**. The class is reduced,
+not closed: 15 markers still land on one day, and the remaining 77 are still a single date.
+
+The 25 that land on 2026-10-01 all carry `revisit=2026-09-30` with `owner=security-audit` or
+`owner=cpp-audit` — a single sweep's default date, not 25 exemptions that genuinely come due the
+same Tuesday. The 2027-01-01 spike is the same story with `revisit=2026-12-31`.
+
+## Why it matters
+
+The failure lands on whoever happens to push that morning, not on the owner of any of the 25
+markers, and it lands on all of them at once. The gate is correct — the audit loop is *supposed* to
+force a re-evaluation — but a same-day cohort converts "re-evaluate one exemption" into "re-evaluate
+25 or bypass the gate", and bypassing is the outcome that actually happens under deadline. An
+`--admin` merge past it is exactly what `postmortem-owed.sh` flags, so the cliff manufactures the
+incident it then reports.
+
+## Concrete next action
+
+1. **Before 2026-09-30**, re-evaluate the 25-marker cohort (they are listed in the audit's retarget
+   table) and give each an outcome: retire it, or re-date it to a *staggered* date, or convert it to
+   `revisit=never` where the exemption is genuinely standing. Most are the include-prologue class
+   (tooling entry "`dup_audit.py` flags shared include prologues", archived in [`applied.md`](applied.md))
+   and should be retired by fixing the auditor, not re-dated. The auditor fix landed 2026-10-03.
+2. **Stop the class regenerating**: a sweep that stamps N markers must not give them all one date.
+   Add a check next to the deviation well-formedness gate (`deviation-malformed`, landed 2026-10-03;
+   history in [`2026-08-16-wrapped-deviation-markers-invisible-to-gate.md`](applied.md))
+   that WARNs when more than ~8 first-party markers share a single `revisit=` date. Enumerator: the
+   `revisit=` values `compute_wide_violations` already parses, bucketed by date. Replaying the
+   motivating case against it: today's tree has buckets of 54 (2026-12-31) and 25 (2026-09-30), both
+   of which would WARN.
+3. `AGENTS.md` § Tiered enforcement should say plainly that `deviation-overdue` is whole-tree and
+   merge-blocking, not diff-scoped. Today a reader has to infer that from the script.
+
+Triggered-follow-up: when=date:2026-09-20; action=confirm the 25-marker 2026-09-30 cohort has been re-evaluated before it fires; baseline=25 markers dated 2026-09-30 as of 2026-08-16; fired=never
+
+**Applied 2026-10-04.**
+1. The 2026-09-30 / 10-01, 11-30 / 12-01 and 2026-12-31 cohorts were each re-evaluated in their own PR (#2272, #2275, #2280). Markers were retired where they exempted nothing, folded where the clone could be folded, set to `revisit=never` where standing, and otherwise staggered with a debt entry. Unwrapping the wrapped markers showed the 2026-12-31 cohort had been larger than the gate could see.
+2. The `deviation-cohort` WARN in `test-lint-rules.sh --diff` fires when a diff adds a marker on a date more than 8 markers already share (`SMATCHET_DEVIATION_COHORT_MAX`). The `--scan-revisit-cohorts` sweep lists every crowded date. The last such date, 2027-03-31 with 21 markers, was spread by group so that no date holds more than 8.
+3. `cpp-rules.md` states that `deviation-overdue` is a strict, whole-tree, merge-blocking rule, and the AGENTS.md contract-card row lists it as absolute.

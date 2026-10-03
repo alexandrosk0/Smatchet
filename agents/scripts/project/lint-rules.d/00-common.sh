@@ -92,6 +92,30 @@ dev_trim() {
     DEV_TRIMMED="${s%"${s##*[![:space:]]}"}"
 }
 
+# True when $1 mentions SMATCHET_DEVIATION( but is not a whole marker: no closing paren on the
+# line, or no non-empty rule= / reason= / owner=, or no revisit= key at all. Every gate reads a
+# marker one line at a time, so a marker wrapped onto a second line never had its revisit= read:
+# 28 such markers hid 24 due dates from deviation-overdue until 2026-10. A revisit= that is present
+# but empty is left to deviation-overdue, which already fails it closed. Same greedy DEV_RE body
+# and field split as scan_file_rules, so "whole" means every field those gates read is there.
+dev_marker_malformed() {
+    local body kv have_rule="" have_reason="" have_owner="" have_revisit=""
+    [[ "$1" =~ $DEV_RE ]] || return 0
+    body="${BASH_REMATCH[1]}"
+    IFS=';' read -ra kvs <<< "$body"
+    for kv in "${kvs[@]}"; do
+        dev_trim "$kv"
+        case "$DEV_TRIMMED" in
+            rule=?*)   have_rule=1 ;;
+            reason=?*) have_reason=1 ;;
+            owner=?*)  have_owner=1 ;;
+            revisit=*) have_revisit=1 ;;
+        esac
+    done
+    [ -n "$have_rule" ] && [ -n "$have_reason" ] && [ -n "$have_owner" ] && [ -n "$have_revisit" ] && return 1
+    return 0
+}
+
 today_ymd() { date +%Y-%m-%d; }
 
 # True if $1 is a CALENDAR ATTEMPT that revisit_overdue cannot compare. Every such value used to
