@@ -38,10 +38,6 @@
 #include <unordered_set>
 #include <iterator>
 
-// Include-list scaffold — dup_audit token-normalizes every include to the same
-// `# include LIT` run, so touching this block re-hashes a maximal run that matches
-// sibling AppController TUs' include blocks. Idiomatic boilerplate, not shared logic.
-// SMATCHET_DEVIATION(rule=duplication; reason=include-block scaffold clone; owner=lua-automation; revisit=2026-12-31)
 #include <nlohmann/json.hpp>
 
 #include "Json/BoundedJsonParse.h"

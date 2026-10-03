@@ -18,8 +18,7 @@
 #include <unordered_map>
 #include <mutex>
 
-// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
-// clients; owner=tracker-backend; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=2026-12-31)
 class PlaneClient : public ITrackerBackend,
                     public ITrackerIssueReader,
                     public ITrackerConnectivity,

@@ -38,9 +38,6 @@
 #include <utility>
 #include <vector>
 
-// Companion TU shares subsystem include set; no shared header without worse coupling; DRY gate
-// endorses exemption over abstraction (see ADR-0020 / debt.md).
-// SMATCHET_DEVIATION(rule=duplication; owner=orchestrator; revisit=ADR-0020)
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 

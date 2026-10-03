@@ -200,8 +200,8 @@ as a copy-paste clone. Every god-file split therefore costs one exemption per si
 That is exactly the condition `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp:12` names —
 `revisit=when the dup auditor scopes cross-file clones to logic blocks`. It has **not** fired.
 Teaching `dup_audit.py` to skip contiguous preprocessor runs would retire ~73 exemptions at once
-and stop the class regenerating. Filed as
-`docs/self-improvement/categories/tooling/2026-08-16-dup-auditor-flags-include-prologues.md`.
+and stop the class regenerating. Filed as a tooling entry, applied 2026-10-03 and archived in
+`docs/self-improvement/categories/applied.md` ("`dup_audit.py` flags shared include prologues").
 
 ## S7 · 56 markers hang on triggers nobody owns
 

@@ -2,7 +2,6 @@
 
 #if defined(SMATCHET_WITH_MCP)
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling UI TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "McpServerStatus.h"

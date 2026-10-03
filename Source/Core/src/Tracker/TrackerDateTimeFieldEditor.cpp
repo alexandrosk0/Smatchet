@@ -9,7 +9,6 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=tracker-backend; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include <algorithm>
 #include <cctype>
 #include <cstdio>

@@ -37,9 +37,6 @@
 // Debug.cpp — the SmatchetUiSession.h-side extern is gated on
 // SMATCHET_WITH_LUA_AUTOMATION while g_ui itself is defined unconditionally
 // in SmatchetUI.cpp.
-// File-top scaffold clone across sibling scenarios — see the matching marker in
-// DockGapSentinelScenario.cpp; the extractable parts now live in ScenarioArgs.h.
-// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
 extern UiDrawSession g_ui;
 
 namespace smatchet {

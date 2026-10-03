@@ -31,8 +31,7 @@
 // cfg-less mutation paths — JiraClient's pattern) so a PAT entered or rotated
 // in Preferences takes effect without recreating the client (issue #979).
 
-// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
-// clients; owner=tracker-backend; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=2026-12-31)
 class GitHubClient : public ITrackerBackend,
                      public ITrackerIssueReader,
                      public ITrackerConnectivity,

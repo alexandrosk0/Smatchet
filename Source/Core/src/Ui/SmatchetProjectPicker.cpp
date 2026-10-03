@@ -1,6 +1,5 @@
 #include "SmatchetProjectPicker.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include-list boilerplate: quote includes, the SmatchetLocalizedImGui define and the std includes normalize to the same tokens as other Ui TUs' lists, so the offline load's extra includes made the run long enough to match; nothing behavioural to factor out; owner=ui; revisit=2027-06-30)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "DataFreshnessCue.h"

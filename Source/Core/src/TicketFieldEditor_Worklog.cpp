@@ -4,7 +4,6 @@
 // the logged/remaining bar, the duration and date inputs, and Save on a worker. Reaches the controller
 // only through the IAppThreading + IAppTicketMutations facets.
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "TicketFieldEditor_detail.h"
 #include "CachedTicketTypes.h"
 #include "Commands/IAppThreading.h"

@@ -38,7 +38,6 @@
 // this reach.
 #include "imgui_internal.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include prologue shared with sibling TUs; owner=plugins; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>

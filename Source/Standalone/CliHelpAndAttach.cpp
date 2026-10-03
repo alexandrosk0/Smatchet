@@ -13,9 +13,6 @@
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared CliCommandRunner-TU include block + cli::detail using-prologue is grandfathered across the god-file-split siblings (CliCommandRunner.cpp / CliArgs / CliSpawn / CliDispatch / CliHelpAndAttach) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared CliCommandRunner TU prologue header is introduced)
-// clang-format on
 
 #if defined(SMATCHET_WITH_MCP)
 #if defined(_WIN32)

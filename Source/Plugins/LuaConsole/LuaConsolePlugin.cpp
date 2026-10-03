@@ -2,15 +2,6 @@
 #include "LuaConsolePlugin_detail.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-// The prologue below (project headers + SmatchetLocalizedImGui #define + std-library include block) is the shared
-// preamble every panel/plugin TU carries — SmatchetAiAssistantUi / SmatchetBulkTicketsUi / SmatchetOfflineQueueUi /
-// SmatchetPreferencesUi*. Every edit that lengthens it (<future> for the Issue #1925 async script load, the
-// SmatchetWindowExpand pair for the tab-bar toggle) re-flags an already-common run rather than introducing new
-// copy-paste, and there is no shared prologue header to factor into without worse coupling — the DRY gate doc
-// endorses an exemption over cross-context abstraction. dup_audit._suppressed accepts a marker on the nearest
-// non-blank line above the clone start OR anywhere inside the span — this one sits directly above, since the
-// token-run start drifts and only that position is stable for a prologue clone that begins at the includes.
-// SMATCHET_DEVIATION(rule=duplication; reason=shared panel/plugin TU prologue; owner=orchestrator; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"

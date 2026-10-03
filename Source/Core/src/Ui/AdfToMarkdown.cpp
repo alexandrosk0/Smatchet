@@ -13,10 +13,6 @@ extern "C" {
 
 #include <nlohmann/json.hpp>
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared engine-TU include block + namespace-open boilerplate is grandfathered across the MarkdownConvert split siblings (MarkdownToAdf / MarkdownToHtml / AdfToMarkdown) — a behavior-preserving god-file partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared MarkdownConvert TU prologue header is introduced)
-// clang-format on
-
 #include <algorithm>
 #include <cctype>
 #include <cstring>

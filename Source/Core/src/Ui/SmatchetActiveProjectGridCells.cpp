@@ -25,9 +25,6 @@
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared SmatchetActiveProjectGrid-TU include prologue is grandfathered across the god-file-split siblings (SmatchetActiveProjectGridUi.cpp / _Table / _Cells) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared Grid TU prologue header is introduced)
-// clang-format on
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"

@@ -18,12 +18,12 @@
 
 #include <nlohmann/json.hpp>
 
-// Below is per-backend declaration shell only — shared behaviour lives in TrackerFixtureBackendBase.
-// SMATCHET_DEVIATION(rule=duplication; reason=fixture decl shell; owner=tracker; revisit=2026-12-31)
 #include <memory>
 #include <string>
 #include <vector>
 
+// Below is per-backend declaration shell only — shared behaviour lives in TrackerFixtureBackendBase.
+// SMATCHET_DEVIATION(rule=duplication; reason=fixture decl shell; owner=tracker; revisit=2026-12-31)
 class ITrackerBackendFactory;
 class ITrackerFieldCatalog;
 class ITrackerCollaboration;

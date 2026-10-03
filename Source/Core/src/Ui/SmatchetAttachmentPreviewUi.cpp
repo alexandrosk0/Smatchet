@@ -12,10 +12,6 @@
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=idiomatic per-TU ImGui-localization preamble (imgui
-// includes + `#define ImGui SmatchetLocalizedImGui` wrapper + the Win32 lean-and-mean guard) shared
-// verbatim across localized-ImGui TUs; the `#define ImGui` must follow the imgui includes per-TU, so
-// it is not extractable into a shared header; owner=ui-host; revisit=2026-12-31)
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"

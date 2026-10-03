@@ -14,9 +14,6 @@
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=the shared CliCommandRunner-TU include block + cli::detail using-prologue is grandfathered across the god-file-split siblings (CliCommandRunner.cpp / CliArgs / CliSpawn / CliDispatch / CliHelpAndAttach) — a behavior-preserving partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared CliCommandRunner TU prologue header is introduced)
-// clang-format on
 
 #if defined(SMATCHET_WITH_MCP)
 #if defined(_WIN32)
@@ -37,9 +34,6 @@
 #include <ghc/filesystem.hpp>
 
 #include <chrono>
-// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
-// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
-// CliCommandRunner TU prologue header is introduced)
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -52,9 +46,6 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
-// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
-// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
-// CliCommandRunner TU prologue header is introduced)
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)

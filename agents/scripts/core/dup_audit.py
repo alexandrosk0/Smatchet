@@ -9,7 +9,9 @@ the clone signal survives whitespace / comment / clang-format churn; an extra no
 maps identifiers -> `ID` and literals -> `LIT` (keywords + punctuation stay structural), so a
 copy-then-rename is still caught. This is the DRY gate's detector — NOT a structural-similarity
 or semantic-dup tool; it flags literal copy-paste only (see docs/adr/0015 + the plan's
-double-edged-DRY guardrail).
+double-edged-DRY guardrail). Preprocessor directives (except function-like macros) and the `using` run
+that opens a file are dropped before shingling, so sibling TUs that share only an include block are
+not clones.
 
 Verdict model — BLOCKING (graduated 2026-06-21; calibration complete per ADR-0015). `--diff`
 emits `[dup] FAIL ...` lines for NEW cross-file copy-paste clones and exits 1, blocking the
@@ -27,6 +29,7 @@ Modes mirror function_size_audit.py:
 
   dup_audit.py                       # human report of current cross-file clones
   dup_audit.py --list                # one `rule<TAB>fileA:lineA<TAB>fileB:lineB (Ntok)` per clone
+  dup_audit.py --dead-markers        # one `rule<TAB>file:line` per marker that exempts no clone
   dup_audit.py --baseline-md         # deterministic markdown grandfather snapshot
   dup_audit.py --diff <ref>          # DELTA gate: BLOCKING `[dup] FAIL ...` for NEW clones (exit 1)
   dup_audit.py --scan-file <path>    # git-free single-file INTRA-file clone scan (bats harness)
@@ -129,11 +132,76 @@ def _tokens_with_lines(text):
     return out
 
 
+# Preprocessor directives are dropped before shingling: sibling TUs split from one file all open with
+# the same include block, which on its own clears MIN_CLONE_TOKENS, and no directive is logic. The one
+# exception is a function-like macro (the name directly followed by `(`): its body is code and can be
+# copy-pasted, so it stays. Object-like defines (include guards, NOMINMAX, `#define ImGui X`) go.
+_FUNCTION_MACRO_RE = re.compile(r"^\s*#\s*define\s+[A-Za-z_][A-Za-z0-9_]*\(")
+
+
+def _drop_directives(toks, text):
+    """Remove every token of a preprocessor directive, except a function-like `#define`, from `toks`
+    ([(token, line), ...]). A directive is a `#` that is the first token on its line, and it runs to
+    the end of its logical line (a trailing backslash continues it). Only the directive's tokens go;
+    the code around it stays, so a clone that starts in an include block and continues into real logic
+    is still reported for its logic part. Tokens inside a kept macro are never read as a directive
+    start, so a stringizing `#` at the start of a macro continuation line stays part of the body."""
+    raw_lines = text.split("\n")
+
+    def logical_end(line):
+        end = line
+        # Whitespace after the backslash still splices, as GCC and Clang accept it.
+        while end <= len(raw_lines) and raw_lines[end - 1].rstrip().endswith("\\"):
+            end += 1
+        return end
+
+    out = []
+    drop_through = 0  # last line of the directive being dropped
+    keep_through = 0  # last line of the function-like macro being kept
+    prev_line = 0
+    for tok, ln in toks:
+        first_on_line = ln != prev_line
+        prev_line = ln
+        if ln <= drop_through:
+            continue
+        if tok == "#" and first_on_line and ln > keep_through:
+            if _FUNCTION_MACRO_RE.match(raw_lines[ln - 1]):
+                keep_through = logical_end(ln)
+            else:
+                drop_through = logical_end(ln)
+                continue
+        out.append((tok, ln))
+    return out
+
+
+def _drop_leading_using_run(toks):
+    """Remove the run of `using ...;` declarations and `namespace X = ...;` aliases that opens a file
+    once its directives are gone. Sibling TUs repeat the same block of imported names after their
+    includes, and it is not logic either. Only the run at the very start of the file goes: the first
+    token that begins anything else ends it, so a `using` inside a namespace or function stays."""
+    i, n = 0, len(toks)
+    while i < n:
+        is_using = toks[i][0] == "using"
+        is_alias = (toks[i][0] == "namespace" and i + 2 < n and _IDENT_RE.match(toks[i + 1][0])
+                    and toks[i + 2][0] == "=")
+        if not (is_using or is_alias):
+            break
+        j = i
+        while j < n and toks[j][0] != ";":
+            j += 1
+        if j == n:
+            break  # unterminated: leave the tail in the stream rather than guess
+        i = j + 1
+    return toks[i:]
+
+
 def normalized_stream(text):
-    """Return (norm_tokens, lines): parallel lists of normalized tokens and their source lines."""
+    """Return (norm_tokens, lines): parallel lists of normalized tokens and their source lines.
+    Preprocessor directives other than a function-like `#define` (_drop_directives) and the `using`
+    run that opens the file (_drop_leading_using_run) are not part of the stream."""
     norm = []
     lines = []
-    for tok, ln in _tokens_with_lines(text):
+    for tok, ln in _drop_leading_using_run(_drop_directives(_tokens_with_lines(text), text)):
         norm.append(normalize_token(tok))
         lines.append(ln)
     return norm, lines
@@ -383,28 +451,57 @@ def _ineffective_dup_deviation(path, start_line):
     return 0
 
 
-def _suppressed(path, start_line, end_line):
-    """True if a `// SMATCHET_DEVIATION(rule=duplication; ...)` sits on the nearest non-blank line
-    ABOVE the clone, or ANYWHERE WITHIN the cloned span [start_line, end_line]. The span scan is
-    needed because the maximal-token-run boundary can drift above the human-meaningful start (a
-    stripped comment line doesn't bound the token stream), so an above-the-block marker would
-    otherwise be missed. Mirrors function_size_audit._suppressed's grammar (comma-separated ids)."""
+def _suppressing_lines(path, start_line, end_line):
+    """1-based lines of every `// SMATCHET_DEVIATION(rule=duplication; ...)` that exempts the clone
+    occurrence [start_line, end_line] of `path`: the nearest non-blank line ABOVE the clone, plus any
+    marker ANYWHERE WITHIN the span. The span scan is needed because the maximal-token-run boundary
+    can drift above the human-meaningful start (a stripped comment line doesn't bound the token
+    stream), so an above-the-block marker would otherwise be missed. Mirrors
+    function_size_audit._suppressed's grammar (comma-separated ids)."""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = fh.read().split("\n")
     except OSError:
-        return False
+        return []
+    found = []
     # Nearest non-blank line above the clone start (marker placed directly above the block).
     idx = start_line - 2
     while 0 <= idx < len(lines) and lines[idx].strip() == "":
         idx -= 1
     if 0 <= idx < len(lines) and _has_dup_deviation(lines[idx]):
-        return True
+        found.append(idx + 1)
     # Anywhere inside the cloned span.
-    for i in range(start_line - 1, min(end_line, len(lines))):
-        if 0 <= i and _has_dup_deviation(lines[i]):
-            return True
-    return False
+    for i in range(max(0, start_line - 1), min(end_line, len(lines))):
+        if _has_dup_deviation(lines[i]):
+            found.append(i + 1)
+    return found
+
+
+def _suppressed(path, start_line, end_line):
+    """True if a duplication deviation exempts this clone occurrence (see _suppressing_lines)."""
+    return bool(_suppressing_lines(path, start_line, end_line))
+
+
+def dead_dup_markers(clones, paths):
+    """(path, line) of every `rule=duplication` marker in `paths` that exempts none of `clones`. Such
+    a marker can be deleted without un-exempting anything the detector reports today. Pure apart from
+    reading the files, so --selftest can drive it without git."""
+    used = set()
+    for c in clones:
+        for p, s, e in c.locations:
+            for ln in _suppressing_lines(p, s, e):
+                used.add((p, ln))
+    dead = []
+    for p in paths:
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().split("\n")
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            if _has_dup_deviation(line) and (p, i + 1) not in used:
+                dead.append((p, i + 1))
+    return dead
 
 
 def new_clones_vs(base, head_streams, base_streams):
@@ -499,6 +596,16 @@ def run_list():
     return 0
 
 
+def run_dead_markers():
+    """One `rule<TAB>file:line` per duplication marker that exempts no cross-file clone at HEAD.
+    Advisory, exit 0. `--diff` cannot answer this: removing a comment leaves the token stream
+    unchanged, so a clone whose marker was deleted stays grandfathered and the gate stays green
+    whether or not the marker was doing anything."""
+    for p, ln in dead_dup_markers(find_clones(streams_head(), allow_intra=False), list_head_files()):
+        print("%s\t%s:%d" % (RULE_DUP, p, ln))
+    return 0
+
+
 def run_baseline_md():
     clones = sorted(find_clones(streams_head(), allow_intra=False), key=lambda c: c.locations)
     print("# Duplication — grandfathered baseline")
@@ -530,6 +637,98 @@ def run_report():
     for c in sorted(clones, key=lambda c: c.ntokens, reverse=True)[:30]:
         locs = " <-> ".join("%s:%d" % (os.path.basename(p), ln) for p, ln, _e in c.locations)
         print("- %s — %d tokens" % (locs, c.ntokens))
+    return 0
+
+
+def _selftest_prologue_filter():
+    """Directives and the leading `using` run leave the stream; everything else, line numbers
+    included, is untouched. Returns 1 on any failure."""
+    miss = 0
+
+    def fail(msg):
+        print("SELFTEST FAIL: " + msg, file=sys.stderr)
+        return 1
+
+    src = ('#include "a.h"\n'
+           '#if defined(X)\n'
+           '#include <b>\n'
+           '#endif\n'
+           'using a::b;\n'
+           'namespace fs = c::d;\n'
+           'int x = 1;\n'
+           'using e::f;\n')
+    norm, lines = normalized_stream(src)
+    expected = ["int", "ID", "=", "LIT", ";", "using", "ID", ":", ":", "ID", ";"]
+    if norm != expected or lines[0] != 7 or lines[-1] != 8:
+        miss |= fail("directives / leading using run not dropped as specified: %s %s" % (norm, lines))
+    # A backslash continues a directive onto the next line; the whole logical line goes.
+    if normalized_stream("#if defined(A) && \\\n    defined(B)\nint y;\n")[0] != ["int", "ID", ";"]:
+        miss |= fail("continuation line of a dropped directive leaked into the stream")
+    # A function-like macro is code and stays, including a stringizing `#` that starts a
+    # continuation line; an object-like define (an include guard) goes.
+    norm, lines = normalized_stream("#define GUARD_H\n#define STR(x) \\\n    #x\nint z;\n")
+    if (norm[:2] != ["#", "ID"] or norm.count("#") != 2 or norm[-3:] != ["int", "ID", ";"]
+            or lines[0] != 2):
+        miss |= fail("function-like macro not kept intact, or object-like define kept: %s %s" % (norm, lines))
+    # Prologues cycle through several line shapes, as real ones do. A block of one repeated shape
+    # would be skipped as ubiquitous (MAX_FP_OCCURRENCES) whatever the filter does, and the
+    # "not a clone" checks below would then pass for the wrong reason.
+    include_shapes = ('#include "Dir%d/File.h"\n', "#include <lib%d/sub/file.hpp>\n",
+                      "#include <cstd%d>\n", '#include "Gen%d.inc" // generated\n', "#include <a%d/b.h>\n")
+    using_shapes = ("using a%d::b;\n", "using namespace n%d;\n", "using T%d = std::vector<int>;\n",
+                    "namespace fs%d = x::y::z;\n", "using c%d::d::e;\n")
+    includes = "".join(include_shapes[i % 5] % i for i in range(40))
+    usings = "".join(using_shapes[i % 5] % i for i in range(40))
+    logic = "".join("    int v%d = g(%d) + h(%d);\n" % (i, i, i) for i in range(40))
+    block = "void f() {\n" + logic + "}\n"
+
+    def unfiltered(text):
+        pairs = _tokens_with_lines(text)
+        return [normalize_token(t) for t, _ in pairs], [ln for _, ln in pairs]
+
+    # A shared include block or a shared leading using run alone is not a clone, though the same
+    # text is one when its directives / using lines stay in the stream.
+    for name, shared in (("include block", includes), ("leading using run", usings)):
+        texts = {"A.cpp": shared + "int a() { return 1; }\n",
+                 "B.cpp": shared + "double b(double x) { return x * 2; }\n"}
+        if not find_clones({p: unfiltered(t) for p, t in texts.items()}):
+            miss |= fail("the shared %s fixture is not a clone even unfiltered; the check below is "
+                         "vacuous" % name)
+        if find_clones({p: normalized_stream(t) for p, t in texts.items()}):
+            miss |= fail("a shared %s alone was reported as a clone" % name)
+    # The guard against over-correction: a clone that starts in a shared include block and continues
+    # into logic is still reported, starting at its first line of logic.
+    streams = {"A.cpp": normalized_stream(includes + block), "B.cpp": normalized_stream(includes + block)}
+    clones = find_clones(streams)
+    if not clones or any(s != 41 for c in clones for _p, s, _e in c.locations):
+        miss |= fail("prologue-then-logic clone lost or not anchored at the logic: %s"
+                     % [c.locations for c in clones])
+    return miss
+
+
+def _selftest_dead_markers():
+    """dead_dup_markers lists a marker that exempts nothing and never one that exempts a clone.
+    Returns 1 on any failure."""
+    logic = "".join("    int v%d = g(%d) + h(%d);\n" % (i, i, i) for i in range(40))
+    block = "void f() {\n" + logic + "}\n"
+    marker = "// SMATCHET_DEVIATION(rule=duplication; reason=t; owner=t; revisit=2099-01-01)\n"
+    with tempfile.TemporaryDirectory() as td:
+        a = os.path.join(td, "A.cpp")
+        b = os.path.join(td, "B.cpp")
+        with open(a, "w", encoding="utf-8") as fh:
+            fh.write(marker + block + "\n" + marker + "int lone() { return 7; }\n")
+        with open(b, "w", encoding="utf-8") as fh:
+            fh.write(block)
+        streams = {}
+        for p in (a, b):
+            with open(p, "r", encoding="utf-8") as fh:
+                streams[p] = normalized_stream(fh.read())
+        dead = dead_dup_markers(find_clones(streams), [a, b])
+        used_line, dead_line = 1, block.count("\n") + 3
+        if dead != [(a, dead_line)]:
+            print("SELFTEST FAIL: dead_dup_markers expected only %s:%d (and never the used marker on "
+                  "line %d), got %s" % (a, dead_line, used_line, dead), file=sys.stderr)
+            return 1
     return 0
 
 
@@ -642,6 +841,8 @@ def run_selftest():
             print("SELFTEST FAIL: non-duplication deviation drew the duplication hint",
                   file=sys.stderr)
             miss = 1
+    miss |= _selftest_prologue_filter()
+    miss |= _selftest_dead_markers()
     if miss:
         return 1
     print("selftest: normalization + threshold invariants hold (min %d tokens, shingle %d, "
@@ -663,6 +864,7 @@ def main():
     ap.add_argument("--diff", metavar="REF")
     ap.add_argument("--scan-file", metavar="PATH")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--dead-markers", action="store_true")
     ap.add_argument("--baseline-md", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -675,6 +877,8 @@ def main():
             sys.exit(run_scan_file(args.scan_file))
         if args.list:
             sys.exit(run_list())
+        if args.dead_markers:
+            sys.exit(run_dead_markers())
         if args.baseline_md:
             sys.exit(run_baseline_md())
         sys.exit(run_report())
