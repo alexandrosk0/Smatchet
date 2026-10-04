@@ -526,9 +526,12 @@ runs:
             # Terminal arm (postmortems 2026-08-19 / process 2026-08-30): the
             # previous path nudged via GITHUB_TOKEN then returned non-terminal,
             # which exhausted the poll window into an unbounded `pending` —
-            # and CodeRabbit IGNORES bot-authored `@coderabbitai review`, so the
-            # nudge could never heal. Post a TERMINAL failure naming the two
-            # sanctioned moves. Re-run triggers: CR review/comment (workflow
+            # and the bot-authored nudge never healed it. That is an observed
+            # asymmetry, not a known CodeRabbit policy: bot-authored
+            # `@coderabbitai review` nudges drew no review in the observed
+            # parked cases (0/5 on #2176/#2184) while human-authored ones did
+            # (4/4), yet one github-actions[bot] nudge on #2036 did draw a
+            # reply. Post a TERMINAL failure naming the two sanctioned moves. Re-run triggers: CR review/comment (workflow
             # issue_comment filter), labeled/unlabeled waiver, or a human
             # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \

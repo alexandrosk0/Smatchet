@@ -96,6 +96,20 @@ Mandatory on every `open` entry.
    Entries written from assumption get caught downstream at a CI / CodeRabbit round; a
    5-second check at authoring time avoids the re-push. (This is the backlog/plan analogue
    of the CR-reply post-push verification in `docs/agent-rules/process-rules.md`.)
+   **Claims about a third-party system's mechanism need a positive observation.** An
+   entry may state what was *observed* at any time ("the `17:17Z` trigger drew no
+   response"). A claim about *why* a third-party system behaved that way (its mechanism
+   or policy) needs a **positive** observation: the system doing something under
+   condition A that it does not do under condition B. A non-response cannot establish a
+   mechanism, because every competing explanation (quota, coalescing, a dropped webhook,
+   an outage) produces the same non-event. An inference drawn from a non-response is
+   labelled `Hypothesis:` in the entry and MUST NOT appear in the entry's title, its
+   priority rationale, a rule-doc, or any remediation that spends money or adds a
+   credential. (process 2026-08-16 `silence-filed-as-a-mechanism`: "CodeRabbit ignores
+   bot-authored triggers" was filed from one silence, proposed a paid token as the fix,
+   and was contradicted by a positive observation 85 minutes later.) This keeps a false
+   claim out of the title; the class-sweep rule in `docs/agent-rules/process-rules.md`
+   cleans up after one that got in.
 3. **No count to sync.** Counts are on-demand and derive from a directory listing
    — `bash agents/scripts/core/test-backlog-counts.sh --list` counts the monolith
    entry-lines **plus** the per-entry files. There is no stored count column to
