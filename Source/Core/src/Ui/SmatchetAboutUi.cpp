@@ -10,14 +10,8 @@
 
 #include "SmatchetAboutUi.h"
 
-// The three things this modal needs live on AppController and nowhere narrower:
-// OpenUrl (which carries the scheme allowlist and the host-callback indirection
-// that keep a link safe under Unreal), GetAppVersion, and GetGitHubReleaseRepo.
-// DrawAboutModal takes an AppController reference by signature, exactly as every
-// sibling modal TU already does, so there is no lighter dependency to swap in.
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=calls OpenUrl/GetAppVersion; owner=alexk; revisit=2026-12-31)
-#include "AppController.h"
 #include "Diagnostics/AboutInfo.h"
+#include "Interfaces/IAppMeta.h"
 #include "IconsFontAwesome6.h"
 #include "Privacy/TextRedaction.h"
 #include "SmatchetImGuiFonts.h"
@@ -51,7 +45,7 @@ const char* const kAboutPopupId = "About Smatchet";
 /// pattern (docs/guides/imgui-draw-pattern.md) so each helper stays short and
 /// none of them re-fetches the snapshot.
 struct AboutDrawCtx {
-    AppController& app;
+    const IAppMeta& app;
     UiDrawSession& d;
     const AboutInfo& info;
 };
@@ -443,7 +437,7 @@ void ResetAboutTransient(UiDrawSession& d) {
 
 } // namespace
 
-void DrawAboutModal(AppController& app, UiDrawSession& d) {
+void DrawAboutModal(const IAppMeta& app, UiDrawSession& d) {
     if (!d.showAbout) {
         ResetAboutTransient(d);
         return;

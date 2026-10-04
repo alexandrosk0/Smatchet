@@ -990,9 +990,6 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
 }
 
 void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
-    // clang-format off
-    // SMATCHET_DEVIATION(rule=duplication; reason=the ActiveProjectDrawCtx unpack prologue (AppController& app = ctx.app; ... = ctx.*) is shared by every grid section helper by construction; the god-file-split only moved these helpers into separate TUs, so a pre-existing intra-file pattern reads as a cross-file clone; owner=orchestrator; revisit=when the draw context exposes typed accessors)
-    // clang-format on
     AppController& app = ctx.app;
     GridPane& pane = ctx.pane;
     const std::vector<CachedTicket>& tickets = ctx.tickets;

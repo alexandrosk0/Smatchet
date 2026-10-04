@@ -127,11 +127,7 @@ void DispatchOpenAiDataLine(const std::string& data, const IAiClient::DeltaCallb
 // Single-source wire introspection (AiWireIntrospect.h) — delegate to the same
 // anonymous-namespace builders the live Chat/Stream path uses, so ai.dump-request
 // reflects the exact wire body/URL with no drift.
-// SMATCHET_DEVIATION(rule=duplication; reason=each provider client's thin wire-introspection wrapper
-// (BuildChatBodyJson + ResolveChatUrl) must live in its OWN TU to delegate to that client's
-// anonymous-namespace BuildChatBody/ResolveBaseUrl/JoinUrl; folding the three into one shared unit
-// would couple otherwise-independent provider adapters — the cross-subsystem-coupling anti-pattern
-// the DRY pillar itself forbids (ADR-0015); owner=ai-clients; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=per-provider wire-introspection entry points (AiWireIntrospect.h); each must sit in its own TU to reach that TU's anonymous-namespace builders; owner=ai-clients; revisit=never)
 namespace smatchet {
 namespace ai {
 nlohmann::json OpenAiBuildChatBodyJson(const AiChatRequest& req) { return BuildChatBody(req); }

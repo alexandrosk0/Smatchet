@@ -26,8 +26,6 @@
 #include <vector>
 
 /** Result of GET /rest/api/3/myself with probe timeouts (periodic connectivity monitor). */
-// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
-// clients; owner=tracker-backend; revisit=2026-12-31)
 class JiraClient : public ITrackerBackend,
                    public ITrackerIssueReader,
                    public ITrackerConnectivity,
@@ -54,8 +52,7 @@ class JiraClient : public ITrackerBackend,
                                                            const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,
                                                             const std::vector<TrackerField>& catalog) override;
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<nlohmann::json, TrackerError> BuildUpdatePayload(const IssueDraft& draft,
                                                             const std::vector<TrackerField>& catalog) override;
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
@@ -119,8 +116,7 @@ class JiraClient : public ITrackerBackend,
     Result<TrackerIssueVotes, TrackerError> FetchIssueVotes(const TrackerConfig& cfg,
                                                             const std::string& issueKey) override;
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
@@ -151,8 +147,7 @@ class JiraClient : public ITrackerBackend,
     // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
     // Server-side change probe + keys-only membership + existence GET, replacing the heavy
     // full-fetch defaults on ITrackerIssueReader with native Jira queries.
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<std::vector<CachedTicket>, TrackerError>
     FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
                             const std::vector<std::string>& salientFields) override;

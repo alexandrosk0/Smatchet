@@ -1,52 +1,28 @@
 #include "GitHubFixtureBackend.h"
 
 #include "GitHubIssueSearchMapping.h"
-#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
-#include <sstream>
+#include <utility>
 
 namespace smatchet {
 namespace github {
-
-namespace {
-
-// Read the full file at `path` into `out`. Returns true on success; on failure
-// `out` carries a diagnostic.
-bool ReadFileToString(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open()) {
-        out = std::string("Failed to open fixture file: ") + path;
-        return false;
-    }
-    std::ostringstream ss;
-    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by
-    // construction; owner=security-audit; revisit=2026-12-31)
-    ss << in.rdbuf();
-    out = ss.str();
-    return true;
-}
-
-} // namespace
 
 GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint,
                                            const std::string& repoHint, bool includePullRequests)
     : smatchet::tracker_fixture::TrackerFixtureBackendBase(fixturePath), ownerHint_(ownerHint), repoHint_(repoHint),
       includePullRequests_(includePullRequests) {
-    std::string contents;
-    if (!ReadFileToString(fixturePath_, contents)) {
-        loadError_ = contents;
+    // The shared loader caps the read and the parse: the fixture path is env-var-selectable
+    // (SMATCHET_TEST_GITHUB_BACKEND_FIXTURE), so nothing is trusted about wherever it points.
+    nlohmann::json parsed;
+    if (!LoadFixtureJson(parsed)) {
         LOG_ERROR("GitHubFixtureBackend: %s", loadError_.c_str());
         return;
     }
-    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_GITHUB_BACKEND_FIXTURE),
-    // so cap depth/nodes/bytes rather than trust wherever it points.
-    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(contents);
-    if (parsed.is_discarded() || !parsed.is_object()) {
-        loadError_ = std::string("Fixture JSON parse failed or root is not an object: ") + fixturePath_;
+    if (!parsed.is_object()) {
+        loadError_ = std::string("Fixture JSON root is not an object: ") + fixturePath_;
         LOG_ERROR("GitHubFixtureBackend: %s", loadError_.c_str());
         return;
     }

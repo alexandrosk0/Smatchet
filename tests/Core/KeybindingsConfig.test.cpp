@@ -387,6 +387,23 @@ TEST_CASE("BoundHotkeyDisplayForArgs treats empty and \"{}\" args as equivalent"
     CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "{}").empty());
 }
 
+TEST_CASE("BoundHotkeyDisplayForArgs rejects deeply nested args and compares them as empty") {
+    // Args come from the user-editable keybindings file. A depth bomb must be rejected by the bounded
+    // parse (an unbounded one overflows the stack tearing the DOM down) and then count as empty args.
+    const std::string bomb = std::string(100000, '[') + std::string(100000, ']');
+    std::vector<Keybinding> bindings;
+    Keybinding b;
+    b.CommandId = "ui.zoom.in";
+    b.Hotkeys.push_back("Ctrl+=");
+    b.ArgsJson = bomb;
+    b.Enabled = true;
+    bindings.push_back(b);
+
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "{}") == "Ctrl+=");
+    bindings[0].ArgsJson = "{}";
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", bomb) == "Ctrl+=");
+}
+
 TEST_CASE("BoundHotkeyDisplayForArgs returns empty for unbound or disabled bindings") {
     const KeybindingsConfig c = KeybindingsConfig::Defaults();
     // No such command id.

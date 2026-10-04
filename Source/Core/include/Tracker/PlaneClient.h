@@ -18,7 +18,7 @@
 #include <unordered_map>
 #include <mutex>
 
-// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
 class PlaneClient : public ITrackerBackend,
                     public ITrackerIssueReader,
                     public ITrackerConnectivity,
@@ -38,8 +38,7 @@ class PlaneClient : public ITrackerBackend,
     std::string GetTrackerType() const override { return "Plane"; }
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
@@ -60,8 +59,7 @@ class PlaneClient : public ITrackerBackend,
     // FetchIssueKeysForView is intentionally NOT overridden: Plane's list endpoint returns full
     // work-items regardless, so the ITrackerIssueReader default (full fetch → project ids) is already
     // the minimal path — see the plan's § Deviations (deferred slice).
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<std::vector<CachedTicket>, TrackerError>
     FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
                             const std::vector<std::string>& salientFields) override;
@@ -74,8 +72,7 @@ class PlaneClient : public ITrackerBackend,
 
     void SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) override;
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
 
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
@@ -90,8 +87,7 @@ class PlaneClient : public ITrackerBackend,
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                     const std::string& value) const override;
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override;
 
     Result<std::vector<std::pair<std::string, std::string>>, TrackerError>

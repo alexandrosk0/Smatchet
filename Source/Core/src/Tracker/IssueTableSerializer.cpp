@@ -14,20 +14,11 @@
 
 namespace IssueTableSerializer {
 
-std::string Trim(const std::string& s) {
-    size_t a = 0, b = s.size();
-    while (a < b && std::isspace(static_cast<unsigned char>(s[a])))
-        ++a;
-    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1])))
-        --b;
-    return s.substr(a, b - a);
-}
-
 // Column header → field id resolver.
 // Priority: literal field id (case-insensitive) > catalog display name
 // (case-insensitive) > special keys > raw header.
 std::string ResolveColumnKey(const std::string& header, const std::vector<TrackerField>& catalog) {
-    const std::string trimmed = Trim(header);
+    const std::string trimmed = TrimCopyIsspace(header);
     if (trimmed.empty())
         return {};
     const std::string low = ToLowerAsciiCopy(trimmed);
@@ -64,7 +55,7 @@ std::string ResolveColumnKey(const std::string& header, const std::vector<Tracke
 void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::string& rawValue) {
     if (key.empty())
         return;
-    const std::string value = Trim(rawValue);
+    const std::string value = TrimCopyIsspace(rawValue);
     if (key == "__existing_issue_key__") {
         // Skip empty cells so a duplicate "issuekey" column (often empty in exports)
         // does not overwrite a non-empty "key" column parsed earlier in the row.
@@ -95,7 +86,7 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
         std::stringstream ss(value);
         std::string path;
         while (std::getline(ss, path, '|')) {
-            const std::string trimmedPath = Trim(path);
+            const std::string trimmedPath = TrimCopyIsspace(path);
             if (trimmedPath.empty())
                 continue;
             StagedAttachment att;
@@ -200,7 +191,8 @@ ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vecto
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
         // Skip fully empty lines (e.g. trailing blank).
-        bool anyNonEmpty = std::any_of(row.begin(), row.end(), [](const auto& c) { return !Trim(c).empty(); });
+        bool anyNonEmpty =
+            std::any_of(row.begin(), row.end(), [](const auto& c) { return !TrimCopyIsspace(c).empty(); });
         if (!anyNonEmpty)
             continue;
 
@@ -270,9 +262,9 @@ ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>&
     // 2M-node budget (~10x the default; a bulk import row is ~60 nodes, so this clears tens of
     // thousands of issues while still bounding heap growth).
     std::string parseErr;
-    nlohmann::json root = smatchet::json_safe::ParseBounded(
-        text, parseErr, /*maxBytes=*/64u * 1024u * 1024u, smatchet::json_safe::kDefaultMaxDepth,
-        /*maxNodes=*/2000000u);
+    nlohmann::json root = smatchet::json_safe::ParseBounded(text, parseErr, /*maxBytes=*/64u * 1024u * 1024u,
+                                                            smatchet::json_safe::kDefaultMaxDepth,
+                                                            /*maxNodes=*/2000000u);
     if (!parseErr.empty()) {
         result.Error = std::string("JSON parse error: ") + parseErr;
         return result;

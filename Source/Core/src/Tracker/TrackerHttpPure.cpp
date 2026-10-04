@@ -11,35 +11,10 @@ namespace TrackerHttpPure {
 
 namespace {
 
-// Trim surrounding whitespace. C++14, ASCII-only.
-std::string Trimmed(const std::string& in) {
-    std::size_t b = 0;
-    // Kept duplicated rather than folded onto Core's TrimCopyAsciiWhitespace: that helper trims only
-    // {space,\t,\n,\r} while this uses std::isspace (also \v,\f), so folding would NARROW the trim on a
-    // host-allowlisting input (HostFromBase) — a behaviour change out of scope for a dead-code sweep.
-    // This body is byte-identical to smatchet::linear::Trim, and ALREADY was: deleting this TU's ToLower
-    // (now the shared ToLowerAsciiCopy) merely removed the divergence that had kept the maximal token run
-    // under MIN_CLONE_TOKENS. The TrimCopyAsciiWhitespace clone family is deferred to a follow-up
-    // burn-down driven by small_helper_audit.py's first real run (gate-blind-spot-sweep § Out of scope).
-    //
-    // The marker MUST stay the last line before `std::size_t e` and MUST stay on one line: the gate
-    // matches a maximal token run that starts mid-body, and dup_audit._suppressed reads the nearest
-    // non-blank line above that start. Wrapping it would push `rule=duplication` off that line.
-    // SMATCHET_DEVIATION(rule=duplication; reason=see above; owner=build-doctor; revisit=2026-12-31)
-    std::size_t e = in.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(in[b]))) {
-        ++b;
-    }
-    while (e > b && std::isspace(static_cast<unsigned char>(in[e - 1]))) {
-        --e;
-    }
-    return in.substr(b, e - b);
-}
-
 // Strip scheme, userinfo, path/query, and an optional :port from a base URL, leaving the
 // bare host. Handles bracketed IPv6 (`[::1]:443`). Returns lowercased host.
 std::string HostFromBase(const std::string& rawBase) {
-    std::string s = Trimmed(rawBase);
+    std::string s = TrimCopyIsspace(rawBase);
     const std::size_t scheme = s.find("://");
     if (scheme != std::string::npos) {
         s = s.substr(scheme + 3);
@@ -123,7 +98,7 @@ bool IsLoopbackHost(const std::string& host) {
 }
 
 bool ShouldUpgradeCleartextBase(const std::string& rawBase) {
-    const std::string s = Trimmed(rawBase);
+    const std::string s = TrimCopyIsspace(rawBase);
     // Case-insensitive "http://" prefix check; https:// and anything else => no upgrade.
     if (ToLowerAsciiCopy(s).compare(0, 7, "http://") != 0) {
         return false;
@@ -132,7 +107,7 @@ bool ShouldUpgradeCleartextBase(const std::string& rawBase) {
 }
 
 long ParseRetryAfterSeconds(const std::string& value) {
-    const std::string s = Trimmed(value);
+    const std::string s = TrimCopyIsspace(value);
     // Delta-seconds form only: 1-6 digits (999999 s ≈ 11.5 days is already far past any
     // real throttle window; longer runs are garbage and would overflow smaller longs).
     if (s.empty() || s.size() > 6) {
@@ -162,6 +137,20 @@ long ComputeTrackerRetryDelayMs(int attempt, long baseMs, long expCapMs, long re
         }
     }
     return delayMs;
+}
+
+Result<bool, TrackerError> ClassifyIssueExistsProbe(long statusCode) {
+    using ProbeResult = Result<bool, TrackerError>;
+    if (statusCode == 200) {
+        return ProbeResult::Ok(true);
+    }
+    if (statusCode == 404) {
+        return ProbeResult::Ok(false);
+    }
+    if (statusCode >= 200 && statusCode < 300) {
+        return ProbeResult::Err(TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(statusCode)));
+    }
+    return ProbeResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(statusCode), "ProbeIssueExists HTTP error"));
 }
 
 } // namespace TrackerHttpPure
