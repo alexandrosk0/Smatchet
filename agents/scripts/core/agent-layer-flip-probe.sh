@@ -49,9 +49,17 @@
 #   match:ERE     ...and their output matches ERE (a scope check: proof the probe
 #                 read the host, for checks whose counts legitimately change once the
 #                 layer's files are no longer in the host tree)
+#   pending:ROW:ERE
+#                 the output must match ERE, as for match:, but an exit code that
+#                 differs from today is OWED to Phase C row ROW, not a failure of
+#                 this tree: work the flip itself does and that cannot land before
+#                 it. Printed as PENDING with the row, counted apart from the
+#                 matches, and the expectation must become match:ERE in the PR that
+#                 lands the row.
 #
 # EXIT
-#   0  every probe met its expectation in both post-flip modes
+#   0  every probe met its expectation in both post-flip modes (PENDING ones
+#      included — each names the Phase C row that owns it)
 #   1  a probe did not
 #   2  usage error, tooling missing, or the layout could not be built
 set -uo pipefail
@@ -65,12 +73,19 @@ MIRRORS_REL="docs/mirrored-paths.txt"
 # name <TAB> expectation <TAB> command. {L} is the layer prefix: empty today,
 # `agent-layer/` post-flip — exactly how a host caller's path changes at the flip.
 PROBES=(
+    # Provisioning first: the adapter probes below read what setup-harness writes.
+    $'setup-harness\trc\tbash {L}agents/scripts/core/setup-harness.sh claude-code'
+    $'adapter-drift\tmatch:PASS\tbash {L}agents/scripts/core/test-adapter-drift.sh'
+    $'harness-provisioned\tsame\tbash {L}agents/scripts/core/check-harness-provisioned.sh'
     $'followup-due-nudge\tsame\tbash {L}agents/scripts/core/followup-due-nudge.sh'
     $'plan-archival-owed\tsame\tbash {L}agents/scripts/core/plan-archival-owed.sh --list'
     $'work-item-owed\tsame\tbash {L}agents/scripts/core/work-item-owed.sh --list'
     $'audit-doc-status-owed\tsame\tbash {L}agents/scripts/core/audit-doc-status-owed.sh --list'
     $'historical-ledger-reconcile\tsame\tbash {L}agents/scripts/core/historical-review-ledger-reconcile.sh'
-    $'markdown-links\tmatch:scanned ([2-9][0-9]{2}|[1-9][0-9]{3,}) markdown\tbash {L}agents/scripts/core/test-markdown-links.sh --all'
+    # Host links into the layer (docs/agent-rules/, agents/scripts/, AGENTS.md ...)
+    # dangle until row 15's cross-boundary sweep rewrites them to agent-layer/;
+    # that path does not exist before the flip, so the sweep cannot land first.
+    $'markdown-links\tpending:15:scanned ([2-9][0-9]{2}|[1-9][0-9]{3,}) markdown\tbash {L}agents/scripts/core/test-markdown-links.sh --all'
     $'shell-lint\tmatch:scripts/dev/pre-ship\\.sh\tbash {L}agents/scripts/core/test-shell-lint.sh --list-targets'
     $'workflow-yaml\tsame\tbash {L}agents/scripts/core/test-workflow-yaml.sh'
     $'doc-anchors\tsame\tbash {L}agents/scripts/core/test-doc-anchors.sh'
@@ -87,6 +102,11 @@ PROBES=(
     $'plan-index\tsame\tbash {L}agents/scripts/core/test-plan-index.sh'
     $'plan-claim-anchors\tsame\tbash {L}agents/scripts/core/test-plan-claim-anchors.sh --all'
     $'lint-rules-scope\tmatch:Source/\tbash {L}agents/scripts/project/test-lint-rules.sh --scan-offline'
+    $'fleet-preflight\tsame\tbash {L}agents/scripts/core/fleet-preflight.sh --selftest'
+    $'dead-export-audit\tsame\tbash {L}agents/scripts/core/test-dead-export-audit.sh'
+    $'small-helper-audit\tsame\tbash {L}agents/scripts/core/test-small-helper-audit.sh'
+    # The HOST's required contexts (the layer's config names only its three lanes).
+    $'branch-protection-config\tmatch:"Windows \\+ MSVC"\tenv REPO=probe/host bash {L}agents/scripts/core/setup-branch-protection.sh --dry-run'
     $'mirrored-paths\trc\tbash scripts/dev/test-mirrored-paths.sh'
 )
 
@@ -213,7 +233,7 @@ main() {
     build_layout "$src" "$sha"
     say "layout: $DIR  (today/, layer/, host/ with agent-layer/ mounted — commit $sha)"
 
-    local entry name expect cmd ran=0 failed=0 t l c t_rc l_rc c_rc mode verdict
+    local entry name expect cmd ran=0 failed=0 pending=0 t l c t_rc l_rc c_rc mode verdict re owed
     printf '%-28s %-6s %-6s %-6s %s\n' PROBE TODAY LOCAL CI RESULT
     for entry in "${PROBES[@]}"; do
         name="$(probe_field "$entry" 1)"; expect="$(probe_field "$entry" 2)"; cmd="$(probe_field "$entry" 3)"
@@ -222,10 +242,21 @@ main() {
         l="$(run_probe "$DIR/host" "agent-layer/" "$cmd")"
         c="$(run_probe "$DIR/host" "agent-layer/" "$cmd" PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
         t_rc="$(split_rc "$t")"; l_rc="$(split_rc "$l")"; c_rc="$(split_rc "$c")"
-        verdict="ok"
+        verdict="ok"; owed=""
         for mode in local ci; do
             local out rc
             if [ "$mode" = local ]; then out="$(split_out "$l")"; rc="$l_rc"; else out="$(split_out "$c")"; rc="$c_rc"; fi
+            case "$expect" in
+                pending:*)
+                    re="${expect#pending:}"; re="${re#*:}"
+                    if ! printf '%s\n' "$out" | grep -qE -- "$re"; then
+                        verdict="FAIL ($mode output lacks /$re/)"; break
+                    fi
+                    if [ "$rc" != "$t_rc" ]; then
+                        owed="${expect#pending:}"; owed="${owed%%:*}"
+                    fi
+                    continue ;;
+            esac
             if [ "$rc" != "$t_rc" ]; then
                 verdict="FAIL ($mode exit $rc, today $t_rc)"; break
             fi
@@ -242,9 +273,13 @@ main() {
                 *) die 2 "probe $name: unknown expectation '$expect'" ;;
             esac
         done
+        if [ "$verdict" = ok ] && [ -n "$owed" ]; then
+            verdict="PENDING (owed to Phase C row $owed)"
+            pending=$((pending + 1))
+        fi
         printf '%-28s %-6s %-6s %-6s %s\n' "$name" "$t_rc" "$l_rc" "$c_rc" "$verdict"
-        if [ "$verdict" != ok ]; then
-            failed=$((failed + 1))
+        if [ "${verdict%% *}" = FAIL ]; then failed=$((failed + 1)); fi
+        if [ "${verdict%% *}" != ok ]; then
             printf '    today: %s\n    local: %s\n    ci:    %s\n' \
                 "$(split_out "$t" | last_line | cut -c1-200)" \
                 "$(split_out "$l" | last_line | cut -c1-200)" \
@@ -258,11 +293,13 @@ main() {
         say "RED — $failed of $ran probe(s) differ after the flip; layout kept at $DIR"
         exit 1
     fi
+    local summary="$((ran - pending)) of $ran probe(s) match after the flip"
+    [ "$pending" -eq 0 ] || summary="$summary; $pending PENDING, each owed to the Phase C row it names"
     if [ "$KEEP" -eq 1 ]; then
-        say "GREEN — $ran probe(s) match after the flip; layout kept at $DIR"
+        say "GREEN — $summary; layout kept at $DIR"
     else
         rm -rf "$DIR"
-        say "GREEN — $ran probe(s) match after the flip"
+        say "GREEN — $summary"
     fi
 }
 
