@@ -744,11 +744,12 @@ _resolve_py() {
     # Every gate reads a marker one line at a time. A marker wrapped onto a second line never had its
     # revisit= read (28 live ones hid 24 due dates until 2026-10), and a fieldless one leaves nothing
     # to audit. DEV_RE matches the token anywhere on a line, so a prose mention is read as a marker.
+    # Line 35 has every field, but its only ')' closes a parenthetical in reason=, not the marker.
     run bash "$LINT" --scan-file "$FIX/deviation-malformed.cpp"
     [ "$status" -eq 0 ]
     # Count by the rule column: the fixture's own file name also contains the rule id.
-    [ "$(grep -c '^deviation-malformed' <<< "$output")" -eq 9 ]
-    for l in 5 8 11 14 17 23 26 29 32; do grep -q "^deviation-malformed.*deviation-malformed\.cpp:$l\$" <<< "$output"; done
+    [ "$(grep -c '^deviation-malformed' <<< "$output")" -eq 10 ]
+    for l in 5 8 11 14 17 23 26 29 32 35; do grep -q "^deviation-malformed.*deviation-malformed\.cpp:$l\$" <<< "$output"; done
     # The whole marker on line 20 (parenthetical reason and all) passes and still suppresses line 21.
     [ -z "$(grep 'deviation-malformed\.cpp:2[01]$' <<< "$output")" ]
     # The wrapped marker suppressed nothing, so its target's raw new is still reported.
@@ -772,15 +773,18 @@ _resolve_py() {
         printf '// SMATCHET_DEVIATION(rule=no-raw-new; reason=r) see SMATCHET_DEVIATION(owner=o; revisit=never)\nint b = 0;\n'
         # Two whole markers on one line, the second with a parenthetical reason, stay valid.
         printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) and SMATCHET_DEVIATION(rule=b; reason=r (x); owner=o; revisit=2099-01-01)\nint c = 0;\n'
+        # A stray ')' in reason= and a parenthetical after the marker leave it whole.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=step 1) then 2; owner=o; revisit=never) see (x)\nint d = 0;\n'
     } > "$tmp/M.cpp"
     # Each printf writes a marker line and a code line, so M.cpp holds: 1 half/half,
-    # 2 code, 3 half/half, 4 code, 5 two whole markers, 6 code.
+    # 2 code, 3 half/half, 4 code, 5 two whole markers, 6 code, 7 stray ')', 8 code.
     run bash "$LINT" --scan-file "$tmp/M.cpp"
     rm -rf "$tmp"
     [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 2 ]
     [[ "$output" == *"M.cpp:1"* ]]
     [[ "$output" == *"M.cpp:3"* ]]
     [[ "$output" != *"M.cpp:5"* ]]
+    [[ "$output" != *"M.cpp:7"* ]]
 }
 
 @test "an EMPTY revisit= is reported once, as deviation-overdue, not also as deviation-malformed" {

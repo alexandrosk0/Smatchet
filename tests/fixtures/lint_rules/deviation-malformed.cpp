@@ -1,4 +1,4 @@
-// deviation-malformed fixture: lines 5, 8, 11, 14, 17, 23, 26, 29 and 32 are not whole markers; line 20 is.
+// deviation-malformed fixture: lines 5, 8, 11, 14, 17, 23, 26, 29, 32 and 35 are not whole markers; line 20 is.
 #include <memory>
 struct Thing {};
 
@@ -31,3 +31,6 @@ int i = 0;
 
 // SMATCHET_DEVIATION(rule=no-raw-new; reason=no revisit key at all; owner=alex)
 int j = 0;
+
+// SMATCHET_DEVIATION(rule=no-raw-new; owner=alex; revisit=2099-01-01; reason=its last paren closes (this aside) and the marker runs on
+Thing* k() { return new Thing(); }

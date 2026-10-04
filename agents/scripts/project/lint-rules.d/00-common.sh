@@ -101,15 +101,22 @@ dev_trim() {
 # the line) and its body ends at the last ')' inside that span, the same greedy body DEV_RE reads
 # for a single marker. Otherwise the greedy DEV_RE body would let a second mention's revisit=
 # complete a first mention that has none, and the suppressing parsers would honour the pair.
+# That last ')' must be able to close the marker itself: a body that leaves a '(' open spent it on
+# a parenthetical inside a field ("reason=(why)" with no ')' after it), so the marker runs on past
+# the line. A stray ')' in the body ("reason=step 1) ...") is harmless and stays allowed.
 dev_marker_malformed() {
-    local rest="$1" seg kv have_rule have_reason have_owner have_revisit
+    local rest="$1" seg body opens closes kv have_rule have_reason have_owner have_revisit
     case "$rest" in *'SMATCHET_DEVIATION('*) ;; *) return 1 ;; esac
     rest="${rest#*"SMATCHET_DEVIATION("}"
     while :; do
         seg="${rest%%"SMATCHET_DEVIATION("*}"
         [[ "$seg" =~ ^(.*)\) ]] || return 0
+        body="${BASH_REMATCH[1]}"
+        opens="${body//[^(]/}"
+        closes="${body//[^)]/}"
+        [ "${#opens}" -le "${#closes}" ] || return 0
         have_rule="" have_reason="" have_owner="" have_revisit=""
-        IFS=';' read -ra kvs <<< "${BASH_REMATCH[1]}"
+        IFS=';' read -ra kvs <<< "$body"
         for kv in "${kvs[@]}"; do
             dev_trim "$kv"
             case "$DEV_TRIMMED" in
