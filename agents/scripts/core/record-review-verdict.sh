@@ -44,12 +44,20 @@
 #     # <base-ref> defaults to origin/develop (ra_is_substantive's default) —
 #     # pass the SAME <base-ref> here as was used for `pre-ship.sh --ack-review`;
 #     # a mismatch fingerprints a different diff and REFUSES as "no proof".
+#   bash record-review-verdict.sh "<tail>" [<base-ref>] --sync-pr <n>
+#     # opt-in: after stamping, write the line into PR #<n>'s body — replace its
+#     # live `adversarial-code-review:` line (never one inside <!-- -->) or
+#     # append one — via gh (tooling 2026-08-16-verdict-head-hex-hand-copied-
+#     # into-pr-body: the hand-copied head= hex is a typo class). The rewrite
+#     # goes through lib/pr-body-edit.sh, which refuses a body that lost a
+#     # `lock-slug:` / `holds-lock:` line. No gh on PATH -> a message, exit 0.
 #   bash record-review-verdict.sh --selftest
 #
 # Exit: 0 = tail validated + marker written + line printed; 1 = tail rejected
 # by the verdict grammar (unfilled placeholders included) OR a substantive diff
 # has no matching review-ack/artifact pair; 2 = usage / not a git repo / no
-# HEAD / the review-ack library is unreadable (infra, not a real gate result).
+# HEAD / the review-ack library is unreadable (infra, not a real gate result);
+# 3 = marker written + line printed, but --sync-pr could not update the PR body.
 #
 # Bypass (logged, discouraged, mirrors pre-ship.sh): SMATCHET_SKIP_REVIEW_GATE=1
 #
@@ -60,6 +68,13 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 CHECKER="$SELF_DIR/check-pr-intent.sh"
 REVIEW_ACK_LIB="$SELF_DIR/lib/review-ack.sh"
+PR_BODY_EDIT_LIB="$SELF_DIR/lib/pr-body-edit.sh"
+# Line-start prefix of check-pr-intent.sh's verdict_re (list bullet, checkbox,
+# emphasis around the key): --sync-pr replaces whatever line the checker would
+# read as the verdict, so a `- adversarial-code-review:` line is not left behind
+# ahead of an appended one.
+# shellcheck disable=SC2016  # the backticks are regex characters, not expansions
+VERDICT_LINE_RE='^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:'
 
 # _require_review_proof <base_ref> — rc 0 when the current branch diff either
 # isn't substantive or carries a current, fingerprint-matching review-ack +
@@ -141,6 +156,41 @@ _record() {
     fi
     printf '%s\n' "$line" > "$gitdir/review-verdict-$head"
     printf '%s\n' "$line"
+}
+
+# _sync_pr <pr> — copy the verdict line just stamped for HEAD into PR #<pr>'s
+# body (opt-in --sync-pr). rc 0 synced, or no gh (nothing attempted); rc 3 the
+# body was not updated (the local marker stands either way).
+_sync_pr() {
+    local pr="$1" gitdir head line repo old new rc=0
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "record-review-verdict: --sync-pr: gh not on PATH — PR #${pr} body NOT updated; paste the line above into it." >&2
+        return 0
+    fi
+    gitdir="$(git rev-parse --git-dir)" || return 3
+    head="$(git rev-parse --verify HEAD)" || return 3
+    line="$(cat "$gitdir/review-verdict-$head")" || return 3
+    # shellcheck source=agents/scripts/core/lib/resolve-repo.sh
+    . "$SELF_DIR/lib/resolve-repo.sh"
+    # shellcheck source=agents/scripts/core/lib/pr-body-edit.sh
+    . "$PR_BODY_EDIT_LIB"
+    if ! repo="$(resolve_repo)"; then
+        echo "record-review-verdict: --sync-pr: cannot resolve owner/name (set REPO=owner/name) — PR #${pr} body NOT updated." >&2
+        return 3
+    fi
+    old="$(mktemp)" || return 3
+    new="$(mktemp)" || { rm -f "$old"; return 3; }
+    if ! pbe_fetch "$repo" "$pr" "$old" \
+        || ! pbe_upsert_line "$VERDICT_LINE_RE" "$line" "$old" "$new" \
+        || ! pbe_write "$repo" "$pr" "$old" "$new"; then
+        rc=3
+    fi
+    rm -f "$old" "$new"
+    if [ "$rc" -ne 0 ]; then
+        echo "record-review-verdict: --sync-pr: ${repo}#${pr} body NOT updated (verdict still recorded locally)." >&2
+        return "$rc"
+    fi
+    echo "record-review-verdict: ${repo}#${pr} body now carries the verdict line."
 }
 
 run_selftest() {
@@ -396,13 +446,37 @@ run_selftest() {
     echo "record-review-verdict --selftest: PASS"
 }
 
+# --sync-pr <n> may sit anywhere; the remaining words keep their positions.
+SYNC_PR=""
+_args=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --sync-pr)
+            [ "$#" -ge 2 ] || { echo "record-review-verdict: --sync-pr needs a PR number" >&2; exit 2; }
+            SYNC_PR="$2"; shift 2 ;;
+        --sync-pr=*) SYNC_PR="${1#--sync-pr=}"; shift ;;
+        *) _args+=("$1"); shift ;;
+    esac
+done
+set -- "${_args[@]+"${_args[@]}"}"
+# Validated before anything is stamped: never guess at a PR number.
+if [ -n "$SYNC_PR" ] && ! [[ "$SYNC_PR" =~ ^[1-9][0-9]*$ ]]; then
+    echo "record-review-verdict: --sync-pr takes a PR number, got '$SYNC_PR'" >&2
+    exit 2
+fi
+
 case "${1:-}" in
     --selftest) run_selftest; exit $? ;;
-    --help | -h) sed -n '2,56p' "$0"; exit 0 ;;
+    --help | -h) sed -n '2,64p' "$0"; exit 0 ;;
     "")
         echo "record-review-verdict: missing verdict tail." >&2
-        echo "  usage: bash record-review-verdict.sh \"N findings, <disposition>\" | \"n/a — <reason>\" [<base-ref>]" >&2
+        echo "  usage: bash record-review-verdict.sh \"N findings, <disposition>\" | \"n/a — <reason>\" [<base-ref>] [--sync-pr <n>]" >&2
         exit 2
         ;;
-    *) _record "$1" "${2:-}" ;;
+    *)
+        _record "$1" "${2:-}" || exit $?
+        if [ -n "$SYNC_PR" ]; then
+            _sync_pr "$SYNC_PR" || exit $?
+        fi
+        ;;
 esac

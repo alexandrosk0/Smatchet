@@ -21,7 +21,9 @@
      verdict you did not earn defeats the gate (ship-loops.md § [pre-first-push gate] item 5).
      `bash agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
      the head= binding filled; the CI check rejects a head= that is not the PR head,
-     so every push needs the verdict re-recorded for the new commit.
+     so every push needs the verdict re-recorded for the new commit. Add
+     `--sync-pr <PR number>` and the script writes the line into this body itself
+     (no hand-copied hex; lock-slug / holds-lock lines are kept).
 adversarial-code-review: N findings, <disposition> (head=<sha>)
 adversarial-code-review: n/a — <reason the diff is trivial> (head=<sha>)
 -->
