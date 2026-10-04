@@ -8,7 +8,69 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (4 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `crash-retire-terminate-prefs-enddisabled`
+
+- **Owner**: `debug-detective`
+- **Branch**: `fix/retire-pane-terminate-and-prefs-enddisabled`
+- **Started**: 2026-10-03T23:16:03Z
+- **Write set** (12 paths):
+  - `Source/Core/include/Sync/TicketSyncService.h`
+  - `Source/Core/src/Sync/TicketSyncService.cpp`
+  - `Source/Core/src/Ui/SmatchetPreferencesUi.cpp`
+  - `tests/Core/TicketSyncService.test.cpp`
+  - `tests/ui/tracker_first_run_setup.test.cpp`
+  - `scripts/dev/test-ui-tracker-first-run-setup.sh`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/include/Sync/TicketSyncService.h`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/src/Sync/TicketSyncService.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/src/Ui/SmatchetPreferencesUi.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/tests/Core/TicketSyncService.test.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/tests/ui/tracker_first_run_setup.test.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/scripts/dev/test-ui-tracker-first-run-setup.sh`
+
+### `crash-retire-terminate-wt-alias`
+
+- **Owner**: `debug-detective`
+- **Branch**: `develop`
+- **Started**: 2026-10-03T23:23:46Z
+- **Write set** (12 paths):
+  - `Source/Core/include/Sync/TicketSyncService.h`
+  - `Source/Core/src/Sync/TicketSyncService.cpp`
+  - `Source/Core/src/Ui/SmatchetPreferencesUi.cpp`
+  - `tests/Core/TicketSyncService.test.cpp`
+  - `tests/ui/tracker_first_run_setup.test.cpp`
+  - `scripts/dev/test-ui-tracker-first-run-setup.sh`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/include/Sync/TicketSyncService.h`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/src/Sync/TicketSyncService.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/Source/Core/src/Ui/SmatchetPreferencesUi.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/tests/Core/TicketSyncService.test.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/tests/ui/tracker_first_run_setup.test.cpp`
+  - `.claude/worktrees/agent-a26a8a314323686d6/scripts/dev/test-ui-tracker-first-run-setup.sh`
+- **Notes**: subagent-worktree edit-hook alias of crash-retire-terminate-prefs-enddisabled (hook resolves CLAUDE_PROJECT_DIR=main tree)
+
+### `gate-selftest-msys-execbit`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/stoic-mccarthy-082155`
+- **Started**: 2026-08-29T16:46:48Z
+- **Updated**: 2026-08-29T17:22:38Z
+- **Write set** (5 paths):
+  - `docs/plans/active/gate-selftest-msys-execbit.md`
+  - `docs/plans/shipped/gate-selftest-msys-execbit.md`
+  - `docs/plans/INDEX.md`
+  - `agents/scripts/core/test-gate-selftests.sh`
+  - `tests/bats/gate_selftests.bats`
+
+### `jira-search-token-leftover`
+
+- **Owner**: `tracker-backend`
+- **Branch**: `develop`
+- **Started**: 2026-10-03T23:09:31Z
+- **Write set** (4 paths):
+  - `.claude/worktrees/agent-a328642f72cdbf194/Source/Core/src/Tracker/JiraIssueSearch.cpp`
+  - `.claude/worktrees/agent-a328642f72cdbf194/tests/Core/JiraIssueSearchHttp.test.cpp`
+  - `Source/Core/src/Tracker/JiraIssueSearch.cpp`
+  - `tests/Core/JiraIssueSearchHttp.test.cpp`
+- **Notes**: jira tokenLeftover fix
+
