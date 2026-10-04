@@ -57,9 +57,14 @@ PC_CONFIG_FILE="$(_pc_resolve_config)"
 # and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
 # Source/ and project.config.json. Pre-flip both are the repo root, so every
 # consumer rewritten to address a tree through one of these is a provable no-op.
-# Both honour a caller-set value, which is what lets the layer's standalone CI
-# force PROJECT_ROOT=$AGENT_LAYER_ROOT and the flip set AGENT_LAYER_ROOT=agent-layer
-# without touching the resolution logic above.
+# AGENT_LAYER_ROOT honours a caller-set value: the flip's CI sets it to agent-layer
+# for the host's own scripts. PROJECT_ROOT honours one only when it names the host
+# this copy resolves by itself (the rungs above) — CI's `.`, the standalone layer's
+# PROJECT_ROOT=$AGENT_LAYER_ROOT and every runner that exports its own tree all do.
+# Any other value is ignored with a WARN: the bare name is common, and a stale export
+# from a sibling checkout would otherwise aim every gate at that tree, readers and
+# writers alike, with nothing to say so. A caller that really means another tree (a
+# test fixture) says so with SMATCHET_PROJECT_ROOT_OVERRIDE=1.
 #
 # Both are made absolute. CI sets the pair relative to the workspace
 # (`PROJECT_ROOT: .`), and a consumer that cds into one root and then builds a path
@@ -77,20 +82,30 @@ _pc_abs() {
   if [ -d "$1" ]; then (CDPATH='' cd -- "$1" && pwd); else printf '%s\n' "$1"; fi
 }
 _pc_export_roots() {
-  # A caller-set PROJECT_ROOT is honoured as given (CI, the standalone layer and
-  # test fixtures rely on it), but one holding no project.config.json is most
-  # likely an unrelated variable of the same name inherited from the shell: every
-  # host-content read would then check that tree. Say so; never redirect silently.
-  if [ -n "${PROJECT_ROOT:-}" ] && [ ! -f "$PROJECT_ROOT/project.config.json" ]; then
-    printf 'project-config.sh: WARN — PROJECT_ROOT=%s holds no project.config.json; host content is read from there (unset it if it names another project)\n' \
-      "$PROJECT_ROOT" >&2
+  local own given
+  own="$(_pc_abs "$(dirname "$PC_CONFIG_FILE")")"
+  if [ -n "${PROJECT_ROOT:-}" ]; then
+    given="$(_pc_abs "$PROJECT_ROOT")"
+    if [ "$given" != "$own" ] && [ "${SMATCHET_PROJECT_ROOT_OVERRIDE:-0}" != 1 ]; then
+      printf 'project-config.sh: WARN — ignoring PROJECT_ROOT=%s: this checkout resolves its host to %s (SMATCHET_PROJECT_ROOT_OVERRIDE=1 aims it at another tree)\n' \
+        "$PROJECT_ROOT" "$own" >&2
+      given="$own"
+    fi
+  else
+    given="$own"
   fi
   AGENT_LAYER_ROOT="$(_pc_abs "${AGENT_LAYER_ROOT:-$_pc_layer_root}")"
-  PROJECT_ROOT="$(_pc_abs "${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}")"
+  PROJECT_ROOT="$given"
   PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
   PC_PROJECT_ROOT="$PROJECT_ROOT"
   export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
 }
+
+# The roots depend on neither python nor the parse, so they are exported before
+# either can fail: a best-effort full source (`. project-config.sh || true`) on a box
+# without a working python still finds the host instead of falling back to the
+# caller's own tree — which after the flip is the layer.
+_pc_export_roots
 
 # Roots-only mode, for layer scripts that need only to find the host tree (the
 # session-start nudges among them): the same rungs, without the python start-up or
@@ -98,7 +113,6 @@ _pc_export_roots() {
 # a later full source in the same shell is not silently truncated.
 if [ "${PC_ROOTS_ONLY:-0}" = 1 ]; then
   unset PC_ROOTS_ONLY
-  _pc_export_roots
   if (return 0 2>/dev/null); then
     return 0
   fi
@@ -133,9 +147,6 @@ fi
 # one repo's config with another's schema would validate the wrong required-key
 # list, and the FileNotFoundError branch below would silently skip the gate.
 PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$(dirname "$PC_CONFIG_FILE")/project.config.schema.json}"
-
-# The dual-root pair (see _pc_export_roots above).
-_pc_export_roots
 
 # Emit `KEY=value` lines (arrays space-joined). eval them into the caller.
 # Fail-fast (exit 2) on a malformed config or a missing required top-level key

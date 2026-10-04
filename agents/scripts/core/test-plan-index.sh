@@ -174,8 +174,11 @@ if [ "$MODE" = "selftest" ]; then
     # the re-invocations below. Without this the defaults anchor on the real
     # repo's root (they no longer follow `git rev-parse --show-toplevel`, which
     # is the whole point of row 5b) and every assertion here would silently read
-    # the real docs/plans/ instead of the fixture it just built.
-    export PROJECT_ROOT="$_st_tmp"
+    # the real docs/plans/ instead of the fixture it just built. The override is
+    # what makes project-config.sh take a root that is not this checkout's host;
+    # without it the re-invocations would warn and fall back to the REAL tree,
+    # where --fix writes.
+    export PROJECT_ROOT="$_st_tmp" SMATCHET_PROJECT_ROOT_OVERRIDE=1
     git init -q || exit 90
     git config user.email t@t.t || exit 90
     git config user.name t || exit 90

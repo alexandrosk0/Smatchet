@@ -121,6 +121,12 @@ PROBES=(
     $'plan-naming\tmatch:Flip_Probe_Fixture\\.md\tctl\tbash {L}agents/scripts/core/test-plan-naming.sh'
     $'plan-index\tsame\tctl\tbash {L}agents/scripts/core/test-plan-index.sh'
     $'plan-claim-anchors\tsame\tctl\tbash {L}agents/scripts/core/test-plan-claim-anchors.sh --all'
+    # The rule-id contract card the selftest checks is the layer's AGENTS.md.
+    $'lint-rules-selftest\tsame\t-\tbash {L}agents/scripts/project/test-lint-rules.sh --selftest'
+    # The default mode guards the layer's framework index; --list counts the host's
+    # categories, which the bare layer does not have.
+    $'backlog-counts\tsame\t-\tbash {L}agents/scripts/core/test-backlog-counts.sh'
+    $'backlog-counts-list\tsame\tctl\tbash {L}agents/scripts/core/test-backlog-counts.sh --list'
     $'lint-rules-scope\tmatch:Source/\tctl\tbash {L}agents/scripts/project/test-lint-rules.sh --scan-offline'
     $'fleet-preflight\tmatch:without model: pin\tctl\tbash {L}agents/scripts/core/fleet-preflight.sh flip-probe-fixture-workflow.js'
     # The audit drivers read only layer files (their python beside them): a wrong
@@ -129,7 +135,10 @@ PROBES=(
     $'small-helper-audit\tsame\t-\tbash {L}agents/scripts/core/test-small-helper-audit.sh'
     # The HOST's required contexts (the layer's config names only its three lanes).
     $'branch-protection-config\tmatch:"Windows \\+ MSVC"\tctl\tenv REPO=probe/host bash {L}agents/scripts/core/setup-branch-protection.sh --dry-run'
-    $'mirrored-paths\trc\tctl\tbash scripts/dev/test-mirrored-paths.sh'
+    # Host-only gate (the layer does not carry it), so no control. The scope check
+    # is the point: post-flip the comparison must be against the agent-layer/
+    # mount, and a gate comparing the host with itself prints the host instead.
+    $'mirrored-paths\tmatch:^layer: .*/agent-layer$\t-\tbash scripts/dev/test-mirrored-paths.sh'
 )
 
 # FIXTURES — fixture_<probe> <tree> <layer-prefix>, for a probe whose real host
@@ -367,6 +376,10 @@ outcome() {
 }
 
 main() {
+    # An inherited GIT_DIR (a hook, a linked worktree) would aim every `git -C` below
+    # at the SOURCE repository — git honours GIT_DIR over -C — so a checkout or an
+    # update-ref meant for a scratch clone would move the source's HEAD and refs.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     parse_args "$@"
     local tool
     for tool in git bash tar; do command -v "$tool" >/dev/null 2>&1 || die 2 "$tool not on PATH"; done

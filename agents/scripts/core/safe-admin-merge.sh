@@ -333,8 +333,13 @@ detect_cr_installed() {
     # The HOST repo's CodeRabbit config: PROJECT_ROOT (loaded through merge-gates.sh)
     # is the superproject once this script lives in the agent-layer/ submodule, which
     # carries a .coderabbit.yaml of its own.
+    # Fail closed: only a tree that is recognisably a host (it carries
+    # project.config.json) may answer "not installed". Anything else — an empty or
+    # foreign root — counts as installed, so the gate waits for a review rather than
+    # waving the merge through.
     local root="${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
-    if [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
+    if [ ! -f "$root/project.config.json" ] \
+       || [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
         printf 'true'
     else
         printf 'false'

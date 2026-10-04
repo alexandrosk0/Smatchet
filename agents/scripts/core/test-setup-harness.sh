@@ -18,12 +18,15 @@
 set -euo pipefail
 
 # Two trees. The adapters setup-harness writes (.claude/, .codex/) and the project
-# agents (agents/project/) are HOST content: cwd is the host — CLAUDE_PROJECT_DIR
-# when a harness set it, else PROJECT_ROOT from scripts/dev/project-config.sh (the
-# superproject once the layer is a submodule). What the test runs and reads from the
-# layer (setup-harness.sh, agents/core/, the skills, the rule docs, the harness
-# templates) is addressed through LAYER, this script's own tree. Before the flip the
-# two are one checkout.
+# agents (agents/project/) are HOST content: cwd is the host — PROJECT_ROOT from
+# scripts/dev/project-config.sh (the superproject once the layer is a submodule),
+# the very tree the setup-harness under test writes into, so the snapshot, the
+# restore and every assertion cover what the run wrote. (Not CLAUDE_PROJECT_DIR:
+# set to another checkout, it split the test from the writes — the assertions read
+# a tree nothing wrote, and the real writes went unrestored.) What the test runs
+# and reads from the layer (setup-harness.sh, agents/core/, the skills, the rule
+# docs, the harness templates) is addressed through LAYER, this script's own tree.
+# Before the flip the two are one checkout.
 LAYER="$(cd "$(dirname "$0")/../../.." && pwd)"
 if [ -f "$LAYER/scripts/dev/project-config.sh" ]; then
     # shellcheck source=scripts/dev/project-config.sh
@@ -31,7 +34,7 @@ if [ -f "$LAYER/scripts/dev/project-config.sh" ]; then
 else
     unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
 fi
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_ROOT:-$LAYER}}"
+PROJ_DIR="${PROJECT_ROOT:-$LAYER}"
 cd "$PROJ_DIR" || exit 1
 SETUP_HARNESS="$LAYER/agents/scripts/core/setup-harness.sh"
 

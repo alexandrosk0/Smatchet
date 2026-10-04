@@ -187,45 +187,48 @@ case "$MODE" in
     ;;
 
   selftest)
+    # The contract card the rule-ids must appear in is the LAYER's AGENTS.md (it is
+    # seeded with this script; the host keeps a stub) — cwd is the scanned host.
+    _tlr_agents_md="$LAYER_ROOT/AGENTS.md"
     # Assert each STRICT_GLOBS entry appears in AGENTS.md § Tiered enforcement.
     miss=0
     for g in "${STRICT_GLOBS[@]}"; do
         # only check the canonical src/* + Mcp globs (include/ mirrors are implied)
         case "$g" in Source/Core/include/*) continue ;; esac
-        if ! grep -qF "$g" AGENTS.md; then echo "SELFTEST FAIL: '$g' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$g" "$_tlr_agents_md"; then echo "SELFTEST FAIL: '$g' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert each repo-wide comment-regrowth rule-id is documented in AGENTS.md (delta-gated list).
     for r in "${COMMENT_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: comment rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: comment rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert each repo-wide function-size rule-id is documented in AGENTS.md (delta-gated list).
     for r in "${FUNCSIZE_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: function-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: function-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert the agent-prompt-size rule-id is documented in AGENTS.md (delta-gated list).
     for r in "${AGENTSIZE_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: agent-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: agent-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert the include-cycle rule-id is documented in AGENTS.md (delta-gated, BLOCKING gate).
     for r in "${INCLUDECYCLE_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: include-cycle rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: include-cycle rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert the AppController fan-in rule-id is documented in AGENTS.md (delta-gated, BLOCKING gate).
     for r in "${FANIN_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: fan-in rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: fan-in rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Assert the PR-5 rule-ids are documented in AGENTS.md (bare-json WARN-first; ui-reqflag absolute-0).
     for r in "${BAREJSON_RULES[@]}" "${UIREQFLAG_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: PR-5 rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: PR-5 rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
     # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
-    if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "duplication" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the no-glfw-in-core-headers rule-id is documented in AGENTS.md (absolute-0 gate).
-    if ! grep -qF "no-glfw-in-core-headers" AGENTS.md; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "no-glfw-in-core-headers" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the cmake-local-gate-ci-scope rule-id is documented in AGENTS.md (absolute-0 gate).
-    if ! grep -qF "cmake-local-gate-ci-scope" AGENTS.md; then echo "SELFTEST FAIL: 'cmake-local-gate-ci-scope' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "cmake-local-gate-ci-scope" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'cmake-local-gate-ci-scope' rule missing from AGENTS.md" >&2; miss=1; fi
     # cmake-local-gate-ci-scope: asserts-failure — an unguarded knob-keyed FATAL_ERROR must fire;
     # a CI-scoped one (NOT DEFINED ENV{CI}) must not; a SMATCHET_DEVIATION in the window must not.
     _cmci_tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/cmci_selftest.$$")"
@@ -240,7 +243,7 @@ case "$MODE" in
         echo "SELFTEST FAIL: cmake-local-gate-ci-scope fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_cmci_tmp" 2>/dev/null || true
     # Assert the unused-symbol-under-config-guard rule-id is documented in AGENTS.md (absolute-0 gate).
-    if ! grep -qF "unused-symbol-under-config-guard" AGENTS.md; then echo "SELFTEST FAIL: 'unused-symbol-under-config-guard' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "unused-symbol-under-config-guard" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'unused-symbol-under-config-guard' rule missing from AGENTS.md" >&2; miss=1; fi
     # unused-symbol-under-config-guard: asserts-failure — replays the #863 shape (61b17427~1):
     # an UNGUARDED column-0 free-function definition whose only call sites are inside a
     # #if defined(SMATCHET_WITH_LUA_AUTOMATION) block MUST fire; the fixed shape (#945 / 61b17427,
@@ -268,7 +271,7 @@ case "$MODE" in
     # --- bare-json-parse-untrusted — assert the rule is documented + fires on a bare parse in ANY
     # first-party TU (repo-wide default-deny), in a HEADER, and on the stream>>json slurp form; and
     # stays quiet for a ParseBounded route / a deviation. ---
-    if ! grep -qF "bare-json-parse-untrusted" AGENTS.md; then echo "SELFTEST FAIL: 'bare-json-parse-untrusted' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "bare-json-parse-untrusted" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'bare-json-parse-untrusted' rule missing from AGENTS.md" >&2; miss=1; fi
     # selftest: asserts-failure — a bare json::parse in ANY TU must fire; ParseBounded / a
     # deviation must not.
     _bj_tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/bj_selftest.$$")"
@@ -311,7 +314,7 @@ case "$MODE" in
     # --- catch-all-swallow — assert the rule is documented + fires on an EMPTY catch (...) body and
     # stays quiet for a commented body / catch-all-ok / a LOG body / a deviation. ---
     for r in "${CATCHALL_RULES[@]}" "${JSONWALKER_RULES[@]}" "${SLURP_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: recurring-findings rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: recurring-findings rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     _ca_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/ca_selftest.$$.cpp")"
     case "$_ca_tmp" in *.cpp) ;; *) mv -f "$_ca_tmp" "$_ca_tmp.cpp" 2>/dev/null && _ca_tmp="$_ca_tmp.cpp" ;; esac
@@ -370,7 +373,7 @@ case "$MODE" in
     rm -f "$_sl_tmp" 2>/dev/null || true
     # --- ui-request-flag-off-thread (PR-5) — assert the rule is documented + fires on an unwrapped
     # request-flag write and stays quiet inside a RunOnUiThread closure / behind a deviation. ---
-    if ! grep -qF "ui-request-flag-off-thread" AGENTS.md; then echo "SELFTEST FAIL: 'ui-request-flag-off-thread' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "ui-request-flag-off-thread" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'ui-request-flag-off-thread' rule missing from AGENTS.md" >&2; miss=1; fi
     # selftest: asserts-failure — a request-flag write outside RunOnUiThread must fire; inside it,
     # and behind a deviation, must not. (.cpp-gated, so the fixture carries a .cpp extension.)
     _ui_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/ui_selftest.$$.cpp")"
@@ -395,7 +398,7 @@ case "$MODE" in
     # --- no-ui-include-in-domain — assert the rule is documented + fires on a quote-form Ui/
     # include, and stays quiet for an angle-bracket / comment mention / a deviation. ---
     for r in "${UIINCLUDE_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: include-direction rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: include-direction rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # selftest: asserts-failure — a quote-form `#include "Ui/..."` must fire; a comment mention,
     # an angle-bracket include, and an in-window SMATCHET_DEVIATION must not.
@@ -414,7 +417,7 @@ case "$MODE" in
     # --- pr-numbered-temporal-comments — assert the rule is documented + fires on a dev-PR-number
     # comment, and stays quiet for product-domain "PR" (no number) / Issue refs / non-comment lines /
     # a deviation. ---
-    if ! grep -qF "pr-numbered-temporal-comments" AGENTS.md; then echo "SELFTEST FAIL: 'pr-numbered-temporal-comments' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "pr-numbered-temporal-comments" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'pr-numbered-temporal-comments' rule missing from AGENTS.md" >&2; miss=1; fi
     _prc_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/prc_selftest.$$.cpp")"
     case "$_prc_tmp" in *.cpp) ;; *) mv -f "$_prc_tmp" "$_prc_tmp.cpp" 2>/dev/null && _prc_tmp="$_prc_tmp.cpp" ;; esac
     # Positive: each dev-PR-number comment shape must fire.
@@ -443,7 +446,7 @@ case "$MODE" in
     # quiet for an under-ceiling .cpp, an over-ceiling header (headers out of scope), and a
     # deviation-suppressed over-ceiling .cpp. ---
     for r in "${TU_LINE_CEILING_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: tu-line-ceiling rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: tu-line-ceiling rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     _tuc_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/tuc_selftest.$$.cpp")"
     case "$_tuc_tmp" in *.cpp) ;; *) mv -f "$_tuc_tmp" "$_tuc_tmp.cpp" 2>/dev/null && _tuc_tmp="$_tuc_tmp.cpp" ;; esac
@@ -468,7 +471,7 @@ case "$MODE" in
     # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
     # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
     # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
-    if ! grep -qF "interface-doc" AGENTS.md; then echo "SELFTEST FAIL: 'interface-doc' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "interface-doc" "$_tlr_agents_md"; then echo "SELFTEST FAIL: 'interface-doc' rule missing from AGENTS.md" >&2; miss=1; fi
     _idoc_pins=$'ITrackerIssueMutations::UpdateField'
     _idoc_hit=$'-    TrackerError UpdateField(const std::string& issueId, const TrackerField& field);\n+    Result<nlohmann::json, TrackerError> UpdateField(const std::string& issueId);'
     _idoc_miss=$'+    void SomeUnrelatedThing();'
@@ -481,7 +484,7 @@ case "$MODE" in
         echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
     # --- offline-first rules (Pillar 6; ADR-0026) — assert each is documented + fires correctly. ---
     for r in "${OFFLINE_EXACT_RULES[@]}" "${OFFLINE_WARN_RULES[@]}"; do
-        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: offline rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+        if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: offline rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # selftest: offline-write-bypasses-queue fires on a direct backend write outside the queue seam.
     _off_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/off_selftest.$$.cpp")"
@@ -749,10 +752,11 @@ case "$MODE" in
     as_py="$(resolve_python || true)"
     [ -n "$as_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --agentsize-baseline" >&2; exit 2; }
     # A LAYER file (seeded with agent_size_audit.py, which reads it from its own
-    # tree), so it is written through the layer root, not the scanned host.
+    # tree), so it is both generated in the layer — the audit lists `git ls-files`
+    # of its cwd — and written there, never from the scanned host.
     AGENTSIZE_BASELINE_FILE="$LAYER_ROOT/docs/high-integrity/agent-size-baseline.md"
     mkdir -p "$(dirname "$AGENTSIZE_BASELINE_FILE")"
-    "$as_py" "$LAYER_ROOT/agents/scripts/core/agent_size_audit.py" --baseline-md > "$AGENTSIZE_BASELINE_FILE"
+    ( cd "$LAYER_ROOT" && "$as_py" agents/scripts/core/agent_size_audit.py --baseline-md ) > "$AGENTSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $AGENTSIZE_BASELINE_FILE"
     ;;
 

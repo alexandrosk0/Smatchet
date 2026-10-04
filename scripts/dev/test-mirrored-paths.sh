@@ -75,7 +75,7 @@ layer_root_for() {
 }
 
 selftest() {
-    local tmp rc=0
+    local tmp rc=0 main_rc
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/test-mirrored-paths.XXXXXX")" || return 2
     mkdir -p "$tmp/host/scripts" "$tmp/layer/scripts"
     printf 'a\n' > "$tmp/host/scripts/x.sh"
@@ -105,6 +105,13 @@ selftest() {
         || { echo "selftest: an explicit layer root was overridden"; rc=1; }
     check_mirrors "$tmp/host" "$(layer_root_for "$tmp/host" "$tmp/host")" "$tmp/list" >/dev/null \
         && { echo "selftest: drift in the mounted layer was accepted"; rc=1; }
+    # ...and through the script's own main path, not just its helpers: a call site
+    # that stopped using layer_root_for would compare the host with itself.
+    main_rc=0
+    MIRRORED_PATHS_FILE="$tmp/list" PROJECT_ROOT="$tmp/host" AGENT_LAYER_ROOT="$tmp/host" \
+        SMATCHET_PROJECT_ROOT_OVERRIDE=1 bash "$_tmp_self" >/dev/null 2>&1 || main_rc=$?
+    [ "$main_rc" -eq 1 ] \
+        || { echo "selftest: the main path did not report drift in the mounted layer (rc $main_rc, want 1)"; rc=1; }
     rm -rf "$tmp"
     if [ "$rc" -eq 0 ]; then
         echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list, drift in a mounted layer)"

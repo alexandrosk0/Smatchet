@@ -140,28 +140,33 @@ make_config_dir() {
 }
 
 @test "caller-set roots are honoured (the flip and standalone CI both rely on this)" {
+    # AGENT_LAYER_ROOT as given: the flip's CI points the host's scripts at agent-layer/.
     local layer
     layer="$(root_of PC_AGENT_LAYER_ROOT env AGENT_LAYER_ROOT="$TMP")"
     [ "$layer" = "$TMP" ]
+    # PROJECT_ROOT naming the host this copy resolves itself (CI's `.`, the
+    # standalone layer, a runner exporting its own tree) is taken, silently.
+    run bash -c 'PROJECT_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # Another tree is taken only on the explicit override (a test fixture).
     local project
-    project="$(root_of PC_PROJECT_ROOT env PROJECT_ROOT="$TMP")"
+    project="$(root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT="$TMP")"
     [ "$project" = "$TMP" ]
 }
 
-@test "a caller-set PROJECT_ROOT with no project.config.json is honoured, with a warning" {
-    # The bare name is common (an inherited shell variable naming another project
-    # would silently aim every host-content read there). Redirecting it would be
-    # worse — a fixture tree is set this way on purpose — so it is kept and named.
-    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$TMP" bash "$CONFIG_SH" 2>&1 >/dev/null'
+@test "a caller-set PROJECT_ROOT naming another tree is ignored, with a warning" {
+    # The bare name is common, and a stale export from a sibling checkout (which
+    # has a project.config.json of its own) would aim every gate at that tree.
+    local sibling="$TMP/sibling"
+    mkdir -p "$sibling"
+    printf '{}\n' > "$sibling/project.config.json"
+    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$1" bash "$CONFIG_SH" 2>&1 >/dev/null' _ "$sibling"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"WARN"*"PROJECT_ROOT=$TMP holds no project.config.json"* ]]
+    [[ "$output" == *"WARN"*"ignoring PROJECT_ROOT=$sibling"*"$REPO_ROOT"* ]]
     local project
-    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$TMP" 2>/dev/null)"
-    [ "$project" = "$TMP" ]
-    # A root that is this project says nothing.
-    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" 2>/dev/null)"
+    [ "$project" = "$(cd "$REPO_ROOT" && pwd)" ]
 }
 
 @test "PC_SCHEMA_FILE follows the resolved config, not the script's own root" {
@@ -186,14 +191,17 @@ make_config_dir() {
     # that cds into one root and reads the other must still name the right tree.
     mkdir -p "$TMP/ws/agent-layer"
     local project layer
-    project="$(cd "$TMP/ws" && root_of PC_PROJECT_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
-    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    # $TMP/ws is not this copy's host, so the PROJECT_ROOT half needs the override.
+    project="$(cd "$TMP/ws" && root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer 2>/dev/null)"
     [ "$project" = "$(cd "$TMP/ws" && pwd)" ]
     [ "$layer" = "$(cd "$TMP/ws/agent-layer" && pwd)" ]
 }
 
 @test "roots-only: sourcing exports the pair without loading the config" {
-    run bash -c 'PC_ROOTS_ONLY=1 . "$CONFIG_SH" && printf "%s|%s|%s|%s\n" \
+    # The flag is EXPORTED, not a prefix assignment: bash scopes `PC_ROOTS_ONLY=1 .`
+    # to the builtin, which would clear it whether or not the script does.
+    run bash -c 'export PC_ROOTS_ONLY=1; . "$CONFIG_SH" && printf "%s|%s|%s|%s\n" \
         "$PROJECT_ROOT" "$AGENT_LAYER_ROOT" "${PC_PROJECT_NAME:-none}" "${PC_ROOTS_ONLY:-cleared}"'
     [ "$status" -eq 0 ]
     IFS='|' read -r p l name flag <<<"$output"
@@ -204,7 +212,7 @@ make_config_dir() {
 }
 
 @test "roots-only: a later full source in the same shell still loads the config" {
-    run bash -c 'PC_ROOTS_ONLY=1 . "$CONFIG_SH" && . "$CONFIG_SH" && printf "%s\n" "${PC_PROJECT_NAME:-none}"'
+    run bash -c 'export PC_ROOTS_ONLY=1; . "$CONFIG_SH" && . "$CONFIG_SH" && printf "%s\n" "${PC_PROJECT_NAME:-none}"'
     [ "$status" -eq 0 ]
     [ "$output" != "none" ]
     [ -n "$output" ]

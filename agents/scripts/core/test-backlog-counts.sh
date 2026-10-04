@@ -39,11 +39,12 @@ else
 fi
 : "${PROJECT_ROOT:=$_tbc_self_root}"
 
-# The self-improvement index, its category files and their entries stay HOST-side
-# permanently (grill decision 4 / ADR-0025) while this script moves into the
-# layer — so its own location stops being the right anchor at the flip. Both were
-# bare literals with no override; they gain the standard env-override shape the
-# rest of the gate family uses, defaulted through $PROJECT_ROOT.
+# The category files and their entries stay HOST-side permanently (grill decision 4
+# / ADR-0025), so they are read through $PROJECT_ROOT. The index is the framework
+# doc AGENT_SELF_IMPROVEMENT.md, which ADR-0025 moves with the layer (it is in the
+# seed manifest), so it is read through $AGENT_LAYER_ROOT: after the flip the host
+# has none, and a missing index exits 2, which test-all.sh --ci reports as a
+# missing tool and skips. Both keep the standard env-override shape.
 
 if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     echo "test-backlog-counts: SMATCHET_SKIP_BACKLOG_COUNTS=1 — skipping" >&2
@@ -51,7 +52,7 @@ if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     exit 0
 fi
 
-INDEX="${SMATCHET_SELF_IMPROVEMENT_INDEX:-$PROJECT_ROOT/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md}"
+INDEX="${SMATCHET_SELF_IMPROVEMENT_INDEX:-${AGENT_LAYER_ROOT:-$_tbc_self_root}/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md}"
 DIR="${SMATCHET_SELF_IMPROVEMENT_DIR:-$PROJECT_ROOT/docs/self-improvement/categories}"
 [ -f "$INDEX" ] || { echo "missing index: $INDEX" >&2; exit 2; }
 

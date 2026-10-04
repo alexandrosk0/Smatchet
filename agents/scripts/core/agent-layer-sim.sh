@@ -278,6 +278,10 @@ check_no_exit2_skips() {
 }
 
 main() {
+    # An inherited GIT_DIR (a hook, a linked worktree) would aim every `git -C` below
+    # at the SOURCE repository — git honours GIT_DIR over -C — so a checkout or an
+    # update-ref meant for a scratch clone would move the source's HEAD and refs.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     parse_args "$@"
     preflight
 
