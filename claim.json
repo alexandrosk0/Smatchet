@@ -1,0 +1,1 @@
+{"branch":"fix/jira-search-token-leftover","notes":"jira tokenLeftover fix #2281","originating_plan":"","owner":"tracker-backend","schema":"smatchet-plan-lock/1","slug":"jira-search-token-leftover","started":"2026-10-04T00:22:41Z","updated":"2026-10-04T00:22:41Z","write_set":["Source/Core/src/Tracker/JiraIssueSearch.cpp","tests/Core/JiraIssueSearchHttp.test.cpp"]}
