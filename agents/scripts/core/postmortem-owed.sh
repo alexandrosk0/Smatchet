@@ -34,12 +34,17 @@
 #              nudge. Deliberately NOT wired into SessionStart (that stays
 #              advisory) — a caller opts in explicitly. Degrades to advisory
 #              exit 0 when gh is unavailable (no gate should hard-fail on a
-#              missing/​unauthenticated gh, same fail-open as the other modes).
+#              missing/​unauthenticated gh, same fail-open as the other modes),
+#              but exits 3 when gh IS available and the merged-PR fetch fails
+#              or returns nothing (a window it never read is not a pass).
 #
 # Mirrors memory-drain-nudge.sh: deterministic check -> nudge, no investigation.
 # Default modes (--list / --nudge) are advisory — never block, exit 0 always
-# (even without gh; degrades to a notice). Only --blocking can exit non-zero,
-# and only on a real owed-escape count over the grace.
+# (even without gh; degrades to a notice). Only --blocking can exit non-zero:
+# 1 on a real owed-escape count over the grace, 3 when the merged-PR window
+# could not be fetched. A failed (or empty) fetch is never reported as clean —
+# every mode prints "merged-PR fetch failed (…) — window NOT scanned" on stderr
+# and the "merges clean" line is reachable only when rows were actually read.
 #
 # Test seams (production leaves all unset → identical behaviour):
 #   POSTMORTEM_LEDGER             override the postmortems.md path (has_entry).
@@ -53,6 +58,10 @@
 #   POSTMORTEM_OVERRIDE_LABELS    override the override-label set (space-separated)
 #                                 without sourcing project-config.sh (python-free).
 #   SNAPSHOT_LEDGER               override merge-snapshots.jsonl path.
+#   POSTMORTEM_FETCH_N            merged-PR over-fetch --limit (default SCAN_N*3).
+#   POSTMORTEM_FETCH_RETRIES      halvings of that --limit tried after a 5xx /
+#                                 timeout before the window reads NOT scanned
+#                                 (default 2: 60 → 30 → 15).
 #   POSTMORTEM_DIRECTPUSH_SINCE   git-log window for trigger 4 (default 7 days).
 #   POSTMORTEM_DIRECTPUSH_MAX     cap on pulls-confirmation gh calls (default 40).
 #   POSTMORTEM_ABSENT_GRACE_SECONDS
@@ -701,12 +710,52 @@ JQ_ROWS="${JQ_ROWS//__CUTOFF__/$ABSENT_CUTOFF_ISO}"
 #
 # Buffering is bounded by SCAN_N (default small, tens of rows), so holding the
 # window in memory costs nothing meaningful.
+#
+# FAIL LOUD, NOT CLEAN (postmortem-owed-graphql-504-reads-as-clean, tooling P1).
+# The batched rollup query grows with every check context on develop and 504s at
+# a large --limit; the fetch used to drop stderr + exit status, leave ROWS empty
+# and report "last N merges clean" over a window it never read — hiding #2280 and
+# #2286. Now the exit status + first stderr line are kept; a 5xx / timeout is
+# retried at a halved --limit (60 → 30 → 15, POSTMORTEM_FETCH_RETRIES halvings);
+# any other failure, or zero rows, sets FETCH_FAILED, which prints "window NOT
+# scanned" on stderr, suppresses the clean line, and fails --blocking (exit 3).
 ROWS=()
+FETCH_FAILED=""
+_fetch_limit="$FETCH_N"
+_fetch_retries="${POSTMORTEM_FETCH_RETRIES:-2}"
+case "$_fetch_retries" in ''|*[!0-9]*) _fetch_retries=2 ;; esac
+_fetch_out=""
+_fetch_err_file="$(mktemp)"
+while :; do
+    _fetch_rc=0
+    _fetch_out="$(gh pr list --repo "$REPO" --base develop --state merged --limit "$_fetch_limit" \
+            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" \
+            2>"$_fetch_err_file")" || _fetch_rc=$?
+    [ "$_fetch_rc" -eq 0 ] && break
+    _fetch_first_err="$(head -n 1 "$_fetch_err_file" 2>/dev/null | tr -d '\r' || true)"
+    if [ "$_fetch_retries" -gt 0 ] && [ "$_fetch_limit" -gt 1 ] \
+       && grep -qiE 'HTTP 5[0-9][0-9]|time[d ]*out' "$_fetch_err_file"; then
+        _fetch_limit=$(( _fetch_limit / 2 ))
+        _fetch_retries=$(( _fetch_retries - 1 ))
+        case "$MODE" in
+            list|blocking) echo "postmortem-owed: merged-PR fetch failed (${_fetch_first_err}) — retrying with --limit $_fetch_limit" >&2 ;;
+        esac
+        continue
+    fi
+    FETCH_FAILED="${_fetch_first_err:-gh pr list exited $_fetch_rc}"
+    _fetch_out=""
+    break
+done
+rm -f "$_fetch_err_file"
 while IFS= read -r row; do
     [ -n "$row" ] && ROWS+=("$row")
-done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
-            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null \
-            | tr -d '\r' || true)
+done < <(printf '%s\n' "$_fetch_out" | tr -d '\r')
+if [ -z "$FETCH_FAILED" ] && [ "${#ROWS[@]}" -eq 0 ]; then
+    FETCH_FAILED="0 merged PRs returned"
+fi
+if [ -n "$FETCH_FAILED" ]; then
+    echo "postmortem-owed: merged-PR fetch failed (${FETCH_FAILED}) — window NOT scanned" >&2
+fi
 
 # The required-context list, decoded ONCE. It is loop-invariant, and re-spawning
 # jq per row put SCAN_N extra processes on a SessionStart hook path for an answer
@@ -1071,6 +1120,17 @@ if [ "${#warns[@]}" -gt 0 ]; then
     done
 fi
 
+if [ "${#owed[@]}" -eq 0 ] && [ -n "$FETCH_FAILED" ]; then
+    # Nothing owed from triggers 3+4, but triggers 1+2 never read the window:
+    # that is NOT a clean result. The NOT-scanned line was already printed at
+    # the fetch; --blocking must not pass a window it never scanned.
+    if [ "$MODE" = "blocking" ]; then
+        echo "postmortem-owed: merged-PR window NOT scanned — blocking (cannot assert the window is clean)." >&2
+        exit 3
+    fi
+    exit 0
+fi
+
 if [ "${#owed[@]}" -eq 0 ]; then
     # Qualify the CLEAN result specifically (gate-tooling-run-from-stale-session-
     # branch, process P1). "no gate escapes owed" from a checkout running months-old
@@ -1089,7 +1149,7 @@ if [ "${#owed[@]}" -eq 0 ]; then
         esac
     fi
     case "$MODE" in
-        list|blocking) echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)." ;;
+        list|blocking) echo "postmortem-owed: no gate escapes owed a postmortem (last ${#ROWS[@]} merges clean)." ;;
     esac
     exit 0
 fi
@@ -1109,5 +1169,9 @@ for o in "${owed[@]}"; do echo "postmortem owed: $o"; done
 if [ "$MODE" = "blocking" ] && [ "${#owed[@]}" -gt "$BLOCKING_GRACE" ]; then
     echo "postmortem-owed: ${#owed[@]} escape(s) owed a postmortem exceeds grace ($BLOCKING_GRACE) — blocking." >&2
     exit 1
+fi
+if [ "$MODE" = "blocking" ] && [ -n "$FETCH_FAILED" ]; then
+    echo "postmortem-owed: merged-PR window NOT scanned — blocking (cannot assert the window is clean)." >&2
+    exit 3
 fi
 exit 0

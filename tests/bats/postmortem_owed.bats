@@ -76,8 +76,20 @@ case "$1" in
     pr)
         case "${2:-}" in
             list)
-                f=""; prev=""
-                for a in "$@"; do [ "$prev" = "--jq" ] && { f="$a"; break; }; prev="$a"; done
+                f=""; lim=""; prev=""
+                for a in "$@"; do
+                    case "$prev" in --jq) f="$a" ;; --limit) lim="$a" ;; esac
+                    prev="$a"
+                done
+                # Failure seams (postmortem-owed-graphql-504-reads-as-clean):
+                # STUB_PRLIST_FAIL = stderr text for an unconditional exit 1;
+                # STUB_PRLIST_FAIL_ABOVE = 504 only while --limit exceeds it.
+                printf '%s\n' "$lim" >> "$PM_DATA/prlist_limits.log"
+                if [ -n "${STUB_PRLIST_FAIL:-}" ]; then echo "$STUB_PRLIST_FAIL" >&2; exit 1; fi
+                if [ -n "${STUB_PRLIST_FAIL_ABOVE:-}" ] && [ "$lim" -gt "$STUB_PRLIST_FAIL_ABOVE" ]; then
+                    echo "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)" >&2
+                    exit 1
+                fi
                 if [ -n "$f" ]; then jq -r "$f" "$PM_PRLIST_FIXTURE"; else cat "$PM_PRLIST_FIXTURE"; fi
                 exit 0 ;;
             view)
@@ -1436,4 +1448,89 @@ JSON
     run_detector
     [[ "$output" != *"required-absent"* ]]
     [[ "$output" != *"PR #8046"* ]]
+}
+
+# ============================================================================
+# postmortem-owed-graphql-504-reads-as-clean (tooling P1) — a failed or empty
+# merged-PR fetch must read "window NOT scanned", never "merges clean"; a
+# 5xx / timeout retries at a halved --limit before giving up.
+# ============================================================================
+
+@test "fetch: a 504 on every attempt reads NOT scanned, never merges clean (--list exit 0)" {
+    export STUB_PRLIST_FAIL="HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem-owed: merged-PR fetch failed (HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)) — window NOT scanned"* ]]
+    [[ "$output" != *"merges clean"* ]]
+    [[ "$output" != *"no gate escapes owed"* ]]
+    # 60 → 30 → 15, then give up (two halvings by default).
+    [ "$(paste -sd, "$PM_DATA/prlist_limits.log")" = "60,30,15" ]
+}
+
+@test "fetch: --blocking exits non-zero when the window was NOT scanned" {
+    export STUB_PRLIST_FAIL="HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"window NOT scanned"* ]]
+    [[ "$output" != *"merges clean"* ]]
+}
+
+@test "fetch: --nudge stays advisory but says NOT scanned (no clean silence)" {
+    export STUB_PRLIST_FAIL="HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"
+    run bash "$SCRIPT" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"window NOT scanned"* ]]
+}
+
+@test "fetch: a retry that succeeds at a smaller --limit scans normally" {
+    export STUB_PRLIST_FAIL_ABOVE=30
+    prlist <<'JSON'
+[{"number":9201,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"r1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"retrying with --limit 30"* ]]
+    [[ "$output" == *"postmortem owed: PR #9201 — red-check: Windows + MSVC"* ]]
+    [[ "$output" != *"NOT scanned"* ]]
+    [ "$(paste -sd, "$PM_DATA/prlist_limits.log")" = "60,30" ]
+}
+
+@test "fetch: a retried clean window still prints the clean line (rows were read)" {
+    export STUB_PRLIST_FAIL_ABOVE=30
+    prlist <<'JSON'
+[{"number":9202,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"r2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no gate escapes owed a postmortem (last 1 merges clean)"* ]]
+}
+
+@test "fetch: a non-transient failure is not retried" {
+    export STUB_PRLIST_FAIL="HTTP 401: Bad credentials (https://api.github.com/graphql)"
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merged-PR fetch failed (HTTP 401: Bad credentials"*"window NOT scanned"* ]]
+    [ "$(wc -l < "$PM_DATA/prlist_limits.log")" -eq 1 ]
+}
+
+@test "fetch: zero rows is NOT a clean window either" {
+    # setup()'s default fixture is an empty merged-PR list.
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merged-PR fetch failed (0 merged PRs returned) — window NOT scanned"* ]]
+    [[ "$output" != *"merges clean"* ]]
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 3 ]
+}
+
+@test "fetch: an owed escape from another trigger still lists when the window was NOT scanned" {
+    export STUB_PRLIST_FAIL="HTTP 502: Bad Gateway"
+    printf 'deadbee\tfeat: sneaky direct push\n' > "$PM_DATA/gitlog_directpush.txt"
+    echo 0 > "$PM_DATA/pulls_deadbee.txt"
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit deadbee — direct push"* ]]
+    [[ "$output" == *"window NOT scanned"* ]]
 }
