@@ -49,7 +49,7 @@ class GitHubFixtureBackend : public smatchet::tracker_fixture::TrackerFixtureBac
     // is declaration-shape symmetry with the other tracker backends, not shareable logic: the
     // signatures are fixed by ITrackerConnectivity / ITrackerIssueMutations, and GitHub's write
     // bodies deliberately differ from the read-only default in TrackerFixtureBackendBase.
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-decl symmetry; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=ITrackerIssueMutations override declarations every fixture backend repeats; owner=tracker; revisit=never)
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;

@@ -4,18 +4,34 @@
 # Bats tests for agents/scripts/core/repo-health-facts-nudge.sh (SessionStart
 # staleness nudge for tools/repo-health/facts.json).
 #
-# Deterministic without fixtures: the script keys on the git-commit age of the
-# facts file, so tests pin "now" via REPO_HEALTH_NOW relative to the real last
-# commit that touched facts.json.
+# Hermetic: each test runs a COPY of the script inside a scratch git repo whose
+# only commit adds a stub tools/repo-health/facts.json. The script resolves its
+# tree from its own location, so the copy reads the scratch repo, never the real
+# one — the suite needs no product dashboard data (the standalone agent layer has
+# none) and never writes into the real working tree. "now" is pinned via
+# REPO_HEALTH_NOW relative to that commit's time.
 # ----------------------------------------------------------------------------
 
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    SCRIPT="$REPO_ROOT/agents/scripts/core/repo-health-facts-nudge.sh"
+    SANDBOX="$(mktemp -d)"
+    mkdir -p "$SANDBOX/agents/scripts/core" "$SANDBOX/tools/repo-health"
+    cp "$REPO_ROOT/agents/scripts/core/repo-health-facts-nudge.sh" "$SANDBOX/agents/scripts/core/"
+    printf '{"updated": "2026-01-01"}\n' > "$SANDBOX/tools/repo-health/facts.json"
+    git -C "$SANDBOX" init -q
+    git -C "$SANDBOX" add -A
+    GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" \
+        git -C "$SANDBOX" -c user.name=bats -c user.email=bats@invalid -c commit.gpgsign=false \
+            commit -q -m "stub facts"
+    SCRIPT="$SANDBOX/agents/scripts/core/repo-health-facts-nudge.sh"
     export SCRIPT
-    LAST_COMMIT="$(git -C "$REPO_ROOT" log -1 --format='%ct' -- tools/repo-health/facts.json)"
+    LAST_COMMIT="$(git -C "$SANDBOX" log -1 --format='%ct' -- tools/repo-health/facts.json)"
     export LAST_COMMIT
+}
+
+teardown() {
+    rm -rf "${SANDBOX:-}"
 }
 
 @test "fresh (age < threshold) -> silent exit 0 in --nudge mode" {
@@ -56,7 +72,7 @@ setup() {
 }
 
 @test "untracked facts file (no git history) -> silent exit 0" {
-    tmp="$(mktemp "$REPO_ROOT/tools/repo-health/untracked-XXXXXX.json")"
+    tmp="$(mktemp "$SANDBOX/tools/repo-health/untracked-XXXXXX.json")"
     export REPO_HEALTH_FACTS_FILE="tools/repo-health/$(basename "$tmp")"
     export REPO_HEALTH_NOW=$(( LAST_COMMIT + 100 * 86400 ))
     run bash "$SCRIPT" --nudge

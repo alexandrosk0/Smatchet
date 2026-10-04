@@ -28,20 +28,22 @@ case "${1:-}" in
     *) echo "usage: test-leaf-doc-discovery.sh [--static|--live]" >&2; exit 2 ;;
 esac
 
-PASS=0; FAIL=0; NOTE=""
+PASS=0; FAIL=0; SKIP=0; NOTE=""
 
 static_check() {
     local leaves shim have_any=0 leaf
     leaves="$(git ls-files 'Source/Core/src/*/AGENTS.md')"
     if [ -z "$leaves" ]; then
         NOTE="  (no leaf AGENTS.md files tracked — nothing to check)"
+        SKIP=1
         return 0
     fi
     while IFS= read -r leaf; do
         [ -f "$(dirname "$leaf")/CLAUDE.md" ] && have_any=1
     done <<< "$leaves"
     if [ "$have_any" -eq 0 ]; then
-        NOTE="  (skipped — no CLAUDE.md shims; run setup-harness.sh claude-code to provision)"
+        NOTE="  (no CLAUDE.md shims; run setup-harness.sh claude-code to provision)"
+        SKIP=1
         return 0
     fi
     while IFS= read -r leaf; do
@@ -90,6 +92,11 @@ case "$MODE" in
     live)   live_probe ;;
 esac
 
-echo "Passed: $PASS  Failed: $FAIL$NOTE"
+# A run that checked nothing says Skipped, never a bare 0/0 that reads as a pass.
+if [ "$SKIP" -eq 1 ]; then
+    echo "Passed: $PASS  Failed: $FAIL  Skipped: 1$NOTE"
+else
+    echo "Passed: $PASS  Failed: $FAIL$NOTE"
+fi
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0

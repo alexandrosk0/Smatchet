@@ -173,6 +173,8 @@ print('src:', is_active_md('Source/Core/foo.md'))
     # tuple entry — is_active_md() matches them on parts[0] == 'docs'. This asserts
     # they really are under docs/ (a move back to the root without a matching tuple
     # entry would silently drop them out of the scan, the exact Slice 3 regression).
+    # These are the consuming product's docs; a standalone agent layer has none.
+    [ -d "$REPO_ROOT/Source" ] || skip "product docs not present (standalone agent layer)"
     for f in docs/guides/cli.md docs/guides/lua.md docs/guides/mcp.md \
              docs/audits/SECURITY_AUDIT.md docs/audits/CPP_CODE_AUDIT.md \
              docs/audits/AGENTIC_INFRA_AUDIT.md docs/audits/UX_DESIGN_CRITIQUE.md \

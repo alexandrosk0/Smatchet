@@ -36,7 +36,8 @@
 # a false fire, never a hard fail).
 #
 # Env overrides: FOLLOWUP_FETCH_N (pr-count gh --limit, default 200),
-#   FOLLOWUP_TODAY (today's date, for deterministic selftest), FOLLOWUP_CAT_DIR.
+#   FOLLOWUP_TODAY (today's date, for deterministic selftest), FOLLOWUP_CAT_DIR,
+#   FOLLOWUP_PLANS_DIR (where plan-shipped looks; default docs/plans/shipped).
 
 set -euo pipefail
 cd "$(dirname "$0")/../../.." || exit 0
@@ -50,6 +51,7 @@ case "${1:-}" in
 esac
 
 CAT_DIR="${FOLLOWUP_CAT_DIR:-docs/self-improvement/categories}"
+PLANS_DIR="${FOLLOWUP_PLANS_DIR:-docs/plans/shipped}"
 FETCH_N="${FOLLOWUP_FETCH_N:-200}"
 TODAY="${FOLLOWUP_TODAY:-$(date +%Y-%m-%d 2>/dev/null || echo 1970-01-01)}"
 
@@ -102,7 +104,7 @@ _eval_plan_shipped() {  # spec: <slug>
     local slug="$1"
     [ -n "$slug" ] || { echo MALFORMED; return; }
     case "$slug" in *[!a-z0-9-]*) echo MALFORMED; return ;; esac
-    [ -f "docs/plans/shipped/${slug}.md" ] && echo FIRE || echo SKIP
+    [ -f "$PLANS_DIR/${slug}.md" ] && echo FIRE || echo SKIP
 }
 
 _eval_file_age() {  # spec: <path>;days=<N>
@@ -220,8 +222,14 @@ st "date today → FIRE"       FIRE      "$(_eval_date 2026-06-05)"
 st "date future → SKIP"      SKIP      "$(_eval_date 2027-01-01)"
 # selftest: asserts-failure — malformed/bad-input triggers must classify as MALFORMED (detection path).
 st "date malformed → MAL"    MALFORMED "$(_eval_date 2026-6-5)"
-st "plan-shipped real → FIRE" FIRE     "$(_eval_plan_shipped gate-escape-postmortem)"
+# plan-shipped against a scratch plans dir, not the real tree: the selftest must
+# hold in a checkout with no docs/plans/ at all (the standalone agent layer).
+_st_plans="$(mktemp -d)"
+: > "$_st_plans/a-shipped-plan.md"
+PLANS_DIR="$_st_plans"
+st "plan-shipped real → FIRE" FIRE     "$(_eval_plan_shipped a-shipped-plan)"
 st "plan-shipped absent → SKIP" SKIP   "$(_eval_plan_shipped no-such-plan-xyz)"
+rm -rf "$_st_plans"
 st "plan-shipped bad slug → MAL" MALFORMED "$(_eval_plan_shipped 'Bad Slug')"
 st "pr-count missing key → MAL" MALFORMED "$(_eval_pr_count 'base=develop;n=10')"
 st "pr-count bad n → MAL"    MALFORMED "$(_eval_pr_count 'base=develop;since=2026-01-01;n=ten')"

@@ -22,6 +22,20 @@ inline std::string TrimCopyAsciiWhitespace(const std::string& input) {
 
 inline std::string TrimCopy(const std::string& input) { return TrimCopyAsciiWhitespace(input); }
 
+/// Trim with std::isspace semantics, which also strips \v and \f. Distinct from TrimCopyAsciiWhitespace
+/// (space, tab, CR, LF only) on purpose: callers that already trimmed this way keep identical behaviour.
+inline std::string TrimCopyIsspace(const std::string& input) {
+    std::size_t start = 0;
+    std::size_t end = input.size();
+    while (start < end && std::isspace(static_cast<unsigned char>(input[start]))) {
+        ++start;
+    }
+    while (end > start && std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+        --end;
+    }
+    return input.substr(start, end - start);
+}
+
 inline std::string ToLowerAsciiCopy(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;

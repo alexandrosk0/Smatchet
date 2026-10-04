@@ -55,3 +55,13 @@ TEST_CASE("SetProjectInQuery: a JSON non-object (array) is discarded and replace
     CHECK(j.at("project_id").get<std::string>() == "P7");
     CHECK(j.size() == 1);
 }
+
+TEST_CASE("SetProjectInQuery: an object carrying a depth bomb is discarded and replaced, never parsed") {
+    // Parsed unbounded, the object would be kept and the bomb copied and dumped recursively.
+    const std::string bomb = std::string(100000, '[') + std::string(100000, ']');
+    const std::string out = SetProjectInQuery("{\"state\":" + bomb + "}", "P8");
+    const nlohmann::json j = nlohmann::json::parse(out);
+    REQUIRE(j.is_object());
+    CHECK(j.at("project_id").get<std::string>() == "P8");
+    CHECK(j.size() == 1);
+}

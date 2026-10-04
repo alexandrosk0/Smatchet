@@ -160,8 +160,8 @@ std::vector<TrackerActivityEntry> EntriesFromIssueJson(const nlohmann::json& iss
                 continue;
             }
             const std::string field = JsonValueAsString(item, "field");
-            const std::string from = DisplaySide(field, JsonValueAsString(item, "from"),
-                                                 JsonValueAsString(item, "fromString"));
+            const std::string from =
+                DisplaySide(field, JsonValueAsString(item, "from"), JsonValueAsString(item, "fromString"));
             const std::string to =
                 DisplaySide(field, JsonValueAsString(item, "to"), JsonValueAsString(item, "toString"));
             TrackerActivityEntry entry;
@@ -170,8 +170,8 @@ std::vector<TrackerActivityEntry> EntriesFromIssueJson(const nlohmann::json& iss
             entry.IssueUrl = issueUrl;
             entry.Summary = summary;
             entry.ActionLabel = field;
-            entry.Details = (from.empty() ? std::string("(none)") : from) + " -> " +
-                            (to.empty() ? std::string("(none)") : to);
+            entry.Details =
+                (from.empty() ? std::string("(none)") : from) + " -> " + (to.empty() ? std::string("(none)") : to);
             entries.push_back(std::move(entry));
         }
     }
@@ -215,10 +215,7 @@ JiraClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& accou
         if (resp.status_code != 200) {
             outError = "activity search failed: HTTP " + std::to_string(resp.status_code);
             LOG_ERROR("JiraClient: %s account=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return FeedResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-            }
-            return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+            return FeedResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
         }
         try {
             // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV

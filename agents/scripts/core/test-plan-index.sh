@@ -85,7 +85,13 @@ if [ "$MODE" = "selftest" ]; then
   fail=0
   # (1) git-root resolution: ARCHIVE_DIR must resolve to an existing dir AFTER
   # the cd above, regardless of where the selftest was launched from.
-  if [ ! -d "$ARCHIVE_DIR" ]; then
+  # The standalone agent layer (no Source/, and a seed that carries no docs/plans/)
+  # has nothing to resolve; that is reported, not failed. Anywhere else — a product
+  # tree, or an override naming a dir — a missing ARCHIVE_DIR still fails.
+  if [ -z "${PLAN_INDEX_ARCHIVE_DIR:-}" ] && [ ! -d "$PROJECT_ROOT/docs/plans" ] \
+     && [ ! -d "$PROJECT_ROOT/Source" ]; then
+    echo "test-plan-index --selftest: SKIP (1) — no docs/plans/ under $PROJECT_ROOT (standalone agent layer)"
+  elif [ ! -d "$ARCHIVE_DIR" ]; then
     echo "test-plan-index --selftest: FAIL — ARCHIVE_DIR '$ARCHIVE_DIR' not found after git-root cd" >&2
     fail=1
   fi

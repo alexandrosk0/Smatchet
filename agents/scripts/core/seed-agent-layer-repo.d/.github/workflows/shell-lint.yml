@@ -1,0 +1,54 @@
+name: Shell lint
+
+# Shell-script gates over the layer's own scripts: test-lint-bash.sh (the
+# shellcheck fail-set SC2086 / SC2046 / SC2155) and test-shell-lint.sh (the
+# nine-rule self-review lint — dependency preflight, curl --fail, sha256-pinned
+# downloads, --flag/--flag=value parity, SIGPIPE guards, NUL bytes, the python
+# resolver).
+#
+# "Shell lint (shellcheck)" is a branch-protection REQUIRED context: no path
+# filter, no job `if:`, so it reports on every pull request.
+#
+# agent-layer-sim.sh runs the same commands locally (lane `shell`) and fails if
+# they stop appearing here, so edit both together.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  merge_group:
+
+concurrency:
+  group: shell-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ROOT: ${{ github.workspace }}
+  AGENT_LAYER_ROOT: ${{ github.workspace }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  shell-lint:
+    name: Shell lint (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: shellcheck version (preinstalled on ubuntu runner)
+        run: shellcheck --version
+
+      - name: test-lint-bash — shellcheck fail-set (SC2086 / SC2046 / SC2155)
+        run: bash agents/scripts/core/test-lint-bash.sh
+
+      - name: test-shell-lint — nine-rule self-review gate
+        run: bash agents/scripts/core/test-shell-lint.sh

@@ -1,8 +1,4 @@
-// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=column-view-save-simplification replaced the
-// editor's scattered dirty-flag/buffer fields with one ViewDraft, net negative on the functional
-// churn but the doc-comment expansion explaining the new invariants pushed the file ~15 lines
-// past the ceiling; a companion-TU split (action methods vs draw functions) is a reasonable
-// follow-up but out of scope for this change; owner=orchestrator; revisit=next touch of this file)
+// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=Views editor TU over the 1,200-line advisory ceiling; split in debt 2026-10-03-ui-tu-ceiling-splits; owner=orchestrator; revisit=2027-04-30)
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"

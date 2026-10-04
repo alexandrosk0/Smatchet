@@ -7,9 +7,10 @@
 // All data comes from diagnostics::AboutInfo; this TU only renders it.
 // docs/plans/shipped/about-dialog-help-menu.md Slice 4.
 
-class AppController;
+class IAppMeta;
 struct UiDrawSession;
 
-void DrawAboutModal(AppController& app, UiDrawSession& d);
+/// Needs only the app-meta facet: the version, the release repo, and OpenUrl.
+void DrawAboutModal(const IAppMeta& app, UiDrawSession& d);
 
 #endif // SMATCHET_UI_SMATCHET_ABOUT_UI_H

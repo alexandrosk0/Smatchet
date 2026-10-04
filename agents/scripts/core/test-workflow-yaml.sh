@@ -26,7 +26,7 @@ FAILED=0
 mapfile -t YAMLS < <(find .github/workflows -maxdepth 1 -name '*.yml' 2>/dev/null | sort)
 if [ "${#YAMLS[@]}" -eq 0 ]; then
     echo "[test-workflow-yaml] no .github/workflows/*.yml files — skipping."
-    echo "Passed: 0  Failed: 0"
+    echo "Passed: 0  Failed: 0  Skipped: 1"
     exit 0
 fi
 
@@ -38,7 +38,7 @@ command -v actionlint >/dev/null 2>&1 && ACTIONLINT_OK=1
 if [ "$PYYAML_OK" -eq 0 ] && [ "$ACTIONLINT_OK" -eq 0 ]; then
     echo "[test-workflow-yaml] WARN: neither PyYAML nor actionlint installed; cannot validate."
     echo "  pip install pyyaml   # or: pacman -S mingw-w64-ucrt-x86_64-python-yaml"
-    echo "Passed: 0  Failed: 0"
+    echo "Passed: 0  Failed: 0  Skipped: 1"
     exit 0
 fi
 

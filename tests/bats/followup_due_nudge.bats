@@ -17,7 +17,7 @@ setup() {
 }
 
 teardown() {
-    rm -rf "$CATDIR" "${FAKEBIN:-}"
+    rm -rf "$CATDIR" "${FAKEBIN:-}" "${PLANSDIR:-}"
 }
 
 # mkentry <file> <priority> <trigger-line>
@@ -72,7 +72,12 @@ GH
 }
 
 @test "plan-shipped FIREs for an existing shipped plan" {
-    mkentry a.md P1 "Triggered-follow-up: when=plan-shipped:gate-escape-postmortem; action=ship the ledger; baseline=x; fired=never"
+    # A scratch plans dir, not the real docs/plans/shipped/: hermetic, and it holds
+    # in a checkout that has no docs/plans/ (the standalone agent layer).
+    PLANSDIR="$(mktemp -d)"
+    : > "$PLANSDIR/a-shipped-plan.md"
+    export FOLLOWUP_PLANS_DIR="$PLANSDIR"
+    mkentry a.md P1 "Triggered-follow-up: when=plan-shipped:a-shipped-plan; action=ship the ledger; baseline=x; fired=never"
     run bash "$SCRIPT" --list
     [[ "$output" == *"ship the ledger"* ]]
 }

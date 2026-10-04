@@ -45,7 +45,7 @@
 // idiomatic per-scenario boilerplate that dup_audit's normalization matches
 // across sibling scenarios; the extractable parts (arg parsers + OnStart
 // prologue) now live in ScenarioArgs.h / ConfigureScreenshotScenario.
-// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=per-scenario scaffold (g_ui shim, namespace, IScenario head); the shareable parts are in ScenarioArgs.h; owner=command-system; revisit=never)
 extern UiDrawSession g_ui;
 
 namespace smatchet {

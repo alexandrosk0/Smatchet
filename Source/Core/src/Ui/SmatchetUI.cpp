@@ -1,8 +1,4 @@
-// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=pre-existing grandfathered whale, only
-// surfaced now because this change touches two small, unrelated spots (the debounced
-// layout-autosave drain, and one field rename) — a real split of this orchestrator TU is out
-// of scope for column-view-save-simplification; owner=orchestrator; revisit=next dedicated
-// SmatchetUI.cpp file-split pass)
+// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=UI orchestrator TU over the 1,200-line advisory ceiling; split in debt 2026-10-03-ui-tu-ceiling-splits; owner=orchestrator; revisit=2027-06-30)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.

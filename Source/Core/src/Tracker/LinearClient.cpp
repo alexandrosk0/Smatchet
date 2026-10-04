@@ -533,15 +533,8 @@ Result<TrackerFieldCatalogResult, TrackerError> LinearClient::FetchFieldCatalog(
                 ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text)
                 : errorMessage;
         LOG_ERROR("LinearClient::FetchFieldCatalog: HTTP %ld — %s", resp.status_code, msg.c_str());
-        // This branch also fires on a 2xx (200-with-GraphQL-errors, or a
-        // 2xx-non-200) — cases TrackerErrorFromHttpStatus would classify as Ok()
-        // (Kind==None, detail discarded), silently swallowing the failure. Carry
-        // the detail under an explicit non-OK kind (DR20).
-        // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return CatalogResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
-        }
-        return CatalogResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
+        // This branch also fires on a 200 carrying GraphQL errors; ClassifyRejectedHttpStatus keeps that non-Ok.
+        return CatalogResult::Err(ClassifyRejectedHttpStatus(resp.status_code, msg));
     }
     if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
         !parsed["data"].contains("team") || !parsed["data"]["team"].is_object()) {

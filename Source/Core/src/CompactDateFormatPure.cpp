@@ -9,26 +9,13 @@
 // CompactDateFormat.h, so callers are unaffected and the definitions just live here.
 
 #include "CompactDateFormat.h"
+#include "StringUtil.h"
 
 #include <cctype>
 #include <cstdio>
 #include <string>
 
 namespace {
-
-// Duplicated from CompactDateFormat.cpp (anonymous-namespace, internal linkage —
-// no ODR conflict). FormatCompactJiraDateForDisplay still needs its own copy.
-std::string TrimCopy(const std::string& s) {
-    size_t start = 0;
-    size_t end = s.size();
-    while (start < end && std::isspace(static_cast<unsigned char>(s[start]))) {
-        ++start;
-    }
-    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
-        --end;
-    }
-    return s.substr(start, end - start);
-}
 
 bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
@@ -97,7 +84,7 @@ void AppendOffsetJira(std::string& out, int offsetSec) {
 } // namespace
 
 bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
-    const std::string s = TrimCopy(raw);
+    const std::string s = TrimCopyIsspace(raw);
     out = ParsedJiraDateTime();
     if (s.size() < 10) {
         return false;

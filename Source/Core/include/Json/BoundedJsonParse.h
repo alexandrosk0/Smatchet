@@ -34,6 +34,8 @@ namespace json_safe {
 // bounding stack + heap growth well short of exhaustion.
 constexpr int kDefaultMaxDepth = 256;
 constexpr std::size_t kDefaultMaxNodes = 200000u;
+/// Byte cap. A caller that reads a file before parsing can stop reading at the same size.
+constexpr std::size_t kDefaultMaxBytes = 4u * 1024u * 1024u;
 
 // Stable error strings written to `errOut` on failure. Callers map these to the
 // protocol-correct error for their transport; they never contain attacker input.
@@ -120,7 +122,7 @@ class BoundedDecodeSax : public nlohmann::detail::json_sax_dom_parser<nlohmann::
 //   - NEVER throws across the call boundary (allow_exceptions=false; the byte
 //     check is a size compare). Callers test `errOut.empty()` for success.
 inline nlohmann::json ParseBounded(const std::string& text, std::string& errOut,
-                                   std::size_t maxBytes = 4u * 1024u * 1024u, int maxDepth = kDefaultMaxDepth,
+                                   std::size_t maxBytes = kDefaultMaxBytes, int maxDepth = kDefaultMaxDepth,
                                    std::size_t maxNodes = kDefaultMaxNodes) {
     errOut.clear();
     if (text.size() > maxBytes) {
@@ -147,8 +149,7 @@ inline nlohmann::json ParseBounded(const std::string& text, std::string& errOut,
 // "invalid → discarded" behaviour is preserved while the new "too deep/large →
 // discarded" (instead of a SIGSEGV on deep-DOM teardown) is added. New code that
 // wants the specific failure reason should call ParseBounded directly.
-inline nlohmann::json ParseBoundedOrDiscarded(const std::string& text,
-                                              std::size_t maxBytes = 4u * 1024u * 1024u,
+inline nlohmann::json ParseBoundedOrDiscarded(const std::string& text, std::size_t maxBytes = kDefaultMaxBytes,
                                               int maxDepth = kDefaultMaxDepth,
                                               std::size_t maxNodes = kDefaultMaxNodes) {
     std::string err;

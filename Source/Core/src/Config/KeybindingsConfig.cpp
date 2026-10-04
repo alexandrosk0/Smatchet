@@ -5,6 +5,7 @@
 
 #include "KeybindingsConfig.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
@@ -141,18 +142,15 @@ namespace {
 // falling back to any (BoundHotkeyDisplay); true = semantic, order-independent args
 // equality, needed when one command id carries several distinct-args bindings on
 // distinct keys (BoundHotkeyDisplayForArgs / ...All). Sharing one body keeps the
-// json-parse deviation below in a single place instead of once per display helper.
+// args parsing in a single place instead of once per display helper.
 const Keybinding* FindDisplayBinding(const std::vector<Keybinding>& bindings, const std::string& commandId,
                                      const std::string& argsJson, bool matchArgs) {
-    // Semantic (order-independent) args comparison via nlohmann ==. Parse with the
-    // non-throwing overload + is_discarded() — this is the strict Config zone where
-    // an empty catch is a CRITICAL finding, so no try/catch around json::parse.
+    // Semantic (order-independent) args comparison via nlohmann ==. The args come from the
+    // user-editable keybindings file, so parse bounded (depth / size capped, never throws) and
+    // treat anything unparsable as empty args.
     nlohmann::json want;
     if (matchArgs) {
-        // clang-format off
-        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
-        want = nlohmann::json::parse(argsJson.empty() ? "{}" : argsJson, nullptr, false);
-        // clang-format on
+        want = smatchet::json_safe::ParseBoundedOrDiscarded(argsJson.empty() ? "{}" : argsJson);
         if (want.is_discarded()) {
             want = nlohmann::json::object();
         }
@@ -171,10 +169,7 @@ const Keybinding* FindDisplayBinding(const std::vector<Keybinding>& bindings, co
             }
             continue;
         }
-        // clang-format off
-        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
-        nlohmann::json have = nlohmann::json::parse(b.ArgsJson.empty() ? "{}" : b.ArgsJson, nullptr, false);
-        // clang-format on
+        nlohmann::json have = smatchet::json_safe::ParseBoundedOrDiscarded(b.ArgsJson.empty() ? "{}" : b.ArgsJson);
         if (have.is_discarded()) {
             have = nlohmann::json::object();
         }
@@ -302,8 +297,7 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     // round-trip fixed point.
     c.Bindings.push_back(
         MakeBindingMulti({"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd", "Ctrl+MouseWheelUp"}, "ui.zoom.in", "{}"));
-    c.Bindings.push_back(
-        MakeBindingMulti({"Ctrl+-", "Ctrl+NumSubtract", "Ctrl+MouseWheelDown"}, "ui.zoom.out", "{}"));
+    c.Bindings.push_back(MakeBindingMulti({"Ctrl+-", "Ctrl+NumSubtract", "Ctrl+MouseWheelDown"}, "ui.zoom.out", "{}"));
     c.Bindings.push_back(MakeBindingMulti({"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+V", "ui.open_view", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+G", "grid.clear_selection", "{}"));

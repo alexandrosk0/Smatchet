@@ -38,7 +38,13 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
-cd "$(dirname "$0")/../../.."
+# applied.md is HOST content — self-improvement entries never move into the agent
+# layer — so resolve it from the caller's tree (the git toplevel of cwd), not from
+# this script's location: once the layer is a submodule that location is the layer
+# root, and a fixture repo that runs this script must rotate ITS applied.md, never
+# the real one. Outside any git work tree, fall back to the script-relative root.
+_rot_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _rot_root="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$_rot_root" || { echo "rotate-applied-md: cannot cd to $_rot_root" >&2; exit 2; }
 
 APPLIED="docs/self-improvement/categories/applied.md"
 CHECK_ONLY=0

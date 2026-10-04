@@ -420,6 +420,69 @@ TEST_CASE("JiraClient::FetchGroupMembers — non-200 on the first page maps the 
     CHECK(res.error().Kind == TrackerErrorKind::ServerError);
 }
 
+TEST_CASE("JiraClient user/meta reads — a non-200 2xx stays a non-OK Unknown with its status and detail") {
+    // Each read accepts only 200, so a 202 lands in its failure branch. ClassifyRejectedHttpStatus must
+    // keep it non-OK: TrackerErrorFromHttpStatus alone maps any 2xx to Ok() and drops the detail.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/watchers", 202, "GET");
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/votes", 202, "GET");
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/editmeta", 202, "GET");
+    fx.ScriptStatus("/rest/api/3/user", 202, "GET");
+    fx.ScriptStatus("/rest/api/3/group/member", 202, "GET");
+    JiraClient client;
+    const TrackerConfig cfg = fx.Config();
+    const auto checkUnknown202 = [](const TrackerError& e) {
+        CHECK(e.Kind == TrackerErrorKind::Unknown);
+        CHECK(e.HttpStatus == 202);
+        CHECK(e.Detail.find("HTTP 202") != std::string::npos);
+        CHECK_FALSE(e.IsRetryable());
+    };
+    const auto watchers = client.FetchIssueWatchers(cfg, "SMT-1");
+    REQUIRE_FALSE(watchers.has_value());
+    checkUnknown202(watchers.error());
+    const auto votes = client.FetchIssueVotes(cfg, "SMT-1");
+    REQUIRE_FALSE(votes.has_value());
+    checkUnknown202(votes.error());
+    const auto editMeta = client.FetchIssueEditMeta(cfg, "SMT-1");
+    REQUIRE_FALSE(editMeta.has_value());
+    checkUnknown202(editMeta.error());
+    const auto groups = client.FetchUserGroupNames(cfg, "acc-1");
+    REQUIRE_FALSE(groups.has_value());
+    checkUnknown202(groups.error());
+    const auto members = client.FetchGroupMembers(cfg, "developers");
+    REQUIRE_FALSE(members.has_value());
+    checkUnknown202(members.error());
+}
+
+TEST_CASE("JiraClient user/meta reads — a rejected status keeps its HTTP kind") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/watchers", 401, "GET");
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/votes", 503, "GET");
+    fx.ScriptStatus("/rest/api/3/issue/SMT-1/editmeta", 404, "GET");
+    fx.ScriptStatus("/rest/api/3/user", 429, "GET");
+    JiraClient client;
+    const TrackerConfig cfg = fx.Config();
+
+    const auto watchers = client.FetchIssueWatchers(cfg, "SMT-1");
+    REQUIRE_FALSE(watchers.has_value());
+    CHECK(watchers.error().Kind == TrackerErrorKind::Auth);
+    CHECK(watchers.error().HttpStatus == 401);
+
+    const auto votes = client.FetchIssueVotes(cfg, "SMT-1");
+    REQUIRE_FALSE(votes.has_value());
+    CHECK(votes.error().Kind == TrackerErrorKind::ServerError);
+    CHECK(votes.error().IsRetryable());
+
+    const auto editMeta = client.FetchIssueEditMeta(cfg, "SMT-1");
+    REQUIRE_FALSE(editMeta.has_value());
+    CHECK(editMeta.error().Kind == TrackerErrorKind::NotFound);
+
+    const auto groups = client.FetchUserGroupNames(cfg, "acc-1");
+    REQUIRE_FALSE(groups.has_value());
+    CHECK(groups.error().Kind == TrackerErrorKind::RateLimited);
+    CHECK(groups.error().IsRetryable());
+}
+
 TEST_CASE("JiraClient::FetchUsersByAccountIds — empty id list returns empty with no HTTP") {
     JiraCatalogHttpFixture fx;
     JiraClient client;

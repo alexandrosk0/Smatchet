@@ -389,6 +389,13 @@ PY
 install_git_hooks() {
   local target="scripts/git-hooks"
   local current normalized_current
+  # The hooks are tracked in the HOST tree (cwd). A tree without them — the agent
+  # layer running standalone — must not get a hooksPath pointing at nothing, which
+  # would silently disable every hook git would otherwise run.
+  if [[ ! -d "$target" ]]; then
+    echo "  git-hooks  $target/ not present in this tree — core.hooksPath left unchanged"
+    return 0
+  fi
   current="$(git_cmd config --local --get core.hooksPath 2>/dev/null || echo '')"
   normalized_current="${current//\\//}"
 
@@ -515,9 +522,16 @@ setup_codex() {
     exit 1
   fi
 
-  local core_count project_count count duplicate_basenames leaf_count
+  local core_count project_count=0 count duplicate_basenames leaf_count
+  # agents/project/ is the consuming project's; the standalone agent layer has
+  # none. Count it only when present — under pipefail, find on a missing dir would
+  # abort this whole report.
+  local -a agent_dirs=("$ROOT/agents/core")
   core_count="$(find "$ROOT/agents/core" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-  project_count="$(find "$ROOT/agents/project" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -d "$ROOT/agents/project" ]]; then
+    agent_dirs+=("$ROOT/agents/project")
+    project_count="$(find "$ROOT/agents/project" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+  fi
   count=$((core_count + project_count))
   if [[ "$count" -eq 0 ]]; then
     echo "  FAIL agents/{core,project}/*.md has no agent definitions"
@@ -535,7 +549,7 @@ setup_codex() {
   fi
 
   duplicate_basenames="$(
-    find "$ROOT/agents/core" "$ROOT/agents/project" -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
+    find "${agent_dirs[@]}" -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
       | sort | uniq -d
   )"
   if [[ -n "$duplicate_basenames" ]]; then

@@ -75,6 +75,10 @@ assert cands[0]["samples"][1]["hard_veto"] is True
 }
 
 @test "emitted samples feed the REAL sidecar; veto propagates to verdict" {
+    # The sidecar is agent tooling that still lives host-side (plan agent-surface-
+    # extraction-repo, decision D4), so the standalone layer has no copy. Keyed on
+    # Source/, not on the file, so a host-side deletion still fails.
+    [ -d "$REPO_ROOT/Source" ] || [ -f "$SIDECAR" ] || skip "scripts/dev/verifier-sidecar.py not in this tree (standalone agent layer, D4)"
     _leg 5-review-1-claude-opus.md "$OK_VERDICT"
     _leg 5-review-1-codex-sol.md "$VETO_VERDICT"
     "$PY" "$PV" --subject 7 --round 1 --items-dir items > samples.json
@@ -90,6 +94,10 @@ assert "deterministic gate broken" in " ".join(cand.get("veto_reasons", [])), ca
 }
 
 @test "no-veto samples aggregate clean through the real sidecar" {
+    # The sidecar is agent tooling that still lives host-side (plan agent-surface-
+    # extraction-repo, decision D4), so the standalone layer has no copy. Keyed on
+    # Source/, not on the file, so a host-side deletion still fails.
+    [ -d "$REPO_ROOT/Source" ] || [ -f "$SIDECAR" ] || skip "scripts/dev/verifier-sidecar.py not in this tree (standalone agent layer, D4)"
     _leg 5-review-1-claude-opus.md "$OK_VERDICT"
     run bash -c "\"$PY\" \"$PV\" --subject 7 --round 1 --items-dir items | \"$PY\" \"$SIDECAR\" aggregate -"
     [ "$status" -eq 0 ]

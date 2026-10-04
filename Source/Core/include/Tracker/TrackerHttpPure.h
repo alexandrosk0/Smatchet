@@ -1,6 +1,9 @@
 #ifndef SMATCHET_TRACKER_HTTP_PURE_H
 #define SMATCHET_TRACKER_HTTP_PURE_H
 
+#include "SmatchetResult.h"
+#include "Tracker/TrackerError.h"
+
 #include <string>
 
 // Pure, cpr-free TLS-trust seam for the tracker HTTP layer (WS2 of
@@ -73,6 +76,12 @@ long ParseRetryAfterSeconds(const std::string& value);
 // means "no header" and yields the plain backoff. Pure math; the caller polls its
 // cancel token while sleeping, so a longer honored delay stays shutdown-safe.
 long ComputeTrackerRetryDelayMs(int attempt, long baseMs, long expCapMs, long retryAfterSec, long honorCapMs);
+
+// ProbeIssueExists verdict from the status of a GET on the issue: 200 = it exists, 404 = it was
+// deleted. Anything else is inconclusive and returned as an error, which the reconcile treats
+// non-destructively (it keeps the cache row): another 2xx is Unknown, since TrackerErrorFromHttpStatus
+// would read it as Ok, and every other status keeps its classified kind. Shared by every client.
+Result<bool, TrackerError> ClassifyIssueExistsProbe(long statusCode);
 
 } // namespace TrackerHttpPure
 

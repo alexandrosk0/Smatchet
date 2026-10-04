@@ -147,13 +147,10 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
         if (resp.status_code != 200) {
             outError = "activity discovery failed: HTTP " + std::to_string(resp.status_code);
             LOG_ERROR("PlaneClient: %s account=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return FeedResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-            }
-            return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+            return FeedResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
         }
         std::string parseErr;
-        // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
+        // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom; debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-04-30)
         nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
             outError = std::string("activity discovery parse error: ") + parseErr;

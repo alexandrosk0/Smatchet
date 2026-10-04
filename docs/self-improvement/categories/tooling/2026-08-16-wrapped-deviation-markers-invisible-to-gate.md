@@ -43,6 +43,17 @@ This is the tail of [`2026-08-05-clang-format-reflows-deviation-comments.md`](20
 that entry's option 2 (`CommentPragmas`) shipped 2026-08-16 and stops *new* wrapping, but it does
 not un-wrap the 47 already in the tree.
 
+**Update 2026-10-03 — step 1 is done.** The 2026-11-30 / 12-01 and 2026-12-31 deviation batches
+unwrapped every remaining wrapped marker: `git grep -n "SMATCHET_DEVIATION(" -- 'Source/**'` now finds
+none without `revisit=` on the same line. Each one was resolved rather than just re-flowed:
+- 5 that exempted no clone were deleted (`JiraClient.h`, `LinearClient.h` ×2, `AppController.h`,
+  `LinearIssueMutation.cpp`);
+- the `Tracker/*Client.h` override-signature ones became one-line `revisit=never`;
+- the rest got one-line, staggered dates backed by debt entries.
+
+The wrap had also hidden 24 markers dated 2026-12-31 from `deviation-overdue`, so the 2027-01-01 cliff
+was larger than the gate could see. Step 2, the gate, is next and can now land without a red wall.
+
 ## Concrete next action
 
 Two steps, in order — the second is unsafe before the first.
@@ -62,4 +73,4 @@ Two steps, in order — the second is unsafe before the first.
    `Source/Core/include/AppController.h:989`, which has no `owner=` or `revisit=`. Run step 2 only
    after step 1, or CI red-walls on all 47 at once.
 
-Triggered-follow-up: when=date:2026-09-15; action=re-run the wrapped-marker count and confirm the sweep landed before the 2026-10-01 overdue cliff; baseline=47 wrapped markers on 2026-08-16; fired=never
+Triggered-follow-up: when=date:2026-09-15; action=re-run the wrapped-marker count and confirm the sweep landed before the 2026-10-01 overdue cliff; baseline=47 wrapped markers on 2026-08-16; fired=2026-10-03 (0 wrapped markers left after the 2026-12-31 batch)

@@ -635,6 +635,13 @@ for src, lineno, cand in span_warnings:
           f"nor at origin/develop — fix it, or note in prose that it is not on develop yet.",
           file=sys.stderr)
 
+# Diff scope with nothing in it (no markdown touched vs the base) checked nothing:
+# say so with an explicit Skipped marker rather than a vacuous 0/0 pass, which
+# test-all.sh flags as a possible silent skip.
+if SCOPE == "diff" and checked == 0:
+    print("Passed: 0  Failed: 0  Skipped: 1  (no in-scope markdown changed — nothing to check)")
+    sys.exit(0)
+
 passed = checked - (1 if reportable else 0)
 failed = 1 if reportable else 0
 print(f"Passed: {passed}  Failed: {failed}  (scanned {checked} markdown file(s); "

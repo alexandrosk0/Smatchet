@@ -247,3 +247,50 @@ TEST_CASE("IsQueryUserField / IsQueryDateField: family predicates") {
     CHECK(IsQueryDateField(MakeField("a", "A", TrackerFieldFamily::DateTime)));
     CHECK_FALSE(IsQueryDateField(MakeField("a", "A", TrackerFieldFamily::Text)));
 }
+
+TEST_CASE("BeginQuerySuggestPass: resets stale pass state and resolves the replace span") {
+    const std::string buf = "status = Do";
+    const int len = static_cast<int>(buf.size());
+    QuerySuggestBuild out;
+    out.Items.resize(2);
+    QuerySuggestPass pass;
+    pass.Seen.insert("stale");
+    pass.Prefix = "stale";
+    REQUIRE(BeginQuerySuggestPass(buf.c_str(), len, len, len, len, out, nullptr, pass));
+    CHECK(out.Items.empty());
+    CHECK(pass.Seen.empty());
+    CHECK(pass.Prefix == "Do");
+    CHECK(pass.ReplaceStart == len - 2);
+    CHECK(pass.ReplaceEnd == len);
+    CHECK(out.ReplaceStart == pass.ReplaceStart);
+    CHECK(out.ReplaceEnd == pass.ReplaceEnd);
+
+    // A cursor past the end is clamped into the buffer.
+    REQUIRE(BeginQuerySuggestPass(buf.c_str(), len, len + 50, len + 50, len + 50, out, nullptr, pass));
+    CHECK(pass.Prefix == "Do");
+}
+
+TEST_CASE("BeginQuerySuggestPass: a null buffer resets every output and returns false") {
+    QuerySuggestBuild out;
+    out.Items.resize(1);
+    out.ReplaceStart = 3;
+    out.ReplaceEnd = 7;
+    QuerySuggestMeta meta;
+    meta.UserValueToken = true;
+    meta.UserSearchPrefix = "jo";
+    QuerySuggestPass pass;
+    pass.Seen.insert("stale");
+    pass.ReplaceStart = 3;
+    pass.ReplaceEnd = 7;
+    pass.Prefix = "stale";
+    CHECK_FALSE(BeginQuerySuggestPass(nullptr, 0, 0, 0, 0, out, &meta, pass));
+    CHECK(out.Items.empty());
+    CHECK(out.ReplaceStart == 0);
+    CHECK(out.ReplaceEnd == 0);
+    CHECK_FALSE(meta.UserValueToken);
+    CHECK(meta.UserSearchPrefix.empty());
+    CHECK(pass.Seen.empty());
+    CHECK(pass.ReplaceStart == 0);
+    CHECK(pass.ReplaceEnd == 0);
+    CHECK(pass.Prefix.empty());
+}
