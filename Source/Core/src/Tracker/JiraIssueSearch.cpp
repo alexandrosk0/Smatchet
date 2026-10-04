@@ -534,15 +534,8 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         if (response.status_code != 200) {
             outError =
                 "Fetch by key failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
-            // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to
-            // Ok() and yield an Err(Kind::None) with empty Detail (FIX-1 / Slice-2). Detail is
-            // preserved verbatim for the caller's user-facing error surfaces.
-            if (response.status_code >= 200 && response.status_code < 300) {
-                return FetchResult::Err(TrackerErrorUnknown(outError, response.status_code));
-            }
-            return FetchResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+            return FetchResult::Err(ClassifyRejectedHttpStatus(response.status_code, outError));
         }
         try {
             std::string parseErr;
@@ -663,10 +656,7 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
                 outError = "Fetch children failed: " +
                            smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
                 LOG_WARN("JiraClient::FetchChildrenOfKeys: %s", outError.c_str());
-                if (response.status_code >= 200 && response.status_code < 300) {
-                    return FetchResult::Err(TrackerErrorUnknown(outError, response.status_code));
-                }
-                return FetchResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+                return FetchResult::Err(ClassifyRejectedHttpStatus(response.status_code, outError));
             }
             try {
                 std::string parseErr;

@@ -94,7 +94,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
     // runner replaces the active scenario), signal the cancel token, join the thread, and clear the factory override
     // here so ~std::thread never runs on a joinable thread (std::terminate) and the stub-backed AiClientFactory
     // override never dangles into freed state.
-    // SMATCHET_DEVIATION(rule=duplication; reason=DR7 joining destructor shared by the streaming scenario stubs; owner=command-system; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR7 joining destructor shared by the streaming scenario stubs; owner=command-system; revisit=2027-05-14)
     ~AiAssistantStreamingTransportDownScenario() override {
         if (cancel_) {
             cancel_->store(true, std::memory_order_release);

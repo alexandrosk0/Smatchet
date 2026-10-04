@@ -40,7 +40,7 @@ void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app) {
                                     // Builtin-command result boilerplate (backend call, Failure envelope, JSON items
                                     // array) is uniform across the users/fields command TUs by design; a generic
                                     // wrapper would couple independent TUs.
-                                    // SMATCHET_DEVIATION(rule=duplication; reason=builtin-command result boilerplate; owner=command-system; revisit=2027-03-31)
+                                    // SMATCHET_DEVIATION(rule=duplication; reason=builtin-command result boilerplate; owner=command-system; revisit=2027-05-14)
                                     nlohmann::json items = nlohmann::json::array();
                                     for (const TrackerUser& u : users) {
                                         nlohmann::json one;
