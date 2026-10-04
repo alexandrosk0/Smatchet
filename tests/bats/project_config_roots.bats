@@ -25,6 +25,11 @@ setup() {
     # under test.
     unset PC_CONFIG_FILE PC_SCHEMA_FILE SMATCHET_PROJECT_CONFIG
     unset PROJECT_ROOT AGENT_LAYER_ROOT PC_PROJECT_ROOT PC_AGENT_LAYER_ROOT
+    # ...and every other PC_* a parent's full load exported (test-all.sh sources
+    # this script, so PC_PROJECT_NAME and the rest arrive set): a test asserting
+    # what a load did NOT set would otherwise read the parent's value.
+    local v
+    while IFS= read -r v; do unset "$v"; done < <(compgen -e | grep '^PC_' || true)
 
     TMP="$(mktemp -d)"
     export TMP
