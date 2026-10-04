@@ -37,9 +37,18 @@ class TicketSyncService {
   public:
     explicit TicketSyncService(ITicketSyncDeps& deps);
 
+    /// Cancels and joins the streaming worker. `IsActive()` drops to false at session finalize,
+    /// one tick BEFORE `StartPendingSyncIfIdle` joins the finished worker, so an "idle" service
+    /// can still own a joinable `std::thread`; destroying that member un-joined calls
+    /// std::terminate (a hidden pane retired in that window crashed the app). Idle-only callers
+    /// (`AppController::retireExpiredHiddenContexts_`) see an instant join.
+    ~TicketSyncService();
+    TicketSyncService(const TicketSyncService&) = delete;
+    TicketSyncService& operator=(const TicketSyncService&) = delete;
+
     /// Cancel any in-flight streaming sync, join the worker thread, clear the pending-batches
-    /// queue. Idempotent. Called from `~AppController`, `RecreateLocalCacheDatabase`, and the
-    /// start path of every new sync.
+    /// queue. Idempotent. Called from `~TicketSyncService`, `~AppController`,
+    /// `RecreateLocalCacheDatabase`, and the start path of every new sync.
     void CancelAndJoinActiveStreamingSync();
 
     /// Apply a single tracker-fetch result on the UI thread: persist fetched tickets to SQLite,

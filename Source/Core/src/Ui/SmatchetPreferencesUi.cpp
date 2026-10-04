@@ -787,7 +787,11 @@ void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
     if (!d.prefsFilter.ShowSetting("tracker.backend.test_connection")) {
         return;
     }
-    if (d.trackerPrefsTestInFlight) {
+    // Latch the in-flight flag for the Begin/EndDisabled pair: clicking the button below sets
+    // it true mid-frame, and re-reading it for EndDisabled popped a disabled scope that was
+    // never pushed (IM_ASSERT "Calling EndDisabled() too many times!" aborted the app).
+    const bool disabledThisFrame = d.trackerPrefsTestInFlight;
+    if (disabledThisFrame) {
         ImGui::BeginDisabled();
     }
     if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.test.button", "Test connection"))) {
@@ -844,8 +848,10 @@ void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
             });
         });
     }
-    if (d.trackerPrefsTestInFlight) {
+    if (disabledThisFrame) {
         ImGui::EndDisabled();
+    }
+    if (d.trackerPrefsTestInFlight) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.tracker.test.testing", "Testing..."));
     }

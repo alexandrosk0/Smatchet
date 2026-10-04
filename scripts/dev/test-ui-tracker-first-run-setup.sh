@@ -11,6 +11,9 @@
 #     imbalance in DrawTrackerFirstRunExplainer trips the in-frame IM_ASSERT.
 #   - VerifiedPinClearsOnWindowClose — closing Preferences must drop the pinned
 #     verified-credential fingerprint.
+#   - TestConnectionClickKeepsDisabledStackBalanced — clicking the real "Test
+#     connection" button must not unbalance the ImGui disabled stack (crash
+#     regression: EndDisabled() re-read the in-flight flag the click had just set).
 #
 # Exit codes:
 #   0 — every test passed
@@ -23,8 +26,8 @@ EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58815}"
 # imgui_test_engine's filter is substring-match with optional ^ / $ / comma —
-# NOT a glob. "TrackerFirstRun" is the registered category, so it matches both
-# tests in the file and nothing else.
+# NOT a glob. "TrackerFirstRun" is the registered category, so it matches every
+# test in the file and nothing else.
 FILTER="${UI_TEST_FILTER:-TrackerFirstRun}"
 
 if [ ! -f "$EXE" ]; then
