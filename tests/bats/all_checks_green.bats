@@ -193,6 +193,17 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     [ "$status" -eq 0 ]
 }
 
+@test "workflow wiring: job name == ACG_SELF == script default; always reports" {
+    WF="$REPO_ROOT/.github/workflows/all-checks-green.yml"
+    [ "$(grep -cxF "    name: $SELF" "$WF")" -eq 1 ]
+    [ "$(grep -cxF "          ACG_SELF: $SELF" "$WF")" -eq 1 ]
+    grep -qF "ACG_SELF:-$SELF}" "$ACG"
+    # Always-report: no paths filter, no job-level `if:` (a skipped run reads as success).
+    run grep -nE '^[[:space:]]*(paths|paths-ignore):|^    if:' "$WF"
+    [ "$status" -eq 1 ]
+    grep -qE '^    timeout-minutes: [0-9]+$' "$WF"
+}
+
 @test "usage errors exit 2" {
     run bash "$ACG" --fixture "$BATS_TEST_TMPDIR/absent.json"
     [ "$status" -eq 2 ]
