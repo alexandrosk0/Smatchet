@@ -764,6 +764,22 @@ _resolve_py() {
     [[ "$output" != *"deviation-malformed"* ]]
 }
 
+@test "deviation-malformed checks each marker on a line on its own, so two halves never make a whole" {
+    tmp="$(mktemp -d)"
+    {
+        # The first mention has no revisit=; the second one's revisit= must not complete it.
+        printf '// SMATCHET_DEVIATION(rule=no-raw-new; reason=r; owner=o; x) see SMATCHET_DEVIATION(y; revisit=never)\nint a = 0;\n'
+        printf '// SMATCHET_DEVIATION(rule=no-raw-new; reason=r) see SMATCHET_DEVIATION(owner=o; revisit=never)\nint b = 0;\n'
+        # Two whole markers on one line, the second with a parenthetical reason, stay valid.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) and SMATCHET_DEVIATION(rule=b; reason=r (x); owner=o; revisit=2099-01-01)\nint c = 0;\n'
+    } > "$tmp/M.cpp"
+    run bash "$LINT" --scan-file "$tmp/M.cpp"
+    rm -rf "$tmp"
+    [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 2 ]
+    [[ "$output" == *"M.cpp:1"* ]]
+    [[ "$output" == *"M.cpp:3"* ]]
+}
+
 @test "an EMPTY revisit= is reported once, as deviation-overdue, not also as deviation-malformed" {
     run bash "$LINT" --scan-file "$FIX/deviation-revisit-malformed.cpp"
     [ "$status" -eq 0 ]

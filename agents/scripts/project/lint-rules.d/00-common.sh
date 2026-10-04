@@ -96,24 +96,33 @@ dev_trim() {
 # line, or no non-empty rule= / reason= / owner=, or no revisit= key at all. Every gate reads a
 # marker one line at a time, so a marker wrapped onto a second line never had its revisit= read:
 # 28 such markers hid 24 due dates from deviation-overdue until 2026-10. A revisit= that is present
-# but empty is left to deviation-overdue, which already fails it closed. Same greedy DEV_RE body
-# and field split as scan_file_rules, so "whole" means every field those gates read is there.
+# but empty is left to deviation-overdue, which already fails it closed.
+# Each mention on the line is checked on its own: its text runs to the next mention (or the end of
+# the line) and its body ends at the last ')' inside that span, the same greedy body DEV_RE reads
+# for a single marker. Otherwise the greedy DEV_RE body would let a second mention's revisit=
+# complete a first mention that has none, and the suppressing parsers would honour the pair.
 dev_marker_malformed() {
-    local body kv have_rule="" have_reason="" have_owner="" have_revisit=""
-    [[ "$1" =~ $DEV_RE ]] || return 0
-    body="${BASH_REMATCH[1]}"
-    IFS=';' read -ra kvs <<< "$body"
-    for kv in "${kvs[@]}"; do
-        dev_trim "$kv"
-        case "$DEV_TRIMMED" in
-            rule=?*)   have_rule=1 ;;
-            reason=?*) have_reason=1 ;;
-            owner=?*)  have_owner=1 ;;
-            revisit=*) have_revisit=1 ;;
-        esac
+    local rest="$1" seg kv have_rule have_reason have_owner have_revisit
+    case "$rest" in *'SMATCHET_DEVIATION('*) ;; *) return 1 ;; esac
+    rest="${rest#*"SMATCHET_DEVIATION("}"
+    while :; do
+        seg="${rest%%"SMATCHET_DEVIATION("*}"
+        [[ "$seg" =~ ^(.*)\) ]] || return 0
+        have_rule="" have_reason="" have_owner="" have_revisit=""
+        IFS=';' read -ra kvs <<< "${BASH_REMATCH[1]}"
+        for kv in "${kvs[@]}"; do
+            dev_trim "$kv"
+            case "$DEV_TRIMMED" in
+                rule=?*)   have_rule=1 ;;
+                reason=?*) have_reason=1 ;;
+                owner=?*)  have_owner=1 ;;
+                revisit=*) have_revisit=1 ;;
+            esac
+        done
+        [ -n "$have_rule" ] && [ -n "$have_reason" ] && [ -n "$have_owner" ] && [ -n "$have_revisit" ] || return 0
+        case "$rest" in *'SMATCHET_DEVIATION('*) ;; *) return 1 ;; esac
+        rest="${rest#*"SMATCHET_DEVIATION("}"
     done
-    [ -n "$have_rule" ] && [ -n "$have_reason" ] && [ -n "$have_owner" ] && [ -n "$have_revisit" ] && return 1
-    return 0
 }
 
 today_ymd() { date +%Y-%m-%d; }
