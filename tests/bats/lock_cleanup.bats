@@ -17,6 +17,37 @@ setup() {
     # The single source of truth for the slug line, pinned here so a change to
     # the workflow regex (or the seed) without updating the other reds a test.
     EXPECTED_PAT='^[[:space:]]*lock-slug:[[:space:]]*[a-z0-9][a-z0-9-]{0,63}[[:space:]]*$'
+    TEMPLATE="$REPO_ROOT/.github/pull_request_template.md"
+    OUT_DIR="$(mktemp -d)"
+}
+
+teardown() {
+    rm -rf "${OUT_DIR:-}"
+}
+
+# parse_step_script — the `Parse lock-slug from PR body` step's run: block,
+# de-indented, with its one `${{ }}` expression stubbed. Running the workflow's
+# own text keeps these tests from passing against a private copy of the logic.
+parse_step_script() {
+    awk '
+        /^      - name: Parse lock-slug from PR body[[:space:]]*$/ { instep = 1; next }
+        instep && /^      - name:/ { exit }
+        instep && /^        run: \|[[:space:]]*$/ { inrun = 1; next }
+        inrun {
+            if ($0 ~ /^[[:space:]]*$/) { print ""; next }
+            if ($0 !~ /^          /) exit
+            print substr($0, 11)
+        }
+    ' "$WF" | sed 's/\${{ github\.event\.pull_request\.number }}/123/g'
+}
+
+# run_parse <body> — run the parse step with PR_BODY=<body>; the step's
+# GITHUB_OUTPUT lands in $OUT_DIR/out.
+run_parse() {
+    local script
+    script="$(parse_step_script)"
+    : > "$OUT_DIR/out"
+    run env PR_BODY="$1" GITHUB_OUTPUT="$OUT_DIR/out" bash -c "$script"
 }
 
 @test "the cleanup workflow pins the exact lock-slug regex (seed must emit this)" {
@@ -86,4 +117,62 @@ setup() {
 
 @test "the workflow keeps contents: write (both release paths delete refs)" {
     grep -qE '^[[:space:]]*contents:[[:space:]]*write' "$WF"
+}
+
+# ---------- commented-out marker warning (parse step, run as written) ----------
+# A `lock-slug:` left inside the template's `<!-- -->` never matches the
+# anchored regex and renders as nothing, so the parse step names it with a
+# ::warning:: (not an error: the branch-match step still releases the head
+# branch's locks). The template's own placeholder slug must stay silent.
+
+@test "the parse step's run: block is extractable from the workflow" {
+    run parse_step_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'GITHUB_OUTPUT'* ]]
+    [[ "$output" == *'lock-slug:'* ]]
+}
+
+@test "a bare lock-slug line parses to slug=<slug> with no warning" {
+    run_parse "$(printf '## Intent\n\nShip it.\n\nlock-slug: armed-slug\n')"
+    [ "$status" -eq 0 ]
+    grep -qx 'slug=armed-slug' "$OUT_DIR/out"
+    [[ "$output" != *'::warning::'* ]]
+}
+
+@test "a commented-out real slug warns and names it, without failing the run" {
+    run_parse "$(printf '## Intent\n\nShip it.\n\n<!-- lock-slug: forgot-to-arm -->\n')"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'::warning::'*'forgot-to-arm'* ]]
+    grep -qx 'slug=' "$OUT_DIR/out"
+}
+
+@test "the commented template placeholder stays silent" {
+    run_parse "$(printf '## Intent\n\nShip it.\n\n<!-- lock-slug: your-slug-here -->\n')"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *'::warning::'* ]]
+    grep -qx 'slug=' "$OUT_DIR/out"
+}
+
+@test "the unedited PR template body stays silent" {
+    run_parse "$(cat "$TEMPLATE")"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *'::warning::'* ]]
+    grep -qx 'slug=' "$OUT_DIR/out"
+}
+
+@test "a bare line wins over a commented one (no warning)" {
+    run_parse "$(printf '<!-- lock-slug: your-slug-here -->\n<!-- lock-slug: old-slug -->\nlock-slug: real-slug\n')"
+    [ "$status" -eq 0 ]
+    grep -qx 'slug=real-slug' "$OUT_DIR/out"
+    [[ "$output" != *'::warning::'* ]]
+}
+
+@test "the template keeps both markers commented on one line each (parser contract)" {
+    # A marker on its own line inside a multi-line comment would MATCH the
+    # anchored regex (lock-slug) or switch off the branch-match release on every
+    # PR (holds-lock). Both must stay single-line `<!-- … -->`.
+    grep -qxF '<!-- lock-slug: your-slug-here -->' "$TEMPLATE"
+    grep -qE '^<!-- holds-lock: your-slug-here .*-->$' "$TEMPLATE"
+    run grep -E '^[[:space:]]*(lock-slug|holds-lock):' "$TEMPLATE"
+    [ -z "$output" ]
 }

@@ -81,6 +81,23 @@ jobs:
             || true)
 
           if [ -z "$slug" ]; then
+            # A marker left inside the template's HTML comment
+            # (`<!-- lock-slug: <slug> -->`) never matches the anchored regex
+            # above and renders as nothing on the PR, so name it. A ::warning::,
+            # not an ::error::: the branch-match step below still releases a lock
+            # this PR's head branch claimed (it keys on claim.json, not on this
+            # line), so a red on an already-closed PR would be noise with nothing
+            # left to act on. The template's own placeholder slug is in every
+            # lockless PR's body and stays silent.
+            commented=$(printf '%s\n' "$PR_BODY" \
+              | grep -oE '<!--[[:space:]]*lock-slug:[[:space:]]*[a-z0-9][a-z0-9-]{0,63}' \
+              | sed -E 's/^<!--[[:space:]]*lock-slug:[[:space:]]*//' \
+              | grep -vxF 'your-slug-here' \
+              | head -n1 \
+              || true)
+            if [ -n "$commented" ]; then
+              echo "::warning::PR body has a commented-out marker '<!-- lock-slug: ${commented} -->', which never releases anything. The branch-match step below still releases refs/locks/${commented} if this PR's head branch claimed it; if another branch claimed it, run the 'Plan-lock release (dispatch)' workflow with slug=${commented}. On future PRs write the bare line 'lock-slug: ${commented}'."
+            fi
             echo "::notice::No 'lock-slug: <slug>' line found in PR body; no release."
             echo "slug=" >> "$GITHUB_OUTPUT"
             exit 0
