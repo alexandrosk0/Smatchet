@@ -114,7 +114,20 @@ case "$1" in
                 exit 0 ;;
         esac ;;
     api)
-        path="$2"
+        path="$2"; [ "$path" = "--paginate" ] && path="$3"
+        case "$path" in
+            # cr-context-not-green exemption probes (REST). Defaults model an
+            # ordinary human code PR; prfiles_<n>.txt / prmeta_<n>.txt override
+            # with the already-jq-filtered output ("<login> <head-ref>").
+            */pulls/*/files*)
+                pr="${path#*/pulls/}"; pr="${pr%%/*}"
+                if [ -f "$PM_DATA/prfiles_${pr}.txt" ]; then cat "$PM_DATA/prfiles_${pr}.txt"; else echo "Source/Core/src/Feature.cpp"; fi
+                exit 0 ;;
+            */pulls/*)
+                pr="${path##*/pulls/}"
+                if [ -f "$PM_DATA/prmeta_${pr}.txt" ]; then cat "$PM_DATA/prmeta_${pr}.txt"; else echo "someone feature/branch"; fi
+                exit 0 ;;
+        esac
         sha="${path#*/commits/}"; sha="${sha%/pulls}"
         cntfile="$PM_DATA/pulls_${sha}.txt"
         if [ -f "$cntfile" ]; then cat "$cntfile"; else echo 1; fi
@@ -1533,4 +1546,162 @@ JSON
     [ "$status" -eq 1 ]
     [[ "$output" == *"commit deadbee — direct push"* ]]
     [[ "$output" == *"window NOT scanned"* ]]
+}
+
+# ============================================================================
+# Trigger 5 — cr-context-not-green (cr-gate-greens-with-no-cr-status-on-head,
+# item 4): merged while the CR findings StatusContext was never green, with no
+# cr-out-of-band and no policy exemption.
+# ============================================================================
+
+@test "cr-context-not-green: merged with CR findings PENDING and no cr-out-of-band owes" {
+    prlist <<'JSON'
+[{"number":9301,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #9301 — cr-context-not-green: PENDING"* ]]
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 1 ]
+}
+
+@test "cr-context-not-green: the LATEST CR findings status decides (a later SUCCESS clears an earlier PENDING)" {
+    prlist <<'JSON'
+[{"number":9302,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T08:00:00Z"},
+    {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #9302"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "cr-context-not-green: a live cr-out-of-band label hands the PR to the override trigger instead" {
+    prlist <<'JSON'
+[{"number":9303,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g3"},"labels":[{"name":"cr-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_9303.json"
+    run_detector
+    [[ "$output" == *"PR #9303 — override: cr-out-of-band"* ]]
+    [[ "$output" != *"cr-context-not-green"* ]]
+}
+
+@test "cr-context-not-green: cr-out-of-band recorded only in the snapshot (label stripped post-merge) still exempts" {
+    prlist <<'JSON'
+[{"number":9304,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g4"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":9304,"mergeCommit":"g4","redChecks":["CodeRabbit"],"overrideLabels":["cr-out-of-band"]}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"cr-context-not-green"* ]]
+    [[ "$output" == *"PR #9304 — red-check: CodeRabbit; override: cr-out-of-band"* ]]
+}
+
+@test "cr-context-not-green: a self-improvement-only diff is CR-exempt by policy" {
+    prlist <<'JSON'
+[{"number":9305,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g5"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    printf 'docs/self-improvement/categories/tooling/x.md\ndocs/self-improvement/postmortems.md\n' > "$PM_DATA/prfiles_9305.txt"
+    run_detector
+    [[ "$output" != *"PR #9305"* ]]
+}
+
+@test "cr-context-not-green: one code file outside docs/self-improvement/ removes the exemption" {
+    prlist <<'JSON'
+[{"number":9306,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g6"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    printf 'docs/self-improvement/postmortems.md\nagents/scripts/core/x.sh\n' > "$PM_DATA/prfiles_9306.txt"
+    run_detector
+    [[ "$output" == *"PR #9306 — cr-context-not-green: PENDING"* ]]
+}
+
+@test "cr-context-not-green: a Dependabot github-actions bump is CR-exempt by policy" {
+    prlist <<'JSON'
+[{"number":9307,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g7"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo 'dependabot[bot] dependabot/github_actions/actions/checkout-7.0.2' > "$PM_DATA/prmeta_9307.txt"
+    run_detector
+    [[ "$output" != *"PR #9307"* ]]
+}
+
+@test "cr-context-not-green: a FAILURE already named by trigger 1 is not repeated" {
+    prlist <<'JSON'
+[{"number":9308,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g8"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"FAILURE","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #9308 — red-check: CR findings (0 actionable)"* ]]
+    [[ "$output" != *"cr-context-not-green"* ]]
+}
+
+@test "cr-context-not-green: snapshot path (poller passed) is still judged on the live CR context" {
+    # Class A/B: the poller's grace expiry greened a silent CR, so the snapshot
+    # is clean (redChecks=[]) while the CR findings context never went green.
+    prlist <<'JSON'
+[{"number":9309,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g9"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":9309,"mergeCommit":"g9","redChecks":[],"overrideLabels":[]}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" == *"PR #9309 — cr-context-not-green: PENDING"* ]]
+}
+
+@test "cr-context-not-green: ABSENT on a code PR owes once the gate is live in the window and past grace" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":9310,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"h0"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]},
+ {"number":9311,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"h1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","createdAt":"2026-06-09T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #9310 — cr-context-not-green: absent"* ]]
+    [[ "$output" != *"PR #9311"* ]]
+}
+
+@test "cr-context-not-green: ABSENT is inert when no PR in the window carries the context (gate not live)" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":9312,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"h2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"cr-context-not-green"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "cr-context-not-green: ABSENT on a PR merged before the gate was first seen live is not judged" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":9313,"mergedAt":"2026-06-08T10:00:00Z","mergeCommit":{"oid":"h3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-08T09:00:00Z"}]},
+ {"number":9314,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"h4"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","createdAt":"2026-06-09T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #9313"* ]]
+}
+
+@test "cr-context-not-green: ABSENT inside the run-creation grace window is not judged" {
+    # setup() keeps every fixture inside an absurd grace (absent_judgeable=0).
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":9315,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"h5"},"labels":[],
+  "statusCheckRollup":[]},
+ {"number":9316,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"h6"},"labels":[],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","createdAt":"2026-06-09T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #9315"* ]]
 }
