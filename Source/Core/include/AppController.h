@@ -384,7 +384,7 @@ class AppController : public IAppThreading,
     void SetOpenUrlHandler(std::function<void(const std::string&)> handler);
 
     /** Opens a URL using the handler if set; otherwise falls back to default browser. */
-    void OpenUrl(const std::string& url) const;
+    void OpenUrl(const std::string& url) const override;
 
     /**
      * Optional host callback to hide the embedded overlay (e.g. Unreal plugin toggles Slate visibility).
@@ -1058,9 +1058,6 @@ class AppController : public IAppThreading,
     // decomposition Phase 1). Signatures preserved verbatim from the pre-extraction surface; see
     // EditMetaCacheService.h for the issueTypeKeyOverride / configSnapshot contract and the
     // VoidResult (Ok / Err) semantics.
-    // SMATCHET_DEVIATION(rule=duplication): this delegator block MUST mirror EditMetaCacheService.h's
-    // public signatures verbatim (that is the god-object-decomposition contract — the public surface
-    // is unchanged by the extraction); abstracting across the two would defeat the mirror's purpose.
     VoidResult EnsureIssueEditMetaLoaded(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr,
                                          const TrackerConfig* configSnapshot = nullptr);
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);

@@ -148,10 +148,8 @@ void AppendLogTail(std::string& out, const nlohmann::json& snapshot, int maxLine
 
 EngineContextToggles TogglesFromConfig(const TrackerConfig& cfg) {
     EngineContextToggles t;
-    // clang-format off
-    // SMATCHET_DEVIATION(rule=duplication; reason=member-copy assignment run token-matches an unrelated OfflineQueueUi block, and the seven toggle copies are this function's whole purpose; owner=quick-create-issue-unreal-context; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=member-copy assignment run token-matches an unrelated OfflineQueueUi block, and the seven toggle copies are this function's whole purpose; owner=quick-create-issue-unreal-context; revisit=never)
     t.EngineVersion = cfg.QuickCreateCtxEngineVersion;
-    // clang-format on
     t.Project = cfg.QuickCreateCtxProject;
     t.Platform = cfg.QuickCreateCtxPlatform;
     t.Level = cfg.QuickCreateCtxLevel;

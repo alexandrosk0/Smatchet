@@ -251,7 +251,11 @@ void ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selSt
 }
 
 bool BeginQuerySuggestPass(const char* buf, int bufLen, int cursor, int selStart, int selEnd, QuerySuggestBuild& out,
-                           QuerySuggestMeta* metaOut, int& replaceStart, int& replaceEnd, std::string& prefix) {
+                           QuerySuggestMeta* metaOut, QuerySuggestPass& pass) {
+    pass.Seen.clear();
+    pass.ReplaceStart = 0;
+    pass.ReplaceEnd = 0;
+    pass.Prefix.clear();
     if (metaOut != nullptr) {
         metaOut->UserValueToken = false;
         metaOut->UserSearchPrefix.clear();
@@ -266,9 +270,9 @@ bool BeginQuerySuggestPass(const char* buf, int bufLen, int cursor, int selStart
     selStart = (std::max)(0, (std::min)(selStart, bufLen));
     selEnd = (std::max)(0, (std::min)(selEnd, bufLen));
 
-    ResolveQueryReplaceRange(buf, bufLen, cursor, selStart, selEnd, replaceStart, replaceEnd, prefix);
-    out.ReplaceStart = replaceStart;
-    out.ReplaceEnd = replaceEnd;
+    ResolveQueryReplaceRange(buf, bufLen, cursor, selStart, selEnd, pass.ReplaceStart, pass.ReplaceEnd, pass.Prefix);
+    out.ReplaceStart = pass.ReplaceStart;
+    out.ReplaceEnd = pass.ReplaceEnd;
     return true;
 }
 

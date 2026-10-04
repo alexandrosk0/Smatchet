@@ -5,6 +5,7 @@
 #include "Sync/JqlChangedSincePure.h"
 #include "Tracker/JqlEscape.h"
 #include "TrackerFieldValueParser.h"
+#include "TrackerHttpPure.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
 #include "Tracker/JiraErrorMessagePure.h"
@@ -404,7 +405,7 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
 
 } // namespace
 
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=collect-all-batches FetchIssues wrapper twin of Plane; debt 2026-10-03-fetch-issues-collect-wrapper; owner=tracker; revisit=2027-07-31)
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                   const ViewsStore* viewsOverride, std::string* outFetchError,
                                                   std::string* outWarning, TrackerError* outFetchErrorStructured) {
@@ -714,7 +715,7 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
     return FetchResult::Ok(std::move(outTickets));
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=backend-parity signature; owner=tracker-backend; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated FetchIssuesChangedSince signature; owner=tracker-backend; revisit=never)
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
                                     const std::vector<std::string>& /*salientFields*/) {
@@ -749,7 +750,7 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity collect; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=collect-all-batches change probe twin of Plane; debt 2026-10-03-fetch-issues-collect-wrapper; owner=tracker-backend; revisit=2027-07-31)
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
@@ -819,7 +820,6 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
 }
 
 Result<bool, TrackerError> JiraClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity probe; owner=tracker-backend; revisit=2026-12-31)
     using ProbeResult = Result<bool, TrackerError>;
     // One cheap `GET /issue/{key}` to tell a deletion (404 → Ok(false)) apart from a ticket that
     // merely left the view (still 200 → Ok(true)). Any other non-200 is an inconclusive Err, which
@@ -832,24 +832,11 @@ Result<bool, TrackerError> JiraClient::ProbeIssueExists(const TrackerConfig& cfg
         return ProbeResult::Err(TrackerErrorInvalidRequest("ProbeIssueExists: empty issue key"));
     }
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=Jira endpoint prologue (auth, key guard, url, GET) shared with FetchIssueEditMeta; the shared tracker GET helper is debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-04-30)
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "?fields=*none";
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
-    auto response = TrackerGetLogged("JiraClient", url, headers);
-    if (response.status_code == 200) {
-        return ProbeResult::Ok(true);
-    }
-    if (response.status_code == 404) {
-        return ProbeResult::Ok(false);
-    }
-    // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
-    if (response.status_code >= 200 && response.status_code < 300) {
-        return ProbeResult::Err(
-            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(response.status_code)));
-    }
-    return ProbeResult::Err(
-        TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), "ProbeIssueExists HTTP error"));
+    return TrackerHttpPure::ClassifyIssueExistsProbe(TrackerGetLogged("JiraClient", url, headers).status_code);
 }
 
 Result<std::vector<TrackerIssueComment>, TrackerError> JiraClient::FetchIssueComments(const std::string& issueKey) {

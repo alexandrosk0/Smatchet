@@ -14,7 +14,7 @@ position. `PrepareMcpWindowLayout` and `PrepareLuaWindowLayout` repeat the same 
 `Begin`. Two duplication markers exempt the clone today:
 `LuaConsolePlugin.cpp` above `RepairLuaWindowLayout` (revisit 2027-03-31) and
 `SmatchetMcpServerUi.cpp` above `ClampMcpWindowPos` and in `PrepareMcpWindowLayout` (revisit
-2026-12-31).
+2027-03-31).
 
 Merging them is not a mechanical refactor. The MCP repair also fires during a layout reset
 (`layoutForceDefaultsFrames`) while the Lua one does not, and each window grows to a different
@@ -30,4 +30,4 @@ sites, keeping each window's current numbers. Cover it with the bucket-E window-
 bucket-C captures. Then remove both duplication markers.
 
 Status: open
-Last-reviewed: 2026-10-01
+Last-reviewed: 2026-10-03

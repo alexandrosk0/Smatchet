@@ -97,8 +97,7 @@ std::string ExtractProjectFromPlaneQuery(const std::string& planeQueryJson) {
         return "";
     }
     try {
-        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=the Plane structured-query blob is app-serialised program-internal bytes, not tracker-response ingress; owner=security-audit; revisit=2026-12-31)
-        const nlohmann::json j = nlohmann::json::parse(planeQueryJson);
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(planeQueryJson);
         if (j.is_object()) {
             auto it = j.find("project_id");
             if (it != j.end() && it->is_string()) {
@@ -695,12 +694,10 @@ PlaneClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore&
     // Lightweight change probe: reuse the streaming fetch but add Plane's native `updated_at__gte`
     // list filter so the server returns only work-items touched inside the window — an idle poll
     // comes back near-empty instead of downloading the whole view.
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity window; owner=tracker-backend; revisit=2026-12-31)
-    const std::int64_t nowUnix =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    const std::string sinceIso = smatchet::IsoSinceFromWindow(nowUnix, static_cast<std::int64_t>(window.count()));
+    const std::string sinceIso =
+        smatchet::IsoSinceFromWindow(TimeNowPure::NowUnixSeconds(), static_cast<std::int64_t>(window.count()));
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity collect; owner=tracker-backend; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=collect-all-batches change probe twin of Jira; debt 2026-10-03-fetch-issues-collect-wrapper; owner=tracker-backend; revisit=2027-07-31)
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));

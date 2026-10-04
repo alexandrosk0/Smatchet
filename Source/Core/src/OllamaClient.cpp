@@ -24,10 +24,7 @@ std::string ResolveBaseUrl(const AiClientConfig& cfg) {
     return kDefaultBaseUrl;
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=the AI provider clients (Ollama/OpenAi/Anthropic) share the file-top
-// base-URL resolve + path-join helper shape by necessity — each adapts to a different wire schema and folding the
-// helpers into one shared unit would couple otherwise-independent provider adapters (DRY Pillar 5 per ADR-0015);
-// owner=ai-clients; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=JoinUrl and the base-URL resolve are copied in each AI provider client; debt 2026-10-03-ai-client-url-and-messages-twins; owner=ai-clients; revisit=2027-05-31)
 std::string JoinUrl(const std::string& base, const char* path) {
     if (base.empty())
         return std::string(path);
@@ -54,10 +51,7 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
         body["options"] = std::move(options);
     }
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=the History->messages array-build loop (and the leading system
-    // message) is identical across the provider clients by necessity; the bodies otherwise differ (Ollama
-    // options.num_predict vs OpenAi max_tokens), and sharing just the loop would couple independent provider adapters
-    // (DRY Pillar 5 per ADR-0015); owner=ai-clients; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=system + History messages array build shared with OpenAiClient; debt 2026-10-03-ai-client-url-and-messages-twins; owner=ai-clients; revisit=2027-05-31)
     nlohmann::json messages = nlohmann::json::array();
     // Ollama's /api/chat takes the system prompt as a leading {role:"system"} message.
     // A top-level `system` field is an /api/generate parameter that /api/chat ignores,
@@ -110,11 +104,7 @@ void DispatchOllamaLine(const nlohmann::json& j, const IAiClient::DeltaCallback&
 std::string OllamaBuildRequestBodyJson(const AiChatRequest& req) { return BuildChatBody(req).dump(); }
 
 // Single-source wire introspection (AiWireIntrospect.h) — see OpenAiClient.cpp.
-// SMATCHET_DEVIATION(rule=duplication; reason=each provider client's thin wire-introspection wrapper
-// (BuildChatBodyJson + ResolveChatUrl) must live in its OWN TU to delegate to that client's
-// anonymous-namespace BuildChatBody/ResolveBaseUrl/JoinUrl; folding the three into one shared unit
-// would couple otherwise-independent provider adapters — the cross-subsystem-coupling anti-pattern
-// the DRY pillar itself forbids (ADR-0015); owner=ai-clients; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=per-provider wire-introspection entry points (AiWireIntrospect.h); each must sit in its own TU to reach that TU's anonymous-namespace builders; owner=ai-clients; revisit=never)
 namespace smatchet {
 namespace ai {
 nlohmann::json OllamaNativeBuildChatBodyJson(const AiChatRequest& req) { return BuildChatBody(req); }

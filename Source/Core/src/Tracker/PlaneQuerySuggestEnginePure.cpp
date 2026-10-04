@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -18,6 +17,7 @@ using tracker_query_suggest::BeginQuerySuggestPass;
 using tracker_query_suggest::FindTrackerField;
 using tracker_query_suggest::IsQueryIdChar;
 using tracker_query_suggest::IsQueryUserField;
+using tracker_query_suggest::QuerySuggestPass;
 using tracker_query_suggest::SortAndCapQuerySuggestions;
 
 // Plane's wording for the display-name variant of a user-field value suggestion. The sole
@@ -61,30 +61,27 @@ static bool ParsePlaneValueContext(const char* buf, int /*bufLen*/, int replaceS
 void BuildPlaneQuerySuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                                     const std::vector<TrackerField>& fields, QuerySuggestBuild& out,
                                     QuerySuggestMeta* metaOut) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=engine entry scaffolding; owner=tracker-backend; revisit=2026-12-31)
-    std::unordered_set<std::string> seen;
-    int replaceStart = 0;
-    int replaceEnd = 0;
-    std::string prefix;
-    if (!BeginQuerySuggestPass(buf, bufLen, cursor, selStart, selEnd, out, metaOut, replaceStart, replaceEnd, prefix)) {
+    QuerySuggestPass pass;
+    if (!BeginQuerySuggestPass(buf, bufLen, cursor, selStart, selEnd, out, metaOut, pass)) {
         return;
     }
 
     const TrackerField* valueField = nullptr;
-    if (ParsePlaneValueContext(buf, bufLen, replaceStart, fields, &valueField)) {
+    if (ParsePlaneValueContext(buf, bufLen, pass.ReplaceStart, fields, &valueField)) {
         if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
-            AppendValueSuggestions(*valueField, prefix, kPlaneUserDisplaySuffix, out.Items, seen);
+            AppendValueSuggestions(*valueField, pass.Prefix, kPlaneUserDisplaySuffix, out.Items, pass.Seen);
         }
         if (metaOut != nullptr && valueField != nullptr && IsQueryUserField(*valueField)) {
             metaOut->UserValueToken = true;
-            metaOut->UserSearchPrefix = prefix;
+            metaOut->UserSearchPrefix = pass.Prefix;
         }
     } else {
-        if (!prefix.empty()) {
+        if (!pass.Prefix.empty()) {
             static const char* kLogical[] = {"AND", "OR"};
-            AppendTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
+            AppendTerms(pass.Prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items,
+                        pass.Seen);
         }
-        AppendFieldCatalog(fields, prefix, out.Items, seen);
+        AppendFieldCatalog(fields, pass.Prefix, out.Items, pass.Seen);
     }
 
     SortAndCapQuerySuggestions(out.Items);
