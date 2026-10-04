@@ -173,7 +173,8 @@ build_layout() {
     git -C "$DIR/today" update-ref refs/remotes/origin/develop HEAD
 }
 
-# run_probe <tree> <layer-prefix> <command> [env assignments...] — prints rc, then output.
+# run_probe <tree> <layer-prefix> <command> [env assignments...] — prints the exit
+# code on the first line and the output after it; split_rc / split_out take it apart.
 run_probe() {
     local tree="$1" prefix="$2" cmd="$3"; shift 3
     local out rc
@@ -185,6 +186,9 @@ run_probe() {
     rc=$?
     printf '%s\n%s\n' "$rc" "$out"
 }
+
+split_rc()  { printf '%s\n' "${1%%$'\n'*}"; }
+split_out() { case "$1" in *$'\n'*) printf '%s\n' "${1#*$'\n'}" ;; esac; }
 
 last_line() { # last non-empty line, with the probe trees' paths normalised
     grep -v '^[[:space:]]*$' | tail -n 1 | sed -e "s#$DIR/today#<root>#g" -e "s#$DIR/host#<root>#g"
@@ -217,18 +221,18 @@ main() {
         t="$(run_probe "$DIR/today" "" "$cmd")"
         l="$(run_probe "$DIR/host" "agent-layer/" "$cmd")"
         c="$(run_probe "$DIR/host" "agent-layer/" "$cmd" PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
-        t_rc="${t%%$'\n'*}"; l_rc="${l%%$'\n'*}"; c_rc="${c%%$'\n'*}"
+        t_rc="$(split_rc "$t")"; l_rc="$(split_rc "$l")"; c_rc="$(split_rc "$c")"
         verdict="ok"
         for mode in local ci; do
             local out rc
-            if [ "$mode" = local ]; then out="${l#*$'\n'}"; rc="$l_rc"; else out="${c#*$'\n'}"; rc="$c_rc"; fi
+            if [ "$mode" = local ]; then out="$(split_out "$l")"; rc="$l_rc"; else out="$(split_out "$c")"; rc="$c_rc"; fi
             if [ "$rc" != "$t_rc" ]; then
                 verdict="FAIL ($mode exit $rc, today $t_rc)"; break
             fi
             case "$expect" in
                 rc) ;;
                 same)
-                    if [ "$(printf '%s\n' "$out" | last_line)" != "$(printf '%s\n' "${t#*$'\n'}" | last_line)" ]; then
+                    if [ "$(printf '%s\n' "$out" | last_line)" != "$(split_out "$t" | last_line)" ]; then
                         verdict="FAIL ($mode last line differs)"; break
                     fi ;;
                 match:*)
@@ -242,9 +246,9 @@ main() {
         if [ "$verdict" != ok ]; then
             failed=$((failed + 1))
             printf '    today: %s\n    local: %s\n    ci:    %s\n' \
-                "$(printf '%s\n' "${t#*$'\n'}" | last_line | cut -c1-200)" \
-                "$(printf '%s\n' "${l#*$'\n'}" | last_line | cut -c1-200)" \
-                "$(printf '%s\n' "${c#*$'\n'}" | last_line | cut -c1-200)"
+                "$(split_out "$t" | last_line | cut -c1-200)" \
+                "$(split_out "$l" | last_line | cut -c1-200)" \
+                "$(split_out "$c" | last_line | cut -c1-200)"
         fi
         ran=$((ran + 1))
     done

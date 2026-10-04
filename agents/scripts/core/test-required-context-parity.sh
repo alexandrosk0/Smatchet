@@ -52,8 +52,10 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "test-required-context-parity: cannot cd to repo root" >&2; exit 2; }
 
+# The resolver is layer content beside this script — after the flip the host root
+# above has no agents/scripts/core/ of its own.
 # shellcheck source=agents/scripts/core/lib/ci-check-resolve.sh
-. "$ROOT/agents/scripts/core/lib/ci-check-resolve.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-check-resolve.sh"
 
 CONFIG="${CI_PARITY_CONFIG:-project.config.json}"
 

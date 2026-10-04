@@ -24,7 +24,14 @@
 
 set -euo pipefail
 
+# cwd is this script's tree: the skills and agents/core/ are layer content.
+# agents/project/ is HOST content (it stays in the host at the flip), so it is read
+# from PROJECT_ROOT — scripts/dev/project-config.sh, the superproject once the layer
+# is a submodule. Before the flip both are this checkout.
 cd "$(dirname "$0")/../../.."
+# shellcheck source=scripts/dev/project-config.sh
+PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh 2>/dev/null || true
+PROJECT_AGENTS_DIR="${PROJECT_ROOT:-$(pwd)}/agents/project"
 
 PASS=0
 FAIL=0
@@ -63,7 +70,7 @@ is_skill_only() {
 resolve_agent_md() {
     local name="$1"
     local candidate
-    for candidate in "agents/core/${name}.md" "agents/project/${name}.md" "agents/${name}.md"; do
+    for candidate in "agents/core/${name}.md" "$PROJECT_AGENTS_DIR/${name}.md" "agents/${name}.md"; do
         if [ -f "$candidate" ]; then
             printf '%s\n' "$candidate"
             return 0

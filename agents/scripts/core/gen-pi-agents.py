@@ -146,13 +146,17 @@ def resolve_model(hint_models, model_map):
 
 
 def main():
+    # argv: <layer root> [<out dir>] [<project root>]. agents/core/ is layer content;
+    # agents/project/ stays in the host at the flip, so it is read from the project
+    # root, which defaults to the layer root (one tree before the flip).
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else root / ".pi" / "agents"
+    project_root = Path(sys.argv[3]) if len(sys.argv) > 3 else root
     out.mkdir(parents=True, exist_ok=True)
     model_map = load_model_map(root)
 
     sources = sorted((root / "agents" / "core").glob("*.md")) + \
-        sorted((root / "agents" / "project").glob("*.md"))
+        sorted((project_root / "agents" / "project").glob("*.md"))
 
     written, skipped, by_name = 0, 0, {}
     keep = set()

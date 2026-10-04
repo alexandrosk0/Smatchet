@@ -64,8 +64,10 @@ need_val() { [ $# -ge 2 ] || die "$1 requires a value"; }
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git work tree"
 cd "$ROOT" || die "cannot cd to repo root"
 
+# The guard is layer content beside this script — after the flip the host root above
+# has no agents/scripts/core/ of its own.
 # shellcheck source=lib/review-guard.sh
-source "$ROOT/agents/scripts/core/lib/review-guard.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/review-guard.sh"
 
 # Same interpreter dance as scripts/dev/test-docs.sh: on Windows `python3` is
 # the Store alias stub, so resolve by actually executing a candidate.

@@ -314,6 +314,11 @@ cd "$AGENT_LAYER_ROOT"
 # checkout — the layer repo's seed carries no Source/.
 host_content_present() { [ -d "$PROJECT_ROOT/Source" ]; }
 
+# The project tier of agents is HOST content: agents/project/ stays in the host at
+# the flip (the seed excludes it), so it is read from $PROJECT_ROOT, never from the
+# layer cwd. Pre-flip that is the same directory.
+PROJECT_AGENTS_DIR="$PROJECT_ROOT/agents/project"
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -325,15 +330,25 @@ check_fail() { FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); printf '  FAIL  %s\n' "$
 # host run silently degrading to skips is visible rather than reading 15/15.
 check_skip() { SKIP=$((SKIP+1)); printf '  SKIP  %s (host content absent)\n' "$1"; }
 
-# Agents live under agents/{core,project}/ (the portable/project split) — resolve
-# by name so this contract is location-agnostic. Excludes agents/_shared/.
+# Agents live under agents/core/ (layer) and agents/project/ (host) — resolve by
+# name so this contract is location-agnostic. Excludes agents/_shared/; the layer's
+# own agents/project/ is pruned so a pre-flip tree, where it is the same directory
+# as $PROJECT_AGENTS_DIR, is not searched twice.
 agent_path() {
-  find agents -path 'agents/_shared/*' -prune -o -name "$1.md" -print 2>/dev/null | head -1
+  local f
+  f="$(find agents -path 'agents/_shared' -prune -o -path 'agents/project' -prune \
+         -o -name "$1.md" -print 2>/dev/null | head -1)"
+  [[ -n "$f" ]] || f="$(find "$PROJECT_AGENTS_DIR" -maxdepth 1 -name "$1.md" -print 2>/dev/null | head -1)"
+  printf '%s\n' "$f"
 }
-# All agent prompt files (both tiers, excluding _shared + the root README).
+# All agent prompt files (both tiers, excluding _shared + the root README), one per
+# line; loaded once into AGENT_FILES below so a path with spaces stays one word.
 agent_files() {
-  find agents/core agents/project -maxdepth 1 -name '*.md' 2>/dev/null | sort
+  { find agents/core -maxdepth 1 -name '*.md' 2>/dev/null
+    find "$PROJECT_AGENTS_DIR" -maxdepth 1 -name '*.md' 2>/dev/null
+  } | sort
 }
+mapfile -t AGENT_FILES < <(agent_files)
 
 # -------------------------------------------------------------------------
 # 1. Implementer agents — 3 required headings.
@@ -355,10 +370,10 @@ check_implementer() {
   if [[ $miss -eq 0 ]]; then check_pass "$a"; else check_fail "$a missing $miss/3 Implementer headings"; fi
 }
 for a in "${LAYER_IMPLEMENTERS[@]}"; do check_implementer "$a"; done
-if [[ -d agents/project ]]; then
+if [[ -d "$PROJECT_AGENTS_DIR" ]]; then
   for a in "${PROJECT_IMPLEMENTERS[@]}"; do check_implementer "$a"; done
 else
-  check_skip "${#PROJECT_IMPLEMENTERS[@]} project implementer(s): agents/project/ is not in the layer"
+  check_skip "${#PROJECT_IMPLEMENTERS[@]} project implementer(s): no agents/project/ under $PROJECT_ROOT"
 fi
 
 # -------------------------------------------------------------------------
@@ -404,7 +419,7 @@ echo
 echo "[4/15] ## Outcome: mandate present in every agent prompt (README excluded)"
 miss_outcome=()
 total_agents=0
-for f in $(agent_files); do
+for f in "${AGENT_FILES[@]}"; do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   total_agents=$((total_agents + 1))
@@ -428,7 +443,7 @@ fi
 echo
 echo "[5/15] Banner ↔ frontmatter identity (name · model/effort · read-scope)"
 banner_mismatch=()
-for f in $(agent_files); do
+for f in "${AGENT_FILES[@]}"; do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   fm_model=$(claude_code_hint "$f" model)
@@ -555,7 +570,7 @@ fi
 echo
 echo "[10/15] Frontmatter version ↔ banner version match"
 version_mismatch=()
-for f in $(agent_files); do
+for f in "${AGENT_FILES[@]}"; do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   fm_version=$(awk '/^---$/{p=!p;next}p' "$f" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
@@ -671,7 +686,7 @@ echo
 echo "[14/15] ## Self-improvement contract referenced in every agent prompt (README excluded)"
 miss_selfimp=()
 total_si=0
-for f in $(agent_files); do
+for f in "${AGENT_FILES[@]}"; do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   total_si=$((total_si + 1))
@@ -694,7 +709,7 @@ fi
 echo
 echo "[15/15] Top-level model: ↔ harness-hints.claude-code.model parity"
 model_mismatch=()
-for f in $(agent_files); do
+for f in "${AGENT_FILES[@]}"; do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   verdict=$(model_verdict "$f")

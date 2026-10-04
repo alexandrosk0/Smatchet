@@ -79,7 +79,13 @@ set -euo pipefail
 # Resolve our own dir BEFORE the repo-root cd (BASH_SOURCE still resolves here)
 # so we can source merge-gates.sh by absolute path regardless of cwd.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/../../.."
+# Host content (docs/self-improvement/postmortems.md, the merge-snapshot ledger) is
+# read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to the
+# superproject once this script lives in the agent-layer/ submodule, and to this
+# checkout before the flip.
+# shellcheck source=scripts/dev/project-config.sh
+PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+cd "${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
 
 MODE="list"
 case "${1:-}" in

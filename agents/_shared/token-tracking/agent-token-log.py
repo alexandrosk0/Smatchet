@@ -165,13 +165,18 @@ def _agent_version(agent_name: str, project_dir: Path) -> int:
     flat path. Returns 1 when the field is absent or no file is found. (The flat
     `agents/<name>.md` lookup alone was dead after the core/project split, so this
     telemetry always returned the fallback 1.)
+
+    agents/core/ is agent-layer content: once the layer is the agent-layer/
+    submodule it sits under that mount, while agents/project/ stays in the
+    project. Both layouts are probed, the mounted one first.
     """
-    candidate = None
-    for sub in ("core", "project", ""):
-        cand = project_dir / "agents" / sub / f"{agent_name}.md"
-        if cand.is_file():
-            candidate = cand
-            break
+    candidates = [
+        project_dir / "agent-layer" / "agents" / "core" / f"{agent_name}.md",
+        project_dir / "agents" / "core" / f"{agent_name}.md",
+        project_dir / "agents" / "project" / f"{agent_name}.md",
+        project_dir / "agents" / f"{agent_name}.md",
+    ]
+    candidate = next((c for c in candidates if c.is_file()), None)
     if candidate is None:
         return 1
     try:

@@ -43,7 +43,9 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$ROOT" || { echo "test-small-helper-audit: cannot cd to repo root" >&2; exit 2; }
 
-AUDIT="$ROOT/agents/scripts/core/small_helper_audit.py"
+# The audit is layer content beside this script; the tree it scans (Source/, the
+# baseline) is the host root above. After the flip the host has no agents/scripts/.
+AUDIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/small_helper_audit.py"
 BASELINE="docs/high-integrity/small-helper-baseline.md"
 
 # command -v alone is insufficient on Windows: the python3 Store-alias stub passes it

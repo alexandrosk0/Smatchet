@@ -71,41 +71,38 @@ set -euo pipefail
 # scanner logic (not origin/develop's older copy) against the base worktree.
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
-# --root <dir> scans an arbitrary tree (used to scan the --diff baseline worktree
-# with the current scanner). Default root = repo root relative to this script.
-if [ "${1:-}" = "--root" ]; then
-    cd "$2"; shift 2
-else
-    cd "$(dirname "$0")/../../.."
-fi
-REPO_ROOT="$(pwd)"
-
 # DUAL-ROOT (plan agent-surface-extraction-repo, Phase A row 3b). One variable
 # was doing two jobs here: REPO_ROOT anchored both the Source/ scan (HOST) and
-# the agents/scripts/core/*.py audit tools (LAYER). Post-flip the `cd` above
-# lands in the layer, so Source/ scanning would silently scan NOTHING — the
-# scanner reports zero violations instead of failing, a green that means nothing.
+# the agents/scripts/core/*.py audit tools (LAYER). A scan root climbed from this
+# script's own path lands in the layer after the flip, so Source/ scanning would
+# silently scan NOTHING — the scanner reports zero violations instead of failing,
+# a green that means nothing.
 #
-# REPO_ROOT keeps its name and its meaning: the tree being SCANNED. That is what
-# --root selects, so --root sets PROJECT_ROOT, and every scan site is unchanged.
-# The audit tools move to AGENT_LAYER_ROOT, resolved from THIS SCRIPT'S location
-# rather than the scanned root — the same distinction the module loader below
-# already makes for lint-rules.d/ ("not the scanned root — the --diff base scan
-# re-invokes this scanner against a base worktree and must use the current
-# modules"). That was AGENT_LAYER_ROOT semantics by another name; this makes it
-# explicit so the file stops carrying two conventions.
+# REPO_ROOT keeps its name and its meaning: the tree being SCANNED. --root selects
+# it explicitly; otherwise it is PROJECT_ROOT from scripts/dev/project-config.sh —
+# the superproject once this script lives in the agent-layer/ submodule, this
+# checkout before the flip, the layer itself in the layer's own CI. --root then
+# sets PROJECT_ROOT, and every scan site is unchanged. The audit tools are
+# AGENT_LAYER_ROOT, resolved from THIS SCRIPT'S location rather than the scanned
+# root — the same distinction the module loader below already makes for
+# lint-rules.d/ ("not the scanned root — the --diff base scan re-invokes this
+# scanner against a base worktree and must use the current modules").
 #
-# Bootstrap is the location-relative climb (row 3a): this script lives in the
-# layer and must never reach for a host path it does not yet know.
-#
-# It climbs from $SELF, not ${BASH_SOURCE[0]}. The `cd` above has ALREADY moved
-# us — to --root's target or to the script's own tree — and BASH_SOURCE keeps
-# whatever (possibly relative) path the caller typed, so climbing from it after
-# the cd resolves against the wrong directory or fails outright. $SELF is
-# absolutised at the top of the file, before any cd, precisely for this.
+# Bootstrap is the location-relative climb (row 3a), from $SELF — absolutised at
+# the top of the file — before any cd, so a relative caller path cannot resolve
+# against the wrong directory.
 _tlr_layer_root="$(cd "$(dirname "$SELF")/../../.." && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
 . "$_tlr_layer_root/scripts/dev/project-config.sh" 2>/dev/null || true
+
+# --root <dir> scans an arbitrary tree (used to scan the --diff baseline worktree
+# with the current scanner). Default: the host tree, PROJECT_ROOT.
+if [ "${1:-}" = "--root" ]; then
+    cd "$2"; shift 2
+else
+    cd "${PROJECT_ROOT:-$_tlr_layer_root}"
+fi
+REPO_ROOT="$(pwd)"
 PROJECT_ROOT="$REPO_ROOT"
 export PROJECT_ROOT
 LAYER_ROOT="${AGENT_LAYER_ROOT:-$_tlr_layer_root}"

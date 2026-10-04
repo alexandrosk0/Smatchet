@@ -126,9 +126,11 @@ check_layer() {
     # Content freshness. Skipped when .claude/agents was never built at all —
     # that is the unprovisioned state check_tree already reports, and claiming
     # "stale" for it would name the wrong remedy.
-    if [ -d "$agents_dest" ] && ! agents_dir_current "$agents_dest" "$layer_root"; then
+    # agents/project/ is host content: it stays in TREE at the flip, so it is
+    # compared from there while agents/core/ follows the layer.
+    if [ -d "$agents_dest" ] && ! agents_dir_current "$agents_dest" "$layer_root" "$tree"; then
         {
-            echo "⚠ agent links STALE: $agents_dest does not match $layer_root/agents/{core,project}/."
+            echo "⚠ agent links STALE: $agents_dest does not match $layer_root/agents/core/ + $tree/agents/project/."
             echo "  On Windows these are HARDLINKS, which share an inode with the canonical"
             echo "  file. \`git submodule update\` checks out NEW files rather than editing in"
             echo "  place, so advancing the layer leaves every existing link on the OLD inode,"

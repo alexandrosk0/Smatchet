@@ -330,7 +330,10 @@ detect_cr_installed() {
         printf '%s' "$SAFE_ADMIN_MERGE_CR_INSTALLED"
         return 0
     fi
-    local root="$SCRIPT_DIR/../../.."
+    # The HOST repo's CodeRabbit config: PROJECT_ROOT (loaded through merge-gates.sh)
+    # is the superproject once this script lives in the agent-layer/ submodule, which
+    # carries a .coderabbit.yaml of its own.
+    local root="${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
     if [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
         printf 'true'
     else

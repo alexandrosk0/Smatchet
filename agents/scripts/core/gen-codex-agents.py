@@ -75,15 +75,19 @@ def toml_string(value):
     return json.dumps(value, ensure_ascii=False)
 
 
-def agent_sources(root):
+def agent_sources(root, project_root):
     return sorted((root / "agents" / "core").glob("*.md")) + sorted(
-        (root / "agents" / "project").glob("*.md")
+        (project_root / "agents" / "project").glob("*.md")
     )
 
 
 def main():
+    # argv: <layer root> [<out dir>] [<project root>]. agents/core/ is layer content;
+    # agents/project/ stays in the host at the flip, so it is read from the project
+    # root, which defaults to the layer root (one tree before the flip).
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else root / ".codex" / "agents"
+    project_root = Path(sys.argv[3]) if len(sys.argv) > 3 else root
     out.mkdir(parents=True, exist_ok=True)
 
     written = 0
@@ -91,7 +95,7 @@ def main():
     keep = set()
     by_name = {}
 
-    for src in agent_sources(root):
+    for src in agent_sources(root, project_root):
         text = src.read_text(encoding="utf-8")
         fm_lines, full_text = split_frontmatter(text)
         if fm_lines is None:

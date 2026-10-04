@@ -21,13 +21,19 @@ Bucket A (CLI). Zero manual steps. Invoked from scripts/dev/test-doc-anchors.sh.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 
+# The anchors (AGENTS.md + docs/agent-rules/) are agent-layer content: read from this
+# file's own tree. The references are scanned in PROJECT_ROOT — the host once the
+# layer is the agent-layer/ submodule (test-doc-anchors.sh exports it), this tree
+# before the flip and in the layer's own CI.
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SCAN_ROOT = Path(os.environ.get("PROJECT_ROOT") or REPO_ROOT).resolve()
 
 # Files searched for `AGENTS.md §` references — limit to source / docs / scripts.
 SCAN_GLOBS = (
@@ -123,7 +129,7 @@ def collect_references() -> list[tuple[str, str, int]]:
         *EXCLUDE_GLOBS,
     ]
     try:
-        out = subprocess.check_output(cmd, cwd=REPO_ROOT, text=True, encoding="utf-8")
+        out = subprocess.check_output(cmd, cwd=SCAN_ROOT, text=True, encoding="utf-8")
     except subprocess.CalledProcessError as exc:
         if exc.returncode == 1:
             return []  # No matches.

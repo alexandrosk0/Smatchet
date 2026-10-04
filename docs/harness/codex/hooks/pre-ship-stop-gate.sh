@@ -10,4 +10,6 @@ set -u
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export CLAUDE_PROJECT_DIR="$ROOT"
 
-bash "$ROOT/docs/harness/claude-code/hooks/pre-ship-stop-gate.sh"
+# The Claude Code gate is this hook's sibling in the harness tree — layer content,
+# so it is found from this file's location, not from the project root above.
+bash "$(cd "$(dirname "$0")/../../claude-code/hooks" && pwd)/pre-ship-stop-gate.sh"
