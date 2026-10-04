@@ -182,6 +182,18 @@ case "$1" in
             echo "${MERGE_GATES_STUB_VIEW_ISDRAFT:-false}"
             exit 0
         fi
+        if [ "$2" = "diff" ]; then
+            # gh pr diff <pr> --repo <o/r> --name-only — the stale-red Plan-lock
+            # re-check's changed-file list.
+            #   MERGE_GATES_STUB_PR_DIFF — newline-separated paths (unset/empty →
+            #                              no output); "fail" → error exit
+            if [ "${MERGE_GATES_STUB_PR_DIFF:-}" = "fail" ]; then
+                echo "stub-gh: pr diff failure" >&2
+                exit 1
+            fi
+            [ -n "${MERGE_GATES_STUB_PR_DIFF:-}" ] && printf '%s\n' "$MERGE_GATES_STUB_PR_DIFF"
+            exit 0
+        fi
         if [ "$2" = "comment" ]; then
             # gh pr comment <pr> --body "@coderabbitai review" — the auto-nudge.
             # Append one line per invocation to a counter file so a test can
@@ -222,7 +234,7 @@ teardown() {
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
     unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED MERGE_GATES_STUB_HEAD_RUNS
     unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
-    unset MERGE_GATES_STUB_ARGV_FILE MERGE_GATES_STUB_JQ
+    unset MERGE_GATES_STUB_ARGV_FILE MERGE_GATES_STUB_JQ MERGE_GATES_STUB_PR_DIFF LTC_ROWS_OVERRIDE
 }
 
 # ---------- helpers ----------
@@ -1650,6 +1662,81 @@ plan_lock_red_fixture() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"downgraded=Plan-lock gate"* ]]
+    rm -f "$f"
+}
+
+# Stale-red re-check (tooling 2026-10-04 stale-plan-lock-red-overridden-instead-
+# of-rerun, item 1): before honouring plan-lock-out-of-band + disposition, the
+# poller re-runs plan_lock_gate_decide against the CURRENT lock table. The gh
+# stub serves the PR diff; LTC_ROWS_OVERRIDE injects the lock table
+# (branch<TAB>epoch<TAB>slug<TAB>path) so no refs/locks fetch happens.
+
+planlock_waived_fixture() {
+    plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}]'
+}
+
+@test "stale Plan-lock red (colliding lock now past the 14-day cutoff) -> override REFUSED, 'stale red — re-run'" {
+    # The #2213 replay: the lock that reddened the gate has aged out, so the
+    # gate would pass on a re-run — the override must not be what clears it.
+    local f rows="$BATS_TEST_TMPDIR/lock-rows"
+    printf 'claude/other-branch\t%s\tgate-selftest-msys-execbit\tdocs/plans/INDEX.md\n' \
+        "$(( $(date -u +%s) - 20 * 24 * 3600 ))" > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"stale red — re-run"* ]]
+    [[ "$output" == *"gh run rerun"* ]]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"0 warn-downgraded"* ]]
+    rm -f "$f"
+}
+
+@test "live Plan-lock collision on re-check -> override + disposition still honoured" {
+    local f rows="$BATS_TEST_TMPDIR/lock-rows"
+    printf 'claude/other-branch\t%s\tsanitizer-nightly-run-tests\tdocs/plans/INDEX.md\n' \
+        "$(date -u +%s)" > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"downgraded=Plan-lock gate"* ]]
+    [[ "$output" != *"stale red"* ]]
+    rm -f "$f"
+}
+
+@test "Plan-lock re-check: a lock held by THIS PR's own branch does not count as a live collision" {
+    # The gate never blocks a branch on its own lock, so a red whose only
+    # overlap is the PR's own lock is stale too.
+    local f rows="$BATS_TEST_TMPDIR/lock-rows"
+    printf 'feature/pass\t%s\tmy-own-lock\tdocs/plans/INDEX.md\n' "$(date -u +%s)" > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"stale red — re-run"* ]]
+    rm -f "$f"
+}
+
+@test "Plan-lock re-check inputs unavailable (PR diff fails) -> WARN, override + disposition stands" {
+    # Never refuse on unverified evidence: only a positively clean re-check
+    # turns the override down.
+    local f
+    export MERGE_GATES_STUB_PR_DIFF="fail"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"could not re-evaluate the Plan-lock gate red"* ]]
     rm -f "$f"
 }
 
@@ -3486,8 +3573,8 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 39; the
-    # -ne 39 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 40; the
+    # -ne 40 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
     # + thread-count + stale-override + dup-masked fields rely on).
     local f
@@ -3497,7 +3584,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 39"* ]]
+    [[ "$output" == *"expected 40"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }

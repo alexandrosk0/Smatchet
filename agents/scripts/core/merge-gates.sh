@@ -227,7 +227,7 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 39-field
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 40-field
 #                        projection) as a template emitter; run by standalone
 #                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
@@ -253,6 +253,71 @@ for _mg_mod in "$SCRIPT_DIR"/lib/script-freshness.sh \
     . "$_mg_mod"
 done
 unset _mg_mod
+
+# _mg_csv_has <", "-joined list> <name> — exact membership in a jq
+# `join(", ")` list (no check name contains ", ").
+_mg_csv_has() {
+    local rest="$1" item
+    while [ -n "$rest" ]; do
+        item="${rest%%, *}"
+        [ "$item" = "$2" ] && return 0
+        [ "$item" = "$rest" ] && break
+        rest="${rest#*, }"
+    done
+    return 1
+}
+
+# _mg_csv_drop <", "-joined list> <name> — the list without <name>.
+_mg_csv_drop() {
+    local rest="$1" item out=""
+    while [ -n "$rest" ]; do
+        item="${rest%%, *}"
+        if [ "$item" != "$2" ]; then out="${out:+$out, }$item"; fi
+        [ "$item" = "$rest" ] && break
+        rest="${rest#*, }"
+    done
+    printf '%s' "$out"
+}
+
+# _mg_planlock_recheck <owner> <repo> <pr> <head ref> — re-run the Plan-lock
+# gate's own decision (plan_lock_gate_decide, sourced from plan-lock-gate.sh)
+# against the CURRENT refs/locks table and the PR's changed files. A
+# "Plan-lock gate" verdict is frozen at push time while the lock table it
+# judged keeps moving (locks are released, or age past the 14-day cutoff), so a
+# red can go stale (tooling 2026-10-04 stale-plan-lock-red-overridden-instead-
+# of-rerun). Prints one token:
+#   clean     — no changed file overlaps another branch's live lock any more
+#   collides  — still overlaps, or the lock table is undetermined (the gate's
+#               own fail-closed answer)
+#   unknown   — the inputs could not be gathered (no head ref, no diff, gate
+#               script missing)
+# Runs in a subshell: the gate script and the lock substrate set shell options
+# and define helpers that must not leak into a sourcing caller.
+_mg_planlock_recheck() {
+    local owner="$1" repo="$2" pr="$3" head_ref="$4"
+    (
+        [ -n "$head_ref" ] || { echo unknown; exit 0; }
+        changed="$(gh pr diff "$pr" --repo "$owner/$repo" --name-only 2>/dev/null)" \
+            || { echo unknown; exit 0; }
+        [ -n "$changed" ] || { echo unknown; exit 0; }
+        # The lock table is read from the HOST repo (locks-show.sh fetches
+        # refs/locks/* into the checkout it runs in), resolved the way
+        # plan-lock-gate.sh's own entry point resolves it.
+        root="${PC_PROJECT_ROOT:-${PROJECT_ROOT:-$SCRIPT_DIR/../../..}}"
+        cd "$root" 2>/dev/null || { echo unknown; exit 0; }
+        export LTC_PROJ="$PWD"
+        # shellcheck source=agents/scripts/core/lock-table-cache.sh
+        . "$SCRIPT_DIR/lock-table-cache.sh" 2>/dev/null || { echo unknown; exit 0; }
+        # shellcheck source=agents/scripts/core/plan-lock-gate.sh
+        . "$SCRIPT_DIR/plan-lock-gate.sh" 2>/dev/null || { echo unknown; exit 0; }
+        command -v plan_lock_gate_decide >/dev/null 2>&1 || { echo unknown; exit 0; }
+        if printf '%s\n' "$changed" | plan_lock_gate_decide "$head_ref" >/dev/null 2>&1; then
+            echo clean
+        else
+            echo collides
+        fi
+    )
+}
 
 # ----------------------------------------------------------------------------
 # poll_merge_gates <owner> <repo> <pr_number>
@@ -622,7 +687,7 @@ poll_merge_gates() {
     start=$(date +%s)
 
     # One filter computes every gate field and emits them as a fixed-order,
-    # one-per-line stream (39 lines) that the poll loop reads with `mapfile`.
+    # one-per-line stream (40 lines) that the poll loop reads with `mapfile`.
     # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
     # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
     # jq sub-expressions are the same ones the per-field `jq` calls used
@@ -666,7 +731,7 @@ poll_merge_gates() {
     # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 39-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 40-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
     # crDisposition (30), the two numeric thread counts (31/32) and
@@ -680,10 +745,12 @@ poll_merge_gates() {
     # 37 dependabotActionsBump (bool: Dependabot-authored PR on a
     # dependabot/github_actions/* head — the one shape whose silent CR still
     # passes after the grace window; non-empty, safe at the tail) ·
-    # 38 planLockOobRefused (bool: plan-lock-out-of-band is on a red
+    # 38 headRefName (the PR branch; may be empty, so never the last field —
+    # read by the stale-red Plan-lock re-check) ·
+    # 39 planLockOobRefused (bool: plan-lock-out-of-band is on a red
     # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
     # downgrade was refused; non-empty, safe at the tail).
-    # GATE_FILTER — the 39-field jq projection (see field-order map above).
+    # GATE_FILTER — the 40-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -711,6 +778,10 @@ poll_merge_gates() {
     if command -v jq >/dev/null 2>&1; then
         gate_jq_engine=jq
     fi
+
+    # Stale-red Plan-lock re-check cache: re-evaluated once per head, not every
+    # poll (it costs a PR-diff call and a refs/locks fetch).
+    local planlock_recheck_head="" planlock_recheck_verdict=""
 
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
@@ -809,11 +880,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 39 ]; then
-            # Exactly 39 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 40 ]; then
+            # Exactly 40 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 39); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 40); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -878,6 +949,33 @@ poll_merge_gates() {
         local ci_warn_downgraded="${fields[8]:--1}"
         local dg_names="${fields[9]}"
 
+        # Stale-red Plan-lock guard (tooling 2026-10-04 stale-plan-lock-red-
+        # overridden-instead-of-rerun, item 1). The "Plan-lock gate" verdict is
+        # frozen at push time; the refs/locks table it judged is not. Before
+        # honouring a plan-lock-out-of-band downgrade, re-run the gate's own
+        # decision against the CURRENT table: if nothing collides any more, the
+        # red is stale and the right move is a re-run, not an override (#2213
+        # merged over a 12-day-stale red that a re-run would have cleared). Only
+        # a positively CLEAN re-check refuses; a collision, an undetermined
+        # table or unavailable inputs leave the downgrade standing, as before.
+        if [ "$ci_warn_downgraded" -gt 0 ] && _mg_csv_has "$dg_names" "Plan-lock gate"; then
+            if [ "$planlock_recheck_head" != "$head_sha" ]; then
+                planlock_recheck_head="$head_sha"
+                planlock_recheck_verdict="$(_mg_planlock_recheck "$owner" "$repo" "$prNumber" "${fields[38]}")"
+            fi
+            case "$planlock_recheck_verdict" in
+                clean)
+                    ci_fail=$((ci_fail + 1))
+                    ci_warn_downgraded=$((ci_warn_downgraded - 1))
+                    dg_names="$(_mg_csv_drop "$dg_names" "Plan-lock gate")"
+                    echo "BLOCK: Plan-lock gate: stale red — re-run, do not override. Re-evaluated against the current refs/locks table, none of this PR's changed files overlaps another branch's live lock any more (the colliding lock was released or aged past the cutoff since the gate ran), so plan-lock-out-of-band is refused. Re-run the gate: gh api \"repos/${owner}/${repo}/commits/${head_sha}/check-runs?check_name=Plan-lock%20gate\" --jq '.check_runs[0].details_url' — the run id is the number after /runs/ — then gh run rerun <that-id>." >&2
+                    ;;
+                unknown)
+                    echo "WARN: could not re-evaluate the Plan-lock gate red against the current lock table (PR diff or head ref unavailable); the plan-lock-out-of-band downgrade stands as recorded." >&2
+                    ;;
+            esac
+        fi
+
         # Surface every downgraded check on stderr so the operator sees what the
         # label hid. Mirrors the "Skip gates and merge anyway" LOG_WARN pattern.
         if [ "$ci_warn_downgraded" -gt 0 ]; then
@@ -900,8 +998,8 @@ poll_merge_gates() {
         # The label alone no longer downgrades a red "Plan-lock gate": like
         # cr-out-of-band it needs a recorded reason, or nothing says which lock
         # was crossed or why (GitHub strips the label post-merge, so the reason
-        # is otherwise unrecoverable — #2160). Field 38; the red stays in ci_fail.
-        if [ "${fields[38]:-false}" = "true" ]; then
+        # is otherwise unrecoverable — #2160). Field 39; the red stays in ci_fail.
+        if [ "${fields[39]:-false}" = "true" ]; then
             echo "WARN: plan-lock-out-of-band present but NOT honoured — a plan-lock-out-of-band downgrade also requires a 'plan-lock-disposition:<reason>' label or PR-body marker naming the lock slug(s) the Plan-lock gate reported and why crossing them is safe. Add one to merge past the 'Plan-lock gate' red; if the red is stale (the lock was released or aged out), re-run the gate instead." >&2
         fi
 

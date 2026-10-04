@@ -429,6 +429,10 @@ def disposition($labels; $body; $prefix):
     ($dupMasked | join(", ")),
     ($dupMasked | length),
     ($dependabotActionsBump | tostring),
+    # headRefName — the PR branch, which the stale-red Plan-lock re-check
+    # passes to plan_lock_gate_decide (a lock held by this branch never blocks
+    # it). May be empty, so it is never the LAST field.
+    ($pr.headRefName // ""),
     # planLockOobRefused — plan-lock-out-of-band is applied to a red
     # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
     # downgrade was refused and the red still counts in ciFail.
