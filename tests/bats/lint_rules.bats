@@ -773,11 +773,14 @@ _resolve_py() {
         # Two whole markers on one line, the second with a parenthetical reason, stay valid.
         printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) and SMATCHET_DEVIATION(rule=b; reason=r (x); owner=o; revisit=2099-01-01)\nint c = 0;\n'
     } > "$tmp/M.cpp"
+    # Each printf writes a marker line and a code line, so M.cpp holds: 1 half/half,
+    # 2 code, 3 half/half, 4 code, 5 two whole markers, 6 code.
     run bash "$LINT" --scan-file "$tmp/M.cpp"
     rm -rf "$tmp"
     [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 2 ]
     [[ "$output" == *"M.cpp:1"* ]]
     [[ "$output" == *"M.cpp:3"* ]]
+    [[ "$output" != *"M.cpp:5"* ]]
 }
 
 @test "an EMPTY revisit= is reported once, as deviation-overdue, not also as deviation-malformed" {
