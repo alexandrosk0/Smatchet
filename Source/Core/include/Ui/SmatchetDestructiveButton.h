@@ -10,7 +10,7 @@
 #include "imgui.h"
 
 inline void SmatchetPushDestructiveButtonColors() {
-    // SMATCHET_DEVIATION(rule=duplication; reason=style-push triple shape; owner=ui; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=style-push triple shape; owner=ui; revisit=2027-04-15)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));

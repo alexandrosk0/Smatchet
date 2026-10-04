@@ -159,7 +159,7 @@ void EnrichFromCreateMeta(const TrackerConfig& cfg, const std::string& projectKe
     auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     if (metaResponse.status_code == 200) {
         try {
-            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
+            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom; debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-04-30)
             std::string parseErr;
             auto metaJson = smatchet::json_safe::ParseBounded(metaResponse.text, parseErr);
             if (!parseErr.empty()) {

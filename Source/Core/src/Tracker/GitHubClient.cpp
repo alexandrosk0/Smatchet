@@ -604,14 +604,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueC
                 smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             LOG_ERROR("GitHubClient::FetchIssueComments: HTTP %ld on page %d for %s — %s", resp.status_code, page,
                       issueKey.c_str(), msg.c_str());
-            // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx
-            // TrackerErrorFromHttpStatus returns Ok() (Kind==None, detail discarded).
-            // Carry the verbatim detail under an explicit non-OK kind (DR20).
-            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return CommentsResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
-            }
-            return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
+            return CommentsResult::Err(ClassifyRejectedHttpStatus(resp.status_code, msg));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
         const nlohmann::json parsedJson = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);

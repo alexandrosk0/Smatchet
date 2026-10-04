@@ -227,7 +227,7 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
     // cancel / transport / HTTP / EOF dispatch) are a near-verbatim pair: both speak the same SSE wire shape
     // while their token-delta decoders differ. One shared helper would couple two independent provider
     // adapters, which the DRY pillar forbids (ADR-0015).
-    // SMATCHET_DEVIATION(rule=duplication; reason=SSE streaming skeleton twin of OpenAiClient; owner=ai-clients; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=SSE streaming skeleton twin of OpenAiClient; owner=ai-clients; revisit=2027-05-31)
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
                                if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;

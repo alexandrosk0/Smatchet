@@ -667,12 +667,7 @@ FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
                                          std::to_string(resp.status_code) + "): " + msg;
             LOG_ERROR("GitHubIssueSearch::FetchIssuesForKeysViaRestApi HTTP %ld on %s: %s", resp.status_code,
                       key.c_str(), msg.c_str());
-            // Guard the `!= 200` branch before FromHttpStatus (FIX-1): a 2xx-other → Unknown, never a
-            // dropped Ok(). Detail preserved verbatim for the caller's text checks.
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return FetchResult::Err(TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
-            }
-            return FetchResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
+            return FetchResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
         nlohmann::json parsed_json = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);

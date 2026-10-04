@@ -147,10 +147,7 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchIssueWatchers(co
     if (response.status_code != 200) {
         outError = "Failed to fetch watchers: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
-        if (response.status_code >= 200 && response.status_code < 300) {
-            return WatchersResult::Err(TrackerErrorUnknown(outError, response.status_code));
-        }
-        return WatchersResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+        return WatchersResult::Err(ClassifyRejectedHttpStatus(response.status_code, outError));
     }
 
     try {
@@ -274,13 +271,7 @@ JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issu
             outError += TruncateForLog(response.text, 800);
         }
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
-        // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx, TrackerErrorFromHttpStatus
-        // yields an Ok sentinel (Kind==None, detail discarded). Carry the verbatim detail under an
-        // explicit non-OK kind so the user-visible .Detail never vanishes. Genuine non-2xx classifies normally.
-        if (response.status_code >= 200 && response.status_code < 300) {
-            return EditMetaResult::Err(TrackerErrorUnknown(std::move(outError), response.status_code));
-        }
-        return EditMetaResult::Err(TrackerErrorFromHttpStatus(response.status_code, std::move(outError)));
+        return EditMetaResult::Err(ClassifyRejectedHttpStatus(response.status_code, outError));
     }
 
     try {
@@ -332,10 +323,7 @@ Result<TrackerIssueVotes, TrackerError> JiraClient::FetchIssueVotes(const Tracke
     if (response.status_code != 200) {
         outError = "Failed to fetch votes: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
-        if (response.status_code >= 200 && response.status_code < 300) {
-            return VotesResult::Err(TrackerErrorUnknown(outError, response.status_code));
-        }
-        return VotesResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+        return VotesResult::Err(ClassifyRejectedHttpStatus(response.status_code, outError));
     }
 
     try {
@@ -499,15 +487,12 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(c
 
     const std::string url =
         base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
-    // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom; debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-04-30)
     auto resp = TrackerGetLogged("JiraClient", url, headers);
     if (resp.status_code != 200) {
         outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
         LOG_ERROR("JiraClient: %s accountId=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return GroupsResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-        }
-        return GroupsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+        return GroupsResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
     }
 
     try {
@@ -590,7 +575,7 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
             startAt += pageCount;
         }
     }
-    // SMATCHET_DEVIATION(rule=duplication; reason=FetchGroupMembers opening (signature, result alias, auth guard) shared with GitHubClient; a helper would couple independent backend clients; owner=tracker-backend; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=FetchGroupMembers opening (signature, result alias, auth guard) shared with GitHubClient; debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-05-14)
     return UsersResult::Ok(std::move(outUsers));
 }
 
@@ -617,14 +602,12 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(con
         const std::string url = base + "/rest/api/3/group/member?groupname=" + UrlEncode(groupName) +
                                 "&startAt=" + std::to_string(page * kPageSize) +
                                 "&maxResults=" + std::to_string(kPageSize);
+        // SMATCHET_DEVIATION(rule=duplication; reason=Jira GET-reject prologue (message, log line, ClassifyRejectedHttpStatus) shared with FetchUserActivity; debt 2026-09-30-tracker-get-parse-error-handling-helper; owner=tracker-backend; revisit=2027-04-30)
         auto resp = TrackerGetLogged("JiraClient", url, headers);
         if (resp.status_code != 200) {
             outError = "group/member failed: HTTP " + std::to_string(resp.status_code);
             LOG_ERROR("JiraClient: %s group=%s", outError.c_str(), TruncateForLog(groupName, 80).c_str());
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return MembersResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-            }
-            return MembersResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+            return MembersResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
         }
 
         bool isLast = true;
