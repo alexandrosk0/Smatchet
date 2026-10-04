@@ -789,6 +789,16 @@ _resolve_py() {
     [[ "$output" != *"never"* ]]
 }
 
+@test "--scan-revisit-cohorts exits 0 with no output on a tree with no marker at all" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'int f() { return 0; }\n' > "$tmp/Source/Core/src/A.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-revisit-cohorts
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "deviation-cohort warns only on a marker the diff ADDS to a crowded revisit date" {
     tmp="$(mktemp -d)"
     ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null

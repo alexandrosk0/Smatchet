@@ -226,7 +226,9 @@ compute_revisit_cohorts() {
     local files=() f
     while IFS= read -r f; do [ -n "$f" ] && files+=("$f"); done < <(list_first_party_cpp_files)
     [ "${#files[@]}" -gt 0 ] || return 0
-    grep -h 'SMATCHET_DEVIATION(' "${files[@]}" 2>/dev/null | marker_revisit_dates | sort | uniq -c \
+    # `|| true`: a tree with no marker at all makes grep exit 1, which pipefail + set -e in the
+    # runner would turn into a failed sweep instead of an empty one.
+    { grep -h 'SMATCHET_DEVIATION(' "${files[@]}" 2>/dev/null || true; } | marker_revisit_dates | sort | uniq -c \
         | awk -v max="$DEVIATION_COHORT_MAX" '$1 > max { print $1 "\t" $2 }' | sort -rn
     return 0
 }
