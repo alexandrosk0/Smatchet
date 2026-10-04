@@ -7,7 +7,8 @@ name: Sanitizer nightly
 # auto-opens an issue. Trade-off (accepted): a regression can sit up to ~24 h
 # before this catches it.
 #
-# Two jobs, because no one toolchain does both things on Windows:
+# Two jobs, because as configured today no one toolchain does both things on
+# Windows:
 #
 #   sanitizer-nightly      ninja-clang-asan (clang-cl). Build only — the Clang
 #                          warning set over the Whisper-off / Lua-off feature
@@ -16,11 +17,14 @@ name: Sanitizer nightly
 #                          doctest rig instrumented with ASan and RUNS it. This
 #                          is the job that executes code under a sanitizer.
 #
-# Why the rig does not run in the clang job: an exe instrumented by clang-cl does
-# not survive C++ exception rethrow against the MSVC runtime — a bare `throw;`
-# aborts inside VCRUNTIME140.dll, and the instrumented rig dies seconds in with
-# an execute fault inside MSVCP140.dll. cl.exe's ASan has no such problem; the
-# per-PR "Sanitizer (ASAN via MSVC)" job runs the same rig the same way.
+# Why the rig does not run in the clang job: with the flags
+# cmake/Sanitizers.cmake passes today, an exe instrumented by clang-cl does not
+# survive every C++ exception path against the MSVC runtime — a rethrow caught
+# in the same function aborts inside VCRUNTIME140.dll, and the instrumented rig
+# dies seconds in with an execute fault inside MSVCP140.dll. One codegen flag
+# cures the small reproduction (see the backlog entry below); until that is
+# proven on the whole rig, the rig runs under cl.exe's ASan, which has no such
+# problem — the per-PR "Sanitizer (ASAN via MSVC)" job runs it the same way.
 #
 # What is sanitized: ASan only, in both jobs. MSVC has no UBSan, and clang-cl is
 # an MSVC-style driver, so cmake/Sanitizers.cmake takes its MSVC branch
@@ -136,7 +140,7 @@ jobs:
           build_log="build-clang-asan.log"
           if [ -f "$build_log" ] && \
              grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
-            title="Sanitizer nightly BUILD BREAK (compile failure, not a sanitizer finding)"
+            title="Sanitizer nightly BUILD BREAK (ninja-clang-asan compile failure, not a sanitizer finding)"
             body="The nightly clang-cl build on \`develop\` (job \`sanitizer-nightly\`,
           preset \`ninja-clang-asan\`) failed during the COMPILE phase. This is a
           BUILD BREAK, not a sanitizer finding.
@@ -146,7 +150,7 @@ jobs:
           See the build log (\`build-clang-asan.log\`) in the run for the failing TU.
           Route to build-doctor, not a sanitizer-finding owner."
           else
-            title="Sanitizer nightly HARNESS BREAK (the job failed outside the compile, not a sanitizer finding)"
+            title="Sanitizer nightly HARNESS BREAK (ninja-clang-asan job failed outside the compile, not a sanitizer finding)"
             body="The nightly clang-cl build on \`develop\` (job \`sanitizer-nightly\`,
           preset \`ninja-clang-asan\`) failed before or outside the compile — checkout,
           toolchain setup or configure. This is a broken harness, not a sanitizer
@@ -219,8 +223,14 @@ jobs:
       # the exe is the instrumented surface, and its own output is what the
       # assertions below read. abort_on_error=0 so a stray abort() surfaces with a
       # stack, not an opaque SIGABRT.
+      #
+      # The step has its own timeout because a direct run has none of ctest's: a
+      # deadlocked rig would otherwise sit until the job-level timeout, which
+      # CANCELS the job — and a cancelled job files no Issue. A step timeout is a
+      # failure. The rig takes about six minutes.
       - name: Run the instrumented doctest rig (ASan)
         shell: bash
+        timeout-minutes: 20
         working-directory: build/ninja-msvc-asan
         env:
           ASAN_OPTIONS: abort_on_error=0
@@ -266,7 +276,7 @@ jobs:
           rig_log="rig-msvc-asan.log"
           if [ -f "$build_log" ] && \
              grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
-            title="Sanitizer nightly BUILD BREAK (compile failure, not a sanitizer finding)"
+            title="Sanitizer nightly BUILD BREAK (ninja-msvc-asan compile failure, not a sanitizer finding)"
             label="build-break"
             body="The nightly MSVC ASan build on \`develop\` (job \`sanitizer-nightly-rig\`,
           preset \`ninja-msvc-asan\`) failed during the COMPILE phase — it never
@@ -278,7 +288,7 @@ jobs:
           See the build log (\`build-msvc-asan.log\`) in the run for the failing TU.
           Route to build-doctor, not a sanitizer-finding owner."
           elif grep -a -qs 'ERROR: AddressSanitizer' "$rig_log"; then
-            title="Sanitizer nightly failed (ASan+UBSan)"
+            title="Sanitizer nightly failed (MSVC ASan report)"
             label="bug"
             body="The nightly instrumented doctest rig on \`develop\` (job
           \`sanitizer-nightly-rig\`, MSVC ASan) reported an AddressSanitizer error.
@@ -294,8 +304,9 @@ jobs:
             body="A test failed in the nightly instrumented doctest rig on \`develop\`
           (job \`sanitizer-nightly-rig\`, MSVC ASan), and the output carries no
           AddressSanitizer report. Read it as a plain test failure under the
-          sanitizer build (an assertion, a wall-clock budget), not as a memory-safety
-          regression, unless the log says otherwise.
+          sanitizer build (an assertion, a wall-clock budget, or a crash doctest
+          caught and reported), not as a memory-safety regression, unless the log
+          says otherwise.
 
           Run: ${RUN_URL}"
           else
