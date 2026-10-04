@@ -65,4 +65,20 @@ repo enforces an attestation trail for one override and not for the other.
 and that adding the disposition does. Replayed against the gate as it stands, the first half fails —
 the bare label downgrades today, which is the #2160 shape exactly.
 
-Triggered-follow-up: when=pr-count:base=develop;since=2026-09-12;n=15; action=check whether the plan-lock hatch requires a disposition trail, and whether any PR merged on a bare plan-lock-out-of-band since; baseline=1 bare-label escape (#2160) with the reason unrecoverable, 2026-09-06; fired=never
+## Follow-up measurement — 2026-10-04 (PR #2280 postmortem)
+
+Re-measured: 52 PRs have merged into `develop` since 2026-09-12. **The hatch is unchanged, and it has been used twice more.**
+
+- **Still a bare boolean.** `merge-gates.d/10-gate-filter.sh:36` still reads `($labels | any(. == "plan-lock-out-of-band")) as $planlock`. `grep -rn plan-lock-disposition` finds the token only in this entry and the ledger, not in any gate. None of actions 1-3 has landed.
+- **2 merges since then crossed a red `Plan-lock gate` under the label** (`gh pr list --state merged --search "label:plan-lock-out-of-band merged:>=2026-09-12"`):
+  - **#2213** merged 2026-09-24T13:48:26Z. Its head `1df75c8a` had `Plan-lock gate` red at 2026-09-12T00:46:43Z, and its body has no disposition line. This is the #2160 shape again, with no `postmortems.md` entry. It merged outside `postmortem-owed.sh`'s 20-merge window, which is also blinded by an HTTP 504; see [`2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md`](../tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md).
+  - **#2280** merged 2026-10-04T04:47:49Z. Its author wrote a `plan-lock-disposition:` line voluntarily, which the gate does not yet ask for. The line covers `crash-retire-terminate-prefs-enddisabled`: a lock left orphaned by #2286's merge, with the override authorised by the maintainer.
+- **The whole-gate waiver bit, as point 2 predicted.** The same red `Plan-lock gate` run (job `111353340607`) flagged a **second** overlap: `tests/CMakeLists.txt` against the live lock `sanitizer-nightly-run-tests`, held by `fix/sanitizer-nightly-run-tests` (#2288). The disposition never mentions it, and the label cleared it anyway.
+  - It did no harm this time. #2288 does not edit `tests/CMakeLists.txt`, because its lock claims more than its diff, and #2288 is still mergeable.
+  - That was luck, not review. A per-slug disposition, with every red overlap required to be named, would have forced someone to look at it.
+
+So the volunteer behaviour this entry asks for showed up once, and the gate still could not tell a full disposition from a partial one. Action 1 should require the disposition to name **every** slug the failing run reported. `plan-lock-gate.sh` already prints one `overlaps the write set of plan-lock '<slug>'` line per overlap, so that is the enumerator. A bats case: a red run naming two slugs, plus a disposition naming one, must not downgrade.
+
+Upstream of #2280's override is a separate hole: lock release on close keys only on a `lock-slug:` body line. That is filed as [`2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md`](../tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md).
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-09-12;n=15; action=check whether the plan-lock hatch requires a disposition trail, and whether any PR merged on a bare plan-lock-out-of-band since; baseline=1 bare-label escape (#2160) with the reason unrecoverable, 2026-09-06; fired=2026-10-04
