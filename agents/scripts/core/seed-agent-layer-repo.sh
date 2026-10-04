@@ -37,6 +37,11 @@ SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
 # The one non-image file is `seed-scrub-paths.txt` (scaffold root): a seed-TIME
 # input consumed by phase 3, never copied into the layer.
 SCAFFOLD_DIR="$SCRIPT_DIR/seed-agent-layer-repo.d"
+# The scaffold image rule — committed files under SCAFFOLD_DIR at a commit, minus
+# the seed-time input — shared with agent-layer-sim.sh (ali_image_files,
+# ali_extract_image).
+# shellcheck source=agents/scripts/core/lib/agent-layer-image.sh
+. "$SCRIPT_DIR/lib/agent-layer-image.sh"
 MANIFEST_SRC="$SCAFFOLD_DIR/docs/seed-paths.txt"
 AUDIT_SRC="$SCAFFOLD_DIR/docs/seed-audit.md"
 
@@ -76,11 +81,10 @@ FORBIDDEN_PREFIXES=(
     CMakeLists.txt
 )
 
-# Phase 4 copies the WHOLE scaffold image into the seeded repo (minus the one
-# seed-time input, SCAFFOLD_NON_IMAGE); agent-layer-sim.sh applies the same rule, so
-# the simulated tree is the seeded tree. These lists are the files the image must
+# Phase 4 copies the WHOLE scaffold image of the validated commit into the seeded
+# repo (lib/agent-layer-image.sh); agent-layer-sim.sh applies the same rule, so the
+# simulated tree is the seeded tree. These lists are the files the image must
 # contain — phase 4 refuses to publish a repo without its gates or its contract.
-SCAFFOLD_NON_IMAGE="seed-scrub-paths.txt"
 SCAFFOLD_ROW10=(README.md LICENSE project.config.json .gitignore)
 SCAFFOLD_ROW9=(
     .coderabbit.yaml
@@ -109,8 +113,10 @@ LANES_CLEARED=0
 SIM_SCRIPT="$SCRIPT_DIR/agent-layer-sim.sh"
 # The exact commit phase 2 validated. Phase 3 refuses a clone that resolves to
 # anything else, so the tree that is rewritten and published is the tree that was
-# checked — not whatever the remote branch happens to point at by then.
+# checked — not whatever the remote branch happens to point at by then. Phase 4
+# reads the scaffold image from this commit in SOURCE_ROOT, never the work tree.
 SOURCE_SHA=""
+SOURCE_ROOT=""
 
 usage() {
     cat <<'USAGE'
@@ -216,8 +222,10 @@ parse_args() {
             --dry-run)      DRY_RUN=1; shift ;;
             --simulate)     SIMULATE=1; DRY_RUN=1; shift ;;
             --print-bats-block)
-                            cd "$(git rev-parse --show-toplevel 2>/dev/null)" \
-                                || die 2 "not inside a git repo — run from the Smatchet working tree"
+                            # The block describes THIS script's repo, wherever it is run from.
+                            if ! cd "$SCRIPT_DIR/../../.." || [ ! -d agents/scripts/core ]; then
+                                die 2 "cannot resolve the repo root from $SCRIPT_DIR"
+                            fi
                             layer_named_suites
                             exit 0 ;;
             --target)       [ "$#" -ge 2 ] || die 2 "--target needs a value"
@@ -319,10 +327,9 @@ manifest_pathspecs() {
     grep -vE '^[[:space:]]*(#|$)' "$MANIFEST_SRC"
 }
 
-# Files of the scaffold image, relative to its root, one per line: everything under
-# SCAFFOLD_DIR except the seed-time input at its root.
+# Files of the scaffold image of the validated commit, image-relative, one per line.
 scaffold_image_files() {
-    ( cd "$SCAFFOLD_DIR" && find . -type f ! -path "./$SCAFFOLD_NON_IMAGE" | sed 's#^\./##' | sort )
+    ali_image_files "$SOURCE_ROOT" "$SOURCE_SHA"
 }
 
 # The publication audit is pinned to the develop commit it swept, recorded in
@@ -398,6 +405,7 @@ phase2_manifest() {
     # manifest path (or tests/bats/, which feeds the regenerated block) would
     # validate a tree that no commit — and therefore no clone — contains.
     SOURCE_SHA="$(git rev-parse HEAD)" || die 2 "cannot resolve HEAD in $repo_root"
+    SOURCE_ROOT="$repo_root"
     local -a pin_specs
     mapfile -t pin_specs < <(manifest_pathspecs)
     local dirty
@@ -632,10 +640,15 @@ phase3_rewrite() {
 phase4_scaffold() {
     head1 "phase 4 — scaffold"
 
+    # The image comes from the validated commit, never the work tree: an untracked
+    # or ignored file under the scaffold dir (a stray log, an editor backup) is not
+    # in it, so it can neither be published nor exempted by phase 4b.
+    local image
+    image="$(scaffold_image_files)" || die 1 "no scaffold image at $SOURCE_SHA"
     local missing=0 asset
     for asset in "${SCAFFOLD_ROW10[@]}" "${SCAFFOLD_ROW9[@]}" docs/seed-paths.txt docs/seed-audit.md; do
-        [ -f "$SCAFFOLD_DIR/$asset" ] \
-            || { fail "required scaffold file missing: $SCAFFOLD_DIR/$asset"; missing=1; }
+        printf '%s\n' "$image" | grep -qxF -- "$asset" \
+            || { fail "required scaffold file missing at $SOURCE_SHA: $asset"; missing=1; }
     done
     if [ "$missing" -ne 0 ]; then
         fail "The scaffold image must carry the layer's CI (row 9), its root files and"
@@ -644,13 +657,14 @@ phase4_scaffold() {
         die 1 "scaffold incomplete"
     fi
 
-    # <scaffold>/X lands at <layer>/X — one copy rule, shared with agent-layer-sim.sh.
+    # <image>/X lands at <layer>/X — one copy rule, shared with agent-layer-sim.sh.
+    ali_extract_image "$SOURCE_ROOT" "$SOURCE_SHA" "$WORK_DIR" \
+        || die 1 "could not write the scaffold image of $SOURCE_SHA into $WORK_DIR"
     local f
     while IFS= read -r f; do
-        mkdir -p "$WORK_DIR/$(dirname "$f")" || die 1 "mkdir failed for $f"
-        cp "$SCAFFOLD_DIR/$f" "$WORK_DIR/$f" || die 1 "cannot write $f"
+        [ -f "$WORK_DIR/$f" ] || die 1 "scaffold file not written: $f"
         pass "wrote $f"
-    done < <(scaffold_image_files)
+    done <<< "$image"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
     git add -A || die 1 "git add failed"

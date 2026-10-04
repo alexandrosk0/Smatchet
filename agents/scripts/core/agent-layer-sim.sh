@@ -46,10 +46,12 @@
 set -uo pipefail
 
 _SCRIPT_PATH="${BASH_SOURCE[0]}"
-SCAFFOLD_REL="agents/scripts/core/seed-agent-layer-repo.d"
-# The one scaffold file that is a seed-TIME input, not part of the layer image.
-SCAFFOLD_NON_IMAGE="seed-scrub-paths.txt"
-MANIFEST_REL="$SCAFFOLD_REL/docs/seed-paths.txt"
+SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
+# The scaffold image rule (ALI_SCAFFOLD_REL, ali_extract_image), shared with the
+# seed script so the simulated tree is the seeded tree.
+# shellcheck source=agents/scripts/core/lib/agent-layer-image.sh
+. "$SCRIPT_DIR/lib/agent-layer-image.sh"
+MANIFEST_REL="$ALI_SCAFFOLD_REL/docs/seed-paths.txt"
 
 LANE_ORDER=(bats shell docs)
 declare -A LANE_WORKFLOW=(
@@ -152,16 +154,8 @@ build_image() {
     git -C "$src" archive --format=tar "$sha" -- "${specs[@]}" | tar -x -C "$DIR" \
         || die 2 "git archive of the manifest pathspecs failed"
 
-    # The scaffold image: <scaffold>/X lands at <layer>/X, exactly as seed phase 4
-    # writes it — one copy rule for both, so the simulation is the seed's tree.
-    local stage
-    stage="$(mktemp -d "${TMPDIR:-/tmp}/agent-layer-sim-scaffold.XXXXXX")" || die 2 "mktemp failed"
-    git -C "$src" archive --format=tar "$sha" -- "$SCAFFOLD_REL" | tar -x -C "$stage" \
-        || { rm -rf "$stage"; die 2 "git archive of the scaffold failed"; }
-    rm -f "$stage/$SCAFFOLD_REL/$SCAFFOLD_NON_IMAGE"
-    ( cd "$stage/$SCAFFOLD_REL" && tar -cf - . ) | tar -x -C "$DIR" \
-        || { rm -rf "$stage"; die 2 "scaffold copy failed"; }
-    rm -rf "$stage"
+    # The scaffold image, by the same rule seed phase 4 copies it with.
+    ali_extract_image "$src" "$sha" "$DIR" || die 2 "could not write the scaffold image of $sha"
 
     (
         cd "$DIR" || exit 2
@@ -220,7 +214,9 @@ check_drift() {
 }
 
 # Run one lane in the image exactly as its workflow does: from the tree root, with
-# both roots on the tree (the layer is its own host when it runs standalone).
+# both roots on the tree (the layer is its own host when it runs standalone), and
+# stdin closed as on a runner — a command reading stdin must not swallow the rest
+# of the lane's command list.
 run_lane() {
     local lane="$1" log="$2" cmd rc=0
     : > "$log" || return 1
@@ -228,9 +224,24 @@ run_lane() {
         printf '\n$ %s\n' "$cmd" >> "$log"
         # shellcheck disable=SC2086  # cmd is a fixed, word-split command line
         ( cd "$DIR" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-              PROJECT_ROOT="$DIR" AGENT_LAYER_ROOT="$DIR" $cmd ) >> "$log" 2>&1 || { rc=$?; break; }
+              PROJECT_ROOT="$DIR" AGENT_LAYER_ROOT="$DIR" $cmd ) < /dev/null >> "$log" 2>&1 || { rc=$?; break; }
     done <<< "${LANE_COMMANDS[$lane]}"
     return "$rc"
+}
+
+# test-all.sh --ci turns a wrapper's exit 2 into "SKIPPED (ci): missing
+# binary/build". In a standalone layer an exit 2 is almost always a file the
+# manifest does not carry — the exact gap this simulation exists to find — so the
+# bats lane may carry none. A suite that genuinely needs the consuming product
+# names its host subject in test-all.sh LAYER_HOST_SUT_RE and skips explicitly.
+check_no_exit2_skips() {
+    local log="$1" hits
+    hits="$(awk '/^# (agents|scripts)\//{s=$2} /^SKIPPED \(ci\): exit 2/{print s}' "$log")"
+    [ -z "$hits" ] && return 0
+    printf '  FAIL  bats: suite(s) skipped by exit 2 — a missing seeded file, not a missing tool:\n' >&2
+    printf '%s\n' "$hits" | sed 's/^/          /' >&2
+    printf '        Seed what each one needs, or name its host subject in test-all.sh LAYER_HOST_SUT_RE.\n' >&2
+    return 1
 }
 
 main() {
@@ -256,7 +267,8 @@ main() {
             failed=1
             continue
         fi
-        if run_lane "$lane" "$logs/$lane.log"; then
+        if run_lane "$lane" "$logs/$lane.log" \
+            && { [ "$lane" != bats ] || check_no_exit2_skips "$logs/$lane.log"; }; then
             printf '  PASS  %-5s %s\n' "$lane" "${LANE_WORKFLOW[$lane]}"
         else
             printf '  FAIL  %-5s %s — log: %s\n' "$lane" "${LANE_WORKFLOW[$lane]}" "$logs/$lane.log" >&2

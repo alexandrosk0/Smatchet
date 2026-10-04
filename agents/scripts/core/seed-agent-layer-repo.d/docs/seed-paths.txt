@@ -53,7 +53,8 @@ scripts/dev/project-config.sh
 scripts/dev/test-all.sh
 scripts/dev/test-docs.sh
 
-# --- test fixtures the seeded suites read (HAND-MAINTAINED — see CONTRACT above) ---
+# --- test fixtures + data the seeded suites read (HAND-MAINTAINED — see CONTRACT above) ---
+tests/dev/comment_tooling/
 tests/fixtures/function_size/
 tests/fixtures/lint_rules/
 tests/fixtures/shell_lint/
