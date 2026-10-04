@@ -66,6 +66,8 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
 
 TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
+TicketSyncService::~TicketSyncService() { CancelAndJoinActiveStreamingSync(); }
+
 bool TicketSyncService::ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
                                                               int consecutiveEmptyFullSyncs, int emptyWipeThreshold,
                                                               std::chrono::milliseconds emptyStreakElapsed,
