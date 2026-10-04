@@ -15,6 +15,7 @@
 // concrete `GridContextDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
 // so they can exercise the service without constructing an AppController.
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -71,7 +72,13 @@ class OfflineQueueService {
     explicit OfflineQueueService(IOfflineQueueDeps& deps);
 
     // --- Phase 1A: trivial read-only accessors -------------------------------------------
+    /// Rows in the active create queue (every backend) as last counted on a worker: one atomic load,
+    /// never SQLite, so the UI may read it every frame. A queue change made through this service, a
+    /// replay pass and a replaced local cache each recount on a worker, so a read can trail a change
+    /// by one recount. The exact count is GetPendingCreates().size().
     std::size_t GetPendingCreateCount() const;
+    /// Field-edit twin of GetPendingCreateCount; the exact count is GetPendingFieldEdits().size().
+    std::size_t GetPendingFieldEditCount() const;
     std::size_t GetDeadPendingCreateCount() const;
     std::vector<PendingCreate> GetPendingCreates() const;
     std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
@@ -301,7 +308,30 @@ class OfflineQueueService {
     void SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
                                      LegacyProjectSweepTally& tally);
 
+    // --- Pending-count mirror (GetPendingCreateCount / GetPendingFieldEditCount) -------------
+    /// Recount both active queues on a worker. Coalesces with a recount already queued or running,
+    /// which then counts once more, so no change is missed. Any thread.
+    void RequestPendingCountRefresh();
+    /// Worker body of RequestPendingCountRefresh: recounts until no request is left.
+    void RunPendingCountRefresh();
+    /// Count both active queues in the current cache and publish the counts. Worker only.
+    void RecountPendingRows();
+    /// Requests a recount when the cache object changed (first use, or the local cache was
+    /// recreated). UI thread, every frame: a pointer compare unless it changed.
+    void RecountIfCacheReplaced();
+    /// A replay tick just loaded `loadedRows` rows: requests a recount when `mirror` disagrees
+    /// (rows written to the cache outside this service).
+    void RecountIfDrifted(std::size_t loadedRows, const std::atomic<std::size_t>& mirror);
+
     IOfflineQueueDeps& deps_;
+
+    std::atomic<std::size_t> pendingCreateCount_{0};
+    std::atomic<std::size_t> pendingFieldEditCount_{0};
+    std::atomic<const ISyncCache*> countedCache_{nullptr}; ///< the cache the last requested recount reads
+    std::mutex recountMutex_; ///< workers only: one recount at a time, so an older read never wins
+    std::mutex countRefreshMutex_;
+    bool countRefreshInFlight_ = false;  ///< guarded by countRefreshMutex_
+    bool countRefreshRequested_ = false; ///< guarded by countRefreshMutex_
 
     // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
     // All accesses go through `offlineReplayScheduleMutex_`. UI thread sets the schedule

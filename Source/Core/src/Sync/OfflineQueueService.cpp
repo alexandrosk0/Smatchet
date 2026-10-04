@@ -175,18 +175,85 @@ std::string MineValueToMarkdown(const nlohmann::json& myVal) {
 
 OfflineQueueService::OfflineQueueService(IOfflineQueueDeps& deps) : deps_(deps) {}
 
-std::size_t OfflineQueueService::GetPendingCreateCount() const {
-    if (!deps_.Cache()) {
-        return 0;
+// Pillar 2: the status bar reads these every frame, so they are atomics a worker keeps current.
+std::size_t OfflineQueueService::GetPendingCreateCount() const { return pendingCreateCount_.load(); }
+
+std::size_t OfflineQueueService::GetPendingFieldEditCount() const { return pendingFieldEditCount_.load(); }
+
+void OfflineQueueService::RequestPendingCountRefresh() {
+    {
+        std::lock_guard<std::mutex> lock(countRefreshMutex_);
+        countRefreshRequested_ = true;
+        if (countRefreshInFlight_) {
+            return; // the running refresh sees the request and counts once more
+        }
+        countRefreshInFlight_ = true;
     }
     try {
-        return deps_.Cache()->LoadPendingCreates().size();
+        deps_.LaunchBackgroundTask([this]() { RunPendingCountRefresh(); });
     } catch (const std::exception& ex) {
-        LOG_ERROR("OfflineQueueService::GetPendingCreateCount failed: %s", ex.what());
-        return 0;
+        LOG_WARN("OfflineQueueService: could not start counting the offline queue: %s", ex.what());
+        std::lock_guard<std::mutex> lock(countRefreshMutex_);
+        countRefreshInFlight_ = false;
+    }
+}
+
+void OfflineQueueService::RunPendingCountRefresh() {
+    bool released = false;
+    // A throw must not leave the refresh marked in flight, or no later change would be counted.
+    ScopeExit release([this, &released]() {
+        if (!released) {
+            std::lock_guard<std::mutex> lock(countRefreshMutex_);
+            countRefreshInFlight_ = false;
+        }
+    });
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lock(countRefreshMutex_);
+            if (!countRefreshRequested_) {
+                countRefreshInFlight_ = false;
+                released = true;
+                return;
+            }
+            countRefreshRequested_ = false;
+        }
+        RecountPendingRows();
+    }
+}
+
+void OfflineQueueService::RecountPendingRows() {
+    std::lock_guard<std::mutex> lock(recountMutex_);
+    const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+    if (!cache) {
+        pendingCreateCount_.store(0);
+        pendingFieldEditCount_.store(0);
+        return;
+    }
+    try {
+        const std::size_t creates = cache->LoadPendingCreates().size();
+        const std::size_t edits = cache->LoadPendingFieldEdits().size();
+        pendingCreateCount_.store(creates);
+        pendingFieldEditCount_.store(edits);
+    } catch (const std::exception& ex) {
+        LOG_WARN("OfflineQueueService: counting the offline queue failed; keeping the previous counts: %s", ex.what());
     } catch (...) {
-        LOG_ERROR("OfflineQueueService::GetPendingCreateCount failed: unknown exception");
-        return 0;
+        LOG_WARN("OfflineQueueService: counting the offline queue failed (unknown exception); keeping the previous "
+                 "counts");
+    }
+}
+
+void OfflineQueueService::RecountIfCacheReplaced() {
+    const ISyncCache* cache = deps_.Cache();
+    if (cache == countedCache_.load()) {
+        return;
+    }
+    countedCache_.store(cache);
+    RequestPendingCountRefresh();
+}
+
+void OfflineQueueService::RecountIfDrifted(std::size_t loadedRows, const std::atomic<std::size_t>& mirror) {
+    if (loadedRows != mirror.load()) {
+        RequestPendingCountRefresh();
     }
 }
 
@@ -278,6 +345,9 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
 
     LOG_INFO("Legacy-project sweep: recovered=%d, dead-lettered=%d, untouched=%d", tally.Recovered, tally.DeadLettered,
              tally.Untouched);
+    if (tally.DeadLettered > 0) {
+        RequestPendingCountRefresh();
+    }
 }
 
 void OfflineQueueService::SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
@@ -380,16 +450,15 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     // real field values. The audit copy is a SEPARATE, structurally-redacted view of the same
     // draft (security #10): `auditDraft` is the only form that touches the audit trail.
     const nlohmann::json auditDraft = MakeAuditDraft(payload);
+    std::int64_t id = 0;
     try {
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
         // strictly matches this key, so a create queued under Jira never replays against Plane.
-        const std::int64_t id =
-            cache->EnqueuePendingCreate(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, payload);
+        id = cache->EnqueuePendingCreate(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(), std::to_string(id), true,
                                         std::string(),
                                         nlohmann::json{{"pending_create_id", id}, {"draft", auditDraft}});
-        return id;
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::QueueCreateOffline failed: %s", ex.what());
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(),
@@ -397,6 +466,8 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
                                         nlohmann::json{{"draft", auditDraft}});
         return 0;
     }
+    RequestPendingCountRefresh();
+    return id;
 }
 
 AppController::DeadLetterRestoreSummary
@@ -437,6 +508,9 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
                                             nlohmann::json{{"original_pending_create_id", id}});
         }
     }
+    if (summary.Restored > 0) {
+        RequestPendingCountRefresh();
+    }
     return summary;
 }
 
@@ -474,6 +548,9 @@ OfflineQueueService::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t
                                             std::to_string(id), false, "Unknown exception.",
                                             nlohmann::json{{"original_pending_field_edit_id", id}});
         }
+    }
+    if (summary.Restored > 0) {
+        RequestPendingCountRefresh();
     }
     return summary;
 }
@@ -533,6 +610,9 @@ OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendi
                                             "Unknown exception.", nlohmann::json{{"pending_create_id", id}});
         }
     }
+    if (summary.Deleted > 0) {
+        RequestPendingCountRefresh();
+    }
     return summary;
 }
 
@@ -562,10 +642,11 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                    "reachable.";
         return 0;
     }
+    std::int64_t id = 0;
     try {
         // Stamp the backend namespace of the pane the edit was made in (multi-grid Slice 1c) — see
         // QueueCreateOffline.
-        const std::int64_t id =
+        id =
             cache->EnqueuePendingFieldEdit(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, issueKey, fieldId,
                                            fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
@@ -573,7 +654,6 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
                                         std::string(),
                                         nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
-        return id;
     } catch (const std::exception& ex) {
         outError = "Saving this edit to the offline queue failed (local database error). Retry the edit once "
                    "Tracker is reachable.";
@@ -583,6 +663,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                                         nlohmann::json{{"field_id", fieldId}});
         return 0;
     }
+    RequestPendingCountRefresh();
+    return id;
 }
 
 std::vector<PendingFieldEditRecord> OfflineQueueService::GetPendingFieldEdits() const {
@@ -763,6 +845,9 @@ OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& id
                                             false, "Unknown exception.", nlohmann::json{{"pending_field_edit_id", id}});
         }
     }
+    if (summary.Deleted > 0) {
+        RequestPendingCountRefresh();
+    }
     return summary;
 }
 
@@ -842,6 +927,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         offlineFieldEditReplayInFlight_ = false;
         return;
     }
+    RecountIfDrifted(pending.size(), pendingFieldEditCount_);
     // Capture-then-check token (issue #1081): latched at work-capture time, re-checked
     // before the post-replay RefreshLocalData below so a replay that completed against the
     // OLD backend never wholesale-replaces the NEW backend's ActiveTickets after a swap.
@@ -914,6 +1000,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
                      tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
         }
 
+        RecountPendingRows(); // on this worker: the pass deleted or archived rows
         std::chrono::seconds delay{5};
         if (!tally.RanUpdate && !pending.empty()) {
             delay = std::chrono::seconds(300);
@@ -1388,6 +1475,7 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
 }
 
 void OfflineQueueService::TickOfflineCreates() {
+    RecountIfCacheReplaced(); // ahead of every early return: the counts matter in read-only mode too
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
@@ -1427,6 +1515,7 @@ void OfflineQueueService::TickOfflineCreates() {
     // namespace (proven TOCTOU). The generation gates the post-replay RefreshLocalData.
     const std::string capturedBackendKey = deps_.CacheBackendKey();
     const std::uint64_t capturedGeneration = deps_.BackendGeneration();
+    RecountIfDrifted(pending.size(), pendingCreateCount_);
     // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
     // backend are replayed; other backends' rows stay queued for their own context.
     FilterRowsToReplayBackendKey(pending, capturedBackendKey, "TickOfflineCreates");
@@ -1489,6 +1578,7 @@ void OfflineQueueService::TickOfflineCreates() {
                          "cache_op_failures=%d",
                          tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
             }
+            RecountPendingRows(); // on this worker: the pass deleted or archived rows
             std::chrono::seconds delay{5};
             if (!tally.RanCreate && !pending.empty()) {
                 delay = std::chrono::seconds(300);
