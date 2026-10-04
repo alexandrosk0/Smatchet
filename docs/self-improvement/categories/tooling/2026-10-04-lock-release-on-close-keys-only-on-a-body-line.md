@@ -6,6 +6,7 @@
 - **Observed on**:
   - PR #2286 orphaned lock `crash-retire-terminate-prefs-enddisabled` when it merged 2026-10-04T01:59:46Z.
   - PR #2280 then merged at 04:47:49Z with `Plan-lock gate` red under `plan-lock-out-of-band`. The orphan was one of the two overlaps that label waived.
+  - PR #2164 is a second instance. It merged 2026-09-13T21:24:01Z with no `lock-slug:` line and orphaned `gate-selftest-msys-execbit`, which is still on origin on 2026-10-04 with stale-lock Issue #2215 open. See [`2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md`](2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md).
 - **Status**: open
 
 ## What happened

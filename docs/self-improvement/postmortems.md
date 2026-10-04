@@ -34,6 +34,58 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-10-04 · PR #2213 · override: bare `plan-lock-out-of-band` over a 12-day-stale `Plan-lock gate` red that a re-run would have cleared
+
+### What escaped
+`chore: archive multi-jira plan and record #2212 merge snapshot` (#2213, head `1df75c8a`, branch `cursor/archive-multi-jira-plan-2eef`, opened by a Cursor agent) merged 2026-09-24T13:48:26Z as `f3128222`. Its only `Plan-lock gate` run (job `103468437213`, 2026-09-12T00:46:43Z) was **failure**:
+
+```text
+'docs/plans/INDEX.md' overlaps the write set of plan-lock 'gate-selftest-msys-execbit', held by a different branch.
+```
+
+A session applied `plan-lock-out-of-band` at 2026-09-24T11:36:31Z and the PR merged two hours later. Nothing records why: there is no `plan-lock-disposition:` line, no comment, and no `merge-snapshots.jsonl` row. It was a direct merge with no auto-merge request.
+
+Every other check on the head was green, except `Cursor Bugbot`, which was neutral because of its usage cap.
+
+The detector missed it twice over. #2213 is outside `postmortem-owed.sh`'s 20-merge window, and that window is blinded anyway by the HTTP 504 in the #2286 entry below. It surfaced only through the #2160 follow-up search for `label:plan-lock-out-of-band`.
+
+### Root cause
+The red was correct when it was written, and wrong by the time it was overridden. The gate re-evaluated nothing in between.
+
+- **At 2026-09-12T00:46Z the overlap was real.** `gate-selftest-msys-execbit` belonged to `claude/stoic-mccarthy-082155`, the head of #2164, which was still open, and its write set lists `docs/plans/INDEX.md`.
+- **The lock aged out.** Its `updated` time, 2026-08-29T17:22:38Z, crossed `plan-lock-gate.sh:33`'s 14-day cutoff at 2026-09-12T17:22:38Z, so the gate would skip it from then on.
+- **The owner PR merged.** #2164 merged 2026-09-13T21:24:01Z without a `lock-slug:` line, so `lock-cleanup.yml` left the lock orphaned. It is still on origin today. Stale-lock Issue #2215 was opened 2026-09-13 and is refreshed daily with no response.
+
+By the merge, the red's cause had expired twice. A re-run would have been green: `Plan-lock gate` passed on #2243 and #2273, which edited the same `docs/plans/INDEX.md` while the same lock was still on origin.
+
+Three gate holes compound this:
+
+1. **The verdict is frozen at push time.** `plan-lock-gate.yml` triggers only on `opened` / `synchronize` / `reopened`. The lock table it judges keeps changing through claims, releases and the cutoff, but nothing re-evaluates the check. The merge poller and every native path trust a 12-day-old verdict, in both directions.
+2. **The hatch is a bare boolean**, the #2160 class. The label cleared a red nobody had re-examined, with no disposition required.
+3. **Release-on-close keys only on `lock-slug:`**, the #2280 class. #2164 orphaned its lock exactly as #2286 did.
+
+### Preventing gate
+PRIMARY — **re-evaluate a red `Plan-lock gate` against the live lock table at merge time, before honouring `plan-lock-out-of-band`.** In `merge-gates.sh`, pipe `gh pr diff --name-only` through `plan_lock_gate_decide` (sourced from `plan-lock-gate.sh`) after fetching `refs/locks/*`:
+
+- **Now clean:** the red is stale. Refuse the downgrade and print `gh run rerun <id>`.
+- **Still red:** the label applies, under the #2160 per-slug disposition rule.
+
+Run the same re-check on a green whose run predates a covering lock's `updated`.
+
+Replayed on #2213 at 13:48:26Z: the lock's epoch (08-29T17:22Z) is older than the cutoff (09-10T13:48Z), so the decision is clean. The downgrade is refused, job `103468437213` is re-run and passes, and the merge needs no override.
+
+Companions:
+- the branch-matched lock release from the #2280 entry, which also covers #2164's orphan;
+- a scheduled re-run of red `Plan-lock gate` runs.
+
+### Eval case
+none — not agent-reviewable. The gap is in the gate's own lifecycle: a time- and state-dependent check evaluated only at push, plus the override contract. #2213's diff (plan archive + a ledger row) contains nothing a review agent would score.
+
+### Filed as
+- [`categories/tooling/2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md`](categories/tooling/2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md) (P2 — merge-time re-evaluation; also records the live orphan `gate-selftest-msys-execbit` / Issue #2215 for operator release)
+- [`categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md`](categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md) (#2164 added as a second orphan instance)
+- [`categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md`](categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md) § Follow-up measurement — 2026-10-04
+
 ## 2026-10-04 · PR #2280 · override: `plan-lock-out-of-band` over a lock orphaned by a merged PR — and the same label silently waived a second, undispositioned overlap
 
 ### What escaped
@@ -57,7 +109,7 @@ Two gate holes. Neither one is the override decision itself, which was sound for
 
 **(2) The hatch is still a bare, whole-gate boolean.** This is the #2160 class recurring: `merge-gates.d/10-gate-filter.sh:36`, unchanged since that entry was filed. One label waives every overlap on the run. The author volunteered a disposition the gate does not ask for, but the gate cannot tell a disposition covering one of two slugs from one covering both, so overlap A was cleared without anyone looking at it. It happened to be harmless: #2288 does not edit `tests/CMakeLists.txt`, because its lock claims more than its diff, and it is still mergeable. That was luck.
 
-The 2026-10-04 follow-up on the #2160 entry also found **#2213** (merged 2026-09-24): a red `Plan-lock gate` under a bare label with no disposition at all, and no ledger entry yet.
+The 2026-10-04 follow-up on the #2160 entry also found **#2213** (merged 2026-09-24): a red `Plan-lock gate` under a bare label with no disposition at all. It has its own entry above.
 
 ### Preventing gate
 PRIMARY — **release locks by `claim.json` branch on PR close**, not only by `lock-slug:` line. Add a fallback step to `lock-cleanup.yml`:
