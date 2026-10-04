@@ -579,8 +579,8 @@ void AppController::CancelAndJoinAllPaneStreamingSyncs() {
             services.push_back(entry.second->ticketSync_.get());
         }
     }
-    // focusedContextPtr_ may resolve to a retired husk (ADR-0012 graveyard) outside the live map;
-    // CancelAndJoinAll drops the duplicate when it is a live entry.
+    // The focused context may be a retired husk (ADR-0012 graveyard) outside the live map. When it
+    // is a live entry instead, CancelAndJoinAll drops the duplicate.
     if (focusedContext().ticketSync_) {
         services.push_back(focusedContext().ticketSync_.get());
     }
