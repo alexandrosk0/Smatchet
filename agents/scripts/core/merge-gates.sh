@@ -27,9 +27,18 @@
 # Plus: pullRequest.state == OPEN, reviewDecision in {APPROVED, null},
 # all connection pageInfo.hasNextPage == false.
 #
-# Rollup dedup: required CheckRuns with the same `.name` are deduped to the
-# entry with the latest `.startedAt` so stale FAILUREs from rerun jobs don't
-# falsely block. StatusContexts are deduped by `.context` (GitHub overwrites).
+# Rollup dedup: CheckRuns with the same `.name` are deduped to the newest entry
+# (newest check suite, then latest `.startedAt` — see 10-gate-filter.sh) so
+# stale FAILUREs from rerun jobs don't falsely block. StatusContexts are
+# deduped by `.context` (GitHub overwrites).
+# The rule cuts both ways: a rerun always carries the newest `.startedAt`, so a
+# rerun that FAILS displaces whatever stood before it — an older SUCCESS, or a
+# CANCELLED that blocked nothing — and the gate then blocks on the fresh red.
+# Latest-wins is still right; it just means a rerun is not free. In particular
+# `gh run rerun` replays the run's ORIGINAL event payload, so rerunning a check
+# whose subject is that payload (e.g. a PR-body-reading gate) can only re-fail —
+# and now blocks where it did not before (process 2026-09-07
+# rerunning-a-body-reading-gate-replays-a-frozen-payload).
 #
 # Per-PR label overrides (AGENTS.md § Merge gates § Per-PR overrides):
 #   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
