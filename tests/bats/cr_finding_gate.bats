@@ -903,3 +903,120 @@ run_nudge() {
     NUDGE_MODE=never-reviewed run_nudge
     [ ! -s "$POST_LOG" ]
 }
+
+# --- OSS arm: a failed requested review is terminal ------------------------
+# process 2026-08-17 cr-finding-gate-accepts-a-verdict-line-without-a-review,
+# action 4. On #2090 CodeRabbit acknowledged two human asks and both ended in
+# "An error occurred during the review process" — the first published by
+# EDITING the ack comment in place. The OSS arm's human_asked branch waited on
+# that forever (non-terminal every pass -> unbounded PENDING). oss_ask_state()
+# makes "requested and failed" a first-class state; these tests run the REAL
+# function, extracted from action.yml, against the stubbed `gh` above.
+
+setup_oss() {
+    awk '/oss_ask_state\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' \
+        "$ACTION" > "$BATS_TEST_TMPDIR/oss.fn"
+    # Non-vacuity: an extraction miss must fail loudly, not test nothing.
+    grep -q 'an error occurred during the review process' "$BATS_TEST_TMPDIR/oss.fn"
+    grep -q 'gh api'                                      "$BATS_TEST_TMPDIR/oss.fn"
+    TSV="$BATS_TEST_TMPDIR/oss.tsv"; : > "$TSV"
+    POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
+    export TSV POST_LOG
+    OWNER=o REPO=r PR=1
+    export OWNER REPO PR
+    # shellcheck disable=SC1090
+    source "$BATS_TEST_TMPDIR/oss.fn"
+}
+
+# ask_row <login> <user.type> <updated_at> <body> — one comment in the
+# function's wire format (login TAB type TAB updated_at TAB flattened body).
+ask_row() {
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$TSV"
+}
+
+CR_LOGIN='coderabbitai[bot]'
+
+@test "oss: no human ask -> none (the terminal OSS failure path)" {
+    setup_oss
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:00:00Z 'Review skipped: manual review required for this OSS repository'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: human ask with no CR reply yet -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: human ask acknowledged, review in flight -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:00:20Z 'Full review requested for #2090 <details>Action performed - Full review triggered</details>'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: ack EDITED in place into 'Review failed' -> failed (the #2090 shape)" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:09:00Z 'Full review requested for #2090 <details>Action failed - Review failed</details>'
+    [ "$(oss_ask_state)" = failed ]
+}
+
+@test "oss: 'An error occurred during the review process' reply -> failed" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process. Please try again later.'
+    [ "$(oss_ask_state)" = failed ]
+}
+
+@test "oss: a fresh human ask after the failure supersedes it -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    ask_row alice User 2026-08-17T11:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a newer non-error CR reply after the error -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:30:00Z 'Reviewing #2090 at abcdef.'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a CR error from BEFORE the latest ask is not this ask's answer" {
+    setup_oss
+    # Position matters, not just timestamps: an older comment (created before
+    # the ask) edited later must not be read as the reply to this ask.
+    ask_row "$CR_LOGIN" Bot 2026-08-17T12:00:00Z 'Review failed (earlier attempt)'
+    ask_row alice User 2026-08-17T11:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a bot-authored ask is not a human ask -> none" {
+    setup_oss
+    ask_row 'github-actions[bot]' Bot 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "the failed-review state is wired into decide()'s OSS arm as a terminal failure" {
+    # The function existing is not enough: decide() must post a TERMINAL
+    # failure on it, not fall through to the waiting `return 1`.
+    awk "/grep -qi 'manual review required'; then/,/^            fi\$/" "$ACTION" \
+        > "$BATS_TEST_TMPDIR/oss-arm.txt"
+    grep -qF 'case "$(oss_ask_state)" in' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    awk '/^ *failed\)$/{f=1} f' "$BATS_TEST_TMPDIR/oss-arm.txt" | head -3 \
+        > "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+    grep -qF 'post failure "CodeRabbit errored on the requested review' "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+    grep -q 'exit 0' "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+}
+
+@test "the failed-review description names the next step within 140 chars" {
+    d="$(sed -n 's/^ *post failure "\(CodeRabbit errored on the requested review[^"]*\)"$/\1/p' "$ACTION")"
+    [ -n "$d" ]
+    [ "${#d}" -le 140 ]
+    printf '%s' "$d" | grep -qF "'@coderabbitai full review'"
+    printf '%s' "$d" | grep -qF 'cr-out-of-band'
+}

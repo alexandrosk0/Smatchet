@@ -251,6 +251,56 @@ runs:
             || echo "WARN: nudge comment POST failed (missing pull-requests:write? the /issues/ path needs it — permissions key on target type, not path)" >&2
         }
 
+        # oss_ask_state — where the human OSS manual trigger stands on this PR,
+        # for decide()'s `manual review required` arm. Echoes one of:
+        #   none    — no human-authored `@coderabbitai review` / `full review`;
+        #   waiting — a human asked and CodeRabbit has not answered it with an
+        #             error (it may still be working);
+        #   failed  — CodeRabbit's newest reply after the latest human ask is a
+        #             review ERROR ("An error occurred during the review
+        #             process" / "Review failed").
+        # `failed` is a first-class state because a failed invocation otherwise
+        # reads as one still running: on #2090 CR acknowledged two asks and
+        # both ended in an error, the first published by EDITING the ack
+        # comment in place. Waiting on that returns non-terminal on every pass
+        # and parks the PR on an unbounded PENDING (process 2026-08-17
+        # cr-finding-gate-accepts-a-verdict-line-without-a-review, action 4).
+        # Only CR comments positioned AFTER the latest ask count, newest by
+        # updated_at, so an ack edited into a failure counts at its edit time
+        # and a fresh human ask supersedes an earlier failure. A failed fetch
+        # reads as `none`, i.e. the terminal arm that names the human move.
+        oss_ask_state() {
+          local login utype ts cmt asked=false cr_ts="" cr_err=false
+          while IFS=$'\t' read -r login utype ts cmt; do
+            if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
+              if [ "$asked" = true ] && { [ -z "$cr_ts" ] || [ "$ts" \> "$cr_ts" ]; }; then
+                cr_ts="$ts"
+                if printf '%s' "$cmt" | grep -qiE 'an error occurred during the review process|review failed'; then
+                  cr_err=true
+                else
+                  cr_err=false
+                fi
+              fi
+              continue
+            fi
+            case "$utype" in Bot) continue ;; esac
+            case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
+            if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
+              asked=true
+              cr_ts=""
+              cr_err=false
+            fi
+          done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
+                    --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + (.updated_at // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
+          if [ "$asked" = false ]; then
+            echo none
+          elif [ "$cr_err" = true ]; then
+            echo failed
+          else
+            echo waiting
+          fi
+        }
+
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
         # `cr-out-of-band` + a `cr-disposition:<reason>` attestation lets a
         # maintainer force-pass this gate (PR-3 disposition trail). The workflow
@@ -531,28 +581,26 @@ runs:
             # `@coderabbitai review` nudges drew no review in the observed
             # parked cases (0/5 on #2176/#2184) while human-authored ones did
             # (4/4), yet one github-actions[bot] nudge on #2036 did draw a
-            # reply. Post a TERMINAL failure naming the two sanctioned moves. Re-run triggers: CR review/comment (workflow
-            # issue_comment filter), labeled/unlabeled waiver, or a human
+            # reply. Post a TERMINAL failure naming the two sanctioned moves.
+            # Re-run triggers: CR review/comment (workflow issue_comment
+            # filter), labeled/unlabeled waiver, or a human
             # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
               # If a human already asked, keep waiting — CR may still be working
-              # (synchronize / human-trigger comment re-runs land here).
-              human_asked=false
-              while IFS=$'\t' read -r login utype cmt; do
-                case "$utype" in Bot) continue ;; esac
-                case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
-                if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
-                  human_asked=true
-                  break
-                fi
-              done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
-                        --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
-              if [ "$human_asked" = true ]; then
-                echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
-                return 1
-              fi
-              # Keep <=140 chars (GitHub status description limit).
+              # (synchronize / human-trigger comment re-runs land here) — UNLESS
+              # CR has since answered that ask with a review error: waiting on a
+              # failed invocation is an unbounded PENDING, so post a terminal
+              # failure naming the next step instead. Descriptions <=140 chars
+              # (GitHub status description limit).
+              case "$(oss_ask_state)" in
+                waiting)
+                  echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
+                  return 1 ;;
+                failed)
+                  post failure "CodeRabbit errored on the requested review: re-ask '@coderabbitai full review' OR labels cr-out-of-band + cr-disposition:<reason>"
+                  exit 0 ;;
+              esac
               post failure "OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled"
               exit 0
             fi
