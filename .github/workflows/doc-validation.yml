@@ -208,8 +208,20 @@ jobs:
           persist-credentials: true
       - name: Note autosync skipped (checkout could not authenticate)
         if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'failure'
+        env:
+          # Secrets can't be read in a step `if:` or echoed; route PRESENCE only.
+          PAT_CONFIGURED: ${{ secrets.PLAN_INDEX_PAT != '' }}
         run: |
-          echo "::warning::INDEX autosync skipped — credentialed checkout could not authenticate (PLAN_INDEX_PAT absent/expired). This advisory auto-fixer is a no-op here; INDEX correctness stays hard-gated by the required test-plan-index check. Restore the PAT (see job header) to re-enable auto-fix."
+          # The checkout token is `PLAN_INDEX_PAT || github.token`, so the two
+          # failure causes need different owners: a SET secret was used and
+          # rejected (expired / revoked — only an admin rotation fixes it), while
+          # an ABSENT secret means the checkout ran under GITHUB_TOKEN and failed
+          # for another reason (re-run), and auto-fix stays off until one is added.
+          if [ "$PAT_CONFIGURED" = "true" ]; then
+            echo "::warning title=PLAN_INDEX_PAT rejected::INDEX autosync skipped — PLAN_INDEX_PAT is set but the checkout could not authenticate with it (expired or revoked). Rotate it: a repo admin saves a fresh fine-grained PAT (this repo only, Contents: Read and write) as the PLAN_INDEX_PAT Actions secret (see job header). This advisory auto-fixer is a no-op until then; INDEX correctness stays hard-gated by the required test-plan-index check."
+          else
+            echo "::warning title=PLAN_INDEX_PAT absent::INDEX autosync skipped — PLAN_INDEX_PAT is not configured, and the checkout under the default GITHUB_TOKEN failed anyway (likely transient — re-run the job). Auto-fix additionally needs the PLAN_INDEX_PAT secret (see job header); INDEX correctness stays hard-gated by the required test-plan-index check."
+          fi
       - name: Set up Python
         if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'success'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
