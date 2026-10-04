@@ -159,6 +159,16 @@
             "timeout": 15000
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*__(enable_pr_auto_merge|set_auto_merge)|set_auto_merge",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/docs/harness/claude-code/hooks/guard-auto-merge-arm.sh\"",
+            "timeout": 3000
+          }
+        ]
       }
     ],
     "PostToolUse": [
