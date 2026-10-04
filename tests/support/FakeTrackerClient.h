@@ -30,12 +30,15 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <functional>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -198,6 +201,27 @@ class FakeTrackerClient : public ITrackerBackend,
         if (outWarning)
             *outWarning = fetchWarning_;
         return fetchTickets_;
+    }
+
+    /// Default: the base adapter over FetchIssues. With SetSlowStreamedPages armed, models a paged
+    /// fetch whose every page is an in-flight request that ignores cancellation (a real HTTP call
+    /// runs to completion or timeout); `shouldCancel` is only consulted BETWEEN pages, exactly
+    /// like the Jira / GitHub pagination loops. Returns a partial (non-full) summary.
+    TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
+                                                 const TrackerConfig* configOverride = nullptr,
+                                                 const ViewsStore* viewsOverride = nullptr) override {
+        if (slowStreamedPageCount_ <= 0) {
+            return ITrackerIssueReader::FetchIssuesStreamed(onBatch, shouldCancel, configOverride, viewsOverride);
+        }
+        TrackerIssueFetchSummary summary;
+        for (int page = 0; page < slowStreamedPageCount_; ++page) {
+            ++slowStreamedPagesStarted_;
+            std::this_thread::sleep_for(slowStreamedPageDelay_);
+            if (shouldCancel && shouldCancel()) {
+                break;
+            }
+        }
+        return summary;
     }
 
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& /*cfg*/,
@@ -720,6 +744,15 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchWarning_ = warning;
     }
 
+    /// Arm the slow paged FetchIssuesStreamed model: `pageCount` pages of `pageDelay` each.
+    void SetSlowStreamedPages(int pageCount, std::chrono::milliseconds pageDelay) {
+        slowStreamedPageCount_ = pageCount;
+        slowStreamedPageDelay_ = pageDelay;
+    }
+    /// Pages the slow model has STARTED (each one an uncancellable in-flight request). Read from
+    /// the test thread while the sync worker increments it, hence atomic.
+    int SlowStreamedPagesStarted() const { return slowStreamedPagesStarted_.load(); }
+
     /// Script the static-fallback fetch failure with a realistic kind
     /// (retire-transport-error-text item 12); Detail doubles as the string error.
     void SetFetchIssuesError(TrackerError error) {
@@ -934,6 +967,11 @@ class FakeTrackerClient : public ITrackerBackend,
     std::string fetchError_;
     std::string fetchWarning_;
     std::size_t fetchIssuesCalls_ = 0;
+
+    // FetchIssuesStreamed slow paged model (SetSlowStreamedPages); off while count <= 0.
+    int slowStreamedPageCount_ = 0;
+    std::chrono::milliseconds slowStreamedPageDelay_{0};
+    std::atomic<int> slowStreamedPagesStarted_{0};
 
     // FetchIssuesForKeys
     bool fetchIssuesForKeysOk_ = true;
