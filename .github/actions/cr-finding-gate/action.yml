@@ -670,9 +670,12 @@ runs:
         # Window exhausted. If not a single fetch succeeded, the GraphQL API was
         # down the whole time -> surface error. Otherwise CR simply hasn't
         # settled on this head -> PENDING; a later review event or re-run
-        # resolves it.
+        # resolves it. The description names the next step so a parked PR is
+        # self-explanatory to whoever has to unpark it (tooling 2026-08-16
+        # cr-gate-nudge-403 entry, item 3). ASCII only and <=140 chars: post()
+        # cuts at 140, and nothing parses this text.
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
         else
-          post pending "awaiting CodeRabbit review on current head"
+          post pending "awaiting CodeRabbit on current head; if stalled, a human comments '@coderabbitai review' (scripts/dev/trigger-coderabbit-review.sh)"
         fi

@@ -211,6 +211,50 @@ provenance_step() {
     [ "$status" -eq 0 ]
 }
 
+# A parked PR must say what unparks it (tooling 2026-08-16 cr-gate-nudge-403
+# entry, item 3). Both PENDING descriptions — the action's window-exhausted one
+# and the workflow's fallback poster — name the human next step, and fit
+# GitHub's 140-char status-description limit (post() cuts at 140, so an
+# overlong text would silently lose its tail: the very next-step it carries).
+# ASCII-only, so a byte-counting locale cannot cut it mid-character.
+pending_desc_action() {
+    sed -n 's/^ *post pending "\(.*\)"$/\1/p' "$ACTION"
+}
+fallback_desc_wf() {
+    sed -n 's/^ *-f description="\(.*\)" \\$/\1/p' "$WF"
+}
+
+@test "window-exhausted PENDING names the human next step within 140 chars" {
+    d="$(pending_desc_action)"
+    [ -n "$d" ]
+    [ "$(printf '%s\n' "$d" | wc -l)" -eq 1 ]
+    [ "${#d}" -le 140 ]
+    # run + status, not a bare `!`: a negated pipeline that is not the last
+    # statement never fails a bats test (errexit exempts it).
+    run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
+    [ "$status" -ne 0 ]
+    printf '%s' "$d" | grep -qF "'@coderabbitai review'"
+    printf '%s' "$d" | grep -qF 'scripts/dev/trigger-coderabbit-review.sh'
+    # The helper it names must exist, or the hint is a dead end.
+    [ -f "$REPO_ROOT/scripts/dev/trigger-coderabbit-review.sh" ]
+}
+
+@test "fallback PENDING names the next step within 140 chars" {
+    d="$(fallback_desc_wf)"
+    [ -n "$d" ]
+    [ "${#d}" -le 140 ]
+    run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
+    [ "$status" -ne 0 ]
+    printf '%s' "$d" | grep -qF 're-run'
+    printf '%s' "$d" | grep -qF "'@coderabbitai review'"
+}
+
+@test "selftest: an overlong PENDING description is detected" {
+    d="$(pending_desc_action)"
+    long="${d} and then some extra words that push it well past the GitHub limit"
+    ! [ "${#long}" -le 140 ]
+}
+
 @test "selftest: a workflow with no fallback poster is detected" {
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"

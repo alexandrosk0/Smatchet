@@ -201,7 +201,8 @@ jobs:
       # PENDING on its behalf so a later CR review event or a re-run still has a
       # path to resolve it. The action runs `set +e` and exits 0 on every
       # terminal verdict (incl. `post failure`), so outcome != success/skipped
-      # genuinely means "did not conclude".
+      # genuinely means "did not conclude". The description names the next
+      # step (ASCII, <=140 chars — GitHub's status-description limit).
       - name: Post PENDING if the evaluation could not conclude
         if: >-
           always() && steps.eval.outcome != 'success' && steps.eval.outcome != 'skipped'
@@ -214,5 +215,5 @@ jobs:
           gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
             -f state=pending \
             -f context='CR findings (0 actionable)' \
-            -f description='gate evaluation did not conclude (timeout/runner fault) — re-run or await CR' \
+            -f description="gate evaluation did not conclude (timeout/runner fault): re-run it; if CR is stalled, a human comments '@coderabbitai review'" \
             >/dev/null || echo "WARN: fallback status POST failed" >&2
