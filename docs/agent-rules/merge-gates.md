@@ -109,7 +109,7 @@ Ship-loop: this is pause-exception (6) material when the helper exits 2 (cannot 
 | 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
 | 6 | `gh pr ready` unknown failure (after positive-check fallback) | surface error to user; do not auto-merge |
 | 7 | Actions unavailable — required context(s) absent for ≥`MERGE_GATES_OUTAGE_POLLS` polls AND zero workflow runs created repo-wide in the probe window | "Wait for Actions to drain, then re-poll" / "Re-fire CI (push or close-reopen), then re-poll" / "Abandon" — **no skip option**: an `--admin` merge past absent checks is exactly what postmortem-owed.sh's required-ABSENT detector flags (snapshot + deviation entry owed) |
-| 8 | Cancelled-while-pending — required context(s) absent, everything else terminal-green, and the head's runs include a CANCELLED run of the missing context's workflow with nothing queued/in-progress (the concurrency pending-queue collapse left no check-run; #1937) | "Rerun the named run(s) (`gh run rerun <id>` from the BLOCK output), then re-poll" / "Abandon" — **no skip option**: same absent-checks rationale as code 7 |
+| 8 | Cancelled-while-pending — required context(s) absent, everything else terminal-green, and the head's runs include a CANCELLED run of the missing context's workflow with nothing queued/in-progress (the concurrency pending-queue collapse left no check-run; #1937) | "Rerun the named run(s) (`gh run rerun <id>` from the BLOCK output), then re-poll" / "Abandon" — **no skip option**: same absent-checks rationale as code 7. **Rerun carve-out:** a rerun replays the run's *original* event payload, so it cannot fix a check whose input is `github.event.pull_request.*` (body / title — enumerate with `grep -rln -e github.event.pull_request.body -e github.event.pull_request.title .github/workflows/`); for those, edit the PR body instead — the `edited` event re-runs it against the current body |
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 
@@ -261,8 +261,9 @@ gh api "repos/OWNER/REPO/commits/HEAD_SHA/check-runs?per_page=100" \
 gh run rerun <run-id>          # the run whose job is CANCELLED, not the newer one
 ```
 
-No push, no force, no PR-body re-pin — none of those touch the stale context. Watch
-the 405 text change as it clears:
+No push, no force, no PR-body re-pin — none of those touch the stale context
+(unless the check reads the event payload — see the carve-out below the table).
+Watch the 405 text change as it clears:
 
 | Message | Meaning |
 |---|---|
@@ -270,10 +271,17 @@ the 405 text change as it clears:
 | `... is expected` | it was invalidated; GitHub is waiting for the fresh one |
 | *(merge succeeds)* | the re-run reported a terminal conclusion |
 
-Do **not** re-run the *newer* run to fix this, and do not re-run a job whose result
-depends on the PR body (`Intent section`): a re-run replays the original event
-payload, so it re-reads the body as it was, not as it is. For those, edit the body
-— that fires its own run against current state.
+Do **not** re-run the *newer* run to fix this, and do not re-run a check whose input
+is the event payload — `github.event.pull_request.*` (body / title; today the
+`Intent section` job — enumerate with
+`grep -rln -e github.event.pull_request.body -e github.event.pull_request.title .github/workflows/`).
+A re-run replays the original event payload, so it re-reads the body as it was, not
+as it is: a run that failed on the body can never pass, and its fresh FAILURE
+replaces the run's earlier conclusion (on #2180 a harmless `CANCELLED` became a
+blocking `FAILURE`). For those, edit the PR body — the `edited` event fires a new
+run against current state. Every such workflow must list `edited` in its
+`pull_request` types, or it has no re-trigger short of a new commit (pinned by
+`tests/bats/workflow_event_payload.bats`).
 
 Provenance: [`merge-gate-duplicate-check-name-drift`](../self-improvement/categories/applied.md).
 Pinned by `tests/bats/merge_gates.bats` (six dedup cases plus two for the WARN).

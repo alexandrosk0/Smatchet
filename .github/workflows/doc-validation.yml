@@ -79,6 +79,14 @@ on:
     # body edit changes). The heavier jobs self-gate on `Detect doc-relevant
     # changes` and `concurrency.cancel-in-progress` collapses rapid edits, so the
     # extra trigger is cheap. See docs/agent-rules/ship-loops.md § Intent capture.
+    # The inverse holds too: `gh run rerun` on a red `Intent section` replays the
+    # ORIGINAL event payload, so it re-reads the body (and head SHA) as they were
+    # when that run started. A run that failed on the body can never pass on a
+    # rerun, and the rerun is not free: its fresh FAILURE replaces the run's
+    # earlier conclusion (on #2180 a harmless CANCELLED became a blocking
+    # FAILURE). To re-run it, EDIT the PR body — that fires `edited` against the
+    # current body. Pinned by tests/bats/workflow_event_payload.bats
+    # (process 2026-09-07).
     types: [opened, synchronize, reopened, edited]
   # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
   # finding #14 path B): `Doc anchors + agent contract` is a branch-protection
