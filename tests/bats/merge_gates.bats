@@ -3726,6 +3726,39 @@ blocked_with_bot_threads() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
+@test "CR rate-limit + prior-commit clean review + docs-only delta (the #2070 shape) -> GATES_PASSED as STALE_CLEAN" {
+    # process 2026-08-18 cr-rate-limit-pause-classifies-whole-pr-not-unreviewed-
+    # delta: CR reviewed an earlier commit in full (0 actionable); the head is
+    # one later commit touching only a markdown file, and CR's quota ran out
+    # before it could re-review. The whole-PR diff is CODE (config + gate shell +
+    # bats), so a whole-PR pure-docs classifier must not be what decides this:
+    # the prior review object makes cr_state STALE (not NONE), STALE_CLEAN
+    # passes, and the rate-limit notice is annotated as non-blocking. #2070
+    # needed a cr-out-of-band + cr-disposition waiver for exactly this head.
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.reviews" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"COMMENTED","submittedAt":"2026-08-18T13:01:47Z","commit":{"oid":"a31fc8cc"},"body":"**Actionable comments posted: 0**\n\nNo actionable comments were generated."}]}')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> [!WARNING]\n> ## Review limit reached\n>\n> CodeRabbit is rate limited. Next review available in: 38 minutes."}]')"
+    f3="$(fixture_override "$f2" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"project.config.json"},{"path":"project.config.schema.json"},{"path":"agents/scripts/core/setup-branch-protection.sh"},{"path":"tests/bats/setup_branch_protection.bats"},{"path":"docs/agent-rules/merge-gates.md"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"CodeRabbit: STALE_CLEAN"* ]]
+    [[ "$output" == *"rate-limit stale-on-prior-push"* ]]
+    [[ "$output" != *"CODE-PR-pause"* ]]
+    # No waiver was needed, so none is recorded as load-bearing.
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0"* ]]
+    rm -f "$f1" "$f2" "$f3"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 @test "CR rate-limit + CODE PR + cr-out-of-band ALONE still BLOCKS (needs cr-disposition)" {
     local f1 f2 f3
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
