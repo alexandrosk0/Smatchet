@@ -134,7 +134,7 @@ It must pass the host `shell-lint` lane it will be committed under — `test-lin
 
 ## Phase C — the flip (Smatchet PR)
 
-11. `git rm -r agents/ docs/agent-rules/ docs/harness/` + `git rm docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + `git rm` the 61 layer-coupled bats suites + `git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (absolute public HTTPS URL — both repos public, resolves tokenless from forks and CI alike; 11b has the why-not-relative). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
+11. `git rm` exactly the seed manifest's pathspecs minus the mirrored files (`docs/mirrored-paths.txt`) — that is `agents/{core,_shared,scripts}/`, `docs/agent-rules/`, `docs/harness/`, `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, the two moved baselines, the layer's bats suites and fixtures; **not** `git rm -r agents/`, which also deletes `agents/project/` (host-side — the seed excludes it) and `agents/README.md` (corrected 2026-10-04, see 11a step 1) — + `git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (absolute public HTTPS URL — both repos public, resolves tokenless from forks and CI alike; 11b has the why-not-relative). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
 
 11a. **Ordered checklist.** Two commits, deliberately — a delete commit and an add commit — so the rollback in 11d has clean granularity and `git log --follow` in the host still traces the deletions:
 
@@ -155,11 +155,15 @@ git add docs/seed-paths.txt && git commit -m "chore(agent-layer): vendor the see
 awk 'NF && $1 !~ /^#/' docs/seed-paths.txt > /tmp/seed-paths.pathspec   # ls-files has no comment syntax
 git ls-files --pathspec-from-file=/tmp/seed-paths.pathspec > /tmp/pre-flip-inventory.txt
 
-# 1. remove the in-tree surface
-git rm -r -q agents docs/agent-rules docs/harness
-git rm -q docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
-git rm -q docs/high-integrity/portable-purity-baseline.txt docs/high-integrity/agent-size-baseline.md
-grep '^tests/bats/' docs/seed-paths.txt | xargs git rm -q   # the 61, from the vendored manifest
+# 1. remove the in-tree surface: exactly the manifest's pathspecs, minus the files the host
+#    keeps a byte-identical mirror of (docs/mirrored-paths.txt). NOT `git rm -r agents`: that
+#    also deletes agents/project/ — the product's specialist agents, which the seed excludes
+#    and which stay host-side — and agents/README.md. agent-layer-flip-probe.sh builds its
+#    post-flip host with this same rule, so a probe run is a rehearsal of this step.
+grep -vE '^[[:space:]]*(#|$)' docs/mirrored-paths.txt > /tmp/mirrored.txt
+grep -vxFf /tmp/mirrored.txt /tmp/seed-paths.pathspec > /tmp/flip-rm.pathspec
+git rm -r -q --pathspec-from-file=/tmp/flip-rm.pathspec
+test -d agents/project || { echo "agents/project/ was removed — abort"; exit 1; }
 git commit -m "refactor(agent-layer)!: remove the in-tree agent surface"
 
 # 2. mount the layer, pinned at the seed SHA

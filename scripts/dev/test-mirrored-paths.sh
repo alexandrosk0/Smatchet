@@ -22,6 +22,8 @@
 #
 # EXIT 0 every listed path is identical in both trees; 1 a path differs or is
 #      missing, or the list names no path; 2 the roots cannot be resolved.
+#
+# selftest: asserts-failure
 set -uo pipefail
 
 _tmp_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
