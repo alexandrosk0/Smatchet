@@ -159,3 +159,62 @@ make_config_dir() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"missing required key"* ]]
 }
+
+@test "relative caller-set roots are made absolute" {
+    # CI sets the pair relative to the workspace (`PROJECT_ROOT: .`); a consumer
+    # that cds into one root and reads the other must still name the right tree.
+    mkdir -p "$TMP/ws/agent-layer"
+    local project layer
+    project="$(cd "$TMP/ws" && root_of PC_PROJECT_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    [ "$project" = "$(cd "$TMP/ws" && pwd)" ]
+    [ "$layer" = "$(cd "$TMP/ws/agent-layer" && pwd)" ]
+}
+
+@test "roots-only: sourcing exports the pair without loading the config" {
+    run bash -c 'PC_ROOTS_ONLY=1 . "$CONFIG_SH" && printf "%s|%s|%s|%s\n" \
+        "$PROJECT_ROOT" "$AGENT_LAYER_ROOT" "${PC_PROJECT_NAME:-none}" "${PC_ROOTS_ONLY:-cleared}"'
+    [ "$status" -eq 0 ]
+    IFS='|' read -r p l name flag <<<"$output"
+    [ "$p" = "$(cd "$REPO_ROOT" && pwd)" ]
+    [ "$l" = "$p" ]
+    [ "$name" = "none" ]
+    [ "$flag" = "cleared" ]
+}
+
+@test "roots-only: a later full source in the same shell still loads the config" {
+    run bash -c 'PC_ROOTS_ONLY=1 . "$CONFIG_SH" && . "$CONFIG_SH" && printf "%s\n" "${PC_PROJECT_NAME:-none}"'
+    [ "$status" -eq 0 ]
+    [ "$output" != "none" ]
+    [ -n "$output" ]
+}
+
+@test "roots-only: needs no config file and follows the same rungs" {
+    # Rung 0 names a config that does not exist: a full load fails (tested above),
+    # roots-only still resolves PROJECT_ROOT to that file's directory.
+    mkdir -p "$TMP/host"
+    local project
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PC_CONFIG_FILE="$TMP/host/project.config.json")"
+    [ "$project" = "$(cd "$TMP/host" && pwd)" ]
+}
+
+@test "roots-only: a copy inside a submodule resolves the superproject" {
+    local layer="$TMP/layer" super="$TMP/super"
+    mkdir -p "$layer/scripts/dev"
+    cp "$CONFIG_SH" "$layer/scripts/dev/project-config.sh"
+    make_config_dir "$layer"
+    git -C "$layer" init -q
+    git -C "$layer" add -A
+    git -C "$layer" -c user.email=t@t -c user.name=t commit -qm init
+    make_config_dir "$super"
+    git -C "$super" init -q
+    git -C "$super" add -A
+    git -C "$super" -c user.email=t@t -c user.name=t commit -qm init
+    git -C "$super" -c protocol.file.allow=always submodule add -q "$layer" agent-layer
+
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh && printf "%s|%s\n" "$PROJECT_ROOT" "$AGENT_LAYER_ROOT"' _ "$super/agent-layer"
+    [ "$status" -eq 0 ]
+    IFS='|' read -r p l <<<"$output"
+    [ "$p" = "$(cd "$super" && pwd)" ]
+    [ "$l" = "$(cd "$super/agent-layer" && pwd)" ]
+}

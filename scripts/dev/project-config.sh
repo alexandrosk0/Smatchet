@@ -3,6 +3,9 @@
 #
 # Usage:  . scripts/dev/project-config.sh        # source it; sets PC_* in caller
 #         bash scripts/dev/project-config.sh      # print the exports (debug)
+#         PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh
+#                                                 # the dual-root pair only: no python,
+#                                                 # no JSON parse, no config-file check
 #
 # The portable agentic layer (agents/core, agents/_shared, docs/agent-rules,
 # docs/harness, generic scripts) must read project-specific values from here
@@ -50,6 +53,52 @@ _pc_resolve_config() {
 }
 PC_CONFIG_FILE="$(_pc_resolve_config)"
 
+# Dual-root pair. AGENT_LAYER_ROOT is the tree holding agents/, docs/agent-rules/
+# and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
+# Source/ and project.config.json. Pre-flip both are the repo root, so every
+# consumer rewritten to address a tree through one of these is a provable no-op.
+# Both honour a caller-set value, which is what lets the layer's standalone CI
+# force PROJECT_ROOT=$AGENT_LAYER_ROOT and the flip set AGENT_LAYER_ROOT=agent-layer
+# without touching the resolution logic above.
+#
+# Both are made absolute. CI sets the pair relative to the workspace
+# (`PROJECT_ROOT: .`), and a consumer that cds into one root and then builds a path
+# from the other would resolve a relative value against the wrong tree — after the
+# flip, `cd "$AGENT_LAYER_ROOT"` followed by "$PROJECT_ROOT/Source" names
+# agent-layer/Source. A value that is not an existing directory is kept as given.
+#
+# Note the bare name PROJECT_ROOT is also a LOCAL variable in the Unreal-plugin
+# scripts under scripts/dev/local/ and scripts/publish/, where it means "the
+# Unreal project to deploy into". None of those source this file and each assigns
+# the variable before first use, so the export cannot leak in — do not "fix" the
+# apparent collision. PC_PROJECT_ROOT is the namespaced alias for callers that
+# prefer to avoid the bare name entirely.
+_pc_abs() {
+  if [ -d "$1" ]; then (CDPATH='' cd -- "$1" && pwd); else printf '%s\n' "$1"; fi
+}
+_pc_export_roots() {
+  AGENT_LAYER_ROOT="$(_pc_abs "${AGENT_LAYER_ROOT:-$_pc_layer_root}")"
+  PROJECT_ROOT="$(_pc_abs "${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}")"
+  PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
+  PC_PROJECT_ROOT="$PROJECT_ROOT"
+  export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
+}
+
+# Roots-only mode, for layer scripts that need only to find the host tree (the
+# session-start nudges among them): the same rungs, without the python start-up or
+# the config parse, and without requiring the config file to exist. Cleared here so
+# a later full source in the same shell is not silently truncated.
+if [ "${PC_ROOTS_ONLY:-0}" = 1 ]; then
+  unset PC_ROOTS_ONLY
+  _pc_export_roots
+  if (return 0 2>/dev/null); then
+    return 0
+  fi
+  printf 'export PC_PROJECT_ROOT=%s\n' "$(printf '%q' "$PC_PROJECT_ROOT")"
+  printf 'export PC_AGENT_LAYER_ROOT=%s\n' "$(printf '%q' "$PC_AGENT_LAYER_ROOT")"
+  exit 0
+fi
+
 if [ ! -f "$PC_CONFIG_FILE" ]; then
   echo "project-config.sh: $PC_CONFIG_FILE not found" >&2
   return 1 2>/dev/null || exit 1
@@ -77,25 +126,8 @@ fi
 # list, and the FileNotFoundError branch below would silently skip the gate.
 PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$(dirname "$PC_CONFIG_FILE")/project.config.schema.json}"
 
-# Dual-root pair. AGENT_LAYER_ROOT is the tree holding agents/, docs/agent-rules/
-# and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
-# Source/ and project.config.json. Pre-flip both are the repo root, so every
-# consumer rewritten to address a tree through one of these is a provable no-op.
-# Both honour a caller-set value, which is what lets the layer's standalone CI
-# force PROJECT_ROOT=$AGENT_LAYER_ROOT and the flip set AGENT_LAYER_ROOT=agent-layer
-# without touching the resolution logic above.
-#
-# Note the bare name PROJECT_ROOT is also a LOCAL variable in the Unreal-plugin
-# scripts under scripts/dev/local/ and scripts/publish/, where it means "the
-# Unreal project to deploy into". None of those source this file and each assigns
-# the variable before first use, so the export cannot leak in — do not "fix" the
-# apparent collision. PC_PROJECT_ROOT is the namespaced alias for callers that
-# prefer to avoid the bare name entirely.
-AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_pc_layer_root}"
-PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}"
-PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
-PC_PROJECT_ROOT="$PROJECT_ROOT"
-export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
+# The dual-root pair (see _pc_export_roots above).
+_pc_export_roots
 
 # Emit `KEY=value` lines (arrays space-joined). eval them into the caller.
 # Fail-fast (exit 2) on a malformed config or a missing required top-level key
