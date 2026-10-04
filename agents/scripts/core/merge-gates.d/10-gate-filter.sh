@@ -31,6 +31,14 @@ _MG_GATE_FILTER_TEMPLATE='
 | (($changedPaths | length) > 0
    and ($filesOverflow | not)
    and ($changedPaths | all(startswith("docs/self-improvement/")))) as $selfImpOnly
+# dependabotActionsBump — a Dependabot github-actions SHA bump: the
+# GitHub-authenticated author is Dependabot (GraphQL drops the [bot] suffix,
+# REST keeps it) AND the head ref is dependabot/github_actions/*. CodeRabbit
+# never reviews bot PRs, so for this shape alone a silent CR past the grace
+# window still passes; every other silent head blocks. Same scope as the
+# cr-finding-gate action Dependabot auto-pass. Absent author → FALSE.
+| (((($pr.author.login) // "") | IN("dependabot", "dependabot[bot]"))
+   and ((($pr.headRefName) // "") | startswith("dependabot/github_actions/"))) as $dependabotActionsBump
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
 | ($labels | any(. == "intent-out-of-band")) as $intent
@@ -396,6 +404,7 @@ _MG_GATE_FILTER_TEMPLATE='
     ([$staleOverride[].name] | join(", ")),
     ($staleOverride | length),
     ($dupMasked | join(", ")),
-    ($dupMasked | length)
+    ($dupMasked | length),
+    ($dependabotActionsBump | tostring)
   )
 '

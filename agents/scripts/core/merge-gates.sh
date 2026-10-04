@@ -215,7 +215,7 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 37-field
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 38-field
 #                        projection) as a template emitter; run by standalone
 #                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
@@ -610,7 +610,7 @@ poll_merge_gates() {
     start=$(date +%s)
 
     # One filter computes every gate field and emits them as a fixed-order,
-    # one-per-line stream (37 lines) that the poll loop reads with `mapfile`.
+    # one-per-line stream (38 lines) that the poll loop reads with `mapfile`.
     # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
     # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
     # jq sub-expressions are the same ones the per-field `jq` calls used
@@ -654,7 +654,7 @@ poll_merge_gates() {
     # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 37-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 38-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
     # crDisposition (30), the two numeric thread counts (31/32) and
@@ -664,8 +664,11 @@ poll_merge_gates() {
     # 35 dupMaskedNames (", "-joined check names where the duplicate-context
     # collapse discarded a BLOCKING context from a DIFFERENT check suite than the
     # one it kept — the shape that made PR #2071 unmergeable while every check
-    # read green; may be empty) · 36 dupMaskedCount (their count).
-    # GATE_FILTER — the 37-field jq projection (see field-order map above).
+    # read green; may be empty) · 36 dupMaskedCount (their count) ·
+    # 37 dependabotActionsBump (bool: Dependabot-authored PR on a
+    # dependabot/github_actions/* head — the one shape whose silent CR still
+    # passes after the grace window; non-empty, safe at the tail).
+    # GATE_FILTER — the 38-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -781,7 +784,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the filter's field stream — 37 fixed-order lines (see GATE_FILTER
+        # Parse the filter's field stream — 38 fixed-order lines (see GATE_FILTER
         # field map above). Filter errors (either engine) already routed through
         # the gh-fail path above; this guards a truncated/partial body → fail
         # closed (retry).
@@ -791,11 +794,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 37 ]; then
-            # Exactly 37 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 38 ]; then
+            # Exactly 38 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 37); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 38); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -999,6 +1002,11 @@ poll_merge_gates() {
         # ALONGSIDE cr-out-of-band to waive ANY CR block (PR-3): cr-out-of-band
         # alone is NOT honoured — the disposition records why CR review was waived.
         local cr_disposition="${fields[30]:-false}"
+        # dependabot_actions_bump — Dependabot-authored PR on a
+        # dependabot/github_actions/* head (field 37). CR never reviews bot PRs,
+        # so this is the one shape whose silent CR keeps the grace-then-pass
+        # (dependabot-auto-merge.yml relies on it). Empty/parse-miss → false.
+        local dependabot_actions_bump="${fields[37]:-false}"
 
         # UNFILTERED unresolved-non-outdated review-thread counts (fields 31/32:
         # total, user-authored). The user-comment gate deliberately excludes bot
@@ -1042,6 +1050,10 @@ poll_merge_gates() {
         # the rate-limit arm there). Hoisted for the same reason as
         # cr_size_skip_block: the cr-out-of-band downgrade below reads it.
         local cr_rate_limit_block=false
+        # Set true only by the NONE branch when the CR grace window expired on a
+        # silent head (no review, no SUCCESS status) — the terminal block the
+        # cr-out-of-band + cr-disposition downgrade below may waive.
+        local cr_grace_expired_block=false
         case "$cr_state" in
             APPROVED)
                 # Approval on the current head is always a pass, regardless of body shape.
@@ -1210,12 +1222,30 @@ poll_merge_gates() {
                     if [ "$p" -eq 0 ]; then
                         echo "INFO: CodeRabbit status=SUCCESS with no inline review yet. If CR said 'manual review required' / 'Review available on request' (repos <10 stars), run: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber} — or waive with cr-out-of-band + cr-disposition:cr-auto-review-disabled. See merge-gates.md § CodeRabbit OSS manual-trigger." >&2
                     fi
-                elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
-                    # Grace window elapsed; CR never started. Log + fall through to pass
-                    # so the loop is never wedged by a stuck integration.
-                    echo "WARN: CodeRabbit grace window ($CR_GRACE_POLLS polls) expired without a review or SUCCESS status; treating NONE as pass." >&2
+                elif [ "$p" -ge "$CR_GRACE_POLLS" ] && [ "$dependabot_actions_bump" = true ]; then
+                    # Dependabot github-actions SHA bump: CR never reviews bot PRs,
+                    # so silence is the expected steady state, not a stuck
+                    # integration. Keeps the grace-then-pass this shape has always
+                    # had (dependabot-auto-merge.yml routes these through
+                    # safe-merge.sh and relies on it); build/test/lint still bind.
+                    echo "WARN: CodeRabbit grace window ($CR_GRACE_POLLS polls) expired without a review or SUCCESS status on a Dependabot github-actions bump; treating NONE as pass (CR does not review bot PRs)." >&2
                     cr_pass=true
-                    cr_state_print="NONE+grace-expired"
+                    cr_state_print="NONE+grace-expired (Dependabot github-actions bump — pass)"
+                elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
+                    # Grace window elapsed with no review, no SUCCESS CodeRabbit
+                    # status and no skip/rate-limit notice: TERMINAL block. A stuck
+                    # integration, a never-installed reviewer and a quota-exhausted
+                    # one are indistinguishable from here, and silence is not a
+                    # review — 27 PRs merged green on exactly this shape (tooling
+                    # 2026-08-16 cr-gate-greens-with-no-cr-status-on-head, item 2).
+                    # Not a wedge: trigger a review, or attest the silent head with
+                    # cr-out-of-band + cr-disposition, which the downgrade below
+                    # honours for this block the same way it does for the size-skip
+                    # and rate-limit blocks.
+                    cr_pass=false
+                    cr_grace_expired_block=true
+                    cr_state_print="NONE+grace-expired (CR silent on head — block)"
+                    echo "BLOCK: CodeRabbit grace window ($CR_GRACE_POLLS polls) expired with no review and no SUCCESS CodeRabbit status on head ${head_sha:0:8} — silence is not a review. Trigger one: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber} (or post '@coderabbitai review' yourself — bot-posted triggers are ignored). To merge without CR review, apply BOTH 'cr-out-of-band' AND a 'cr-disposition:<reason>' label or PR-body marker recording why." >&2
                 else
                     cr_state_print="NONE+pending (poll $((p+1))/$CR_GRACE_POLLS)"
                 fi
@@ -1559,6 +1589,12 @@ poll_merge_gates() {
         # dismiss the gate — otherwise a bogus attestation on a CR-untouched PR
         # bypasses review entirely (the original merge-pipeline-04 hole, residual
         # after PR-3 added the disposition requirement).
+        # One exception: the terminal grace-expired block (cr_grace_expired_block).
+        # By then the head has waited the full grace window, and attesting the
+        # silent head with cr-out-of-band + cr-disposition is the sanctioned way
+        # past it (tooling 2026-08-16 cr-gate-greens-with-no-cr-status-on-head,
+        # item 2) — before that block existed the same head passed with no label
+        # at all. Within the window the never-ran guard still refuses.
         local cr_ran=false
         case "$cr_state" in
             APPROVED|COMMENTED|CHANGES_REQUESTED|STALE*) cr_ran=true ;;
@@ -1568,12 +1604,15 @@ poll_merge_gates() {
            || [ "$cr_size_skip_block" = true ]; then
             cr_ran=true
         fi
+        local cr_waivable="$cr_ran"
+        [ "$cr_grace_expired_block" = true ] && cr_waivable=true
 
         # cr-out-of-band label: when present, downgrade a CR block to a WARN
         # (pass) — mirrors the tests/perf-out-of-band CI-downgrade pattern but
         # scoped to the CR gate ONLY. Covers both CR-gate signals: the state
         # verdict (cr_pass=false: CHANGES_REQUESTED, COMMENTED+actionable>0,
-        # DISMISSED, STALE_WITH_FINDINGS, STALE_UNKNOWN, NONE-after-grace) and
+        # DISMISSED, STALE_WITH_FINDINGS, STALE_UNKNOWN, the NONE size-skip /
+        # rate-limit / grace-expired blocks) and
         # unresolved CR-authored review threads (cr_open_blocks). The
         # user-comment gate is NOT touched. CI is untouched EXCEPT the
         # CR-findings StatusContext/CheckRun (`CR findings*` / `CR finding
@@ -1598,7 +1637,7 @@ poll_merge_gates() {
                 else
                     echo "WARN: cr-out-of-band present but NOT honoured — a cr-out-of-band downgrade also requires a 'cr-disposition:<reason>' label or PR-body marker recording why CR review was waived. Add one to merge past the CR block (${cr_state_print}). PR-3 cr-out-of-band-disposition-trail." >&2
                 fi
-            elif [ "$cr_ran" != true ]; then
+            elif [ "$cr_waivable" != true ]; then
                 # merge-pipeline-04 residual: disposition present, but CR never ran on
                 # this head (no review, no CR context, no SUCCESS status, no terminal
                 # "Review skipped", no size-skip, no rate-limit skip). A disposition
@@ -1614,6 +1653,8 @@ poll_merge_gates() {
                 elif [ "$cr_rate_limit_block" = true ]; then
                     # cr-out-of-band + cr-disposition both present → honoured.
                     echo "WARN: cr-out-of-band + cr-disposition label downgraded CR rate-limit block (${cr_state_print}) to WARN" >&2
+                elif [ "$cr_grace_expired_block" = true ]; then
+                    echo "WARN: cr-out-of-band + cr-disposition — CodeRabbit silent past the grace window on head ${head_sha:0:8}; merging without CR review on the recorded disposition" >&2
                 else
                     echo "WARN: cr-out-of-band + cr-disposition label downgraded CR block (${cr_state_print}) to WARN" >&2
                 fi

@@ -6,6 +6,12 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       reviewDecision
       headRefOid
       headRefName
+      # author — with headRefName, identifies a Dependabot github-actions bump
+      # ($dependabotActionsBump): CodeRabbit never reviews bot PRs, so for that
+      # one shape a silent CR past the grace window keeps passing (the same scope
+      # as the cr-finding-gate action's Dependabot auto-pass). GitHub-authenticated,
+      # so unlike the branch name it cannot be forged.
+      author { login }
       mergeStateStatus
       # body — load-bearing for the cr-disposition trail (PR-3
       # cr-out-of-band-disposition-trail): the disposition reason may be supplied

@@ -776,16 +776,111 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR installed + NONE + grace expired (GRACE_POLLS=0) -> pass with warn" {
-    # GRACE_POLLS=0 → poll index 0 ≥ 0 immediately → fall through to pass.
+@test "CR installed + NONE + grace expired (GRACE_POLLS=0) -> terminal BLOCK naming the trigger + the label escape" {
+    # tooling 2026-08-16 cr-gate-greens-with-no-cr-status-on-head item 2: the
+    # grace window used to fall through to PASS on a head CR never touched (no
+    # review, no status, no comment) — 27 PRs merged green that way. Expiry is
+    # now terminal: block, and say how to get out (trigger a review, or attest
+    # the silent head with cr-out-of-band + cr-disposition).
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_CR_GRACE_POLLS=0
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
     [[ "$output" == *"NONE+grace-expired"* ]]
-    [[ "$output" == *"CodeRabbit grace window"* ]]
+    [[ "$output" == *"BLOCK: CodeRabbit grace window"* ]]
+    [[ "$output" == *"scripts/dev/trigger-coderabbit-review.sh 1"* ]]
+    [[ "$output" == *"cr-out-of-band"* ]]
+    [[ "$output" == *"cr-disposition"* ]]
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR grace-expired block + cr-out-of-band + cr-disposition -> downgraded like size-skip/rate-limit (cr_override=1)" {
+    # The silent-head block is waivable the way the size-skip and rate-limit
+    # blocks are, even though CR never ran: past the grace window the attested
+    # label pair is the sanctioned escape (and the override is recorded).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:cr-never-reported"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition — CodeRabbit silent past the grace window"* ]]
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=1"* ]]
+    [[ "$output" != *"never ran on head"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR grace-expired block + cr-out-of-band ALONE -> still BLOCKS (disposition required)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band present but NOT honoured"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR grace expired on a Dependabot github-actions bump -> still passes (bot PRs are never CR-reviewed)" {
+    # dependabot-auto-merge.yml routes these through safe-merge.sh and relies on
+    # the grace-then-pass; CR never reviews bot PRs. Scope matches the
+    # cr-finding-gate action: GitHub-authenticated author AND the
+    # dependabot/github_actions/* head ref.
+    local f1 f
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.author" '{"login":"dependabot"}')"
+    f="$(fixture_override "$f1" \
+        "data.repository.pullRequest.headRefName" '"dependabot/github_actions/actions/checkout-7.0.2"')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"NONE+grace-expired (Dependabot github-actions bump — pass)"* ]]
+    rm -f "$f1" "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR grace expired on a dependabot/github_actions/* branch NOT authored by Dependabot -> BLOCK (branch name alone is forgeable)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.headRefName" '"dependabot/github_actions/totally-a-bump"')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+grace-expired (CR silent on head — block)"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR grace expired on a self-improvement-only diff -> still passes (deliberate exemption unchanged)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/categories/tooling/2026-10-04-x.md"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"self-improvement doc PR — CR gate auto-skipped"* ]]
+    rm -f "$f"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
@@ -2053,11 +2148,17 @@ set_fixture() {
     # no '## Review skipped' heading. The old loose contains-AND-contains check
     # false-positived this as a size-skip and hard-blocked a clean PR. The
     # tightened detection (HTML marker OR structural heading) must NOT fire here;
-    # with CI/user/reviewDecision all green this is a clean CR pass.
-    local f
-    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+    # with CI/user/reviewDecision all green this is a clean CR pass. The head
+    # carries the CodeRabbit SUCCESS status a real summary run posts alongside
+    # the comment — the pass path is the status arm, since a head with NO CR
+    # status now blocks at grace expiry (cr-gate-greens-with-no-cr-status-on-head).
+    local f1 f
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.comments.nodes" \
         '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\nNo actionable comments were generated. 🎉\n\nAdds crReviewSkipped when StatusContext is SUCCESS with \"Review skipped\" in description (excluding the \"Too many files\" size-skip variant)."}]')"
+    f="$(fixture_override "$f1" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review completed","isRequired":false}]')"
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_CR_GRACE_POLLS=0
     set_fixture "$f"
@@ -2065,7 +2166,7 @@ set_fixture() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" != *"size-skip"* ]]
-    rm -f "$f"
+    rm -f "$f1" "$f"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
@@ -3318,8 +3419,8 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 37; the
-    # -ne 37 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 38; the
+    # -ne 38 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
     # + thread-count + stale-override + dup-masked fields rely on).
     local f
@@ -3329,7 +3430,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 37"* ]]
+    [[ "$output" == *"expected 38"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
