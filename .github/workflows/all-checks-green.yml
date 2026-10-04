@@ -1,0 +1,87 @@
+name: All checks green
+
+# ONE aggregate check that turns block-on-any-red into something GitHub itself
+# can require. Preventing gate from postmortems.md 2026-10-04 PR #2286 (backlog
+# infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check).
+#
+# GitHub's native auto-merge waits only on the branch-protection REQUIRED
+# contexts. Block-on-any-red is enforced by the merge-gates poller, which only
+# runs when a merge goes through safe-merge.sh / git-janitor / the merge-watcher,
+# so every other arm path (a harness auto-merge tool, a GitHub-MCP tool, the web
+# UI button, a bare `gh pr merge --auto`) merged past a red or still-pending
+# NON-required check (#1406/#1414/#1415, #1438, #1566, #2286). The single job
+# below polls the PR head's check runs + commit statuses until every OTHER check
+# is terminal, fails fast on the first blocking red, and passes only when all of
+# them are terminal and green. The rules (latest run per name, `advisory`-name
+# exemption, self-exclusion, required-but-unreported = pending, the poller's
+# *-out-of-band downgrades) live in agents/scripts/core/all-checks-green.sh
+# (tests/bats/all_checks_green.bats replays the #2286 check list).
+#
+# It binds native auto-merge only once `All checks green (block-on-any-red)` is in
+# project.config.json § branch_protection.required_contexts AND re-applied to the
+# live ruleset (setup-branch-protection.sh) — an admin step, landed on a green
+# develop tip (a new required context while any lane is red blocks every PR).
+# Until then it is one more blocking check the poller waits on.
+#
+# Always-report rule (docs/agent-rules/ci-required-check-pattern.md): NO `paths:`
+# filter and NO job-level `if:` — a skipped run would publish a `skipped` check
+# run, which branch protection treats as success. If develop moves behind a merge
+# queue, add `merge_group:` handling before requiring this context.
+#
+# Re-evaluation: label changes re-run it (the out-of-band downgrades are read
+# live); so do pushes, reopen and ready-for-review. A red verdict does NOT clear
+# itself when the red check is later re-run green or a timed-out pending check
+# finishes — re-run this job (or toggle any label) after fixing / re-running.
+#
+# Cost: one ubuntu-latest runner, mostly asleep, for about as long as the slowest
+# lane. Each poll is 2-3 REST calls on GITHUB_TOKEN's shared per-repo budget,
+# which is why the poll interval is 90 s (floor 30 s). timeout-minutes is above
+# the script's own 85-min budget, so the script reports the pending set itself;
+# a timeout is red either way (fail-closed — re-run to clear).
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+# One live evaluation per PR: a newer event (push, label) cancels the older run.
+# A newer head gets its own run; a cancelled run on a superseded head is moot.
+concurrency:
+  group: all-checks-green-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read       # checkout of the gate script
+  checks: read         # GET commits/{sha}/check-runs
+  statuses: read       # GET commits/{sha}/status
+  pull-requests: read  # GET pulls/{n}: head SHA, state, live labels + body
+
+env:
+  # Agent-layer indirection (mirrors the other workflows): the checkout root.
+  AGENT_LAYER_ROOT: .
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  all-checks-green:
+    name: All checks green (block-on-any-red)
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - name: Checkout (gate script + project.config.json only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Cone mode: agents/scripts/core/ plus every root-level file
+          # (project.config.json supplies the required-context set).
+          sparse-checkout: agents/scripts/core
+
+      - name: Wait for every other check; fail fast on the first blocking red
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACG_REPO: ${{ github.repository }}
+          ACG_PR: ${{ github.event.pull_request.number }}
+          ACG_SHA: ${{ github.event.pull_request.head.sha }}
+          # Must equal the job `name:` above — the script excludes itself by name.
+          ACG_SELF: All checks green (block-on-any-red)
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/all-checks-green.sh"
