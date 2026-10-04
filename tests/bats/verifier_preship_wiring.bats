@@ -180,3 +180,24 @@ marker_fields() {
     [[ "$output" == *"hard_veto=false"* ]]
     [[ "$output" == *"ADVISORY"* ]]
 }
+
+@test "each recorded trace carries a meta join key that verifier-labels.py can label" {
+    # verifier-calibration-traces-never-collected: a trace alone has no outcome. The
+    # <trace>.meta.json (branch, headSha, overall_score) joins it to the merge ledger.
+    start_endpoint
+    run ack
+    [ "$status" -eq 0 ]
+    meta="$(ls "$REPO_TMP"/.verifier-traces/*.meta.json)"
+    head="$(git -C "$REPO_TMP" rev-parse HEAD)"
+    [ "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["headSha"])' "$meta")" = "$head" ]
+    [ "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["branch"])' "$meta")" = "feature" ]
+    python3 -c 'import json,sys;s=json.load(open(sys.argv[1]))["overall_score"];assert isinstance(s,float) and 0<=s<=1' "$meta"
+    # End to end: the merged head labels 1 and lands in a set verifier-calibrate.py reads.
+    printf '{"pr":7,"headSha":"%s","gates":"GATES_PASSED","redChecks":[]}\n' "$head" > "$REPO_TMP/ledger.jsonl"
+    run python3 "$ROOT/scripts/dev/verifier-labels.py" --traces "$REPO_TMP/.verifier-traces" \
+        --ledger "$REPO_TMP/ledger.jsonl" --postmortems "$REPO_TMP/none.md" --out "$REPO_TMP/cal.json"
+    [ "$status" -eq 0 ]
+    [ "$(python3 -c 'import json,sys;c=json.load(open(sys.argv[1]))["cases"];print(len(c), c[0]["outcome"])' "$REPO_TMP/cal.json")" = "1 1" ]
+    run python3 "$ROOT/scripts/dev/verifier-calibrate.py" "$REPO_TMP/cal.json"
+    [ "$status" -eq 0 ]
+}

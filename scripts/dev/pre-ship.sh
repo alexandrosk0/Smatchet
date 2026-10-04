@@ -393,6 +393,16 @@ PY
     if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
         return 1
     fi
+    # The join key that pairs this run with its outcome: verifier-labels.py matches
+    # headSha against merge-snapshots.jsonl to label it. Best-effort — never fails the ack.
+    "$PRESHIP_PY" - "$out" "${tracef%.json}.meta.json" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+        "$(git rev-parse HEAD 2>/dev/null)" <<'PY' 2>/dev/null || true
+import json, sys
+agg, meta, branch, head = sys.argv[1:5]
+c = (json.load(open(agg)).get("candidates") or [{}])[0]
+json.dump({"branch": branch, "headSha": head, "overall_score": c.get("overall_score"),
+           "hard_veto": bool(c.get("hard_veto", False))}, open(meta, "w"))
+PY
     echo "pre-ship: verifier trace recorded at ${tracef#"$repo_root/"} (calibration evidence)."
     return 0
 }
