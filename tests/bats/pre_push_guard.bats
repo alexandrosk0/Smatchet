@@ -2,7 +2,8 @@
 # tests/bats/pre_push_guard.bats
 # ----------------------------------------------------------------------------
 # Bats tests for scripts/git-hooks/pre-push (A) — the direct-push-to-protected-
-# branch hard-stop — plus (C) plan-lock collision and (E) review-verdict marker.
+# branch hard-stop — plus (C) plan-lock collision, (E) review-verdict marker, and
+# the leading p4 drift check's independence from its script's mode bit.
 # Pre-push ref updates are fed on stdin
 # ("<local_ref> <local_sha> <remote_ref> <remote_sha>"); `gh` is stubbed to a
 # no-op so the (B) merged-PR check makes no network call and cleanly exits 0.
@@ -203,4 +204,20 @@ refs/heads/side $SIDESHA refs/heads/side $ZERO" "SMATCHET_SKIP_REVIEW_MARKER=0"
     run run_push "refs/heads/feature $SHA refs/heads/develop $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
     [ "$status" -eq 1 ]
     [[ "$output" == *"REFUSING direct push to 'develop'"* ]]
+}
+
+# ---- p4 drift check: must not depend on a mode bit ---------------------------
+# The hook once guarded the checker with `[ -x ... ]` while it was tracked
+# 100644, so it never ran on Linux/macOS. A blocking stub proves the call; on
+# Windows Git Bash treats any `#!` file as executable, so the teeth are Linux/
+# macOS (CI) — review_ack_gate.bats carries the platform-independent sweep.
+
+@test "the p4 drift check runs even when its script is not executable" {
+    mkdir -p "$TMP/agents/scripts/project"
+    printf '#!/usr/bin/env bash\necho P4-CHECK-RAN >&2\nexit 2\n' \
+        > "$TMP/agents/scripts/project/p4-reconcile-check.sh"
+    chmod 644 "$TMP/agents/scripts/project/p4-reconcile-check.sh"
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"P4-CHECK-RAN"* ]]
 }

@@ -12,6 +12,8 @@
 #   review-ack.sh --record --staged   writes the fingerprint for mode `staged`
 #   pre-commit                        refuses the commit exactly when --check is 1,
 #                                     unless SMATCHET_SKIP_REVIEW_GATE=1
+#   pre-commit check (A)              runs the Pillar-2 scan whatever the scanner's
+#                                     mode bit (tail of this file)
 #
 # Runs against a REAL throwaway git repo (no stubs): the scripts read git diff
 # output and the git index, so a real repo is the faithful fixture.
@@ -218,4 +220,32 @@ commit_in_fixture() {
 @test "--check rejects an unknown flag with rc 2" {
     run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --check --bogus 2>&1"
     [ "$status" -eq 2 ]
+}
+
+# ---- check (A): the Pillar-2 scan must not depend on a mode bit -------------
+# The hook once guarded the scan with `[[ -x ... ]]` while the scanner was
+# tracked 100644, so every Linux/macOS commit skipped it silently. Git Bash on
+# Windows reports any `#!` file as executable, so the behavioural test below only
+# has teeth on Linux/macOS (where CI runs it); the static sweep after it fails
+# on every platform.
+
+@test "pre-commit runs the Pillar-2 scan even when the scanner is not executable" {
+    mkdir -p "$REPO_TMP/scripts/dev"
+    cp "$ROOT/scripts/dev/pillar2-scan.sh" "$REPO_TMP/scripts/dev/pillar2-scan.sh"
+    chmod 644 "$REPO_TMP/scripts/dev/pillar2-scan.sh"
+    printf 'void f() { popen("x", "r"); }\n' > "$REPO_TMP/Source/Core/src/Ui/ScanUi.cpp"
+    git -C "$REPO_TMP" add Source/Core/src/Ui/ScanUi.cpp
+    run commit_in_fixture "feat: sync io on a ui path"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"CRITICAL: Source/Core/src/Ui/ScanUi.cpp:1"* ]]
+    [[ "$output" != *"skipping Pillar 2 scan"* ]]
+}
+
+@test "no git hook gates a helper script on its executable bit" {
+    # Every hook runs its helpers through `bash`, so the mode bit never decides
+    # whether they CAN run; an `-x` guard only makes the gate vanish wherever the
+    # helper is tracked 100644. Guard on existence (`-f`) instead.
+    run grep -nE -- '-x[[:space:]]+"[^"]*\.(sh|py)"' "$ROOT"/scripts/git-hooks/*
+    printf '%s\n' "$output"
+    [ "$status" -eq 1 ]
 }

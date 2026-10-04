@@ -35,11 +35,15 @@ mapfile -t cpp_files < <(
         || true
 )
 
+# Existence (-f), not executability (-x): the scanner is run through `bash`, so
+# its mode bit is irrelevant. An `-x` guard silently skipped the scan on every
+# Linux/macOS commit while the file was tracked 100644 (Git Bash on Windows
+# reports any `#!` file as executable, which hid it locally).
 if [[ "${#cpp_files[@]}" -gt 0 ]]; then
-    if [[ -x "scripts/dev/pillar2-scan.sh" ]]; then
+    if [[ -f "scripts/dev/pillar2-scan.sh" ]]; then
         bash scripts/dev/pillar2-scan.sh "${cpp_files[@]}"
     else
-        echo "pre-commit: WARN scripts/dev/pillar2-scan.sh missing or not executable; skipping Pillar 2 scan." >&2
+        echo "pre-commit: WARN scripts/dev/pillar2-scan.sh missing; skipping Pillar 2 scan." >&2
     fi
 fi
 
