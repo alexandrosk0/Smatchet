@@ -353,6 +353,26 @@ snapshot_red_csv() {
 }
 
 # ----------------------------------------------------------------------------
+# snapshot_cr_state <gate_out> — the CodeRabbit verdict of the passing poll,
+# i.e. the `CodeRabbit: <verdict> (<n> open)` segment of the LAST `Poll …`
+# line (e.g. "COMMENTED (0 actionable)", "NONE+grace-expired"). Recorded as
+# the ledger's optional crState so review evidence survives the merge
+# (cr-gate-greens-with-no-cr-status-on-head item 3). Empty when no poll line
+# carries it (a stubbed gate) — the row then simply omits the field.
+# ----------------------------------------------------------------------------
+snapshot_cr_state() {
+    local line cr
+    line=$(printf '%s\n' "$1" | grep '^Poll ' | tail -1)
+    case "$line" in
+        *" | CodeRabbit: "*" | Bugbot: "*) ;;
+        *) return 0 ;;
+    esac
+    cr="${line#* | CodeRabbit: }"
+    cr="${cr%% | Bugbot: *}"
+    printf '%s' "${cr% (*open)}"
+}
+
+# ----------------------------------------------------------------------------
 # snapshot_override_csv <labels-newline-list> — comma-joined subset of the
 # labels that are override labels, via safe-admin-merge.sh's
 # override_labels_csv (the one projection every ledger writer shares: config
@@ -375,15 +395,17 @@ snapshot_override_csv() {
 
 # ----------------------------------------------------------------------------
 # print_snapshot_paste <pr> <mergeCommit> <headSha> <red> <override> <mergedAt>
+#                      [crState]
 # — the ready-to-paste append line for a merge this run could not record
 # itself. Known values are pre-filled (shell-quoted); unknown ones stay as
 # <placeholders> to fill from `gh pr view <pr> --json mergeCommit,mergedAt`.
 # ----------------------------------------------------------------------------
 print_snapshot_paste() {
     local pr="$1" mc="${2:-<mergeCommit>}" head="${3:-<headSha>}"
-    local red="$4" override="$5" merged_at="${6:-<mergedAt>}"
-    printf '  SNAPSHOT_MERGED_AT=%s bash %s %s %s %s GATES_PASSED %s %s orchestrator-automerge\n' \
-        "$merged_at" "$(_paste_quote "$SCRIPT_DIR/merge-snapshot-append.sh")" "$pr" "$mc" "$head" \
+    local red="$4" override="$5" merged_at="${6:-<mergedAt>}" cr_state="${7:-}" cr_env=""
+    [ -n "$cr_state" ] && cr_env="SNAPSHOT_CR_STATE=$(_paste_quote "$cr_state") "
+    printf '  %sSNAPSHOT_MERGED_AT=%s bash %s %s %s %s GATES_PASSED %s %s orchestrator-automerge\n' \
+        "$cr_env" "$merged_at" "$(_paste_quote "$SCRIPT_DIR/merge-snapshot-append.sh")" "$pr" "$mc" "$head" \
         "$(_paste_quote "$red")" "$(_paste_quote "$override")"
 }
 
@@ -414,13 +436,14 @@ await_merge_and_snapshot() {
     case "$budget" in ''|*[!0-9]*) budget=120 ;; esac
     case "$interval" in ''|*[!0-9]*|0) interval=5 ;; esac
 
-    local red_csv override_csv override_ok=1
+    local red_csv override_csv override_ok=1 cr_state
     red_csv=$(snapshot_red_csv "$gate_out")
+    cr_state=$(snapshot_cr_state "$gate_out")
     override_csv=$(snapshot_override_csv "$labels") || { override_ok=0; override_csv="<override-labels-csv>"; }
 
     if ! command -v jq >/dev/null 2>&1; then
         echo "safe-merge: WARN — jq not on PATH; cannot read the merge result, ledger row NOT written. Once PR #$pr merges, run:" >&2
-        print_snapshot_paste "$pr" "" "" "$red_csv" "$override_csv" "" >&2
+        print_snapshot_paste "$pr" "" "" "$red_csv" "$override_csv" "" "$cr_state" >&2
         return 0
     fi
 
@@ -455,20 +478,20 @@ await_merge_and_snapshot() {
 
     if [ "$merged" != "true" ]; then
         echo "SNAPSHOT PENDING — PR #$pr: auto-merge is armed but had not merged after ${budget}s; no ledger row written. Once it merges, append it (fill <mergeCommit>/<mergedAt> from 'gh pr view $pr --json mergeCommit,mergedAt'):"
-        print_snapshot_paste "$pr" "" "$head_sha" "$red_csv" "$override_csv" ""
+        print_snapshot_paste "$pr" "" "$head_sha" "$red_csv" "$override_csv" "" "$cr_state"
         return 0
     fi
     if [ -z "$mc" ] || [ -z "$head_sha" ] || [ -z "$merged_at" ] || [ "$override_ok" -ne 1 ]; then
         echo "safe-merge: WARN — PR #$pr merged but mergeCommit/headSha/mergedAt or the override-label projection is unavailable; ledger row NOT written. Fill the gaps and run:" >&2
-        print_snapshot_paste "$pr" "$mc" "$head_sha" "$red_csv" "$override_csv" "$merged_at" >&2
+        print_snapshot_paste "$pr" "$mc" "$head_sha" "$red_csv" "$override_csv" "$merged_at" "$cr_state" >&2
         return 0
     fi
-    if SNAPSHOT_MERGED_AT="$merged_at" bash "$SCRIPT_DIR/merge-snapshot-append.sh" \
+    if SNAPSHOT_CR_STATE="$cr_state" SNAPSHOT_MERGED_AT="$merged_at" bash "$SCRIPT_DIR/merge-snapshot-append.sh" \
         "$pr" "$mc" "$head_sha" GATES_PASSED "$red_csv" "$override_csv" orchestrator-automerge; then
-        echo "Merge snapshot appended for PR #$pr (actor orchestrator-automerge; redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
+        echo "Merge snapshot appended for PR #$pr (actor orchestrator-automerge; redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}; CR: ${cr_state:-n/a}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
     else
         echo "safe-merge: WARN — merge-snapshot-append failed; ledger row NOT written. Retry with:" >&2
-        print_snapshot_paste "$pr" "$mc" "$head_sha" "$red_csv" "$override_csv" "$merged_at" >&2
+        print_snapshot_paste "$pr" "$mc" "$head_sha" "$red_csv" "$override_csv" "$merged_at" "$cr_state" >&2
     fi
     return 0
 }
@@ -678,8 +701,20 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 16 — snapshot_cr_state reads the CodeRabbit verdict off the LAST poll
+    # line (the passing one), and yields nothing when no poll line carries it.
+    local cr
+    cr=$(snapshot_cr_state $'Poll 1/40 — CI: 3/4 pass (0 fail, 1 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: NONE+pending (poll 1/10) (0 open) | Bugbot: NONE (0 open) | User: 0 | reviewDecision: NONE\nPoll 2/40 — CI: 4/4 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: COMMENTED (0 actionable) (0 open) | Bugbot: CLEAN (0 open) | User: 0 | reviewDecision: NONE\nGATES_PASSED')
+    cr+="|$(snapshot_cr_state 'GATES_PASSED')"
+    if [ "$cr" = "COMMENTED (0 actionable)|" ]; then
+        echo "selftest CASE16 PASS — snapshot crState = the passing poll's CodeRabbit verdict"
+    else
+        echo "selftest CASE16 FAIL — wrong snapshot crState (got: '$cr')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-merge --selftest (15/15)"
+        echo "PASS — safe-merge --selftest (16/16)"
         return 0
     fi
     echo "FAIL — safe-merge --selftest ($fails failing case(s))" >&2

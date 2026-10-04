@@ -15,6 +15,12 @@
 #   {"pr":N,"mergeCommit":"<sha>","headSha":"<sha>","mergedAt":"<iso8601Z>",
 #    "gates":"GATES_PASSED","redChecks":[...],"overrideLabels":[...],
 #    "requiredContexts":[...],"mergeActor":"<token>","schema":2}
+# schema 3 = schema 2 + "crState":"<verdict>" — the merge-gates poll's
+# CodeRabbit verdict at the decision instant (e.g. "COMMENTED (0 actionable)",
+# "NONE+grace-expired"), so review evidence is a jq query rather than a
+# 1,400-PR API sweep (cr-gate-greens-with-no-cr-status-on-head). Written ONLY
+# when the caller sets SNAPSHOT_CR_STATE (safe-merge.sh does); rows without it
+# stay schema 2. Additive: readers key on field presence, not the number.
 #
 # mergeActor tokens — the canonical list (docs/agent-rules/ship-loops.md
 # § merge-time snapshot mirrors it; free text is accepted, but use these):
@@ -152,7 +158,8 @@ append_merge_snapshot() {
     # Compose the compact single-line object with jq so every field (labels +
     # redChecks arrays, the ISO timestamp, the actor) encodes UTF-8-safely.
     # schema 2 = requiredContexts added (additive; schema-1 rows stay valid and
-    # readers key on field presence, not the schema number).
+    # readers key on field presence, not the schema number); schema 3 = the
+    # optional crState (SNAPSHOT_CR_STATE), present only when the caller knows it.
     line="$(jq -cn \
         --argjson pr "$pr" \
         --arg mergeCommit "$merge_commit" \
@@ -163,7 +170,9 @@ append_merge_snapshot() {
         --argjson overrideLabels "$override_json" \
         --argjson requiredContexts "$req_json" \
         --arg mergeActor "$actor" \
-        '{pr:$pr, mergeCommit:$mergeCommit, headSha:$headSha, mergedAt:$mergedAt, gates:$gates, redChecks:$redChecks, overrideLabels:$overrideLabels, requiredContexts:$requiredContexts, mergeActor:$mergeActor, schema:2}')" \
+        --arg crState "${SNAPSHOT_CR_STATE:-}" \
+        '{pr:$pr, mergeCommit:$mergeCommit, headSha:$headSha, mergedAt:$mergedAt, gates:$gates, redChecks:$redChecks, overrideLabels:$overrideLabels, requiredContexts:$requiredContexts, mergeActor:$mergeActor}
+         + (if $crState == "" then {schema:2} else {crState:$crState, schema:3} end)')" \
         || { echo "merge-snapshot-append: jq failed to compose snapshot line" >&2; return 1; }
 
     mkdir -p "$(dirname "$MERGE_SNAPSHOT_LEDGER")"
@@ -181,6 +190,7 @@ run_selftest() {
     local tmp rc
     tmp="$(mktemp)"
     export MERGE_SNAPSHOT_LEDGER="$tmp"
+    unset SNAPSHOT_CR_STATE   # the schema-2 assertions below need the field absent
     local fails=0
 
     # 1. Append works + line is valid JSON with the expected fields.
@@ -208,6 +218,14 @@ run_selftest() {
         append_merge_snapshot 8 seam2 h2 GATES_PASSED "" "" orchestrator
     if [ "$(jq -rs '.[1].requiredContexts | length' "$tmp2")" != "0" ]; then
         echo "selftest FAIL: set-but-empty seam should record []" >&2; fails=$((fails+1)); fi
+    # 1c. SNAPSHOT_CR_STATE records the CR verdict as crState (schema 3); a row
+    # written without it carries no crState and stays schema 2.
+    MERGE_SNAPSHOT_LEDGER="$tmp2" SNAPSHOT_CR_STATE="NONE+grace-expired" \
+        append_merge_snapshot 9 seam3 h3 GATES_PASSED "" "" orchestrator-automerge
+    if [ "$(jq -rs '.[2] | "\(.crState)|\(.schema)"' "$tmp2")" != "NONE+grace-expired|3" ]; then
+        echo "selftest FAIL: SNAPSHOT_CR_STATE not recorded as crState/schema 3" >&2; fails=$((fails+1)); fi
+    if [ "$(jq -rs '.[0] | has("crState")' "$tmp2")" != "false" ]; then
+        echo "selftest FAIL: a row without SNAPSHOT_CR_STATE must carry no crState" >&2; fails=$((fails+1)); fi
     rm -f "$tmp2"
 
     # 2. Idempotent re-append (same pr+mergeCommit) is a no-op.

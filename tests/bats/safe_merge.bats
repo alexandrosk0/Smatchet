@@ -75,10 +75,10 @@ teardown() {
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (15/15) and dogfoods arm/refuse/obligation/snapshot" {
+@test "--selftest passes (16/16) and dogfoods arm/refuse/obligation/snapshot" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-merge --selftest (15/15)"* ]]
+    [[ "$output" == *"PASS — safe-merge --selftest (16/16)"* ]]
 }
 
 @test "DRY-RUN: a PASS prints the arm command and arms nothing (exit 0)" {
@@ -111,7 +111,7 @@ teardown() {
     # tooling/2026-08-19-safe-merge-arms-automerge-and-execs-away-before-writing-
     # a-snapshot-row: the default merge path used to `exec` gh and write nothing.
     export SAFE_MERGE_STUB_GATE=PASS
-    export SAFE_MERGE_STUB_GATE_OUT=$'Poll 1/1 — passed\nGATE_SNAPSHOT cr_override=1 downgraded=Test-delta gate\nGATES_PASSED'
+    export SAFE_MERGE_STUB_GATE_OUT=$'Poll 1/1 — CI: 4/4 pass (0 fail, 0 pending, 1 warn-downgraded, 0 req-missing) | CodeRabbit: NONE+grace-expired (0 open) | Bugbot: CLEAN (0 open) | User: 0 | reviewDecision: NONE\nGATE_SNAPSHOT cr_override=1 downgraded=Test-delta gate\nGATES_PASSED'
     export SAFE_MERGE_LABELS="tests-out-of-band,cr-out-of-band,area:tooling"
     export SAFE_MERGE_DIFF_PATHS="docs/x.md"
     echo '{"state":"closed","merged":true,"merge_commit_sha":"abc1234def","merged_at":"2026-10-04T10:00:00Z","head":{"sha":"head5678"}}' > "$STUB_PR_JSON"
@@ -128,6 +128,9 @@ teardown() {
     [ "$(jq -r '.redChecks | join("|")' "$MERGE_SNAPSHOT_LEDGER")" = "Test-delta gate|CodeRabbit" ]
     # Only override labels are recorded (area:tooling is not one).
     [ "$(jq -r '.overrideLabels | sort | join("|")' "$MERGE_SNAPSHOT_LEDGER")" = "cr-out-of-band|tests-out-of-band" ]
+    # The passing poll's CodeRabbit verdict rides along as crState (schema 3).
+    [ "$(jq -r '.crState' "$MERGE_SNAPSHOT_LEDGER")" = "NONE+grace-expired" ]
+    [ "$(jq -r '.schema' "$MERGE_SNAPSHOT_LEDGER")" = "3" ]
 }
 
 @test "snapshot: a clean pass records empty redChecks and overrideLabels" {
@@ -140,6 +143,9 @@ teardown() {
     [ "$(wc -l < "$MERGE_SNAPSHOT_LEDGER")" -eq 1 ]
     [ "$(jq -r '.redChecks | length' "$MERGE_SNAPSHOT_LEDGER")" = "0" ]
     [ "$(jq -r '.overrideLabels | length' "$MERGE_SNAPSHOT_LEDGER")" = "0" ]
+    # No poll line carried a CodeRabbit verdict → no crState, schema stays 2.
+    [ "$(jq -r 'has("crState")' "$MERGE_SNAPSHOT_LEDGER")" = "false" ]
+    [ "$(jq -r '.schema' "$MERGE_SNAPSHOT_LEDGER")" = "2" ]
 }
 
 @test "snapshot: a merge not landed within the budget prints the paste-ready line, writes no row" {
