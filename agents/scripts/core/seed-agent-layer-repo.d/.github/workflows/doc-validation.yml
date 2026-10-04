@@ -40,15 +40,12 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # No history needed: in this repo test-docs.sh runs the link check at --all
+      # scope against docs/high-integrity/markdown-link-baseline.md, not diff-scoped.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # test-markdown-links.sh diff-scopes against origin/develop.
-          fetch-depth: 0
           persist-credentials: false
-
-      - name: Ensure origin/develop ref (for the diff-scoped link check)
-        run: git fetch --no-tags --quiet origin develop || true
 
       - name: test-docs.sh — layer doc-validation subset
         run: bash scripts/dev/test-docs.sh

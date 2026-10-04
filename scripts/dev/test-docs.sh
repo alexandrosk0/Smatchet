@@ -48,6 +48,25 @@ done
 [ -n "$PY" ] || {
   echo "test-docs: no working python3 on PATH (md_lint step needs it)" >&2; exit 2; }
 
+# The standalone agent-layer probe (plan agent-surface-extraction-repo row 9b) —
+# see HOST_ONLY_STEPS below. Source/ under the host tree is the same probe
+# test-all.sh's LAYER_HOST_SUT_RE and test-agent-contract.sh's host_content_present() use.
+HOST_TREE="${PROJECT_ROOT:-$ROOT}"
+LAYER_STANDALONE=0
+if [ ! -d "$HOST_TREE/Source" ]; then
+  LAYER_STANDALONE=1
+fi
+
+# test-markdown-links diff-scopes against origin/develop in the host, which
+# grandfathers pre-existing breakage. A standalone layer scans --all against its
+# own committed docs/high-integrity/markdown-link-baseline.md instead: on a seed
+# (the simulator's throwaway origin, a new repo's first push) origin/develop IS
+# the tree, so a diff-scoped scan checks nothing — and --all needs no history.
+MDLINKS_SCOPE=""
+if [ "$LAYER_STANDALONE" -eq 1 ]; then
+  MDLINKS_SCOPE=" --all"
+fi
+
 # Ordered to match doc-validation.yml. project.config.json schema validation is
 # the workflow's one Python-jsonschema step; replicate it inline so a malformed
 # config is caught locally too.
@@ -68,7 +87,7 @@ STEPS=(
   "test-portable-agent-vexp|bash $CORE/test-portable-agent-vexp.sh --selftest && bash $CORE/test-portable-agent-vexp.sh"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
-  "test-markdown-links|bash $CORE/test-markdown-links.sh"
+  "test-markdown-links|bash $CORE/test-markdown-links.sh$MDLINKS_SCOPE"
   "test-orphan-bats|bash $CORE/test-orphan-bats.sh --selftest && bash $CORE/test-orphan-bats.sh"
   "work_item_lint|$PY $CORE/work_item_lint.py --selftest && $PY $CORE/work_item_lint.py --all && bash scripts/dev/test-work-item-lint.sh"
 )
@@ -77,9 +96,8 @@ STEPS=(
 # script is mirrored byte-for-byte into the agent-layer repo, where there is no
 # consuming product: the steps below read product content (plans, presets, work
 # items, ADRs, the product's CI workflows) and would hard-fail on its absence, so
-# there they print an explicit SKIP. Every other step runs in both trees. The probe
-# is Source/ under the host tree — the same one test-all.sh's LAYER_HOST_SUT_RE and
-# test-agent-contract.sh's host_content_present() use.
+# there they print an explicit SKIP. Every other step runs in both trees (the link
+# check at --all scope there; see MDLINKS_SCOPE). LAYER_STANDALONE is set above.
 declare -A HOST_ONLY_STEPS=(
   [test-plan-index]="reads docs/plans/"
   [test-plan-ref-integrity]="reads docs/plans/"
@@ -107,10 +125,7 @@ if [ "${#STEPS[@]}" -ne $((LAYER_STEP_COUNT + ${#HOST_ONLY_STEPS[@]})) ]; then
   exit 2
 fi
 
-HOST_TREE="${PROJECT_ROOT:-$ROOT}"
-LAYER_STANDALONE=0
-if [ ! -d "$HOST_TREE/Source" ]; then
-  LAYER_STANDALONE=1
+if [ "$LAYER_STANDALONE" -eq 1 ]; then
   printf 'test-docs: no Source/ under %s — standalone agent layer: running the %d layer steps, skipping %d host-only.\n' \
     "$HOST_TREE" "$LAYER_STEP_COUNT" "${#HOST_ONLY_STEPS[@]}"
 fi
