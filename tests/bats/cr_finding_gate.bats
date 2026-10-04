@@ -636,6 +636,45 @@ run_nudge() {
     grep -q '@coderabbitai full review' "$POST_LOG"
 }
 
+# Clean-pass vocabulary, one case per wording CR has used. The guard is only as
+# good as its words: on #2023 CR's targeted verification reply said only "No
+# findings", clean_ts never advanced past busy_ts, and the nudge stayed quiet in
+# precisely its target scenario (tooling 2026-08-16 trigger-identity entry, (c)).
+@test "nudge: clean-pass vocabulary - 'no actionable comments' counts" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'No actionable comments were generated in the recent review.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: clean-pass vocabulary - 'no actionable findings' counts" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Verified the fix: no actionable findings remain.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: clean-pass vocabulary - a bare 'No findings' counts (#2023 wording)" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Checked the targeted change. No findings.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: 'Reviews are available now' is NOT a busy signal (the limit cleared)" {
+    setup_nudge
+    # The reply a plain `review` draws on an already-seen head. Reading it as
+    # busy would let the very reply that proves the wedge suppress its cure.
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Review complete — no actionable findings.'
+    row 'coderabbitai[bot]' '2026-08-13T13:30:00Z' 'Reviews are available now.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
 @test "the nudge is also wired into the not-settled arm (shape 2, no status at all)" {
     # A comment-only clean pass can complete with NO CodeRabbit StatusContext
     # on the head (cr_ctx ABSENT) — the wedge parks in the `*)` arm, one door

@@ -176,11 +176,17 @@ runs:
               # learnings verbatim, and ours contain "Review rate limited" —
               # matching that would mark the genuine clean reply itself busy
               # and suppress the nudge in exactly its target scenario.
+              # "Reviews are available now" is deliberately NOT busy: it is CR
+              # saying the limit has CLEARED.
               if printf '%s' "$cmt" | grep -qiE 'review limit reached|next review available|currently processing|review in progress by coderabbit'; then
                 [ "$ts" \> "$busy_ts" ] && busy_ts="$ts"
               fi
+              # Clean-pass vocabulary: the guard is only as good as its words,
+              # and it under-fires silently when CR rephrases. A targeted
+              # verification reply said only "No findings" (#2023), so clean_ts
+              # never advanced and the nudge stayed quiet in its target state.
               if ! printf '%s' "$cmt" | grep -q 'walkthrough_start' \
-                 && printf '%s' "$cmt" | grep -qiE 'no actionable (comments|findings)'; then
+                 && printf '%s' "$cmt" | grep -qiE 'no actionable (comments|findings)|no findings'; then
                 [ "$ts" \> "$clean_ts" ] && clean_ts="$ts"
               fi
             fi
