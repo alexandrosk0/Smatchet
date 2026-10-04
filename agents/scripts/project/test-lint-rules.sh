@@ -25,7 +25,7 @@
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
 #   deviation-malformed    SMATCHET_DEVIATION( not closed on its line, or missing rule/reason/owner/revisit
-#   (advisory)             deviation-cohort — a marker added on a revisit date > 8 others already share
+#   (advisory)             deviation-cohort — a marker added on a revisit date that then holds > 8 markers
 #   function-too-long      function body > 120 lines non-UI / > 200 lines ImGui-draw
 #                          (repo-wide, delta-gated; tiered; function_size_audit.py)
 #   function-too-branchy   function decision count > 30 (repo-wide, delta-gated, all functions)
@@ -1176,14 +1176,14 @@ case "$MODE" in
     fi
 
     # --- deviation-cohort (markers ADDED in this diff; WARN-first, never touches $rc) ---
-    # A marker this diff adds whose calendar revisit= is already shared by more than
-    # DEVIATION_COHORT_MAX first-party markers. Delta-scoped so existing crowded dates stay quiet until
-    # someone adds to them; whole-tree view via --scan-revisit-cohorts.
+    # A marker this diff adds whose calendar revisit= date then holds more than DEVIATION_COHORT_MAX
+    # first-party markers, counting the ones this diff adds. Delta-scoped so existing crowded dates stay
+    # quiet until someone adds to them; whole-tree view via --scan-revisit-cohorts.
     dco_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
     dco_out="$(deviation_cohort_hits "$dco_mb" | grep -E . || true)"
     if [ -n "$dco_out" ]; then
         {
-            echo "[deviation-cohort] WARN: this diff adds a marker on a revisit date more than $DEVIATION_COHORT_MAX others already share — they all turn deviation-overdue (whole-tree, merge-blocking) on the same day. Advisory; not blocking:"
+            echo "[deviation-cohort] WARN: this diff adds a marker on a revisit date that now holds more than $DEVIATION_COHORT_MAX markers — they all turn deviation-overdue (whole-tree, merge-blocking) on the same day. Advisory; not blocking:"
             printf '%s\n' "$dco_out" | sed 's/^/  /'
             echo "  Pick a less crowded date for the new marker (see --scan-revisit-cohorts), or revisit=never if the exemption is standing."
         } >&2

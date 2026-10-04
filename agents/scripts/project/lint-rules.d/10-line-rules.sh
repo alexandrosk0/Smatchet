@@ -234,8 +234,10 @@ compute_revisit_cohorts() {
 }
 
 # deviation-cohort, delta form: for each calendar revisit date on a marker that this diff (vs merge-base
-# $1) ADDS to first-party C++, print `deviation-cohort\t<date>\t<count> markers` when the date is
-# already crowded per compute_revisit_cohorts. Existing crowded dates stay quiet until added to.
+# $1) ADDS to first-party C++, print `deviation-cohort\t<date>\t<count> markers` when the date now
+# holds more than DEVIATION_COHORT_MAX markers. The count is the current tree's, so it includes the
+# markers this diff adds: taking a date from the cap to one over it warns, which is how a cliff grows.
+# Existing crowded dates stay quiet until added to.
 deviation_cohort_hits() {
     local mb="$1" changed dates cohorts d n
     changed="$(git diff --name-only --diff-filter=d "$mb" 2>/dev/null \

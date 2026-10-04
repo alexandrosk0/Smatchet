@@ -839,6 +839,21 @@ _resolve_py() {
     [[ "$output" != *"2099-03-01"* ]]
 }
 
+@test "deviation-cohort warns when an added marker takes a date from the cap to one over it" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src"
+    for i in 1 2; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint a%s = 0;\n' "$i"; done > "$tmp/Source/Core/src/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint n = 0;\n' > "$tmp/Source/Core/src/New.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
+    # The base holds 2 markers on the date, exactly the cap; the diff makes it 3.
+    run bash -c "cd '$tmp' && export SMATCHET_DEVIATION_COHORT_MAX=2 && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/10-line-rules.sh' && deviation_cohort_hits develop"
+    rm -rf "$tmp"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'deviation-cohort\t2099-01-01\t3 markers'* ]]
+}
+
 # ---------- known-good ----------
 
 @test "known-good fixture produces no findings" {
