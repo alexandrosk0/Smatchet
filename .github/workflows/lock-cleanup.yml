@@ -4,10 +4,18 @@ name: Plan-lock cleanup
 # whether merged to develop OR closed unmerged (an abandoned seeded branch's
 # reservation is void; without this it would orphan-block later PRs that
 # overlap its write set, since the staleness sweep is Issue-only and never
-# deletes). The PR body must contain a single `lock-slug: <slug>` line
-# (typically pulled from the PR template). Without that line the workflow is a
-# no-op. Stacked intermediates carry `holds-lock:` (NOT matched here) so only
-# the final cutover PR's close releases.
+# deletes). Two release paths run on every close:
+#   1. Body marker — a single bare `lock-slug: <slug>` line in the PR body
+#      (typically pulled from the PR template) releases that slug.
+#   2. Branch match — agents/scripts/core/lock-release-on-close.sh releases
+#      every lock whose claim.json `branch` equals the PR's head ref. The body
+#      is mutable and the marker is easy to omit, drop in a rewrite, or leave
+#      commented out; the claim itself records the claiming branch (tooling
+#      backlog 2026-10-04-lock-release-on-close-keys-only-on-a-body-line).
+#      Skipped for a fork head, for develop/main/protected branches, and when
+#      the body carries a bare `holds-lock:` line.
+# Stacked intermediates carry `holds-lock:` (NOT matched by path 1, and it
+# switches path 2 off) so only the final cutover PR's close releases.
 #
 # Phase 3 of docs/plans/shipped/git-ref-plan-locks.md; closed-unmerged
 # extension per docs/plans/plan-lock-enforcement.md item 11.
@@ -15,7 +23,8 @@ name: Plan-lock cleanup
 # Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
 # Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub
 # App and is deferred to Phase 7 hardening. Mitigation today: this
-# workflow is short, single-purpose, and runs only on merged PRs.
+# workflow is short, single-purpose, and the only code it runs with that
+# token is develop's (the checkout below never takes the PR's ref).
 
 on:
   pull_request:
@@ -28,12 +37,22 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   release:
     name: Release refs/locks/<slug> on PR close
-    # Fires on ANY close (merged or abandoned) — the parse step below gates on
-    # the `lock-slug:` line, so a no-slug PR is a clean no-op. Releasing on
-    # closed-unmerged frees an abandoned branch's reservation (item 11).
+    # Fires on ANY close (merged or abandoned) — the parse step below gates the
+    # body-marker path on the `lock-slug:` line, and the branch-match step finds
+    # nothing for a PR that holds no lock, so a lockless PR is a clean no-op.
+    # Releasing on closed-unmerged frees an abandoned branch's reservation
+    # (item 11).
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
@@ -97,3 +116,28 @@ jobs:
           else
             echo "::notice::refs/${ref} already absent on origin; no-op."
           fi
+
+      - name: Checkout develop (the branch-match release script only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          # develop, never the PR's ref: this job holds `contents: write`, so the
+          # script it runs must be the reviewed one.
+          ref: develop
+          fetch-depth: 1
+          # Kept: the next step deletes refs/locks/<slug> with `git push origin
+          # :refs/locks/<slug>` under this job's GITHUB_TOKEN (the github-actions
+          # integration the plan-locks ruleset lets delete). This job uploads no
+          # artifact, so the persisted credential never leaves the runner.
+          persist-credentials: true
+
+      - name: Release locks claimed by the PR's head branch
+        # Runs after the body-marker path, on every close: a lock that path
+        # already deleted is simply absent from the fetch.
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          LOCK_REMOTE: origin
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --branch "$HEAD_REF"

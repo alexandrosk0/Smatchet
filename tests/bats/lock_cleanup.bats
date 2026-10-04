@@ -52,3 +52,38 @@ setup() {
 @test "ref delete uses the PLURAL endpoint (/git/refs/)" {
     grep -qE '\-X DELETE "repos/[^"]*/git/refs/\$\{ref\}"' "$WF"
 }
+
+# ---------- branch-keyed release (lock-release-on-close.sh) ----------
+# The body marker is mutable and easy to omit; the claim.json `branch` field is
+# not. The script's behaviour is covered by lock_release_on_close.bats — these
+# pin only that the workflow calls it, with the inputs its guards need.
+
+@test "the workflow releases by claim.json branch via lock-release-on-close.sh --branch" {
+    grep -qE 'lock-release-on-close\.sh" --branch "\$HEAD_REF"' "$WF"
+}
+
+@test "the branch-match step runs AFTER the body-marker delete step" {
+    local marker_line branch_line
+    marker_line="$(grep -nE 'name: Delete refs/locks/<slug> if present' "$WF" | cut -d: -f1)"
+    branch_line="$(grep -nE 'lock-release-on-close\.sh" --branch' "$WF" | cut -d: -f1)"
+    [ -n "$marker_line" ]
+    [ -n "$branch_line" ]
+    [ "$branch_line" -gt "$marker_line" ]
+}
+
+@test "the branch-match step gets head ref, head repo, base repo and body through env" {
+    grep -qE 'HEAD_REF:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.ref[[:space:]]*\}\}' "$WF"
+    grep -qE 'HEAD_REPO:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name[[:space:]]*\}\}' "$WF"
+    grep -qE 'BASE_REPO:[[:space:]]*\$\{\{[[:space:]]*github\.repository[[:space:]]*\}\}' "$WF"
+    grep -qE 'PR_BODY:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.body[[:space:]]*\}\}' "$WF"
+}
+
+@test "the release script is checked out from develop, never the PR's ref" {
+    grep -qE '^[[:space:]]*ref:[[:space:]]*develop[[:space:]]*$' "$WF"
+    run grep -E '^[[:space:]]*ref:[[:space:]]*\$\{\{' "$WF"
+    [ -z "$output" ]
+}
+
+@test "the workflow keeps contents: write (both release paths delete refs)" {
+    grep -qE '^[[:space:]]*contents:[[:space:]]*write' "$WF"
+}
