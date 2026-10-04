@@ -30,7 +30,8 @@ set -euo pipefail
 # is a submodule. Before the flip both are this checkout.
 cd "$(dirname "$0")/../../.."
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh 2>/dev/null || true
+PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 PROJECT_AGENTS_DIR="${PROJECT_ROOT:-$(pwd)}/agents/project"
 
 PASS=0

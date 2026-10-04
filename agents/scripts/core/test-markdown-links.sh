@@ -68,7 +68,8 @@ set -euo pipefail
 # climb from this script's path would check the layer's markdown from the host.
 _tml_self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$(dirname "$_tml_self")/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$(dirname "$_tml_self")/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$(dirname "$_tml_self")/../../..}"
 
 if [ "${SMATCHET_SKIP_MARKDOWN_LINK_CHECK:-0}" = "1" ]; then

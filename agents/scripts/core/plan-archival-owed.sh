@@ -27,7 +27,8 @@ set -euo pipefail
 # script's own path would land in the layer after the flip and find nothing.
 _pao_self="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_pao_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_pao_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$_pao_self/../../..}" || exit 2
 
 MODE="list"

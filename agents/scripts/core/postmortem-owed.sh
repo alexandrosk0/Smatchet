@@ -84,7 +84,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # superproject once this script lives in the agent-layer/ submodule, and to this
 # checkout before the flip.
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
 
 MODE="list"

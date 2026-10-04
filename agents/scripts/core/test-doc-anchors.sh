@@ -33,7 +33,8 @@ fi
 # agents/scripts/core/ of its own.
 _tda_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_tda_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_tda_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$(git rev-parse --show-toplevel)}" || exit 2
 export PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 exec "$PY" "$_tda_self/test_doc_anchors.py" "$@"

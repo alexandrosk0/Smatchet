@@ -26,7 +26,8 @@ set -euo pipefail
 # two are one checkout.
 LAYER="$(cd "$(dirname "$0")/../../.." && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$LAYER/scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$LAYER/scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_ROOT:-$LAYER}}"
 cd "$PROJ_DIR" || exit 1
 SETUP_HARNESS="$LAYER/agents/scripts/core/setup-harness.sh"

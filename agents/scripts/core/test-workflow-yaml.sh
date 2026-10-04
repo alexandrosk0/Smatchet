@@ -17,7 +17,8 @@ set -uo pipefail
 # layer after the flip.
 _twy_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_twy_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_twy_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 REPO_ROOT="${PROJECT_ROOT:-$(cd "$_twy_self/../../.." && pwd)}"
 cd "$REPO_ROOT" || { echo "ERROR: cd to $REPO_ROOT failed" >&2; exit 1; }
 

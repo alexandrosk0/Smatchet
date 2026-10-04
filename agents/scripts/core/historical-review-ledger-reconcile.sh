@@ -42,7 +42,8 @@ set -uo pipefail
 # script's own path would land in the layer after the flip and find nothing.
 _hrl_self="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_hrl_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_hrl_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$_hrl_self/../../..}" || exit 0
 
 LEDGER="${HRL_LEDGER:-docs/self-improvement/historical-review-findings.md}"

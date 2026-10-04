@@ -65,7 +65,8 @@ set -euo pipefail
 # script would rewrite the wrong repo's branch protection.
 _sbp_self="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_sbp_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_sbp_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$_sbp_self/../../..}"
 
 command -v gh >/dev/null 2>&1 || { echo "setup-branch-protection: gh CLI is required" >&2; exit 2; }

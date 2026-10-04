@@ -66,7 +66,8 @@ set -euo pipefail
 # layer's own CI. A climb from this script's path would lint the layer from the host.
 _tsl_self="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_tsl_self/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$_tsl_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 cd "${PROJECT_ROOT:-$_tsl_self/../../..}"
 
 if [ "${SMATCHET_SKIP_SHELL_LINT:-0}" = "1" ]; then

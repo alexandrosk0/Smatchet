@@ -92,8 +92,14 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 # the top of the file — before any cd, so a relative caller path cannot resolve
 # against the wrong directory.
 _tlr_layer_root="$(cd "$(dirname "$SELF")/../../.." && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-. "$_tlr_layer_root/scripts/dev/project-config.sh" 2>/dev/null || true
+# No project-config.sh beside this script means a fixture copy: scan its own tree,
+# never a root inherited from the caller. A config that fails to parse keeps them.
+if [ -f "$_tlr_layer_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_tlr_layer_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT
+fi
 
 # --root <dir> scans an arbitrary tree (used to scan the --diff baseline worktree
 # with the current scanner). Default: the host tree, PROJECT_ROOT.

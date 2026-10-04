@@ -29,7 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # checkout before the flip. A climb from this script's own path would land in the
 # layer after the flip.
 # shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null || true
+PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null \
+    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
 REPO_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 HOOK="$REPO_ROOT/scripts/git-hooks/pre-push"
 
