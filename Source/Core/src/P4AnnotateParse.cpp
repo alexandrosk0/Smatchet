@@ -173,4 +173,30 @@ P4ClScanMatch FindFirstChangelistInText(const std::string& text) {
     return match;
 }
 
+bool IsChangelistUnknownMessage(const std::string& p4Output) {
+    const std::string lower = ToLowerAsciiCopy(p4Output);
+    if (lower.find("no such changelist") != std::string::npos) {
+        return true;
+    }
+    static const std::string kChange = "change ";
+    static const std::string kUnknown = "unknown";
+    for (std::size_t pos = lower.find(kChange); pos != std::string::npos; pos = lower.find(kChange, pos + 1)) {
+        std::size_t i = pos + kChange.size();
+        const std::size_t digitsStart = i;
+        while (i < lower.size() && lower[i] >= '0' && lower[i] <= '9') {
+            ++i;
+        }
+        if (i == digitsStart) {
+            continue;
+        }
+        while (i < lower.size() && (lower[i] == ' ' || lower[i] == '\t')) {
+            ++i;
+        }
+        if (lower.compare(i, kUnknown.size(), kUnknown) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace P4AnnotateParse

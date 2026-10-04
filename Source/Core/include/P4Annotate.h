@@ -4,6 +4,8 @@
 #include "ConfigManager.h"
 #include "SmatchetResult.h"
 
+#include <chrono>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -95,26 +97,55 @@ Result<std::vector<P4ChangeSummary>> P4ChangesForUser(const AnnotateAnalysisConf
  */
 std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string& email);
 
-/** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
+/**
+ * LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe; the mutex is never held
+ * while `p4` runs.
+ *
+ * A described changelist and the server's "Change N unknown." answer are final for the session. Any
+ * other describe failure (p4 not started, timed out, server unreachable) is cached with Loaded=true
+ * and its Error so callers can show it, but only until the retry window has passed: the next
+ * GetOrFetch after that runs `p4 describe` again, so a describe that failed offline recovers once
+ * the server is reachable. A failure never replaces a final answer already in the cache.
+ */
 class P4ChangelistDescribeCache {
   public:
+    using Clock = std::chrono::steady_clock;
+    /// Time source for the retry window. Tests inject one to step through the window.
+    using NowFn = std::function<Clock::time_point()>;
+
+    /** Retries a transient failure after smatchet::offline::kLookupRetryAfterSeconds. */
     explicit P4ChangelistDescribeCache(int maxEntries = 512);
+
+    /** `retryAfter` may be zero (retry on the next lookup); an empty `now` uses Clock::now. */
+    P4ChangelistDescribeCache(int maxEntries, std::chrono::seconds retryAfter, NowFn now);
 
     /** Returns cached or empty with Loaded=false if missing; caller may call Store. */
     P4ChangelistDetails Get(const std::string& changelist) const;
 
+    /** Stores `d` as a final entry (never re-fetched by GetOrFetch). */
     void Store(const std::string& changelist, P4ChangelistDetails d);
 
-    /** Fetch via p4 describe -s if not cached (blocking). */
+    /** Fetch via p4 describe -s if not cached, or if a cached transient failure is due a retry (blocking). */
     P4ChangelistDetails GetOrFetch(const AnnotateAnalysisConfig& cfg, const std::string& changelist);
 
   private:
+    struct Slot {
+        P4ChangelistDetails Details;
+        /// A failure GetOrFetch runs `p4 describe` for again once RetryAt has passed.
+        bool Transient = false;
+        Clock::time_point RetryAt{};
+    };
+
+    P4ChangelistDetails RecordFailure(const std::string& changelist, bool ran, int code, const std::string& out,
+                                      const std::string& err);
     void Touch(const std::string& cl);
     void EvictIfNeeded();
 
     int maxEntries_;
+    std::chrono::seconds retryAfter_;
+    NowFn now_;
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, P4ChangelistDetails> map_;
+    std::unordered_map<std::string, Slot> map_;
     std::vector<std::string> lru_;
 };
 
