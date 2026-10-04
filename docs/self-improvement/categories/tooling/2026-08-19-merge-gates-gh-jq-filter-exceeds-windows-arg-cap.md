@@ -78,5 +78,5 @@ stands between an agent and a merge past a red check. On Windows it does not run
 and it fails in the one way that discourages investigation: an outage verdict on a
 healthy API, which invites either waiting or reaching for the admin-merge carve-out. A
 gate that is locally unrunnable on the primary dev platform is a gate that gets routed
-around. See also [`2026-08-18-cr-out-of-band-label-inert-until-gate-rerun.md`](2026-08-18-cr-out-of-band-label-inert-until-gate-rerun.md)
+around. See also [`2026-08-18-cr-out-of-band-label-inert-until-gate-rerun.md`](../applied.md)
 for the other half of the same session's un-wedging cost.

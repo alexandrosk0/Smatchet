@@ -3753,7 +3753,7 @@ head reaches this state the only exit is a **new head**.
 Neither existing entry covers this: the
 [adaptive-ratelimit](applied.md)
 one is about CR never *arriving*; the
-[stuck-blockers](tooling/2026-07-13-cr-merge-gate-stuck-blockers.md) one is about
+[stuck-blockers](applied.md) one is about
 findings that *are* parseable. This is CR having arrived and the gate being
 structurally unable to read it.
 
@@ -6600,3 +6600,1247 @@ Triggered-follow-up: when=date:2026-09-20; action=confirm the 25-marker 2026-09-
 1. The 2026-09-30 / 10-01, 11-30 / 12-01 and 2026-12-31 cohorts were each re-evaluated in their own PR (#2272, #2275, #2280). Markers were retired where they exempted nothing, folded where the clone could be folded, set to `revisit=never` where standing, and otherwise staggered with a debt entry. Unwrapping the wrapped markers showed the 2026-12-31 cohort had been larger than the gate could see.
 2. The `deviation-cohort` WARN in `test-lint-rules.sh --diff` fires when a diff adds a marker on a date more than 8 markers already share (`SMATCHET_DEVIATION_COHORT_MAX`). The `--scan-revisit-cohorts` sweep lists every crowded date. The last such date, 2027-03-31 with 21 markers, was spread by group so that no date holds more than 8.
 3. `cpp-rules.md` states that `deviation-overdue` is a strict, whole-tree, merge-blocking rule, and the AGENTS.md contract-card row lists it as absolute.
+
+- 2026-08-06 · claude-code · [debt] · P2 — `ScenarioRunner::Tick` runs **twice per rendered frame**, so `--warmupFrames=N` silently means `N/2` rendered frames and any scenario that draws in `OnFrame` submits its content twice into one ImGui frame
+
+  Two call sites, both live in the standalone ephemeral loop:
+  - [`SmatchetUI.cpp:642`](../../../Source/Core/src/Ui/SmatchetUI.cpp) — end of
+    `drawPerFrameTicksAndHandlers`, itself the tail of `SmatchetUI::Draw`.
+  - [`StandaloneAppBootstrap.cpp:685`](../../../Source/Standalone/StandaloneAppBootstrap.cpp)
+    — in `RunRenderLoop`, after `SmatchetDrawFrameWithSeh`.
+
+  `git log -S` dates both sites and the bootstrap `SmatchetDrawFrameWithSeh` call to
+  `27063e22` (2026-05-29), so the duplication is not recent.
+
+  Two observable consequences:
+
+  1. **Frame budgets are halved.** `IsDone(frameIndex)` is compared against a
+     frame counter incremented twice per rendered frame, so `--warmupFrames=16`
+     gives 8 actual rendered warm-up frames. Every scenario's warm-up constant is
+     off by 2× from what its author intended, and any timing-sensitive scenario is
+     tuned against the wrong number.
+  2. **Content is drawn twice.** Scenarios that issue ImGui calls from `OnFrame`
+     — e.g. [`CodeSyntaxColoringScenario`](../../../Source/Core/src/Commands/Scenarios/CodeSyntaxColoringScenario.cpp)
+     — submit their whole window twice into a single ImGui frame. The
+     `code-syntax-coloring` capture visibly renders every code sample twice (and the
+     Syncing toast twice, the second dimmed). Scenarios whose `OnFrame` only sets
+     idempotent session flags (the `user-info-*` family) show no duplication, which
+     is why this stayed invisible.
+
+  Not fixed inline with PR #1962 deliberately: removing either call site changes
+  frame semantics for **every** scenario (warm-up counts double overnight) and
+  invalidates every bucket-C golden, so it needs its own slice with golden
+  regeneration — which is approval-gated by
+  [`golden-image-approval.md`](../../agent-rules/golden-image-approval.md).
+
+  Suggested shape: keep the in-`Draw` tick (it matches production ordering and
+  runs inside the `NewFrame`/`Render` bracket), delete the bootstrap one, then
+  halve every scenario's default warm-up constant in the same commit so the
+  *rendered*-frame count is unchanged and only the goldens that were genuinely
+  double-drawn move.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — the bootstrap tick is gone (StandaloneAppBootstrap.cpp carries a 'Deliberately no scenario-runner tick' comment); SmatchetUI.cpp is the only desktop tick site, so --warmupFrames=N means N rendered frames.
+  Status: applied (2026-10-04)
+
+- 2026-09-07 · code-review · [debt] · P2 — worker-side missing-parent fetch gates on the ACTIVE view; the grid projection gates per pane
+
+  Details: `TicketSyncService::FetchMissingParentsIntoQueue` decides whether to skip the keyed parent fetch
+  by reading `ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId)`'s `HideParents`
+  and the global `TrackerConfig::LoadParentIssues` — one decision for the whole sync. But the grid's row
+  projection (`SmatchetActiveProjectGridTable.cpp`, `HierarchyOptionsForView(activeViewForGrid)`) reads
+  the hierarchy options **per pane** (ADR-0018 multi-pane views). A background pane whose own view wants
+  Story group / does not hide parents gets no parent top-up whenever the globally-active view happens to
+  hide parents — the two switches read different scopes for the same feature.
+  Found during adversarial review of docs/plans/shipped/parent-issue-hierarchy.md (PR #2198).
+
+  Concrete next action: either (a) make the worker-side gate check every open pane's view (fetch parents
+  if ANY pane wants them), or (b) document the active-view-only scope as an intentional simplification in
+  docs/guides/parent-hierarchy.md and drop the cost only when literally no pane could use the result.
+  Enumerator: `g_ui.gridPanes` (or the pane-view resolver used by `HierarchyOptionsForView` callers) is the
+  per-pane view source of truth to reconcile against.
+  Resolution: not a defect, closed 2026-10-04 (backlog-sweep-2026-10) — every sync is pane-scoped: pane-kicked syncs re-point views.ActiveViewId to the pane's own view before SyncPaneWithBackend, and the focused pane syncs against the active view, so FetchMissingParentsIntoQueue resolves each pane's own HideParents.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-06-18 · orchestrator · [process] · P3 — new backlog entries land as one file per entry
+  Details: Self-improvement entries now go in their own file under
+    docs/self-improvement/categories/<category>/<YYYY-MM-DD>-<slug>.md instead of
+    being appended to the monolithic categories/<category>.md. Two concurrent PRs
+    that each add an entry then touch disjoint paths, so adds never merge-conflict;
+    archiving an entry is removing/moving that one file, so deletes never conflict
+    either. The ~135 legacy entries stay in the monolith files and are still read
+    in union by every reader (the count gate and the triggered-follow-up nudge glob
+    both sources). This is the incremental, new-entries-only slice of the deferred
+    self-improvement-one-entry-per-file plan; the 135-entry migration is not done.
+  Concrete next action: none — this entry exists to exercise the new per-entry
+    path end-to-end and document the switchover. Producers: write per-entry files
+    from now on per docs/self-improvement/AGENT_SELF_IMPROVEMENT.md § Workflow.
+  Resolution: observational entry closed 2026-10-04 (backlog-sweep-2026-10) — the one-file-per-entry convention is documented in AGENT_SELF_IMPROVEMENT.md § Format and read in union by test-backlog-counts.sh / followup-due-nudge.sh; no action was ever pending.
+  Status: applied (2026-10-04; was: observational)
+  Last-reviewed: 2026-10-04
+
+- 2026-07-04 · orchestrator (CPP_CODE_AUDIT.md remediation, #1593) · [process] · P2 — ad hoc post-implementation `/code-review`-style subagent prompts caught the CORRECTNESS of each new fix but missed 3 real issues CodeRabbit's guideline-driven review caught: a fix that silently dropped a pre-existing property of the code it touched, and two cross-file duplication/consistency gaps
+  Details: across this PR's ~10 review rounds, the orchestrator hand-wrote per-diff prompts telling review subagents what to verify (e.g. "does this ParseBounded conversion preserve the original control flow", "trace this idiom by hand for an overflow boundary"). Those targeted prompts were effective at catching correctness bugs in the NEW code (5 real bugs found and fixed across the session this way). But CodeRabbit's follow-up review of the same diffs, working from fixed house style-guide rules rather than a per-diff prompt, caught 3 things the orchestrator's own agents missed entirely: (1) `coverage-delta-gate.sh`'s SIGPIPE fix (switching a `|` pipe to process substitution) fixed the reported crash but silently dropped `git diff`'s own exit-status propagation — a bad `MERGE_BASE`/git error now produced empty input that the classifier treated as EXEMPT, silently passing a gate that should hard-fail; the review agent tasked with verifying that exact fix confirmed the SIGPIPE mechanism but was never asked "does this fix change any OTHER property of the surrounding code, not just the one bug it targets" and so never checked exit-status handling. (2) `TicketFieldEditor_Modal.cpp`'s deferred-load placeholder path hand-duplicated a helper (`SeedLongTextBuffer`) introduced ~40 lines earlier in the same file/session — the orchestrator's own duplication lint gate (`dup_audit.py`) is delta-gated against `origin/develop` and doesn't catch same-PR intra-file duplication introduced across two different edits to the same file. (3) `SmatchetToolbarUi.cpp`'s new `ParseBounded` conversion didn't log parse failures the way the near-identical sibling block in `SmatchetUI.cpp` already did — a same-class-of-fix consistency gap across files that no single-file-scoped review prompt would surface.
+  Concrete next action: when writing review-subagent prompts for a bug fix, add two standing checks regardless of what the specific finding is about: (a) "list every property/behavior of the code this diff touches that existed BEFORE the change (error propagation, logging, timeout semantics, etc.) and confirm each one is either preserved or the change to it is a deliberate, stated part of the fix" — not just "does this fix the reported bug"; (b) "grep the codebase for the nearest sibling/analogous code path performing the same operation (same helper function available but not used, same class of parse/log/error-handling elsewhere in the file or a sibling file) and flag any inconsistency." Neither check requires knowing the specific bug in advance, so both can be added as always-on boilerplate in the code-review agent prompt / `/code-review` skill rather than something the orchestrator has to remember to ask for per-diff.
+  Update (2026-07-04): both checks added to `agents/core/code-review.md`'s Smatchet checklist (v5→v6, new "Fix-scope integrity" and "Cross-file / intra-file consistency" items, inserted between "Dual-target" and "Conventions"). Not yet flipped to `applied`/archived: `code-review` has eval coverage per `AGENT_SELF_IMPROVEMENT.md` § Optimize against evals, which asks for a scored base-vs-head delta (`scripts/dev/agent-eval-score.py` over the curated case set) before an eval-covered agent's prompt edit is marked applied — that scoring run has not been done yet. Leaving Status as `open` (prompt edit landed, eval-score + formal archive still pending) rather than overclaiming.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — both checklist items are in agents/core/code-review.md. The advisory base-vs-head eval score was not run (needs live harness invocations this environment does not have); it is advisory, so it does not hold the archival.
+  Status: applied (2026-10-04; was: open (prompt edit landed 2026-07-04; eval-score + archive-to-applied.md still pending))
+  Last-reviewed: 2026-10-04
+
+# The auto-register hook silently grants auto-merge authorization to every PR the agent opens
+
+- **Date**: 2026-08-16
+- **Author**: orchestrator
+- **Category**: process
+- **Priority**: P1
+
+## What
+
+`gh pr create` auto-registers the new PR with `smatchet-merge-watcher`, and mere
+registration is documented as *authorization to auto-merge*. The two facts compose
+into a consent bypass: **every** agent-opened PR is auto-merge-authorized at creation
+time, before the user has been asked anything.
+
+The two halves:
+
+1. **`docs/harness/claude-code/hooks/autoregister-pr.sh`** — a `PostToolUse(Bash)`
+   hook wired at `docs/harness/claude-code/settings.json.tmpl:145` and `:161`, copied
+   to `.claude/hooks/` by `setup-harness.sh claude-code`. On any Bash command
+   containing `gh pr create` it greps `pull/<N>` out of the payload and runs
+   `python agents/scripts/core/merge-watcher-cli.py register <N>`. Unconditional —
+   no authorization check, no user prompt, no opt-in flag. Its header states the
+   intent plainly: closing the "shipped a PR but forgot to register it" gap.
+
+2. **`docs/agent-rules/merge-gates.md:84`** — "Auto-`gh pr ready` + merge apply only
+   when the user has explicitly authorised this PR for merge (post-ship option 3
+   'Register with watcher', in-session 'merge when green', **OR any PR registered
+   with `smatchet-merge-watcher`**)."
+
+That third clause is what converts the hook's bookkeeping into consent. Result: the
+post-ship 4-option `AskUserQuestion` (AGENTS.md § Autonomous ship-loop) is decorative
+with respect to auto-merge — picking option 1, 2, or 4 cannot withhold it, because
+the hook already registered the PR minutes earlier.
+
+**Observed live, 2026-08-16, PR #2027.** The user answered the post-ship question with
+"Wait and report gates" and stated "No merge without your go-ahead." `merge-watch list`
+nonetheless showed `{"pr": 2027, "registered_at": 1786850965, ...}`. Nothing merged
+without consent only because the entry was parked at `stuck_reason: "REVIEW_REQUIRED"`,
+`stuck_streak: 11` — an incidental branch-protection state, not the consent boundary.
+Once every check went terminal-green and `mergeStateStatus` flipped to `CLEAN`, the
+next daemon cycle had no remaining reason to hold. The orchestrator ran
+`merge-watch unregister 2027` by hand to restore the user's stated intent.
+
+**Reproduced by the PR that files this entry.** Opening the backlog PR fired the hook
+again — `merge-watch list` showed `{"pr": 2031, "registered_at": 1786895461, ...}`
+seconds after `gh pr create`, with no authorization asked for or given, and the user
+had authorized no merge. Unregistered by hand a second time. Two for two: the bypass
+is the default path, not an edge case.
+
+## Why it matters
+
+This inverts the autonomy model. [`AI_POLICY.md`](../../../AI_POLICY.md) makes agent
+autonomy a **granted and revocable mode**, and AGENTS.md § Merge gates states
+"**Auto-merge applies only when explicitly authorised**". Here authorization is
+granted by a side effect of the agent's own tool call — the agent effectively
+self-authorizes, and the user's answer to the one question that exists to gate it has
+no mechanical effect.
+
+It also contradicts the watcher's own shipped design decision,
+[`smatchet-merge-watcher.md:102`](../../plans/shipped/smatchet-merge-watcher.md)
+("Explicit owner transfer on register … Clean ownership boundary; no race between
+orchestrator + watcher + user"). Ownership transfer was specified as an explicit user
+act; the hook made it automatic and silent while the docs kept describing it as
+explicit.
+
+The failure is quiet by construction. Registration emits only a `systemMessage`
+inside a hook result, so nothing in the post-ship summary tells the user that a
+background daemon now holds merge rights on their PR. The user learns only if they
+run `merge-watch list` — or after the merge lands.
+
+Same family as the 2026-06-19 "Intent gate bypassed via non-poller merge" entry (since
+applied — see [`applied.md`](applied.md)): enforcement that lives on the merge-actor
+side is defeated by a path that never consults it. There the bypass was the merge
+*mechanism*; here it is the merge *authorization*.
+
+## Concrete next action
+
+Split registration from authorization — keep the hook, drop its power. The hook's
+observability value is real (gate-polling and the stuck-nudge caught wedged PRs
+#2024 and #2027); the defect is that registration silently implies merge rights.
+
+1. **Registry gains `authorized` (bool, default `false`).** Hook-driven registration
+   writes `false`. Explicit user authorization — post-ship option 3, in-session
+   "merge when green" — writes `true`.
+2. **`merge-watcher.py` merges only on `authorized: true`.** An unauthorized entry
+   still polls gates, still nudges on stuck/stale, still escalates — it just never
+   calls the merge REST endpoint or `gh pr merge --auto`. Preserves everything the
+   hook was written for.
+3. **Add `merge-watch authorize <pr>` / `deauthorize <pr>`** verbs; make `register`
+   take `--authorized` for the explicit-consent path. Have `authorize` print the
+   ownership-transfer notice that `smatchet-merge-watcher.md:102` already specifies.
+4. **Fix `docs/agent-rules/merge-gates.md:84`** — replace "OR any PR registered with
+   `smatchet-merge-watcher`" with "OR a PR whose registry entry has
+   `authorized: true`". As written today the clause is the actual bug in doc form.
+5. **bats coverage** (sibling of `test-merge-watcher-bats.sh` /
+   `test-merge-watcher-integration-bats.sh`): a hook-registered entry with **all gates
+   PASS** must not be merged; `authorize` must flip it to mergeable; `register` +
+   `--authorized` must be equivalent to `register` then `authorize`.
+6. **Surface it in the post-ship summary.** If the PR is registered but unauthorized,
+   say so in the ship report — a background daemon holding a PR should never be
+   invisible state.
+
+Est ~0.5d. Rejected alternative: delete `autoregister-pr.sh`. That trades one real
+gap (forgotten registration → no gate-polling, no stuck-nudge) for another, when the
+coupling between registration and authorization is the only thing actually broken.
+
+## Status
+
+applied 2026-08-16 — all 6 steps shipped on `fix/watcher-merge-authorization`.
+Registry entries carry `authorized` (default `false`); `merge-watcher.py` gates
+**both** write verbs on it — the merge in `handle_pass` and, beyond this entry's
+literal text, the earlier C4 draft→ready flip in `poll_one` (a ready-flip is a
+write to the user's PR, so leaving it ungated would reproduce the bypass one verb
+earlier). An unauthorized non-draft PR still polls gates, nudges and escalates;
+only a genuinely-draft one parks at the new `DRAFT_UNAUTHORIZED` state.
+
+## Cross-ref
+
+- `docs/harness/claude-code/hooks/autoregister-pr.sh`
+- `docs/harness/claude-code/settings.json.tmpl:145`, `:161`
+- `docs/agent-rules/merge-gates.md:84`
+- `agents/scripts/core/merge-watcher-cli.py`, `agents/scripts/core/merge-watcher.py`
+- `docs/plans/shipped/smatchet-merge-watcher.md:102` (explicit owner transfer)
+- AGENTS.md § Merge gates (auto-merge authorization), § Autonomous ship-loop default
+  (post-ship 4-option question)
+- `AI_POLICY.md` § Two loop modes (autonomy as granted / revocable)
+- PR #2027 (observed instance), PR #2024 (second registered entry, same session),
+  PR #2031 (this entry's own PR — reproduced the bypass on creation)
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — merge-watcher.py gates both write verbs on the per-PR authorized flag, authorize/deauthorize exist in merge-watcher-cli.py, and merge-gates.md documents the consent rule.
+  Status: applied (2026-10-04)
+
+# `cr-finding-gate` posts an unbounded `pending` that no enforcement layer blocks on
+
+- **Category**: process
+- **Priority**: P1
+- **Date**: 2026-08-19
+- **Observed on**: PR #2127 (merged past it under an explicit user authorisation) — and #2130, #2122, #2121, #2119, #2118, #2117 before it, all merged with the same context `pending` and **no** override label
+- **Status**: applied — 2026-09-09 (OSS manual-trigger playbook: labeled trigger + terminal failure + merge-gates discount + scripts/dev/trigger-coderabbit-review.sh)
+
+## What happened
+
+`CR findings (0 actionable)` — the StatusContext `cr-finding-gate.yml` posts as its verdict — has
+been stuck `pending` on every head in this repository for at least ~18 h (first observed merge
+`2026-08-18T16:58Z`, still true now). Seven PRs merged past it. Seven more (#2132, #2131, #2129,
+#2126, #2125, #2101, #2080) are sitting on it right now.
+
+Nobody bypassed anything. GitHub reported each PR mergeable, because branch protection requires the
+**job** (`CR finding gate`) and the job is green — while the **context** the job posts is `pending`.
+The two names are different, and only one of them is guarded.
+
+Full RCA: [`postmortems.md`](../postmortems.md) § 2026-08-19 · PR #2127.
+
+## The mechanics, source-read
+
+1. CodeRabbit's OSS star-gate (<10 stars) makes every PR report
+   `Review skipped: manual review required for this OSS repository`. `decide()` in
+   `.github/actions/cr-finding-gate/action.yml` **refuses** to read that as a verdict
+   (`maybe_nudge_review never-reviewed; return 1`) — correctly, guarding the #2028 fail-open.
+2. But that refusal has **no terminal branch**. The poll exhausts `POLL_BUDGET_SECONDS=180`, exits
+   the loop, and posts `pending "awaiting CodeRabbit review on current head"`. The condition it waits
+   on is a repo-plan property, not a race — so the wait can never end.
+3. The action runs `set +e` and **exits 0** on every terminal verdict (deliberate: it keeps the
+   `if: always()` fallback poster alive through a step timeout). Job green, context pending.
+4. `project.config.json` § `branch_protection.required_contexts` names `CR finding gate` and not
+   `CR findings (0 actionable)` — confirmed by the auto-derived 22-name `requiredContexts` array in
+   #2127's own `merge-snapshots.jsonl` row. GitHub says mergeable; `merge-gates.sh`, which blocks on
+   **any** check, says `GATES_TIMEOUT`. Two layers, two answers.
+5. `postmortem-owed.sh` cannot report it. Trigger 1 needs a *terminal* non-SUCCESS
+   (`IN_PROGRESS/QUEUED/PENDING never count`; StatusContexts matched only on
+   `IN("FAILURE","ERROR")`). The `required-never-terminal` column that **does** select
+   `IN("PENDING","EXPECTED")` is AND-gated on the same `$reqNames` set point 4 shows this context is
+   missing from. Trigger 2 needs an override label; none was used. `--list` after #2127's merge
+   reported `no gate escapes owed a postmortem (last 20 merges clean)`.
+
+The system-level shape: `merge-gates.sh` deliberately **bounds** its CR wait
+(`MERGE_GATES_CR_GRACE_POLLS`, default 10, WARN-and-pass — "so a stuck integration never wedges the
+ship-loop indefinitely") while the producer it waits on posts an **unbounded** `pending`. The
+no-wedge hatch is defeated by the thing it hatches against.
+
+## Relationship to the 2026-08-17 entry
+
+[`2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md)
+covers the **review-assurance ladder** — whether a review actually happened, and how three rungs
+each convert "not reviewed" into "reviewed, clean". This entry is the **gate mechanics** underneath
+it: even once you correctly refuse to score a non-review as a pass (which `cr-finding-gate` already
+does), the refusal has nowhere terminal to go, and the resulting `pending` is invisible to every
+layer that could act on it. Same upstream cause (auto-review off), opposite failure direction — that
+one fails *open*, this one fails *silent*. Fix them together; neither subsumes the other.
+
+## Concrete next action
+
+Ordered — (b) before (a) turns a soft repo-wide wedge into a hard one.
+
+1. **(a) Add a terminal arm for the never-reviewed-by-policy input.** On
+   `manual review required for this OSS repository`, stop polling and `post failure` naming the
+   condition (e.g. `cr-auto-review-disabled (OSS <10 stars) — needs cr-out-of-band +
+   cr-disposition:cr-auto-review-disabled`), mirroring the distinct `cr-quota-exhausted` verdict the
+   #1962 postmortem proposed for the sibling input. A terminal `failure` is visible to
+   `merge-gates.sh`, to branch protection, and to `postmortem-owed.sh`; an unbounded `pending` is
+   visible to none of them. Enumerator:
+   `grep -n 'manual review required\|POLL_BUDGET_SECONDS\|post pending' .github/actions/cr-finding-gate/action.yml`.
+2. **Assert the invariant this escape violated**, in `tests/bats/cr_finding_gate.bats`: the action
+   must never conclude its job green while the context it posted is `pending`. That single assertion
+   catches every future variant of "refused, but had nowhere terminal to go".
+3. **(b) Then close the name gap.** Add `CR findings (0 actionable)` to
+   `branch_protection.required_contexts`. This makes GitHub and the poller guard the same name and
+   switches on the detector's existing `required-never-terminal` column for free. Enumerator:
+   `jq '.branch_protection.required_contexts' project.config.json`.
+4. **Generalise it into a parity check**: every status context a first-party workflow posts as a
+   *gate verdict* must appear in the required set. That is the check that would have caught point 4
+   at authoring time instead of at merge #7. Enumerator:
+   `grep -rn 'repos/.*/statuses/' .github/` cross-referenced against the required set.
+5. **Name the human action as a human action.** Enabling CR auto-review (10 stars, or a paid plan)
+   is the real remediation and is not a gate. Recording it here keeps 1–4 from being mistaken for a
+   fix to the underlying blindness.
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=re-check whether `CR findings (0 actionable)` still posts `pending` on merged heads, whether the terminal arm shipped, and whether the context joined required_contexts; baseline=7 consecutive merges past a pending context with 0 override labels, 2026-08-18/19; fired=2026-08-30
+
+## Re-check 2026-08-30 (fired via PR #2176 ship-loop)
+
+- **Terminal arm: NOT shipped.** `action.yml:510-511` still handles `manual review required` by
+  nudging + `return 1` — no `post failure`; `:635` still posts the unbounded
+  `pending "awaiting CodeRabbit review on current head"`.
+- **Name gap: still open.** `project.config.json` `.branch_protection.required_contexts` carries
+  the job name `CR finding gate`, not the posted context `CR findings (0 actionable)`.
+- **But no merge escaped past it this time**: on #2176 `merge-gates.sh` block-on-any-red held the
+  merge until the pending context resolved (poll 41/90, 22/22 green) — the baseline's
+  "7 consecutive merges past a pending context" class did not recur. The remaining risk is the
+  silent wedge, not a silent escape; the wedge's root cause is the bot-authored nudge —
+  see [`2026-08-30-cr-gate-auto-nudge-is-bot-authored-so-coderabbit-ignores-it.md`](applied.md).
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — the OSS arm posts a terminal failure naming the human action (action.yml, bats-covered), and block-on-any-red holds merges on a pending context. Residual NOT done here: adding the CR findings context to branch protection's required contexts is an admin design call (merge-gates.md keeps CR PR-advisory by design).
+  Status: applied (2026-10-04)
+
+# `cr-finding-gate`'s auto-nudge is bot-authored, and CodeRabbit ignores bot-authored commands
+
+- **Category**: process
+- **Priority**: P2
+- **Date**: 2026-08-30
+- **Observed on**: PR #2176 (both heads: the initial review head and `b335714be` after the CR-Major fix)
+- **Status**: applied — 2026-09-09 (OSS manual-trigger playbook: labeled trigger + terminal failure + merge-gates discount + scripts/dev/trigger-coderabbit-review.sh)
+
+## What happened
+
+On a sub-10-star repo CodeRabbit posts `Review skipped: manual review required for this OSS
+repository` on every head. `cr-finding-gate`'s `maybe_nudge_review never-reviewed` rung
+(`action.yml:511`) is supposed to break that state by commenting `@coderabbitai review` — but the
+comment posts via the workflow's `GITHUB_TOKEN`, i.e. authored by `github-actions[bot]`, and
+**CodeRabbit does not act on bot-authored commands**. The nudge lands, CR stays silent, the
+context stays `pending "awaiting CodeRabbit review on current head"` forever.
+
+Observed twice on #2176: after each push the gate's own nudge produced nothing; the pending
+resolved ONLY once a **human-authored** `@coderabbitai review` PR comment was posted out-of-band
+(sanctioned human-nudge carve-out at `merge-gates.sh:149-150`). After the human comment CR
+reviewed the head, the context went terminal, and the merge proceeded on real review evidence —
+so `merge-gates.sh`'s block-on-any-red held correctly; the dead rung just converts "auto-heal"
+into "silent wedge until a human notices".
+
+## Relationship to existing entries
+
+[`2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md`](applied.md)
+documents that the never-reviewed refusal has no terminal arm (fails silent). This entry adds the
+*reason the wait can never self-heal*: the one automated actor that could end it speaks with a
+voice CodeRabbit is deaf to. Fix both together — a terminal arm makes the wedge visible; a
+human-credentialed nudge (or dropping the dead rung) makes the auto-heal real.
+
+## Concrete next action
+
+1. Make the nudge human-credentialed: post it with the orchestrator's user token (`ORCH_USER`
+   path already exists in `safe-merge.sh`) from the *caller* side rather than the workflow side —
+   or delete the `never-reviewed` nudge rung outright and document that resolution requires a
+   human comment, so the gate does not pretend to an ability it lacks.
+   Enumerator: `grep -n 'maybe_nudge_review\|GITHUB_TOKEN' .github/actions/cr-finding-gate/action.yml`.
+2. Assert in `tests/bats/cr_finding_gate.bats` that whichever path remains is honest: either the
+   nudge is posted with a non-bot credential, or the never-reviewed branch posts a terminal
+   verdict naming the human action required.
+
+## Follow-up observation — 2026-09-12 (PR #2184)
+
+Re-checked on PR #2184. The finding **reproduced, and the dead rung is still in place**, but with one
+correction to how "applied" should be read.
+
+- **The rung still posts as `github-actions[bot]`.** `.github/actions/cr-finding-gate/action.yml:158-165`
+  documents it in its own comment: *"the nudge posts via the workflow token, i.e. as
+  `github-actions[bot]`"*. The 2026-09-09 remedy shipped
+  `scripts/dev/trigger-coderabbit-review.sh` — a **human-run playbook**, which is a real improvement
+  to the recovery path but does not repair the automated rung. Action 1 of this entry ("make the
+  nudge human-credentialed, or delete the rung outright") is therefore still open, and the entry's
+  `Status: applied` overstates coverage.
+- **Bot nudge 0 for 3 on one PR.** #2184 fired auto-nudges at 2026-09-06T19:03:11Z,
+  2026-09-07T00:02:27Z and 2026-09-07T18:59:32Z. The first two were ignored for ~20 h and ~15 h; the
+  third was likewise never acted on. All three pre-date the 2026-09-09 remedy, so they are evidence
+  about the rung, not about the playbook.
+- **Human nudge acted on in 7 seconds, twice.** A human-authored `@coderabbitai review` at
+  2026-09-07T15:37:15Z drew a CodeRabbit reply at 15:37:22Z (7 s). A second at 20:08:15Z drew a reply
+  at 20:08:20Z (5 s) and the completed review that produced 2 actionable findings. The asymmetry is
+  now 0/3 bot vs 2/2 human on this PR alone, or **0/5 bot vs 4/4 human** counting #2176.
+- **New adjacent fact worth folding in:** the first human nudge was refused with *"Review rate
+  limited"*, and CodeRabbit's summary comment states the real constraint — *"Your plan provides up to
+  1 included review per hour; 0 remain after this review"*. So on this repo the recovery path is
+  bounded by an OSS quota as well as by authorship; a human-credentialed nudge fixes the authorship
+  half only, and the terminal-arm work in
+  [`2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md`](applied.md)
+  is what makes the quota wait *visible* rather than silent.
+
+Suggested status correction: `applied` → `partially applied` (human playbook shipped; automated rung
+unchanged).
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-30;n=15; action=re-check whether the never-reviewed nudge still posts as github-actions[bot] and whether any PR resolved the pending without a human comment; baseline=2 bot-nudges ignored, 2 human nudges acted on, PR #2176 2026-08-29/30; fired=2026-09-12
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — the never-reviewed nudge rung is no longer reached (only stale-clean has call sites) and the OSS state posts a terminal failure naming the human step. Hypothesis, not mechanism: bot-authored nudges drew no review in the observed cases while human ones did (one bot nudge on #2036 did draw a reply) — see the observation-vs-mechanism rule in AGENT_SELF_IMPROVEMENT.md § Workflow.
+  Status: applied (2026-10-04)
+
+# An orphaned plan-lock has no direct write path for a session-scoped token — release it through a closing PR's `lock-slug:` line instead
+
+- **Category**: process
+- **Priority**: P3
+- **Date**: 2026-09-10
+- **Observed on**: Issue #2182 (`refs/locks/fa-fetch-raw-host`), alongside #2183/`pillar2-shutdown-flush` (PR #2201's session) and #2198's `parent-issue-hierarchy` (same session)
+- **Status**: applied (this PR)
+
+## What happened
+
+`refs/locks/fa-fetch-raw-host` was claimed 2026-08-17 by branch
+`fix/fa-fetch-raw-host` for a one-line fix to
+`.github/actions/fetch-fontawesome/action.yml`. The fix landed the next day —
+folded into unrelated PR #2119 rather than shipped from the locked branch —
+so `fix/fa-fetch-raw-host` was deleted with no PR ever pointing back at the
+`fa-fetch-raw-host` slug. `lock-staleness.yml` flagged it 23 days later as
+Issue #2182.
+
+## Why the obvious fixes don't apply
+
+- `lock-cleanup.yml` only fires on `pull_request: closed` and only releases a
+  ref named by a `lock-slug:` line in *that* PR's body. A lock whose branch
+  never became a PR — or whose fix shipped under an unrelated PR, as here —
+  is orphaned forever by that path alone.
+- `lock-release.sh` pushes a ref delete straight to `refs/locks/*`, which
+  needs git credentials with write access to that namespace. A
+  session-scoped `GITHUB_TOKEN` / CCR credential does not have it —
+  confirmed by a repeatable HTTP 403 chasing the same problem for
+  `parent-issue-hierarchy` (#2198's lock), released only because the repo
+  owner ran the push locally with `SMATCHET_ALLOW_MERGED_PR_PUSH=1`.
+
+## The fix that generalizes
+
+`lock-cleanup.yml` releases on **any** PR close, merged or abandoned — so a
+PR that carries `lock-slug: <slug>` in its body releases the ref the moment
+it closes, whether or not its own diff touches the locked write-set at all.
+PR #2195 used exactly this to release `pillar2-shutdown-flush` for #2183;
+this PR does the same for `fa-fetch-raw-host` — the diff is this note, and
+the ref is released by the `lock-slug:` line in the PR body, not by the
+note's content.
+
+Any future orphaned-lock Issue where the branch is gone and no PR names the
+slug can be closed the same way: open (and merge or close) a PR whose body
+carries `lock-slug: <slug>`. No push access to `refs/locks/*` required.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — lock-staleness-sweep.sh's stale-lock Issue body offers the lock-slug PR path for agents without ref-write access; the sweep also gains a workflow_dispatch release path in this sweep.
+  Status: applied (2026-10-04)
+
+# Three `bare-json-parse-untrusted` exemptions describe input they do not actually receive
+
+- **Category**: security
+- **Priority**: P1
+- **Date**: 2026-08-16
+- **Observed on**: the full deviation re-evaluation, [`docs/audits/DEVIATION_AUDIT_2026-08-16.md`](../../audits/DEVIATION_AUDIT_2026-08-16.md)
+- **Status**: open
+
+## What happened
+
+`bare-json-parse-untrusted` exists because a bare `nlohmann::json::parse` builds a DOM whose
+**recursive `~json` teardown** overflows the stack on a deeply-nested payload — an uncatchable
+crash no `try/catch` intercepts (#1271 / #1287 / #1290), and the 3-arg non-throwing form does not
+help because it still builds the full DOM. The rule is repo-wide default-deny; six first-party
+sites escape it with a deviation asserting their bytes are program-internal.
+
+Re-evaluating those six against the code that actually feeds them, three assertions do not hold.
+
+**1 · `Source/Core/src/Config/KeybindingsConfig.cpp:153` and `:175`** —
+`reason=keybinding args are app-serialised local config bytes loaded via the bounded config
+reader, not external ingress`. The bounded config reader bounds the *outer* keybindings document.
+`ArgsJson` is a `std::string` **field inside** it (`Config/KeybindingsConfig.h:27`, "command args
+as JSON text; parsed at dispatch"), so to the outer `ParseBounded` a hostile payload is a single
+depth-1 string node — the outer bound gives the inner parse no protection whatsoever. The tree
+already disagrees with the reason in two places: the same `ArgsJson` bytes go through
+`smatchet::json_safe::ParseBounded` at `Source/Core/src/Ui/SmatchetToolbarUi.cpp:132` and
+`Source/Core/src/Ui/SmatchetImGuiHost.cpp:1060`. One field, three parse sites, and only this one
+exempts itself.
+
+That is not a coincidence, and it is the sharpest part of this entry. **`docs/audits/CPP_CODE_AUDIT.md`
+finding #12 is this exact class** — *"[Low][Security/DoS] Bare `json::parse` on toolbar/keybinding
+`ArgsJson` (2 sites) … Config-sourced `ArgsJson` (from `smatchet_config.json`) bare-parsed; deep DOM
+→ uncatchable teardown crash. Fix: `ParseBounded` with empty-object fallback."* It is marked
+**✅ Fixed** in that audit's summary table (line 16). The two sites it named
+(`SmatchetToolbarUi.cpp`, `SmatchetUI.cpp`) *were* fixed, with precisely that fix. The class then
+recurred in `KeybindingsConfig.cpp`, which the curated two-site list did not watch — and instead of
+the prescribed one-line fix, that site received a deviation asserting it was safe.
+
+This is the documented failure mode of a curated allow-list, quoted in `cpp-rules.md` as the reason
+`bare-json-parse-untrusted` went repo-wide default-deny in the first place: *"the list lagged the
+code every time the class recurred (#1573 / #1592 / #1598)."* Default-deny did its job and caught
+the recurrence; the deviation then waived it on a premise the audit had already rejected.
+
+**2 · `Source/Core/src/Tracker/PlaneProjectScope.cpp:13`** (and the same reason at
+`PlaneIssueMappingPure.cpp:223`, `PlaneIssueSearch.cpp:98`) —
+`reason=the Plane structured-query blob is app-serialised program-internal bytes, not
+tracker-response ingress`. Traced the argument: `SetProjectInQuery(currentJql, …)` is called from
+`Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp:293`, where `currentJql` is
+`std::string(d.viewJqlEditor.buf)` (`:245`) — the **query text the user types into the view
+editor**, which is then persisted with the saved view. That is user-authored input, not
+app-serialised bytes.
+
+**3 · `Source/Core/src/Tracker/TrackerFixtureBackendBase.cpp:25`** (`rule=unbounded-file-slurp`) —
+`reason=developer-authored local fixture file, small by construction`. Three lines above it, the
+header this file implements says the opposite in writing
+(`Source/Core/include/Tracker/TrackerFixtureBackendBase.h:77-79`): *"The fixture path is
+env-var-selectable per backend (`SMATCHET_TEST_*_BACKEND_FIXTURE`), so the parse caps
+depth/nodes/bytes rather than trusting wherever it points."* The *parse* is indeed
+`ParseBoundedOrDiscarded` — but the exemption is on the **slurp**, `buf << in.rdbuf()`, which
+reads the whole file into memory before any cap applies.
+
+## Why it matters
+
+None of these is remotely reachable, and the realistic worst case is a local self-inflicted crash
+or memory spike, so this is not an urgent exploit. What matters is the audit trail: a deviation is
+the project's record of *why* a blocking safety rule was waived, and the next auditor re-evaluating
+these in 2026-12 will read a provenance claim that is simply not what the code does. A wrong reason
+is worse than no reason, because it terminates the inquiry.
+
+Note also that all four Plane/IssueDraft markers in this class are among the 15 that `clang-format`
+rewrites (fixed 2026-08-16 via `CommentPragmas`), and `GitHubFixtureBackend.cpp:26` — the wrapped
+twin of item 3 — is failing open today.
+
+## Concrete next action
+
+Per site, cheapest first:
+
+1. **KeybindingsConfig `:153` / `:175`** — delete both deviations and route through
+   `smatchet::json_safe::ParseBounded`, exactly as `SmatchetToolbarUi.cpp:132` already does with
+   the same field. The call sites already handle a failed parse (`is_discarded()` →
+   `json::object()`), so `ParseBoundedOrDiscarded` is a drop-in. This removes the class rather than
+   re-arguing it.
+2. **Plane query blob (3 markers)** — same treatment; `ParseBoundedOrDiscarded` matches the
+   existing `is_discarded()` handling line for line. If the exemption is kept instead, the reason
+   must say what is true: *user-authored view-query text, bounded risk accepted because the blast
+   radius is the author's own session*.
+3. **`TrackerFixtureBackendBase.cpp:25`** — keep the exemption (a size cap on a test-fixture read
+   is not worth the code), but rewrite the reason to match the header it contradicts:
+   *env-var-selected local path, developer-controlled by deployment; parse is bounded, slurp is
+   not*. Then fix the wrapped twin at `GitHubFixtureBackend.cpp:26`, which suppresses nothing today
+   — `--scan-slurps` reports its slurp at `:28`.
+
+Enumerator for the verification sweep: the six `rule=bare-json-parse-untrusted` and two
+`rule=unbounded-file-slurp` markers are the complete first-party set —
+`bash agents/scripts/project/test-lint-rules.sh --scan-bare-json` and `--scan-slurps` enumerate
+exactly the sites they guard, and `--scan-bare-json` is empty tree-wide today. Replaying the
+motivating case against that enumerator: drop the marker line at `KeybindingsConfig.cpp:153`
+without touching the parse and `scan_bare_json_parse_file` immediately reports the parse — proving
+the marker is load-bearing and the rule really does watch that line, so the deviation is the only
+thing standing between this parse and the gate.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — all three sites now parse through ParseBoundedOrDiscarded / LoadFixtureJson (read capped before a bounded parse) with no deviation; no rule=bare-json-parse-untrusted marker remains in Source/ and --scan-bare-json is empty.
+  Status: applied (2026-10-04)
+
+- 2026-06-23 · orchestrator (mobile Phase-1 P1.2) · [test] · P2 — the mobile touch view quick-switcher band (`drawMobileViewQuickSwitcher`) shipped under a `tests-out-of-band` Test-delta dismissal; it has no deterministic automated coverage, only on-emulator screenshot verification
+  Details: P1.2 (PR #1549) added `drawMobileViewQuickSwitcher` in `SmatchetViewsDashboardUi.cpp` + the band reservation in `drawMobileShell` (`SmatchetMobileShellUi.cpp`). Both are pure ImGui draw surface, which `test-rig` refuses (doctest is the wrong vehicle), so the Test-delta gate was dismissed with `tests-out-of-band` rather than satisfied. The behaviour (tab render, active highlight, dirty-aware switch via `viewsRequestActivate`, deferred-create via `viewsCreateNewView`, grid-page-only gating) is verified only by hand on the emulator.
+  Concrete next action: add a bucket-E ImGui Test Engine case driving the switcher band — (1) tap a non-active tab → assert `ViewState.GetActiveView()->Id` changes + grid reloads; (2) tap a tab while the active view is dirty → assert the shell-level discard-confirm modal latches (`viewsShowDiscardConfirm`); (3) assert the band is absent on non-Grid mobile pages (`gridPage` gate). Blocked until the Mesa-GL bucket-C/E lanes can boot the CI exe again (AGENTS.md merge-gates — bucket lanes dropped from required 2026-06-15 for exactly this reason); track alongside that lane's restoration. Cross-ref: plan `docs/plans/shipped/mobile-app-fuller-integration.md` § Deviations (P1.2 entry); sibling bucket-E entries `2026-06-20-bucket-e-case8-offline-create-guard.md`, `2026-06-21-bucket-e-readonly-vacuous-green.md`.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — tests/ui/mobile_view_quick_switcher.test.cpp registers both cases (entry's own 2026-07-12 resolution).
+  Status: applied (2026-10-04; was: applied (2026-07-12 — `tests/ui/mobile_view_quick_switcher.test.cpp` adds two bucket-E cases driving the real band via `--spawn` (authored + verified locally, since the harness boots fine on a real GPU — the "blocked on the CI Mesa lane" premise only ever applied to CI's llvmpipe): **case 3** the band's `+##MobileNewView` button exists on the Grid page and is absent on a non-Grid page (the `gridPage` gate); **case 1** a clean (non-dirty) tab tap resolves without raising the shell-level discard modal. Registered in `ui_tests_registry.cpp` → auto-runs under CI's `ui_test.run --all`. **Case 2** (dirty tab tap latches `viewsShowDiscardConfirm`) is NOT re-driven: `d.viewsDirty` is recomputed to false each frame by the grid draw path unless a real edit is pending, so a synthetic flag can't reach the band's `viewsRequestActivate`; the dirty → shell-level-modal end-behavior is already covered deterministically by `mobile_views_confirm_modal.test.cpp` (#1117).))
+  Last-reviewed: 2026-10-04
+
+- 2026-06-27 · orchestrator (tests-out-of-band obligation from #1600) · [test] · P3 — omnibar focus-on-appearing has no automated coverage; needs a bucket-E scenario asserting the input is focused on its first (appearing) frame
+  Details: PR #1600 fixed the omnibar's 1-frame-stale focus (it now sets `jqlAcpWantsJqlInputFocus` on the `ImGui::IsWindowAppearing()` edge so the first keystroke lands) but shipped with `tests-out-of-band` — the fix is gated on `IsWindowAppearing()`, a live-frame property with no pure-logic doctest seam, and there is no existing omnibar scenario harness to extend. The fix was maintainer-verified live, not automated, so a focus regression would not be caught by CI.
+  Concrete next action: add a bucket-E (ImGui Test Engine) scenario that opens the omnibar and asserts the JQL/omnibar input reports `IsItemFocused()` / receives the first synthetic keystroke on its appearing frame (and that per-tab text persists across tab switches — the sibling behavior #1600 also touched). Register it in the bucket-E driver. This closes the #1600 tests-out-of-band obligation. Cross-ref: #1600; `Source/Core/src/Ui/SmatchetOmnibarUi.cpp` (the `IsWindowAppearing()` focus edge); the shared `DrawJqlQueryEditorEmbedded` `SetKeyboardFocusHere` consumer.
+  Update 2026-07-12 (bucket-E authored locally): `omnibar_search_apply.test.cpp` gains a 4th variant `InputFocus_WantsFocusFlag_FirstKeystrokeLands` covering the #1600 focus CONSUMER: with the JQL input defocused (production `x##ClearQueryEmbedded` clear button), setting `jqlAcpWantsJqlInputFocus` (the exact flag the `IsWindowAppearing()` edge sets) and yielding must route the next bare synthetic keystroke into `omniJqlEditor.buf` — proving `DrawJqlQueryEditorEmbedded`'s `SetKeyboardFocusHere` consumed the flag and granted keyboard focus. The `IsWindowAppearing()` TRIGGER itself fires once at app start (the bar is drawn unconditionally) and can't be re-driven from a test, so the trigger half stays uncovered; the consumer is the load-bearing #1600 behavior ("first keystroke lands"). Verified locally: `SMATCHET_USER_DATA=<clean> SMATCHET_TEST_JIRA_BACKEND_FIXTURE=<basic-grid> ui_test.run --name=Omnibar --spawn` → 4/4 (a stale profile boots a layout without the active-project window, so the clean-profile env the CI wrapper already sets is required). RESIDUAL: per-tab text persistence across tab switches (line 106-114 / 141-142) needs a 2-pane harness (heavier) and stays uncovered; and the Omnibar suite runs via `scripts/dev/test-ui-omnibar-search-apply.sh` (fixture-gated) which — like the other bucket-E fixture wrappers — is not in the main required CI lane, so these skip-pass under bare `ui_test.run --all` (pre-existing enrollment state, shared by the 3 original omnibar tests).
+  Resolution: obsolete 2026-10-04 (backlog-sweep-2026-10) — the omnibar surface is gone: SmatchetOmnibarUi.cpp was renamed to SmatchetGridSearchUi.cpp and its input range now lands on the per-pane search box, so the IsWindowAppearing focus edge and omnibar tabs no longer exist; tests/ui/omnibar_search_apply.test.cpp was deleted.
+  Status: applied (2026-10-04; was: open (residual: per-tab persistence 2-pane case + the IsWindowAppearing trigger half; the #1600 focus-consumer + first-keystroke-lands behavior is now covered))
+  Last-reviewed: 2026-10-04
+
+# AI-chat bucket-E: input widget unreachable in the headless docked panel (blocks scenarios 4–5)
+
+- **Date**: 2026-07-12
+- **Author**: orchestrator
+- **Category**: test
+- **Priority**: P2
+
+## What
+
+The AI-chat panel bucket-E suite (`tests/ui/ai_chat_panel.test.cpp`) shipped **3 of the 5**
+mandatory scenarios — `ClearConversation_ConfirmWipesCancelKeeps` (#1796),
+`CopyMessage_WritesContentToClipboard` (#1799), `PinBookmark_ActionRowTogglesPinnedState`
+(#1802). The remaining two — **keyboard-nav** and **history-persist** — are **blocked by a
+harness limitation, not by test-authoring effort**, and were NOT shipped rather than ship a
+vacuously-skipping test (coverage theater).
+
+## The blocker (verified)
+
+Both remaining scenarios must drive the panel's **message input** (`##AiAssistantInput`, an
+`InputTextMultiline` at the bottom of the panel): keyboard-nav needs to type + press Enter;
+history-persist needs to send a turn so the persist worker writes it to SQLite.
+
+In the headless bucket-E run the panel is **docked into a sidebar** (it acquires a `DockId`,
+same as `ai_assistant_panel_dock_swap.test.cpp` observes). At the dockspace's default
+sidebar size the input row is **clipped below the fold and never submitted to the ImGui item
+table**, so `ctx->ItemExists("**/##AiAssistantInput")` returns **false** and `ctx->ItemInput`
+spins the whole frame budget (the run times out). Verified directly: a diagnostic
+`IM_CHECK(ctx->ItemExists("**/##AiAssistantInput"))` fails with
+`SKIP: ##AiAssistantInput not reachable in this docked layout`.
+
+The already-shipped 3 scenarios only touch the **header** (clear button) and the **history
+child** (copy / pin action rows), which lay out at the TOP of the panel and are reachable —
+the copy scenario's single-pinned-turn trick keeps that row on-screen. The input is the one
+surface at the BOTTOM, past the reserved history height, that the short docked panel clips.
+
+## Concrete unblock options (pick one before authoring 4–5)
+
+1. **Float the panel at a test-controlled size.** Add a test seam so the panel opens
+   undocked (e.g. a `g_ui`/config flag the bucket-E boot sets, or a
+   `SmatchetActiveUiTestFloatAssistantPanel()` hook) and `ctx->WindowResize` it to a size
+   that fits header + a short history + the input. `WindowResize` is a no-op on a **docked**
+   window (that was tried and fails), so the panel must be floating first.
+2. **Direct input-focus + programmatic submit seam.** Expose a tiny test-only entry point
+   (mirroring `SmatchetActiveUiTestAppController()`) that focuses `##AiAssistantInput` and/or
+   invokes the Enter-submit path (`DispatchAiSend` via the same `enterSubmitted` branch)
+   without needing the widget on-screen. Keeps the assertion on the real send flow (the
+   first-send **outbound-consent gate** — `assistantConsentRows` / `##AiOutboundConsent` —
+   is a deterministic no-network observable that Enter submitted).
+3. **Give the dockspace a taller assistant node in the bucket-E layout** so the input is
+   never clipped, then drive `ItemInput` + `KeyChars` + `KeyPress(Enter)` normally.
+
+## Scenario sketches (ready once unblocked)
+
+- **keyboard-nav** — `SMATCHET_WITH_AI` is ON in `ninja-ui-test-msvc`, so the
+  `AiAssistantController` exists and the send path is live. Type a prompt, press Enter, assert
+  the first-send consent gate fires (`assistantConsentRows` non-empty / `##AiOutboundConsent`
+  live) — **no network** (the gate intercepts before any POST). Force it with
+  `cfg.AssistantOutboundConsentShown = false`. Ctrl+Enter-inserts-newline is the complementary
+  half.
+- **history-persist** — send a turn (past consent), let `SmatchetChatPersistWorker` flush to
+  SQLite, then re-hydrate (`LoadAiChatMessages`) and assert the turn + its row-id round-trip.
+  Needs a clean `SMATCHET_USER_DATA` tmp DB (the existing fixture-gated pattern).
+
+## Status
+
+**RESOLVED 2026-07-13** — unblocked via **option 1** the same day it was recorded. A new
+`OpenAssistantPanelWithInput` test helper `ctx->UndockWindow`s the "Smatchet Assistant" panel to
+a floating window then `ctx->WindowResize`s it to 520×700, so the bottom `##AiAssistantInput` row
+is no longer clipped off the docked sidebar (`WindowResize` is a no-op on a docked window — the
+undock must precede it; confirmed with a diagnostic `IM_CHECK(ItemExists("**/##AiAssistantInput"))`).
+Both remaining scenarios then shipped in `tests/ui/ai_chat_panel.test.cpp`:
+**keyboard-nav** (`KeyboardEnter_SubmitsThroughConsentGate` — bare Enter → offline first-send
+consent gate) and **history-persist** (`HistoryPersist_AppendRoundTripsThroughSqlite` — drives
+`chat_persist::EnqueueAppendAndTrim` → `LoadAiChatMessages` directly, no send/network needed).
+`ui_test.run --name=AiChat --spawn` → **5/5**. All 5 mandatory ai-chat-claude-desktop-parity
+scenarios are now covered.
+
+_Was:_ open (3 of 5 scenarios shipped; 2 blocked on the input-reachability harness seam above — a
+concrete deferred-automation plan, not a flat "out of scope").
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — tests/ui/ai_chat_panel.test.cpp registers all 5 scenarios (entry self-marked RESOLVED 2026-07-13).
+  Status: applied (2026-10-04)
+
+# Bucket-C goldens silently depend on whether the gitignored icon font resolves
+
+- **Category**: test
+- **Priority**: P2
+- **Date**: 2026-08-06
+- **Source**: PR #1952 (bucket-C determinism) — cost a full misdiagnosis round
+
+## What
+
+`assets/fonts/fa-solid-900.ttf` is **gitignored**. Toolbars render icon glyphs
+when it resolves and a text fallback ("Refresh View", "Filter", …) when it does
+not — a whole-row pixel difference, far past the L_inf 4 tolerance.
+
+Two things make that environment-dependent rather than constant:
+
+- CI has no font (nothing fetches it), so every checked-in golden is a
+  *text-fallback* capture.
+- PR #1948's `smatchet_resolve_font_asset()` falls back to the **main worktree**,
+  so a linked worktree under `.claude/worktrees/<id>/` finds the dev's local copy
+  and captures *icon* glyphs.
+- The build's link step copies the font next to the exe whenever it resolves, so
+  "I moved it aside" does not survive the next `cmake --build`.
+
+Net effect: `bash scripts/dev/test-screenshot-diff.sh` fails on a dev machine
+that has the font, passes in CI, with a diff that looks like a real UI
+regression. During #1952 this masked a genuine, unrelated capture bug for a
+whole debugging round (moving the TTF aside took the suite 9/6 → 11/4).
+
+## Fix options
+
+1. **Pin the font into the capture path** — have the screenshot driver force the
+   text fallback (an env knob the font resolver honours, e.g.
+   `SMATCHET_DISABLE_ICON_FONT=1`, exported by `test-screenshot-diff.sh`). Makes
+   local and CI captures identical by construction; preferred.
+2. **Vendor the font** — un-ignore it and check it in, so every environment
+   including CI renders icons. Larger blast radius (licence + repo size + every
+   existing golden regenerates), but removes the whole class.
+3. **Assert, don't guess** — at minimum, make the driver detect a resolved font
+   and print a loud banner naming it as a likely diff source. Cheap; strictly a
+   diagnostic, not a fix.
+
+Option 1 plus the option-3 banner is the recommended pair.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — resolved by option 2: assets/fonts/fa-solid-900.ttf is committed, so CI, the main tree and worktrees render identical icons.
+  Status: applied (2026-10-04)
+
+- 2026-06-19 · orchestrator · [tooling] · P2 — concurrency-correctness fixes have no headless doctest home, so tests-out-of-band waves them; add seam lints + a native/TSan leg
+  Details: PR #1390 (g_ui UI-thread marshalling in BuiltinCommands_Debug.cpp) and #1409
+    (std::atomic audit of AnthropicClient/OllamaClient/OpenAiClient + a new Windows-on-ARM
+    native test leg) both shipped behaviour-changing concurrency-correctness fixes to product
+    .cpp with zero tests/Core/*.test.cpp delta. The Test-delta gate passed only because the
+    tests-out-of-band label waved it — the deterministic load-bearing condition in
+    postmortem-owed.sh override_is_moot (Test-delta == SUCCESS AND pr_touches_test_files) is
+    FALSE for both (gate green, no .test.cpp). Root reason there is no test: the correctness
+    invariant is a threading property — "the g_ui request-flag write executes on the UI thread,
+    not the dispatching MCP/Lua worker thread" / "the shared cross-thread flag is std::atomic" —
+    that the headless, single-threaded pure-logic doctest rig cannot assert (no UI thread, no
+    g_ui, no second thread, no AppController command-queue marshalling). This is a recurring
+    class, not a one-off: see postmortems.md 2026-06-19.
+  Concrete next action: two static/structural gates that catch the class without relying on the
+    rig that can't host it —
+    (1) extend test-lint-rules.sh with a strict-zone rule forbidding direct writes to the g_ui
+    request-flag fields (requestWindowResize/requestWindowWidth/requestWindowHeight/
+    requestScreenshot/requestScreenshotPath) from command-dispatch TUs (Source/Core/src/Commands/**)
+    outside a RunOnUiThread* closure — green on HEAD (debug.dock.*, bug.report already conform),
+    fires only on a new off-thread-write regression (the #1390 pre-fix shape). Est ~0.5d.
+    (2) extend the Windows-on-ARM native test leg #1409 added (or the in-flight
+    feat/tsan-subset-sync-layer TSan subset) to exercise the AI-client request paths so a
+    non-atomic shared-flag regression surfaces at runtime, plus a lint flagging plain
+    (non-std::atomic) shared mutable cross-thread flags in the AI-client TUs. Est ~1-2d.
+  Cross-ref: postmortems.md 2026-06-19 PR #1390, #1409; commits b546e125 (#1390), ad0b34a1 (#1409);
+    branch feat/tsan-subset-sync-layer; prior tests-out-of-band residue #1317 / #1308 are distinct
+    (behaviour-preserving relocations, owe nothing).
+  Resolution: residual subsumed 2026-10-04 (backlog-sweep-2026-10) — gate (1) shipped as the ui-request-flag-off-thread lint; the AI streaming hand-off and cancel race run under TSan in SmatchetTsanTests, and the cross-thread cancel flag is atomic by type (AiCancelToken), so the proposed non-atomic-flag lint has no target. Only the real cpr clients under TSan remain uncovered — cpr is app-only, not worth a dedicated build.
+  Status: applied (2026-10-04; was: partially applied (2026-06-20 roadmap campaign — core shipped #1510; residual remains))
+  Last-reviewed: 2026-10-04
+
+# dup_audit delta gate false-flags a clone in UNCHANGED files (winnow boundary drift)
+
+**Category**: tooling · **Priority**: P2 · **Status**: applied (fixed in the N12 slice-3 PR)
+
+## What happened
+
+N12 slice-3 (a Tracker-only refactor) tripped `dup_audit.py --diff origin/develop` with:
+
+```
+[dup] FAIL CodeColorView.cpp:97 <-> CppSyntaxLex.cpp:113 — 74-token copy-paste clone
+```
+
+Neither file was in the diff. Probe of the module confirmed both files were **byte-identical**
+at the merge-base and at HEAD, yet `find_clones` surfaced an *extra* maximal-clone boundary
+`(97,113)` ntok 74 at HEAD that it did not surface at base `(98,124)` ntok 71. Winnowing is
+corpus-sensitive: adding tokens in an unrelated changed file shifts which shingles seed the
+extension for a pre-existing clone between two unchanged files, so the drifted boundary gets a
+base-absent `content_hash` and slips past the hash-only grandfathering.
+
+## Impact
+
+A blocking DRY gate can fail a PR over duplication in files the author never touched, keyed on the
+happenstance of what other files the diff perturbs. Every "gate, don't trust" property assumes the
+gate flags the author's own new duplication; this violated it.
+
+## Fix (applied)
+
+`new_clones_vs` now grandfathers a clone whose **every** occurrence is in a file unchanged (by
+normalized token stream) vs the base — you cannot duplicate code *into* a file without changing it,
+so an all-unchanged-files clone is definitionally pre-existing, whatever boundary the winnow drift
+selected. Sound: it cannot mask a genuinely-new clone (a new clone has ≥1 occurrence in a changed
+file). Pinned by a `--selftest` case that stubs `find_clones` to emit a drifted base-absent hash for
+an unchanged pair and asserts it stays grandfathered (fails on the old code, passes on the new).
+
+## Preventing recurrence
+
+The selftest locks the invariant. A stronger follow-up (not done — low value): make winnowing seed
+selection deterministic w.r.t. corpus so boundaries don't drift at all; deferred as the guard fully
+closes the false-positive class.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — dup_audit.py grandfathers clones between files whose normalized token streams are unchanged at base and head (the boundary-drift case), with selftest coverage; nothing left to do.
+  Status: applied (2026-10-04)
+
+- 2026-07-13 · orchestrator (agentic-infra-audit-review) · [tooling] · P2 — the `agent-too-long` gate self-suppressed on `AGENTS.md`: a bare-substring deviation match let the rulebook's own prose exempt it from its own cap
+  Details: `agent_size_audit.py`'s `_suppressed()` scanned each line for the literal `SMATCHET_DEVIATION` + `rule=agent-too-long`, with no requirement that the token be a real HTML-comment marker. `AGENTS.md` *documents* the escape hatch in backtick prose (line 62: "`SMATCHET_DEVIATION(rule=agent-too-long; …)` anywhere in the file escapes") — so that sentence matched, and the gate treated `AGENTS.md` as permanently deviation-suppressed. Consequence: the 2026-07-08 A1 trim (159→149) claimed "cap binding again" but never was; `AGENTS.md` silently drifted back over 150 (#1753 +1, #1764 +1 = 151) with the delta gate exiting 0 on both crossings. Found while triple-checking AGENTIC_INFRA_AUDIT.md (A1). This is a fresh instance of the report's own self-description-drift thesis — the gate that anchors the enforcement contract-card was structurally blind to the contract file.
+  Concrete next action: (a) require a real file-scoped marker — an HTML comment (`<!-- SMATCHET_DEVIATION(...) -->`), stripping backtick code spans first so a documented example never counts; (b) trim `AGENTS.md` back to ≤150; (c) add a selftest + bats regression asserting a backtick-prose token does NOT suppress while a real marker does.
+  Resolution: applied (2026-07-13, agentic-infra-audit-review PR) — `_suppressed()` now delegates to `_deviation_suppresses(text)`, which strips ``…`` code spans per line and requires `<!--` to precede the token before it counts as a marker; `run_selftest()` case (d) asserts a backtick-prose token (bare + full-form) does NOT suppress and a real HTML-comment marker DOES; `tests/bats/agent_size.bats` adds "STILL FAILS when the deviation token appears only in backtick prose". `AGENTS.md` trimmed 151→149 (folded the two `Harness adapter` paragraphs, condensed the size-rule sentence) and its own escape-hatch prose reworded to spell out the `<!-- -->` requirement. Verified: `--selftest` green; `--diff origin/develop` no longer suppresses `AGENTS.md` (was `suppressed: True`, now `False`); a replay of the historical #1764 151-line file is correctly NOT suppressed by the fixed matcher; the grandfather baseline snapshot is unchanged.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — agent_size_audit.py only honours an HTML-comment marker, not a prose/backtick mention, and tests/bats/agent_size.bats pins it; AGENTS.md is under its cap.
+  Status: applied (2026-10-04; was: applied)
+  Last-reviewed: 2026-10-04
+
+# CR merge-gate: two silent BLOCKED-with-everything-green states + their auto-remedies
+
+- **Date**: 2026-07-13
+- **Author**: orchestrator
+- **Category**: tooling
+- **Priority**: P2
+
+## What
+
+During a large merge push (~15 PRs), multiple PRs sat `BLOCKED` / `UNSTABLE` for 90+ minutes
+with **every CI check green and CodeRabbit itself reporting clean** — no red, no findings. The
+merge-watcher / babysit loop waited indefinitely because it only merges on `CLEAN`. Two distinct
+CR-gate mechanics were the cause; both are non-obvious and cost a live diagnosis to find. Both have
+a cheap, deterministic remedy the merge-watcher (and the orchestrator's merge step) should apply
+automatically instead of stalling.
+
+## Friction A — the `CR findings (0 actionable)` aggregator gate gets stuck `pending`
+
+`.github/workflows/cr-finding-gate.yml` posts the `CR findings (0 actionable)` StatusContext. It
+runs on `pull_request` (fires BEFORE CodeRabbit reviews → posts `pending`) and re-runs on
+`pull_request_review` / `pull_request_review_comment` / CR-bot `issue_comment` to post `success`.
+**But when CodeRabbit finds 0 actionable findings it flips its own `CodeRabbit` status to green with
+NO review node** — so none of the re-trigger events fire, and the aggregator stays `pending`
+forever. GitHub then shows the PR `BLOCKED` (a required context never reached success) even though
+CodeRabbit is done and clean. Re-running the `pull_request` workflow run just re-posts `pending`
+(same stuck condition). A human/agent comment does NOT help — the workflow's `issue_comment` handler
+only acts on **CodeRabbit-bot-authored** comments (a non-bot comment run "skips").
+
+- **Remedy that works:** post `@coderabbitai review` on the PR. CodeRabbit re-reviews and this time
+  posts a **review node**, which re-fires `cr-finding-gate` → it posts `success` → PR goes `CLEAN`.
+  Verified on 4 PRs (#1799/#1801/#1803/#1804) — each cleared within ~90 s of the nudge. **No
+  `cr-out-of-band` override or admin-merge was needed** (and must not be used here — CR genuinely
+  reviewed clean; only the aggregator was mechanically stuck).
+
+## Friction B — an ADDRESSED CodeRabbit thread still blocks via "require conversation resolution"
+
+After fixing a CodeRabbit inline finding by **pushing a code change**, the review **thread stays
+`isResolved:false`** (CodeRabbit does not auto-resolve it, and its re-review may report "0 findings"
+without touching the old thread). Branch protection's *require-conversation-resolution* then holds
+the PR `BLOCKED` with all checks green, `mergeable:true`, `mergeable_state:blocked`, `strict:false`
+— an easy misdiagnosis as "out of date" or "needs review." Seen on #1810 (dangling-pointer fix) and
+#1821 (state-leak fix).
+
+- **Remedy that works:** after the fix lands, resolve the (now-addressed/outdated) thread via the
+  GraphQL `resolveReviewThread` mutation. PR flips to `CLEAN` immediately.
+
+## Concrete next action (implement)
+
+Teach the **merge-watcher** (`agents/scripts/core/merge-watcher.py` / `merge-gates.sh`) — and the
+orchestrator's inline merge step — to auto-remedy both before concluding a PR is un-mergeable:
+
+1. If `mergeStateStatus != CLEAN` but **all CI is green and `CodeRabbit` status is success**:
+   - resolve any review thread that is `isResolved:false` AND (`isOutdated:true` OR its finding's
+     file/line no longer exists in the head diff) — the addressed-thread case (Friction B);
+   - if the `CR findings (0 actionable)` context is still `pending` after that (Friction A), post
+     `@coderabbitai review` **once** (idempotency-guarded) and re-poll.
+   Only then, if it is still not green, fall through to the existing halt/label logic.
+2. **Root-cause fix for Friction A (preferred, removes the nudge dance):** make `cr-finding-gate.yml`
+   also trigger on the `CodeRabbit` StatusContext reaching `success` — e.g. a `status:` /
+   `check_run: [completed]` event handler that re-evaluates + posts `CR findings (0 actionable)`
+   `success` when CodeRabbit is done with no review node. That closes the "0-findings-via-status,
+   no-review-node" hole so the gate self-resolves.
+3. Add a bats guard for the merge-watcher remedy path (mock a stuck-pending aggregator + an
+   outdated-unresolved thread; assert the watcher resolves + nudges rather than stalling).
+
+Until (2) ships, the manual sequence is: **resolve the addressed thread → `@coderabbitai review`
+→ merge when CLEAN** (never `cr-out-of-band`/admin-merge while CR is genuinely reviewing clean).
+
+## Status
+
+open (documented; the merge-watcher auto-remedy + the cr-finding-gate status-event trigger are the
+implementable fixes)
+  Resolution: superseded 2026-10-04 (backlog-sweep-2026-10) — friction A is handled (gate re-runs on CodeRabbit issue_comment and label events, success-without-review-node passes, budget-capped auto-nudge); friction B is detected (merge-gates.sh names the BLOCKED-with-unresolved-threads shape; pr-blocked-why.sh classifies threads). Auto-resolving outdated CodeRabbit threads was deliberately not built: it conflicts with the never-trust-Addressed rule and needs a human policy decision before re-filing.
+  Status: applied (2026-10-04)
+
+- 2026-08-04 · orchestrator · [tooling] · P2 — six gate scripts under `agents/scripts/core/` still carry the **resolve-only python probe** that PR #1936 (`f423605a`, 2026-08-04) fixed everywhere else: `command -v python3` matches the Windows Store App Execution Alias, which resolves on PATH but exits non-zero on run, so the "no python" guard never fires and the script dies mid-run instead of skipping cleanly
+  Details: Hit live while validating a PR body — `bash agents/scripts/core/check-pr-intent.sh <body-file>`
+    printed "Python was not found; run without arguments to install from the Microsoft Store" and exited
+    **49**, not the documented `2` (no python3). The presence probe at `check-pr-intent.sh:20` had already
+    passed, so the fail-closed infra-error path was bypassed and the caller got an undocumented exit code
+    from the stub. Worked around by symlinking a real interpreter onto PATH ahead of the alias.
+    #1936 swept `tests/bats/**` plus `issue-sweep.sh` / `migrate-bugs-to-issues.sh` to the probe-EXECUTE
+    form (`"$c" -c ""`); the gate scripts were out of that PR's scope. Remaining sites:
+    `check-pr-intent.sh:20`, `sort-applied-md.sh:26`, `test-autonomous-debug-loop.sh:22` (all `python3` —
+    these are the ones that hit the alias today, since `python3` has no real entry on a stock Windows
+    dev box), plus `test-agent-contract.sh:77`, `test-lint-hook-split.sh:411`, `test-skill-load-log.sh:16`
+    (`python` — currently resolve to a real interpreter here, but identical shape and identical failure on
+    a machine where only the alias exists). Impact is local-dev-experience only: CI (Ubuntu) has a working
+    `python3`, so no gate is wrong on the ship-line — same blast radius as the check-5 emoji false negative
+    shipped alongside this entry (PR #1938).
+  Concrete next action: apply #1936's canonical probe-EXECUTE form to the six sites — iterate the
+    `python3 python py` candidate list and select on `"$c" -c "" >/dev/null 2>&1`, not on `command -v`.
+    Mechanical; est ~0.5h including a `tests/bats` assertion that a stub named `python3` which exits
+    non-zero is rejected rather than selected. Consider hoisting the resolver into `agents/_shared/` so
+    the next script cannot reintroduce the resolve-only shape, and a `test-shell-lint.sh` rule matching
+    `command -v python` used as an interpreter-selection probe.
+  Cross-ref: PR #1936 (`f423605a`, the exec-validate sweep + the canonical form); PR #1938 (where this
+    surfaced); `agents/scripts/core/check-pr-intent.sh` :20; `agents/scripts/core/sort-applied-md.sh` :26;
+    `agents/scripts/core/test-autonomous-debug-loop.sh` :22; `agents/scripts/core/test-agent-contract.sh` :77;
+    `agents/scripts/core/test-lint-hook-split.sh` :411; `agents/scripts/core/test-skill-load-log.sh` :16.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — all six named scripts source agents/scripts/core/lib/resolve-py.sh (which executes the interpreter), covered by tests/bats/resolve_py.bats and the shell-lint probe-shape rule.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# test-gate-selftests raw-self-exec negatives are vacuous on Windows (MSYS `#!` → `-x` true)
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-16
+- **Found during**: shipping `github-issue-body-empty-line` (a UI display fix that touches no shell gate)
+
+## Symptom
+
+`bash scripts/dev/test-docs.sh` reports `test-gate-selftests` FAILED on Windows, on a
+tree whose copy of `agents/scripts/core/test-gate-selftests.sh` is byte-identical to
+`origin/develop`. The gate's own `--selftest` mode prints six paired failures:
+
+```
+test-gate-selftests selftest: FAIL — raw self-exec behind env -- was NOT flagged
+test-gate-selftests selftest: FAIL — env -- exposer rejected for the wrong reason:
+    test-gate-selftests: PASS — all 1 --selftest-exposing scripts assert a failure case.
+```
+
+(same shape for `env -i`, tab-separated, spaced-redirection, `&>`-redirection,
+braced-expansion and `$( )`-capture fixtures). `--check` mode alone passes, so the
+failure is invisible unless the suite runs `--selftest`.
+
+## Cause
+
+The raw-self-exec rule deliberately applies only to **non-executable** scripts (on a
+mode-100755 file the raw form execs fine, so the 126-Permission-denied premise does not
+hold). It reads the mode from the git index, falling back to the filesystem bit for
+**untracked** files — and the `--selftest` synth fixtures are untracked, so they take
+that fallback:
+
+```sh
+*) if [ -x "$f" ]; then _nonexec=0; else _nonexec=1; fi ;;
+```
+
+MSYS / Git-Bash has no real exec bit and reports any file whose first bytes are `#!` as
+executable. Every synth fixture is written starting `#!/usr/bin/env bash`, so `[ -x ]` is
+true, `_nonexec=0`, and the rule is skipped — the negatives can never fire. Reproduced
+directly in this shell: a two-line `#!`-headed file reports `-x` true; the same file
+without the shebang reports false. The `chmod -x "$synth"` the fixture sequence performs
+does not help, since the heuristic ignores the mode.
+
+Production impact is limited to the gate's own negatives: **tracked** files take their
+mode from the git index, so the `--check` path that polices real first-party scripts is
+correct on Windows. The damage is that a Windows agent sees `test-docs.sh` red on every
+branch, which trains the reflex this repo least wants — treating a red gate as background
+noise.
+
+## Proposed fix
+
+Make the untracked fallback independent of the MSYS heuristic. Cheapest correct option:
+have the `--selftest` harness classify its own fixtures explicitly (e.g. `git -C "$tmp"
+init` + `git add` the fixture so the index-mode branch is exercised, which is also closer
+to what the rule actually polices), or gate the fs-bit fallback on
+`git config core.fileMode` being true and treat untracked files as non-executable
+otherwise. Whichever is chosen, add a negative that fails on a platform where `[ -x ]` is
+unreliable, so the vacuity cannot come back.
+
+## Why it matters
+
+This is a `--selftest`-asserts-a-failure-case gate — its entire job is proving its
+negatives are reachable — and on one supported platform six of them are unreachable for
+the same class of reason the rule itself was written to catch (a negative satisfied by
+something other than the behaviour it names).
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — test-gate-selftests.sh pins SMATCHET_GATE_SELFTEST_FORCE_NONEXEC (flipped to 0 for the one 100755 fixture), so the negative fixtures no longer depend on msys exec-bit answers; tests/bats/gate_selftests.bats covers both override directions.
+  Status: applied (2026-10-04)
+
+- 2026-08-16 · orchestrator · [tooling] · P2 — `test-gate-selftests.sh --selftest` fails all 11 negative fixtures on Windows/msys because its untracked-file mode fallback is `[ -x "$f" ]`, which msys answers TRUE for every temp file — so `scripts/dev/pre-ship.sh` cannot go green on a Windows dev box and its red becomes background noise
+  Details: the raw-self-exec rule in
+    [`test-gate-selftests.sh`](../../../agents/scripts/core/test-gate-selftests.sh)
+    only applies to mode-100644 scripts (the "126 Permission denied" premise does
+    not hold on a `+x` file). It reads the mode from the git index and falls back
+    to the filesystem bit for untracked files — and the synthetic selftest
+    fixtures are exactly that: untracked temp files. On NTFS under msys there is
+    no meaningful exec bit; a freshly `printf`-written temp file reports
+    `-rwxr-xr-x` and `[ -x ]` is TRUE. Every fixture therefore resolves to
+    `_nonexec=0`, the detection chain short-circuits before the awk lexer runs,
+    and each negative reports `raw self-exec … was NOT flagged`, `rc=1`.
+    Verified platform, not regression: the script is byte-identical to
+    `origin/develop` (`git show origin/develop:… | diff -q` → identical),
+    `origin/develop` is green in CI (Linux, where the fs bit is real), and the
+    detection pieces work standalone here — GNU Awk 5.3.2 matches
+    `SELF_EXEC_RE` against a fixture by hand. Only the mode gate misfires.
+    Damage is scoped to the SELFTEST, not the gate: real first-party scripts are
+    tracked, so they take the `git ls-files --stage` path and classify correctly
+    on every platform. The cost is that `pre-ship.sh` — the documented "run all
+    gates locally before every push" entry point — is permanently red on Windows,
+    so a genuine finding sitting next to it gets skipped. Hit while shipping
+    `branch-protection-config-completeness`, where it sat alongside a real
+    (separate, local-only) `test-agent-contract` drift that was easy to miss
+    behind the standing red.
+  Concrete next action: make the fixture's mode explicit instead of inferring it
+    from the filesystem. Cheapest fix is at the fixture site — `chmod a-x` each
+    synthetic fixture right after it is written, so the fallback is never
+    consulted; one line per fixture, production path untouched. Belt-and-braces
+    alternative: have the selftest export a mode override the classifier honours
+    (e.g. `_GATE_SELFTEST_FORCE_NONEXEC=1`), which also documents that the
+    fixtures are deliberately mode-100644. Either way add a bats case asserting an
+    untracked, non-executable fixture IS flagged, so the platform divergence
+    cannot regress silently. Est ~1h.
+  Resolution: duplicate of the gate-selftests-msys-exec-bit entry, same fix — verified-in-tree 2026-10-04 (backlog-sweep-2026-10): the SMATCHET_GATE_SELFTEST_FORCE_NONEXEC pin replaces the [ -x ] untracked-mode fallback, with bats coverage.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-08-16 · orchestrator · [tooling] · P1 — `historical-review-worklist-misses-merge-commit-prs`: the historical-review work-list is built by scraping `(#N)` off develop squash subjects, so a PR that landed as a **true merge commit** is invisible to it — Batch 20 claimed a contiguous #1–#1940 frontier while silently omitting 7 merged PRs
+  Details: The sweep's resume recipe
+  ([`historical-review-findings.md`](../historical-review-findings.md) § Sweep status)
+  discovers each batch's work-list from `gh pr list`, but in a `gh`-less environment
+  (every remote session — see the Batch 13 header) the documented fallback is to
+  scrape the develop log for squash subjects ending in `(#N)`. That scrape is only
+  correct under the repo's stated squash-merge invariant, and the invariant does not
+  actually hold: PRs merged with a **merge commit** carry the subject
+  `Merge pull request #N from <branch>`, which has no trailing `(#N)`, and their
+  constituent commits carry no PR reference at all. Such a PR is not "skipped" with a
+  warning — it never enters the work-list, so it cannot appear in the batch's
+  reviewed / clean / superseded counts, and the batch reports a complete frontier.
+  <br><br>
+  Measured on the #1878–#1940 range while re-running Batch 20 at full agent grade:
+  GitHub's merged list for `base=develop` returns **60** PRs; the `(#N)` scrape
+  returns **53**. The 7 missing are **#1883, #1919, #1920, #1921, #1923, #1927,
+  #1932** — every one a merge commit, and (not coincidentally) every one part of the
+  release-publishing pipeline (`.github/workflows/release.yml` driving
+  `scripts/publish/release-github.sh`), which is signing/publishing code that has
+  therefore never been survivor-reviewed. Batch 20's header nonetheless states "The
+  frontier is now #1–#1940 contiguous", and the § Sweep status coverage claim inherits
+  that error.
+  <br><br>
+  This is a **recurrence, not a first occurrence**, which is what raises it above a
+  one-off correction. The Batch 13 header already records the same class — "4 PRs with
+  edited/non-standard squash subjects the `(#N)`-suffix scrape misses: #1439/#1577/#1593/#1597"
+  — caught that time only because the run cross-validated against GitHub's merged list
+  by hand. Batch 20 did not repeat the cross-validation and the misses went unrecorded.
+  The knowledge exists in the ledger as a batch-local anecdote; nothing in the tooling
+  enforces it, so whether a batch is honest about its own coverage depends on whether
+  that particular run happened to remember. Note also the second-order defect: blame
+  attributes lines to a merge commit's **constituents**, never to the merge commit
+  itself, so even a work-list that correctly contained #1883 would extract
+  `FULLY SUPERSEDED` (an empty, falsely-clean review surface) if it passed the merge
+  sha to the extractor. The #1593 "per-constituent special" in Batch 16 is the existing
+  precedent for the right handling; it too is recorded only as prose.
+  Concrete next action: make coverage a computed property of the sweep instead of a
+  claim in its header. (1) Add a `--worklist <lo> <hi>` mode to
+  [`historical-review-survivors.sh`](../../../agents/scripts/core/historical-review-survivors.sh)
+  (or a sibling `historical-review-worklist.sh`) that emits `{pr, sha}` units for a PR
+  range and **fails loudly** when the two enumerators disagree. The gate's enumerator
+  is the GitHub merged set — `gh pr list --state merged --base develop --json number,mergeCommit`,
+  or in a `gh`-less session the `list_pull_requests(base=develop, state=closed)` MCP
+  call filtered on non-null `merged_at`; the candidate set is the `(#N)` develop-log
+  scrape. Replaying the motivating bug against that enumerator: for `lo=1878 hi=1940`
+  the GitHub set contains rows `1883, 1919, 1920, 1921, 1923, 1927, 1932` that the
+  scrape set does not, so the gate trips on exactly the 7 PRs Batch 20 lost — and on
+  the Batch 13 set (#1439/#1577/#1593/#1597) for its own range. (2) When a work-list
+  entry's resolved sha is a merge commit (`git rev-list --parents -n1 <sha>` reports
+  2+ parents), expand it to one unit per constituent (`<first-parent>..<sha> --no-merges`)
+  rather than emitting the merge sha, promoting the #1593 special into the default
+  path. (3) Have the sweep return its own coverage triple (requested / reviewed /
+  unreachable) so a batch header quotes a computed number rather than asserting one,
+  and correct Batch 20's contiguity claim in the ledger. Est ~2–3 h for (1)+(2),
+  ~1 h for (3). Cross-ref: Batch 13 header (the #1439/#1577/#1593/#1597 precedent);
+  Batch 16 § the #1593 per-constituent special; Batch 20 header (the incorrect
+  contiguity claim); the #1987 review-ref bug, the other case where the extractor
+  degraded silently rather than failing loudly.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — all three parts shipped (historical-review-worklist.sh with --json coverage; Batch 20 marked SUPERSEDED with the REDO section in historical-review-findings.md); archival had only waited on a lock that is gone from origin.
+  Status: applied (2026-10-04; was: partially applied (2026-08-16 — shipped: parts (1) + (2). New gate)
+    [`historical-review-worklist.sh`](../../../agents/scripts/core/historical-review-worklist.sh)
+    builds the work-list from the GitHub merged set cross-validated against the
+    develop-log scrape, **refuses to emit a scrape-only list** when no authority is
+    available (`gh` absent and no `--merged-list`), reports any PR the scrape missed,
+    fails loudly on a merged PR with no resolvable commit, and expands merge shas to
+    per-constituent units. Validated by replaying the motivating bug against the real
+    range: `--range 1878 1940` reports `authoritative 60 / scrape 53 / MISSED 1883
+    1919 1920 1921 1923 1927 1932 / coverage 60/60 -> 64 units`, independently
+    reconstructing the hand-built Batch 20-REDO work-list. `--selftest` carries 3 e2e
+    fixtures, two of them asserts-failure (no-authority must exit 2; an unresolvable
+    merged PR must exit 2). Wired into § Sweep status resume instructions and used to
+    build Batch 22. Part (3) shipped 2026-08-29: `--json` emits ONE OBJECT
+    carrying the computed coverage triple alongside the units, the sweep
+    workflow accepts that object as `args` and returns the triple verbatim
+    (`result.coverage`), and the selftest asserts the object against the
+    fixture-A ground truth (2 authoritative / 1 scraped / missed [101] /
+    2 covered → 3 units) plus units-parity with the bare-array output.
+    Validated on the real Batch 23 range: `--json --range 2042 2159` returns
+    `{authoritative: 76, scraped: 76, missed: [], covered: 76, units: 76}`,
+    matching the shipped batch header. All three parts applied — archive to
+    `applied.md` deferred only because that file sits under the
+    `testing-surface-activation` plan-lock held by a concurrent session.)
+  Last-reviewed: 2026-10-04
+
+# `cr-out-of-band` downgrades the CR gate but cannot clear the CR gate's own pending status — the label is inert until someone re-runs the workflow by hand
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-18
+- **Found during**: un-wedging [PR #2070](https://github.com/alexandrosk0/Smatchet/pull/2070) (`branch-protection-enforce-admins`), stuck 116 watcher cycles
+
+## Symptom
+
+PR #2070 sat wedged behind an exhausted CodeRabbit review quota. The operator took the
+sanctioned waiver path — applied `cr-out-of-band` + `cr-disposition:cr-rate-limited`
+with a justifying comment. `merge-gates.sh` acknowledged the waiver:
+
+```
+WARN: cr-out-of-band + cr-disposition label downgraded CR block (…) to WARN
+```
+
+and still refused to emit `GATES_PASSED`:
+
+```
+Poll 1/1 — CI: 21/22 pass (0 fail, 1 pending, 0 warn-downgraded, 0 req-missing) | …
+```
+
+The one pending item **was the CR gate's own StatusContext**, `CR findings (0 actionable)`,
+description `awaiting CodeRabbit review on current head`. The waiver that exists precisely
+to unblock this state could not unblock it.
+
+## Cause
+
+Two mechanisms that both key on `cr-out-of-band` are not wired to each other:
+
+1. **`merge-gates.sh`** downgrades the *CodeRabbit gate* (gate 2) to WARN. It deliberately
+   does **not** touch the CI counters — the comment at
+   [`merge-gates.sh:1414`](../../../agents/scripts/core/merge-gates.sh) says so outright:
+   *"(ci_fail / ci_pend) … are NOT touched"*. But `GATES_PASSED` requires `ci_pend -eq 0`
+   (lines 1502 and 1557), and `CR findings (0 actionable)` is an ordinary StatusContext that
+   lands in `ci_pend` (`fields[7]`, line 736) like any other check.
+2. **The CR finding gate action** ([`.github/actions/cr-finding-gate/action.yml:249-254`](../../../.github/actions/cr-finding-gate/action.yml))
+   *does* honour the label — it fetches labels live and posts `success` with
+   `cr-out-of-band label set — gate overridden`. That branch is the thing that clears
+   `ci_pend`.
+
+The gap: **nothing re-triggers the workflow when the label is applied.**
+[`cr-finding-gate.yml`](../../../.github/workflows/cr-finding-gate.yml) triggers on
+`pull_request` (default types — no `labeled`), `pull_request_review`,
+`pull_request_review_comment`, and `issue_comment`, and the `issue_comment` arm is
+additionally gated on a **CodeRabbit-authored** comment. Labelling the PR fires nothing;
+the operator's own disposition comment fires nothing.
+
+So the override sat live in the API and inert in CI. The unwedge required knowing to run
+`gh run rerun 32035340446` against a stale run of that workflow, purely so the action would
+re-read the labels. After the re-run the status flipped in one poll and the merge went
+through (`22/22 pass, 0 pending` → `GATES_PASSED` → merged `30d09b2dbcbd`).
+
+## Proposed fix
+
+1. **Add `labeled` / `unlabeled` to the workflow's `pull_request` types** (~15 min). A
+   labelled event re-runs the action, which already reads labels live and already has the
+   override branch. `unlabeled` matters too — pulling the waiver should re-evaluate, not
+   leave a forged `success` behind.
+2. **Make `merge-gates.sh` self-consistent.** When the CR gate is downgraded by
+   `cr-out-of-band` + disposition, discount the CR gate's own StatusContext from `ci_pend`
+   (it is the same signal counted twice — once as gate 2, once as a check). Leaving it in
+   means the documented waiver can never produce `GATES_PASSED` on its own, which is the
+   defect above stated at the poller instead of the workflow. Guard with a bats case in
+   `tests/bats/merge_gates.bats` asserting `cr-out-of-band` + disposition + a pending
+   `CR findings (0 actionable)` reaches `GATES_PASSED`.
+3. **Say the next step in the block message.** If (2) is rejected as too clever, the
+   `BLOCK:` line should name the manual step (`re-run the "CR finding gate" workflow so the
+   override is re-evaluated`) rather than leaving the operator to derive it from two files.
+
+## Why it matters
+
+This is a waiver that reports as applied and does not apply. The operator sees
+`WARN: … downgraded CR block … to WARN` — a success message — and a poll that still blocks,
+with no line connecting the two. The only escape a reader is likely to find from there is
+the admin-merge carve-out, i.e. the documented safe path pushes people onto the unsafe one.
+`cr-out-of-band` is the repo's designated pressure valve for exactly the CR-quota wedge that
+cost #2070 116 watcher cycles; a pressure valve that needs an undocumented `gh run rerun` to
+open is not a pressure valve.
+
+## Recurrence — 2026-08-19, [PR #2124](https://github.com/alexandrosk0/Smatchet/pull/2124)
+
+Same defect, different trigger, one day later. Not a quota exhaustion this time: CodeRabbit
+posted `Review skipped: manual review required for this OSS repository` (the repo is under
+CR's 10-star auto-review threshold, so CR reviews **nothing** unsolicited). The gate's own
+auto-nudge posted `@coderabbitai review`; CR never answered. `CR findings (0 actionable)`
+sat `pending / awaiting CodeRabbit review on current head` for **2h10m** with 0 reviews on
+the PR, and the 90-poll gate run ended `GATES_TIMEOUT`.
+
+Applying `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review` again changed
+nothing until `gh run rerun 32190691612` was issued by hand, exactly as documented above.
+After the re-run the status flipped to `cr-out-of-band label set — gate overridden` and the
+next poll reached `GATES_PASSED`.
+
+Two things this recurrence adds to the fix list:
+
+- **Fix 1 (`labeled` / `unlabeled` trigger) is the load-bearing one.** Both incidents were
+  un-wedged by a manual re-run whose only purpose was making the action re-read labels.
+- **The sub-10-star state is permanent, not incidental.** Unlike a rate limit, it never
+  clears on its own — every PR on this repo reaches `pending` and stays there unless a human
+  asks CR for a review or waives the gate. #2117, #2119, and #2122 all merged carrying
+  `CR findings (0 actionable) = pending`, i.e. the gate is routinely bypassed rather than
+  satisfied. Worth deciding explicitly whether the nudge should be retried on a schedule, or
+  whether the CR gate should have a documented terminal disposition for repos CR will not
+  auto-review — the status quo is a required-looking check that nobody can turn green.
+
+## Recurrence — 2026-08-19, [PR #2131](https://github.com/alexandrosk0/Smatchet/pull/2131)
+
+Third occurrence, second in 24 hours, same trigger as #2124 (the permanent sub-10-star
+`Review skipped: manual review required for this OSS repository` state). PR open
+05:54:16Z → merged 11:20:38Z, **5h26m**, with **0 reviews** on it the whole time;
+`CR findings (0 actionable)` never left `pending / awaiting CodeRabbit review on current head`.
+Every other gate was clean throughout — CI 30 pass / 9 skipping / 0 red, Bugbot pass with
+0 findings in 2m5s, 0 review threads, 0 non-bot comments. Gate 2 alone held the merge.
+
+What this occurrence adds is a **negative** result the first two did not isolate. A plain
+re-run of the wedged workflow, with **no label applied**, is not sufficient:
+`gh run rerun 32221202456` completed (`96049595922`, `96042985248` — both pass) and the
+status stayed `pending`. Only `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review`
+*followed by* a re-run flipped it to `cr-out-of-band label set — gate overridden`.
+
+So the manual step is not "re-run the workflow" — it is the ordered pair *(apply label,
+then re-run)*, and the ordering is silent: labelling fires no event, and a re-run without the
+label reports success while changing nothing. That is two ways to do the documented recovery
+and get no signal that you did it wrong. It also sharpens fix 1 — a `labeled` trigger removes
+the ordering hazard entirely, because the label *is* the event.
+
+Sequence across the three incidents, for whoever picks up the fix:
+
+| PR | Trigger | Wedged for | Cleared by |
+|---|---|---|---|
+| [#2070](https://github.com/alexandrosk0/Smatchet/pull/2070) | CR review quota exhausted | 116 watcher cycles | label + `gh run rerun 32035340446` |
+| [#2124](https://github.com/alexandrosk0/Smatchet/pull/2124) | sub-10-star, nudge unanswered | 2h10m, `GATES_TIMEOUT` | label + `gh run rerun 32190691612` |
+| [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) | sub-10-star, nudge unanswered | 5h26m | label + `gh run rerun 32221202456` (bare re-run first: no effect) |
+
+## Resolution — 2026-09-09
+
+**Status: applied.** All three proposed fixes shipped together with the OSS
+manual-trigger playbook:
+
+1. `cr-finding-gate.yml` now triggers on `labeled` / `unlabeled`.
+2. `merge-gates.d/10-gate-filter.sh` discounts `CR findings*` from `ci_pend` /
+   `ci_fail` when `cr-out-of-band` + `cr-disposition` are present.
+3. `scripts/dev/trigger-coderabbit-review.sh` + `merge-gates.md` § CodeRabbit OSS
+   manual-trigger name the human-trigger / waive moves (bot nudges retired for
+   the never-reviewed arm; terminal failure instead of unbounded pending).
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — cr-finding-gate.yml re-runs on labeled/unlabeled, 10-gate-filter.sh discounts the CR context under cr-out-of-band + disposition, and the playbook is in merge-gates.md (entry's own 2026-09-09 resolution).
+  Status: applied (2026-10-04)
+
+# A `SMATCHET_DEVIATION` marker wrapped across comment lines never expires
+
+- **Category**: tooling
+- **Priority**: P2
+- **Date**: 2026-09-30
+- **Observed on**: the 2026-10-01 deviation renewal (the markers renewed or resolved alongside this entry)
+- **Status**: open
+
+## What happened
+
+`deviation-overdue` reads markers one line at a time (`DEV_RE='SMATCHET_DEVIATION\((.*)\)'` in
+`agents/scripts/project/lint-rules.d/00-common.sh`). When a marker's reason wraps onto following
+comment lines, the `revisit=` field sits on a continuation line the rule never parses, so the marker
+never expires: the fail-open direction. Eleven wrapped markers dated 2026-09-30 / 2026-10-01 were
+past due without any gate noticing; the renewal rewrote them as single-line markers. Wrapped markers
+with later dates remain in `Source/` (for example the backend-client headers under
+`Source/Core/include/Tracker/`, `OllamaClient.cpp`, `OpenAiClient.cpp`). `dup_audit.py` has the same
+per-line reading, so a wrapped marker may also fail to suppress the clone it was written for; its
+`_ineffective_dup_deviation` diagnostic already names that cause.
+
+Most of these markers were wrapped by clang-format before `CommentPragmas: '^ *SMATCHET_DEVIATION'`
+protected them.
+
+## Concrete next action
+
+1. Rewrite the remaining wrapped markers as single-line markers, with the explanation kept as plain
+   comment prose above them.
+2. Make the grammar fail closed: in `scan_file_rules`, a comment line that contains
+   `SMATCHET_DEVIATION(` but no closing `)` emits `deviation-overdue` ("marker must be one line"),
+   like an empty `revisit=`. Add a `--selftest` case and a bats case.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — deviation-malformed (absolute-0) fails a SMATCHET_DEVIATION marker that is not one whole line with rule/reason/owner/revisit (lint-rules.d/10-line-rules.sh + 00-common.sh helpers, fixture tests/fixtures/lint_rules/deviation-malformed.cpp), so a wrapped marker can no longer dodge expiry.
+  Status: applied (2026-10-04)

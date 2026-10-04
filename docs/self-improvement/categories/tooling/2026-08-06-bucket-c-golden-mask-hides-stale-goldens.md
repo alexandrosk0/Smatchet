@@ -137,7 +137,7 @@
   (`code-syntax-coloring`, `command-palette-fuzzy`, `dock-gap-sentinel`) are
   still stale and still masked — they need their own determinism work first,
   since the `ScenarioRunner::Tick` double-call
-  ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md))
+  ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../applied.md))
   double-draws any scenario that renders from `OnFrame`.
   Status: partially-applied (part 1 — masked-step verdict reporting — shipped
     2026-08-15; part 2 — graduate the `user-info-*` subset to an unmasked diff —

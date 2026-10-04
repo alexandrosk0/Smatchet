@@ -363,7 +363,7 @@ code smell in any reviewable diff; a review agent reading #2127's diff would hav
 correctly. Same disposition as the #1948 and #1962 entries.
 
 ### Filed as
-[`categories/process/2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md`](categories/process/2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md)
+[`categories/process/2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md`](categories/applied.md)
 
 ## 2026-08-18 · PR #2120 · masked gate: the Windows merge-gate poll stopped exec'ing `gh` at all
 
@@ -919,7 +919,7 @@ Two concrete gates that catch the class **without** depending on the rig that ca
 
 ### Filed as
 New tooling per-entry backlog file
-[`categories/tooling/2026-06-19-concurrency-correctness-no-headless-test-home.md`](categories/tooling/2026-06-19-concurrency-correctness-no-headless-test-home.md)
+[`categories/tooling/2026-06-19-concurrency-correctness-no-headless-test-home.md`](categories/applied.md)
 (P2) — carries both concrete gates above as its `Concrete next action`, cross-ref'd to #1390 / #1409 and
 `feat/tsan-subset-sync-layer`.
 

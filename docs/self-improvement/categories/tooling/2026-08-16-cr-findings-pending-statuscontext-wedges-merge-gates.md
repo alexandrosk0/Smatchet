@@ -15,7 +15,7 @@
     are real and did fire — they just downgrade gate **#2**, and this block lives
     in gate **#1**.
     **(b) Why it never resolves.** Per
-    [`2026-07-13-cr-merge-gate-stuck-blockers.md`](2026-07-13-cr-merge-gate-stuck-blockers.md)
+    [`2026-07-13-cr-merge-gate-stuck-blockers.md`](../applied.md)
     § Friction A the aggregator posts `pending` on `pull_request` and flips to
     `success` only on a CR **review node**. When CR cannot produce one — an
     exhausted rate limit on an already-seen head
