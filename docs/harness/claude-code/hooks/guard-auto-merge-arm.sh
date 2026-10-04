@@ -25,10 +25,11 @@
 # once it is a required context. See docs/agent-rules/merge-gates.md
 # § Sanctioned non-admin merge path.
 #
-# Wiring: settings.json.tmpl runs this file from its tracked path, so no harness
-# re-provisioning copy step is needed. No env override by design — the
-# sanctioned path exists; a human who really wants native auto-merge arms it
-# outside the agent.
+# Wiring: a PreToolUse matcher in settings.json.tmpl runs the deployed copy at
+# .claude/hooks/ (the SessionStart hook sync in clear-session-context.sh copies
+# every hook here; sync-settings-hooks.sh heals the matcher into an existing
+# settings.json). No env override by design — the sanctioned path exists; a
+# human who really wants native auto-merge arms it outside the agent.
 #
 # Protocol: tool-call JSON on stdin. Allow = exit 0 with no output. Deny = exit 0
 # with a permissionDecision JSON. Unparseable input -> allow (fail-open guard).
