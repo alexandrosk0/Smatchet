@@ -17,9 +17,12 @@
 # checks API (the GraphQL GATE_FILTER also scores CodeRabbit / Bugbot / comments /
 # review state, which are not checks, so it cannot be reused verbatim):
 #   * latest run per name — newest check suite (suite id, monotonic in creation
-#     order: the REST stand-in for the filter's checkSuite.createdAt), then
-#     started_at, then run id; a re-run supersedes, a cancelled concurrency twin
-#     in an older suite does not count;
+#     order: the REST stand-in for the filter's checkSuite.createdAt), then the
+#     newest run in it (run id, also creation order — unlike started_at it is set
+#     on a still-queued re-run); a re-run supersedes, a cancelled concurrency
+#     twin in an older suite does not count. Runs are fetched with filter=all so
+#     a queued / in-progress re-run attempt is never hidden behind the completed
+#     attempt it replaces;
 #   * red = a completed run concluding failure / timed_out / cancelled /
 #     action_required / startup_failure, or a status in failure / error;
 #     pending = a run not yet completed, or a status in pending / expected;
@@ -93,7 +96,7 @@ ACG_FILTER='
 | ([$req[] | select(. != $self)]) as $reqNames
 | ([.check_runs[]? | select((.name // "") != $self)]
    | group_by(.name // "")
-   | map(sort_by([(.check_suite.id // 0), (.started_at // ""), (.id // 0)]) | .[-1])
+   | map(sort_by([(.check_suite.id // 0), (.id // 0)]) | .[-1])
    | map({kind: "check", name: (.name // ""), id: (.id // 0),
           state: (if (.status // "") != "completed" then "pending"
                   elif ((.conclusion // "") | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) then "fail"
@@ -180,7 +183,7 @@ case "${1:-}" in
         FIXTURE="${1#--fixture=}"
         ;;
     -h|--help)
-        sed -n '2,68p' "$0"
+        awk 'NR > 1 && /^set -uo pipefail/ { exit } NR > 1' "$0"
         exit 0
         ;;
     "") ;;
@@ -231,7 +234,7 @@ echo '{"head":"","state":"open","labels":[],"body":""}' > "$WORK/pr.json"
 
 # fetch_checks — the head's check runs + commit statuses (every page) into $WORK.
 fetch_checks() {
-    gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100&filter=latest" \
+    gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100&filter=all" \
         --jq '.check_runs[] | {id, name, status, conclusion, started_at, completed_at, check_suite: {id: .check_suite.id}}' \
         | jq -s '.' > "$WORK/runs.json" || return 1
     gh api --paginate "repos/$REPO/commits/$SHA/status?per_page=100" \

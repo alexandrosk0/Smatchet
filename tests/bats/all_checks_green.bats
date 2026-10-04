@@ -104,6 +104,15 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     [[ "$output" == *"RED         Intent section (failure)"* ]]
 }
 
+@test "a queued re-run attempt (same suite, newer run id, no started_at) supersedes the red attempt" {
+    replay "2026-10-04T01:59:29Z" ".check_runs += [{name: \"Bucket-E UI tests (Mesa headless GL)\", status: \"queued\",
+        conclusion: null, started_at: null, id: 999999999999, check_suite: {id: 100675454637}}]"
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"PENDING     Bucket-E UI tests (Mesa headless GL) (queued)"* ]]
+    [[ "$output" != *"RED "* ]]
+}
+
 @test "cancelled / timed_out / action_required / startup_failure count as red" {
     for c in cancelled timed_out action_required startup_failure; do
         replay final "$GREEN_EDIT | setrun(\"TSan Linux subset (Clang)\"; \"$c\")"
