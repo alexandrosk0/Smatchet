@@ -147,7 +147,10 @@ done
 # Runs the canonical harness-agnostic scanner at scripts/dev/pillar2-scan.sh
 # against every file in the chunk. Emits CRITICAL per sync-I/O reaching the
 # UI thread without /* PILLAR2_WORKER_ONLY */ + est-latency annotation.
-if [[ ${#CHUNK[@]} -gt 0 ]]; then
+# The scanner is the consuming project's, not the harness's: a project without one
+# (the agent layer running on itself) has opted out of the gate, so it is skipped
+# only when the file is ABSENT. A present scanner that fails still surfaces below.
+if [[ ${#CHUNK[@]} -gt 0 && -f "$PROJ_DIR/scripts/dev/pillar2-scan.sh" ]]; then
     declare -a P2_RELS=()
     for abs in "${CHUNK[@]}"; do
         P2_RELS+=("$(lint_normalize_path "$abs")")

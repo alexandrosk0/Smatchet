@@ -22,6 +22,13 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
+# Every fixture below is its own tree. An inherited root would point the scripts
+# under test at the CALLER's tree instead — test-plan-index.sh keeps an exported
+# PROJECT_ROOT — so a run from the standalone agent layer (where both roots are
+# exported) failed on the layer's missing docs/plans/, and a run with an absolute
+# host root aimed the fixture's --fix at the real docs/plans/INDEX.md.
+unset PROJECT_ROOT PC_PROJECT_ROOT AGENT_LAYER_ROOT PC_AGENT_LAYER_ROOT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUT="$SCRIPT_DIR/archive-plan.sh"
 IDX="$SCRIPT_DIR/test-plan-index.sh"

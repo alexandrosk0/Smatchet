@@ -17,6 +17,9 @@
 # archival is exercised end to end (append + git rm + staging) without touching
 # the real backlog. ARCHIVE_SKIP_LINK_CHECK=1 because the built-in self-check
 # scans the REAL repo, which a fixture archival must not depend on.
+# ARCHIVE_SKIP_ROTATE=1 because rotation would move the fixture's dated entries out
+# of applied.md — and, before rotate-applied-md.sh resolved its root from cwd, it
+# rotated the REAL applied.md on every run of this suite.
 #
 # Requires: bash, git, python3, bats.
 # ----------------------------------------------------------------------------
@@ -65,7 +68,7 @@ MD
 }
 
 _run_archive() {  # <args...>
-    ( cd "$WORK" && ARCHIVE_SKIP_LINK_CHECK=1 bash "$SCRIPT" "$@" )
+    ( cd "$WORK" && ARCHIVE_SKIP_LINK_CHECK=1 ARCHIVE_SKIP_ROTATE=1 bash "$SCRIPT" "$@" )
 }
 
 # ── Outbound: the body is re-depthed for its new home ────────────────────────

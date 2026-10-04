@@ -264,8 +264,12 @@ setup() {
     # filenames) so individual script renames don't break this.
     run bash "$LINT" --list-targets
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scripts/mobile/"* ]]
     [[ "$output" == *"docs/harness/"*"/hooks/"* ]]
+    # scripts/mobile/ is the consuming product's; the standalone agent layer has
+    # none, so that half applies only where the directory exists.
+    if [ -d "$REPO_ROOT/scripts/mobile" ]; then
+        [[ "$output" == *"scripts/mobile/"* ]]
+    fi
 }
 
 @test "default target set covers agents/scripts/core/lib (sourced libraries)" {

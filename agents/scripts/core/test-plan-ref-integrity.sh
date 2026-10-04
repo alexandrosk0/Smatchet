@@ -28,7 +28,9 @@
 # IS still scanned and should use the move-proof tier-less form.
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# Absolute self-path, taken before the cd below (the standalone skip re-runs it).
+_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+cd "$(git rev-parse --show-toplevel)" || exit 2
 
 # Tier-check base — overridable so --selftest can point at a temp fixture tree.
 PLAN_BASE="${SMATCHET_PLAN_BASE:-docs/plans}"
@@ -211,6 +213,21 @@ PLAN
 
   if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5 unit + 6 e2e)"; exit 0; fi
   echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
+fi
+
+# A tree with no plans dir — the standalone agent layer, whose seed carries none —
+# has nothing to resolve a reference against: every docs/plans/ path its prose
+# cites belongs to a consuming product. Keep the resolver's own coverage (the
+# self-contained selftest above) and report the real-tree scan as skipped, rather
+# than failing on every citation.
+if [ ! -d "$PLAN_BASE" ]; then
+  echo "test-plan-ref-integrity: no $PLAN_BASE/ in this tree (standalone agent layer) — real-tree scan skipped."
+  if bash "$_SELF" --selftest; then
+    echo "Passed: 1  Failed: 0  Skipped: 1"
+    exit 0
+  fi
+  echo "Passed: 0  Failed: 1  Skipped: 1"
+  exit 1
 fi
 
 # is_archive_self_ref <ref> — true iff <ref> is a plan's OWN post-move shipped

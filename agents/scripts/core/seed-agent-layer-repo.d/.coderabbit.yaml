@@ -1,0 +1,70 @@
+# the-unwilling-agentic-bunch — CodeRabbit review config for the agent layer.
+#
+# Written fresh for the layer, not copied from a consuming product: there is no
+# C++ here, and no self-improvement auto-exemption — the self-improvement ENTRIES
+# stay in each consuming project, so no path in this repo is review-exempt.
+# merge-gates.sh reads this bot's verdict (project.config.json § merge_gates).
+language: en-US
+early_access: false
+tone_instructions: |
+  Terse. Drop pleasantries. Cite file:line. One line per finding when possible.
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - develop
+  path_filters:
+    - '!.claude/**'
+    - '!.codex/**'
+    - '!.cursor/**'
+    - '!.pi/**'
+    - '!.session-context*'
+    - '!**/__pycache__/**'
+  path_instructions:
+    - path: 'agents/scripts/**/*.sh'
+      instructions: |
+        Gate and tooling scripts that run in CI and in every consuming project.
+        Hold them to docs/agent-rules/shell-script-self-review.md: `set -uo
+        pipefail` (or -euo), quoted expansions, `command -v` preflight for every
+        external tool, `curl --fail` plus a sha256 check on any download, and
+        --flag / --flag=value parity. A gate must FAIL CLOSED: flag any path where
+        a missing tool, an empty input, or a zero-iteration loop reports a pass.
+        Flag reads of consuming-project paths (docs/plans/, Source/, backlog/) that
+        do not go through $PROJECT_ROOT, and layer reads that do not go through
+        $AGENT_LAYER_ROOT or the script's own location.
+    - path: 'agents/scripts/**/*.py'
+      instructions: |
+        Python 3 stdlib only unless the script already imports a third-party
+        module. Exit codes are part of each gate's contract (0 pass, 1 finding,
+        2 usage/environment) — flag any change to them. Parse untrusted JSON with
+        bounded depth.
+    - path: 'tests/bats/**/*.bats'
+      instructions: |
+        Suites must be hermetic: build fixtures under $BATS_TEST_TMPDIR (or a
+        mktemp dir) and never write to the repository working tree. A case that
+        depends on consuming-project content must `skip` with a reason when that
+        content is absent, never pass vacuously.
+    - path: 'agents/{core,project}/*.md'
+      instructions: |
+        Agent prompts. Keep each under the 250-line cap enforced by
+        agent_size_audit.py; move procedure bodies to agents/_shared/skills/.
+        Every prompt keeps its `## Outcome:` mandate and a `## Self-improvement`
+        section. Flag product-specific names in portable prose.
+    - path: 'docs/agent-rules/**/*.md'
+      instructions: |
+        Rule docs are the single source of truth that AGENTS.md links into. Flag a
+        rule restated in a second place, a section rename that would orphan an
+        `AGENTS.md § <section>` reference, and relative links that leave the repo.
+    - path: 'AGENTS.md'
+      instructions: |
+        Navigation-only rulebook, capped at 150 lines. New rule detail belongs in
+        docs/agent-rules/, with a one-line pointer here.
+chat:
+  auto_reply: true
