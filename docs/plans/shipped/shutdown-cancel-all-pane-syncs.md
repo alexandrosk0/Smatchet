@@ -1,8 +1,9 @@
 # Plan — cancel every pane's streaming sync before joining any
+<!-- plan-date: 2026-10-04 -->
 
 > **Slug**: `shutdown-cancel-all-pane-syncs`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -72,7 +73,7 @@ A shared `CollectPaneTicketSyncServices()` helper for the stale-deletion reset l
 
 ## Implementation log
 
-Shipped on `claude/pensive-stonebraker-d3db80`.
+Shipped in #2291 (branch `claude/pensive-stonebraker-d3db80`).
 
 ## Deviations from plan
 
@@ -84,4 +85,4 @@ See § Verification.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
-Flip Status to `shipped` and `git mv` to `docs/plans/shipped/` once the PR merges.
+Done in #2291: Status flipped to `shipped` and the file moved to `docs/plans/shipped/`.
