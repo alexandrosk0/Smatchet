@@ -740,6 +740,144 @@ _resolve_py() {
     [[ "$output" != *"no-raw-new"* ]]
 }
 
+@test "deviation-malformed fires on a wrapped marker, a missing or blank field, the old prose grammar and a prose mention" {
+    # Every gate reads a marker one line at a time. A marker wrapped onto a second line never had its
+    # revisit= read (28 live ones hid 24 due dates until 2026-10), and a fieldless one leaves nothing
+    # to audit. DEV_RE matches the token anywhere on a line, so a prose mention is read as a marker.
+    # Line 35 has every field, but its only ')' closes a parenthetical in reason=, not the marker.
+    run bash "$LINT" --scan-file "$FIX/deviation-malformed.cpp"
+    [ "$status" -eq 0 ]
+    # Count by the rule column: the fixture's own file name also contains the rule id.
+    [ "$(grep -c '^deviation-malformed' <<< "$output")" -eq 10 ]
+    for l in 5 8 11 14 17 23 26 29 32 35; do grep -q "^deviation-malformed.*deviation-malformed\.cpp:$l\$" <<< "$output"; done
+    # The whole marker on line 20 (parenthetical reason and all) passes and still suppresses line 21.
+    [ -z "$(grep 'deviation-malformed\.cpp:2[01]$' <<< "$output")" ]
+    # The wrapped marker suppressed nothing, so its target's raw new is still reported.
+    grep -q '^no-raw-new.*deviation-malformed\.cpp:7$' <<< "$output"
+}
+
+@test "deviation-malformed leaves whole markers alone, including every valid revisit shape" {
+    run bash "$LINT" --scan-file "$FIX/deviation-revisit-valid-shapes.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deviation-malformed"* ]]
+    run bash "$LINT" --scan-file "$FIX/deviation-current-paren-reason.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deviation-malformed"* ]]
+}
+
+@test "deviation-malformed checks each marker on a line on its own, so two halves never make a whole" {
+    tmp="$(mktemp -d)"
+    {
+        # The first mention has no revisit=; the second one's revisit= must not complete it.
+        printf '// SMATCHET_DEVIATION(rule=no-raw-new; reason=r; owner=o; x) see SMATCHET_DEVIATION(y; revisit=never)\nint a = 0;\n'
+        printf '// SMATCHET_DEVIATION(rule=no-raw-new; reason=r) see SMATCHET_DEVIATION(owner=o; revisit=never)\nint b = 0;\n'
+        # Two whole markers on one line, the second with a parenthetical reason, stay valid.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) and SMATCHET_DEVIATION(rule=b; reason=r (x); owner=o; revisit=2099-01-01)\nint c = 0;\n'
+        # A stray ')' in reason= and a parenthetical after the marker leave it whole.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=step 1) then 2; owner=o; revisit=never) see (x)\nint d = 0;\n'
+    } > "$tmp/M.cpp"
+    # Each printf writes a marker line and a code line, so M.cpp holds: 1 half/half,
+    # 2 code, 3 half/half, 4 code, 5 two whole markers, 6 code, 7 stray ')', 8 code.
+    run bash "$LINT" --scan-file "$tmp/M.cpp"
+    rm -rf "$tmp"
+    [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 2 ]
+    [[ "$output" == *"M.cpp:1"* ]]
+    [[ "$output" == *"M.cpp:3"* ]]
+    [[ "$output" != *"M.cpp:5"* ]]
+    [[ "$output" != *"M.cpp:7"* ]]
+}
+
+@test "deviation-malformed closes a marker only on a ')' with no '(' open before it" {
+    tmp="$(mktemp -d)"
+    {
+        # The stray ')' after "1" comes before owner= and revisit=, and the last ')' closes
+        # "(aside)", so no ')' closes the marker with every field inside it.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=step 1) then; owner=o; revisit=never; note (aside)\nint a = 0;\n'
+        # The ')' after "1" closes the marker with every field inside; "then (aside)" is prose after it.
+        printf '// SMATCHET_DEVIATION(rule=a; owner=o; revisit=never; reason=step 1) then (aside)\nint b = 0;\n'
+        # Prose after a closed marker may leave its own '(' open.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) see (x (y)\nint c = 0;\n'
+    } > "$tmp/P.cpp"
+    # Each printf writes a marker line and a code line: markers on lines 1, 3 and 5.
+    run bash "$LINT" --scan-file "$tmp/P.cpp"
+    rm -rf "$tmp"
+    [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 1 ]
+    [[ "$output" == *"P.cpp:1"* ]]
+    [[ "$output" != *"P.cpp:3"* ]]
+    [[ "$output" != *"P.cpp:5"* ]]
+}
+
+@test "an EMPTY revisit= is reported once, as deviation-overdue, not also as deviation-malformed" {
+    run bash "$LINT" --scan-file "$FIX/deviation-revisit-malformed.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deviation-malformed"* ]]
+}
+
+@test "--scan-revisit-cohorts lists a revisit date shared by more than the cap, not one at the cap" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    {
+        for i in 1 2 3; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint a%s = 0;\n' "$i"; done
+        for i in 1 2; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-02-01)\nint b%s = 0;\n' "$i"; done
+        for i in 1 2 3; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=never)\nint c%s = 0;\n' "$i"; done
+        for i in 1 2 3; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-Q2)\nint q%s = 0;\n' "$i"; done
+    } > "$tmp/Source/Core/src/M.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    SMATCHET_DEVIATION_COHORT_MAX=2 run bash "$LINT" --root "$tmp" --scan-revisit-cohorts
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'3\t2099-01-01'* ]]
+    [[ "$output" == *$'3\t2099-Q2'* ]]
+    # At the cap (2 markers), not over it; and `never` is not a date.
+    [[ "$output" != *"2099-02-01"* ]]
+    [[ "$output" != *"never"* ]]
+}
+
+@test "--scan-revisit-cohorts exits 0 with no output on a tree with no marker at all" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'int f() { return 0; }\n' > "$tmp/Source/Core/src/A.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-revisit-cohorts
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "deviation-cohort warns only on a marker the diff ADDS to a crowded revisit date" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src"
+    for i in 1 2 3; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint a%s = 0;\n' "$i"; done > "$tmp/Source/Core/src/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    # A change that adds no marker stays quiet even though 2099-01-01 is already crowded.
+    printf 'int z = 0;\n' > "$tmp/Source/Core/src/Other.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm other ) >/dev/null
+    run bash -c "cd '$tmp' && export SMATCHET_DEVIATION_COHORT_MAX=2 && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/10-line-rules.sh' && deviation_cohort_hits develop"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint n = 0;\n// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-03-01)\nint m = 0;\n' > "$tmp/Source/Core/src/New.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
+    run bash -c "cd '$tmp' && export SMATCHET_DEVIATION_COHORT_MAX=2 && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/10-line-rules.sh' && deviation_cohort_hits develop"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'deviation-cohort\t2099-01-01\t4 markers'* ]]
+    # The other added marker lands on an uncrowded date.
+    [[ "$output" != *"2099-03-01"* ]]
+}
+
+@test "deviation-cohort warns when an added marker takes a date from the cap to one over it" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src"
+    for i in 1 2; do printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint a%s = 0;\n' "$i"; done > "$tmp/Source/Core/src/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    printf '// SMATCHET_DEVIATION(rule=duplication; reason=r; owner=o; revisit=2099-01-01)\nint n = 0;\n' > "$tmp/Source/Core/src/New.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
+    # The base holds 2 markers on the date, exactly the cap; the diff makes it 3.
+    run bash -c "cd '$tmp' && export SMATCHET_DEVIATION_COHORT_MAX=2 && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/10-line-rules.sh' && deviation_cohort_hits develop"
+    rm -rf "$tmp"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'deviation-cohort\t2099-01-01\t3 markers'* ]]
+}
+
 # ---------- known-good ----------
 
 @test "known-good fixture produces no findings" {
@@ -859,6 +997,17 @@ _resolve_py() {
     run bash "$LINT" --root "$tmp" --scan-wide
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "--scan-wide fails a wrapped SMATCHET_DEVIATION anywhere in first-party C++" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf '// SMATCHET_DEVIATION(rule=duplication; reason=wrapped onto\n// a second line; owner=x; revisit=2020-01-01)\nint v = 1;\n' \
+        > "$tmp/Source/Core/src/Ui/Wrapped.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-wide
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deviation-malformed"*"Ui/Wrapped.cpp:1"* ]]
 }
 
 @test "--scan-wide is clean on the real first-party tree" {
