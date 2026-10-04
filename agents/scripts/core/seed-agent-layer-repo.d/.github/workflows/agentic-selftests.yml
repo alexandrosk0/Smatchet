@@ -1,0 +1,68 @@
+name: Agentic self-tests
+
+# The layer's bats + shell self-test suite, run on the layer itself: the framework
+# is its own first consumer. scripts/dev/test-all.sh --ci discovers every
+# agents/scripts/{core,project}/test-*.sh wrapper and treats a missing built
+# binary (exit 2) as a clean SKIP; suites whose subject-under-test lives in a
+# consuming product (LAYER_HOST_SUT_RE in test-all.sh) skip when no Source/ is
+# present and run in that product's own CI instead.
+#
+# "Agentic self-tests (bats)" is a branch-protection REQUIRED context
+# (project.config.json § branch_protection.required_contexts). It must report on
+# EVERY pull request, so this workflow has no path filter and the job no `if:` —
+# a required context emitted conditionally wedges every PR that skips it.
+#
+# agent-layer-sim.sh runs the same commands locally (lane `bats`) and fails if
+# they stop appearing here, so edit both together.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  merge_group:
+
+concurrency:
+  group: agentic-selftests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Standalone: the layer is its own host, so both roots are the checkout.
+  PROJECT_ROOT: ${{ github.workspace }}
+  AGENT_LAYER_ROOT: ${{ github.workspace }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  agentic-selftests:
+    name: Agentic self-tests (bats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: several gates are merge-base deltas vs origin/develop
+          # (dup_audit / agent_size_audit / test-lint-rules / portable-purity).
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure origin/develop ref (for delta-vs-develop gates)
+        run: git fetch --no-tags --quiet origin develop || true
+
+      - name: Install bats (shellcheck + python3 preinstalled on ubuntu runner)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+          bats --version
+          shellcheck --version | head -2
+          python3 --version
+
+      - name: Provision .claude/ adapter (hooks + agents the guard and adapter suites source)
+        run: bash agents/scripts/core/setup-harness.sh claude-code
+
+      - name: test-all.sh --ci — agentic self-test aggregator
+        run: bash scripts/dev/test-all.sh --ci

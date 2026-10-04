@@ -223,9 +223,7 @@ int HtmlEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     case MD_SPAN_IMG: {
         auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
         b.imgSrcStack.push_back(d ? MdAttrToString(d->src) : std::string());
-        // clang-format off
-        // SMATCHET_DEVIATION(rule=duplication; reason=the MD_SPAN_A/MD_SPAN_IMG detail-extraction skeleton is a pre-existing near-verbatim twin of the ADF engine's EnterSpan (MarkdownToAdf.cpp) — both consume the identical md4c span-detail contract while emitting different targets; the clone predates the god-file split (it lived intra-file in MarkdownConvert.cpp) and folding it would couple the two independent engines against DRY Pillar 5; owner=orchestrator; revisit=2026-12-31)
-        // clang-format on
+        // SMATCHET_DEVIATION(rule=duplication; reason=image-span enter (src push, depth, alt reset) twin of AdfEnterSpan; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
         ++b.imgSpanDepth;
         b.imgAltBuf.clear();
         break;
@@ -265,9 +263,7 @@ int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
             b.out << "\"/>";
             b.imgAltBuf.clear();
         }
-        // clang-format off
-        // SMATCHET_DEVIATION(rule=duplication; reason=the LeaveSpan img-teardown + imgSpanDepth-decrement tail is a pre-existing near-verbatim twin of the ADF engine's LeaveSpan (MarkdownToAdf.cpp) — both close out the same md4c span contract; the clone predates the god-file split (it lived intra-file in MarkdownConvert.cpp) and folding it would couple the two independent engines against DRY Pillar 5; owner=orchestrator; revisit=2026-12-31)
-        // clang-format on
+        // SMATCHET_DEVIATION(rule=duplication; reason=image-span teardown twin of AdfLeaveSpan; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
         if (b.imgSpanDepth > 0)
             --b.imgSpanDepth;
         break;
@@ -293,9 +289,7 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
         return 0;
     }
     const std::string txt(text, size);
-    // clang-format off
-    // SMATCHET_DEVIATION(rule=duplication; reason=the text-callback preamble (NULLCHAR skip + NOHTML MD_TEXT_HTML debug-log guard + img-alt accumulation) is a pre-existing near-verbatim twin of the ADF engine's TextCallback (MarkdownToAdf.cpp) — both implement the identical md4c text contract; the clone predates the god-file split (it lived intra-file in MarkdownConvert.cpp) and folding it would couple the two independent engines against DRY Pillar 5; owner=orchestrator; revisit=2026-12-31)
-    // clang-format on
+    // SMATCHET_DEVIATION(rule=duplication; reason=text-callback preamble (NUL and raw-HTML skip, image alt collection) twin of AdfTextCallback; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
     if (b.imgSpanDepth > 0 && b.codeBlockDepth == 0) {
         if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
             b.imgAltBuf += txt;

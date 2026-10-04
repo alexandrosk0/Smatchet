@@ -88,10 +88,14 @@ int w = obj["w"].get<int64_t>();  // suppresses `narrowing-conversions` on this 
 **One line, directly above — overflow prose goes ABOVE the marker, never after it.** Every scanner's suppression check is a **per-line** test: the whole `SMATCHET_DEVIATION(...)` must sit on a *single* line, and that line must be the **nearest non-blank line above** the target (`duplication` also accepts a marker anywhere *inside* the clone span — so a wrapped marker sometimes suppresses *by accident*, when the detected span happens to drift up over it. That is why the failure looks intermittent; never rely on it). Splitting a long marker across comment lines silently fails to suppress — the nearest line above the target is then the trailing prose, which carries no token — and the gate reports a bare `FAIL` that reads as if the *reason text* were wrong when only its *shape* is:
 
 ```cpp
-// the MCP and Lua-console window-layout helpers are long-standing structural
-// twins; unifying them would couple two independent subsystems
-// SMATCHET_DEVIATION(rule=duplication; reason=cross-subsystem twins; owner=ui-host; revisit=2026-12-31)
+// the MCP and Lua-console window-layout helpers are structural twins; the shared
+// helper is tracked in debt 2026-10-01-dock-window-layout-repair-helpers
+// SMATCHET_DEVIATION(rule=duplication; reason=twin of the Lua console helpers; owner=ui-host; revisit=2027-03-31)
 void DrawMcpWindowLayout() { /* ... */ }
 ```
 
 `dup_audit.py` names this case explicitly — when a clone FAILs with a well-formed `rule=duplication` marker within 5 lines above it, the gate emits a `[dup] hint:` line pointing at the marker's placement rather than leaving you to re-word a reason that was already fine.
+
+**`deviation-malformed`** (absolute, whole first-party tree, like `deviation-overdue`) enforces that shape. A line naming `SMATCHET_DEVIATION(` fails every PR when the fields do not close on that line (a `)` that closes a parenthetical inside a field never closes the marker, while a stray one such as `reason=step 1) ...` may), when `rule=`, `reason=` or `owner=` is missing or blank, or when there is no `revisit=` at all (a blank `revisit=` is `deviation-overdue`'s to report). Wrapped markers were invisible to the overdue check: 28 of them hid 24 due dates until the 2026-12-31 batch unwrapped them. A prose mention of the token in a C++ comment trips the rule too, on purpose. The gates match the token anywhere on a line, so a half-written mention would be read as a marker.
+
+**`deviation-cohort`** (WARN, delta-scoped) catches the expiry cliff early. `deviation-overdue` fails every PR at once when many markers share one `revisit=` date. So when a diff adds a marker on a calendar date that then holds more than 8 first-party markers (`SMATCHET_DEVIATION_COHORT_MAX`), counting the ones this diff adds, `--diff` warns and names the date and count. Taking a date from 8 to 9 warns, because that is exactly how a cliff grows. Existing crowded dates stay quiet until someone adds to them. `bash agents/scripts/project/test-lint-rules.sh --scan-revisit-cohorts` lists them all. Stagger a sweep's dates by group (one debt item, one date), and use `revisit=never` only for standing exemptions.

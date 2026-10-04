@@ -34,6 +34,158 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-10-04 · PR #2213 · override: bare `plan-lock-out-of-band` over a 12-day-stale `Plan-lock gate` red that a re-run would have cleared
+
+### What escaped
+`chore: archive multi-jira plan and record #2212 merge snapshot` (#2213, head `1df75c8a`, branch `cursor/archive-multi-jira-plan-2eef`, opened by a Cursor agent) merged 2026-09-24T13:48:26Z as `f3128222`. Its only `Plan-lock gate` run (job `103468437213`, 2026-09-12T00:46:43Z) was **failure**:
+
+```text
+'docs/plans/INDEX.md' overlaps the write set of plan-lock 'gate-selftest-msys-execbit', held by a different branch.
+```
+
+A session applied `plan-lock-out-of-band` at 2026-09-24T11:36:31Z and the PR merged two hours later. Nothing records why: there is no `plan-lock-disposition:` line, no comment, and no `merge-snapshots.jsonl` row. It was a direct merge with no auto-merge request.
+
+Every other check on the head was green, except `Cursor Bugbot`, which was neutral because of its usage cap.
+
+The detector missed it twice over. #2213 is outside `postmortem-owed.sh`'s 20-merge window, and that window is blinded anyway by the HTTP 504 in the #2286 entry below. It surfaced only through the #2160 follow-up search for `label:plan-lock-out-of-band`.
+
+### Root cause
+The red was correct when it was written, and wrong by the time it was overridden. The gate re-evaluated nothing in between.
+
+- **At 2026-09-12T00:46Z the overlap was real.** `gate-selftest-msys-execbit` belonged to `claude/stoic-mccarthy-082155`, the head of #2164, which was still open, and its write set lists `docs/plans/INDEX.md`.
+- **The lock aged out.** Its `updated` time, 2026-08-29T17:22:38Z, crossed `plan-lock-gate.sh:33`'s 14-day cutoff at 2026-09-12T17:22:38Z, so the gate would skip it from then on.
+- **The owner PR merged.** #2164 merged 2026-09-13T21:24:01Z without a `lock-slug:` line, so `lock-cleanup.yml` left the lock orphaned. It is still on origin today. Stale-lock Issue #2215 was opened 2026-09-13 and is refreshed daily with no response.
+
+By the merge, the red's cause had expired twice. A re-run would have been green: `Plan-lock gate` passed on #2243 and #2273, which edited the same `docs/plans/INDEX.md` while the same lock was still on origin.
+
+Three gate holes compound this:
+
+1. **The verdict is frozen at push time.** `plan-lock-gate.yml` triggers only on `opened` / `synchronize` / `reopened`. The lock table it judges keeps changing through claims, releases and the cutoff, but nothing re-evaluates the check. The merge poller and every native path trust a 12-day-old verdict, in both directions.
+2. **The hatch is a bare boolean**, the #2160 class. The label cleared a red nobody had re-examined, with no disposition required.
+3. **Release-on-close keys only on `lock-slug:`**, the #2280 class. #2164 orphaned its lock exactly as #2286 did.
+
+### Preventing gate
+PRIMARY — **re-evaluate a red `Plan-lock gate` against the live lock table at merge time, before honouring `plan-lock-out-of-band`.** In `merge-gates.sh`, pipe `gh pr diff --name-only` through `plan_lock_gate_decide` (sourced from `plan-lock-gate.sh`) after fetching `refs/locks/*`:
+
+- **Now clean:** the red is stale. Refuse the downgrade and print `gh run rerun <id>`.
+- **Still red:** the label applies, under the #2160 per-slug disposition rule.
+
+Run the same re-check on a green whose run predates a covering lock's `updated`.
+
+Replayed on #2213 at 13:48:26Z: the lock's epoch (08-29T17:22Z) is older than the cutoff (09-10T13:48Z), so the decision is clean. The downgrade is refused, job `103468437213` is re-run and passes, and the merge needs no override.
+
+Companions:
+- the branch-matched lock release from the #2280 entry, which also covers #2164's orphan;
+- a scheduled re-run of red `Plan-lock gate` runs.
+
+### Eval case
+none — not agent-reviewable. The gap is in the gate's own lifecycle: a time- and state-dependent check evaluated only at push, plus the override contract. #2213's diff (plan archive + a ledger row) contains nothing a review agent would score.
+
+### Filed as
+- [`categories/tooling/2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md`](categories/tooling/2026-10-04-stale-plan-lock-red-overridden-instead-of-rerun.md) (P2 — merge-time re-evaluation; also records the live orphan `gate-selftest-msys-execbit` / Issue #2215 for operator release)
+- [`categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md`](categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md) (#2164 added as a second orphan instance)
+- [`categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md`](categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md) § Follow-up measurement — 2026-10-04
+
+## 2026-10-04 · PR #2280 · override: `plan-lock-out-of-band` over a lock orphaned by a merged PR — and the same label silently waived a second, undispositioned overlap
+
+### What escaped
+`chore(deviations): resolve or renew the markers expiring 2026-12-31` (#2280, head `f12f4bc2`, branch `claude/gallant-cannon-3xe881`) merged 2026-10-04T04:47:49Z as `385f3833`. Its only `Plan-lock gate` run on that head (job `111353340607`, 03:29:25–03:29:58Z) was **failure**, and no newer run replaced it. The `plan-lock-out-of-band` label, applied 03:29:33Z, downgraded it. The label is still on the PR.
+
+Every other non-advisory check was green on its newest suite. The older-suite reds of `Intent section`, `Doc anchors` and `Perf PR-fast` were superseded by later green runs. `Mobile texture-guard smoke (…, advisory)` was red, but it is advisory-named and exempt.
+
+The red run reported two overlaps:
+
+- **A** — `tests/CMakeLists.txt` vs live lock `sanitizer-nightly-run-tests`, held by `fix/sanitizer-nightly-run-tests` (PR #2288, still open). That lock was claimed at 02:37:30Z, about three hours after #2280's commit had already edited the file.
+- **B** — `tests/ui/tracker_first_run_setup.test.cpp` vs lock `crash-retire-terminate-prefs-enddisabled`, held by `fix/retire-pane-terminate-and-prefs-enddisabled`. That is #2286's branch, which had merged and been deleted at 01:59:46Z.
+
+#2280 touched the file to fix the bucket-E test #2286 had shipped red (see the entry below). The PR body carries `plan-lock-disposition: crash-retire-terminate-prefs-enddisabled — …`, recording that the maintainer authorised the override in-session. That disposition covers **only B**. Nothing records a decision on A.
+
+The merge was direct: there is no `auto_squash_enabled` event, `merged_by` is the shared account, it came from a cloud session, and it wrote no `merge-snapshots.jsonl` row. The merge path does not change the outcome. Every path honours the label: the poller through `$planlock`, and the native paths never consult the non-required `Plan-lock gate` at all.
+
+### Root cause
+Two gate holes. Neither one is the override decision itself, which was sound for B.
+
+**(1) The lock was orphaned because release-on-close keys only on a body line.** `.github/workflows/lock-cleanup.yml` deletes `refs/locks/<slug>` only when the closed PR's body has a `lock-slug: <slug>` line. #2286's body had none, and its close-time run logged `No 'lock-slug: <slug>' line found in PR body; no release.` (01:59:52Z). The line is required only in prose ([`ship-loops.md`](../agent-rules/ship-loops.md) § Release wiring), which predicts this exact outcome: "the merged PR orphans its lock and Layers B/C false-block later overlapping PRs". No gate checks for the line. The staleness sweep has a 14-day cutoff and only opens an Issue, so the orphan blocked the very PR fixing #2286's red test, and the only way through was the hatch. Each claim's `claim.json` already records its `branch`, so a branch-matched release would have freed the lock 6 s after #2286 merged.
+
+**(2) The hatch is still a bare, whole-gate boolean.** This is the #2160 class recurring: `merge-gates.d/10-gate-filter.sh:36`, unchanged since that entry was filed. One label waives every overlap on the run. The author volunteered a disposition the gate does not ask for, but the gate cannot tell a disposition covering one of two slugs from one covering both, so overlap A was cleared without anyone looking at it. It happened to be harmless: #2288 does not edit `tests/CMakeLists.txt`, because its lock claims more than its diff, and it is still mergeable. That was luck.
+
+The 2026-10-04 follow-up on the #2160 entry also found **#2213** (merged 2026-09-24): a red `Plan-lock gate` under a bare label with no disposition at all. It has its own entry above.
+
+### Preventing gate
+PRIMARY — **release locks by `claim.json` branch on PR close**, not only by `lock-slug:` line. Add a fallback step to `lock-cleanup.yml`:
+- enumerate `git/matching-refs/locks/`;
+- read each `claim.json`;
+- delete every lock whose `branch` equals the closed PR's `head.ref`.
+
+Guards: same-repo heads only, skip when the body carries `holds-lock:`, and never match `develop`/`main`. Replayed on #2286's close (01:59:46Z), this deletes `crash-retire-terminate-prefs-enddisabled` at about 01:59:52Z. #2280's 03:29Z run then reports only overlap A, which leaves its author a coordination choice instead of a hatch already being used for B.
+
+COMPANION — tighten the still-open #2160 gate: the `plan-lock-disposition:` trail must name **every** slug the failing `Plan-lock gate` run reported, using the one-line-per-overlap `overlaps the write set of plan-lock '<slug>'` output as the enumerator. A bats case: a red run naming two slugs plus a disposition naming one must **not** downgrade.
+
+### Eval case
+none — not agent-reviewable. It is a plan-lock lifecycle and merge-gate label-contract gap in CI wiring. #2280's diff was correct, and no defect in it is something a review agent would score.
+
+### Filed as
+- [`categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md`](categories/tooling/2026-10-04-lock-release-on-close-keys-only-on-a-body-line.md) (P2 — branch-matched release on close)
+- [`categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md`](categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md) § Follow-up measurement — 2026-10-04 (per-slug disposition; #2213 recorded; follow-up stamped `fired=2026-10-04`)
+
+## 2026-10-04 · PR #2286 · merged past a red `Bucket-E UI tests (Mesa headless GL)` via native auto-merge armed by a harness tool, and the escape detector reported the window clean
+
+### What escaped
+`fix(crash): join sync worker on pane retire; balance prefs EndDisabled` (#2286, head `dfa2e0ce`) merged 2026-10-04T01:59:46Z as `b4e71bec`. Its `Bucket-E UI tests (Mesa headless GL)` lane had been **failure** since 01:56:45Z. The failing test was `TrackerFirstRun/TestConnectionClickKeepsDisabledStackBalanced`, which #2286 itself added, and it failed with "Unable to locate item: 'Preferences/**/Test connection'". It never passed in CI: the PR had one head commit, and that commit's only run of the lane failed. Develop's own run on `b4e71bec` failed at 02:30:51Z. Every earlier develop run of the lane that finished was green. The previous tip's run, on `462d28ab`, was cancelled at 02:00:04Z, 18 s after #2286 landed. Develop stayed red until `385f3833` (#2280, merged 04:47:49Z) added the per-frame `KeepTrackerBodyLive()` GuiFunc, built the button id from the PrefsBody window, and switched to `ItemNavActivate`. Under block-on-any-red, the red lane was inherited by every open PR for those ~2 h 48 min.
+
+Merge path, reconstructed over REST (`issues/2286/timeline`, `commits/dfa2e0ce…/check-runs`) and from the arming session's transcript:
+
+- **01:43:54Z, `auto_squash_enabled`:** GitHub-native squash auto-merge was armed through the Claude desktop app's `set_auto_merge` PR tool. Six checks were still running at that point: ASAN, Bucket-E Jira, Bucket-E UI, UBSan, Mobile texture-guard (advisory) and CodeQL analyze.
+- **Not `safe-merge.sh`, the merge-watcher, an admin merge, or a manual merge.** The PR has no `merge-snapshots.jsonl` row and no override labels.
+- **01:59:29Z:** UBSan reported success. It was the last of the 22 branch-protection required contexts.
+- **01:59:46Z:** GitHub merged the PR, 17 s later. `merged_by` is the shared `alexandrosk0` account. `CodeQL analyze (c-cpp)` was still **pending** at that moment.
+
+CodeRabbit (rate-limited) and Cursor Bugbot (usage cap) had not reviewed the PR either. Native auto-merge consults neither.
+
+The detector missed it too. `agents/scripts/core/postmortem-owed.sh --list`, run from this worktree at `c9479274d` (the `origin/develop` tip, 2026-10-04), printed "no gate escapes owed a postmortem (last 20 merges clean)". The SessionStart `--nudge` was silent.
+
+### Root cause
+Two gate holes, one for prevention and one for detection.
+
+**(1) Prevention — block-on-any-red only applies when the merge goes through the poller.** `merge-gates.sh` blocks on any non-advisory check that is red **or pending** (`merge-gates.d/10-gate-filter.sh` `$blocking`/`$failing`). It only runs when the merge goes through `safe-merge.sh`, `git-janitor`, or the merge-watcher. GitHub's native auto-merge waits only on `branch_protection.required_contexts`, and `Bucket-E UI tests (Mesa headless GL)` is not one of them.
+
+This is the fourth ledger incident of the class. Each earlier fix was scoped to the instance just seen:
+
+- the bare-`--auto` / direct-`PUT` ban plus the `safe-merge.sh` wrapper (#1406/#1414/#1415);
+- the API-created-PR intent rule (#1438);
+- a required-context promotion for the one lane that escaped (#1566, `Perf PR-fast`).
+
+The arm-side fixes covered the arm paths seen so far. The arm path here, a harness-native auto-merge tool, is named by no rule or hook. The `gh pr merge --auto` ban does not obviously cover it. It creates the same server-side `autoMergeRequest` as a GitHub-MCP auto-merge tool, the web UI button, or bare `gh`.
+
+The only mitigation applied was prose. The arming session noted that GitHub auto-merge only waits on required checks, and that auto-merge should be turned off if a non-required check went red. That was not wired to any check result. The session had no activity after 01:44:25Z, so the 3-minute window between the red and the merge passed with nothing acting on it.
+
+**(2) Detection — a failed fetch reads as "clean".** Trigger 1+2 of `postmortem-owed.sh` fetches the window in one GraphQL call: `gh pr list --limit $FETCH_N --json …statusCheckRollup`, with `FETCH_N` = 3 × `SCAN_N` = 60 (`:612`, `:707-709`). At about 52 check runs per develop PR, that query returns `HTTP 504 Gateway Timeout` (3 of 3 on 2026-10-04; `--limit 40` succeeds). `2>/dev/null … || true` discards the failure, so `ROWS` stays empty. The script then prints its clean line (`:1092`) for a window it never read.
+
+With `POSTMORTEM_FETCH_N=30`, the same script and tree report `PR #2286 — red-check: Bucket-E UI tests (Mesa headless GL)`. They also report the separately owed #2280 (`Plan-lock gate` red under `plan-lock-out-of-band`), which has its own entry above. The detector goes blind as rollups grow, and it gives no sign that it has.
+
+### Preventing gate
+PRIMARY (prevention, independent of arm path) — add one **required aggregate context** that GitHub's own auto-merge must wait on. Add a `pull_request` workflow (no `paths:` filter, per the always-report rule) whose single job, `All checks green (block-on-any-red)`:
+- polls the head's check runs and statuses until every other check is terminal;
+- fails fast on any non-advisory red;
+- passes only when everything is terminal and green, using the CI semantics of `merge-gates.d/10-gate-filter.sh` (newest-suite collapse, the `advisory` name exemption, `*-out-of-band` downgrades re-evaluated on `labeled`).
+
+Add the job to `branch_protection.required_contexts`, landing it on a green develop tip. Replayed on #2286, the aggregate is pending at the 01:43:54Z arm and red from 01:56:45Z, so auto-merge holds at 01:59:29Z.
+
+A `workflow_run`-triggered disarm was replayed and rejected: `Build and test` completed at 02:00:25Z, 39 s *after* the merge, and that trigger cannot see pending checks. Defence-in-depth companion: a `PreToolUse` deny for harness auto-merge tools, plus naming them in `merge-gates.md` § Sanctioned non-admin merge path.
+
+COMPANION (detection) — make `postmortem-owed.sh` fail loud and fit under the timeout:
+- keep the fetch's exit status;
+- print `window NOT scanned` (and fail `--blocking`) on a failed or empty fetch instead of "clean";
+- page the window in chunks of at most 20, or read check runs per PR over REST;
+- add a bats case with a stub `gh` that 504s.
+
+### Eval case
+none — not agent-reviewable. The escape is a merge-path and CI-configuration gap: the native auto-merge condition omits a non-required lane, and the detector swallows a fetch error. The CI lane did catch the defective test on the PR's first run, as designed, so no diff a review agent scores contains the miss.
+
+### Filed as
+- [`categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md) (P1 — the required aggregate context)
+- [`categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md`](categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md) (P1 — the detector fail-loud + chunked fetch)
+
 ## 2026-09-24 · PR #2234 · design escape: the status combo stopped working offline (no gate existed)
 
 ### What escaped

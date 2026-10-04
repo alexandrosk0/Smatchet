@@ -16,9 +16,11 @@
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "Sync/JqlChangedSincePure.h"
+#include "TimeNowPure.h"
 #include "TrackerFieldPayloadPure.h"
 #include "TrackerFieldSchema.h"
 #include "TrackerHttpClient.h"
+#include "TrackerHttpPure.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>
@@ -98,7 +100,7 @@ ITrackerActivity* GitHubClient::Activity() { return this; }
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
     : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat),
       lastLoggedPatBytes_(pat.size()) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend ctor/auth parity; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=ctor auth logging twin of LinearClient; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
     LOG_INFO("GitHubClient: ctor baseUrl='%s' pat_bytes=%zu", baseUrl_.c_str(), pat_.size());
 }
 
@@ -180,7 +182,7 @@ GitHubClient::FetchProjectV2ValuesForSync(const smatchet::github::GitHubRequestA
         return empty;
     }
     appendWarning(capWarning);
-    // SMATCHET_DEVIATION(rule=duplication; reason=degrade-to-warning tail parity; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=degrade-to-warning tail twin of LinearClient; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
     return std::move(values.value());
 }
 
@@ -318,7 +320,7 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
         pv2Values = FetchProjectV2ValuesForSync(auth, cfg, &fetchWarning);
     }
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=streamed-page emit parity; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=streamed-page emit twin of LinearClient; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
     auto onPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
         ++pageCount;
         totalEmitted += page.size();
@@ -344,7 +346,7 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     };
 
     TrackerError fetchErrorStructured;
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=streamed fetch summary fill twin of LinearClient; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
     smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
                                             &fullSyncCompleted, &fetchError, &fetchWarning, onPage,
                                             &fetchErrorStructured);
@@ -383,10 +385,8 @@ GitHubClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore
     if (auth.Pat.empty()) {
         return FetchResult::Err(TrackerErrorAuth(kPatMissingError));
     }
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity window; owner=tracker-backend; revisit=2026-12-31)
-    const std::int64_t nowUnix =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    const std::string sinceIso = smatchet::IsoSinceFromWindow(nowUnix, static_cast<std::int64_t>(window.count()));
+    const std::string sinceIso =
+        smatchet::IsoSinceFromWindow(TimeNowPure::NowUnixSeconds(), static_cast<std::int64_t>(window.count()));
     const std::string qualifier = std::string("updated:>=") + sinceIso;
 
     bool fullSync = false;
@@ -427,20 +427,7 @@ Result<bool, TrackerError> GitHubClient::ProbeIssueExists(const TrackerConfig& c
     const cpr::Header headers = smatchet::github::BuildGitHubHeaders(auth.Pat);
     const std::string url =
         auth.BaseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
-    const cpr::Response resp = TrackerGetLogged("GitHubClient", url, headers);
-    if (resp.status_code == 200) {
-        return ProbeResult::Ok(true);
-    }
-    if (resp.status_code == 404) {
-        return ProbeResult::Ok(false);
-    }
-    if (resp.status_code >= 200 && resp.status_code < 300) {
-        return ProbeResult::Err(
-            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(resp.status_code)));
-    }
-    return ProbeResult::Err(
-        TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), "ProbeIssueExists HTTP error"));
+    return TrackerHttpPure::ClassifyIssueExistsProbe(TrackerGetLogged("GitHubClient", url, headers).status_code);
 }
 
 Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& cfg,
@@ -617,14 +604,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueC
                 smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             LOG_ERROR("GitHubClient::FetchIssueComments: HTTP %ld on page %d for %s — %s", resp.status_code, page,
                       issueKey.c_str(), msg.c_str());
-            // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx
-            // TrackerErrorFromHttpStatus returns Ok() (Kind==None, detail discarded).
-            // Carry the verbatim detail under an explicit non-OK kind (DR20).
-            // SMATCHET_DEVIATION(rule=duplication; reason=tracker GET/ParseBounded error-handling idiom, shared helper backlogged; owner=tracker-backend; revisit=2027-03-31)
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return CommentsResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
-            }
-            return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
+            return CommentsResult::Err(ClassifyRejectedHttpStatus(resp.status_code, msg));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
         const nlohmann::json parsedJson = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
@@ -959,7 +939,7 @@ TrackerError GitHubClient::UpdateField(const std::string& issueId, const Tracker
     }
     // Set-replace single-field edit: catalog-id-keyed payload → the shared PATCH +
     // label-reconcile path. Interface-mandated routing shape shared with Jira/Linear.
-    // SMATCHET_DEVIATION(rule=duplication; reason=UpdateField routing symmetry; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=UpdateField routing shared with Jira/Linear; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
     auto payloadResult = BuildFieldPayload(field, values);
     if (!payloadResult) {
         return payloadResult.error();

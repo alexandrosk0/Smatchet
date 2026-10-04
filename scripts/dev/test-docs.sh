@@ -24,7 +24,8 @@
 # EXIT
 #   0 — every step passed.
 #   1 — at least one step failed (names printed in the summary).
-#   2 — cannot resolve repo root.
+#   2 — cannot resolve repo root, or the layer/host step split (HOST_ONLY_STEPS)
+#       no longer adds up to STEPS.
 
 set -euo pipefail
 
@@ -47,6 +48,25 @@ done
 [ -n "$PY" ] || {
   echo "test-docs: no working python3 on PATH (md_lint step needs it)" >&2; exit 2; }
 
+# The standalone agent-layer probe (plan agent-surface-extraction-repo row 9b) —
+# see HOST_ONLY_STEPS below. Source/ under the host tree is the same probe
+# test-all.sh's LAYER_HOST_SUT_RE and test-agent-contract.sh's host_content_present() use.
+HOST_TREE="${PROJECT_ROOT:-$ROOT}"
+LAYER_STANDALONE=0
+if [ ! -d "$HOST_TREE/Source" ]; then
+  LAYER_STANDALONE=1
+fi
+
+# test-markdown-links diff-scopes against origin/develop in the host, which
+# grandfathers pre-existing breakage. A standalone layer scans --all against its
+# own committed docs/high-integrity/markdown-link-baseline.md instead: on a seed
+# (the simulator's throwaway origin, a new repo's first push) origin/develop IS
+# the tree, so a diff-scoped scan checks nothing — and --all needs no history.
+MDLINKS_SCOPE=""
+if [ "$LAYER_STANDALONE" -eq 1 ]; then
+  MDLINKS_SCOPE=" --all"
+fi
+
 # Ordered to match doc-validation.yml. project.config.json schema validation is
 # the workflow's one Python-jsonschema step; replicate it inline so a malformed
 # config is caught locally too.
@@ -67,18 +87,62 @@ STEPS=(
   "test-portable-agent-vexp|bash $CORE/test-portable-agent-vexp.sh --selftest && bash $CORE/test-portable-agent-vexp.sh"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
-  "test-markdown-links|bash $CORE/test-markdown-links.sh"
+  "test-markdown-links|bash $CORE/test-markdown-links.sh$MDLINKS_SCOPE"
   "test-orphan-bats|bash $CORE/test-orphan-bats.sh --selftest && bash $CORE/test-orphan-bats.sh"
   "work_item_lint|$PY $CORE/work_item_lint.py --selftest && $PY $CORE/work_item_lint.py --all && bash scripts/dev/test-work-item-lint.sh"
 )
 
+# Standalone agent-layer subset (plan agent-surface-extraction-repo row 9b). This
+# script is mirrored byte-for-byte into the agent-layer repo, where there is no
+# consuming product: the steps below read product content (plans, presets, work
+# items, ADRs, the product's CI workflows) and would hard-fail on its absence, so
+# there they print an explicit SKIP. Every other step runs in both trees (the link
+# check at --all scope there; see MDLINKS_SCOPE). LAYER_STANDALONE is set above.
+declare -A HOST_ONLY_STEPS=(
+  [test-plan-index]="reads docs/plans/"
+  [test-plan-ref-integrity]="reads docs/plans/"
+  [test-plan-claim-anchors]="reads docs/plans/"
+  [test-plan-naming]="reads docs/plans/"
+  [check-pr-intent-sync]="diffs a verdict regex against the product's .github/workflows/"
+  [test-config-globs]="every project.config.json glob must match tracked product files"
+  [test-required-context-adr-consistency]="reads docs/adr/ and docs/plans/shipped/"
+  [test-agent-build-facts]="resolves the product's CMakePresets.json"
+  [work_item_lint]="reads docs/work/"
+)
+# Steps that run in the standalone layer. A new STEPS entry breaks this count on
+# purpose: classify it — layer-runnable (bump this) or host-only (add it above).
+LAYER_STEP_COUNT=10
+
+declare -A STEP_NAMES=()
+for entry in "${STEPS[@]}"; do STEP_NAMES["${entry%%|*}"]=1; done
+for name in "${!HOST_ONLY_STEPS[@]}"; do
+  [ -n "${STEP_NAMES[$name]:-}" ] || {
+    echo "test-docs: HOST_ONLY_STEPS names '$name', which is not a STEPS entry — fix the split" >&2; exit 2; }
+done
+if [ "${#STEPS[@]}" -ne $((LAYER_STEP_COUNT + ${#HOST_ONLY_STEPS[@]})) ]; then
+  echo "test-docs: ${#STEPS[@]} steps != $LAYER_STEP_COUNT layer + ${#HOST_ONLY_STEPS[@]} host-only." >&2
+  echo "  Classify the new step: layer-runnable (bump LAYER_STEP_COUNT) or host-only (HOST_ONLY_STEPS)." >&2
+  exit 2
+fi
+
+if [ "$LAYER_STANDALONE" -eq 1 ]; then
+  printf 'test-docs: no Source/ under %s — standalone agent layer: running the %d layer steps, skipping %d host-only.\n' \
+    "$HOST_TREE" "$LAYER_STEP_COUNT" "${#HOST_ONLY_STEPS[@]}"
+fi
+
 declare -a FAILED=()
 pass_count=0
+skip_count=0
 
 for entry in "${STEPS[@]}"; do
   name="${entry%%|*}"
   cmd="${entry#*|}"
   printf '\n=== %s ===\n' "$name"
+  if [ "$LAYER_STANDALONE" -eq 1 ] && [ -n "${HOST_ONLY_STEPS[$name]:-}" ]; then
+    printf 'SKIP (standalone agent layer): %s\n' "${HOST_ONLY_STEPS[$name]}"
+    skip_count=$((skip_count + 1))
+    continue
+  fi
   if eval "$cmd"; then
     pass_count=$((pass_count + 1))
   else
@@ -87,7 +151,7 @@ for entry in "${STEPS[@]}"; do
 done
 
 printf '\n----------------------------------------\n'
-printf 'test-docs — Passed: %d  Failed: %d\n' "$pass_count" "${#FAILED[@]}"
+printf 'test-docs — Passed: %d  Failed: %d  Skipped: %d\n' "$pass_count" "${#FAILED[@]}" "$skip_count"
 
 if [ "${#FAILED[@]}" -gt 0 ]; then
   printf 'Failures:\n'

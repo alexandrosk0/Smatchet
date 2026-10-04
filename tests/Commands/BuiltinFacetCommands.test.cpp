@@ -195,9 +195,11 @@ struct FakeOfflineQueue : IAppOfflineQueue {
 
 struct FakeMeta : IAppMeta {
     mutable int QuitRequests = 0;
+    mutable std::string OpenedUrl;
     std::string GetAppVersion() const override { return "9.9.9-test"; }
     std::string GetGitHubReleaseRepo() const override { return "owner/smatchet"; }
     void RequestAppQuit() const override { ++QuitRequests; }
+    void OpenUrl(const std::string& url) const override { OpenedUrl = url; }
     AppUpdateInfo CheckForAppUpdate(bool) const override {
         AppUpdateInfo info;
         info.Ok = true;

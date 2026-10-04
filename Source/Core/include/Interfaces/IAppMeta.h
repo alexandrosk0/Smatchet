@@ -18,6 +18,10 @@ class IAppMeta {
     virtual std::string GetGitHubReleaseRepo() const = 0;
     virtual void RequestAppQuit() const = 0;
     virtual AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const = 0;
+    /// Open `url` through the host's handler when one is set, else the default browser.
+    /// Implementations enforce the URL scheme allowlist, so a link taken from UI text stays safe
+    /// under Unreal.
+    virtual void OpenUrl(const std::string& url) const = 0;
 };
 
 #endif // SMATCHET_INTERFACES_IAPP_META_H

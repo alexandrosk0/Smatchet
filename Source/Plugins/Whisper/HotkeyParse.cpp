@@ -5,6 +5,8 @@
 
 #include "HotkeyParse.h"
 
+#include "StringUtil.h"
+
 #include <cctype>
 #include <cstdio>
 #include <string>
@@ -33,19 +35,6 @@ std::string AsciiLower(const std::string& s) {
     return out;
 }
 
-// Trim ASCII whitespace from both ends. Spaces around `+` are tolerated.
-std::string Trim(const std::string& s) {
-    std::size_t begin = 0;
-    std::size_t end = s.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(s[begin]))) {
-        ++begin;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
-        --end;
-    }
-    return s.substr(begin, end - begin);
-}
-
 // Split `s` on `+`, trimming each segment. Empty input -> empty result; an
 // empty segment (e.g. "Ctrl++A") is preserved so the caller surfaces the
 // malformed input as an "empty token" error.
@@ -54,13 +43,13 @@ std::vector<std::string> SplitOnPlus(const std::string& s) {
     std::string current;
     for (char c : s) {
         if (c == '+') {
-            out.push_back(Trim(current));
+            out.push_back(TrimCopyIsspace(current));
             current.clear();
         } else {
             current.push_back(c);
         }
     }
-    out.push_back(Trim(current));
+    out.push_back(TrimCopyIsspace(current));
     return out;
 }
 
@@ -197,7 +186,7 @@ bool Parse(const std::string& descriptor, Hotkey& out, std::string& outError) {
     out = Hotkey();
     outError.clear();
 
-    const std::string trimmed = Trim(descriptor);
+    const std::string trimmed = TrimCopyIsspace(descriptor);
     if (trimmed.empty()) {
         outError = "hotkey descriptor is empty";
         return false;

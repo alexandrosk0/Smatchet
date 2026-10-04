@@ -442,6 +442,13 @@ TEST_CASE("ExtractKeyFromPlaneQuery — non-string key member → empty") {
     CHECK(ExtractKeyFromPlaneQuery(R"({"key":null})").empty());
 }
 
+TEST_CASE("ExtractKeyFromPlaneQuery — a depth bomb is rejected, not parsed") {
+    // The query blob lives in user-editable config and views; the bounded parse must refuse it.
+    CHECK(ExtractKeyFromPlaneQuery(std::string(100000, '[') + std::string(100000, ']')).empty());
+    CHECK(ExtractKeyFromPlaneQuery(R"({"key":"SMT-7","x":)" + std::string(100000, '[') + std::string(100000, ']') + "}")
+              .empty());
+}
+
 // security deep-audit target 11 — the Plane work-item mapper sits behind a
 // possibly-malicious tracker or a MITM, so every shape of hostile JSON must map
 // to a safe default rather than throw or over-read. nlohmann member access on a

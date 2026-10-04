@@ -71,12 +71,7 @@ void SaveMcpWindowLayoutDebounced(UiDrawSession& d) {
     ConfigManager::Save(d.cfg);
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=the MCP and Lua-console window-layout helpers are
-// long-standing structural twins (debounced save, clamp-to-work-area, prepare/repair); the dock
-// -liveness guard only made the delta gate re-notice them. Unifying would make Source/Plugins/
-// LuaConsole depend on Source/Core/src/Ui window-layout internals, which AGENTS.md calls out as
-// the CRITICAL kind of DRY refactor — coupling independent subsystems; owner=ui-host;
-// revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=window clamp/save/prepare helpers twin the Lua console's; debt 2026-10-01-dock-window-layout-repair-helpers; owner=ui-host; revisit=2027-03-31)
 ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
@@ -112,7 +107,7 @@ void PrepareMcpWindowLayout(UiDrawSession& d) {
     const bool forceRect = requested && !docked;
     // Structural twin of PrepareLuaWindowLayout's default-rect/clamp block; see the note above
     // ClampMcpWindowPos for why unifying the two would couple independent subsystems.
-    // SMATCHET_DEVIATION(rule=duplication; reason=twin of PrepareLuaWindowLayout; owner=ui-host; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=twin of PrepareLuaWindowLayout; debt 2026-10-01-dock-window-layout-repair-helpers; owner=ui-host; revisit=2027-03-31)
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);

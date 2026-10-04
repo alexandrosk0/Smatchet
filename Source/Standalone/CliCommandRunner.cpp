@@ -142,9 +142,6 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
 
     // Bounded read via the shared leaf (command-input-hardening Phase 1.3): a corrupt/oversized
     // result file must not balloon parent memory before ParseBounded's 4 MiB cap rejects it.
-    // clang-format off
-    // SMATCHET_DEVIATION(rule=duplication; reason=the read leaf itself is now shared (CliResultFileRead.h); only the per-surface error-envelope emit remains cloned with CliDispatch.cpp's --spawn reader and differs irreducibly by command var (toolName vs commandName), message prefix, and shutdown call (standalone::Shutdown(boot) vs PostAppQuitBestEffort(cli)) — a shared emitter would take all three as params for a 4-line body, worse coupling than the DRY gate doc endorses exempting; owner=orchestrator; revisit=if a source-tagged CLI error-envelope emitter lands)
-    // clang-format on
     std::string content;
     switch (smatchet::cli::ReadResultFileBounded(outPath, 4u * 1024u * 1024u, content)) {
     case smatchet::cli::ResultFileReadStatus::OpenFailed: {

@@ -50,8 +50,10 @@ set -euo pipefail
 #   - docs/plans/shipped/git-to-perforce-migration.md § Files to modify §
 #     scripts/git-hooks/pre-push:1
 #   - AGENTS.md § Dual-VCS topology
+# Existence (-f), not executability (-x): the checker is run through `bash`, and
+# it is tracked 100644 — an `-x` guard skipped it on every Linux/macOS push.
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-if [ -n "$repo_root" ] && [ -x "$repo_root/agents/scripts/project/p4-reconcile-check.sh" ]; then
+if [ -n "$repo_root" ] && [ -f "$repo_root/agents/scripts/project/p4-reconcile-check.sh" ]; then
     if ! bash "$repo_root/agents/scripts/project/p4-reconcile-check.sh"; then
         # Exit code 2 from p4-reconcile-check = drift detected + block mode.
         # The script already printed its own diagnostic; just propagate.

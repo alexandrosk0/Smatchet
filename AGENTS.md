@@ -66,7 +66,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | Rule | Scope | Cap / note |
 |---|---|---|
 | `no-printf-stderr`, `define-imgui` | strict zone | grep rules |
-| `no-raw-new`, `deviation-overdue`, `no-detach` | all first-party C++ | absolute (0; no grandfathering) |
+| `no-raw-new`, `deviation-overdue`, `deviation-malformed`, `no-detach` | all first-party C++ | absolute (0; no grandfathering; `deviation-malformed` = a marker not whole on one line with rule/reason/owner/revisit) · WARN `deviation-cohort`: a marker added on a revisit date that then holds > 8 markers (`--scan-revisit-cohorts`) |
 | `no-glfw-in-core-headers` | `Source/Core/include/**/*.{h,hpp}` | absolute (0; GLFW/glad/OpenGL include breaks the DX12 dual-target build) |
 | `cmake-local-gate-ci-scope` | `CMakeLists.txt` / `cmake/*.cmake` | absolute (0; a `message(FATAL_ERROR …)` keyed on a local knob `msvc_toolset_pin` without a `NOT DEFINED ENV{CI}` scope FATALs every fresh-configure CI runner — #1074) |
 | `ui-request-flag-off-thread` | `Source/Core/src/Commands/**` (excl. `Scenarios/`) | absolute (0; a `g_ui.request{Window*,Screenshot*}` write in a command handler outside a `RunOnUiThread*` closure races the main loop polling those non-atomic fields — Pillar-3 data race; Scenarios run on the UI thread by contract) |
@@ -81,7 +81,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `function-too-branchy` | all first-party C++ | **30** decision points |
 | `include-cycle` | `Source/Core/**` quote-includes | acyclicity + layer-DAG; delta-gated vs origin/develop; baseline-grandfathered; SCC>1 or low→high back-edge fails |
 | `no-ui-include-in-domain` | `Source/Core/{src,include}/{Tracker,Sync,Persistence,Config}/`, `Source/Plugins/Mcp/` | absolute (0; a quote-form `#include "Ui/…"` in domain code inverts the layer DAG — the include-cycle back-edge check is header→header by design, so a domain-TU→Ui edge escapes it; Commands/ excluded — sanctioned Scenario/view-visibility Ui seams) |
-| `app-controller-fan-in` (`appcontroller_fan_in_audit.py`) | `Source/**` quote-form `#include "AppController.h"` | cap = baseline fan-in (currently 71; enforced as a merge-base delta, not the constant), **ratchet-down only**, **hard-FAIL absolute** (intentionally *not* WARN-first, unlike the `unused-symbol` calibration gate — a new includer is an exact signal); `SMATCHET_DEVIATION(rule=app-controller-fan-in; …)` above the include escapes a genuinely-needed new includer |
+| `app-controller-fan-in` (`appcontroller_fan_in_audit.py`) | `Source/**` quote-form `#include "AppController.h"` | cap = baseline fan-in (currently 70; enforced as a merge-base delta, not the constant), **ratchet-down only**, **hard-FAIL absolute** (intentionally *not* WARN-first, unlike the `unused-symbol` calibration gate — a new includer is an exact signal); `SMATCHET_DEVIATION(rule=app-controller-fan-in; …)` above the include escapes a genuinely-needed new includer |
 | `agent-too-long` (`agent_size_audit.py`) | agent prompts / `AGENTS.md` | **250** / **150** lines |
 | `duplication` (`dup_audit.py`) | all first-party C++ | copy-paste clone, delta-gated vs origin/develop; **blocking** (graduated from WARN-first 2026-06-21, ADR-0015); `SMATCHET_DEVIATION(rule=duplication)` on/above either occurrence exempts |
 | `interface-doc` (WARN) | `ITracker*.h`/`Tracker/*Client.h` ↔ `Tracker/AGENTS.md` | advisory: a doc-pinned `Type::method` changed in the header without a doc touch (symbol-pinned, not coarse — noise-spike-rejected) |

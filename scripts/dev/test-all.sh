@@ -105,12 +105,36 @@ if [ "${1:-}" = "--ci" ]; then TESTALL_CI=1; shift; fi
 # block-on-any-red rework), lint-rules-bats (fixture made a genuine blank-run),
 # bucket-lane-launch-smoke-bats (stub emits a real decodable PNG).
 CI_SKIP_RE='(test-p4-dual-vcs|test-doctor|test-plan-index|test-docs|test-guard-head-drift-bats|test-guard-plan-lock-bats|test-session-registry-bats)'
-# A1w host-SUT wrapper: lives under agents/scripts/core so the layer seed carries
-# it with its bats, but the SUT is host cmake/SmatchetThirdParty.cmake. Skip only
-# when Source/ is absent (standalone layer CI). Host --ci keeps running it.
+# Host-SUT wrappers: they live under agents/scripts/** so the layer seed carries them
+# with their bats, but the subject-under-test is a host file the seed does not carry.
+# Skip only when Source/ is absent (standalone layer CI); host --ci keeps running
+# every one, and post-flip the host's agent-layer-integration lane runs them through
+# the submodule. Each name below cites its host subject:
+#   test-android-openssl-failfast-bats   cmake/SmatchetThirdParty.cmake (A1w)
+#   test-harness-provisioned-bats        scripts/dev/doctor.sh
+#   test-preship-review-artifact-bats    scripts/dev/pre-ship.sh
+#   test-verifier-preship-wiring-bats    scripts/dev/pre-ship.sh + scripts/dev/verifier-*.py
+#   test-subsystem-docs                  CONTEXT-MAP.md + Source/Core/src/*/AGENTS.md
+#   test-agent-build-facts               CMakePresets.json
+#   test-autonomous-debug-loop           a cmake + cl.exe product build
+#   test-dead-export-audit               Source/Core/include/** (cross-TU exports)
+#   test-small-helper-audit              Source/** (duplicated helpers)
+#   test-mobile-security                 Source/Mobile/**
+# An exit 2 is NOT a substitute for a name here: --ci reports it as "missing
+# binary/build", which in the standalone layer hides an unseeded file, so
+# agent-layer-sim.sh fails its bats lane on any exit-2 skip.
+# These six test agent tooling that still lives host-side, pending an ownership
+# decision (plan agent-surface-extraction-repo, decisions D3 + D4). Relocating the
+# subject into the layer removes the name from this list:
+#   test-review-ack-gate-bats            scripts/git-hooks/pre-commit          (D3)
+#   test-pre-push-guard-bats             scripts/git-hooks/pre-push            (D3)
+#   test-pre-push-merged-pr-guard        scripts/git-hooks/pre-push            (D3)
+#   test-pre-push-stage-neutralisers     scripts/git-hooks/pre-push            (D3)
+#   test-verifier-review-gate-bats       pre-commit + scripts/dev/verifier-sidecar.py (D3, D4)
+#   test-worktree-prune-bats             scripts/dev/worktree{,-prune}.sh      (D4)
 # test-safe-merge-bats is NOT in this list: its SUT is agents/scripts/core/safe-merge.sh
 # (layer content) so it stays enrolled in both trees.
-LAYER_HOST_SUT_RE='^(test-android-openssl-failfast-bats)$'
+LAYER_HOST_SUT_RE='^(test-android-openssl-failfast-bats|test-harness-provisioned-bats|test-preship-review-artifact-bats|test-verifier-preship-wiring-bats|test-subsystem-docs|test-agent-build-facts|test-autonomous-debug-loop|test-dead-export-audit|test-small-helper-audit|test-mobile-security|test-review-ack-gate-bats|test-pre-push-guard-bats|test-pre-push-merged-pr-guard|test-pre-push-stage-neutralisers|test-verifier-review-gate-bats|test-worktree-prune-bats)$'
 
 # Collect test scripts across all roots that hold them. Product/build tests
 # stay under scripts/dev/; the agentic test-* suites live under

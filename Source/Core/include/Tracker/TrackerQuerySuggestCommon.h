@@ -88,10 +88,20 @@ void ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selSt
 /// 80 items so the popup stays bounded.
 void SortAndCapQuerySuggestions(std::vector<QuerySuggestion>& items);
 
-/// Shared entry prologue for both engines: reset `out` + `metaOut`, reject a null buffer,
-/// clamp cursor/selection into [0, bufLen], resolve the replace span + prefix, and publish
-/// the span onto `out`. Returns false (outputs already reset) when `buf` is null.
+/// Per-call state both engines work from: the labels already suggested (de-dup), the
+/// [ReplaceStart, ReplaceEnd) span the suggestion replaces and the prefix being completed.
+struct QuerySuggestPass {
+    std::unordered_set<std::string> Seen;
+    int ReplaceStart = 0;
+    int ReplaceEnd = 0;
+    std::string Prefix;
+};
+
+/// Shared entry prologue for both engines: reset `out`, `metaOut` and `pass`, reject a null
+/// buffer, clamp cursor/selection into [0, bufLen], resolve the replace span + prefix into
+/// `pass`, and publish the span onto `out`. Returns false (outputs already reset) when `buf`
+/// is null.
 bool BeginQuerySuggestPass(const char* buf, int bufLen, int cursor, int selStart, int selEnd, QuerySuggestBuild& out,
-                           QuerySuggestMeta* metaOut, int& replaceStart, int& replaceEnd, std::string& prefix);
+                           QuerySuggestMeta* metaOut, QuerySuggestPass& pass);
 
 } // namespace tracker_query_suggest

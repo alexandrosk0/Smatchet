@@ -10,6 +10,7 @@
 #include "MarkdownConvert.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
+#include "TrackerHttpPure.h"
 #include "TrackerHttpUtils.h"
 
 #include <nlohmann/json.hpp>
@@ -194,20 +195,7 @@ Result<bool, TrackerError> PlaneClient::ProbeIssueExists(const TrackerConfig& cf
 
     const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
                             resolvedProjectId + "/work-items/" + targetUuid + "/";
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
-    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers);
-    if (resp.status_code == 200) {
-        return ProbeResult::Ok(true);
-    }
-    if (resp.status_code == 404) {
-        return ProbeResult::Ok(false);
-    }
-    if (resp.status_code >= 200 && resp.status_code < 300) {
-        return ProbeResult::Err(
-            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(resp.status_code)));
-    }
-    return ProbeResult::Err(
-        TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), "ProbeIssueExists HTTP error"));
+    return TrackerHttpPure::ClassifyIssueExistsProbe(TrackerGetLogged("PlaneClient", url, headers).status_code);
 }
 
 Result<nlohmann::json, TrackerError> PlaneClient::BuildFieldPayload(const TrackerField& field,
@@ -605,7 +593,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
     std::vector<TrackerIssueComment> mapped;
     // The Plane cursor-pagination loop is the uniform tracker idiom; the per-page bodies differ, so a
     // shared callback helper across independent fetches is not worth the coupling.
-    // SMATCHET_DEVIATION(rule=duplication; reason=Plane cursor-pagination idiom; owner=tracker-backend; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=Plane cursor-pagination idiom; owner=tracker-backend; revisit=2027-07-15)
     std::string cursor;
     // Follow Plane's cursor pagination so comments beyond the first page are returned (DR25).
     // The page cap bounds a cursor that never signals end-of-list.
@@ -620,10 +608,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
         if (resp.status_code != 200) {
             const std::string msg = "Plane API error: " + std::to_string(resp.status_code);
             LOG_ERROR("PlaneClient::FetchIssueComments: HTTP %ld for %s", resp.status_code, issueKey.c_str());
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return CommentsResult::Err(TrackerErrorUnknown(msg, resp.status_code));
-            }
-            return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
+            return CommentsResult::Err(ClassifyRejectedHttpStatus(resp.status_code, msg));
         }
 
         std::string parseErr;

@@ -6,7 +6,8 @@
 #
 # Wraps the regression suite for the commit-time code-review gate
 # (agents/scripts/core/review-ack.sh + lib/review-ack.sh + the scripts/git-hooks/
-# pre-commit check (B) that consumes them) + emits the canonical
+# pre-commit check (B) that consumes them, plus check (A)'s Pillar-2 scan
+# mode-bit independence) + emits the canonical
 # `Passed: N  Failed: M` line that test-all.sh greps for.
 #
 # Exit codes follow the test-author convention:

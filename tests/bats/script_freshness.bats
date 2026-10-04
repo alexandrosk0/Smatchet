@@ -431,6 +431,9 @@ _add_devonly_rule() {
 }
 
 @test "wiring: pre-ship.sh passes its rules glob QUOTED, so the lib expands it" {
+    # pre-ship.sh is the consuming product's pre-ship runner; the standalone agent
+    # layer has none. Keyed on Source/, not on the file, so a host-side deletion fails.
+    [ -d "$REPO_ROOT/Source" ] || skip "scripts/dev/pre-ship.sh is product tooling (standalone agent layer)"
     # Without the quotes the shell expands the pattern at the call site against
     # the invoking CWD and the root-relative expansion in the lib never runs —
     # the fix is inert and the silent-degrade returns. Cheap to un-fix by
@@ -441,6 +444,9 @@ _add_devonly_rule() {
 }
 
 @test "wiring: pre-ship.sh's declared non-glob relpaths all resolve under the repo root" {
+    # pre-ship.sh is the consuming product's pre-ship runner; the standalone agent
+    # layer has none. Keyed on Source/, not on the file, so a host-side deletion fails.
+    [ -d "$REPO_ROOT/Source" ] || skip "scripts/dev/pre-ship.sh is product tooling (standalone agent layer)"
     # A typo'd or relocated declared path fingerprints as missing and degrades the
     # whole check to `unverifiable`, silently. Assert every literal one exists.
     local rel
@@ -466,6 +472,9 @@ _add_devonly_rule() {
 }
 
 @test "wiring: pre-ship.sh warns before its PASS line, not at startup" {
+    # pre-ship.sh is the consuming product's pre-ship runner; the standalone agent
+    # layer has none. Keyed on Source/, not on the file, so a host-side deletion fails.
+    [ -d "$REPO_ROOT/Source" ] || skip "scripts/dev/pre-ship.sh is product tooling (standalone agent layer)"
     # A caveat printed ahead of minutes of gate output has scrolled away by the
     # time the verdict lands — and the verdict is what it qualifies.
     local warn_line pass_line

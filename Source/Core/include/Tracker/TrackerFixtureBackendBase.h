@@ -11,13 +11,17 @@
 // role interfaces, not a helper spanning independent subsystems.
 
 #include "ITrackerBackend.h"
+#include "ITrackerBackendFactory.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class ITrackerFieldCatalog;
@@ -62,7 +66,7 @@ class TrackerFixtureBackendBase : public ITrackerBackend,
     /// ("<Type>FixtureBackend is read-only") and BuildFieldPayload yields an empty object.
     /// GitHub overrides all three to log a no-op and return Ok so mutating scenarios run.
     /// The signatures are fixed by ITrackerIssueMutations, hence identical everywhere.
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-decl symmetry; owner=tracker; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=ITrackerIssueMutations override declarations every fixture backend repeats; owner=tracker; revisit=never)
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override;
@@ -76,16 +80,34 @@ class TrackerFixtureBackendBase : public ITrackerBackend,
     explicit TrackerFixtureBackendBase(std::string fixturePath);
 
     /// Open `fixturePath_`, read it, and bounded-parse it into `out`. The fixture path is
-    /// env-var-selectable per backend (SMATCHET_TEST_*_BACKEND_FIXTURE), so the parse caps
-    /// depth/nodes/bytes rather than trusting wherever it points. On any I/O or parse failure
-    /// this sets `loadError_` and returns false, leaving the backend empty — the caller
-    /// should simply return from its constructor.
+    /// env-var-selectable per backend (SMATCHET_TEST_*_BACKEND_FIXTURE), so the read stops at the
+    /// parse's byte cap and the parse caps depth/nodes rather than trusting wherever it points.
+    /// On any I/O, size or parse failure this sets `loadError_` and returns false, leaving the
+    /// backend empty — the caller should simply return from its constructor.
     bool LoadFixtureJson(nlohmann::json& out);
 
     std::string fixturePath_;
     std::string loadError_;
     std::vector<CachedTicket> tickets_;
 };
+
+/// Builds the fixture backend for a path; the factory below calls it once per Create.
+using FixtureBackendMaker = std::function<std::unique_ptr<TrackerFixtureBackendBase>(const std::string& fixturePath)>;
+
+/// A backend factory that serves `fixturePath` whatever tracker type is requested, so the
+/// SMATCHET_TEST_*_BACKEND_FIXTURE env hook short-circuits the default factory. `backendName`
+/// ("Plane", "Linear") is the type served and the prefix of its log lines; `make` builds the backend.
+std::unique_ptr<ITrackerBackendFactory> MakeFixtureBackendFactory(std::string fixturePath, std::string backendName,
+                                                                  FixtureBackendMaker make);
+
+/// MakeFixtureBackendFactory for a `Backend` constructible from the fixture path alone.
+template <typename Backend>
+std::unique_ptr<ITrackerBackendFactory> MakeFixtureBackendFactoryFor(std::string fixturePath, std::string backendName) {
+    return MakeFixtureBackendFactory(std::move(fixturePath), std::move(backendName),
+                                     [](const std::string& path) -> std::unique_ptr<TrackerFixtureBackendBase> {
+                                         return std::make_unique<Backend>(path);
+                                     });
+}
 
 } // namespace tracker_fixture
 } // namespace smatchet

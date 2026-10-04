@@ -24,6 +24,8 @@
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
+#   deviation-malformed    SMATCHET_DEVIATION( not closed on its line, or missing rule/reason/owner/revisit
+#   (advisory)             deviation-cohort — a marker added on a revisit date that then holds > 8 markers
 #   function-too-long      function body > 120 lines non-UI / > 200 lines ImGui-draw
 #                          (repo-wide, delta-gated; tiered; function_size_audit.py)
 #   function-too-branchy   function decision count > 30 (repo-wide, delta-gated, all functions)
@@ -165,10 +167,11 @@ case "${1:-}" in
     --scan-ui-include) MODE=scanuiinclude ;;
     --scan-pr-comments) MODE=scanprcomments ;;
     --scan-tu-ceiling) MODE=scantuceiling ;;
+    --scan-revisit-cohorts) MODE=scancohorts ;;
     --scan-offline) MODE=scanoffline ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--scan-offline|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--scan-revisit-cohorts|--scan-offline|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -214,6 +217,9 @@ case "$MODE" in
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
     # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
     if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
+    # Assert the deviation-malformed (absolute-0) and deviation-cohort (WARN) rule-ids are documented in AGENTS.md.
+    if ! grep -qF "deviation-malformed" AGENTS.md; then echo "SELFTEST FAIL: 'deviation-malformed' rule missing from AGENTS.md" >&2; miss=1; fi
+    if ! grep -qF "deviation-cohort" AGENTS.md; then echo "SELFTEST FAIL: 'deviation-cohort' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the no-glfw-in-core-headers rule-id is documented in AGENTS.md (absolute-0 gate).
     if ! grep -qF "no-glfw-in-core-headers" AGENTS.md; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the cmake-local-gate-ci-scope rule-id is documented in AGENTS.md (absolute-0 gate).
@@ -614,6 +620,11 @@ case "$MODE" in
     compute_wide_violations
     ;;
 
+  scancohorts)
+    # deviation-cohort sweep: every revisit date more than DEVIATION_COHORT_MAX markers share.
+    compute_revisit_cohorts
+    ;;
+
   scanglfw)
     # no-glfw-in-core-headers absolute-0 set over Source/Core/include headers (debug +
     # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
@@ -848,11 +859,13 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no new comment-noise vs $BASE"
     fi
 
-    # --- first-party-wide absolute rules (no-raw-new, deviation-overdue) ---
+    # --- first-party-wide absolute rules (no-raw-new, deviation-overdue, deviation-malformed, no-detach) ---
     # Enforced at 0 across ALL first-party C++ (Source/Core, Source/Plugins,
     # Source/Standalone — the comment_audit.py SWEEP_ROOTS), not just the strict
     # zone: every raw `new` must use make_unique or carry an exemption marker, and
-    # no SMATCHET_DEVIATION may sit past its revisit= date, ANYWHERE. Absolute (no
+    # no SMATCHET_DEVIATION may sit past its revisit= date or be anything but one
+    # whole line (a wrapped marker hides its revisit= from the overdue check),
+    # ANYWHERE. Absolute (no
     # grandfathering) — the tree is clean today, so any hit is a regression. The
     # other two grep rules stay strict-only: both have legitimate first-party uses
     # outside the strict zone (no-printf-stderr → Standalone CLI stdout; define-imgui
@@ -861,13 +874,14 @@ case "$MODE" in
     if [ -n "$wide_out" ]; then
         rc=1
         echo
-        echo "FAIL: first-party no-raw-new / deviation-overdue / no-detach (enforced everywhere, not just the strict zone):"
+        echo "FAIL: first-party no-raw-new / deviation-overdue / deviation-malformed / no-detach (enforced everywhere, not just the strict zone):"
         printf '%s\n' "$wide_out" | sed 's/^/  /'
         echo "  no-raw-new: use std::unique_ptr + make_unique (or marker // C-ABI handle / // custom-deleter / // pimpl)."
         echo "  no-detach: route the worker through AppController::LaunchBackgroundTask (joined at shutdown), not std::thread().detach()."
+        echo "  deviation-malformed: write the whole marker on ONE line with rule=, reason=, owner= and revisit= (prose above it, not after it)."
         echo "  Or revisit the overdue SMATCHET_DEVIATION / add SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
     else
-        echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue / no-detach (whole tree)"
+        echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue / deviation-malformed / no-detach (whole tree)"
     fi
 
     # --- no-glfw-in-core-headers (Source/Core/include headers; ABSOLUTE-0) ---
@@ -1158,6 +1172,20 @@ case "$MODE" in
             printf '%s\n' "$ofh_out" | sed 's/^/  /'
             echo "  Render cached data + DataFreshnessCue, gate fetches with KeyedLookupCache / IsOfflineState, back off on failure."
             echo "  If intended, add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
+        } >&2
+    fi
+
+    # --- deviation-cohort (markers ADDED in this diff; WARN-first, never touches $rc) ---
+    # A marker this diff adds whose calendar revisit= date then holds more than DEVIATION_COHORT_MAX
+    # first-party markers, counting the ones this diff adds. Delta-scoped so existing crowded dates stay
+    # quiet until someone adds to them; whole-tree view via --scan-revisit-cohorts.
+    dco_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    dco_out="$(deviation_cohort_hits "$dco_mb" | grep -E . || true)"
+    if [ -n "$dco_out" ]; then
+        {
+            echo "[deviation-cohort] WARN: this diff adds a marker on a revisit date that now holds more than $DEVIATION_COHORT_MAX markers — they all turn deviation-overdue (whole-tree, merge-blocking) on the same day. Advisory; not blocking:"
+            printf '%s\n' "$dco_out" | sed 's/^/  /'
+            echo "  Pick a less crowded date for the new marker (see --scan-revisit-cohorts), or revisit=never if the exemption is standing."
         } >&2
     fi
 

@@ -91,7 +91,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
     std::string available;
     // The Plane cursor-pagination loop is the uniform tracker idiom; the per-page bodies differ, so a
     // shared callback helper across independent fetches is not worth the coupling.
-    // SMATCHET_DEVIATION(rule=duplication; reason=Plane cursor-pagination idiom; owner=tracker-backend; revisit=2027-03-31)
+    // SMATCHET_DEVIATION(rule=duplication; reason=Plane cursor-pagination idiom; owner=tracker-backend; revisit=2027-07-15)
     std::string cursor;
     // Follow Plane's cursor pagination so a project on a later page still resolves (DR25).
     // The page cap bounds a misbehaving cursor that never terminates.

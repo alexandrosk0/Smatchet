@@ -33,6 +33,9 @@ AGENTS.md
 scripts/dev/project-config.sh
 # ... then one line per layer-coupled bats suite, appended by:
 #   grep -l 'agents/' tests/bats/*.bats | sort >> seed-paths.txt   # expect 61 lines
+#   (SUPERSEDED 2026-10-04: the block is every suite a layer-side wrapper runs —
+#    `seed-agent-layer-repo.sh --print-bats-block` — plus a fixtures block; see the
+#    plan's § Deviations.)
 
 git filter-repo --paths-from-file seed-paths.txt \
     --replace-refs delete-no-add --prune-empty auto

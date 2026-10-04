@@ -254,8 +254,8 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
         *outFatal = false;
     }
     bool reachedShortPage = false;
-    std::string cursor; // empty → page 1; subsequent pages use endCursor.
-    size_t totalFetchedBytes = 0;  // cumulative response size guard
+    std::string cursor;           // empty → page 1; subsequent pages use endCursor.
+    size_t totalFetchedBytes = 0; // cumulative response size guard
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
@@ -287,7 +287,7 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
         totalFetchedBytes += resp.text.size();
         if (totalFetchedBytes > kGitHubMaxTotalFetchBytes) {
             AppendOutWarning(outWarning, std::string("GitHub total result size exceeds ") +
-                                         std::to_string(kGitHubMaxTotalFetchBytes / 1024 / 1024) + "MB; stopped.");
+                                             std::to_string(kGitHubMaxTotalFetchBytes / 1024 / 1024) + "MB; stopped.");
             LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: total fetch size (%zu bytes) exceeds limit (%zu bytes)",
                      totalFetchedBytes, kGitHubMaxTotalFetchBytes);
             return false;
@@ -319,7 +319,7 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
         // Guard result count to prevent memory exhaustion from massive result sets.
         if (accum.size() + pageTickets.size() > kGitHubMaxResultCount) {
             AppendOutWarning(outWarning, std::string("GitHub result count exceeds ") +
-                                         std::to_string(kGitHubMaxResultCount) + " items; stopped.");
+                                             std::to_string(kGitHubMaxResultCount) + " items; stopped.");
             LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: result count (%zu total) exceeds limit (%zu)",
                      accum.size() + pageTickets.size(), kGitHubMaxResultCount);
             isLastPage = true;
@@ -513,7 +513,7 @@ void WarnIfIsQualifierMappedZeroRows(const std::string& jqlQueryOrEmpty, const s
 
 } // namespace
 
-// SMATCHET_DEVIATION(rule=function-too-long,duplication; reason=N12 fills; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=function-too-long,duplication; reason=REST fetch out-param reset prologue shared with LinearIssueSearch; the function is also over the size cap; owner=tracker; revisit=2027-10-31)
 std::vector<CachedTicket>
 FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                       const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
@@ -667,12 +667,7 @@ FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
                                          std::to_string(resp.status_code) + "): " + msg;
             LOG_ERROR("GitHubIssueSearch::FetchIssuesForKeysViaRestApi HTTP %ld on %s: %s", resp.status_code,
                       key.c_str(), msg.c_str());
-            // Guard the `!= 200` branch before FromHttpStatus (FIX-1): a 2xx-other → Unknown, never a
-            // dropped Ok(). Detail preserved verbatim for the caller's text checks.
-            if (resp.status_code >= 200 && resp.status_code < 300) {
-                return FetchResult::Err(TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
-            }
-            return FetchResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
+            return FetchResult::Err(ClassifyRejectedHttpStatus(resp.status_code, outError));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
         nlohmann::json parsed_json = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);

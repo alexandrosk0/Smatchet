@@ -349,6 +349,11 @@ line two	tabbed"
 # ----------------------------------------------------------------------------
 
 @test "doc-validation: pr-intent-lint exempts dependabot by login, not by user.type" {
+    # The pr-intent-lint job is the consuming product's CI, not the agent layer's:
+    # a standalone layer checkout (no Source/) has its own doc-validation.yml
+    # without that job. Skip there, never on a mere missing file, so a host-side
+    # rename or deletion still fails.
+    [ -d "$REPO_ROOT/Source" ] || skip "product CI workflow not present (standalone agent layer)"
     wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
     [ -f "$wf" ]
     # Isolate the EXECUTABLE `if:` expression (not the surrounding job prefix —
@@ -382,6 +387,11 @@ line two	tabbed"
 # schedule). The exemption is therefore keyed on the `bot/` head-branch namespace,
 # restricted to same-repo heads so a fork cannot forge it.
 @test "doc-validation: pr-intent-lint exempts same-repo bot/ generated branches" {
+    # The pr-intent-lint job is the consuming product's CI, not the agent layer's:
+    # a standalone layer checkout (no Source/) has its own doc-validation.yml
+    # without that job. Skip there, never on a mere missing file, so a host-side
+    # rename or deletion still fails.
+    [ -d "$REPO_ROOT/Source" ] || skip "product CI workflow not present (standalone agent layer)"
     wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
     [ -f "$wf" ]
     if_expr="$(

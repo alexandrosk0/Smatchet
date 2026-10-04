@@ -25,13 +25,13 @@ namespace github {
 /// by every GitHub REST call. Mirrors the helper in the anon
 /// namespace of GitHubClient.cpp — re-exposed here so GitHubIssueSearch.cpp
 /// can reuse it without copying the implementation.
-// SMATCHET_DEVIATION(rule=duplication; reason=declaration-scaffold token run; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=free-function declarations matching their sibling search headers; owner=tracker; revisit=never)
 cpr::Header BuildGitHubHeaders(const std::string& pat);
 
 /// GraphQL endpoint for a REST base URL ("https://api.github.com" → ".../graphql";
 /// GHE "https://<host>/api/v3" → "https://<host>/api/graphql"). Shared by the
 /// GraphQL search path here and the Projects v2 surface (GitHubProjectsV2.cpp).
-// SMATCHET_DEVIATION(rule=duplication; reason=declaration-scaffold token run; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=free-function declarations matching their sibling search headers; owner=tracker; revisit=never)
 std::string ResolveGraphQlEndpoint(const std::string& baseUrl);
 
 /// Flatten a GraphQL response's `errors[]` into one human-readable string
@@ -61,7 +61,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                 std::string* outFetchError, std::string* outWarning);
 
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API declaration symmetry with LinearIssueSearch.h; owner=tracker; revisit=never)
 /// Latency fix — same as `FetchIssuesViaRestApi` but emits each page's
 /// mapped tickets via `onPage` as soon as the page mapping completes (before
 /// the next page's HTTP roundtrip). Used by `GitHubClient::FetchIssuesStreamed`
@@ -78,7 +78,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
 /// streaming callers ignore the return value and consume the per-page batches.
 /// `outFetchErrorStructured` (optional) receives the classified twin of `outFetchError`
 /// (retire-transport-error-text item 12), filled at the same composition sites.
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API declaration symmetry with LinearIssueSearch.h; owner=tracker; revisit=never)
 /// `extraSearchQualifier` (optional) is appended verbatim to the final GraphQL `search()`
 /// query string (space-separated) after JQL translation — used by the ticket-change monitor
 /// to add a native `updated:>=<ISO>` window that GitHub applies server-side. Empty = no-op.
