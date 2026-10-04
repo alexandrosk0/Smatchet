@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # agents/scripts/core/merge-gates.d/10-gate-filter.sh
 # ----------------------------------------------------------------------------
-# The one `gh api graphql --jq` GATE_FILTER program — the 35-field projection
+# The one GATE_FILTER jq program — the field projection run by standalone
+# `jq -f` (or by `gh api graphql --jq` when jq is absent)
 # that turns the GraphQL response into the fixed-order field stream the poll
 # loop reads with `mapfile`. Relocated VERBATIM from merge-gates.sh (the former
 # in-function `GATE_FILTER='...'` literal) into a single-quoted global so the

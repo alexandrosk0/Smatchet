@@ -56,9 +56,17 @@ setup() {
 #   MERGE_GATES_STUB_VIEW_ISDRAFT  — value returned for `gh pr view --json isDraft`
 #                                   (default: false; "true" / "false" / "" )
 #   MERGE_GATES_STUB_VIEW_EXIT     — exit code for `gh pr view` (default 0)
+#   MERGE_GATES_STUB_ARGV_FILE     — append every `gh api graphql` argv element
+#                                   here, one per line (argv-shape assertions)
+#   MERGE_GATES_STUB_JQ            — jq binary the `--jq` emulation runs
+#                                   (default: jq on PATH; a no-jq PATH test
+#                                   passes an absolute path)
 case "$1" in
     api)
         if [ "$2" = "graphql" ]; then
+            if [ -n "${MERGE_GATES_STUB_ARGV_FILE:-}" ]; then
+                printf '%s\n' "$@" >> "$MERGE_GATES_STUB_ARGV_FILE"
+            fi
             if [ -n "${MERGE_GATES_STUB_GH_FAIL:-}" ]; then
                 echo "$MERGE_GATES_STUB_GH_FAIL" >&2
                 exit 1
@@ -74,7 +82,7 @@ case "$1" in
                 _prev="$_a"
             done
             if [ -n "$_filter" ]; then
-                jq -r "$_filter" "$fixture"; exit $?
+                "${MERGE_GATES_STUB_JQ:-jq}" -r "$_filter" "$fixture"; exit $?
             fi
             cat "$fixture"
             exit 0
@@ -214,6 +222,7 @@ teardown() {
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
     unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED MERGE_GATES_STUB_HEAD_RUNS
     unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
+    unset MERGE_GATES_STUB_ARGV_FILE MERGE_GATES_STUB_JQ
 }
 
 # ---------- helpers ----------
@@ -3651,17 +3660,19 @@ blocked_with_bot_threads() {
 # ----------------------------------------------------------------------------
 # argv budget — the Windows CreateProcess command-line cap (32,767 chars).
 #
-# The poll hands gh two large blobs. The GraphQL document now rides `-F
-# query=@file` (read by gh, never on argv), but the spliced `--jq` filter has
-# no file form and MUST cross the process boundary as one argument. When
+# The poll hands gh two large blobs. The GraphQL document rides `-F
+# query=@file` (read by gh, never on argv). The spliced filter leaves argv too
+# whenever standalone jq is on PATH: it is written to a temp file and the raw
+# response is piped through `jq -r -f` (tooling 2026-08-19). Only the jq-less
+# fallback still passes it as `--jq <filter>`, which has no file form. When
 # filter + document were both on argv the total reached ~32.7 KB and Windows
 # refused to exec gh at all — `Argument list too long`, three polls in a row,
 # reported as GH_API_DOWN. Linux (ARG_MAX ~2 MB) never reproduced it, so it
 # shipped green and broke every Windows merge on develop.
 #
 # These assertions are the preventing gate: they fail on the PR that grows the
-# filter past the budget, on any platform, instead of on a Windows merge weeks
-# later.
+# fallback filter past the budget, or that puts the filter back on argv when jq
+# is present, on any platform, instead of on a Windows merge weeks later.
 # ----------------------------------------------------------------------------
 
 @test "argv budget: spliced gate filter stays well under the Windows argv cap" {
@@ -3711,4 +3722,58 @@ STUB
     [ "$status" -eq 3 ]
     [[ "$output" == *"GH_ARGV_TOO_LONG"* ]]
     [[ "$output" != *"GH_API_DOWN"* ]]
+}
+
+@test "argv: with standalone jq on PATH the gate filter rides a temp file, never argv" {
+    # tooling 2026-08-19 merge-gates-gh-jq-filter-exceeds-windows-arg-cap: the
+    # ~25 KB filter must not cross the gh process boundary at all when jq can
+    # read it from a file. The stub records every `gh api graphql` argv element;
+    # neither the `--jq` flag nor any filter text may appear. TMPDIR is pinned
+    # to a fresh dir so the temp-file cleanup is observable too.
+    local argv_file="$BATS_TEST_TMPDIR/gh-argv" tmpd="$BATS_TEST_TMPDIR/tmpd"
+    mkdir -p "$tmpd"
+    export MERGE_GATES_STUB_ARGV_FILE="$argv_file"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    TMPDIR="$tmpd" run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [ -s "$argv_file" ]
+    ! grep -qx -- '--jq' "$argv_file"
+    ! grep -q 'selfImpOnly' "$argv_file"
+    grep -qx -- 'query=@.*' "$argv_file"
+    # The subshell EXIT trap removed the staged filter (and gh stderr) files.
+    [ -z "$(ls -A "$tmpd")" ]
+}
+
+@test "argv: a jq-less host falls back to gh --jq and still evaluates the gates" {
+    # gh is the only hard dep (Windows hosts may lack jq), so the poll must keep
+    # working through gh's bundled engine. Build a PATH with the stub gh plus the
+    # few tools the poll and the stub use — and no jq. The stub's own --jq
+    # emulation runs jq by absolute path, outside that PATH.
+    local nojq="$BATS_TEST_TMPDIR/nojq" argv_file="$BATS_TEST_TMPDIR/gh-argv" b
+    mkdir -p "$nojq"
+    for b in bash cat date grep awk sed mktemp rm sleep tr head dirname; do
+        ln -s "$(command -v "$b")" "$nojq/$b"
+    done
+    MERGE_GATES_STUB_JQ="$(command -v jq)"
+    export MERGE_GATES_STUB_JQ
+    export MERGE_GATES_STUB_ARGV_FILE="$argv_file"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    PATH="$STUB_BIN_DIR:$nojq" run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    grep -qx -- '--jq' "$argv_file"
+}
+
+@test "argv: gh failure under the jq engine reports gh's own error, not a jq parse error" {
+    # gh's stderr is kept off the pipe into jq, so a failed fetch surfaces the
+    # gh message verbatim and keeps the gh-fail classification (retry, then
+    # GH_API_DOWN) exactly as the `gh --jq` path did.
+    export MERGE_GATES_STUB_GH_FAIL="stub network error"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"gh failed (1/3): stub network error"* ]]
+    [[ "$output" != *"parse error"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
 }

@@ -215,8 +215,9 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant `gh api graphql --jq` GATE_FILTER program
-#                        (the 37-field projection) as a template emitter.
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 37-field
+#                        projection) as a template emitter; run by standalone
+#                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
 # stay INLINE in poll_merge_gates: they share one tightly-coupled per-poll local
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
@@ -251,8 +252,10 @@ poll_merge_gates() {
     # Deps preflight scoped to function call — file is documented sourceable
     # (see header § Usage). Top-level `exit` would kill the caller's shell.
     command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; return 2; }
-    # No standalone `jq` needed — the poll parses the GraphQL response via
-    # gh's bundled jq engine (`gh api --jq`). gh is the only hard dep.
+    # Standalone `jq` is a SOFT dep: when it is on PATH the poll pipes the raw
+    # GraphQL response through `jq -r -f <filter file>` (the gate filter never
+    # rides argv); when it is absent the poll falls back to gh's bundled jq
+    # engine (`gh api --jq`). gh is the only hard dep.
 
     # SKIP_MERGE_GATES=true at session init bypasses all gates. Documented in
     # AGENTS.md § Merge gates and docs/agent-rules/merge-gates.md § Override.
@@ -517,11 +520,14 @@ poll_merge_gates() {
     # as a directive marker. That asymmetry is why the flag letter matters here.
     #
     # Keeping the ~7.8 KB document off argv is not cosmetic: Windows caps a
-    # CreateProcess command line at 32,767 chars, and the spliced --jq filter
-    # alone is ~24.8 KB. Passing both put every Windows poll at ~32.7 KB, i.e.
+    # CreateProcess command line at 32,767 chars, and the spliced gate filter
+    # alone is ~25 KB. Passing both put every Windows poll at ~32.7 KB, i.e.
     # over the cap, so gh was never exec'd at all — `Argument list too long`,
     # three times, scored as GH_API_DOWN. Linux (ARG_MAX ~2 MB) never saw it.
-    # The budget assertion in tests/bats/merge_gates.bats holds the line.
+    # The filter leaves argv too whenever standalone jq is on PATH (written to a
+    # temp file, read with `jq -f` — no length ceiling at all); only the jq-less
+    # `gh --jq` fallback still carries it, and the budget assertion in
+    # tests/bats/merge_gates.bats holds the line for that path.
 
     # ----------------------------------------------------------------------
     # Required-context ground-truth — branch_protection.required_contexts from
@@ -603,13 +609,14 @@ poll_merge_gates() {
     local start gh_fails=0
     start=$(date +%s)
 
-    # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
-    # — no standalone `jq` binary required (gh is the only dep). One filter
-    # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (37 lines) that the poll loop reads with `mapfile`. The exact jq
-    # sub-expressions are the same ones the per-field `jq` calls used before;
-    # they're just composed into one program. ORCH_USER is spliced in as a
-    # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
+    # One filter computes every gate field and emits them as a fixed-order,
+    # one-per-line stream (37 lines) that the poll loop reads with `mapfile`.
+    # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
+    # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
+    # jq sub-expressions are the same ones the per-field `jq` calls used
+    # before; they're just composed into one program. ORCH_USER is spliced in
+    # as a string literal because `gh --jq` (unlike standalone jq) takes no
+    # --arg, and both engines must run the identical program.
     # Field order (index): 0 state · 1 headSha · 2 overflow · 3 testsOob ·
     # 4 perfOob · 5 ciTotal · 6 ciFail · 7 ciPend · 8 ciWarnDowngraded ·
     # 9 dgNames · 10 crState · 11 crFirstLine · 12 crOpen · 13 crStatusState ·
@@ -674,15 +681,63 @@ poll_merge_gates() {
     # chars, so a plain substitution is safe.
     GATE_FILTER="${GATE_FILTER//__BLOCK_ALLOWLIST_RE__/$MERGE_GATES_BLOCK_ALLOWLIST_RE}"
 
+    # Filter engine (tooling 2026-08-19 merge-gates-gh-jq-filter-exceeds-windows-
+    # arg-cap). `gh --jq` has no file form, so routing the ~25 KB filter through
+    # gh puts it on argv, where it grows toward the Windows 32,767-char
+    # CreateProcess cap with every gate refinement. With standalone jq on PATH
+    # the filter goes to a temp file instead and gh only fetches the raw
+    # response — no ceiling at all. jq-less hosts (gh is the only hard dep on
+    # Windows) keep the `--jq` path, which the argv budget bats case guards.
+    local gate_jq_engine=gh
+    if command -v jq >/dev/null 2>&1; then
+        gate_jq_engine=jq
+    fi
+
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
-        local data
-        if ! data=$(gh api graphql \
+        local data data_rc=0
+        if [ "$gate_jq_engine" = jq ]; then
+            # Subshell-scoped temp files + EXIT trap: cleaned up on every path
+            # out of the fetch, and the trap never leaks into a sourcing caller.
+            # gh's stderr is kept OFF the pipe (it must not reach jq's stdin)
+            # and PIPESTATUS splits the two failure sources so the outcome
+            # matches the `gh --jq` path exactly: a gh failure (network, auth,
+            # E2BIG) surfaces gh's own message with gh's exit status; a jq
+            # failure (the C2 malformed-response arms) surfaces jq's message
+            # with jq's status — both land in the gh-fail branch below, as
+            # they did when gh ran the filter itself.
+            data=$(
+                set +e
+                _mg_filter_file="" _mg_gh_err=""
+                trap 'rm -f "$_mg_filter_file" "$_mg_gh_err"' EXIT
+                if ! _mg_filter_file=$(mktemp) || ! _mg_gh_err=$(mktemp) \
+                   || ! printf '%s' "$GATE_FILTER" >"$_mg_filter_file"; then
+                    echo "merge-gates: could not stage the gate filter in a temp file"
+                    exit 1
+                fi
+                gh api graphql \
+                    -f owner="$owner" \
+                    -f repo="$repo" \
+                    -F pr="$prNumber" \
+                    -F query=@"$QUERY_FILE" 2>"$_mg_gh_err" \
+                    | jq -r -f "$_mg_filter_file" 2>&1
+                _mg_rc=("${PIPESTATUS[@]}")
+                if [ "${_mg_rc[0]}" -ne 0 ]; then
+                    cat "$_mg_gh_err"
+                    exit "${_mg_rc[0]}"
+                fi
+                cat "$_mg_gh_err" >&2
+                exit "${_mg_rc[1]}"
+            ) || data_rc=$?
+        else
+            data=$(gh api graphql \
                        -f owner="$owner" \
                        -f repo="$repo" \
                        -F pr="$prNumber" \
                        -F query=@"$QUERY_FILE" \
-                       --jq "$GATE_FILTER" 2>&1); then
+                       --jq "$GATE_FILTER" 2>&1) || data_rc=$?
+        fi
+        if [ "$data_rc" -ne 0 ]; then
             gh_fails=$((gh_fails+1))
             echo "Poll $((p+1)): gh failed ($gh_fails/3): $data"
             # E2BIG is a LOCAL exec failure, not a GitHub outage — the argv we
@@ -699,7 +754,11 @@ poll_merge_gates() {
             # prints ("Argument list too long" / "argument list too long").
             case "$data" in
                 *'rgument list too long'*)
-                    echo "GH_ARGV_TOO_LONG — the spliced --jq filter (${#GATE_FILTER} chars) exceeds this OS's exec argv limit (Windows: 32767). Shrink merge-gates.d/10-gate-filter.sh or move the filter off argv; this is NOT a GitHub outage."
+                    if [ "$gate_jq_engine" = jq ]; then
+                        echo "GH_ARGV_TOO_LONG — the gh command line exceeds this OS's exec argv limit (Windows: 32767). The gate filter is read from a file by standalone jq, so it is NOT on argv; look at the other gh arguments. This is NOT a GitHub outage."
+                    else
+                        echo "GH_ARGV_TOO_LONG — the spliced --jq filter (${#GATE_FILTER} chars) exceeds this OS's exec argv limit (Windows: 32767). Install standalone jq (the poll then reads the filter from a file) or shrink merge-gates.d/10-gate-filter.sh; this is NOT a GitHub outage."
+                    fi
                     return 3
                     ;;
             esac
@@ -721,9 +780,10 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 37 fixed-order lines (see GATE_FILTER
-        # field map above). gh --jq errors already routed through the gh-fail
-        # path above; this guards a truncated/partial body → fail closed (retry).
+        # Parse the filter's field stream — 37 fixed-order lines (see GATE_FILTER
+        # field map above). Filter errors (either engine) already routed through
+        # the gh-fail path above; this guards a truncated/partial body → fail
+        # closed (retry).
         local fields
         # Strip CR — Windows jq builds (and gh's bundled jq on Windows) emit
         # CRLF, which would leave a trailing \r on every field (e.g. pr_state
