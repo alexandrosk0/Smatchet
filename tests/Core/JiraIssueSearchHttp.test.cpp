@@ -163,3 +163,59 @@ TEST_CASE("JiraClient::FetchIssuesStreamed — an unreadable page body surfaces 
     CHECK_FALSE(summary.FetchError.empty());
     CHECK(summary.FetchedCount == 0);
 }
+
+TEST_CASE("JiraClient::FetchIssueKeysForView — a clean 2-page walk is a complete snapshot, not a partial walk") {
+    // Regression: the page loop broke on the clean isLast page BEFORE carrying that page's (empty)
+    // cursor, so page 1's nextPageToken survived and `tokenLeftover` read true — every query with
+    // more than one page (>100 issues) was rejected as "returned a partial page walk".
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(
+        kSearchPath,
+        [](const httplib::Request& req) -> nlohmann::json {
+            nlohmann::json body = nlohmann::json::object();
+            if (req.get_param_value("nextPageToken").empty()) {
+                body["isLast"] = false;
+                body["nextPageToken"] = "page-2";
+                body["issues"] = nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}});
+            } else {
+                body["isLast"] = true;
+                body["issues"] = nlohmann::json::array({nlohmann::json{{"key", "SMT-2"}}});
+            }
+            return body;
+        },
+        "GET");
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    const auto res = client.FetchIssueKeysForView(cfg, views);
+    REQUIRE(res.has_value());
+    REQUIRE(res.value().size() == 2);
+    CHECK(res.value()[0] == "SMT-1");
+    CHECK(res.value()[1] == "SMT-2");
+    CHECK(fx.RequestCount(kSearchPath) == 2);
+}
+
+TEST_CASE("JiraClient::FetchIssueKeysForView — hitting the page cap with a token pending is a partial walk") {
+    // Every page claims more results — the loop exhausts its 50-page safety cap with a cursor
+    // still pending, which must NOT be treated as an authoritative membership snapshot.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(
+        kSearchPath,
+        [](const httplib::Request&) -> nlohmann::json {
+            nlohmann::json body = nlohmann::json::object();
+            body["isLast"] = false;
+            body["nextPageToken"] = "more";
+            body["issues"] = nlohmann::json::array();
+            return body;
+        },
+        "GET");
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    const auto res = client.FetchIssueKeysForView(cfg, views);
+    REQUIRE_FALSE(res.has_value());
+    CHECK(res.error().Detail.find("partial page walk") != std::string::npos);
+    CHECK(fx.RequestCount(kSearchPath) == 50);
+}

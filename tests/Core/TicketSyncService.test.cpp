@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -451,6 +452,34 @@ TEST_CASE("TicketSyncService::SyncWithBackend end-to-end populates cache + activ
     // Cancel + join before fixture destruction — defensive even though the worker is already
     // finished, mirrors what ~AppController does in production.
     svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService destroyed right after its session finalizes joins the worker (no std::terminate)" *
+          doctest::test_suite("[high-risk]")) {
+    // Crash regression: IsActive() reads false from the finalize tick onward, but the finished
+    // worker's std::thread is only joined on the NEXT tick (StartPendingSyncIfIdle).
+    // AppController::retireExpiredHiddenContexts_ trusts IsActive() and resets the service in
+    // that window; without a joining destructor the joinable std::thread member called
+    // std::terminate and the app aborted. Deliberately NO CancelAndJoinActiveStreamingSync()
+    // here — the destructor alone must make teardown safe. A regression aborts this binary.
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    // A failed fetch, matching the crash log (GitHub HTTP 0 → session finished with err).
+    fake->SetFetchIssuesError(TrackerErrorTransport("HTTP 0"));
+
+    std::unique_ptr<TicketSyncService> svc = std::make_unique<TicketSyncService>(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc->SyncWithBackend(&cfg, &views);
+
+    // Stop on the FIRST tick that reports idle — the finalize tick — so the worker thread is
+    // finished but not yet joined, exactly the state retirement observed.
+    const bool idle = SpinUntil(*svc, [&]() { return !svc->IsActive(); });
+    REQUIRE(idle);
+    // Pane retirement: ctx.ticketSync_.reset(). The assertion is that this returns at all —
+    // a regression calls std::terminate here and doctest reports the case as CRASHED.
+    svc.reset();
 }
 
 TEST_CASE("TicketSyncService streamed seam prefers the backend's structured kind over the text sniff" *

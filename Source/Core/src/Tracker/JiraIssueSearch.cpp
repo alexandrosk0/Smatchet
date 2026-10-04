@@ -80,7 +80,7 @@ struct JiraSearchPageOutcome {
     bool EndedCleanly = false;  // value to assign to syncEndedCleanly
     bool HadFetchError = false; // when set, FetchError carries the message
     std::string FetchError;     // populated only when HadFetchError
-    std::string NextToken;      // next-page cursor (valid only when !Stop)
+    std::string NextToken;      // next-page cursor; always empty when Stop
 };
 
 // Phase: parse one search-page body, map its issues onto `summary` + the batch callback, and
@@ -305,7 +305,7 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
 struct JiraPageLoopResult {
     bool endedCleanly = false;        // every page consumed with a clean isLast (no abort / cap / error)
     int fetchedPages = 0;             // pages that returned HTTP 200 and were mapped
-    bool tokenLeftover = false;       // a next-page token remained when the loop stopped (cap hit)
+    bool tokenLeftover = false;       // a next-page cursor was still pending when the loop broke
     size_t totalFetchedBytes = 0;     // cumulative response size (bytes) across all pages
     bool totalSizeLimitHit = false;   // true if total fetch size exceeded the cap
     bool resultCountLimitHit = false; // true if result count exceeded the cap
@@ -383,13 +383,19 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
             break;
         }
 
+        // Carry this page's cursor BEFORE the Stop check: a Stop outcome never carries a next token,
+        // so this clears the previous page's (already-consumed) token. Without it a clean multi-page
+        // walk ended with the prior page's token still set, `tokenLeftover` read true, and every
+        // caller gating on it rejected any query spanning more than one page as a partial walk.
+        nextPageToken = std::move(outcome.NextToken);
         if (outcome.Stop) {
             result.endedCleanly = outcome.EndedCleanly;
             break;
         }
-        nextPageToken = std::move(outcome.NextToken);
     }
 
+    // Non-empty only when the loop broke before consuming a page's cursor (page cap, size/count
+    // cap, pre-request cancel, HTTP error); every Stop outcome clears it.
     result.tokenLeftover = !nextPageToken.empty();
     if (result.fetchedPages >= kMaxPages && result.tokenLeftover) {
         LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);

@@ -198,9 +198,51 @@ static void RegisterVerifiedPinClearsOnClose(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// TrackerFirstRun_TestConnectionClickKeepsDisabledStackBalanced
+// Crash regression: DrawTrackerTestConnection re-read d.trackerPrefsTestInFlight
+// for its EndDisabled() AFTER the click had set it true, popping a disabled scope
+// it never pushed — IM_ASSERT "Calling EndDisabled() too many times!" aborted the
+// app on the first "Test connection" click. Clicking the REAL button exercises the
+// exact frame; a regression trips the in-frame IM_ASSERT.
+// ---------------------------------------------------------------------------
+static void RegisterTestConnectionClickBalanced(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TrackerFirstRun", "TestConnectionClickKeepsDisabledStackBalanced");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        const bool prefsLive = OpenPreferences(ctx);
+        IM_CHECK_NO_RET(prefsLive);
+        if (!prefsLive) {
+            g_ui.showPreferences = false;
+            return;
+        }
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return TrackerTabBodyRan(); }));
+        IM_CHECK_NO_RET(!g_ui.trackerPrefsTestInFlight);
+
+        // The click frame flips trackerPrefsTestInFlight false -> true between the
+        // BeginDisabled and EndDisabled decisions — the crashing transition.
+        const int genBefore = g_ui.trackerPrefsTestGen;
+        ctx->ItemClick("**/Test connection");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.trackerPrefsTestGen == genBefore + 1); // the click reached the handler
+
+        // Let the throwaway probe settle so no verdict lands after the window closes;
+        // a probe that outlives the budget is dropped by the close path's gen bump.
+        YieldUntil(ctx, [] { return !g_ui.trackerPrefsTestInFlight; }, 600);
+        g_ui.showPreferences = false;
+        ctx->Yield();
+    };
+}
+
 extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engine) {
     RegisterExplainerBranches(engine);
     RegisterVerifiedPinClearsOnClose(engine);
+    RegisterTestConnectionClickBalanced(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
