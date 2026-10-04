@@ -7,6 +7,8 @@ using SmatchetProjectPicker::detail::AllProjectPasses;
 using SmatchetProjectPicker::detail::ContainsCi;
 using SmatchetProjectPicker::detail::MakeRowLabel;
 using SmatchetProjectPicker::detail::RecentEntryPasses;
+using SmatchetProjectPicker::detail::RecentSnapshotAction;
+using SmatchetProjectPicker::detail::RecentSnapshotActionFor;
 
 namespace {
 
@@ -84,4 +86,19 @@ TEST_CASE("MakeRowLabel formats Jira and Plane rows" * doctest::test_suite("[ui]
     CHECK(MakeRowLabel(MakeProject("id", "PROJ", ""), "Jira") == "PROJ");
     CHECK(MakeRowLabel(MakeProject("id", "", "Plane Proj"), "Plane") == "Plane Proj");
     CHECK(MakeRowLabel(MakeProject("uuid-only", "", ""), "Plane") == "uuid-only");
+}
+
+TEST_CASE("RecentSnapshotActionFor reads the cache once per open and drops it on close" * doctest::test_suite("[ui]")) {
+    bool wasOpen = false;
+    CHECK(RecentSnapshotActionFor(false, wasOpen) == RecentSnapshotAction::Keep); // closed, never opened
+    CHECK_FALSE(wasOpen);
+    CHECK(RecentSnapshotActionFor(true, wasOpen) == RecentSnapshotAction::Refresh); // closed -> open edge
+    CHECK(wasOpen);
+    for (int frame = 0; frame < 3; ++frame) {
+        CHECK(RecentSnapshotActionFor(true, wasOpen) == RecentSnapshotAction::Keep); // no per-frame re-read
+    }
+    CHECK(RecentSnapshotActionFor(false, wasOpen) == RecentSnapshotAction::Release); // open -> closed edge
+    CHECK_FALSE(wasOpen);
+    CHECK(RecentSnapshotActionFor(false, wasOpen) == RecentSnapshotAction::Keep);
+    CHECK(RecentSnapshotActionFor(true, wasOpen) == RecentSnapshotAction::Refresh); // reopen re-reads
 }

@@ -32,5 +32,17 @@ std::string AllProjectKey(const RemoteProject& p, const std::string& backendKind
  *  render. A row with an empty key is always rejected. */
 bool AllProjectPasses(const std::string& key, const RemoteProject& p, const std::string& filter);
 
+/** What the "Recently used" snapshot needs this frame. */
+enum class RecentSnapshotAction {
+    Keep,    ///< no edge: draw from the snapshot as it is
+    Refresh, ///< closed->open edge: read FieldCatalogCache::ListCachedProjects() once
+    Release, ///< open->closed edge: drop the snapshot so the next open reads the cache again
+};
+
+/** Edge decision for the combo popup's "Recently used" snapshot: Refresh on the frame the popup
+ *  opens, Release on the frame it closes, Keep otherwise, so the catalog-cache index (file read +
+ *  JSON parse) is read once per open instead of on every frame. Sets `wasOpen` to `isOpenNow`. */
+RecentSnapshotAction RecentSnapshotActionFor(bool isOpenNow, bool& wasOpen);
+
 } // namespace detail
 } // namespace SmatchetProjectPicker

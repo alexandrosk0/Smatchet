@@ -58,5 +58,14 @@ bool AllProjectPasses(const std::string& key, const RemoteProject& p, const std:
     return true;
 }
 
+RecentSnapshotAction RecentSnapshotActionFor(bool isOpenNow, bool& wasOpen) {
+    const bool wasOpenBefore = wasOpen;
+    wasOpen = isOpenNow;
+    if (isOpenNow == wasOpenBefore) {
+        return RecentSnapshotAction::Keep;
+    }
+    return isOpenNow ? RecentSnapshotAction::Refresh : RecentSnapshotAction::Release;
+}
+
 } // namespace detail
 } // namespace SmatchetProjectPicker

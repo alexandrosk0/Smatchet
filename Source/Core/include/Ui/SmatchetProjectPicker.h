@@ -2,8 +2,9 @@
 
 // Shared "Project" combobox used by the new-issue draft picker and the bulk-import modal.
 // Hybrid surface (OQ-2):
-//   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
-//     current backend+endpoint, ordered by lastUsedUnix desc.
+//   - Recently used: FieldCatalogCache::ListCachedProjects(), read once when the combo opens and kept
+//     on the picker state until it closes (never per frame), filtered to the current
+//     backend+endpoint, ordered by lastUsedUnix desc.
 //   - All projects: collapsible. First expand loads the list on the app-owned joined background-task
 //     pool (smatchet::projects::LoadProjectList); subsequent renders use the vector on the picker
 //     state. The fetch captures a shared_ptr to the backend so a live tracker swap (which frees the
@@ -14,6 +15,7 @@
 // Renders inside the current ImGui scope — caller is responsible for ImGui::SetNextItemWidth
 // upstream if a specific width is desired.
 
+#include "FieldCatalogCache.h"
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
@@ -42,6 +44,9 @@ void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBac
 struct State {
     char searchBuf[128]{};
     bool allExpanded = false;
+    // "Recently used" rows: read on the combo's closed->open edge, dropped when it closes. UI thread.
+    std::vector<FieldCatalogCache::CachedProjectEntry> recentSnapshot;
+    bool comboWasOpen = false;
     // Fetched-from-server "all projects" list. Protected by `fetchMutex` because the fetch
     // thread writes into it; the UI thread reads under lock and copies once per frame.
     std::mutex fetchMutex;

@@ -51,12 +51,11 @@ namespace {
 // "Recently used" section of the combo popup: cache-backed rows filtered by backend/endpoint/text.
 // Sets selectedKey + returns true when a row is picked (and closes the popup, matching the
 // pre-decomposition body). Runs inside the active BeginCombo scope.
-bool DrawRecentSection(const std::string& backendKind, const std::string& endpoint, const std::string& filter,
-                       std::string& selectedKey) {
+bool DrawRecentSection(const std::vector<FieldCatalogCache::CachedProjectEntry>& cached, const std::string& backendKind,
+                       const std::string& endpoint, const std::string& filter, std::string& selectedKey) {
     bool changed = false;
     ImGui::Separator();
     ImGui::TextDisabled("%s", SmatchetLocalization::T("draft.project.section.recent", "Recently used"));
-    std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
     int recentShown = 0;
     for (const auto& e : cached) {
         if (!detail::RecentEntryPasses(e, backendKind, endpoint, filter)) {
@@ -261,15 +260,27 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
     const char* placeholder = SmatchetLocalization::T("draft.project.placeholder", "(pick one)");
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
 
-    if (ImGui::BeginCombo("##projectpicker", preview.c_str())) {
+    const bool open = ImGui::BeginCombo("##projectpicker", preview.c_str());
+    // Pillar 2: the catalog-cache index is a file read + JSON parse, so it is read once per open.
+    switch (detail::RecentSnapshotActionFor(open, state.comboWasOpen)) {
+    case detail::RecentSnapshotAction::Refresh:
+        state.recentSnapshot = FieldCatalogCache::ListCachedProjects();
+        break;
+    case detail::RecentSnapshotAction::Release:
+        std::vector<FieldCatalogCache::CachedProjectEntry>().swap(state.recentSnapshot);
+        break;
+    case detail::RecentSnapshotAction::Keep:
+        break;
+    }
+    if (open) {
         // Search field at top.
         const char* searchPlaceholder = SmatchetLocalization::T("draft.project.search", "Search...");
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##projsearch", searchPlaceholder, state.searchBuf, sizeof(state.searchBuf));
         const std::string filter(state.searchBuf);
 
-        // --- Recently used (always populated from cache; no async needed). ---
-        if (DrawRecentSection(backendKind, endpoint, filter, selectedKey)) {
+        // --- Recently used (the cache snapshot taken when the combo opened). ---
+        if (DrawRecentSection(state.recentSnapshot, backendKind, endpoint, filter, selectedKey)) {
             changed = true;
         }
 
