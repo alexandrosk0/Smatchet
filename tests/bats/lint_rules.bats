@@ -787,6 +787,26 @@ _resolve_py() {
     [[ "$output" != *"M.cpp:7"* ]]
 }
 
+@test "deviation-malformed closes a marker only on a ')' with no '(' open before it" {
+    tmp="$(mktemp -d)"
+    {
+        # The stray ')' after "1" comes before owner= and revisit=, and the last ')' closes
+        # "(aside)", so no ')' closes the marker with every field inside it.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=step 1) then; owner=o; revisit=never; note (aside)\nint a = 0;\n'
+        # The ')' after "1" closes the marker with every field inside; "then (aside)" is prose after it.
+        printf '// SMATCHET_DEVIATION(rule=a; owner=o; revisit=never; reason=step 1) then (aside)\nint b = 0;\n'
+        # Prose after a closed marker may leave its own '(' open.
+        printf '// SMATCHET_DEVIATION(rule=a; reason=r; owner=o; revisit=never) see (x (y)\nint c = 0;\n'
+    } > "$tmp/P.cpp"
+    # Each printf writes a marker line and a code line: markers on lines 1, 3 and 5.
+    run bash "$LINT" --scan-file "$tmp/P.cpp"
+    rm -rf "$tmp"
+    [ "$(printf '%s\n' "$output" | grep -c '^deviation-malformed')" -eq 1 ]
+    [[ "$output" == *"P.cpp:1"* ]]
+    [[ "$output" != *"P.cpp:3"* ]]
+    [[ "$output" != *"P.cpp:5"* ]]
+}
+
 @test "an EMPTY revisit= is reported once, as deviation-overdue, not also as deviation-malformed" {
     run bash "$LINT" --scan-file "$FIX/deviation-revisit-malformed.cpp"
     [ "$status" -eq 0 ]
