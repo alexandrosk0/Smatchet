@@ -37,6 +37,11 @@ SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
 # The one non-image file is `seed-scrub-paths.txt` (scaffold root): a seed-TIME
 # input consumed by phase 3, never copied into the layer.
 SCAFFOLD_DIR="$SCRIPT_DIR/seed-agent-layer-repo.d"
+# The scaffold image rule — committed files under SCAFFOLD_DIR at a commit, minus
+# the seed-time input — shared with agent-layer-sim.sh (ali_image_files,
+# ali_extract_image).
+# shellcheck source=agents/scripts/core/lib/agent-layer-image.sh
+. "$SCRIPT_DIR/lib/agent-layer-image.sh"
 MANIFEST_SRC="$SCAFFOLD_DIR/docs/seed-paths.txt"
 AUDIT_SRC="$SCAFFOLD_DIR/docs/seed-audit.md"
 
@@ -48,18 +53,21 @@ AUDIT_SRC="$SCAFFOLD_DIR/docs/seed-audit.md"
 LAYER_BRANCH="develop"
 SOURCE_URL="https://github.com/alexandrosk0/Smatchet.git"
 
-# Tripwire, not a measurement. `grep -l 'agents/' tests/bats/*.bats` was 61 when
-# the plan was written (2026-08-29) and is 62 today; the tree keeps drifting. A
-# mismatch is NOT "bump the number" — it means a suite entered or left the
-# layer-coupled set and its wrapper co-location (8e) needs re-auditing before the
-# seed, which is exactly the hole this constant exists to keep shut.
-EXPECTED_BATS_COUNT=62
+# Tripwire, not a measurement: the number of suites layer-side wrappers run (see
+# layer_named_suites). A mismatch is NOT "bump the number" — a suite entered or
+# left the layer. Decide whether it belongs there (its wrapper's location is the
+# decision: agents/scripts/** travels, scripts/dev/ stays), re-audit it for
+# publication, then set this deliberately. It started at 61 (2026-08-29, under the
+# retired `grep -l 'agents/'` rule) and has drifted with the tree ever since.
+EXPECTED_BATS_COUNT=67
 
-# Wrapper roots that TRAVEL with the layer. A layer-coupled suite whose only
-# wrapper lives outside these (i.e. in scripts/dev/) reds BOTH repos after the
-# flip: orphan suite layer-side, wrapper pointing at a deleted file host-side.
+# Wrapper roots that TRAVEL with the layer, and the host root that does not. A
+# suite goes where its wrapper goes: scripts/dev/test-all.sh discovers tests by the
+# test-*.sh glob and never runs a .bats directly, so a suite split from its wrapper
+# reds a repo after the flip — an orphan suite on one side, a wrapper pointing at a
+# deleted file on the other.
 LAYER_WRAPPER_ROOTS=(agents/scripts/core agents/scripts/project)
-ALL_WRAPPER_ROOTS=(scripts/dev agents/scripts/core agents/scripts/project)
+HOST_WRAPPER_ROOTS=(scripts/dev)
 
 # Paths that must NEVER appear in the manifest (grill decision 4 + plan scope).
 FORBIDDEN_PREFIXES=(
@@ -73,19 +81,23 @@ FORBIDDEN_PREFIXES=(
     CMakeLists.txt
 )
 
-# Root files phase 4 writes into the seeded repo, sourced from SCAFFOLD_DIR.
-# `row10` assets are authored; `row9` assets are NOT yet — row 9 (layer CI) is
-# blocked on the repo existing, so phase 4 names them and stops rather than
-# pushing a repo with no gates.
-SCAFFOLD_ROW10=(README.md LICENSE project.config.json)
+# Phase 4 copies the WHOLE scaffold image of the validated commit into the seeded
+# repo (lib/agent-layer-image.sh); agent-layer-sim.sh applies the same rule, so the
+# simulated tree is the seeded tree. These lists are the files the image must
+# contain — phase 4 refuses to publish a repo without its gates or its contract.
+SCAFFOLD_ROW10=(README.md LICENSE project.config.json .gitignore)
 SCAFFOLD_ROW9=(
     .coderabbit.yaml
     .github/workflows/agentic-selftests.yml
     .github/workflows/shell-lint.yml
     .github/workflows/doc-validation.yml
+    docs/high-integrity/markdown-link-baseline.md
 )
 
 DRY_RUN=0
+# --simulate: phases 1-2 report-only (like --dry-run), then run the layer CI lanes
+# on an image of the validated commit (agent-layer-sim.sh) instead of stopping.
+SIMULATE=0
 TARGET=""
 WORK_DIR=""
 SCANNER=""
@@ -96,16 +108,23 @@ FAILED=0
 # report success (the shape-Z zero-run class test-fail-open-authoring.sh guards).
 PASSED=0
 PUBLISH_CLEARED=0
+# Set by phase 4c once the layer's own CI lanes passed on the rewritten clone.
+LANES_CLEARED=0
+SIM_SCRIPT="$SCRIPT_DIR/agent-layer-sim.sh"
 # The exact commit phase 2 validated. Phase 3 refuses a clone that resolves to
 # anything else, so the tree that is rewritten and published is the tree that was
-# checked — not whatever the remote branch happens to point at by then.
+# checked — not whatever the remote branch happens to point at by then. Phase 4
+# reads the scaffold image from this commit in SOURCE_ROOT, never the work tree.
 SOURCE_SHA=""
+SOURCE_ROOT=""
 
 usage() {
     cat <<'USAGE'
 seed-agent-layer-repo.sh — seed the public agent-layer repo from a Smatchet clone.
 
   seed-agent-layer-repo.sh --target <owner/repo> [--work-dir DIR] [--dry-run] [--help]
+  seed-agent-layer-repo.sh --simulate [--target <owner/repo>]
+  seed-agent-layer-repo.sh --print-bats-block
 
 Options (both --key value and --key=value forms are accepted):
   --target <owner/repo>   Destination repo, e.g. alexandrosk0/the-unwilling-agentic-bunch.
@@ -120,6 +139,14 @@ Options (both --key value and --key=value forms are accepted):
                           dry run is useful BEFORE the human preconditions are met —
                           which is the window it exists for. A real run keeps the
                           strict exit-2 / exit-3 semantics.
+  --simulate              Phases 1-2 as --dry-run, then build an image of the
+                          validated commit (manifest + scaffold) and run the layer's
+                          three CI lanes in it via agent-layer-sim.sh (~25 min).
+                          Proves the manifest is COMPLETE, which phase 2 cannot.
+                          Manifest paths must be committed (a dirty tree is a hard
+                          stop, unlike --dry-run). --target is optional here.
+  --print-bats-block      Print the generated tests/bats block of seed-paths.txt
+                          (the suites layer-side wrappers run) and exit.
   --help                  This text.
 
 Exit: 0 seeded (or dry-run review passed) | 1 assertion failed
@@ -136,14 +163,18 @@ Phases:
                 refused unless it resolves to the commit phase 2 validated; then
                 git filter-repo --paths-from-file, then the paired
                 --invert-paths scrub pass if seed-scrub-paths.txt is non-empty
-  4 scaffold    write the row 9 CI files, row 10 root files, .coderabbit.yaml,
-                docs/seed-paths.txt and docs/seed-audit.md; commit
+  4 scaffold    copy the scaffold image (row 9 CI files, row 10 root files,
+                .coderabbit.yaml, .gitignore, docs/seed-paths.txt,
+                docs/seed-audit.md, ...); commit
   4b audit      history-wide secret scan of the REWRITTEN history, plus assert the
                 rewritten `git ls-files` is a SUBSET of the manifest and that every
                 manifest path has exactly one CLEAR (or enforced SCRUB) verdict in
                 docs/seed-audit.md. Any hit is a hard stop; nothing is pushed until
                 this is clean.
-  5 publish     hard-refuses unless 4b cleared; remote add plus push develop;
+  4c lanes      run the layer's own CI lanes on the rewritten clone
+                (agent-layer-sim.sh --run-only); red, or any file the lanes
+                change or create outside .gitignore, is a hard stop.
+  5 publish     hard-refuses unless 4b and 4c cleared; remote add plus push develop;
                 gh label create; setup-branch-protection.sh (failure = failed seed)
   6 report      the row-8 Accept checks with PASS/FAIL and the seed SHA
 
@@ -190,6 +221,14 @@ parse_args() {
         case "$1" in
             --help|-h)      usage; exit 0 ;;
             --dry-run)      DRY_RUN=1; shift ;;
+            --simulate)     SIMULATE=1; DRY_RUN=1; shift ;;
+            --print-bats-block)
+                            # The block describes THIS script's repo, wherever it is run from.
+                            if ! cd "$SCRIPT_DIR/../../.." || [ ! -d agents/scripts/core ]; then
+                                die 2 "cannot resolve the repo root from $SCRIPT_DIR"
+                            fi
+                            layer_named_suites
+                            exit 0 ;;
             --target)       [ "$#" -ge 2 ] || die 2 "--target needs a value"
                             TARGET="$2"; shift 2 ;;
             --target=*)     TARGET="${1#--target=}"; shift ;;
@@ -199,7 +238,10 @@ parse_args() {
             *)              usage >&2; die 2 "unknown argument: $1" ;;
         esac
     done
-    [ -n "$TARGET" ] || { usage >&2; die 2 "--target <owner/repo> is required"; }
+    if [ -z "$TARGET" ]; then
+        [ "$SIMULATE" -eq 1 ] && { [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"; return 0; }
+        usage >&2; die 2 "--target <owner/repo> is required"
+    fi
     case "$TARGET" in
         */*/*|/*|*/) die 2 "--target must be exactly owner/repo, got: $TARGET" ;;
         */*)         : ;;
@@ -248,7 +290,9 @@ phase1_preflight() {
 
     # Target must EXIST (human precondition a) and be EMPTY. A non-empty target
     # makes the phase-5 push a non-fast-forward.
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    if [ -z "$TARGET" ]; then
+        warn "no --target given — target checks skipped (--simulate)"
+    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
         if gh repo view "$TARGET" >/dev/null 2>&1; then
             pass "target repo exists: $TARGET"
             local commits
@@ -282,6 +326,11 @@ phase1_preflight() {
 # Non-comment, non-blank lines of the manifest = the filter-repo pathspecs.
 manifest_pathspecs() {
     grep -vE '^[[:space:]]*(#|$)' "$MANIFEST_SRC"
+}
+
+# Files of the scaffold image of the validated commit, image-relative, one per line.
+scaffold_image_files() {
+    ali_image_files "$SOURCE_ROOT" "$SOURCE_SHA"
 }
 
 # The publication audit is pinned to the develop commit it swept, recorded in
@@ -325,6 +374,23 @@ wrappers_for_suite() {
     done
 }
 
+# Every tests/bats/*.bats that a LAYER-side wrapper runs, sorted and unique. This is
+# the generated bats block of seed-paths.txt. A wrapper names its suite by path on
+# a non-comment line (BATS_FILE="tests/bats/<n>.bats", or a BATS_FILES=(...) array).
+# The leading-context class [start "'=( space] keeps a scratch-dir path such as
+# "$tmp/tests/bats/synth.bats" — a suite a selftest writes and deletes — from counting.
+# Must run from the repo root.
+layer_named_suites() {
+    local root
+    for root in "${LAYER_WRAPPER_ROOTS[@]}"; do
+        [ -d "$root" ] || continue
+        grep -rhE --include='test-*.sh' 'tests/bats/' "$root" 2>/dev/null \
+            | grep -vE '^[[:space:]]*#' \
+            | grep -oE "(^|[\"' =(])tests/bats/[A-Za-z0-9_.-]+\\.bats" \
+            | sed -E "s#^[\"' =(]##"
+    done | sort -u
+}
+
 phase2_manifest() {
     head1 "phase 2 — manifest"
     local p0="$PASSED"
@@ -340,17 +406,20 @@ phase2_manifest() {
     # manifest path (or tests/bats/, which feeds the regenerated block) would
     # validate a tree that no commit — and therefore no clone — contains.
     SOURCE_SHA="$(git rev-parse HEAD)" || die 2 "cannot resolve HEAD in $repo_root"
+    SOURCE_ROOT="$repo_root"
     local -a pin_specs
     mapfile -t pin_specs < <(manifest_pathspecs)
     local dirty
     dirty="$(git status --porcelain --untracked-files=all -- "${pin_specs[@]}" tests/bats/)"
     if [ -z "$dirty" ]; then
         pass "validating committed revision $SOURCE_SHA (manifest paths clean)"
-    elif [ "$DRY_RUN" -eq 1 ]; then
+    elif [ "$DRY_RUN" -eq 1 ] && [ "$SIMULATE" -eq 0 ]; then
         warn "uncommitted changes under manifest paths — this dry run validates the working tree, not $SOURCE_SHA"
     else
+        # --simulate reads this working tree's manifest here but images $SOURCE_SHA,
+        # so a dirty tree would let a green run vouch for a tree it never tested.
         printf '%s\n' "$dirty" | sed 's/^/          /' >&2
-        die 1 "uncommitted changes under manifest paths — commit or discard them; the seed publishes a commit, not a working tree"
+        die 1 "uncommitted changes under manifest paths — commit or discard them; the seed publishes, and --simulate tests, a commit, not a working tree"
     fi
 
     # --- regenerate the bats block and diff it against the committed manifest ---
@@ -360,7 +429,7 @@ phase2_manifest() {
     # shellcheck disable=SC2064
     trap "rm -f '$regen' '$committed'" RETURN
 
-    grep -l 'agents/' tests/bats/*.bats 2>/dev/null | sort > "$regen"
+    layer_named_suites > "$regen"
     grep '^tests/bats/' "$MANIFEST_SRC" | sort > "$committed"
 
     local regen_count
@@ -368,44 +437,55 @@ phase2_manifest() {
     regen_count="${regen_count//[[:space:]]/}"
 
     if [ "$regen_count" -eq "$EXPECTED_BATS_COUNT" ]; then
-        pass "layer-coupled bats count = $regen_count (tripwire $EXPECTED_BATS_COUNT)"
+        pass "layer-run bats count = $regen_count (tripwire $EXPECTED_BATS_COUNT)"
     else
-        fail "layer-coupled bats count drifted: $regen_count vs tripwire $EXPECTED_BATS_COUNT."
-        fail "  Do NOT just bump the constant. A suite entered or left the layer-coupled"
-        fail "  set: re-audit its wrapper co-location (row 8e), refresh seed-paths.txt,"
-        fail "  then set EXPECTED_BATS_COUNT deliberately."
+        fail "layer-run bats count drifted: $regen_count vs tripwire $EXPECTED_BATS_COUNT."
+        fail "  Do NOT just bump the constant. A suite entered or left the layer: decide"
+        fail "  whether its wrapper belongs in agents/scripts/** (travels) or scripts/dev/"
+        fail "  (stays), re-audit it for publication, refresh seed-paths.txt, then set"
+        fail "  EXPECTED_BATS_COUNT deliberately."
     fi
 
     if diff -u "$committed" "$regen" >/dev/null 2>&1; then
         pass "committed manifest bats block matches the regenerated list"
     else
         fail "seed-paths.txt bats block is stale — regenerate it:"
-        fail "  grep -l 'agents/' tests/bats/*.bats | sort"
+        fail "  bash agents/scripts/core/seed-agent-layer-repo.sh --print-bats-block"
         diff -u "$committed" "$regen" >&2 || true
     fi
 
-    # --- 8e: every moved suite's wrapper must travel with it -------------------
-    local off_side=0 unwrapped=0 f base layer_hits all_hits
+    # --- 8e, both directions: a suite travels with the wrapper that runs it -----
+    # Layer -> suite: every suite a layer wrapper names must exist, or that wrapper
+    # is an orphan that reds layer CI. Suite -> host: no host wrapper may also run a
+    # layer suite, or it points at a deleted file once the flip removes the suite.
+    local orphaned=0 split=0 f base host_hits
     while IFS= read -r f; do
-        base="$(basename "$f")"
-        all_hits="$(wrappers_for_suite "$base" "${ALL_WRAPPER_ROOTS[@]}" | sort -u)"
-        layer_hits="$(wrappers_for_suite "$base" "${LAYER_WRAPPER_ROOTS[@]}" | sort -u)"
-        if [ -z "$all_hits" ]; then
-            fail "8e: $f has NO test-*.sh wrapper (test-orphan-bats.sh would red too)"
-            unwrapped=$((unwrapped + 1))
+        if [ ! -f "$f" ]; then
+            fail "8e: a layer wrapper runs $f, which does not exist in the source tree"
+            orphaned=$((orphaned + 1))
             continue
         fi
-        if [ -z "$layer_hits" ]; then
-            fail "8e: $f moves to the layer but every wrapper naming it stays host-side:"
-            printf '%s\n' "$all_hits" | sed 's/^/          /' >&2
-            fail "  git mv the wrapper into agents/scripts/core/ (that is what A1w did for"
-            fail "  android_openssl_failfast.bats and safe_merge.bats), or drop the suite"
-            fail "  from the manifest. Left as-is this reds BOTH repos after the flip."
-            off_side=$((off_side + 1))
+        base="$(basename "$f")"
+        host_hits="$(wrappers_for_suite "$base" "${HOST_WRAPPER_ROOTS[@]}" | sort -u)"
+        if [ -n "$host_hits" ]; then
+            fail "8e: $f moves to the layer but a host wrapper also runs it:"
+            printf '%s\n' "$host_hits" | sed 's/^/          /' >&2
+            fail "  One side must own the suite. Keep exactly one wrapper, in agents/scripts/**"
+            fail "  if the suite tests layer content, in scripts/dev/ if it tests the product."
+            split=$((split + 1))
         fi
     done < "$regen"
-    if [ "$off_side" -eq 0 ] && [ "$unwrapped" -eq 0 ]; then
-        pass "8e suite/wrapper co-location holds for all $regen_count moved suites"
+    if [ "$orphaned" -eq 0 ] && [ "$split" -eq 0 ]; then
+        pass "8e suite/wrapper co-location holds both ways for all $regen_count layer suites"
+    fi
+
+    # Advisory: a host-run suite that names layer paths still works after the flip
+    # only if it reaches them through $AGENT_LAYER_ROOT (Phase C row 15/16 input).
+    local host_coupled
+    host_coupled="$(grep -l 'agents/' tests/bats/*.bats 2>/dev/null | sort | comm -23 - "$regen" | wc -l)"
+    host_coupled="${host_coupled//[[:space:]]/}"
+    if [ "$host_coupled" -gt 0 ]; then
+        warn "$host_coupled host-run suite(s) name agents/ paths — they must resolve them via \$AGENT_LAYER_ROOT after the flip"
     fi
 
     # --- nothing host-only may ride along -------------------------------------
@@ -469,6 +549,12 @@ phase2_manifest() {
     # Source tree, bats tripwire, block match, 8e, forbidden paths, pathspecs exist.
     require_floor "$p0" 6 "phase 2"
 
+    if [ "$SIMULATE" -eq 1 ]; then
+        head1 "--simulate: layer CI lanes on an image of $SOURCE_SHA"
+        [ -f "$SIM_SCRIPT" ] || die 2 "simulator missing: $SIM_SCRIPT"
+        bash "$SIM_SCRIPT" --rev "$SOURCE_SHA"
+        exit $?
+    fi
     if [ "$DRY_RUN" -eq 1 ]; then
         head1 "--dry-run: stopping after phase 2"
         say "Manifest reviewed clean. Re-run without --dry-run once the human"
@@ -557,39 +643,31 @@ phase3_rewrite() {
 phase4_scaffold() {
     head1 "phase 4 — scaffold"
 
+    # The image comes from the validated commit, never the work tree: an untracked
+    # or ignored file under the scaffold dir (a stray log, an editor backup) is not
+    # in it, so it can neither be published nor exempted by phase 4b.
+    local image
+    image="$(scaffold_image_files)" || die 1 "no scaffold image at $SOURCE_SHA"
     local missing=0 asset
-    for asset in "${SCAFFOLD_ROW10[@]}"; do
-        [ -f "$SCAFFOLD_DIR/$asset" ] \
-            || { fail "row 10 scaffold asset missing: $SCAFFOLD_DIR/$asset"; missing=1; }
-    done
-    for asset in "${SCAFFOLD_ROW9[@]}"; do
-        [ -f "$SCAFFOLD_DIR/$asset" ] \
-            || { fail "row 9 scaffold asset missing: $SCAFFOLD_DIR/$asset"; missing=1; }
+    for asset in "${SCAFFOLD_ROW10[@]}" "${SCAFFOLD_ROW9[@]}" docs/seed-paths.txt docs/seed-audit.md; do
+        printf '%s\n' "$image" | grep -qxF -- "$asset" \
+            || { fail "required scaffold file missing at $SOURCE_SHA: $asset"; missing=1; }
     done
     if [ "$missing" -ne 0 ]; then
-        fail "Row 9 (layer CI: the three workflow lanes plus .coderabbit.yaml) is not authored yet."
-        fail "It is blocked on the repo existing — branch protection needs the exact job names"
-        fail "the lanes emit. Land row 9 into $SCAFFOLD_DIR before a real seed:"
-        fail "pushing a public repo with no gates is worse than not pushing it."
+        fail "The scaffold image must carry the layer's CI (row 9), its root files and"
+        fail "consumption contract (row 10), the manifest and the audit table. Pushing a"
+        fail "public repo with no gates is worse than not pushing it."
         die 1 "scaffold incomplete"
     fi
 
-    for asset in "${SCAFFOLD_ROW10[@]}" "${SCAFFOLD_ROW9[@]}"; do
-        mkdir -p "$WORK_DIR/$(dirname "$asset")" || die 1 "mkdir failed for $asset"
-        cp "$SCAFFOLD_DIR/$asset" "$WORK_DIR/$asset" || die 1 "cannot write $asset"
-        pass "wrote $asset"
-    done
-
-    # The manifest is the audit trail; it ships in the seeded repo at the
-    # location row 8c names. Both already sit under docs/ in the scaffold image.
-    mkdir -p "$WORK_DIR/docs" || die 1 "mkdir docs failed"
-    cp "$MANIFEST_SRC" "$WORK_DIR/docs/seed-paths.txt" || die 1 "cannot write docs/seed-paths.txt"
-    pass "wrote docs/seed-paths.txt"
-
-    [ -f "$AUDIT_SRC" ] \
-        || die 1 "audit table missing: $AUDIT_SRC (the per-path publication verdict is a phase-4b precondition)"
-    cp "$AUDIT_SRC" "$WORK_DIR/docs/seed-audit.md" || die 1 "cannot write docs/seed-audit.md"
-    pass "wrote docs/seed-audit.md"
+    # <image>/X lands at <layer>/X — one copy rule, shared with agent-layer-sim.sh.
+    ali_extract_image "$SOURCE_ROOT" "$SOURCE_SHA" "$WORK_DIR" \
+        || die 1 "could not write the scaffold image of $SOURCE_SHA into $WORK_DIR"
+    local f
+    while IFS= read -r f; do
+        [ -f "$WORK_DIR/$f" ] || die 1 "scaffold file not written: $f"
+        pass "wrote $f"
+    done <<< "$image"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
     git add -A || die 1 "git add failed"
@@ -634,17 +712,18 @@ phase4b_audit() {
 
     # 2. the rewritten file set must be a SUBSET of the manifest. Anything the
     #    allowlist did not name aborts before the push.
-    local tracked outside=0 f ok spec
+    local tracked image outside=0 f ok spec
     tracked="$(mktemp)" || die 1 "mktemp failed"
+    image="$(mktemp)" || die 1 "mktemp failed"
     # shellcheck disable=SC2064
-    trap "rm -f '$tracked'" RETURN
+    trap "rm -f '$tracked' '$image'" RETURN
     git ls-files > "$tracked"
+    scaffold_image_files > "$image"
     while IFS= read -r f; do
-        # Files phase 4 just added are seeded-by-construction, not manifest rows.
-        case "$f" in
-            README.md|LICENSE|project.config.json|.coderabbit.yaml) continue ;;
-            .github/workflows/*|docs/seed-paths.txt|docs/seed-audit.md) continue ;;
-        esac
+        # Files phase 4 copied from the scaffold image are seeded by construction,
+        # not manifest rows — and the image is itself under a manifest path, so it
+        # was audited with the rest.
+        grep -qxF -- "$f" "$image" && continue
         ok=0
         while IFS= read -r spec; do
             case "$f" in "$spec"*) ok=1; break ;; esac
@@ -730,12 +809,31 @@ phase4b_audit() {
     pass "publication audit CLEAR — phase 5 unlocked"
 }
 
+# ----------------------------------------------------------------- phase 4c lanes
+# The layer's own CI lanes, on the exact tree phase 5 is about to push. Phase 2
+# proves the manifest's shape; only running the gates proves it is complete — an
+# unseeded fixture or a host-only subject passes every shape check and reds the
+# first layer PR.
+phase4c_lanes() {
+    head1 "phase 4c — layer CI lanes on the rewritten clone (hard gate on the phase 5 push)"
+
+    [ -f "$SIM_SCRIPT" ] || die 1 "simulator missing: $SIM_SCRIPT"
+    if bash "$SIM_SCRIPT" --run-only "$WORK_DIR"; then
+        LANES_CLEARED=1
+        pass "the layer's CI lanes are green on the rewritten clone — phase 5 unlocked"
+    else
+        die 1 "the layer's CI lanes are red on the rewritten clone — nothing pushed"
+    fi
+}
+
 # --------------------------------------------------------------- phase 5 publish
 phase5_publish() {
     head1 "phase 5 — publish (IRREVERSIBLE)"
 
     [ "$PUBLISH_CLEARED" -eq 1 ] \
         || die 1 "refusing to push: phase 4b did not clear. A public history cannot be un-published."
+    [ "$LANES_CLEARED" -eq 1 ] \
+        || die 1 "refusing to push: phase 4c did not clear. A public repo that reds its own gates is not a seed."
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -832,6 +930,7 @@ main() {
     phase3_rewrite
     phase4_scaffold
     phase4b_audit
+    phase4c_lanes
     phase5_publish
     phase6_report
 }

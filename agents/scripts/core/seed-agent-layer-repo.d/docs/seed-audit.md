@@ -47,6 +47,16 @@ The residual risk is bounded by one fact: **the Smatchet repository is already p
 re-publishes a subset of already-public history and adds no new exposure. The audit's job is to stop a
 live leak or an un-republishable text being *doubled* into a second, reuse-oriented repository.
 
+**Delta audit — the row-8 correction (2026-10-04).** The first standalone simulation of the layer
+(`agent-layer-sim.sh`) showed the 75-path manifest was incomplete: layer wrappers whose suites were not
+seeded, and fixtures nobody had listed. **43 pathspecs were added** (5 bats suites, 38 fixture paths;
+77 files), then a 44th — `tests/dev/comment_tooling/` — after review found its wrapper skipping by exit 2. Each was swept over its **full** history, not a delta, because none had been audited before:
+`seed-audit-sweep.py --manifest <the 43 lines>` — **38 commits, 5,879 added lines, 0 binaries**, every
+head file seen in the scanned history; gitleaks over `--all` history for the same paths — **0
+findings**; the provenance grep — no third-party markers. The values triaged are in each row's notes.
+The guards this change adds inside already-cleared paths are its own edits, reviewed in its diff; like
+any post-pin commit they are swept by the next pin advance (§ Status).
+
 ## Findings
 
 ### Secrets — none real (two scanners agree)
@@ -176,74 +186,121 @@ decision rather than an oversight:
 | 11 | `scripts/dev/project-config.sh` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings. |
 | 12 | `scripts/dev/test-all.sh` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings. |
 | 13 | `scripts/dev/test-docs.sh` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings. |
-| 14 | `tests/bats/agent_size.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 15 | `tests/bats/android_openssl_failfast.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 16 | `tests/bats/archive_backlog_entry.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `example.com` link fixture only. |
-| 17 | `tests/bats/capture_intent.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Synthetic token fixtures only — verified placeholders (see § Findings, Secrets). Also uses the owner's real e-mail as a redaction fixture: **D2**, non-blocking. |
-| 18 | `tests/bats/coderabbit_triage.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 19 | `tests/bats/cr_oob_review_backfill.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 20 | `tests/bats/dead_export_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 21 | `tests/bats/dup_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 22 | `tests/bats/fail_open_authoring.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 23 | `tests/bats/fleet_preflight.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 24 | `tests/bats/fleet_rescope.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 25 | `tests/bats/followup_due_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 26 | `tests/bats/function_size.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 27 | `tests/bats/fuzz_closure_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 28 | `tests/bats/gate_selftests.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 29 | `tests/bats/git_janitor.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 30 | `tests/bats/harness_provisioned_doctor.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 31 | `tests/bats/historical_review_ledger_reconcile.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 32 | `tests/bats/historical_review_survivors.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 33 | `tests/bats/include_cycle_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 34 | `tests/bats/is_pure_docs_diff.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 35 | `tests/bats/issue_sweep.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 36 | `tests/bats/lint_rules.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 37 | `tests/bats/lock_claim.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 38 | `tests/bats/lock_staleness_sweep.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 39 | `tests/bats/markdown_links.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `example.com` / `a.b` / `ftp://server` link fixtures only. |
-| 40 | `tests/bats/merge_gates.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 41 | `tests/bats/merge_watcher.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 42 | `tests/bats/merge_watcher_integration.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 43 | `tests/bats/migrate_bugs_to_issues.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 44 | `tests/bats/oob_label_impl.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 45 | `tests/bats/panel_verdicts.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Comment reference to the Whip-Process absorption plan only; suite authored first-party (absorption Phase 4), not a port. |
-| 46 | `tests/bats/plan_archival_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 47 | `tests/bats/plan_index_robustness.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 48 | `tests/bats/plan_lock_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 49 | `tests/bats/postmortem_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 50 | `tests/bats/pre_push_guard.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 51 | `tests/bats/preship_review_artifact.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 52 | `tests/bats/repo_health_facts_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 53 | `tests/bats/required_context_adr_consistency.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 54 | `tests/bats/required_context_parity.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 55 | `tests/bats/resolve_py.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 56 | `tests/bats/resolve_repo.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 57 | `tests/bats/review_ack_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 58 | `tests/bats/review_guard.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap below the scan floor — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
-| 59 | `tests/bats/run_review.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap is low (0.5%) — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
-| 60 | `tests/bats/safe_admin_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 61 | `tests/bats/safe_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 62 | `tests/bats/script_freshness.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 63 | `tests/bats/session_registry.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 64 | `tests/bats/setup_branch_protection.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 65 | `tests/bats/shell_lint.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 66 | `tests/bats/small_helper_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 67 | `tests/bats/subsystem_docs.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `t@t.test` fixture identity only. |
-| 68 | `tests/bats/sync_issue_labels.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 69 | `tests/bats/unwatched_pr_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 70 | `tests/bats/verifier_preship_wiring.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Loopback (`127.0.0.1`) test endpoints only. |
-| 71 | `tests/bats/verifier_review_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Comment reference to the Whip-Process absorption plan only; the panel end-to-end section is first-party, not a port. |
-| 72 | `tests/bats/work_item_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 73 | `tests/bats/workflow_job_mask.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 74 | `tests/bats/workflow_watchdog.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 75 | `tests/bats/worktree_prune.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 14 | `tests/dev/comment_tooling/` | `CLEAR` | Claude (agent) | 2026-10-04 | `test_comment_tooling.py`, the suite behind `test-comment-tooling.sh` for the seeded `comment_audit.py` / `comment_strip.py`; synthetic in-memory fixtures. Added after the review of the row-8 correction found its wrapper skipping by exit 2 in the standalone image. Full-history sweep (7 commits, 326 lines) + gitleaks: no findings beyond commit-trailer `claude.ai` / noreply values. `SMATCHET_DEVIATION` literals are the gate's own grammar — de-Smatchet-ification follow-up. |
+| 15 | `tests/fixtures/function_size/` | `CLEAR` | Claude (agent) | 2026-10-04 | 4 synthetic C++ fixtures for `function_size_audit.py`. Full-history sweep (2026-10-04) + gitleaks: no findings. Each carries `namespace smatchet` — a host literal, the de-Smatchet-ification follow-up (fixtures are outside the portable-purity scope), not a publication blocker. |
+| 16 | `tests/fixtures/lint_rules/` | `CLEAR` | Claude (agent) | 2026-10-04 | 17 synthetic C++ fixtures for the lint-rules gates. Full-history sweep (2026-10-04) + gitleaks: no findings. The only host tokens are `SMATCHET_DEVIATION` markers (the gate's own escape grammar) and one `SmatchetLocalizedImGui` name — de-Smatchet-ification follow-up. |
+| 17 | `tests/fixtures/shell_lint/` | `CLEAR` | Claude (agent) | 2026-10-04 | 16 known-good / known-bad shell fixtures for `test-shell-lint.sh`. Full-history sweep (2026-10-04) + gitleaks: no findings. URLs are `example.com` only. |
+| 18 | `tests/fixtures/lint_hook_probe.cpp` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic probe for `test-lint-hook-split.sh`. Full-history sweep (2026-10-04) + gitleaks: no findings. One `smatchet_lint_probe` namespace — de-Smatchet-ification follow-up. |
+| 19 | `tests/fixtures/ci_parity_config_clean.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 20 | `tests/fixtures/ci_parity_config_filtered.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 21 | `tests/fixtures/ci_parity_config_nopr.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 22 | `tests/fixtures/ci_parity_config_selfgated.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 23 | `tests/fixtures/ci_parity_config_templated.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 24 | `tests/fixtures/ci_parity_config_unresolvable.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 25 | `tests/fixtures/ci_parity_wf_clean.yml` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 26 | `tests/fixtures/ci_parity_wf_filtered.yml` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 27 | `tests/fixtures/ci_parity_wf_nopr.yml` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 28 | `tests/fixtures/ci_parity_wf_selfgated.yml` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 29 | `tests/fixtures/ci_parity_wf_templated.yml` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic workflow/config fixture for `required_context_parity.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 30 | `tests/fixtures/merge_gates_bb_clean.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 31 | `tests/fixtures/merge_gates_bb_findings.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 32 | `tests/fixtures/merge_gates_bb_stale.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 33 | `tests/fixtures/merge_gates_bb_terminal.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 34 | `tests/fixtures/merge_gates_ci_fail.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 35 | `tests/fixtures/merge_gates_ci_pending.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 36 | `tests/fixtures/merge_gates_cr_changes.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 37 | `tests/fixtures/merge_gates_cr_current_clean.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 38 | `tests/fixtures/merge_gates_cr_findings.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 39 | `tests/fixtures/merge_gates_cr_size_skip.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 40 | `tests/fixtures/merge_gates_cr_stale.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 41 | `tests/fixtures/merge_gates_cr_stale_clean.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 42 | `tests/fixtures/merge_gates_cr_stale_findings.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 43 | `tests/fixtures/merge_gates_cr_stale_resolved.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 44 | `tests/fixtures/merge_gates_dedup_rerun_pass.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 45 | `tests/fixtures/merge_gates_label_intent_oob.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 46 | `tests/fixtures/merge_gates_label_oob_other_fail_blocks.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 47 | `tests/fixtures/merge_gates_label_perf_oob.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 48 | `tests/fixtures/merge_gates_label_tests_oob.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 49 | `tests/fixtures/merge_gates_pagination.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 50 | `tests/fixtures/merge_gates_pass.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. One `"login"` is the owner's GitHub handle, already public through this repository and its commit metadata — the D2 class (non-blocking), not a leak. Every other login is a bot or a placeholder. |
+| 51 | `tests/fixtures/merge_gates_state.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 52 | `tests/fixtures/merge_gates_user_comment.json` | `CLEAR` | Claude (agent) | 2026-10-04 | Synthetic GraphQL payload for `merge_gates.bats`. Full-history sweep (2026-10-04) + gitleaks: no findings. Logins are bots (`coderabbitai[bot]`, `cursor[bot]`, `github-actions`) or placeholders. |
+| 53 | `tests/bats/agent_size.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 54 | `tests/bats/android_openssl_failfast.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 55 | `tests/bats/archive_backlog_entry.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `example.com` link fixture only. |
+| 56 | `tests/bats/capture_intent.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Synthetic token fixtures only — verified placeholders (see § Findings, Secrets). Also uses the owner's real e-mail as a redaction fixture: **D2**, non-blocking. |
+| 57 | `tests/bats/coderabbit_triage.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 58 | `tests/bats/cr_oob_review_backfill.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 59 | `tests/bats/dead_export_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 60 | `tests/bats/dup_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 61 | `tests/bats/fail_open_authoring.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 62 | `tests/bats/fleet_preflight.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 63 | `tests/bats/fleet_rescope.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 64 | `tests/bats/followup_due_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 65 | `tests/bats/function_size.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 66 | `tests/bats/fuzz_closure_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 67 | `tests/bats/gate_selftests.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 68 | `tests/bats/git_janitor.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 69 | `tests/bats/guard_head_drift.bats` | `CLEAR` | Claude (agent) | 2026-10-04 | Harness-hook suite, newly seeded by the wrapper-derived bats rule (2026-10-04). Full-history sweep (2026-10-04) + gitleaks: no findings. `SMATCHET_*` env knobs are host literals (de-Smatchet-ification follow-up); `CR-953` is a review-thread id, not a ticket. |
+| 70 | `tests/bats/guard_plan_lock.bats` | `CLEAR` | Claude (agent) | 2026-10-04 | Harness-hook suite, newly seeded by the wrapper-derived bats rule (2026-10-04). Full-history sweep (2026-10-04) + gitleaks: no findings. `SMATCHET_*` env knobs are host literals (de-Smatchet-ification follow-up); `CR-953` is a review-thread id, not a ticket. |
+| 71 | `tests/bats/guard_shared_tree.bats` | `CLEAR` | Claude (agent) | 2026-10-04 | Newly seeded by the wrapper-derived bats rule (2026-10-04): its wrapper already lived in `agents/scripts/**`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 72 | `tests/bats/harness_provisioned_doctor.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 73 | `tests/bats/historical_review_ledger_reconcile.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 74 | `tests/bats/historical_review_survivors.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 75 | `tests/bats/include_cycle_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 76 | `tests/bats/is_pure_docs_diff.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 77 | `tests/bats/issue_sweep.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 78 | `tests/bats/lint_rules.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 79 | `tests/bats/lock_claim.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 80 | `tests/bats/lock_staleness_sweep.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 81 | `tests/bats/markdown_links.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `example.com` / `a.b` / `ftp://server` link fixtures only. |
+| 82 | `tests/bats/merge_gates.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 83 | `tests/bats/merge_watcher.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 84 | `tests/bats/merge_watcher_integration.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 85 | `tests/bats/migrate_bugs_to_issues.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 86 | `tests/bats/oob_label_impl.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 87 | `tests/bats/panel_verdicts.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Comment reference to the Whip-Process absorption plan only; suite authored first-party (absorption Phase 4), not a port. |
+| 88 | `tests/bats/plan_archival_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 89 | `tests/bats/plan_index_robustness.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 90 | `tests/bats/plan_lock_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 91 | `tests/bats/postmortem_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 92 | `tests/bats/pre_push_guard.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 93 | `tests/bats/preship_review_artifact.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 94 | `tests/bats/pretool_workflow_fleet_preflight.bats` | `CLEAR` | Claude (agent) | 2026-10-04 | Newly seeded by the wrapper-derived bats rule (2026-10-04): its wrapper already lived in `agents/scripts/**`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 95 | `tests/bats/project_config_roots.bats` | `CLEAR` | Claude (agent) | 2026-10-04 | Newly seeded by the wrapper-derived bats rule (2026-10-04): its wrapper already lived in `agents/scripts/**`. Full-history sweep (2026-10-04) + gitleaks: no findings. |
+| 96 | `tests/bats/repo_health_facts_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 97 | `tests/bats/required_context_adr_consistency.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 98 | `tests/bats/required_context_parity.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 99 | `tests/bats/resolve_py.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 100 | `tests/bats/resolve_repo.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 101 | `tests/bats/review_ack_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 102 | `tests/bats/review_guard.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap below the scan floor — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
+| 103 | `tests/bats/run_review.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap is low (0.5%) — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
+| 104 | `tests/bats/safe_admin_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 105 | `tests/bats/safe_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 106 | `tests/bats/script_freshness.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 107 | `tests/bats/session_registry.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 108 | `tests/bats/setup_branch_protection.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 109 | `tests/bats/shell_lint.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 110 | `tests/bats/small_helper_audit.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 111 | `tests/bats/subsystem_docs.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | `t@t.test` fixture identity only. |
+| 112 | `tests/bats/sync_issue_labels.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 113 | `tests/bats/unwatched_pr_nudge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 114 | `tests/bats/verifier_preship_wiring.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Loopback (`127.0.0.1`) test endpoints only. |
+| 115 | `tests/bats/verifier_review_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | Comment reference to the Whip-Process absorption plan only; the panel end-to-end section is first-party, not a port. |
+| 116 | `tests/bats/work_item_owed.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 117 | `tests/bats/workflow_job_mask.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 118 | `tests/bats/workflow_watchdog.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
+| 119 | `tests/bats/worktree_prune.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
 
 ## Status
 
-**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved, so the **verdict** gate (phase 4b) is satisfied,
-and as of the pin above the audit is **current**: the **freshness** guard (phase 3) passes until a later
-commit touches a manifest path.
+**119 of 119 rows cleared** (0 `PENDING`), so the **verdict** gate (phase 4b) is satisfied. The
+**freshness** guard (phase 3) is **stale**: commits after the pin above have touched manifest paths —
+ordinary surface traffic, plus the 2026-10-04 row-8 correction, which edited guards inside cleared
+paths. Re-sweep `--since` the pin and move it as the last step before a real seed, not earlier: the
+surface takes several commits a day, so an early pin goes stale again before the human preconditions
+are met.
 
 **A pin can only name a commit that already exists on develop.** A change to manifest paths therefore
 always lands after the pin it sets. Its content can be swept before merge, but the pin cannot name its

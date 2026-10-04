@@ -37,6 +37,10 @@ setup() {
 }
 
 @test "fuzz_closure_audit: --check passes on the real tree (WARN-first -> exit 0)" {
+    # The real fuzz targets are the consuming product's; a standalone agent layer has
+    # none. Keyed on Source/, not on the audit's own input, so a host-side move of
+    # tests/fuzz/CMakeLists.txt still fails here instead of skipping.
+    [ -d "$REPO_ROOT/Source" ] || skip "no product tree (standalone agent layer)"
     cd "$REPO_ROOT" || return 1
     run env CLAUDE_PROJECT_DIR="$REPO_ROOT" "$PY" "$AUD" --check
     [ "$status" -eq 0 ]
@@ -44,12 +48,20 @@ setup() {
 }
 
 @test "fuzz_closure_audit: --strict on the (clean) real tree exits 0" {
+    # The real fuzz targets are the consuming product's; a standalone agent layer has
+    # none. Keyed on Source/, not on the audit's own input, so a host-side move of
+    # tests/fuzz/CMakeLists.txt still fails here instead of skipping.
+    [ -d "$REPO_ROOT/Source" ] || skip "no product tree (standalone agent layer)"
     cd "$REPO_ROOT" || return 1
     run env CLAUDE_PROJECT_DIR="$REPO_ROOT" "$PY" "$AUD" --strict
     [ "$status" -eq 0 ]
 }
 
 @test "fuzz_closure_audit: --list parses every real fuzz target" {
+    # The real fuzz targets are the consuming product's; a standalone agent layer has
+    # none. Keyed on Source/, not on the audit's own input, so a host-side move of
+    # tests/fuzz/CMakeLists.txt still fails here instead of skipping.
+    [ -d "$REPO_ROOT/Source" ] || skip "no product tree (standalone agent layer)"
     cd "$REPO_ROOT" || return 1
     run env CLAUDE_PROJECT_DIR="$REPO_ROOT" "$PY" "$AUD" --list
     [ "$status" -eq 0 ]

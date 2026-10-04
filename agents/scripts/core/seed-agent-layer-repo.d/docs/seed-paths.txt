@@ -14,9 +14,19 @@
 #   * This is an ALLOWLIST, not a subtraction. `agents/` is deliberately NOT
 #     listed as one prefix: that would sweep the project-scoped `agents/project/**`
 #     straight into public history. The four portable subtrees are enumerated.
-#   * The tests/bats block is GENERATED, never hand-edited:
-#       grep -l 'agents/' tests/bats/*.bats | sort
-#     seed-agent-layer-repo.sh phase 2 regenerates it and diffs against this file.
+#   * The tests/bats block is GENERATED, never hand-edited: it is every suite a
+#     layer-side wrapper (agents/scripts/{core,project}/test-*.sh) runs, because a
+#     suite goes where its wrapper goes. Regenerate it with
+#       bash agents/scripts/core/seed-agent-layer-repo.sh --print-bats-block
+#     and phase 2 diffs it against this file. (The old `grep -l 'agents/'` rule
+#     missed every layer suite that never spells out `agents/`.)
+#   * The tests/fixtures block is HAND-MAINTAINED: the test data the seeded suites
+#     read. Phase 2 cannot see a missing fixture; the simulation can —
+#       bash agents/scripts/core/seed-agent-layer-repo.sh --simulate
+#     builds this manifest's tree and runs the layer's own CI lanes in it, and seed
+#     phase 4c re-runs them on the rewritten clone before anything is pushed.
+#     Explicit files, not a parent directory, where the parent also holds product
+#     fixtures; there is no glob form here (it would bypass the per-path audit).
 
 # --- portable agent surface (four explicit subtrees; NOT a bare `agents/`) ---
 agents/core/
@@ -43,6 +53,47 @@ scripts/dev/project-config.sh
 scripts/dev/test-all.sh
 scripts/dev/test-docs.sh
 
+# --- test fixtures + data the seeded suites read (HAND-MAINTAINED — see CONTRACT above) ---
+tests/dev/comment_tooling/
+tests/fixtures/function_size/
+tests/fixtures/lint_rules/
+tests/fixtures/shell_lint/
+tests/fixtures/lint_hook_probe.cpp
+tests/fixtures/ci_parity_config_clean.json
+tests/fixtures/ci_parity_config_filtered.json
+tests/fixtures/ci_parity_config_nopr.json
+tests/fixtures/ci_parity_config_selfgated.json
+tests/fixtures/ci_parity_config_templated.json
+tests/fixtures/ci_parity_config_unresolvable.json
+tests/fixtures/ci_parity_wf_clean.yml
+tests/fixtures/ci_parity_wf_filtered.yml
+tests/fixtures/ci_parity_wf_nopr.yml
+tests/fixtures/ci_parity_wf_selfgated.yml
+tests/fixtures/ci_parity_wf_templated.yml
+tests/fixtures/merge_gates_bb_clean.json
+tests/fixtures/merge_gates_bb_findings.json
+tests/fixtures/merge_gates_bb_stale.json
+tests/fixtures/merge_gates_bb_terminal.json
+tests/fixtures/merge_gates_ci_fail.json
+tests/fixtures/merge_gates_ci_pending.json
+tests/fixtures/merge_gates_cr_changes.json
+tests/fixtures/merge_gates_cr_current_clean.json
+tests/fixtures/merge_gates_cr_findings.json
+tests/fixtures/merge_gates_cr_size_skip.json
+tests/fixtures/merge_gates_cr_stale.json
+tests/fixtures/merge_gates_cr_stale_clean.json
+tests/fixtures/merge_gates_cr_stale_findings.json
+tests/fixtures/merge_gates_cr_stale_resolved.json
+tests/fixtures/merge_gates_dedup_rerun_pass.json
+tests/fixtures/merge_gates_label_intent_oob.json
+tests/fixtures/merge_gates_label_oob_other_fail_blocks.json
+tests/fixtures/merge_gates_label_perf_oob.json
+tests/fixtures/merge_gates_label_tests_oob.json
+tests/fixtures/merge_gates_pagination.json
+tests/fixtures/merge_gates_pass.json
+tests/fixtures/merge_gates_state.json
+tests/fixtures/merge_gates_user_comment.json
+
 # --- layer-coupled bats suites (GENERATED — see CONTRACT above) ---
 tests/bats/agent_size.bats
 tests/bats/android_openssl_failfast.bats
@@ -60,6 +111,9 @@ tests/bats/function_size.bats
 tests/bats/fuzz_closure_audit.bats
 tests/bats/gate_selftests.bats
 tests/bats/git_janitor.bats
+tests/bats/guard_head_drift.bats
+tests/bats/guard_plan_lock.bats
+tests/bats/guard_shared_tree.bats
 tests/bats/harness_provisioned_doctor.bats
 tests/bats/historical_review_ledger_reconcile.bats
 tests/bats/historical_review_survivors.bats
@@ -82,6 +136,8 @@ tests/bats/plan_lock_gate.bats
 tests/bats/postmortem_owed.bats
 tests/bats/pre_push_guard.bats
 tests/bats/preship_review_artifact.bats
+tests/bats/pretool_workflow_fleet_preflight.bats
+tests/bats/project_config_roots.bats
 tests/bats/repo_health_facts_nudge.bats
 tests/bats/required_context_adr_consistency.bats
 tests/bats/required_context_parity.bats

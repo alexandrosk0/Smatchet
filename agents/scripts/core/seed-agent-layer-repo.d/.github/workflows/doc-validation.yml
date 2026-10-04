@@ -1,0 +1,51 @@
+name: Doc validation
+
+# The layer-runnable subset of the doc gates, via scripts/dev/test-docs.sh. In a
+# tree with no consuming product (no Source/), that script runs the steps that
+# read only layer content — anchors, agent contract, portable purity, markdown
+# links, md_lint, agent discovery, gate selftests, out-of-band labels, vexp
+# portability, orphan bats — and prints an explicit SKIP for each step that reads
+# product content (plans, presets, work items, ADRs, CI workflows). The split is
+# test-docs.sh's to own, not this file's, so the two cannot drift apart.
+#
+# "Doc anchors + agent contract" is a branch-protection REQUIRED context: no path
+# filter, no job `if:`, so it reports on every pull request.
+#
+# agent-layer-sim.sh runs the same command locally (lane `docs`) and fails if it
+# stops appearing here, so edit both together.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  merge_group:
+
+concurrency:
+  group: doc-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ROOT: ${{ github.workspace }}
+  AGENT_LAYER_ROOT: ${{ github.workspace }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  doc-validation:
+    name: Doc anchors + agent contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # No history needed: in this repo test-docs.sh runs the link check at --all
+      # scope against docs/high-integrity/markdown-link-baseline.md, not diff-scoped.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: test-docs.sh — layer doc-validation subset
+        run: bash scripts/dev/test-docs.sh

@@ -264,8 +264,13 @@ setup() {
     # filenames) so individual script renames don't break this.
     run bash "$LINT" --list-targets
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scripts/mobile/"* ]]
     [[ "$output" == *"docs/harness/"*"/hooks/"* ]]
+    # scripts/mobile/ is the consuming product's; the standalone agent layer has
+    # none. Keyed on Source/, not on scripts/mobile itself, so a host-side move of
+    # the mobile helpers out of the lint scope still fails here.
+    if [ -d "$REPO_ROOT/Source" ]; then
+        [[ "$output" == *"scripts/mobile/"* ]]
+    fi
 }
 
 @test "default target set covers agents/scripts/core/lib (sourced libraries)" {

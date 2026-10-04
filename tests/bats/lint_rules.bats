@@ -815,7 +815,10 @@ _resolve_py() {
 }
 
 @test "--diff FAILs when HEAD has a triple absent from the baseline" {
-    # Empty baseline -> every current strict-zone violation is 'new'.
+    # Empty baseline -> every current strict-zone violation is 'new'. That needs the
+    # real tree to HAVE strict-zone C++ violations, which only the consuming
+    # product's Source/ does; the standalone agent layer has no C++ at all.
+    [ -d "$REPO_ROOT/Source" ] || skip "no strict-zone C++ in this tree (standalone agent layer)"
     : > /tmp/lr_base_empty
     SMATCHET_LINT_BASELINE_SET=/tmp/lr_base_empty run bash "$LINT" --diff
     [ "$status" -eq 1 ]

@@ -147,7 +147,11 @@ done
 # Runs the canonical harness-agnostic scanner at scripts/dev/pillar2-scan.sh
 # against every file in the chunk. Emits CRITICAL per sync-I/O reaching the
 # UI thread without /* PILLAR2_WORKER_ONLY */ + est-latency annotation.
-if [[ ${#CHUNK[@]} -gt 0 ]]; then
+# The scanner is the consuming product's, not the harness's, so the gate runs
+# wherever there is a product tree (Source/). Keyed on that, never on the scanner
+# file: a deleted or renamed scanner in a product tree must still surface below as
+# an internal failure (rc 127), not silently disable Pillar 2.
+if [[ ${#CHUNK[@]} -gt 0 && -d "$PROJ_DIR/Source" ]]; then
     declare -a P2_RELS=()
     for abs in "${CHUNK[@]}"; do
         P2_RELS+=("$(lint_normalize_path "$abs")")

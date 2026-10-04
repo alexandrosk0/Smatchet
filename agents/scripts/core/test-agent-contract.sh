@@ -37,8 +37,13 @@
 #   [9/15]   .claude/hooks/agent-token-log.py — the host-side adapter copy. Not
 #            newly host-coupled and not converted: it already degrades to a pass
 #            when the copy is absent, which is the same tree state.
+#   [1/15]   the project implementers (tracker-backend, grid-engine, ...) — their
+#            prompts live in agents/project/, which the seed excludes. Missed by
+#            the Phase A audit and found by the first standalone simulation; they
+#            are check_skip'd when agents/project/ is absent. mechanic, the one
+#            layer implementer, is still checked everywhere.
 #
-# 13 of 15 are pure layer checks. That is well short of the third-of-checks
+# 12 of 15 are pure layer checks; [1/15] is partly host-coupled. That is well short of the third-of-checks
 # threshold at which the plan says to reconsider splitting this script in two,
 # so the predicate stays and the harness and pass/fail accounting are not
 # duplicated. Any check added later that names a host path MUST be added to this
@@ -334,15 +339,27 @@ agent_files() {
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
 echo "[1/15] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
-IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge mechanic ui-host)
-for a in "${IMPLEMENTERS[@]}"; do
+# Layer implementers live in agents/core/ and are checked everywhere. Project
+# implementers live in agents/project/, which the agent-layer seed deliberately does
+# not carry, so a standalone layer checkout skips them; wherever agents/project/
+# exists, a missing prompt fails.
+LAYER_IMPLEMENTERS=(mechanic)
+PROJECT_IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge ui-host)
+check_implementer() {
+  local a="$1" f h miss=0
   f="$(agent_path "$a")"
-  miss=0
+  if [[ -z "$f" ]]; then check_fail "$a: agent prompt not found under agents/"; return; fi
   for h in "## Files changed" "## Smoke-test result" "## Manual residue"; do
     if ! grep -qF "$h" "$f"; then miss=$((miss+1)); fi
   done
   if [[ $miss -eq 0 ]]; then check_pass "$a"; else check_fail "$a missing $miss/3 Implementer headings"; fi
-done
+}
+for a in "${LAYER_IMPLEMENTERS[@]}"; do check_implementer "$a"; done
+if [[ -d agents/project ]]; then
+  for a in "${PROJECT_IMPLEMENTERS[@]}"; do check_implementer "$a"; done
+else
+  check_skip "${#PROJECT_IMPLEMENTERS[@]} project implementer(s): agents/project/ is not in the layer"
+fi
 
 # -------------------------------------------------------------------------
 # 2. Maintenance agents — 4 required headings.

@@ -107,6 +107,7 @@ dry_run_body() {
 @test "every required check pins required_checks_app_id (no 'any app' widening)" {
     dry_run_body
     WANT="$(jq -r '.branch_protection.required_checks_app_id' project.config.json | tr -d '\r')"
+    WANT_N="$(jq -r '.branch_protection.required_contexts | length' project.config.json | tr -d '\r')"
     # The deprecated contexts[] spelling must not reappear: it carries no app id,
     # so a body using it silently unpins every context to "any app may report
     # this check" — a widening applied by the script that exists to tighten.
@@ -125,9 +126,12 @@ dry_run_body() {
         # omission is total.
         [ "$(jq -r '[.required_status_checks.checks[] | has("app_id")] | any' "$BODY_FILE" | tr -d '\r')" = "false" ]
         # Floor guard (fail-open shape): `any` over an EMPTY array is also
-        # false, so without this an empty checks[] passes vacuously.
+        # false, so without this an empty checks[] passes vacuously. The floor is
+        # the config's own context count, not a constant — every consumer's list
+        # differs (the agent layer's has three).
         N="$(jq -r '.required_status_checks.checks | length' "$BODY_FILE" | tr -d '\r')"
-        [ "${N:-0}" -ge 10 ]
+        [ "${WANT_N:-0}" -ge 1 ]
+        [ "${N:-0}" -eq "$WANT_N" ]
     else
         # Every entry, not just the first — a partial pin is the same hole.
         MISPINNED="$(jq -r --argjson want "$WANT" \
@@ -138,9 +142,10 @@ dry_run_body() {
             return 1
         fi
         # Floor guard (fail-open shape): an empty MISPINNED is also what an empty
-        # checks[] produces. Assert the pin check had entries to walk.
+        # checks[] produces. Assert the pin check walked every configured context.
         N="$(jq -r '.required_status_checks.checks | length' "$BODY_FILE" | tr -d '\r')"
-        [ "${N:-0}" -ge 10 ]
+        [ "${WANT_N:-0}" -ge 1 ]
+        [ "${N:-0}" -eq "$WANT_N" ]
     fi
 }
 

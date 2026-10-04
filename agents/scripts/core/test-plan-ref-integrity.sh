@@ -28,7 +28,9 @@
 # IS still scanned and should use the move-proof tier-less form.
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# Absolute self-path, taken before the cd below (the standalone skip re-runs it).
+_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+cd "$(git rev-parse --show-toplevel)" || exit 2
 
 # Tier-check base — overridable so --selftest can point at a temp fixture tree.
 PLAN_BASE="${SMATCHET_PLAN_BASE:-docs/plans}"
@@ -211,6 +213,27 @@ PLAN
 
   if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5 unit + 6 e2e)"; exit 0; fi
   echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
+fi
+
+# The standalone agent layer (no Source/, and a seed that carries no plans) has
+# nothing to resolve a reference against: every docs/plans/ path its prose cites
+# belongs to a consuming product. There — and only there, and only with no explicit
+# SMATCHET_PLAN_BASE — keep the resolver's own coverage (the self-contained
+# selftest above) and report the real-tree scan as skipped. Anywhere else a missing
+# plans root is broken setup and fails, never a silent pass.
+if [ ! -d "$PLAN_BASE" ]; then
+  if [ -z "${SMATCHET_PLAN_BASE:-}" ] && [ ! -d Source ]; then
+    echo "test-plan-ref-integrity: no $PLAN_BASE/ in a standalone agent layer — real-tree scan skipped."
+    if bash "$_SELF" --selftest; then
+      echo "Passed: 1  Failed: 0  Skipped: 1"
+      exit 0
+    fi
+    echo "Passed: 0  Failed: 1  Skipped: 1"
+    exit 1
+  fi
+  echo "test-plan-ref-integrity: plans root '$PLAN_BASE' not found — nothing to check references against" >&2
+  echo "Passed: 0  Failed: 1"
+  exit 1
 fi
 
 # is_archive_self_ref <ref> — true iff <ref> is a plan's OWN post-move shipped

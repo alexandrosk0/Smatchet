@@ -40,12 +40,15 @@ root_of() {
     "$@" bash "$CONFIG_SH" | sed -n "s/^export ${var}=//p" | tr -d "'"
 }
 
-# A minimal but schema-complete config directory.
+# A minimal but schema-complete config directory. The schema is a stub: the
+# no-deps gate reads only its top-level `required` list, and this suite tests root
+# RESOLUTION, not the schema's content — which also keeps it runnable in the
+# standalone agent layer, which ships no project.config.schema.json.
 make_config_dir() {
     local dir="$1"
     mkdir -p "$dir"
     cp "$REPO_ROOT/project.config.json" "$dir/project.config.json"
-    cp "$REPO_ROOT/project.config.schema.json" "$dir/project.config.schema.json"
+    printf '{"required": ["project"]}\n' >"$dir/project.config.schema.json"
 }
 
 @test "rung 3: both roots default to the repo root pre-flip" {
@@ -146,7 +149,7 @@ make_config_dir() {
     # the script's root the pairing would be wrong and this would pass silently.
     mkdir -p "$TMP/host"
     printf '{"project": {"name": "x"}}\n' >"$TMP/host/project.config.json"
-    cp "$REPO_ROOT/project.config.schema.json" "$TMP/host/project.config.schema.json"
+    printf '{"required": ["project", "vcs"]}\n' >"$TMP/host/project.config.schema.json"
     #
     # The gate's own exit 2 does not reach the caller: the `|| { ... exit 1; }`
     # guard around the python capture rewrites every failure to 1. That is

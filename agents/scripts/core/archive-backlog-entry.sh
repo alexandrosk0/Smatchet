@@ -44,6 +44,8 @@
 #
 # Env: ARCHIVE_SKIP_LINK_CHECK=1  skip step 4 (bats uses this — the self-check
 #      scans the real repo, which a fixture archival must not depend on).
+#      ARCHIVE_SKIP_ROTATE=1      skip step 2b's applied.md rotation (bats uses this
+#      — a fixture's dated entries would be rotated out from under its asserts).
 #
 # Exit codes: 0 ok · 2 bad args / missing file · 3 unresolved inbound reference
 #             · 4 post-archive link check failed.
@@ -422,7 +424,7 @@ fi
 # fixtures copy this script standalone, and a missing OPTIONAL rotation must
 # not abort the archival (the real tree always ships the sibling).
 ROTATE="$(dirname "${BASH_SOURCE[0]}")/rotate-applied-md.sh"
-if [ -f "$ROTATE" ]; then
+if [ -f "$ROTATE" ] && [ "${ARCHIVE_SKIP_ROTATE:-0}" != "1" ]; then
     bash "$ROTATE"
     git add "$APPLIED" "$(dirname "$APPLIED")"/applied-*.md 2>/dev/null || true
 fi

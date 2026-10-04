@@ -103,7 +103,12 @@
   },
 
   "agents": {
-    "_doc": "enabled_project is empty: agents/project/** is project-scoped by construction and is NOT seeded into the public layer (seed-paths.txt enumerates the four portable subtrees rather than a bare agents/ prefix, precisely so agents/project/ cannot ride along).",
-    "enabled_project": []
+    "_doc": "enabled_project is empty: agents/project/** is project-scoped by construction and is NOT seeded into the public layer (seed-paths.txt enumerates the four portable subtrees rather than a bare agents/ prefix, precisely so agents/project/ cannot ride along). size_*: line budgets for agent_size_audit.py — size_budget/warn = agent prompts (agents/core, agents/project); contract_* = AGENTS.md; sink_warn = soft-warn-only sinks (docs/agent-rules, agents/_shared/skills). Hard caps BLOCK (delta-gated + grandfathered); sinks never block. KEEP IN SYNC with the agent_size_audit.py constants (its --selftest asserts equality).",
+    "enabled_project": [],
+    "size_budget_lines": 250,
+    "size_warn_lines": 150,
+    "contract_budget_lines": 150,
+    "contract_warn_lines": 120,
+    "sink_warn_lines": 400
   }
 }
