@@ -194,7 +194,7 @@ TEST_CASE("UserInfo activity worker: teardown mid-scan is UAF-clean and fast (ca
 
     // Pillar-2: teardown must be signal-then-join, NOT a multi-second block. The fake
     // scan would block up to 10 s absent the IO-cancel; a correct teardown is ~instant.
-#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_TESTS_SANITIZED)
+#if defined(__SANITIZE_ADDRESS__)
     CHECK(teardownMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
 #else
     CHECK(teardownMs < 2000);

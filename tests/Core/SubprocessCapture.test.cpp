@@ -79,7 +79,7 @@ TEST_SUITE("SubprocessCapture::Run") {
         // Allow generous slack on overburdened CI runners; the killed
         // child should still be reaped well under the original 5 s
         // sleep budget.
-#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_TESTS_SANITIZED)
+#if defined(__SANITIZE_ADDRESS__)
         CHECK(out.durationMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
 #else
         CHECK(out.durationMs < 2000);
@@ -121,7 +121,7 @@ TEST_SUITE("SubprocessCapture::Run") {
         REQUIRE(r.has_value());
         const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.cancelled);
-#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_TESTS_SANITIZED)
+#if defined(__SANITIZE_ADDRESS__)
         CHECK(out.durationMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
 #else
         CHECK(out.durationMs < 2000);

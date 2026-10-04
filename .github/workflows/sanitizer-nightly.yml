@@ -1,29 +1,38 @@
 name: Sanitizer nightly
 
-# Nightly sanitizer build + instrumented test run on develop (plan:
-# gate-enforcement-hardening § Slice 4). The per-PR sanitizer checks in
-# build-and-test.yml run only on PRs that touch Core or plugin C++ (and in the
-# merge queue); this lane covers whatever reached develop without them, and is
-# the one lane that runs the doctest rig instrumented by clang. The gate is
-# "last nightly was clean"; a failure auto-opens an issue. Trade-off (accepted):
-# a regression can sit up to ~24 h before this catches it.
+# Nightly sanitizer run on develop (plan: gate-enforcement-hardening § Slice 4).
+# The per-PR sanitizer checks in build-and-test.yml run only on PRs that touch
+# Core or plugin C++ (and in the merge queue); this workflow covers whatever
+# reached develop without them. The gate is "last nightly was clean"; a failure
+# auto-opens an issue. Trade-off (accepted): a regression can sit up to ~24 h
+# before this catches it.
 #
-# Uses ninja-clang-asan. It compiles with clang-cl, which needs both the MSVC
-# environment and LLVM on PATH (both present on the windows-2022 image).
+# Two jobs, because no one toolchain does both things on Windows:
 #
-# What it sanitizes: ASan only. clang-cl is an MSVC-style driver, so
-# cmake/Sanitizers.cmake takes its MSVC branch (/fsanitize=address) — UBSan is
-# NOT applied here, whatever the preset and job names say. Tracked in
+#   sanitizer-nightly      ninja-clang-asan (clang-cl). Build only — the Clang
+#                          warning set over the Whisper-off / Lua-off feature
+#                          shape, app instrumented. It executes nothing.
+#   sanitizer-nightly-rig  ninja-msvc-asan (cl.exe). Builds the SmatchetTests
+#                          doctest rig instrumented with ASan and RUNS it. This
+#                          is the job that executes code under a sanitizer.
+#
+# Why the rig does not run in the clang job: an exe instrumented by clang-cl does
+# not survive C++ exception rethrow against the MSVC runtime — a bare `throw;`
+# aborts inside VCRUNTIME140.dll, and the instrumented rig dies seconds in with
+# an execute fault inside MSVCP140.dll. cl.exe's ASan has no such problem; the
+# per-PR "Sanitizer (ASAN via MSVC)" job runs the same rig the same way.
+#
+# What is sanitized: ASan only, in both jobs. MSVC has no UBSan, and clang-cl is
+# an MSVC-style driver, so cmake/Sanitizers.cmake takes its MSVC branch
+# (/fsanitize=address) for it too, whatever the preset and job names say.
+# Both points are tracked in
 # docs/self-improvement/categories/infra/2026-10-03-clang-cl-sanitizer-lanes-apply-asan-only.md.
 #
-# The lane builds AND runs the SmatchetTests doctest rig, instrumented. A
-# configure without SMATCHET_BUILD_TESTS registers no test at all: `ctest` then
-# prints "No tests were found!!!" and exits 0 — a green run that executed
-# nothing. Three things keep the lane from going hollow that way: tests are
-# switched on at configure, the rig is a named build target, and ctest runs with
-# --no-tests=error. Two assertions cover the quieter ways: the built rig must
-# import the ASan runtime, and smatchet_tests itself must appear in ctest's
-# output.
+# A lane like this goes hollow quietly: a `ctest` over a configure that
+# registered no test prints "No tests were found!!!" and exits 0 — a green run
+# that executed nothing. The rig job therefore asserts what it claims: the built
+# rig must import the ASan runtime, and its own summary must report at least one
+# test case, or the job fails.
 
 on:
   schedule:
@@ -57,8 +66,8 @@ jobs:
       # default branch (develop) on schedule, the dispatched branch on
       # workflow_dispatch. Pinning develop would make a dispatch from a feature
       # branch build develop's sources under that branch's workflow file, so a
-      # change to the tests or CMake this lane builds could not be verified before
-      # it merged.
+      # change to anything this workflow builds could not be verified before it
+      # merged.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,85 +101,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
-      # Tests ON and the rig instrumented. SMATCHET_BUILD_TESTS registers the ctest
-      # targets (the preset alone registers none). SMATCHET_SANITIZE_TESTS applies
-      # the sanitizer to SmatchetTests itself: the rig compiles the Source/Core TUs
-      # it covers into its own exe, so without the knob it runs uninstrumented and
-      # a clean run proves nothing about them.
       - name: Configure ninja-clang-asan
-        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF -DSMATCHET_BUILD_TESTS=ON -DSMATCHET_SANITIZE_TESTS=ON
+        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 
       - name: Build (Clang ASan+UBSan)
         shell: bash
         # Tee the build output so the auto-Issue step can tell a COMPILE-phase
-        # failure (a build break) apart from a sanitizer FINDING at test time —
-        # the two want different Issue titles/labels. pipefail keeps the real
-        # cmake exit code despite the tee.
-        #
-        # SmatchetTests is named explicitly: the build preset's own target list is
-        # SmatchetStandalone alone, so the rig would otherwise never be built.
+        # failure (a build break) apart from a failure outside compilation —
+        # the two want different Issue titles. pipefail keeps the real cmake
+        # exit code despite the tee.
         run: |
           set -o pipefail
-          cmake --build --preset ninja-clang-asan --target SmatchetStandalone SmatchetTests 2>&1 | tee build-clang-asan.log
+          cmake --build --preset ninja-clang-asan 2>&1 | tee build-clang-asan.log
 
-      - name: Check the rig is instrumented and put the clang ASan runtime on PATH
-        shell: bash
-        run: |
-          # An instrumented exe imports the ASan runtime DLL by name. If the rig does
-          # not, SMATCHET_SANITIZE_TESTS was lost somewhere and every later step would
-          # still go green on an uninstrumented run.
-          rig=build/ninja-clang-asan/tests/SmatchetTests.exe
-          if ! grep -a -q 'clang_rt.asan_dynamic' "$rig"; then
-            echo "::error::$rig does not import the ASan runtime — the doctest rig is not instrumented."
-            exit 1
-          fi
-          # The instrumented rig imports clang_rt.asan_dynamic-*.dll. That DLL sits in
-          # clang's resource dir beside the import lib, not in LLVM\bin, and the MSVC
-          # environment carries a same-named DLL from a different toolchain. Take the
-          # directory of the exact import lib CMake linked (cmake/Sanitizers.cmake
-          # caches it as _clang_asan_lib) and put it first on PATH.
-          lib="$(sed -n 's/^_clang_asan_lib:FILEPATH=//p' build/ninja-clang-asan/CMakeCache.txt | tr -d '\r')"
-          dir="$(dirname "$lib")"
-          if [ -z "$lib" ] || ! ls "$dir"/clang_rt.asan_dynamic-*.dll >/dev/null 2>&1; then
-            echo "::error::clang ASan runtime DLL not found beside '${lib:-<_clang_asan_lib missing from CMakeCache.txt>}' — the instrumented test rig cannot start."
-            exit 1
-          fi
-          echo "ASan runtime dir: $dir"
-          cygpath -w "$dir" >> "$GITHUB_PATH"
-
-      - name: Run ctest under ASan+UBSan
-        shell: bash
-        working-directory: build/ninja-clang-asan
-        # --no-tests=error: an empty test list is a failure, never a pass. The
-        # output is teed so the auto-Issue step can tell "nothing ran" apart from a
-        # sanitizer finding.
-        run: |
-          set -o pipefail
-          ctest --output-on-failure --no-tests=error 2>&1 | tee ../../ctest-clang-asan.log
-          # The rig is the point of this lane. The cmake-only android probes are
-          # registered alongside it and must not satisfy the lane on their own.
-          if ! grep -qE 'Test +#[0-9]+: smatchet_tests ' ../../ctest-clang-asan.log; then
-            echo "::error::ctest ran, but not smatchet_tests — the doctest rig did not execute."
-            exit 1
-          fi
-
-      - name: Surface sanitizer report in job summary
-        if: failure()
-        shell: bash
-        run: |
-          echo "## Sanitizer nightly failure (Clang ASan+UBSan)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          log=build/ninja-clang-asan/Testing/Temporary/LastTest.log
-          if [ -f "$log" ]; then
-            grep -A 30 -E 'ERROR: AddressSanitizer|runtime error:|UndefinedBehaviorSanitizer' "$log" \
-              | head -120 >> "$GITHUB_STEP_SUMMARY" || true
-          fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      # No test step here on purpose: this job builds, the rig job runs (see the
+      # header). A bare `ctest` in this build directory finds no test and exits 0.
 
       # Only a run on develop files an Issue. A workflow_dispatch from a feature
       # branch is someone verifying a change — its failures are theirs to read in
       # the run, not a regression on develop.
-      - name: Open or update bug issue on failure
+      - name: Open or update issue on failure
         if: failure() && github.ref == 'refs/heads/develop'
         shell: bash
         env:
@@ -178,78 +128,188 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          # Distinguish a COMPILE-phase break (the build never produced an exe to
-          # sanitize) from a genuine sanitizer FINDING at test time. A build break
-          # is NOT a sanitizer regression — mislabeling it sends a build-fix to the
-          # wrong owner and pollutes the sanitizer-finding history. The build step
-          # tees its output to build-clang-asan.log; these markers are emitted by
-          # CMake/Ninja/Clang on a compile failure (and never by an ASan/UBSan
-          # runtime report). NOTE: match only Ninja's FAILURE markers — `FAILED:`
-          # and `ninja: build stopped` appear ONLY on a compile break, whereas
-          # `Building CXX object` prints on every SUCCESSFUL TU too, so matching it
-          # would false-positive a test-time sanitizer finding as a build break.
+          # This job only builds, so it has two ways to fail: the compile, or
+          # something outside it (checkout, toolchain setup, configure). NOTE:
+          # match only Ninja's FAILURE markers — `FAILED:` and `ninja: build
+          # stopped` appear ONLY on a compile break, whereas `Building CXX object`
+          # prints on every SUCCESSFUL TU too.
           build_log="build-clang-asan.log"
-          is_compile_fail=0
           if [ -f "$build_log" ] && \
              grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
-            is_compile_fail=1
-          fi
-          # A run in which the doctest rig never executed is a broken harness, not a
-          # finding: ctest never started (configure, or the instrumentation/runtime
-          # step, failed first), it had nothing to run, or it ran without the rig.
-          ctest_log="ctest-clang-asan.log"
-          is_harness_break=0
-          if ! grep -qsE 'Test +#[0-9]+: smatchet_tests ' "$ctest_log"; then
-            is_harness_break=1
-          fi
-          # A failure with no AddressSanitizer report in the output is a test that
-          # failed on its own terms (an assertion, a wall-clock budget, a timeout) —
-          # worth an Issue, but not a memory-safety regression.
-          has_asan_report=0
-          if grep -qs 'ERROR: AddressSanitizer' "$ctest_log"; then
-            has_asan_report=1
-          fi
-          if [ "$is_compile_fail" = "1" ]; then
             title="Sanitizer nightly BUILD BREAK (compile failure, not a sanitizer finding)"
-            label="build-break"
-            body="The nightly Clang ASan+UBSan job on \`develop\` failed during the
-          COMPILE phase — the build never produced an instrumented binary, so this
-          is a BUILD BREAK, not a sanitizer finding.
+            body="The nightly clang-cl build on \`develop\` (job \`sanitizer-nightly\`,
+          preset \`ninja-clang-asan\`) failed during the COMPILE phase. This is a
+          BUILD BREAK, not a sanitizer finding.
 
           Run: ${RUN_URL}
 
           See the build log (\`build-clang-asan.log\`) in the run for the failing TU.
           Route to build-doctor, not a sanitizer-finding owner."
-          elif [ "$is_harness_break" = "1" ]; then
-            title="Sanitizer nightly HARNESS BREAK (the doctest rig did not run, not a sanitizer finding)"
-            label="build-break"
-            body="The nightly sanitizer job on \`develop\` failed without running the
-          doctest rig — it stopped before ctest started, ctest found nothing to run,
-          or ctest ran without smatchet_tests. This is a broken harness, not a
-          sanitizer finding, and the lane proves nothing until it is fixed.
+          else
+            title="Sanitizer nightly HARNESS BREAK (the job failed outside the compile, not a sanitizer finding)"
+            body="The nightly clang-cl build on \`develop\` (job \`sanitizer-nightly\`,
+          preset \`ninja-clang-asan\`) failed before or outside the compile — checkout,
+          toolchain setup or configure. This is a broken harness, not a sanitizer
+          finding.
 
           Run: ${RUN_URL}
 
           Route to build-doctor, not a sanitizer-finding owner."
-          elif [ "$has_asan_report" = "0" ]; then
-            title="Sanitizer nightly TEST FAILURE (no sanitizer report)"
-            label="bug"
-            body="A test failed in the nightly instrumented run on \`develop\`, and the
-          output carries no AddressSanitizer report. Read it as a plain test failure
-          under the sanitizer build (an assertion, a wall-clock budget, a timeout),
-          not as a memory-safety regression, unless the log says otherwise.
-
-          Run: ${RUN_URL}"
+          fi
+          label="build-break"
+          # De-dup: reuse the single open issue with this exact title if present.
+          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
           else
-            title="Sanitizer nightly failed (ASan+UBSan)"
-            label="bug"
-            body="The nightly Clang ASan+UBSan build/test on \`develop\` failed.
+            gh issue create --title "$title" --label "$label" --body "$body" || true
+          fi
+
+  sanitizer-nightly-rig:
+    name: Sanitizer nightly (MSVC ASan, instrumented rig)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Cache FetchContent _deps (msvc-asan)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-msvc-asan-nightly-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      # The ninja-msvc-asan preset turns on SMATCHET_BUILD_TESTS and
+      # SMATCHET_SANITIZE_TESTS itself, so the rig is built and instrumented with
+      # /fsanitize=address; its build preset names SmatchetTests as a target. Same
+      # feature shape as the per-PR "Sanitizer (ASAN via MSVC)" job.
+      - name: Configure ninja-msvc-asan
+        run: cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
+
+      - name: Build (MSVC ASan)
+        shell: bash
+        # Teed for the auto-Issue step, as in the clang job.
+        run: |
+          set -o pipefail
+          cmake --build --preset ninja-msvc-asan 2>&1 | tee build-msvc-asan.log
+
+      - name: Check the rig is instrumented
+        shell: bash
+        run: |
+          # An instrumented exe imports the ASan runtime DLL by name. If the rig does
+          # not, the sanitize knob was lost somewhere and the run below would still
+          # go green — on an uninstrumented rig, proving nothing.
+          rig=build/ninja-msvc-asan/tests/SmatchetTests.exe
+          if ! grep -a -q 'clang_rt\.asan' "$rig"; then
+            echo "::error::$rig does not import the ASan runtime — the doctest rig is not instrumented."
+            exit 1
+          fi
+
+      # The rig is run directly rather than through ctest, as the per-PR job does:
+      # the exe is the instrumented surface, and its own output is what the
+      # assertions below read. abort_on_error=0 so a stray abort() surfaces with a
+      # stack, not an opaque SIGABRT.
+      - name: Run the instrumented doctest rig (ASan)
+        shell: bash
+        working-directory: build/ninja-msvc-asan
+        env:
+          ASAN_OPTIONS: abort_on_error=0
+        run: |
+          set -o pipefail
+          ./tests/SmatchetTests.exe 2>&1 | tee ../../rig-msvc-asan.log
+          # A run that reports no test case is a failure, never a pass.
+          if ! grep -qE '^\[doctest\] test cases: +[1-9]' ../../rig-msvc-asan.log; then
+            echo "::error::the doctest rig exited 0 without reporting a single test case."
+            exit 1
+          fi
+
+      - name: Surface sanitizer report in job summary
+        if: failure()
+        shell: bash
+        run: |
+          echo "## Sanitizer nightly failure (MSVC ASan, instrumented rig)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f rig-msvc-asan.log ]; then
+            grep -a -A 30 'ERROR: AddressSanitizer' rig-msvc-asan.log \
+              | head -120 >> "$GITHUB_STEP_SUMMARY" || true
+            grep -a -E '^\[doctest\] (test cases|assertions):' rig-msvc-asan.log \
+              >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Only a run on develop files an Issue (see the clang job).
+      - name: Open or update issue on failure
+        if: failure() && github.ref == 'refs/heads/develop'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # Four ways this job fails, and they want different owners:
+          #   compile failure        the build never produced a rig        (BUILD BREAK)
+          #   ASan report            a memory-safety finding               (the lane's purpose)
+          #   a test failed          doctest reached its summary, no report (TEST FAILURE)
+          #   none of the above      the rig never reached a verdict        (HARNESS BREAK)
+          # Match only Ninja's FAILURE markers for the compile (see the clang job).
+          build_log="build-msvc-asan.log"
+          rig_log="rig-msvc-asan.log"
+          if [ -f "$build_log" ] && \
+             grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
+            title="Sanitizer nightly BUILD BREAK (compile failure, not a sanitizer finding)"
+            label="build-break"
+            body="The nightly MSVC ASan build on \`develop\` (job \`sanitizer-nightly-rig\`,
+          preset \`ninja-msvc-asan\`) failed during the COMPILE phase — it never
+          produced an instrumented rig, so this is a BUILD BREAK, not a sanitizer
+          finding.
 
           Run: ${RUN_URL}
 
-          See the job summary for the AddressSanitizer / UBSan report. This is the
-          safety-net gate from gate-enforcement-hardening § Slice 4 —
-          a sanitizer regression has landed on develop."
+          See the build log (\`build-msvc-asan.log\`) in the run for the failing TU.
+          Route to build-doctor, not a sanitizer-finding owner."
+          elif grep -a -qs 'ERROR: AddressSanitizer' "$rig_log"; then
+            title="Sanitizer nightly failed (ASan+UBSan)"
+            label="bug"
+            body="The nightly instrumented doctest rig on \`develop\` (job
+          \`sanitizer-nightly-rig\`, MSVC ASan) reported an AddressSanitizer error.
+
+          Run: ${RUN_URL}
+
+          See the job summary for the report. This is the safety-net gate from
+          gate-enforcement-hardening § Slice 4 — a sanitizer regression has landed
+          on develop."
+          elif grep -a -qsE '^\[doctest\] test cases: +[1-9]' "$rig_log"; then
+            title="Sanitizer nightly TEST FAILURE (no sanitizer report)"
+            label="bug"
+            body="A test failed in the nightly instrumented doctest rig on \`develop\`
+          (job \`sanitizer-nightly-rig\`, MSVC ASan), and the output carries no
+          AddressSanitizer report. Read it as a plain test failure under the
+          sanitizer build (an assertion, a wall-clock budget), not as a memory-safety
+          regression, unless the log says otherwise.
+
+          Run: ${RUN_URL}"
+          else
+            title="Sanitizer nightly HARNESS BREAK (the doctest rig reached no verdict, not a sanitizer finding)"
+            label="build-break"
+            body="The nightly instrumented doctest rig on \`develop\` (job
+          \`sanitizer-nightly-rig\`, MSVC ASan) failed without a compile error, an
+          AddressSanitizer report or a doctest summary — it never started, was not
+          instrumented, ran no test case, or died without a report. This is a broken
+          harness until shown otherwise, and the lane proves nothing meanwhile.
+
+          Run: ${RUN_URL}
+
+          Route to build-doctor, not a sanitizer-finding owner."
           fi
           # De-dup: reuse the single open issue with this exact title if present.
           existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
