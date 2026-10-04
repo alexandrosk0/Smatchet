@@ -7,14 +7,28 @@
 # provably lossy — GitHub overwrites rollup contexts by name on re-run, and
 # override labels are stripped post-merge (merge-gates.sh). The ONLY lossless
 # capture of merge-decision truth is a snapshot written at the decision instant
-# by the merge actor. This helper is the shared, idempotent writer used by all
-# three merge actors (merge-watcher daemon, in-session orchestrator, git-janitor)
-# so every `develop` merge records its gate verdict identically.
+# by the merge actor. This helper is the shared, idempotent writer used by every
+# merge actor (tokens below) so every `develop` merge records its gate verdict
+# identically.
 #
 # Ledger line schema (one compact single-line JSON object per merge, schema 2):
 #   {"pr":N,"mergeCommit":"<sha>","headSha":"<sha>","mergedAt":"<iso8601Z>",
 #    "gates":"GATES_PASSED","redChecks":[...],"overrideLabels":[...],
-#    "requiredContexts":[...],"mergeActor":"merge-watcher|orchestrator|git-janitor","schema":2}
+#    "requiredContexts":[...],"mergeActor":"<token>","schema":2}
+#
+# mergeActor tokens — the canonical list (docs/agent-rules/ship-loops.md
+# § merge-time snapshot mirrors it; free text is accepted, but use these):
+#   merge-watcher           the merge-watcher daemon merged (handle_pass)
+#   orchestrator            an in-session orchestrator merged (REST PUT)
+#   orchestrator-automerge  a session ARMED GitHub auto-merge and recorded the
+#                           server-side merge (safe-merge.sh does this itself)
+#   safe-admin-merge        safe-admin-merge.sh admin-merged (stale-BLOCKED)
+#   git-janitor             git-janitor --post-merge backfilled a merge no actor
+#                           recorded (gates verdict BACKFILLED)
+#   user                    an in-session orchestrator polled the gates, then a
+#                           HUMAN performed the merge (GitHub UI / by hand); the
+#                           orchestrator writes the row with the verdict it last
+#                           observed (GATES_PASSED when it polled green)
 #
 # Idempotency: a re-append for the same `pr`+`mergeCommit` is a no-op (grep-guard)
 # so merge-path retries never double-write.
