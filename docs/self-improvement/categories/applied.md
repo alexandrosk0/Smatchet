@@ -8009,3 +8009,53 @@ protected them.
   Resolution: obsolete 2026-10-04 (backlog-sweep-2026-10) — the MSYS2 dev image it targets is retired (build.md: MSYS2-retired), so the install script it proposes has no home. Re-file against the current Windows toolchain only if the security-review grep fallback is shown to miss something.
   Status: applied (2026-10-04; was: parked)
   Last-reviewed: 2026-10-04
+
+- 2026-08-16 · orchestrator · [process] · P2 — a new WARN-first gate shipped without measuring its false-positive ratio on the whole tree first; the rule as written was 8/12 false, which would have trained readers to ignore it
+  Details: PR #2028 added a code-span repo-path check to
+    [`test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh).
+    It was authored, unit-tested, bats-tested and negative-tested against the
+    delta scope — all green — and only a discretionary whole-tree `--all` run
+    revealed the real signal quality: **12 warnings, of which 8 were false**. A
+    backlog entry's proposal block names files it exists to CREATE ("Concrete
+    next action: add a `scripts/dev/install-security-tools.sh`"), and those paths
+    are the single most common repo-path code span in the backlog. The rule was
+    narrowed (a structural, label-delimited proposal-block exemption) before
+    landing, ending at 3 warnings — all genuine, all fixed.
+    Residual, found by this very entry dogfooding the rule: the exemption is
+    keyed on the entry's own proposal block, so QUOTING someone else's proposal
+    inside a `Details:` block still warns (the sentence above does exactly that —
+    the install-security-tools path it quotes is illustrative and is not on
+    `develop`). That is the documented escape working as intended — the rule says
+    *fix it, or note in prose that it is not on develop yet*, and this is the
+    note — but it is a real residual worth watching: if quoted-proposal warnings
+    become common, the exemption should widen from "inside a proposal block" to
+    "any path in a sentence that names it as something to create".
+    Why this matters beyond the one rule: a WARN-first gate's entire value is
+    that a human reads the warning. A majority-false rule is worse than no rule,
+    because it teaches the reader to skip the whole category — the same failure
+    the `applied.md` exemption in that PR was independently added to avoid (~100
+    archive rows that would have drowned the live signal). Delta-scoped tests
+    cannot catch this: they only ever see the handful of lines a change touches,
+    which is precisely the sample where a new rule looks clean.
+    The near-miss was caught by discretion, not by process. Nothing in the
+    ship-loop asks for the measurement, so the next WARN gate is one distracted
+    author away from landing at 8/12.
+  Concrete next action: add a line to
+    [`process-rules.md`](../../agent-rules/process-rules.md) § Cadence and
+    verification — *a new or widened WARN-first rule must be run whole-tree
+    (`--all` / equivalent) before push, and the PR body must state the warning
+    count and the true/false split; a rule whose warnings are majority-false gets
+    narrowed or scoped before it lands, never after.* Pairs naturally with the
+    existing "gate, don't trust" principle: a gate nobody reads is not a gate.
+    Cheap and mechanical — the measurement is one command, and stating it in the
+    body makes the reviewer a second check on the calibration.
+  Resolution: applied 2026-10-04 (backlog-sweep-2026-10) — the rule landed in docs/agent-rules/cpp-rules.md § Tiered enforcement ('Landing a new or widened WARN-first rule — measure it whole-tree first'), next to the gate definitions, instead of process-rules.md (that file was in another session's plan-lock write set). The quoted-proposal residual stays observational.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-08-20 · orchestrator · [process] · P2 — UI feature sourced from a runtime-populated cache shipped non-functional in its headline flow (#2148 → #2149): trace the cache's producers (incl. empty/error paths), prefer interaction-time data capture, and never merge past an outstanding visual-validation pause on a bare "merge"
+  Details: The #2148 `reads as` echo named accountIds only via `GetAvailableUsers()` + session search results; the catalog's user list is legitimately empty (warning-only fetch failure, cache-restored catalog), so the headline flow (select user → see name) rendered nothing. Green everywhere: pure tests stocked the catalog by construction, bucket-C/E goldens don't cover the query editor. The autocomplete row the user clicked carried both id and name the whole time — capture at the interaction point needed no cache and no network (what #2149 does). The visual-validation exception (AGENTS.md pause 5) was flagged open on every status update yet a bare "merge" executed without restating it.
+  Concrete next action: (1) one sentence in `docs/agent-rules/ship-loops.md` § Visual-validation exception: a pending visual verdict survives a bare "merge" — restate the unverified behavior and require an explicit merge-anyway. (2) review-checklist line (code-review agent prompt or `docs/agent-rules/cpp-rules.md` § Quality): UI output read from an app-owned cache ⇒ PR body enumerates the cache's producers + the empty-state behavior; "renders nothing" is a finding unless intended. (3) promote the postmortem's eval case (postmortems.md 2026-08-20) into the subagent-eval suite.
+  Resolution: applied 2026-10-04 (backlog-sweep-2026-10) — (1) was already in docs/agent-rules/ship-loops.md § Visual-validation exception ('An outstanding visual verdict survives a bare merge'); (2) review-checklist line 'Cache-sourced UI output' added to agents/core/code-review.md; (3) eval case tests/agent-eval/code-review/cr-reads-as-empty-user-catalog.json (schema-valid; scoring it needs a live harness run, not done here).
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04

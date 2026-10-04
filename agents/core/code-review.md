@@ -138,6 +138,8 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - Errors: every place a `TrackerError` is flattened keeps the `Transport` kind. A collapse to `Unknown` = **High**.
 - Test: an offline case exists — bucket A with `GlobalFakeNetwork()` or bucket E via `scripts/dev/test-ui-offline-first.sh`. Missing = **Medium**.
 
+**Cache-sourced UI output** — when new UI output reads an app-owned cache or catalog (users, options, projects, …), the PR body must name that cache's producers and what the UI shows when it is legitimately empty (warning-only fetch failure, cache restored without the list). A headline flow that renders nothing on an empty cache = **High** unless the empty state is intended and stated; tests that stock the cache by construction do not cover it. Prefer capturing the data at the interaction point (the row the user clicked already carries it) over a later cache lookup.
+
 **Subsystem invariants** — these live next to the code they govern, not here. For each touched `Source/Core/src/<sub>/` file, read that directory's `AGENTS.md` and apply its invariants (the leaf is the single source of truth — it overrides any summary). Leaves today + the registry of what each covers: root [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md). Quick map:
 - `Tracker/` — backend no-leak into shared interfaces, HTTP via `TrackerHttpClient`, catalog→parser→payload field flow, write→offline-queue + audit wiring.
 - `Commands/` — `const CommandContext&` + structured error envelope; all front-ends dispatch through `CommandRegistry`.
