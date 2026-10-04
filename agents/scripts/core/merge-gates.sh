@@ -635,8 +635,9 @@ poll_merge_gates() {
     # cursor[bot] inline-finding review threads — Bugbot gate #4) · 26 bbOob
     # (bugbot-out-of-band label) · 27 selfImpOnly (bool: PR diff entirely under
     # docs/self-improvement/** → auto-skip CR + Bugbot gates) ·
-    # 28 pureDocs (bool: PR diff strictly within the is-pure-docs-diff.sh
-    # allow-list — docs/ / backlog/ / agents/scripts/ / *.md) ·
+    # 28 pureDocs (bool: PR diff strictly docs — docs/ / backlog/ / *.md; NOT
+    # agents/scripts/, which is-pure-docs-diff.sh admits for build cadence but
+    # CodeRabbit reviews) ·
     # 29 crRateLimited (bool: CR posted a rate-limit signal on a comment OR the
     # CodeRabbit StatusContext description — a TEMPORARY skip, not a terminal pass) ·
     # 30 crDisposition (bool: a `cr-disposition:`-prefixed label is present OR a
@@ -981,9 +982,9 @@ poll_merge_gates() {
         # path-ignore (docs/agent-rules/merge-gates.md § Bugbot gate).
         local self_imp_only="${fields[27]:-false}"
 
-        # pure_docs — true iff the PR diff is strictly within the
-        # is-pure-docs-diff.sh allow-list (docs/ / backlog/ / agents/scripts/ /
-        # *.md). Field 28. Drives the rate-limit auto-downgrade (deliverable 1):
+        # pure_docs — true iff the PR diff is strictly docs (docs/ / backlog/ /
+        # *.md — not agents/scripts/, see the $pureDocs comment in
+        # 10-gate-filter.sh). Field 28. Drives the rate-limit auto-downgrade (deliverable 1):
         # a CR rate-limit skip on a pure-docs PR is harmless to fast-pass.
         # Empty/parse-miss → false (fail-safe = NOT pure-docs → treated as code).
         local pure_docs="${fields[28]:-false}"
@@ -1037,6 +1038,10 @@ poll_merge_gates() {
         # cr-out-of-band downgrade + nudge-suppression checks below, regardless of
         # which case branch runs.
         local cr_size_skip_block=false
+        # Set true only by the NONE branch when CR rate-limited a CODE PR (see
+        # the rate-limit arm there). Hoisted for the same reason as
+        # cr_size_skip_block: the cr-out-of-band downgrade below reads it.
+        local cr_rate_limit_block=false
         case "$cr_state" in
             APPROVED)
                 # Approval on the current head is always a pass, regardless of body shape.
@@ -1131,6 +1136,24 @@ poll_merge_gates() {
                     cr_size_skip_block=true
                     cr_state_print="NONE+size-skip (CR skipped review — too many files)"
                     echo "BLOCK: CodeRabbit skipped review — too many files (exceeds CR file limit); split the PR (coderabbit review --dir <path> / --base) or apply the 'cr-out-of-band' label to merge without CR review." >&2
+                elif [ "$cr_rate_limited" = "true" ] && [ "$pure_docs" != "true" ]; then
+                    # CR rate-limited a CODE PR and has no review object on any
+                    # commit: the rate-limit notice is CR stating, in its own
+                    # words, that it did NOT review this head. Decided HERE,
+                    # ahead of the status-SUCCESS / grace-expired arms below —
+                    # those are the generic fail-open for a SILENT CR and must
+                    # never see a head CR has explicitly declined (CR stamps
+                    # "Review rate limited" on a SUCCESS StatusContext, which the
+                    # status-only grace arm would otherwise pass). Block
+                    # (PAUSE/RETRY) until CR recovers and re-reviews; the
+                    # cr-out-of-band + cr-disposition downgrade below is the
+                    # escape. A pure-docs PR falls through: the rate-limit
+                    # handling after this case auto-downgrades it (tooling
+                    # 2026-08-16 cr-gate-greens-on-rate-limited-review, item 2).
+                    cr_pass=false
+                    cr_rate_limit_block=true
+                    cr_state_print="NONE+rate-limit CODE-PR-pause (block; pending CR re-review)"
+                    echo "BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR to re-review on quota recovery. To merge before then, apply BOTH 'cr-out-of-band' AND a 'cr-disposition:<reason>' label (the disposition attests you consciously merged past an incomplete review). PR-2 cr-rate-limit-code-pr-auto-pause." >&2
                 elif [ "$cr_installed" != true ]; then
                     # Repo doesn't have CodeRabbit installed — NONE is the steady state.
                     cr_pass=true
@@ -1217,8 +1240,12 @@ poll_merge_gates() {
                 # genuinely silent CR, not one already working. Without this, an
                 # auto-commit that moves the head (e.g. a bot INDEX-autosync) drew a
                 # second `@coderabbitai review` on top of CR's own auto-review.
+                # Also suppressed when cr_rate_limit_block: a re-trigger while a
+                # rate-limit notice is active RESETS CR's countdown (merge-gates.md
+                # § CodeRabbit rate-limit playbook rule 1).
                 if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && \
-                   [ "$cr_size_skip_block" != true ] && [ "$cr_context_present" != 1 ] && \
+                   [ "$cr_size_skip_block" != true ] && [ "$cr_rate_limit_block" != true ] && \
+                   [ "$cr_context_present" != 1 ] && \
                    [ "$NONE_NUDGE_POLLS" -gt 0 ]; then
                     # Streak-gated (NOT first-poll): let auto_review post first.
                     if [ "$none_head" = "$head_sha" ]; then
@@ -1489,7 +1516,8 @@ poll_merge_gates() {
         #     is never compiled, so a deferred CR review on a docs-only diff is
         #     harmless (deliverable 1: cr-review-skipped-pure-docs-auto-downgrade).
         #   • CODE PR       → block this poll (PAUSE/RETRY): the merge-gate keeps
-        #     polling so CR recovers + re-reviews within the grace window.
+        #     polling so CR recovers + re-reviews. Decided inside the NONE arm
+        #     above (cr_rate_limit_block), ahead of the generic grace branches.
         #     cr-out-of-band ALONE will NOT waive this; the operator must ALSO
         #     attest an explicit `cr-disposition:` label (enforced in the
         #     cr-out-of-band downgrade below). (deliverable 2:
@@ -1497,22 +1525,13 @@ poll_merge_gates() {
         # $cr_rate_limit_block scopes the disposition requirement to exactly this
         # case so a normal cr-out-of-band on a non-rate-limited block is unaffected.
         # Runs BEFORE the Poll line so cr_state_print reflects the rate-limit verdict.
-        local cr_rate_limit_block=false
         if [ "$cr_rate_limited" = "true" ]; then
             if [ "$pure_docs" = "true" ]; then
                 cr_pass=true
                 cr_open_blocks=false
                 cr_state_print="${cr_state_print} +rate-limit pure-docs-auto-downgrade (WARN)"
-                echo "WARN: CodeRabbit rate-limited on a pure-docs PR (diff within docs/ / backlog/ / agents/scripts/ / *.md) — CR gate auto-downgraded to WARN (no label needed; markdown is never compiled). PR-2 cr-review-skipped-pure-docs-auto-downgrade." >&2
-            elif [ "$cr_state" = "NONE" ]; then
-                # CODE PR with NO current-head CR verdict: the rate-limit skip is
-                # the only CR signal for this head, so block (PAUSE/RETRY) until CR
-                # recovers + re-reviews within the grace window.
-                cr_pass=false
-                cr_rate_limit_block=true
-                cr_state_print="${cr_state_print} +rate-limit CODE-PR-pause (block; pending CR re-review)"
-                echo "BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR to re-review on quota recovery. To merge before then, apply BOTH 'cr-out-of-band' AND a 'cr-disposition:<reason>' label (the disposition attests you consciously merged past an incomplete review). PR-2 cr-rate-limit-code-pr-auto-pause." >&2
-            else
+                echo "WARN: CodeRabbit rate-limited on a pure-docs PR (diff within docs/ / backlog/ / *.md) — CR gate auto-downgraded to WARN (no label needed; markdown is never compiled). PR-2 cr-review-skipped-pure-docs-auto-downgrade." >&2
+            elif [ "$cr_state" != "NONE" ]; then
                 # CODE PR that ALSO has a real current-head CR verdict
                 # (APPROVED / COMMENTED / CHANGES_REQUESTED / STALE*): a rate-limit
                 # comment is STALE — it survives from a PRIOR push and must NOT

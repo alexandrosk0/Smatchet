@@ -227,19 +227,23 @@ _MG_GATE_FILTER_TEMPLATE='
        (contains("skip review by coderabbit.ai")
         or test("##[[:space:]]*Review skipped"; "i"))
        and (ascii_downcase | contains("too many files")))) as $crskip
-# pureDocs — the PR diff is strictly within the is-pure-docs-diff.sh allow-list
-# (docs/ , backlog/ , agents/scripts/ , or any *.md ANYWHERE). Mirrors that
-# script over the PR file list so the poller can apply the IDENTICAL pure-docs
-# verdict without a local checkout. Used by the rate-limit auto-downgrade
-# (deliverable 1): a rate-limit skip on a pure-docs PR is harmless to fast-pass
-# (markdown is never compiled), while a rate-limit skip on a CODE PR must pause /
-# require an explicit disposition (deliverable 2). Also gates the comment-based
-# arm of $crreviewskipped below (bound here, above it, for that reason).
-# Fail-safe FALSE on an empty file list, a >100-file page (cannot see every
-# path), or absent files.
+# pureDocs — the PR diff is strictly docs: docs/ , backlog/ , or any *.md
+# ANYWHERE. Deliberately NARROWER than the is-pure-docs-diff.sh allow-list, which
+# also admits agents/scripts/ because it drives the build-skip cadence (shell is
+# never compiled). That is not the question here: this verdict decides whether
+# a CodeRabbit review may be skipped, and agents/scripts/ is executable gate
+# shell that CR reviews (.coderabbit.yaml does not path-filter it) — a
+# rate-limited review of a gate change is exactly the review worth waiting for
+# (tooling 2026-08-16 cr-gate-greens-on-rate-limited-review, item 3). Used by the
+# rate-limit auto-downgrade (deliverable 1): a rate-limit skip on a pure-docs PR
+# is harmless to fast-pass (markdown is never compiled), while a rate-limit skip
+# on a CODE PR must pause / require an explicit disposition (deliverable 2).
+# Also gates the comment-based arm of $crreviewskipped below (bound here, above
+# it, for that reason). Fail-safe FALSE on an empty file list, a >100-file page
+# (cannot see every path), or absent files.
 | (($changedPaths | length) > 0
    and ($filesOverflow | not)
-   and ($changedPaths | all(test("^(docs/|backlog/|agents/scripts/|.*[.]md$)")))) as $pureDocs
+   and ($changedPaths | all(test("^(docs/|backlog/|.*[.]md$)")))) as $pureDocs
 # crReviewSkipped — the GENERIC terminal "Review skipped" (docs-only /
 # path-filtered / trivial diff per .coderabbit.yaml), read from EITHER surface:
 #  (a) the "CodeRabbit" StatusContext is SUCCESS and its description says

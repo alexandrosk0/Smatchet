@@ -3658,6 +3658,98 @@ blocked_with_bot_threads() {
 }
 
 # ----------------------------------------------------------------------------
+# tooling 2026-08-16 cr-gate-greens-on-rate-limited-review, items 2-4: the
+# rate-limit verdict is decided INSIDE the CR NONE arm, ahead of the generic
+# status-SUCCESS / grace-expired fail-open branches; agents/scripts/ is not
+# pure-docs for the CR question; and the CodeRabbit StatusContext description
+# vocabulary is pinned per string so a reworded CR status cannot silently move
+# a head from block to pass.
+# ----------------------------------------------------------------------------
+
+cr_status_fixture() {
+    # Usage: cr_status_fixture <CodeRabbit StatusContext description> <changed path>
+    # Pass fixture + a SUCCESS "CodeRabbit" StatusContext carrying the given
+    # description + a one-file diff. No CR review object -> cr_state NONE.
+    local f1 out
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        "[{\"__typename\":\"CheckRun\",\"name\":\"build\",\"conclusion\":\"SUCCESS\",\"status\":\"COMPLETED\",\"isRequired\":true},{\"__typename\":\"StatusContext\",\"context\":\"CodeRabbit\",\"state\":\"SUCCESS\",\"description\":\"$1\",\"isRequired\":false}]")"
+    out="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        "{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"path\":\"$2\"}]}")"
+    rm -f "$f1"
+    echo "$out"
+}
+
+@test "CR 'Review rate limited' SUCCESS status + CODE PR + grace expired -> BLOCK in the NONE arm (never the status-only pass)" {
+    # CR's own wording on its StatusContext: SUCCESS + "Review rate limited".
+    # With the grace window already expired the status-only arm would pass this
+    # head ("assume status-only"); the hoisted rate-limit arm must win first.
+    local f
+    f="$(cr_status_fixture "Review rate limited" "Source/Core/src/Foo.cpp")"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"CodeRabbit: NONE+rate-limit CODE-PR-pause"* ]]
+    [[ "$output" == *"rate-limited on a CODE PR"* ]]
+    [[ "$output" != *"no-inline-evidence"* ]]
+    [[ "$output" != *"grace-expired"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR rate-limit + agents/scripts/ diff is NOT pure-docs -> BLOCK (no auto-downgrade for gate shell)" {
+    # agents/scripts/ is executable gate shell that CodeRabbit reviews; the
+    # pure-docs auto-downgrade must not wave a rate-limited gate change through.
+    local f
+    f="$(cr_status_fixture "Review rate limited" "agents/scripts/core/merge-gates.sh")"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"CODE-PR-pause"* ]]
+    [[ "$output" != *"pure-docs-auto-downgrade"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR status vocabulary: bare 'Review skipped' on a CODE PR -> terminal pass, rate-limit machinery inert" {
+    local f
+    f="$(cr_status_fixture "Review skipped" "Source/Core/src/Foo.cpp")"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"NONE+review-skipped"* ]]
+    [[ "$output" != *"rate-limit"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR status vocabulary: an unknown description -> neither terminal pass nor rate-limit; status grace binds" {
+    # A CR status string the gate has never seen must not be read as a review:
+    # no terminal "Review skipped" pass, no rate-limit verdict — it waits in the
+    # ordinary status-SUCCESS grace like any un-reviewed head.
+    local f
+    f="$(cr_status_fixture "Review deferred: queue saturated" "Source/Core/src/Foo.cpp")"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"NONE+status-SUCCESS-waiting-for-inline"* ]]
+    [[ "$output" != *"review-skipped"* ]]
+    [[ "$output" != *"rate-limit"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+# ----------------------------------------------------------------------------
 # argv budget — the Windows CreateProcess command-line cap (32,767 chars).
 #
 # The poll hands gh two large blobs. The GraphQL document rides `-F
