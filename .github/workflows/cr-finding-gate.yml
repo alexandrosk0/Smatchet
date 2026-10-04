@@ -139,6 +139,48 @@ jobs:
           echo "sha=${sha}"   >> "$GITHUB_OUTPUT"
           echo "base=${base}" >> "$GITHUB_OUTPUT"
 
+      # Provenance: record WHICH gate code this run executes. An `issue_comment`
+      # run resolves against the default branch (GITHUB_REF is the default
+      # branch, not refs/pull/<n>/merge), so the checkout above — and the local
+      # action it runs — is the default branch's code, whatever the PR changed.
+      # On a PR that changes this gate those runs keep posting the OLD logic's
+      # verdict, and a status has no precedence, only recency: on #2036 the
+      # pull_request run posted the fixed PENDING, then two issue_comment runs
+      # on develop's code overwrote it with the old SUCCESS within a minute.
+      # Printing it makes a mixed-code sequence legible from the run page
+      # instead of from three API calls (tooling 2026-08-16
+      # comment-triggered-gate-runs-execute-default-branch-code). Keyed on the
+      # ref actually checked out, not the event name: pull_request_review*
+      # runs resolve to the PR merge ref. Values arrive via env — no expression
+      # interpolation inside run: (zizmor template-injection).
+      - name: Record which gate code this run executes
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          line="event=${EVENT_NAME} ref=${RUN_REF} gate-code=${RUN_SHA} workflow_sha=${WORKFLOW_SHA} pr-head=${PR_HEAD_SHA:-unresolved}"
+          echo "CR finding gate provenance: ${line}"
+          {
+            echo "### CR finding gate: code provenance"
+            echo ""
+            echo "\`${line}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$RUN_REF" in
+            refs/pull/*) ;;
+            *)
+              note="NOTE: running default-branch gate code @${RUN_SHA:0:12}, not the PR's"
+              echo "$note"
+              printf '\n**%s** (PR head %s). A change to this gate on that PR is not exercised by this run.\n' \
+                "$note" "${PR_HEAD_SHA:0:12}" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+
       - name: Evaluate CR findings
         id: eval
         if: steps.pr.outputs.base == 'develop' && steps.pr.outputs.sha != ''

@@ -171,6 +171,46 @@ step_timeout() {
     grep -qF "context='${ctx}'" "$WF"
 }
 
+# Provenance step (tooling 2026-08-16 comment-triggered-gate-runs-execute-
+# default-branch-code). An issue_comment run checks out and executes the
+# DEFAULT branch's gate code, so on a PR that changes this gate the visible
+# status can come from the code the PR replaces. The step records which code
+# each run executed, so that sequence is legible from the run page.
+# provenance_step <workflow-file> — the step's lines, up to the next step.
+provenance_step() {
+    awk '/^      - name: Record which gate code this run executes$/{f=1; print; next}
+         f && /^      - name: /{exit}
+         f{print}' "$1"
+}
+
+@test "workflow records which gate code each run executes (always-run provenance step)" {
+    run provenance_step "$WF"
+    [ -n "$output" ]
+    grep -qx '        if: always()'                         <<< "$output"
+    grep -q 'EVENT_NAME: ${{ github.event_name }}'          <<< "$output"
+    grep -q 'WORKFLOW_SHA: ${{ github.workflow_sha }}'      <<< "$output"
+    grep -q 'RUN_SHA: ${{ github.sha }}'                    <<< "$output"
+    grep -q 'PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}'      <<< "$output"
+    grep -q 'GITHUB_STEP_SUMMARY'                           <<< "$output"
+    grep -qF "NOTE: running default-branch gate code @"     <<< "$output"
+    grep -qF ", not the PR's"                               <<< "$output"
+    # No expression interpolation inside run: — values arrive via env only
+    # (zizmor template-injection). Everything after `run: |` is shell.
+    run awk '/^        run: \|$/{f=1; next} f' <<< "$output"
+    [ -n "$output" ]
+    run grep -F '${{' <<< "$output"
+    [ "$status" -ne 0 ]
+}
+
+@test "selftest: a provenance step that interpolates inside run: is detected" {
+    tmp="$BATS_TEST_TMPDIR/interp.yml"
+    sed 's/^\(          set -uo pipefail\)$/\1\n          echo "${{ github.event_name }}"/' "$WF" > "$tmp"
+    run provenance_step "$tmp"
+    run awk '/^        run: \|$/{f=1; next} f' <<< "$output"
+    run grep -F '${{' <<< "$output"
+    [ "$status" -eq 0 ]
+}
+
 @test "selftest: a workflow with no fallback poster is detected" {
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"
