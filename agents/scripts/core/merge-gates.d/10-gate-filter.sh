@@ -15,6 +15,15 @@
 
 # shellcheck disable=SC2016  # single-quoted jq literal — $-refs are jq vars, not bash
 _MG_GATE_FILTER_TEMPLATE='
+# disposition(labels; body; prefix) — the ONE reader behind every override
+# disposition trail (cr-disposition, plan-lock-disposition): TRUE when a label
+# prefixed `<prefix>:` is present, OR the PR BODY carries a grep-able
+# `<prefix>:<reason>` marker with a non-empty reason on the line (leading
+# whitespace / list markers tolerated). Shared so the two trails can never
+# drift apart in what they accept.
+def disposition($labels; $body; $prefix):
+  ($labels | any(startswith($prefix + ":")))
+  or (($body // "") | test($prefix + ":[[:space:]]*[^[:space:]]"; "i"));
 .data.repository.pullRequest as $pr
 | ($pr.headRefOid // "") as $sha
 | ([$pr.labels.nodes[]?.name]) as $labels
@@ -80,10 +89,17 @@ _MG_GATE_FILTER_TEMPLATE='
 # cr-out-of-band downgrade): it proves the operator consciously waived CR review
 # with a recorded reason rather than reflexively slapping a generic override on.
 # Body match: `cr-disposition:` followed by any non-empty reason on the line
-# (regex tolerates leading whitespace / list markers). (NB: no apostrophes in
-# this single-quoted jq filter string.)
-| (($labels | any(startswith("cr-disposition:")))
-   or (($pr.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crdisposition
+# (regex tolerates leading whitespace / list markers) — the shared
+# disposition() reader above. (NB: no apostrophes in this single-quoted jq
+# filter string.)
+| disposition($labels; $pr.body; "cr-disposition") as $crdisposition
+# planlockdisposition — the same attestation trail for `plan-lock-out-of-band`
+# (process 2026-09-12 plan-lock-out-of-band-waives-the-whole-gate-with-no-
+# disposition-trail): a `plan-lock-disposition:`-prefixed label OR a
+# `plan-lock-disposition:<reason>` PR-body line naming the lock slug(s) crossed
+# and why crossing is safe. The label ALONE no longer downgrades a red
+# "Plan-lock gate" — see $downgraded and the planLockOobRefused field below.
+| disposition($labels; $pr.body; "plan-lock-disposition") as $planlockdisposition
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
 # Dedup key is (check-suite createdAt, startedAt), NOT startedAt alone. A rerun
 # stays in one check suite, so old-FAILURE/new-SUCCESS ties on the first key and
@@ -181,7 +197,8 @@ _MG_GATE_FILTER_TEMPLATE='
 # post-label evaluation. "" label-time = no timeline data = legacy behaviour;
 # ISO-8601 Z strings compare correctly as strings. A run with NEITHER
 # timestamp and a known label-time fails closed (no downgrade).
-# intent/plan-lock: no conjunct (see the $labelEvents comment above).
+# intent/plan-lock: no freshness conjunct (see the $labelEvents comment above);
+# plan-lock carries the $planlockdisposition conjunct instead.
 # $labelReactiveRed binds the name-predicate-only set once so $staleOverride
 # below is derived by SUBTRACTION — the freshness rule exists in exactly one
 # place and the two sets can never drift out of complement.
@@ -192,7 +209,7 @@ _MG_GATE_FILTER_TEMPLATE='
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // .startedAt // "") >= $testsAt)) or
       ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // .startedAt // "") >= $perfAt)) or
       ($intent and .__typename == "CheckRun" and .name == "Intent section") or
-      ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate") or
+      ($planlock and $planlockdisposition and .__typename == "CheckRun" and .name == "Plan-lock gate") or
       # cr-out-of-band + disposition also discounts the CR finding gate
       # StatusContext / CheckRun ("CR findings..." / "CR finding gate") —
       # otherwise the waiver that exists to clear a stuck CR check leaves
@@ -411,6 +428,11 @@ _MG_GATE_FILTER_TEMPLATE='
     ($staleOverride | length),
     ($dupMasked | join(", ")),
     ($dupMasked | length),
-    ($dependabotActionsBump | tostring)
+    ($dependabotActionsBump | tostring),
+    # planLockOobRefused — plan-lock-out-of-band is applied to a red
+    # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
+    # downgrade was refused and the red still counts in ciFail.
+    (($planlock and ($planlockdisposition | not)
+      and ($failing | any(.__typename == "CheckRun" and .name == "Plan-lock gate"))) | tostring)
   )
 '

@@ -35,7 +35,10 @@
 #   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
 #   perf-out-of-band  → downgrades `Perf PR-fast (...)` FAIL → WARN
 #   intent-out-of-band → downgrades `Intent section` FAIL → WARN
-#   plan-lock-out-of-band → downgrades `Plan-lock gate` FAIL → WARN
+#   plan-lock-out-of-band → downgrades `Plan-lock gate` FAIL → WARN. REQUIRES
+#                       a paired `plan-lock-disposition:<reason>` attestation
+#                       (label OR PR-body marker, the same shape as
+#                       cr-disposition) — the label ALONE is NOT honoured.
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
 #                       CI + user-comment gates still bind). REQUIRES a paired
 #                       `cr-disposition:<reason>` attestation (label OR PR-body
@@ -215,7 +218,7 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 38-field
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 39-field
 #                        projection) as a template emitter; run by standalone
 #                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
@@ -610,7 +613,7 @@ poll_merge_gates() {
     start=$(date +%s)
 
     # One filter computes every gate field and emits them as a fixed-order,
-    # one-per-line stream (38 lines) that the poll loop reads with `mapfile`.
+    # one-per-line stream (39 lines) that the poll loop reads with `mapfile`.
     # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
     # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
     # jq sub-expressions are the same ones the per-field `jq` calls used
@@ -654,7 +657,7 @@ poll_merge_gates() {
     # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 38-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 39-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
     # crDisposition (30), the two numeric thread counts (31/32) and
@@ -667,8 +670,11 @@ poll_merge_gates() {
     # read green; may be empty) · 36 dupMaskedCount (their count) ·
     # 37 dependabotActionsBump (bool: Dependabot-authored PR on a
     # dependabot/github_actions/* head — the one shape whose silent CR still
-    # passes after the grace window; non-empty, safe at the tail).
-    # GATE_FILTER — the 38-field jq projection (see field-order map above).
+    # passes after the grace window; non-empty, safe at the tail) ·
+    # 38 planLockOobRefused (bool: plan-lock-out-of-band is on a red
+    # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
+    # downgrade was refused; non-empty, safe at the tail).
+    # GATE_FILTER — the 39-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -784,7 +790,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the filter's field stream — 38 fixed-order lines (see GATE_FILTER
+        # Parse the filter's field stream — 39 fixed-order lines (see GATE_FILTER
         # field map above). Filter errors (either engine) already routed through
         # the gh-fail path above; this guards a truncated/partial body → fail
         # closed (retry).
@@ -794,11 +800,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 38 ]; then
-            # Exactly 38 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 39 ]; then
+            # Exactly 39 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 38); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 39); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -878,6 +884,16 @@ poll_merge_gates() {
         local stale_ov_count="${fields[34]:--1}"
         if [ "$stale_ov_count" -gt 0 ]; then
             echo "WARN: out-of-band label applied AFTER the latest run of ${stale_ov_count} failing check(s) completed — downgrade refused (stale-override guard): ${stale_ov_names}. Waiting for the post-label re-run (the labeled trigger starts one). If none is coming — label applied by GITHUB_TOKEN automation (does not trigger workflows), an Actions outage, or a renamed check — re-run the workflow manually (gh run rerun <run-id> / gh workflow run) or push a commit; re-applying the label only moves the label-time later and cannot help." >&2
+        fi
+
+        # plan-lock-out-of-band disposition trail (process 2026-09-12
+        # plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail).
+        # The label alone no longer downgrades a red "Plan-lock gate": like
+        # cr-out-of-band it needs a recorded reason, or nothing says which lock
+        # was crossed or why (GitHub strips the label post-merge, so the reason
+        # is otherwise unrecoverable — #2160). Field 38; the red stays in ci_fail.
+        if [ "${fields[38]:-false}" = "true" ]; then
+            echo "WARN: plan-lock-out-of-band present but NOT honoured — a plan-lock-out-of-band downgrade also requires a 'plan-lock-disposition:<reason>' label or PR-body marker naming the lock slug(s) the Plan-lock gate reported and why crossing them is safe. Add one to merge past the 'Plan-lock gate' red; if the red is stale (the lock was released or aged out), re-run the gate instead." >&2
         fi
 
         # Duplicate-context divergence (backlog merge-gate-duplicate-check-name-drift).

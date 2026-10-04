@@ -1580,20 +1580,70 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "plan-lock-out-of-band label downgrades Plan-lock gate FAILURE -> WARN, gates pass" {
-    local f1 f2
+plan_lock_red_fixture() {
+    # Usage: plan_lock_red_fixture <labels.nodes JSON> [<PR body>]
+    # Pass fixture whose sole failure is a red non-required "Plan-lock gate".
+    local f1 f2 out
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
         '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
-    f2="$(fixture_override "$f1" \
-        "data.repository.pullRequest.labels.nodes" '[{"name":"plan-lock-out-of-band"}]')"
-    set_fixture "$f2"
+    f2="$(fixture_override "$f1" "data.repository.pullRequest.labels.nodes" "$1")"
+    out="$(fixture_override "$f2" "data.repository.pullRequest.body" "$(jq -n --arg b "${2:-}" '$b')")"
+    rm -f "$f1" "$f2"
+    echo "$out"
+}
+
+@test "plan-lock-out-of-band ALONE does NOT downgrade a red Plan-lock gate (disposition required)" {
+    # process 2026-09-12 plan-lock-out-of-band-waives-the-whole-gate-with-no-
+    # disposition-trail: the #2160 shape — a bare label waived the gate with no
+    # record of which lock was crossed or why. Mirrors cr-out-of-band, which has
+    # required a cr-disposition since PR-3.
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"0 warn-downgraded"* ]]
+    [[ "$output" == *"plan-lock-out-of-band present but NOT honoured"* ]]
+    [[ "$output" == *"plan-lock-disposition:<reason>"* ]]
+    rm -f "$f"
+}
+
+@test "plan-lock-out-of-band + plan-lock-disposition label downgrades Plan-lock gate FAILURE -> WARN, gates pass" {
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:docs-index-coordinated"}]')"
+    set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"1 warn-downgraded"* ]]
     [[ "$output" == *"downgraded=Plan-lock gate"* ]]
-    rm -f "$f1" "$f2"
+    [[ "$output" != *"NOT honoured"* ]]
+    rm -f "$f"
+}
+
+@test "plan-lock-out-of-band + plan-lock-disposition PR-body marker downgrades too (same shape as cr-disposition)" {
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"}]' \
+        $'## Intent\nx\n\nplan-lock-disposition: crossed gate-selftest-msys-execbit (lock orphaned by its merged PR)\n')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"downgraded=Plan-lock gate"* ]]
+    rm -f "$f"
+}
+
+@test "a cr-disposition does NOT satisfy the plan-lock disposition trail (trails are per-override)" {
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"},{"name":"cr-disposition:follow-up-pr"}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plan-lock-out-of-band present but NOT honoured"* ]]
+    rm -f "$f"
 }
 
 @test "Plan-lock gate as a StatusContext blocks but is NOT downgradable (locks in CheckRun)" {
@@ -1606,7 +1656,7 @@ set_fixture() {
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
         '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"StatusContext","context":"Plan-lock gate","state":"FAILURE"}]')"
     f2="$(fixture_override "$f1" \
-        "data.repository.pullRequest.labels.nodes" '[{"name":"plan-lock-out-of-band"}]')"
+        "data.repository.pullRequest.labels.nodes" '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:acked"}]')"
     set_fixture "$f2"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
@@ -3419,8 +3469,8 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 38; the
-    # -ne 38 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 39; the
+    # -ne 39 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
     # + thread-count + stale-override + dup-masked fields rely on).
     local f
@@ -3430,7 +3480,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 38"* ]]
+    [[ "$output" == *"expected 39"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
