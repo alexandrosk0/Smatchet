@@ -354,9 +354,15 @@ _MG_GATE_FILTER_TEMPLATE='
           (.__typename == "CheckRun" and .status != "COMPLETED") or
           (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED")))
         )
-        # When cr-out-of-band + disposition is live, the CR findings context is
-        # the same signal as gate 2 — do not let it hold ci_pend (tooling 2026-08-18).
-        and (($cr and $crdisposition and (
+        # When gate 2 has already been adjudicated to WARN, the CR findings
+        # context is the same signal under another name — do not let it hold
+        # ci_pend. Two such adjudications: cr-out-of-band + disposition (tooling
+        # 2026-08-18), and the label-free pure-docs rate-limit auto-downgrade
+        # ($pureDocs + $crratelimited — the exact pair the poll loop downgrades
+        # on), whose aggregator stays pending forever because CR cannot produce
+        # the review node it waits for (tooling 2026-08-16
+        # cr-findings-pending-statuscontext-wedges-merge-gates).
+        and (((($cr and $crdisposition) or ($pureDocs and $crratelimited)) and (
                (.__typename == "StatusContext" and ((.context // "") | test("^CR findings"; "i")))
                or (.__typename == "CheckRun" and ((.name // "") | test("^CR finding"; "i")))
              )) | not))] | length),

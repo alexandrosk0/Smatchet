@@ -3818,6 +3818,54 @@ cr_status_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
+cr_findings_pending_ratelimit_fixture() {
+    # Usage: cr_findings_pending_ratelimit_fixture <changed path>
+    # CodeRabbit says "Review rate limited" (SUCCESS status) and the
+    # cr-finding-gate aggregator sits PENDING — the #2071/#2077/#2081 shape.
+    local f1 out
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review rate limited","isRequired":false},{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","isRequired":false}]')"
+    out="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        "{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"path\":\"$1\"}]}")"
+    rm -f "$f1"
+    echo "$out"
+}
+
+@test "pending 'CR findings' context + pure-docs + rate-limited -> GATES_PASSED (auto-downgrade also clears the CI-bucket twin)" {
+    # tooling 2026-08-16 cr-findings-pending-statuscontext-wedges-merge-gates:
+    # the label-free pure-docs rate-limit auto-downgrade adjudicates gate 2 to
+    # WARN, but the aggregator it reads stays PENDING forever (CR cannot produce
+    # a review node) and block-on-any-red counted it in ci_pend — so every poll
+    # read "1 pending" until someone merged outside the gate.
+    local f
+    f="$(cr_findings_pending_ratelimit_fixture "docs/agent-rules/merge-gates.md")"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 pending"* ]]
+    [[ "$output" == *"pure-docs-auto-downgrade"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "pending 'CR findings' context + CODE PR + rate-limited -> still blocks (pending counted, no auto-downgrade)" {
+    local f
+    f="$(cr_findings_pending_ratelimit_fixture "Source/Core/src/Foo.cpp")"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 pending"* ]]
+    [[ "$output" == *"CODE-PR-pause"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 @test "CR status vocabulary: bare 'Review skipped' on a CODE PR -> terminal pass, rate-limit machinery inert" {
     local f
     f="$(cr_status_fixture "Review skipped" "Source/Core/src/Foo.cpp")"
