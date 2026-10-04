@@ -1,0 +1,69 @@
+name: Plan-lock release (dispatch)
+
+# Releases ONE refs/locks/<slug> on demand, running as github-actions — the
+# identity the plan-locks ruleset (agents/scripts/core/setup-locks-ruleset.sh)
+# lets delete refs/locks/*. It exists for the lock no PR close will ever
+# release: one claimed by a branch that was never pushed, or never opened a PR.
+# A non-admin agent's `lock-release.sh` gets HTTP 403 from that ruleset, and
+# the staleness sweep only opens an Issue, so before this workflow such a lock
+# blocked every overlapping PR until a human intervened (tooling backlog
+# 2026-08-17-abandoned-lock-from-unpushed-branch-has-no-agent-release-path).
+#
+#   gh workflow run lock-release-dispatch.yml -f slug=<slug>
+#
+# Audit trail: the run records who dispatched it, and the release script logs
+# the lock's claim.json before deleting, so a released claim can be re-created.
+# Deletion shares lock-release-on-close.sh with lock-cleanup.yml (--slug mode).
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: 'Plan-lock slug to release (refs/locks/<slug>; grammar [a-z0-9][a-z0-9-]{0,63})'
+        required: true
+        type: string
+
+concurrency:
+  group: plan-lock-release-dispatch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release:
+    name: Release refs/locks/<slug> (dispatch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout develop (the release script only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          ref: develop
+          fetch-depth: 1
+          # Kept: the release step deletes the ref with `git push origin
+          # :refs/locks/<slug>` under this job's GITHUB_TOKEN. This job uploads
+          # no artifact, so the persisted credential never leaves the runner.
+          persist-credentials: true
+
+      - name: Release the lock (logs claim.json first)
+        env:
+          SLUG: ${{ inputs.slug }}
+          DISPATCHED_BY: ${{ github.actor }}
+          LOCK_REMOTE: origin
+        run: |
+          set -euo pipefail
+          echo "::notice::Dispatch release of refs/locks/${SLUG} requested by ${DISPATCHED_BY}."
+          # The script validates the slug against the lock grammar before it
+          # touches any ref (exit 2 on a mismatch).
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --slug "$SLUG"

@@ -204,9 +204,9 @@ except Exception:
         echo
         echo "1. **Slice is still active** — bump the lock with \`bash agents/scripts/core/lock-claim-update.sh ${slug} <write-set-file>\` to refresh \`updated\`. This Issue will close automatically on the next sweep."
         echo "2. **Slice is abandoned** — \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref. This Issue will close automatically on the next sweep."
-        echo "3. **Slice has merged** — the PR was missing a \`lock-slug: ${slug}\` line in its body. \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref; this Issue will close automatically on the next sweep. Add the line to future PRs holding a lock."
+        echo "3. **Slice has merged** — its PR's close released nothing: the body had no bare \`lock-slug: ${slug}\` line and the claim branch was not the PR's head branch. \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref; this Issue will close automatically on the next sweep. Add the line to future PRs holding a lock."
         echo
-        echo "No local ref-write access (e.g. a CI-scoped token)? Land a PR whose body carries a \`lock-slug: ${slug}\` line — \`.github/workflows/lock-cleanup.yml\` releases the ref when that PR closes."
+        echo "No local ref-write access (\`lock-release.sh\` gets HTTP 403 from the plan-locks ruleset unless you are an admin)? Run \`gh workflow run lock-release-dispatch.yml -f slug=${slug}\` — \`.github/workflows/lock-release-dispatch.yml\` deletes the ref as github-actions and logs its claim.json, no PR needed. Or land a PR whose body carries a \`lock-slug: ${slug}\` line — \`.github/workflows/lock-cleanup.yml\` releases the ref when that PR closes."
         echo
         echo "Live ref state: \`bash agents/scripts/core/locks-show.sh\`."
         echo "Plan: [\`docs/plans/shipped/git-ref-plan-locks.md\`](../blob/develop/docs/plans/shipped/git-ref-plan-locks.md)."

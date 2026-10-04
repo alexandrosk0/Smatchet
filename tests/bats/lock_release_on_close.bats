@@ -214,3 +214,39 @@ release() {
     [[ "$output" == *"does not look like"* ]]
     held x-lock
 }
+
+# ---------- lock-release-dispatch.yml wiring ----------
+
+@test "dispatch workflow: workflow_dispatch with a required slug input" {
+    grep -qE '^[[:space:]]*workflow_dispatch:' "$DISPATCH_WF"
+    grep -qE '^[[:space:]]*slug:' "$DISPATCH_WF"
+    grep -qE '^[[:space:]]*required:[[:space:]]*true' "$DISPATCH_WF"
+}
+
+@test "dispatch workflow: releases through the shared --slug path with contents: write" {
+    grep -qE 'lock-release-on-close\.sh" --slug "\$SLUG"' "$DISPATCH_WF"
+    grep -qE '^[[:space:]]*contents:[[:space:]]*write' "$DISPATCH_WF"
+}
+
+@test "dispatch workflow: the slug input reaches run: only through env (no template injection)" {
+    grep -qE 'SLUG:[[:space:]]*\$\{\{[[:space:]]*inputs\.slug[[:space:]]*\}\}' "$DISPATCH_WF"
+    # No `${{ … }}` expression may sit inside a run: script.
+    run awk '
+        /^[[:space:]]*run:/ { inrun = 1; indent = match($0, /[^ ]/); if ($0 ~ /\$\{\{/) print; next }
+        inrun && NF && match($0, /[^ ]/) <= indent { inrun = 0 }
+        inrun && /\$\{\{/ { print }
+    ' "$DISPATCH_WF"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "dispatch workflow: every action is pinned to a full commit SHA" {
+    run grep -cE '^[[:space:]]*(-[[:space:]]+)?uses:' "$DISPATCH_WF"
+    [ "$output" -ge 1 ]
+    run bash -c 'grep -E "^[[:space:]]*(-[[:space:]]+)?uses:" "$1" | grep -vE "@[0-9a-f]{40}([[:space:]]|\$)"' _ "$DISPATCH_WF"
+    [ -z "$output" ]
+}
+
+@test "dispatch workflow: checks the release script out from develop, never an input ref" {
+    grep -qE '^[[:space:]]*ref:[[:space:]]*develop[[:space:]]*$' "$DISPATCH_WF"
+}

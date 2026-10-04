@@ -261,3 +261,31 @@ STUB
     grep -q "^CREATE" "$GH_LOG"
     ! grep -q "^CLOSE" "$GH_LOG"
 }
+
+@test "the stale-lock Issue names the dispatch release path for the slug" {
+    # A non-admin agent's lock-release.sh is refused by the plan-locks ruleset;
+    # the Issue must point at the release path it CAN reach. This stub copies
+    # the --body-file into the log (the sweep deletes the file after the call).
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+    "auth status") exit 0 ;;
+    "repo view")   printf '%s\n' "${GH_REPO_SLUG-test/repo}" ;;
+    "issue list")  printf '\n' ;;
+    "issue create")
+        prev=""
+        for a in "$@"; do
+            [ "$prev" = "--body-file" ] && cat "$a" >> "$GH_LOG"
+            prev="$a"
+        done
+        ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    make_lock abandoned 30
+    sweep
+    [ "$status" -eq 0 ]
+    [ -f "$GH_LOG" ]
+    grep -qF 'gh workflow run lock-release-dispatch.yml -f slug=abandoned' "$GH_LOG"
+}
