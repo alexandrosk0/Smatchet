@@ -2007,6 +2007,18 @@ target_compile_options(SmatchetTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
 option(SMATCHET_SANITIZE_TESTS "Apply SMATCHET_SANITIZER to the SmatchetTests doctest rig" OFF)
 if(SMATCHET_SANITIZE_TESTS)
     smatchet_apply_sanitizers(SmatchetTests)
+    # State "this rig is sanitized" ourselves. The tests widen their wall-clock
+    # budgets under a sanitizer, and the compiler's own __SANITIZE_ADDRESS__ is not
+    # a portable signal for that: MSVC and Clang >= 22 define it under
+    # /fsanitize=address, older clang-cl (the windows-2022 runner's LLVM) does not,
+    # so the same instrumented rig would run loose budgets here and tight ones there.
+    # Only when a sanitizer is really selected: the knob alone, with
+    # SMATCHET_SANITIZER off, instruments nothing and must not loosen anything.
+    if(DEFINED SMATCHET_SANITIZER AND
+       NOT "${SMATCHET_SANITIZER}" STREQUAL "" AND
+       NOT "${SMATCHET_SANITIZER}" STREQUAL "off")
+        target_compile_definitions(SmatchetTests PRIVATE SMATCHET_TESTS_SANITIZED=1)
+    endif()
 endif()
 
 # Static-link the C++ + GCC runtime so ctest can run SmatchetTests.exe from any

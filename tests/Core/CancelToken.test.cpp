@@ -95,7 +95,7 @@ TEST_CASE("CancellableFutureSet: a worker observing Token() stops promptly after
     const auto elapsedMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
     CHECK(set.Empty());
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_TESTS_SANITIZED)
     CHECK(elapsedMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
 #else
     CHECK(elapsedMs < 2000); // far below the worker's ~100s uncancelled runtime
