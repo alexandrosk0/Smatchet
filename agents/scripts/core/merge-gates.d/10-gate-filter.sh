@@ -15,12 +15,8 @@
 
 # shellcheck disable=SC2016  # single-quoted jq literal — $-refs are jq vars, not bash
 _MG_GATE_FILTER_TEMPLATE='
-# disposition(labels; body; prefix) — the ONE reader behind every override
-# disposition trail (cr-disposition, plan-lock-disposition): TRUE when a label
-# prefixed `<prefix>:` is present, OR the PR BODY carries a grep-able
-# `<prefix>:<reason>` marker with a non-empty reason on the line (leading
-# whitespace / list markers tolerated). Shared so the two trails can never
-# drift apart in what they accept.
+# disposition — the ONE reader for every override disposition trail: a
+# `<prefix>:` label, or a `<prefix>:<reason>` PR-body marker.
 def disposition($labels; $body; $prefix):
   ($labels | any(startswith($prefix + ":")))
   or (($body // "") | test($prefix + ":[[:space:]]*[^[:space:]]"; "i"));
@@ -40,12 +36,9 @@ def disposition($labels; $body; $prefix):
 | (($changedPaths | length) > 0
    and ($filesOverflow | not)
    and ($changedPaths | all(startswith("docs/self-improvement/")))) as $selfImpOnly
-# dependabotActionsBump — a Dependabot github-actions SHA bump: the
-# GitHub-authenticated author is Dependabot (GraphQL drops the [bot] suffix,
-# REST keeps it) AND the head ref is dependabot/github_actions/*. CodeRabbit
-# never reviews bot PRs, so for this shape alone a silent CR past the grace
-# window still passes; every other silent head blocks. Same scope as the
-# cr-finding-gate action Dependabot auto-pass. Absent author → FALSE.
+# dependabotActionsBump — Dependabot author AND a dependabot/github_actions/*
+# head (the cr-finding-gate action scope): the one silent-CR shape that still
+# passes at grace expiry, since CR never reviews bot PRs.
 | (((($pr.author.login) // "") | IN("dependabot", "dependabot[bot]"))
    and ((($pr.headRefName) // "") | startswith("dependabot/github_actions/"))) as $dependabotActionsBump
 | ($labels | any(. == "tests-out-of-band")) as $tests
@@ -93,12 +86,8 @@ def disposition($labels; $body; $prefix):
 # disposition() reader above. (NB: no apostrophes in this single-quoted jq
 # filter string.)
 | disposition($labels; $pr.body; "cr-disposition") as $crdisposition
-# planlockdisposition — the same attestation trail for `plan-lock-out-of-band`
-# (process 2026-09-12 plan-lock-out-of-band-waives-the-whole-gate-with-no-
-# disposition-trail): a `plan-lock-disposition:`-prefixed label OR a
-# `plan-lock-disposition:<reason>` PR-body line naming the lock slug(s) crossed
-# and why crossing is safe. The label ALONE no longer downgrades a red
-# "Plan-lock gate" — see $downgraded and the planLockOobRefused field below.
+# planlockdisposition — the same trail, required by plan-lock-out-of-band
+# (process 2026-09-12): the label ALONE no longer downgrades a red Plan-lock gate.
 | disposition($labels; $pr.body; "plan-lock-disposition") as $planlockdisposition
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
 # Dedup key is (check-suite createdAt, startedAt), NOT startedAt alone. A rerun
@@ -198,7 +187,7 @@ def disposition($labels; $body; $prefix):
 # ISO-8601 Z strings compare correctly as strings. A run with NEITHER
 # timestamp and a known label-time fails closed (no downgrade).
 # intent/plan-lock: no freshness conjunct (see the $labelEvents comment above);
-# plan-lock carries the $planlockdisposition conjunct instead.
+# plan-lock needs $planlockdisposition instead.
 # $labelReactiveRed binds the name-predicate-only set once so $staleOverride
 # below is derived by SUBTRACTION — the freshness rule exists in exactly one
 # place and the two sets can never drift out of complement.
@@ -252,20 +241,16 @@ def disposition($labels; $body; $prefix):
        (contains("skip review by coderabbit.ai")
         or test("##[[:space:]]*Review skipped"; "i"))
        and (ascii_downcase | contains("too many files")))) as $crskip
-# pureDocs — the PR diff is strictly docs: docs/ , backlog/ , or any *.md
-# ANYWHERE. Deliberately NARROWER than the is-pure-docs-diff.sh allow-list, which
-# also admits agents/scripts/ because it drives the build-skip cadence (shell is
-# never compiled). That is not the question here: this verdict decides whether
-# a CodeRabbit review may be skipped, and agents/scripts/ is executable gate
-# shell that CR reviews (.coderabbit.yaml does not path-filter it) — a
-# rate-limited review of a gate change is exactly the review worth waiting for
-# (tooling 2026-08-16 cr-gate-greens-on-rate-limited-review, item 3). Used by the
-# rate-limit auto-downgrade (deliverable 1): a rate-limit skip on a pure-docs PR
-# is harmless to fast-pass (markdown is never compiled), while a rate-limit skip
-# on a CODE PR must pause / require an explicit disposition (deliverable 2).
-# Also gates the comment-based arm of $crreviewskipped below (bound here, above
-# it, for that reason). Fail-safe FALSE on an empty file list, a >100-file page
-# (cannot see every path), or absent files.
+# pureDocs — the PR diff is strictly docs/ , backlog/ , or any *.md ANYWHERE.
+# NARROWER than is-pure-docs-diff.sh (which admits agents/scripts/ for build
+# cadence): gate shell is executable and CR reviews it, so it is never pure-docs
+# for the CR question (tooling 2026-08-16 cr-gate-greens-on-rate-limited-review).
+# Used by the rate-limit auto-downgrade (deliverable 1): a rate-limit skip on a
+# pure-docs PR is harmless to fast-pass (markdown is never compiled), while a
+# rate-limit skip on a CODE PR must pause / require an explicit disposition
+# (deliverable 2). Also gates the comment-based arm of $crreviewskipped below
+# (bound here, above it, for that reason). Fail-safe FALSE on an empty file
+# list, a >100-file page (cannot see every path), or absent files.
 | (($changedPaths | length) > 0
    and ($filesOverflow | not)
    and ($changedPaths | all(test("^(docs/|backlog/|.*[.]md$)")))) as $pureDocs
@@ -371,14 +356,10 @@ def disposition($labels; $body; $prefix):
           (.__typename == "CheckRun" and .status != "COMPLETED") or
           (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED")))
         )
-        # When gate 2 has already been adjudicated to WARN, the CR findings
-        # context is the same signal under another name — do not let it hold
-        # ci_pend. Two such adjudications: cr-out-of-band + disposition (tooling
-        # 2026-08-18), and the label-free pure-docs rate-limit auto-downgrade
-        # ($pureDocs + $crratelimited — the exact pair the poll loop downgrades
-        # on), whose aggregator stays pending forever because CR cannot produce
-        # the review node it waits for (tooling 2026-08-16
-        # cr-findings-pending-statuscontext-wedges-merge-gates).
+        # Once gate 2 is adjudicated to WARN — cr-out-of-band + disposition
+        # (tooling 2026-08-18) or the pure-docs rate-limit auto-downgrade
+        # (tooling 2026-08-16) — the CR findings context is the same signal; it
+        # must not hold ci_pend.
         and (((($cr and $crdisposition) or ($pureDocs and $crratelimited)) and (
                (.__typename == "StatusContext" and ((.context // "") | test("^CR findings"; "i")))
                or (.__typename == "CheckRun" and ((.name // "") | test("^CR finding"; "i")))
@@ -429,13 +410,9 @@ def disposition($labels; $body; $prefix):
     ($dupMasked | join(", ")),
     ($dupMasked | length),
     ($dependabotActionsBump | tostring),
-    # headRefName — the PR branch, which the stale-red Plan-lock re-check
-    # passes to plan_lock_gate_decide (a lock held by this branch never blocks
-    # it). May be empty, so it is never the LAST field.
+    # headRefName (may be empty, so never the LAST field)
     ($pr.headRefName // ""),
-    # planLockOobRefused — plan-lock-out-of-band is applied to a red
-    # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
-    # downgrade was refused and the red still counts in ciFail.
+    # planLockOobRefused — label on a red Plan-lock gate, no disposition
     (($planlock and ($planlockdisposition | not)
       and ($failing | any(.__typename == "CheckRun" and .name == "Plan-lock gate"))) | tostring)
   )
