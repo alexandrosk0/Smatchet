@@ -49,6 +49,124 @@ setup() {
     [ "$output" -ge 2 ]
 }
 
+# ---------- coverage.sh: infra-crash vs test/threshold verdicts (stubbed end-to-end) ----------
+# Backlog infra.md 2026-06-14 ci-infra-flake-reds-masquerade-as-real-breakage: an
+# OpenCppCoverage crash used to surface as a `0%` threshold red. These cases drive the real
+# script against a stub OpenCppCoverage (the OPENCPPCOVERAGE_EXE seam) and dummy test exes,
+# pinning the exit contract without the Windows toolchain:
+#   3 + COVERAGE-INFRA-CRASH — no coverage data even after the one retry (capture or merge);
+#   1 — a test binary failed under capture, or a genuine threshold miss;
+#   0 — clean, or a transient tooling crash rescued by the retry.
+
+# cov_stub_setup — dummy build dir + stub OpenCppCoverage under $COVDIR. The stub reads
+# COV_CAPTURE_PLAN (one word per capture call: ok | crash | test) and COV_MERGE_PLAN (one
+# word per merge call: ok | empty | fail), writes COV_RATE as the Cobertura line-rate, and
+# counts its calls in $COVDIR/{capture,merge}.count.
+cov_stub_setup() {
+    COVDIR="$BATS_TEST_TMPDIR/cov"
+    mkdir -p "$COVDIR/build/tests/Lua" "$COVDIR/bin" "$COVDIR/out"
+    : > "$COVDIR/build/tests/SmatchetTests.exe"
+    : > "$COVDIR/build/tests/Lua/SmatchetLuaTests.exe"
+    echo 0 > "$COVDIR/capture.count"
+    echo 0 > "$COVDIR/merge.count"
+    # coverage.sh parses the XML with `python`; shim it where only python3 exists.
+    if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+        printf '#!/bin/sh\nexec python3 "$@"\n' > "$COVDIR/bin/python"
+        chmod +x "$COVDIR/bin/python"
+    fi
+    cat > "$COVDIR/bin/occ" <<'STUB'
+#!/usr/bin/env bash
+kind=capture; out=""; prev=""
+for a in "$@"; do
+    [ "$a" = "--input_coverage" ] && kind=merge
+    if [ "$prev" = "--export_type" ]; then
+        case "$a" in binary:*) out="${a#binary:}" ;; cobertura:*) out="${a#cobertura:}" ;; esac
+    fi
+    prev="$a"
+done
+n=$(( $(cat "$COVDIR/$kind.count") + 1 )); echo "$n" > "$COVDIR/$kind.count"
+if [ "$kind" = capture ]; then read -r -a plan <<< "$COV_CAPTURE_PLAN"; else read -r -a plan <<< "$COV_MERGE_PLAN"; fi
+step="${plan[$((n - 1))]:-ok}"
+case "$kind:$step" in
+    capture:crash|merge:fail) exit 1 ;;
+    capture:test) printf 'cov' > "$out"; exit 3 ;;
+    capture:*) printf 'cov' > "$out"; exit 0 ;;
+    merge:empty) : > "$out"; exit 0 ;;
+    *) printf '<?xml version="1.0"?>\n<coverage line-rate="%s" version="1.9">\n</coverage>\n' "$COV_RATE" > "$out"; exit 0 ;;
+esac
+STUB
+    chmod +x "$COVDIR/bin/occ"
+    export COVDIR
+}
+
+# run_cov <capture-plan> <merge-plan> <rate> — run coverage.sh the way coverage.yml does.
+run_cov() {
+    run env PATH="$COVDIR/bin:$PATH" OPENCPPCOVERAGE_EXE="$COVDIR/bin/occ" \
+        SMATCHET_COVERAGE_BUILD_DIR="$COVDIR/build" SMATCHET_COVERAGE_OUTPUT_DIR="$COVDIR/out" \
+        COV_CAPTURE_PLAN="$1" COV_MERGE_PLAN="$2" COV_RATE="$3" \
+        bash "$COVERAGE" --xml-only --threshold 70
+}
+
+@test "coverage.sh: clean capture + merge above threshold exits 0 with no infra marker" {
+    cov_stub_setup
+    run_cov "ok ok" "ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"line coverage: 80%"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a transient capture crash is retried once and recovers (exit 0)" {
+    cov_stub_setup
+    run_cov "crash ok ok" "ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"retrying the capture once"* ]]
+    [ "$(cat "$COVDIR/capture.count")" -eq 3 ]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a persistent capture crash is INFRA — exit 3 + COVERAGE-INFRA-CRASH, never a 0% red" {
+    cov_stub_setup
+    run_cov "crash crash ok" "ok" "0.80"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"::error title=COVERAGE-INFRA-CRASH::"*"SmatchetTests"* ]]
+    [[ "$output" != *"line coverage:"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 0 ]
+}
+
+@test "coverage.sh: a test-binary failure is exit 1, never retried, no infra marker" {
+    cov_stub_setup
+    run_cov "test ok" "ok" "0.80"
+    [ "$status" -eq 1 ]
+    [ "$(cat "$COVDIR/capture.count")" -eq 2 ]
+    [[ "$output" == *"real test failure"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a merge that keeps writing an empty coverage.xml is INFRA (exit 3), not 0%" {
+    cov_stub_setup
+    run_cov "ok ok" "empty empty" "0.80"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"::error title=COVERAGE-INFRA-CRASH::"* ]]
+    [[ "$output" != *"line coverage:"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 2 ]
+}
+
+@test "coverage.sh: a failed merge is retried once and recovers (exit 0)" {
+    cov_stub_setup
+    run_cov "ok ok" "fail ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"line coverage: 80%"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 2 ]
+}
+
+@test "coverage.sh: a genuine threshold miss stays exit 1 with no infra marker" {
+    cov_stub_setup
+    run_cov "ok ok" "ok" "0.50"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"line coverage 50% < threshold 70%"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
 # ---------- coverage-delta-gate.sh: classifier incl. wrapped LOG_* join ----------
 
 @test "coverage-delta-gate.sh --selftest passes (classifier + multi-line LOG_ join)" {
