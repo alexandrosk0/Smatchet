@@ -83,9 +83,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to the
 # superproject once this script lives in the agent-layer/ submodule, and to this
 # checkout before the flip.
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+if [ -f "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 cd "${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
 
 MODE="list"
@@ -1086,9 +1089,13 @@ if [ "${#owed[@]}" -eq 0 ]; then
     # changes the exit code, and silent unless the logic is verifiably behind.
     # warn_if_script_stale comes from lib/script-freshness.sh via the merge-gates.sh
     # source above; guarded so an older/partial checkout degrades rather than errors.
+    # The declared paths are this script's own (layer) files, so they resolve in
+    # its own tree — cwd is the HOST (PROJECT_ROOT), where after the flip they do
+    # not exist and the check would fall silent as `unverifiable`.
     if command -v warn_if_script_stale >/dev/null 2>&1; then
         case "$MODE" in
             list|blocking)
+                SCRIPT_FRESHNESS_ROOT_HINT="$SCRIPT_DIR" \
                 warn_if_script_stale "postmortem-owed detector logic" \
                     "agents/scripts/core/postmortem-owed.sh" \
                     "agents/scripts/core/lib/script-freshness.sh"

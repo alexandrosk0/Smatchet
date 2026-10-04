@@ -77,6 +77,14 @@ _pc_abs() {
   if [ -d "$1" ]; then (CDPATH='' cd -- "$1" && pwd); else printf '%s\n' "$1"; fi
 }
 _pc_export_roots() {
+  # A caller-set PROJECT_ROOT is honoured as given (CI, the standalone layer and
+  # test fixtures rely on it), but one holding no project.config.json is most
+  # likely an unrelated variable of the same name inherited from the shell: every
+  # host-content read would then check that tree. Say so; never redirect silently.
+  if [ -n "${PROJECT_ROOT:-}" ] && [ ! -f "$PROJECT_ROOT/project.config.json" ]; then
+    printf 'project-config.sh: WARN — PROJECT_ROOT=%s holds no project.config.json; host content is read from there (unset it if it names another project)\n' \
+      "$PROJECT_ROOT" >&2
+  fi
   AGENT_LAYER_ROOT="$(_pc_abs "${AGENT_LAYER_ROOT:-$_pc_layer_root}")"
   PROJECT_ROOT="$(_pc_abs "${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}")"
   PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"

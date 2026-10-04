@@ -22,9 +22,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # checkout before the flip. A climb from this script's own path would land in the
 # layer after the flip.
 # The probe under test is layer content beside this script.
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+if [ -f "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$SCRIPT_DIR/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 REPO_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 PROBE="$SCRIPT_DIR/plan-doc-table-probe.sh"
 

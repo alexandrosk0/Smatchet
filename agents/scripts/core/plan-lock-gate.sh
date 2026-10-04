@@ -79,8 +79,13 @@ _plan_lock_gate_main() {
   # used before. This gate is fail-CLOSED, so leaving a root unset would abort
   # under `set -u` with an "unbound variable" — technically still red, but a
   # cryptic red that reads like a bug in the gate rather than a lock verdict.
-  # shellcheck source=scripts/dev/project-config.sh
-  . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+  _plg_pc="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+  if [ -f "$_plg_pc" ]; then
+      # shellcheck source=scripts/dev/project-config.sh
+      . "$_plg_pc" 2>/dev/null || true
+  else
+      unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+  fi
   : "${AGENT_LAYER_ROOT:=$root}"
   : "${PROJECT_ROOT:=$root}"
 

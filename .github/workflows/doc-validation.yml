@@ -475,8 +475,11 @@ jobs:
       # docs/mirrored-paths.txt names the files the host and the agent layer both
       # carry; each must exist in both trees and be byte-identical (plan row 8g).
       # Before the flip both roots are this checkout, so this proves the list.
+      # Deliberately NOT gated on steps.detect: after the flip a pointer-bump PR
+      # changes only the agent-layer gitlink, which the detector does not count as
+      # a doc change, and that is exactly the PR that can strand a stale mirror.
+      # The check is a few cmp calls, so it runs on every PR.
       - name: test-mirrored-paths — dual-homed files identical in host and agent layer
-        if: steps.detect.outputs.docs == 'true'
         run: |
           bash scripts/dev/test-mirrored-paths.sh --selftest
           bash scripts/dev/test-mirrored-paths.sh

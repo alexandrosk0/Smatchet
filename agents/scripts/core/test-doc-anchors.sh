@@ -32,9 +32,12 @@ fi
 # own tree. The .py is run by its own path: after the flip the host has no
 # agents/scripts/core/ of its own.
 _tda_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_tda_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+if [ -f "$_tda_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tda_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 cd "${PROJECT_ROOT:-$(git rev-parse --show-toplevel)}" || exit 2
 export PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 exec "$PY" "$_tda_self/test_doc_anchors.py" "$@"

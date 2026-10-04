@@ -98,9 +98,12 @@ ROOT="${SMATCHET_ADAPTER_ROOT:-}"
 PROJECT="$ROOT"
 if [ -z "$ROOT" ]; then
     ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-    # shellcheck source=scripts/dev/project-config.sh
-    PC_ROOTS_ONLY=1 . "$ROOT/scripts/dev/project-config.sh" 2>/dev/null \
-        || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+    if [ -f "$ROOT/scripts/dev/project-config.sh" ]; then
+        # shellcheck source=scripts/dev/project-config.sh
+        PC_ROOTS_ONLY=1 . "$ROOT/scripts/dev/project-config.sh" || true
+    else
+        unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+    fi
     PROJECT="${PROJECT_ROOT:-$ROOT}"
 fi
 

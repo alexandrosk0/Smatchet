@@ -45,8 +45,13 @@ fi
 # tree holding ONLY agents/scripts/core/ — no scripts/dev/ at all — so a hard
 # dependency on project-config.sh would make this gate unrunnable there. The
 # fallback keeps every reduced tree behaving exactly as it does today.
-# shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+_tpi_pc="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+if [ -f "$_tpi_pc" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_tpi_pc" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${PROJECT_ROOT:=$(pwd)}"
 
 # docs/plans/ is HOST content and stays host-side; this script moves into the

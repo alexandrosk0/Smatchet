@@ -33,9 +33,12 @@ set -uo pipefail
 # this script's own tree.
 _tsd_self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 _tsd_layer="$(cd "$(dirname "$_tsd_self")/../../.." && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_tsd_layer/scripts/dev/project-config.sh" 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+if [ -f "$_tsd_layer/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tsd_layer/scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 cd "${PROJECT_ROOT:-$_tsd_layer}"
 
 # MAP/SRC_GLOB are read-only override seams (no command-from-env injection) so

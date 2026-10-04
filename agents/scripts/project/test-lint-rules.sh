@@ -93,8 +93,13 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 # against the wrong directory.
 _tlr_layer_root="$(cd "$(dirname "$SELF")/../../.." && pwd)"
 # No project-config.sh beside this script means a fixture copy: scan its own tree,
-# never a root inherited from the caller. A config that fails to parse keeps them.
+# never a root inherited from the caller. The roots are resolved first, on their
+# own (no python): a full config load that fails — no interpreter on PATH — must
+# still leave the scan on the host, not fall back to the layer's tree, which has
+# no Source/ and would report a green that checked nothing.
 if [ -f "$_tlr_layer_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tlr_layer_root/scripts/dev/project-config.sh" || true
     # shellcheck source=scripts/dev/project-config.sh
     . "$_tlr_layer_root/scripts/dev/project-config.sh" 2>/dev/null || true
 else
@@ -743,7 +748,9 @@ case "$MODE" in
     # file. reduce-agent-prompt-bloat Slice 0.
     as_py="$(resolve_python || true)"
     [ -n "$as_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --agentsize-baseline" >&2; exit 2; }
-    AGENTSIZE_BASELINE_FILE="docs/high-integrity/agent-size-baseline.md"
+    # A LAYER file (seeded with agent_size_audit.py, which reads it from its own
+    # tree), so it is written through the layer root, not the scanned host.
+    AGENTSIZE_BASELINE_FILE="$LAYER_ROOT/docs/high-integrity/agent-size-baseline.md"
     mkdir -p "$(dirname "$AGENTSIZE_BASELINE_FILE")"
     "$as_py" "$LAYER_ROOT/agents/scripts/core/agent_size_audit.py" --baseline-md > "$AGENTSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $AGENTSIZE_BASELINE_FILE"

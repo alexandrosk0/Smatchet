@@ -12,7 +12,10 @@
 #
 #   Before the flip both roots are this checkout and the gate proves only that the
 #   list names real files. After it, AGENT_LAYER_ROOT is the agent-layer/ submodule
-#   and the comparison is real.
+#   and the comparison is real. Where the roots still resolve to one tree while an
+#   agent-layer/ mount exists (a host run before row 12 teaches the resolution the
+#   mount), the mount is the layer: comparing the host with itself would pass on
+#   any drift.
 #
 # USAGE
 #   bash scripts/dev/test-mirrored-paths.sh             # compare PROJECT_ROOT and AGENT_LAYER_ROOT
@@ -62,6 +65,15 @@ check_mirrors() {
     [ "$failed" -eq 0 ]
 }
 
+# layer_root_for <project_root> <layer_root> — the tree holding the canonical copies.
+layer_root_for() {
+    if [ "$1" = "$2" ] && [ -d "$1/agent-layer" ]; then
+        printf '%s\n' "$1/agent-layer"
+    else
+        printf '%s\n' "$2"
+    fi
+}
+
 selftest() {
     local tmp rc=0
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/test-mirrored-paths.XXXXXX")" || return 2
@@ -82,9 +94,20 @@ selftest() {
         && { echo "selftest: an empty list was accepted"; rc=1; }
     check_mirrors "$tmp/host" "$tmp/layer" "$tmp/no-such-list" >/dev/null \
         && { echo "selftest: a missing list was accepted"; rc=1; }
+    # One resolved root with an agent-layer/ mount: the mount is compared, so a
+    # drifted canonical copy reds instead of the host matching itself.
+    mkdir -p "$tmp/host/agent-layer/scripts"
+    printf 'b\n' > "$tmp/host/agent-layer/scripts/x.sh"
+    printf 'scripts/x.sh\n' > "$tmp/list"
+    [ "$(layer_root_for "$tmp/host" "$tmp/host")" = "$tmp/host/agent-layer" ] \
+        || { echo "selftest: one root with a mount did not resolve to the mount"; rc=1; }
+    [ "$(layer_root_for "$tmp/host" "$tmp/layer")" = "$tmp/layer" ] \
+        || { echo "selftest: an explicit layer root was overridden"; rc=1; }
+    check_mirrors "$tmp/host" "$(layer_root_for "$tmp/host" "$tmp/host")" "$tmp/list" >/dev/null \
+        && { echo "selftest: drift in the mounted layer was accepted"; rc=1; }
     rm -rf "$tmp"
     if [ "$rc" -eq 0 ]; then
-        echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list)"
+        echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list, drift in a mounted layer)"
     fi
     return "$rc"
 }
@@ -98,4 +121,6 @@ esac
 # shellcheck source=scripts/dev/project-config.sh
 PC_ROOTS_ONLY=1 . "$_tmp_root/scripts/dev/project-config.sh" \
     || { echo "test-mirrored-paths: cannot resolve the project and agent-layer roots" >&2; exit 2; }
-check_mirrors "$PROJECT_ROOT" "$AGENT_LAYER_ROOT" "${MIRRORED_PATHS_FILE:-$PROJECT_ROOT/docs/mirrored-paths.txt}"
+layer="$(layer_root_for "$PROJECT_ROOT" "$AGENT_LAYER_ROOT")"
+printf 'host:  %s\nlayer: %s\n' "$PROJECT_ROOT" "$layer"
+check_mirrors "$PROJECT_ROOT" "$layer" "${MIRRORED_PATHS_FILE:-$PROJECT_ROOT/docs/mirrored-paths.txt}"

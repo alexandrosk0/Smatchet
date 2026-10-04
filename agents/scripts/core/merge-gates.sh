@@ -204,8 +204,13 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # would take down the gate itself, and the "config not found" WARN branch below
 # is the documented inert path for exactly that. MERGE_GATES_CONFIG_FILE keeps
 # its meaning as the explicit override and still wins.
-# shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+_mg_pc="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+if [ -f "$_mg_pc" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_mg_pc" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}}"
 
 # ----------------------------------------------------------------------------

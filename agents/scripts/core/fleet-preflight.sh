@@ -48,9 +48,12 @@ set -euo pipefail
 # checkout before the flip. A climb from this script's own path would land in the
 # layer after the flip.
 _ffp_self="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . "$_ffp_self/../../../scripts/dev/project-config.sh" 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+if [ -f "$_ffp_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_ffp_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 cd "${PROJECT_ROOT:-$_ffp_self/../../..}"
 
 usage() { echo "usage: fleet-preflight.sh <workflow-script> [fleet-dir] [--strict] | --selftest" >&2; }

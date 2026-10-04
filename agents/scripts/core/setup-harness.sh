@@ -19,9 +19,13 @@ set -euo pipefail
 # `cd "$(dirname "$0")/../../.."` it did before. A fresh or reduced checkout is
 # precisely when setup-harness is run, so it must not acquire a hard dependency
 # on a config load succeeding.
-# shellcheck source=scripts/dev/project-config.sh
 _sh_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-. "$_sh_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_sh_self_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_sh_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${AGENT_LAYER_ROOT:=$_sh_self_root}"
 : "${PROJECT_ROOT:=$_sh_self_root}"
 

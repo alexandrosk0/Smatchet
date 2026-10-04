@@ -148,6 +148,22 @@ make_config_dir() {
     [ "$project" = "$TMP" ]
 }
 
+@test "a caller-set PROJECT_ROOT with no project.config.json is honoured, with a warning" {
+    # The bare name is common (an inherited shell variable naming another project
+    # would silently aim every host-content read there). Redirecting it would be
+    # worse — a fixture tree is set this way on purpose — so it is kept and named.
+    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$TMP" bash "$CONFIG_SH" 2>&1 >/dev/null'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN"*"PROJECT_ROOT=$TMP holds no project.config.json"* ]]
+    local project
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$TMP" 2>/dev/null)"
+    [ "$project" = "$TMP" ]
+    # A root that is this project says nothing.
+    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "PC_SCHEMA_FILE follows the resolved config, not the script's own root" {
     # A config missing a required key next to a schema that demands it must trip
     # the no-deps required-key gate (exit 2). If the schema were still read from

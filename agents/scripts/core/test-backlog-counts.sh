@@ -30,9 +30,13 @@ set -euo pipefail
 # on agent-layer/, and project-config.sh resolves the HOST tree from there.
 # Best-effort, with an explicit fallback to the climb this script used before,
 # so a reduced tree that carries agents/ without scripts/dev/ behaves as today.
-# shellcheck source=scripts/dev/project-config.sh
 _tbc_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-. "$_tbc_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_tbc_self_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_tbc_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${PROJECT_ROOT:=$_tbc_self_root}"
 
 # The self-improvement index, its category files and their entries stay HOST-side

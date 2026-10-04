@@ -27,11 +27,16 @@ set -euo pipefail
 # cwd is this script's tree: the skills and agents/core/ are layer content.
 # agents/project/ is HOST content (it stays in the host at the flip), so it is read
 # from PROJECT_ROOT — scripts/dev/project-config.sh, the superproject once the layer
-# is a submodule. Before the flip both are this checkout.
-cd "$(dirname "$0")/../../.."
-# shellcheck source=scripts/dev/project-config.sh
-PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh 2>/dev/null \
-    || unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config here (a fixture copy): this tree, not an inherited root
+# is a submodule. Before the flip both are this checkout. The roots are resolved
+# BEFORE the cd: a relative root from CI (PROJECT_ROOT=.) names the caller's tree.
+_svap_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_svap_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_svap_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "$_svap_self/../../.."
 PROJECT_AGENTS_DIR="${PROJECT_ROOT:-$(pwd)}/agents/project"
 
 PASS=0

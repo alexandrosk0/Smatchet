@@ -59,8 +59,12 @@ set -euo pipefail
 # config must degrade to the original guard-hook-only behaviour rather than
 # abort. AGENT_LAYER_ROOT then falls back to the script's own climb.
 _chp_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-. "$_chp_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_chp_self_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_chp_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_chp_self_root}"
 
 # The content probe is itself LAYER content, so it can be missing for exactly the

@@ -299,8 +299,13 @@ PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" 
 # Best-effort with explicit fallbacks to what this script used before (the git
 # toplevel for both roots), so a reduced tree carrying agents/ but no
 # scripts/dev/ keeps running the contract instead of failing to start.
-# shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+_tac_pc="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+if [ -f "$_tac_pc" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_tac_pc" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 _tac_top="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 : "${AGENT_LAYER_ROOT:=$_tac_top}"
 : "${PROJECT_ROOT:=$_tac_top}"
