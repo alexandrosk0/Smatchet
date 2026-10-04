@@ -213,21 +213,15 @@ int HtmlEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         b.out << "<code>";
         break;
     case MD_SPAN_A: {
-        auto* d = static_cast<MD_SPAN_A_DETAIL*>(detail);
-        const std::string href = d ? MdAttrToString(d->href) : std::string();
+        const std::string href = MdLinkHref(detail);
         b.out << "<a href=\"";
         HtmlEscapeAttr(b.out, href);
         b.out << "\">";
         break;
     }
-    case MD_SPAN_IMG: {
-        auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
-        b.imgSrcStack.push_back(d ? MdAttrToString(d->src) : std::string());
-        // SMATCHET_DEVIATION(rule=duplication; reason=image-span enter (src push, depth, alt reset) twin of AdfEnterSpan; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
-        ++b.imgSpanDepth;
-        b.imgAltBuf.clear();
+    case MD_SPAN_IMG:
+        EnterImageSpan(b.img, detail);
         break;
-    }
     default:
         break;
     }
@@ -253,19 +247,15 @@ int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
         b.out << "</a>";
         break;
     case MD_SPAN_IMG: {
-        if (!b.imgSrcStack.empty()) {
-            const std::string src = std::move(b.imgSrcStack.back());
-            b.imgSrcStack.pop_back();
+        std::string src;
+        if (PopImageSrc(b.img, src)) {
             b.out << "<img src=\"";
             HtmlEscapeAttr(b.out, src);
             b.out << "\" alt=\"";
-            HtmlEscapeAttr(b.out, b.imgAltBuf);
+            HtmlEscapeAttr(b.out, b.img.alt);
             b.out << "\"/>";
-            b.imgAltBuf.clear();
         }
-        // SMATCHET_DEVIATION(rule=duplication; reason=image-span teardown twin of AdfLeaveSpan; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
-        if (b.imgSpanDepth > 0)
-            --b.imgSpanDepth;
+        LeaveImageSpan(b.img);
         break;
     }
     default:
@@ -274,31 +264,10 @@ int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
     return 0;
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=md4c callback skeleton (span switch tail, text callback head) both engines implement in the same order; the shared steps are in MarkdownConvert_Internal.h; owner=orchestrator; revisit=never)
 int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (type == MD_TEXT_NULLCHAR)
-        return 0;
-    if (type == MD_TEXT_HTML) {
-#ifndef NDEBUG
-        if (!b.debugLoggedMdTextHtml) {
-            b.debugLoggedMdTextHtml = true;
-            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (HTML path, first chunk size=%u)",
-                      static_cast<unsigned>(size));
-        }
-#endif
-        return 0;
-    }
-    const std::string txt(text, size);
-    // SMATCHET_DEVIATION(rule=duplication; reason=text-callback preamble (NUL and raw-HTML skip, image alt collection) twin of AdfTextCallback; debt 2026-10-03-markdown-engines-image-span-twins; owner=orchestrator; revisit=2027-08-31)
-    if (b.imgSpanDepth > 0 && b.codeBlockDepth == 0) {
-        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
-            b.imgAltBuf += txt;
-            return 0;
-        }
-        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
-            b.imgAltBuf += ' ';
-            return 0;
-        }
+    if (ConsumeNonEmittedMdText(b, "HTML", type, text, size)) {
         return 0;
     }
     if (type == MD_TEXT_BR) {
@@ -311,6 +280,7 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
         b.out << "<br/>";
         return 0;
     }
+    const std::string txt(text, size);
     if (type == MD_TEXT_ENTITY) {
         // md4c verified the entity reference; passthrough.
         b.out << txt;

@@ -14,6 +14,8 @@ extern "C" {
 #include "md4c.h"
 }
 
+#include "Logger.h"
+
 #include <nlohmann/json.hpp>
 
 #include <sstream>
@@ -32,26 +34,114 @@ inline std::string MdAttrToString(const MD_ATTRIBUTE& attr) {
     return std::string(attr.text, attr.size);
 }
 
+/// The href of an MD_SPAN_A, from the `detail` md4c passes to an enter-span callback.
+inline std::string MdLinkHref(const void* detail) {
+    const auto* d = static_cast<const MD_SPAN_A_DETAIL*>(detail);
+    return d ? MdAttrToString(d->href) : std::string();
+}
+
+/// md4c reports an image's alt text as ordinary text events between the image span's enter and
+/// leave callbacks, so the ADF and HTML engines collect it here instead of emitting it.
+struct MdImageSpan {
+    int depth = 0;
+    std::string alt;
+    std::vector<std::string> srcStack;
+};
+
+/// MD_SPAN_IMG enter, given the `detail` md4c passes: remember the src and start a fresh alt text.
+inline void EnterImageSpan(MdImageSpan& img, const void* detail) {
+    const auto* d = static_cast<const MD_SPAN_IMG_DETAIL*>(detail);
+    img.srcStack.push_back(d ? MdAttrToString(d->src) : std::string());
+    ++img.depth;
+    img.alt.clear();
+}
+
+/// MD_SPAN_IMG leave, first half: move the innermost image's src into `outSrc`. False when md4c sent
+/// no matching enter, in which case there is nothing to emit.
+inline bool PopImageSrc(MdImageSpan& img, std::string& outSrc) {
+    if (img.srcStack.empty()) {
+        return false;
+    }
+    outSrc = std::move(img.srcStack.back());
+    img.srcStack.pop_back();
+    return true;
+}
+
+/// MD_SPAN_IMG leave, second half, after the engine has emitted the image with `img.alt`.
+inline void LeaveImageSpan(MdImageSpan& img) {
+    img.alt.clear();
+    if (img.depth > 0) {
+        --img.depth;
+    }
+}
+
+/// Text inside an image span (and outside a code block) is alt text: collect it and return true so
+/// the engine emits nothing for it. Line breaks become one space.
+inline bool AbsorbImageAltText(MdImageSpan& img, int codeBlockDepth, MD_TEXTTYPE type, const MD_CHAR* text,
+                               MD_SIZE size) {
+    if (img.depth <= 0 || codeBlockDepth != 0) {
+        return false;
+    }
+    if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
+        img.alt.append(text, size);
+    } else if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+        img.alt += ' ';
+    }
+    return true;
+}
+
+/// Text events both engines drop: NUL characters, and raw HTML, which md4c should not emit under
+/// MD_FLAG_NOHTML (ignored defensively, for ABI or dialect drift). Debug builds log the first raw-HTML
+/// chunk of a parse once; `engine` names the path in that line.
+inline bool SkipIgnoredMdText(MD_TEXTTYPE type, MD_SIZE size, bool& loggedRawHtml, const char* engine) {
+    if (type == MD_TEXT_NULLCHAR) {
+        return true;
+    }
+    if (type != MD_TEXT_HTML) {
+        return false;
+    }
+#ifndef NDEBUG
+    if (!loggedRawHtml) {
+        loggedRawHtml = true;
+        LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (%s path, first chunk size=%u)", engine,
+                  static_cast<unsigned>(size));
+    }
+#else
+    (void)size;
+    (void)loggedRawHtml;
+    (void)engine;
+#endif
+    return true;
+}
+
+/// State both md4c engines keep for the part of the text pipeline they share.
+struct MdEngineState {
+    int codeBlockDepth = 0;
+    MdImageSpan img;
+    /// At most one LOG_DEBUG per md_parse if md4c emits MD_TEXT_HTML despite NOHTML.
+    bool debugLoggedMdTextHtml = false;
+};
+
+/// True when a text event produces no output of its own: an ignored event (SkipIgnoredMdText) or
+/// image alt text (AbsorbImageAltText). `engine` names the path in the debug log.
+inline bool ConsumeNonEmittedMdText(MdEngineState& st, const char* engine, MD_TEXTTYPE type, const MD_CHAR* text,
+                                    MD_SIZE size) {
+    return SkipIgnoredMdText(type, size, st.debugLoggedMdTextHtml, engine) ||
+           AbsorbImageAltText(st.img, st.codeBlockDepth, type, text, size);
+}
+
 // ---- Markdown -> ADF (Atlassian Document Format JSON) ----
-struct AdfBuilder {
+struct AdfBuilder : MdEngineState {
     json doc;
     /// Stack of pointers into `doc` — each entry is the `content` array of the currently-open
     /// container block. Top of stack is where new child nodes get pushed.
     std::vector<json*> contentStack;
     /// Inline marks currently active for emitted text nodes (innermost first).
     std::vector<json> markStack;
-    int codeBlockDepth = 0;
-    int imgSpanDepth = 0;
     /// Blockquote nesting depth. Jira ADF blockquote content allows only paragraph / bulletList /
     /// orderedList — nested blockquote is a schema violation. Flatten nested quotes into the outer
     /// blockquote by suppressing inner wrappers; depth tracks pairing so leave-block pops correctly.
     int blockquoteDepth = 0;
-    std::string imgAltAccum;
-    std::vector<std::string> imgSrcStack;
-#ifndef NDEBUG
-    /// At most one LOG_DEBUG per md_parse if md4c emits MD_TEXT_HTML despite NOHTML.
-    bool debugLoggedMdTextHtml = false;
-#endif
 
     AdfBuilder() : doc({{"type", "doc"}, {"version", 1}, {"content", json::array()}}) {
         contentStack.push_back(&doc["content"]);
@@ -61,15 +151,8 @@ struct AdfBuilder {
 };
 
 // ---- Markdown -> HTML (Plane subset) ----
-struct HtmlBuilder {
+struct HtmlBuilder : MdEngineState {
     std::ostringstream out;
-    int codeBlockDepth = 0;
-    int imgSpanDepth = 0;
-    std::string imgAltBuf;
-    std::vector<std::string> imgSrcStack;
-#ifndef NDEBUG
-    bool debugLoggedMdTextHtml = false;
-#endif
 };
 
 // ---- ADF -> Markdown (recursive walker) ----
