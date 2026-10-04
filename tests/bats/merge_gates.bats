@@ -1580,6 +1580,23 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required 'TSan Linux subset (Clang)' FAILURE blocks (name-vs-intent: not advisory unless the NAME says so)" {
+    # infra 2026-08-16 tsan-lane-advisory-label-drift, option (b): the TSan lane
+    # is not a required context, but it is not advisory either — only an
+    # `advisory` token in the check NAME exempts a lane. Prose calling a lane
+    # advisory changes nothing; this pins the mechanism the docs now describe.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"TSan Linux subset (Clang)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
 plan_lock_red_fixture() {
     # Usage: plan_lock_red_fixture <labels.nodes JSON> [<PR body>]
     # Pass fixture whose sole failure is a red non-required "Plan-lock gate".
