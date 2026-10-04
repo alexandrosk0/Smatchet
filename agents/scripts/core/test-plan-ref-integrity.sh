@@ -215,18 +215,24 @@ PLAN
   echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
 fi
 
-# A tree with no plans dir — the standalone agent layer, whose seed carries none —
-# has nothing to resolve a reference against: every docs/plans/ path its prose
-# cites belongs to a consuming product. Keep the resolver's own coverage (the
-# self-contained selftest above) and report the real-tree scan as skipped, rather
-# than failing on every citation.
+# The standalone agent layer (no Source/, and a seed that carries no plans) has
+# nothing to resolve a reference against: every docs/plans/ path its prose cites
+# belongs to a consuming product. There — and only there, and only with no explicit
+# SMATCHET_PLAN_BASE — keep the resolver's own coverage (the self-contained
+# selftest above) and report the real-tree scan as skipped. Anywhere else a missing
+# plans root is broken setup and fails, never a silent pass.
 if [ ! -d "$PLAN_BASE" ]; then
-  echo "test-plan-ref-integrity: no $PLAN_BASE/ in this tree (standalone agent layer) — real-tree scan skipped."
-  if bash "$_SELF" --selftest; then
-    echo "Passed: 1  Failed: 0  Skipped: 1"
-    exit 0
+  if [ -z "${SMATCHET_PLAN_BASE:-}" ] && [ ! -d Source ]; then
+    echo "test-plan-ref-integrity: no $PLAN_BASE/ in a standalone agent layer — real-tree scan skipped."
+    if bash "$_SELF" --selftest; then
+      echo "Passed: 1  Failed: 0  Skipped: 1"
+      exit 0
+    fi
+    echo "Passed: 0  Failed: 1  Skipped: 1"
+    exit 1
   fi
-  echo "Passed: 0  Failed: 1  Skipped: 1"
+  echo "test-plan-ref-integrity: plans root '$PLAN_BASE' not found — nothing to check references against" >&2
+  echo "Passed: 0  Failed: 1"
   exit 1
 fi
 

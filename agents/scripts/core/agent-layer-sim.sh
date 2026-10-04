@@ -61,6 +61,14 @@ declare -A LANE_WORKFLOW=(
 )
 # Newline-separated commands, run in order; each line must also appear verbatim
 # in that lane's workflow (the drift check).
+# Tools each lane cannot run honestly without: test-all.sh and test-shell-lint.sh
+# degrade to warn-only passes when they are missing, and a simulation that silently
+# skips is worse than none.
+declare -A LANE_TOOLS=(
+    [bats]="bats shellcheck"
+    [shell]="shellcheck"
+    [docs]=""
+)
 declare -A LANE_COMMANDS=(
     [bats]=$'bash agents/scripts/core/setup-harness.sh claude-code\nbash scripts/dev/test-all.sh --ci'
     [shell]=$'bash agents/scripts/core/test-lint-bash.sh\nbash agents/scripts/core/test-shell-lint.sh'
@@ -120,14 +128,16 @@ parse_args() {
 }
 
 preflight() {
-    local tool
+    local tool lane
     for tool in git tar; do
         command -v "$tool" >/dev/null 2>&1 || die 2 "$tool not on PATH"
     done
-    # The lanes need these; without them test-all.sh / test-shell-lint.sh degrade to
-    # warn-only passes, and a simulation that silently skips is worse than none.
-    command -v bats >/dev/null 2>&1 || die 2 "bats not on PATH — the bats lane cannot run"
-    command -v shellcheck >/dev/null 2>&1 || die 2 "shellcheck not on PATH — the shell lane cannot run"
+    # Only the selected lanes' tools: `--lane docs` needs neither bats nor shellcheck.
+    for lane in "${LANES[@]}"; do
+        for tool in ${LANE_TOOLS[$lane]}; do
+            command -v "$tool" >/dev/null 2>&1 || die 2 "$tool not on PATH — the $lane lane cannot run"
+        done
+    done
 }
 
 # Build the layer image of $REV at $DIR: the manifest pathspecs plus the scaffold
@@ -195,22 +205,35 @@ drop_origin() {
     ADDED_ORIGIN=0
 }
 
-# Every lane command must still appear in its workflow, or the simulation would
-# be green on commands CI no longer runs.
+# The repo commands a workflow runs, in order: every `bash ...` line of it, whether
+# a one-line `run: bash ...` or a line inside a `run: |` block. Comment lines start
+# with `#` and never match. Environment setup (apt-get, git fetch, --version
+# probes) is not a repo command and is not simulated.
+workflow_commands() {
+    awk '{
+        line = $0
+        sub(/^[[:space:]]*(-[[:space:]]+)?(run:[[:space:]]*)?/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line ~ /^bash /) print line
+    }' "$1"
+}
+
+# The lane's commands and the workflow's repo commands must be IDENTICAL — same
+# lines, same order, nothing extra on either side. A substring match would accept
+# `test-all.sh --ci --new-flag` in CI while the simulation runs the old command and
+# clears phase 4c on a gate CI no longer runs.
 check_drift() {
-    local lane="$1" wf="$DIR/${LANE_WORKFLOW[$1]}" cmd rc=0
+    local lane="$1" wf="$DIR/${LANE_WORKFLOW[$1]}" delta
     if [ ! -f "$wf" ]; then
         printf '  FAIL  %s: workflow %s is missing from the image\n' "$lane" "${LANE_WORKFLOW[$lane]}" >&2
         return 1
     fi
-    while IFS= read -r cmd; do
-        if ! grep -qF -- "$cmd" "$wf"; then
-            printf '  FAIL  %s: "%s" no longer appears in %s — update LANE_COMMANDS\n' \
-                "$lane" "$cmd" "${LANE_WORKFLOW[$lane]}" >&2
-            rc=1
-        fi
-    done <<< "${LANE_COMMANDS[$lane]}"
-    return "$rc"
+    if ! delta="$(diff <(printf '%s\n' "${LANE_COMMANDS[$lane]}") <(workflow_commands "$wf"))"; then
+        printf '  FAIL  %s: LANE_COMMANDS and the repo commands in %s differ (< simulator, > workflow):\n' \
+            "$lane" "${LANE_WORKFLOW[$lane]}" >&2
+        printf '%s\n' "$delta" | sed 's/^/          /' >&2
+        return 1
+    fi
 }
 
 # Run one lane in the image exactly as its workflow does: from the tree root, with
