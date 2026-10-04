@@ -7978,3 +7978,34 @@ protected them.
   Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — status was already applied (PR #1854); the JiraIssueSearchHttp / JiraUserAndMetaHttp / JiraIssueMutationCommentHttp fixtures exist and the coverage floor is 70.
   Status: applied (2026-10-04; was: applied (2026-07-14, PR #1854) — 49 HTTP-fixture doctest cases added over JiraUserAndMeta / JiraIssueSearch / JiraIssueMutation (comment+worklog) success/error/edge paths; measured line coverage 67%→71% (OpenCppCoverage), blocking floor raised 65→70. NOTE: the label was NOT removed — it serves the #939-class structural measured-set expansion (rate-drop-while-absolute-rises), a legitimate escape beyond the ramp. Residual low-coverage units (JiraIssueMutation CreateIssue/BuildCreatePayload/UpdateIssueFields*; JiraIssueSearch FetchIssueComments/FetchIssuesForKeys — cfg-less paths needing TestEnvGuard+loopback config) are the next levers if the floor is raised further.)
   Last-reviewed: 2026-10-04
+
+- 2026-08-04 · orchestrator (visual-validation exception from the about-dialog-help-menu ship) · [test] · P3 — the About modal's two manual verification items (open/populate/copy round-trip, and the Help-menu enablement matrix) have no automated coverage; needs a bucket-E scenario
+  Details: the About feature landed with items 10 and 11 of its § Verification (actual) signed off by a human eye-test under the `AGENTS.md` visual-validation exception, because the diff touches `Source/Core/src/Ui/SmatchetAboutUi.cpp` + `SmatchetUI_MainMenu.cpp` and there is no bucket-C/E coverage for either surface. The pure half IS covered — `tests/Core/AboutInfo.test.cpp` asserts `GatherAboutInfo` / `BuildAboutReportText` / `ParseDepManifest`, and `tests/bats/about_buildinfo.bats` asserts the CMake codegen — so what is uncovered is strictly the ImGui layer: that `app.about.open` actually opens the modal, that its six sections render non-empty rows, and (the higher-value half) that the Help-menu reachability restructure holds. That restructure is a real regression risk: `drawMenuBarHelpMenu` was deliberately moved OUTSIDE the `trackerLocked` `BeginDisabled` bracket in `SmatchetUI_MainMenu.cpp` so About stays clickable in exactly the backend-down state where a user needs to copy build info, with the two pre-existing Help items re-disabling themselves per-item. Anyone who later "tidies" that bracket back would silently re-break About in the one state that matters, and nothing in CI would say so.
+  Concrete next action: add a bucket-E (ImGui Test Engine) scenario that (a) dispatches `app.about.open` and asserts the "About Smatchet" popup is the top-most modal with a non-empty version row and a non-empty deps row, (b) presses Escape and asserts the popup closes and the cached snapshot is released (`g_ui.aboutInfo == nullptr`), and (c) drives the enablement matrix — with `cfg.BackendHasBeenReachable` false, assert the Help menu itself is enabled, the About item is enabled, and the two tracker-dependent items report disabled. Register it in the bucket-E driver plus a `scripts/dev/test-ui-about.sh` wrapper (the fixture-gated bucket-E wrappers are not in the main required lane, so enrollment needs the same treatment as the omnibar suite). Cross-ref: `docs/plans/shipped/about-dialog-help-menu.md` § Verification (actual) items 10-11; `Source/Core/src/Ui/SmatchetAboutUi.cpp`; `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp` (`drawMenuBarHelpMenu` placement); `Source/Core/src/Commands/AppViewCommands.cpp` (`app.about.open`).
+  Resolution: duplicate — folded 2026-10-04 (backlog-sweep-2026-10) into test/2026-08-18-about-modal-no-bucket-c-or-e-coverage.md, which now carries both asks (open/populate/copy round-trip and the Help-menu enablement matrix).
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-09-24 · offline-first sweep · [debt] · P2 — `AppController::UpdateTicket` writes the ticket to SQLite on the UI thread
+
+  Details: `AppController::UpdateTicket` (`AppController_CatalogAndFieldEdit.cpp`) calls
+  `Cache->SaveTicket(capturedKey, ticket)` inline, and its callers apply field-edit results on the
+  UI thread (`ApplyFieldEditResult` through the grid pipeline's main-thread post-back). The write runs
+  inside `RunWriteTxnWithBusyRetry`, whose busy-retry deadline can hold the frame, so a contended
+  cache stalls the UI (Quality Pillar 2). Every queued offline edit also passes through this path when
+  it is applied locally. Found by the offline-first sweep (docs/plans/active/offline-first.md).
+
+  Concrete next action: post the `SaveTicket` call to a worker. Keep the key-and-generation latch
+  that precedes it (issue #1081), and pass the latched key into the worker so the write still lands
+  under the captured backend. The in-memory ticket update and `RefreshLocalData()` stay on the UI
+  thread.
+  Resolution: duplicate — folded 2026-10-04 (backlog-sweep-2026-10) into debt/2026-08-18-comment-cache-write-off-ui-thread.md (same UpdateTicket → SaveTicket-on-UI-thread defect, reached from the field-edit path).
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-05-17 · security-review · [tooling] · P3 — Install gitleaks + semgrep + flawfinder in MSYS2 dev image (security-review fallback is grep)
+  Details: Current `security-review` agent attempts gitleaks / semgrep / flawfinder when present, falls back to grep heuristics + cppcheck security warnings otherwise. On the MSYS2 UCRT64 runner none of the three are installed, so cross-language secret scans + AST-aware vuln patterns silently degrade to text-search.
+  Concrete next action: add a `scripts/dev/install-security-tools.sh` (mirror of `doctor.sh` shape) that pacman-installs `gitleaks` (or `go install` if not packaged), `pipx install semgrep`, `pacman -S mingw-w64-ucrt-x86_64-flawfinder`. Document in `docs/harness/SETUP.md`. ~1 h.
+  Resolution: obsolete 2026-10-04 (backlog-sweep-2026-10) — the MSYS2 dev image it targets is retired (build.md: MSYS2-retired), so the install script it proposes has no home. Re-file against the current Windows toolchain only if the security-review grep fallback is shown to miss something.
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04

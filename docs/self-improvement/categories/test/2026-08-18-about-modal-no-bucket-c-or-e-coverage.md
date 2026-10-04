@@ -21,3 +21,9 @@
   assert `IsPopupOpen` true after N frames, then assert the placeholder string appears in the
   item list with a field forced empty. That single case retires the manual step for every future
   About change, not just these two.
+
+  Folded in 2026-10-04 (backlog-sweep-2026-10): the duplicate entry test/2026-08-04-about-modal-bucket-e
+  (now in [applied.md](../applied.md)) asked for the same bucket-E case plus two extra assertions, carried
+  here: (a) `app.about.open` → the About popup is the top-most modal with non-empty version and deps rows,
+  Escape closes it and releases the cached snapshot; (b) the Help-menu enablement matrix (About enabled in
+  every UI mode the menu is drawn in) and the copy-to-clipboard round-trip.

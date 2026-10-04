@@ -97,12 +97,6 @@
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · security-review · [tooling] · P3 — Install gitleaks + semgrep + flawfinder in MSYS2 dev image (security-review fallback is grep)
-  Details: Current `security-review` agent attempts gitleaks / semgrep / flawfinder when present, falls back to grep heuristics + cppcheck security warnings otherwise. On the MSYS2 UCRT64 runner none of the three are installed, so cross-language secret scans + AST-aware vuln patterns silently degrade to text-search.
-  Concrete next action: add a `scripts/dev/install-security-tools.sh` (mirror of `doctor.sh` shape) that pacman-installs `gitleaks` (or `go install` if not packaged), `pipx install semgrep`, `pacman -S mingw-w64-ucrt-x86_64-flawfinder`. Document in `docs/harness/SETUP.md`. ~1 h.
-  Status: parked
-  Last-reviewed: 2026-05-18
-
 - 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/include/IAiClient.h:14` `virtual ~IAiClient() {}` should be `= default`
   Details: Defaulted destructor preferred for trivial-destruct interfaces; rule-of-three compliance.
   Concrete next action: `virtual ~IAiClient() = default;` + add rule-of-three (copy/move ctor + assign defaults). Surfaced by retrospective code-review sweep on PR #140.

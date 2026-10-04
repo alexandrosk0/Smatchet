@@ -25,12 +25,6 @@
   Status: partially applied (2026-06-20 trap-sweep — shipped: (2) pre-ship.sh runs test-docs.sh enrolling all doc gates incl portable-purity; remaining: (3) content-hash/git-mv-following baseline is absent; (1) the rename-specific rule is not separately codified)
   Last-reviewed: 2026-06-20
 
-- 2026-05-17 · code-review · [process] · P3 — PR #146 `Source/Core/src/Commands/Scenarios/*.cpp` manual `extern UiDrawSession g_ui;` duplicated across files
-  Details: Duplicated across `CommandPaletteFuzzyScenario.cpp` + `DockGapSentinelScenario.cpp` + `BuiltinCommands_Debug.cpp`.
-  Concrete next action: promote to an unconditional `extern` in `SmatchetUiSession.h`. Surfaced by retrospective code-review sweep on PR #146.
-  Status: partially applied (2026-06-20 trap-sweep — shipped: central extern (SmatchetUiSession.h:938 `extern UiDrawSession g_ui;`); remaining: the per-file duplicate extern declarations are NOT removed (still in CommandPaletteFuzzyScenario.cpp, DockGapSentinelScenario.cpp, AiChatHistoryRenderScenario.cpp, +6 more) — the dedup goal is unmet)
-  Last-reviewed: 2026-06-20
-
 - 2026-05-16 · test-rig + orchestrator · [process] · P3 — Mutation-sanity recipe in test-rig packets needs taxonomy: prod-mutation vs test-mutation
   Details: callstack-adversarial-subcases run (PR #112) hit the auto-mode classifier denying two mutation-sanity recipe steps: (a) production-side substring-prefix relaxation in `ApplyPathRemaps` (legit denial — production was strictly out-of-scope per the packet), (b) test-side fixture mutation that would have removed a load-bearing invariant from a high-risk case (also legit). The current `test-rig` packet language ("one production-side mutation per high-risk case, demonstrably fails the new test, reverted before commit") assumes both options open. In practice, when production code is `Out of scope — refuse if asked`, every prod-side mutation is denied by the classifier. Agent has to argue-from-assertion-shape for 1/4 of the cases and document deferred-with-rationale.
   Concrete next action: split the recipe into (1) production-side mutation when production is in the write set, demonstrably fails, revert; (2) production-side mutation **deferred** when production is out-of-scope — instead, argue from assertion shape + neighbour-test coverage that the production branch is reachable; (3) test-side fixture mutation only when it does NOT remove a load-bearing invariant. Land in `agents/core/test-rig.md` § Mutation-sanity recipe + AGENTS.md § Orchestrator delegation packet.
@@ -41,17 +35,5 @@
 - 2026-05-14 · architect · [process] · P3 · DEFERRED — `TodoWrite` reminder noise during read-only tasks
   Details: System injected three `TodoWrite` reminders into a read-only validation run. Read-only agents (architect, code-review, security-review, perf-measure) rarely benefit from a todo list; the reminder hook could be muted for them based on the agent banner or `tools:` frontmatter (no `Write`/`Edit`).
   Concrete next action: harness-side (Claude Code injects the reminder unconditionally; not configurable via project settings.json). Re-open once a Claude Code release exposes a per-agent toggle, or once a second harness cites the same noise.
-  Status: deferred
-  Last-reviewed: 2026-05-17
-
-- 2026-05-12 · tracker-backend · [process] · P3 · DEFERRED — `RemoteProject` POD uses lowerCamelCase (`id`, `key`, `displayName`) while most other DTOs use PascalCase
-  Details: Style drift introduced in PR 1. Worth normalizing before more call sites accumulate. Architect call.
-  Concrete next action: C++ rename touching every `RemoteProject` call site (tracker-backend + grid-engine + bulk-import). Architect should scope the rename inside the next PR that legitimately touches `RemoteProject`. Don't open a standalone rename PR — bundle with adjacent work to minimise diff noise.
-  Status: deferred
-  Last-reviewed: 2026-05-17
-
-- 2026-05-12 · offline-sync · [process] · P3 · DEFERRED — `SaveFieldCatalogSnapshot` accumulated 4 extra primitive args; a `FieldCatalogSaveContext` struct would prevent future drift
-  Details: callers already had each arg in scope; bundling them into one struct keeps the call site narrow as more per-axis state lands.
-  Concrete next action: small C++ refactor — bundle into the next PR that touches `SaveFieldCatalogSnapshot`. Don't open a standalone refactor PR; the win shows up only when adding the next per-axis arg, which is when the bundling decision gets reviewed in context.
   Status: deferred
   Last-reviewed: 2026-05-17

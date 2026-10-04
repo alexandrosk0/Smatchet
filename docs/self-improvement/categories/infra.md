@@ -44,8 +44,9 @@
 - 2026-05-16 · unreal-bridge · [infra] · P2 — DX12 backbuffer readback for screenshot diff (Phase 7 bucket C)
   Details: Phase 7 (`test-phase-7-screenshot-diff`) ships PPM capture wired into `Source/Standalone/main.cpp:569` via `glReadPixels(GL_FRONT, GL_RGBA, ...)`. The `debug.window.screenshot` flag pair (`UiDrawSession::requestScreenshot{,Path}`) flips on both Standalone and DX12 builds but DX12 never consumes it — Unreal owns the swap chain and has no equivalent backbuffer-readback path wired in `SmatchetCore_DX12`. Bucket-C verification therefore covers Standalone-only.
   Concrete next action: add a DX12-side equivalent in `Source/UnrealPlugins/SmatchetImGuiPlugin/` (or wherever the swap-chain present hook lives) — `ID3D12GraphicsCommandList::CopyResource` from the backbuffer to a readback heap, then memcpy to the same PPM writer used by Standalone. Estimated cost ~4-6 h (DX12 resource-state transitions are fiddly). Until then, Phase 7 gates only run on Standalone — Unreal-shipped builds skip bucket-C without notice.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): Standalone DX12 readback has landed (Source/Standalone/Dx12Bootstrap.cpp: D3D12_HEAP_TYPE_READBACK heap + CopyTextureRegion). Only the Unreal-plugin path remains (no readback under Source/UnrealPlugins); Windows + Unreal only.
   Status: open
-  Last-reviewed: 2026-05-17
+  Last-reviewed: 2026-10-04
 
 - 2026-06-07 · orchestrator · [infra] · P2 — `strict-off residual`: with strict=false and no merge queue, the concurrent-PR gate-vs-violation class has NO structural mitigation (accepted risk, watch entry)
   Details: #920/#950 turned off require-branches-up-to-date (merge on own-head green; post-merge CI as backstop). The 2026-06-03 postmortem proved post-merge CI does NOT close the concurrent-PR class — a red post-merge develop run blocks nothing. So gate-in-PR-A + violation-in-concurrent-PR-B (both green alone) can dirty develop again. Accepted because solo-dev cadence keeps the window small and the class recurred once in ~3 weeks; the alternatives (strict rebase-everything, merge queue) cost more than the class burns. (CR sweep CR-950-2.)
