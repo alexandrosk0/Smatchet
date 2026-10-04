@@ -143,7 +143,8 @@ Options (both --key value and --key=value forms are accepted):
                           validated commit (manifest + scaffold) and run the layer's
                           three CI lanes in it via agent-layer-sim.sh (~25 min).
                           Proves the manifest is COMPLETE, which phase 2 cannot.
-                          --target is optional here.
+                          Manifest paths must be committed (a dirty tree is a hard
+                          stop, unlike --dry-run). --target is optional here.
   --print-bats-block      Print the generated tests/bats block of seed-paths.txt
                           (the suites layer-side wrappers run) and exit.
   --help                  This text.
@@ -171,8 +172,8 @@ Phases:
                 docs/seed-audit.md. Any hit is a hard stop; nothing is pushed until
                 this is clean.
   4c lanes      run the layer's own CI lanes on the rewritten clone
-                (agent-layer-sim.sh --run-only); red, or any tracked change the
-                lanes leave behind, is a hard stop.
+                (agent-layer-sim.sh --run-only); red, or any file the lanes
+                change or create outside .gitignore, is a hard stop.
   5 publish     hard-refuses unless 4b and 4c cleared; remote add plus push develop;
                 gh label create; setup-branch-protection.sh (failure = failed seed)
   6 report      the row-8 Accept checks with PASS/FAIL and the seed SHA
@@ -412,11 +413,13 @@ phase2_manifest() {
     dirty="$(git status --porcelain --untracked-files=all -- "${pin_specs[@]}" tests/bats/)"
     if [ -z "$dirty" ]; then
         pass "validating committed revision $SOURCE_SHA (manifest paths clean)"
-    elif [ "$DRY_RUN" -eq 1 ]; then
+    elif [ "$DRY_RUN" -eq 1 ] && [ "$SIMULATE" -eq 0 ]; then
         warn "uncommitted changes under manifest paths — this dry run validates the working tree, not $SOURCE_SHA"
     else
+        # --simulate reads this working tree's manifest here but images $SOURCE_SHA,
+        # so a dirty tree would let a green run vouch for a tree it never tested.
         printf '%s\n' "$dirty" | sed 's/^/          /' >&2
-        die 1 "uncommitted changes under manifest paths — commit or discard them; the seed publishes a commit, not a working tree"
+        die 1 "uncommitted changes under manifest paths — commit or discard them; the seed publishes, and --simulate tests, a commit, not a working tree"
     fi
 
     # --- regenerate the bats block and diff it against the committed manifest ---

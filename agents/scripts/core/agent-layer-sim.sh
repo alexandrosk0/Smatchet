@@ -27,9 +27,10 @@
 #   --dir DIR       Where to build the image. Must not exist. Default: a mktemp dir.
 #   --keep          Keep the image after a green run (a red run always keeps it).
 #   --run-only DIR  Skip the build; run the lanes in an existing layer tree. Used
-#                   by seed phase 4c on the rewritten clone. Any tracked change the
-#                   lanes leave behind fails the run, because that tree is about to
-#                   be published.
+#                   by seed phase 4c on the rewritten clone. The tree must start
+#                   clean, and anything the lanes leave behind — a modified tracked
+#                   file, or a new file .gitignore does not cover — fails the run,
+#                   because that tree is about to be published.
 #   --lane NAME     Run only this lane (repeatable): bats | shell | docs.
 #                   Default: all three, in that order.
 #
@@ -41,8 +42,9 @@
 #
 # EXIT
 #   0  every requested lane green
-#   1  a lane red, lane/workflow drift, or the lanes changed tracked files
-#   2  usage error, tooling missing, or the image could not be built
+#   1  a lane red, lane/workflow drift, or the lanes changed or created files
+#   2  usage error, tooling missing, the image could not be built, or the tree was
+#      not clean before the lanes ran
 set -uo pipefail
 
 _SCRIPT_PATH="${BASH_SOURCE[0]}"
@@ -278,6 +280,15 @@ main() {
     else
         build_image
     fi
+    # The post-run check attributes every change in the tree to the lanes, so the
+    # tree has to start clean: nothing modified, nothing untracked outside .gitignore.
+    local before
+    before="$(git -C "$DIR" status --porcelain --untracked-files=all)" \
+        || die 2 "git status failed in $DIR"
+    if [ -n "$before" ]; then
+        printf '%s\n' "$before" | sed 's/^/          /' >&2
+        die 2 "$DIR is not clean before the lanes run — commit or remove the paths above"
+    fi
     trap drop_origin EXIT
     ensure_origin
 
@@ -301,13 +312,16 @@ main() {
         ran=$((ran + 1))
     done
 
-    # The lanes must not have rewritten any tracked file: in --run-only mode that
-    # tree is published next, and anywhere else it means a test reaches outside
-    # its fixture.
+    # The lanes must leave the tree as they found it — no tracked file rewritten, no
+    # new file outside .gitignore (a rotated applied-*.md, say): in --run-only mode
+    # that tree is published next, and anywhere else it means a test reaches outside
+    # its fixture. Ignored paths (the harness adapters, /build/) are runtime output.
     local changed
-    changed="$(git -C "$DIR" status --porcelain --untracked-files=no)"
-    if [ -n "$changed" ]; then
-        printf '  FAIL  the lanes changed tracked files:\n' >&2
+    if ! changed="$(git -C "$DIR" status --porcelain --untracked-files=all)"; then
+        printf '  FAIL  git status failed in %s — cannot show the lanes left it untouched\n' "$DIR" >&2
+        failed=1
+    elif [ -n "$changed" ]; then
+        printf '  FAIL  the lanes changed or created files outside .gitignore:\n' >&2
         printf '%s\n' "$changed" | sed 's/^/          /' >&2
         failed=1
     fi
