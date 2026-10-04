@@ -36,6 +36,7 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 #include "ConfigManager.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "TrackerSetupPure.h"
 
@@ -46,6 +47,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <cstring>
 #include <string>
 
 // g_ui — the shared bag of UI-thread state. Set showPreferences /
@@ -86,6 +88,38 @@ bool OpenPreferences(ImGuiTestContext* ctx) {
 // click needed, and the dispatch switch draws its body every frame the window
 // is live — observing the category is the "the body is ticking" signal.
 bool TrackerTabBodyRan() { return g_ui.preferencesCategory == PreferencesCategory::Tracker; }
+
+// The draw fn consumes requestPreferencesFocus in one frame, and ItemInfo / NavMoveTo yield
+// frames internally, so a test that resolves a body widget re-arms it from its GuiFunc on EVERY
+// frame; otherwise the body (and the widget being looked up) stops being submitted mid-lookup.
+bool g_keepTrackerBodyLive = false;
+
+void KeepTrackerBodyLive() {
+    if (!g_keepTrackerBodyLive) {
+        return;
+    }
+    g_ui.requestPreferencesFocus = true;
+    // A persisted collapse of the backend section would skip the button entirely.
+    g_ui.prefsCollapsedSections.erase("tracker.backend");
+    g_ui.prefsCollapsedLoaded = true;
+    // The update-available modal owns nav, so no widget under it could be activated.
+    g_ui.appUpdateModalOpen = false;
+}
+
+// The engine's `**/label` wildcard does not resolve into the PrefsBody child window, so build the
+// id the draw code uses: PrefsBody seeds the stack, PrefsSection pushes the section id and the
+// button hashes its localized label under that. 0 while the body has not been drawn.
+ImGuiID TrackerTestConnectionButtonId() {
+    const ImGuiContext* g = ImGui::GetCurrentContext();
+    for (int i = 0; i < g->Windows.Size; ++i) {
+        const ImGuiWindow* win = g->Windows[i];
+        if (std::strstr(win->Name, "PrefsBody") != nullptr) {
+            const char* label = SmatchetLocalization::T("prefs.tracker.test.button", "Test connection");
+            return ImHashStr(label, 0, ImHashStr("tracker.backend", 0, win->ID));
+        }
+    }
+    return 0;
+}
 
 // A config the credential-completeness half of NeedsSetup is satisfied by, so
 // BackendHasBeenReachable alone decides the predicate.
@@ -203,11 +237,12 @@ static void RegisterVerifiedPinClearsOnClose(ImGuiTestEngine* engine) {
 // Crash regression: DrawTrackerTestConnection re-read d.trackerPrefsTestInFlight
 // for its EndDisabled() AFTER the click had set it true, popping a disabled scope
 // it never pushed — IM_ASSERT "Calling EndDisabled() too many times!" aborted the
-// app on the first "Test connection" click. Clicking the REAL button exercises the
+// app on the first "Test connection" click. Activating the REAL button exercises the
 // exact frame; a regression trips the in-frame IM_ASSERT.
 // ---------------------------------------------------------------------------
 static void RegisterTestConnectionClickBalanced(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "TrackerFirstRun", "TestConnectionClickKeepsDisabledStackBalanced");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { KeepTrackerBodyLive(); };
     t->TestFunc = [](ImGuiTestContext* ctx) {
         AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
@@ -215,25 +250,33 @@ static void RegisterTestConnectionClickBalanced(ImGuiTestEngine* engine) {
             return;
         }
 
+        g_keepTrackerBodyLive = true;
         const bool prefsLive = OpenPreferences(ctx);
         IM_CHECK_NO_RET(prefsLive);
         if (!prefsLive) {
+            g_keepTrackerBodyLive = false;
             g_ui.showPreferences = false;
             return;
         }
         IM_CHECK_NO_RET(YieldUntil(ctx, [] { return TrackerTabBodyRan(); }));
         IM_CHECK_NO_RET(!g_ui.trackerPrefsTestInFlight);
 
-        // The click frame flips trackerPrefsTestInFlight false -> true between the
-        // BeginDisabled and EndDisabled decisions — the crashing transition.
+        // The activation frame flips trackerPrefsTestInFlight false -> true between the
+        // BeginDisabled and EndDisabled decisions — the crashing transition. Nav-activate,
+        // not ItemClick: the body sits in a dock node the engine cannot move to clear a
+        // mouse path, and Button() returns true for a nav activation exactly as for a click.
+        const ImGuiTestRef buttonRef(TrackerTestConnectionButtonId());
+        IM_CHECK_NO_RET(buttonRef.ID != 0);
         const int genBefore = g_ui.trackerPrefsTestGen;
-        ctx->ItemClick("**/Test connection");
-        ctx->Yield(2);
-        IM_CHECK_NO_RET(g_ui.trackerPrefsTestGen == genBefore + 1); // the click reached the handler
+        ctx->SetInputMode(ImGuiInputSource_Keyboard);
+        ctx->ItemNavActivate(buttonRef);
+        YieldUntil(ctx, [genBefore] { return g_ui.trackerPrefsTestGen != genBefore; }, 30);
+        IM_CHECK_NO_RET(g_ui.trackerPrefsTestGen == genBefore + 1); // the activation reached the handler
 
         // Let the throwaway probe settle so no verdict lands after the window closes;
         // a probe that outlives the budget is dropped by the close path's gen bump.
         YieldUntil(ctx, [] { return !g_ui.trackerPrefsTestInFlight; }, 600);
+        g_keepTrackerBodyLive = false;
         g_ui.showPreferences = false;
         ctx->Yield();
     };
