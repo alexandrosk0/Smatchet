@@ -92,6 +92,66 @@ dev_trim() {
     DEV_TRIMMED="${s%"${s##*[![:space:]]}"}"
 }
 
+# True when the marker body $1 has non-empty rule=, reason= and owner= fields and a revisit= key.
+# A revisit= that is present but empty is left to deviation-overdue, which already fails it closed.
+dev_fields_complete() {
+    local kv kvs have_rule="" have_reason="" have_owner="" have_revisit=""
+    IFS=';' read -ra kvs <<< "$1"
+    for kv in "${kvs[@]}"; do
+        dev_trim "$kv"
+        case "$DEV_TRIMMED" in
+            rule=?*)   have_rule=1 ;;
+            reason=?*) have_reason=1 ;;
+            owner=?*)  have_owner=1 ;;
+            revisit=*) have_revisit=1 ;;
+        esac
+    done
+    [ -n "$have_rule" ] && [ -n "$have_reason" ] && [ -n "$have_owner" ] && [ -n "$have_revisit" ]
+}
+
+# True when the text after a SMATCHET_DEVIATION( opener ($1) closes the marker with every field
+# inside it: some ')' has no '(' still open before it, and the body before that ')' holds all four
+# fields. A ')' with no '(' open is either the marker's close or stray text ("reason=step 1) ..."),
+# so each one is tried in turn. A ')' that closes an open '(' belongs to a parenthetical and can
+# never close the marker, so "reason=(why)" with nothing after it runs on past the line.
+dev_marker_closes_whole() {
+    local rest="$1" body="" depth=0 ch
+    while [[ "$rest" =~ ^([^()]*)([()])(.*)$ ]]; do
+        body+="${BASH_REMATCH[1]}"
+        ch="${BASH_REMATCH[2]}"
+        rest="${BASH_REMATCH[3]}"
+        if [ "$ch" = "(" ]; then
+            depth=$((depth + 1))
+        elif [ "$depth" -gt 0 ]; then
+            depth=$((depth - 1))
+        elif dev_fields_complete "$body"; then
+            return 0
+        fi
+        body+="$ch"
+    done
+    return 1
+}
+
+# True when $1 mentions SMATCHET_DEVIATION( but is not a whole marker: nothing on the line closes
+# it, or it lacks a non-empty rule= / reason= / owner= or a revisit= key (dev_marker_closes_whole).
+# Every gate reads a marker one line at a time, so a marker wrapped onto a second line never had
+# its revisit= read: 28 such markers hid 24 due dates from deviation-overdue until 2026-10.
+# Each mention on the line is checked on its own: its text runs to the next mention (or the end of
+# the line). Otherwise the greedy DEV_RE body would let a second mention's revisit= complete a
+# first mention that has none, and the suppressing parsers would honour the pair. A body that
+# passes is a prefix of the greedy one DEV_RE reads, so no parser misses one of its fields.
+dev_marker_malformed() {
+    local rest="$1" seg
+    case "$rest" in *'SMATCHET_DEVIATION('*) ;; *) return 1 ;; esac
+    rest="${rest#*"SMATCHET_DEVIATION("}"
+    while :; do
+        seg="${rest%%"SMATCHET_DEVIATION("*}"
+        dev_marker_closes_whole "$seg" || return 0
+        case "$rest" in *'SMATCHET_DEVIATION('*) ;; *) return 1 ;; esac
+        rest="${rest#*"SMATCHET_DEVIATION("}"
+    done
+}
+
 today_ymd() { date +%Y-%m-%d; }
 
 # True if $1 is a CALENDAR ATTEMPT that revisit_overdue cannot compare. Every such value used to

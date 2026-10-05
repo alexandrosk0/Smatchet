@@ -192,6 +192,41 @@ TEST_CASE("MarkdownToHtml: inline emphasis") {
     CHECK(Html("~~gone~~") == "<p><s>gone</s></p>");
 }
 
+TEST_CASE("MarkdownToHtml: images take their alt text from the description") {
+    CHECK(Html("![alt](u.png)") == "<p><img src=\"u.png\" alt=\"alt\"/></p>");
+    CHECK(Html("![](u.png)") == "<p><img src=\"u.png\" alt=\"\"/></p>");
+    CHECK(Html("![a](u.png \"title\")") == "<p><img src=\"u.png\" alt=\"a\"/></p>");
+    CHECK(Html("![shot](attachment:abc-123)") == "<p><img src=\"attachment:abc-123\" alt=\"shot\"/></p>");
+    // A line break inside the description becomes one space in the alt text.
+    CHECK(Html("![x\ny](u.png)") == "<p><img src=\"u.png\" alt=\"x y\"/></p>");
+    CHECK(Html("![x  \ny](u.png)") == "<p><img src=\"u.png\" alt=\"x y\"/></p>");
+    // Both attributes are escaped.
+    CHECK(Html("![a\"<b>](u.png?x=1&y=\"2\")") ==
+          "<p><img src=\"u.png?x=1&amp;y=&quot;2&quot;\" alt=\"a&quot;&lt;b&gt;\"/></p>");
+    CHECK(Html("[link ![img](i.png)](http://x)") ==
+          "<p><a href=\"http://x\">link <img src=\"i.png\" alt=\"img\"/></a></p>");
+    CHECK(Html("![a](u.png) ![b](v.png)") == "<p><img src=\"u.png\" alt=\"a\"/> <img src=\"v.png\" alt=\"b\"/></p>");
+    // Image syntax inside a fenced code block is code, not an image.
+    CHECK(Html("```\n![a](b)\n```\n") == "<pre><code>![a](b)\n</code></pre>");
+}
+
+TEST_CASE("MarkdownToHtml: an image description is plain alt text (#2284)") {
+    // Span markup inside the description is alt text, not tags around the image.
+    CHECK(Html("![a *b* c](u.png)") == "<p><img src=\"u.png\" alt=\"a b c\"/></p>");
+    CHECK(Html("![a **b** `c` ~~d~~](u.png)") == "<p><img src=\"u.png\" alt=\"a b c d\"/></p>");
+    CHECK(Html("![foo [bar](/url)](/url2)") == "<p><img src=\"/url2\" alt=\"foo bar\"/></p>");
+    // An entity reference md4c validated stays one reference; literal text is escaped once.
+    CHECK(Html("![`code` &amp; text](u.png)") == "<p><img src=\"u.png\" alt=\"code &amp; text\"/></p>");
+    CHECK(Html("![a &copy; b](u.png)") == "<p><img src=\"u.png\" alt=\"a &copy; b\"/></p>");
+    CHECK(Html("![a & b \"q\" <t>](u.png)") == "<p><img src=\"u.png\" alt=\"a &amp; b &quot;q&quot; &lt;t&gt;\"/></p>");
+    // A nested image adds its description to the outer alt text; only the outer image is emitted.
+    CHECK(Html("![outer ![inner](i.png) tail](o.png)") == "<p><img src=\"o.png\" alt=\"outer inner tail\"/></p>");
+    CHECK(Html("![a **b** ![c *d*](x.png) e](y.png)") == "<p><img src=\"y.png\" alt=\"a b c d e\"/></p>");
+    CHECK(Html("![![](i.png)](o.png)") == "<p><img src=\"o.png\" alt=\"\"/></p>");
+    // Markup around the image is unchanged.
+    CHECK(Html("*![em](u.png)*") == "<p><em><img src=\"u.png\" alt=\"em\"/></em></p>");
+}
+
 TEST_CASE("MarkdownToHtml: headings h1-h6") {
     CHECK(Html("# Title\n\nBody text.") == "<h1>Title</h1><p>Body text.</p>");
     CHECK(Html("###### Deep") == "<h6>Deep</h6>");
@@ -202,8 +237,7 @@ TEST_CASE("MarkdownToHtml: unordered list") {
 }
 
 TEST_CASE("MarkdownToHtml: nested unordered list") {
-    CHECK(Html("- a\n    - a1\n    - a2\n- b") ==
-          "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>");
+    CHECK(Html("- a\n    - a1\n    - a2\n- b") == "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>");
 }
 
 TEST_CASE("MarkdownToHtml: ordered list") {
@@ -220,8 +254,7 @@ TEST_CASE("MarkdownToHtml: inline code and fenced block") {
 }
 
 TEST_CASE("MarkdownToHtml: links and autolinks") {
-    CHECK(Html("See [Jira](https://jira.example.com).") ==
-          "<p>See <a href=\"https://jira.example.com\">Jira</a>.</p>");
+    CHECK(Html("See [Jira](https://jira.example.com).") == "<p>See <a href=\"https://jira.example.com\">Jira</a>.</p>");
     CHECK(Html("<https://ex.com>") == "<p><a href=\"https://ex.com\">https://ex.com</a></p>");
 }
 
@@ -229,9 +262,7 @@ TEST_CASE("MarkdownToHtml: blockquote") {
     CHECK(Html("> quoted line") == "<blockquote><p>quoted line</p></blockquote>");
 }
 
-TEST_CASE("MarkdownToHtml: thematic break") {
-    CHECK(Html("text\n\n---\n\nmore") == "<p>text</p><hr/><p>more</p>");
-}
+TEST_CASE("MarkdownToHtml: thematic break") { CHECK(Html("text\n\n---\n\nmore") == "<p>text</p><hr/><p>more</p>"); }
 
 TEST_CASE("MarkdownToHtml: line breaks collapse to <br/>") {
     // Both hard (trailing-two-space) and soft breaks render as <br/> under the
@@ -241,9 +272,8 @@ TEST_CASE("MarkdownToHtml: line breaks collapse to <br/>") {
 }
 
 TEST_CASE("MarkdownToHtml: table") {
-    CHECK(Html("| A | B |\n|---|---|\n| 1 | 2 |") ==
-          "<table><thead><tr><th>A</th><th>B</th></tr></thead>"
-          "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>");
+    CHECK(Html("| A | B |\n|---|---|\n| 1 | 2 |") == "<table><thead><tr><th>A</th><th>B</th></tr></thead>"
+                                                     "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>");
 }
 
 TEST_CASE("MarkdownToHtml: special characters are HTML-escaped") {

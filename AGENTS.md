@@ -66,7 +66,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | Rule | Scope | Cap / note |
 |---|---|---|
 | `no-printf-stderr`, `define-imgui` | strict zone | grep rules |
-| `no-raw-new`, `deviation-overdue`, `no-detach` | all first-party C++ | absolute (0; no grandfathering) |
+| `no-raw-new`, `deviation-overdue`, `deviation-malformed`, `no-detach` | all first-party C++ | absolute (0; no grandfathering; `deviation-malformed` = a marker not whole on one line with rule/reason/owner/revisit) · WARN `deviation-cohort`: a marker added on a revisit date that then holds > 8 markers (`--scan-revisit-cohorts`) |
 | `no-glfw-in-core-headers` | `Source/Core/include/**/*.{h,hpp}` | absolute (0; GLFW/glad/OpenGL include breaks the DX12 dual-target build) |
 | `cmake-local-gate-ci-scope` | `CMakeLists.txt` / `cmake/*.cmake` | absolute (0; a `message(FATAL_ERROR …)` keyed on a local knob `msvc_toolset_pin` without a `NOT DEFINED ENV{CI}` scope FATALs every fresh-configure CI runner — #1074) |
 | `ui-request-flag-off-thread` | `Source/Core/src/Commands/**` (excl. `Scenarios/`) | absolute (0; a `g_ui.request{Window*,Screenshot*}` write in a command handler outside a `RunOnUiThread*` closure races the main loop polling those non-atomic fields — Pillar-3 data race; Scenarios run on the UI thread by contract) |

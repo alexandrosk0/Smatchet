@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
-# 10-line-rules.sh — per-line grep rules (printf/new/detach/glfw/imgui/deviation-overdue) + strict/wide/glfw sweeps (sourced by test-lint-rules.sh, not run directly).
+# 10-line-rules.sh — per-line grep rules (printf/new/detach/glfw/imgui/deviation-overdue/deviation-malformed) + strict/wide/glfw sweeps (sourced by test-lint-rules.sh, not run directly).
 
 scan_file_rules() {
-    # $1 = file. Emits triples for all line/grep rules + deviation-overdue.
+    # $1 = file. Emits triples for all line/grep rules + deviation-overdue + deviation-malformed.
     local f="$1"
     [ -f "$f" ] || return 0
     local lineno=0 prev_dev_rule="" prev_dev_revisit="" prev_dev_revisit_seen=""
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno+1))
+
+        # deviation-malformed fires on any line naming SMATCHET_DEVIATION( that is not a whole
+        # marker (dev_marker_malformed). DEV_RE below matches the token anywhere on a line, so a
+        # prose mention is read as a marker too: it must be complete or not be there.
+        case "$line" in
+            *'SMATCHET_DEVIATION('*)
+                if dev_marker_malformed "$line"; then
+                    printf 'deviation-malformed\t%s:%s\t%s\n' "$f" "$lineno" "$line"
+                fi ;;
+        esac
 
         # Capture a SMATCHET_DEVIATION comment to suppress the NEXT non-blank line.
         if [[ "$line" =~ $DEV_RE ]]; then
@@ -165,10 +175,11 @@ compute_strict_triples() {
     done | sort -u
 }
 
-# First-party C++ violations for the always-on (absolute) rules. `no-raw-new` and
-# `deviation-overdue` are enforced at 0 across ALL first-party C++ — not just the
-# strict zone — over the comment_audit.py SWEEP_ROOTS (Source/Core, Source/Plugins,
-# Source/Standalone; ThirdParty + tests excluded). Emits `<rule>\t<path>:<line>`.
+# First-party C++ violations for the always-on (absolute) rules. `no-raw-new`,
+# `deviation-overdue`, `deviation-malformed` and `no-detach` are enforced at 0 across ALL
+# first-party C++ — not just the strict zone — over the comment_audit.py SWEEP_ROOTS
+# (Source/Core, Source/Plugins, Source/Standalone; ThirdParty + tests excluded). Emits
+# `<rule>\t<path>:<line>`.
 # Exemption markers (// C-ABI handle / // custom-deleter / // pimpl) and
 # SMATCHET_DEVIATION(rule=...) still suppress — that handling lives in scan_file_rules.
 compute_wide_violations() {
@@ -181,7 +192,67 @@ compute_wide_violations() {
     )
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_file_rules "$f"; done \
-        | awk -F'\t' '$1=="no-raw-new" || $1=="deviation-overdue" || $1=="no-detach" { print $1"\t"$2 }'
+        | awk -F'\t' '$1=="no-raw-new" || $1=="deviation-overdue" || $1=="deviation-malformed" || $1=="no-detach" { print $1"\t"$2 }'
+    return 0
+}
+
+# Calendar revisit values (YYYY-MM-DD, YYYY-Qn) of the deviation markers in the lines read from stdin,
+# one per line. Same DEV_RE body and field split as scan_file_rules; `never` and slugs are not dates.
+marker_revisit_dates() {
+    local line kv
+    while IFS= read -r line; do
+        [[ "$line" =~ $DEV_RE ]] || continue
+        IFS=';' read -ra kvs <<< "${BASH_REMATCH[1]}"
+        for kv in "${kvs[@]}"; do
+            dev_trim "$kv"
+            case "$DEV_TRIMMED" in
+                revisit=*)
+                    dev_trim "${DEV_TRIMMED#revisit=}"
+                    case "$DEV_TRIMMED" in
+                        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] | [0-9][0-9][0-9][0-9]-Q[1-4])
+                            printf '%s\n' "$DEV_TRIMMED" ;;
+                    esac ;;
+            esac
+        done
+    done
+}
+
+# deviation-cohort (WARN) — revisit dates shared by more than DEVIATION_COHORT_MAX first-party
+# markers. deviation-overdue is absolute and whole-tree, so a crowded date turns every PR red on the
+# same morning, and re-dating them all at once is what gets bypassed under deadline. Emits
+# `<count>\t<date>`, most crowded first.
+DEVIATION_COHORT_MAX="${SMATCHET_DEVIATION_COHORT_MAX:-8}"
+compute_revisit_cohorts() {
+    local files=() f
+    while IFS= read -r f; do [ -n "$f" ] && files+=("$f"); done < <(list_first_party_cpp_files)
+    [ "${#files[@]}" -gt 0 ] || return 0
+    # `|| true`: a tree with no marker at all makes grep exit 1, which pipefail + set -e in the
+    # runner would turn into a failed sweep instead of an empty one.
+    { grep -h 'SMATCHET_DEVIATION(' "${files[@]}" 2>/dev/null || true; } | marker_revisit_dates | sort | uniq -c \
+        | awk -v max="$DEVIATION_COHORT_MAX" '$1 > max { print $1 "\t" $2 }' | sort -rn
+    return 0
+}
+
+# deviation-cohort, delta form: for each calendar revisit date on a marker that this diff (vs merge-base
+# $1) ADDS to first-party C++, print `deviation-cohort\t<date>\t<count> markers` when the date now
+# holds more than DEVIATION_COHORT_MAX markers. The count is the current tree's, so it includes the
+# markers this diff adds: taking a date from the cap to one over it warns, which is how a cliff grows.
+# Existing crowded dates stay quiet until added to.
+deviation_cohort_hits() {
+    local mb="$1" changed dates cohorts d n
+    changed="$(git diff --name-only --diff-filter=d "$mb" 2>/dev/null \
+        | grep -E '^Source/(Core|Plugins|Standalone)/.*\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true)"
+    [ -n "$changed" ] || return 0
+    dates="$(while IFS= read -r f; do
+            [ -n "$f" ] && git diff -U0 "$mb" -- "$f" 2>/dev/null
+        done <<< "$changed" | grep -E '^\+[^+]' | grep -F 'SMATCHET_DEVIATION(' | marker_revisit_dates | sort -u)"
+    [ -n "$dates" ] || return 0
+    cohorts="$(compute_revisit_cohorts)"
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        n="$(printf '%s\n' "$cohorts" | awk -F'\t' -v d="$d" '$2 == d { print $1 }')"
+        if [ -n "$n" ]; then printf 'deviation-cohort\t%s\t%s markers\n' "$d" "$n"; fi
+    done <<< "$dates"
     return 0
 }
 

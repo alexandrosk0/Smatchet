@@ -16,8 +16,7 @@ name: CodeQL
 # Cadence is hybrid: a daily cron over the default branch (develop) +
 # workflow_dispatch, plus a PR trigger scoped to trust-boundary paths only.
 # The sccache-off cold compile is ~30-45 min, so per-PR-on-all-Source would tax
-# every code PR for no merge-decision change (findings are advisory) -- the same
-# reason sanitizer-nightly runs nightly-not-per-PR (sanitizer-nightly.yml:4-8).
+# every code PR for no merge-decision change (findings are advisory).
 
 on:
   schedule:
@@ -80,9 +79,8 @@ jobs:
         # No `ref:` on purpose -- default checkout scans the right tree for
         # every trigger: the PR merge head on pull_request, the default branch
         # (develop) on schedule, the dispatched branch on workflow_dispatch.
-        # Hardcoding `ref: develop` (as sanitizer-nightly does -- it is
-        # cron-only) would make PR runs scan develop instead of the PR diff,
-        # defeating the PR trigger.
+        # Hardcoding `ref: develop` would make PR runs scan develop instead of
+        # the PR diff, defeating the PR trigger.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
