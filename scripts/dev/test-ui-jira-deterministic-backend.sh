@@ -12,6 +12,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58736}"
@@ -30,14 +34,17 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
+ui_test_require_fresh_exe "$EXE" || exit 2
+
 if [ ! -f "$FIXTURE" ]; then
     echo "FAIL: fixture not found: $FIXTURE" >&2
     exit 2
 fi
 
 # Isolated user-data dir so this run never writes to the developer's real profile.
-TMPDIR_DATA="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_DATA"' EXIT
+# Deliberately UNSEEDED: test-ui-offline-first.sh execs this driver and its
+# OfflineFirst tests assert fresh-profile (first-run) defaults.
+ui_test_isolate_home
 
 echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $TEST_PORT)..."
 echo "  fixture: $FIXTURE"
@@ -50,7 +57,7 @@ if [ -n "$OUTLOG" ]; then
     # sweep, PR #1566) — the caller-supplied $OUTLOG (an absolute path, e.g. CI's
     # $GITHUB_WORKSPACE/build/tmp/...) is rejected outright since #1566 landed.
     # Pass just the basename and copy the confined result back to $OUTLOG below,
-    # before $TMPDIR_DATA is removed — this keeps the external contract (a file at
+    # before $UI_TEST_HOME is removed — this keeps the external contract (a file at
     # $OUTLOG afterward) unchanged for every caller, including this repo's own CI
     # workflow's cat/upload-artifact steps.
     OUTLOG_RELATIVE="$(basename "$OUTLOG")"
@@ -58,18 +65,17 @@ if [ -n "$OUTLOG" ]; then
     echo "  outLog: $OUTLOG_RELATIVE (confined under \$SMATCHET_USER_DATA/ui-tests/; copied to $OUTLOG after the run)"
 fi
 
-RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
-    SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
+RAW_OUTPUT="$(SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
     "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
     "${OUTLOG_ARG[@]}" \
     --mcp-port="$TEST_PORT" 2>&1 || true)"
 
 echo "$RAW_OUTPUT" | tail -40
 
-# Copy the confined outLog out of the ephemeral $TMPDIR_DATA (removed by the EXIT
-# trap above) to the caller-requested $OUTLOG, before anything below reads $OUTLOG.
+# Copy the confined outLog out of the ephemeral $UI_TEST_HOME (removed by the
+# helper's EXIT trap) to the caller-requested $OUTLOG, before anything below reads $OUTLOG.
 if [ -n "$OUTLOG_RELATIVE" ]; then
-    CONFINED_OUTLOG="$TMPDIR_DATA/ui-tests/$OUTLOG_RELATIVE"
+    CONFINED_OUTLOG="$UI_TEST_HOME/ui-tests/$OUTLOG_RELATIVE"
     if [ -f "$CONFINED_OUTLOG" ]; then
         mkdir -p "$(dirname "$OUTLOG")"
         cp "$CONFINED_OUTLOG" "$OUTLOG"

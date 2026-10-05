@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58741}"
@@ -35,18 +39,15 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
-# Isolated user-data dir so this run never writes to the developer's real profile.
-TMPDIR_DATA="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_DATA"' EXIT
+ui_test_require_fresh_exe "$EXE" || exit 2
 
-# Pre-seed the config: a fresh profile shows the first-launch Whisper setup banner
+# Isolated user-data dir so this run never writes to the developer's real profile,
+# pre-seeded: a fresh profile shows the first-launch Whisper setup banner
 # (##WhisperSetupBanner), which floats OVER the test window and swallows the engine's
 # ItemClick / MouseClick / KeyChars — silently failing every interaction-driven bucket-E test.
-# Marking setup completed (and backend-reachable) keeps the run isolated AND banner-free. Same
-# recipe as test-ui-grid-pane-windows.sh.
-cat > "$TMPDIR_DATA/smatchet_config.json" <<'CFG'
-{"read_only_mode": false, "whisper_setup_completed": true, "backend_has_been_reachable": true}
-CFG
+# The seed marks setup completed (and backend-reachable), keeping the run isolated AND
+# banner-free.
+ui_test_isolate_home --seed
 
 field() {
     # field <json> <key> — extract data.<key>, default "?".
@@ -58,8 +59,7 @@ attempt=1
 while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     PORT=$((TEST_PORT + attempt - 1))
     echo "[test-ui-duration-inline-edit] attempt $attempt/$MAX_ATTEMPTS — launching ephemeral Smatchet (port $PORT)..."
-    RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
-        "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
         --mcp-port="$PORT" 2>&1 || true)"
     echo "$RAW_OUTPUT" | tail -8
 

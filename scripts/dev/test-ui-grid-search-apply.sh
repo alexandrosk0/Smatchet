@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58772}"
@@ -32,27 +36,23 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
+ui_test_require_fresh_exe "$EXE" || exit 2
+
 if [ ! -f "$FIXTURE" ]; then
     echo "FAIL: fixture not found: $FIXTURE" >&2
     exit 2
 fi
 
-# Isolated user-data dir so this run never writes to the developer's real profile.
-TMPDIR_DATA="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_DATA"' EXIT
-
-# Pre-seed the config: a fresh profile shows the first-launch Whisper setup banner
+# Isolated user-data dir so this run never writes to the developer's real profile,
+# pre-seeded: a fresh profile shows the first-launch Whisper setup banner
 # (##WhisperSetupBanner), which floats OVER the chrome and can swallow the test's
-# clicks. Marking setup completed keeps the run isolated AND banner-free.
-cat > "$TMPDIR_DATA/smatchet_config.json" <<'CFG'
-{"read_only_mode": false, "whisper_setup_completed": true, "backend_has_been_reachable": true}
-CFG
+# clicks. The seed marks setup completed, keeping the run isolated AND banner-free.
+ui_test_isolate_home --seed
 
 echo "[test-ui-grid-search-apply] launching ephemeral Smatchet (port $TEST_PORT)..."
 echo "  fixture: $FIXTURE"
 
-RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
-    SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
+RAW_OUTPUT="$(SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
     "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
     --mcp-port="$TEST_PORT" 2>&1 || true)"
 

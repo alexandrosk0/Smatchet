@@ -15,8 +15,16 @@
 # lines; comment lines are dropped first so a name that survives only in prose
 # cannot satisfy the gate.
 #
+# Second half — the preamble ratchet (tooling
+# 2026-08-07-bucket-e-runners-need-ephemeral-home): every driver that launches
+# the exe sources scripts/dev/lib/ui-test-driver.sh and calls its staleness
+# guard, and every driver isolates its profile through it or carries a reasoned
+# `# ui-test-home: opt-out — <reason>` line, so the hardening cannot drift back
+# out one script at a time.
+#
 # selftest: asserts-failure — the fixture cases feed a reintroduced orphan, a
-# comment-only name and a filter-less driver and assert the check goes red.
+# comment-only name, a filter-less driver and preamble-less drivers and assert
+# the check goes red.
 #
 # Requires: bash, grep, sed, bats.
 # ----------------------------------------------------------------------------
@@ -191,4 +199,123 @@ CPP
     echo "$output"
     [ "$status" -eq 0 ]
     grep -q "checked 1 driver(s)" <<<"$output"
+}
+
+# ===========================================================================
+# Preamble ratchet: every driver uses the shared helper or says why not
+# ===========================================================================
+# tooling 2026-08-07-bucket-e-runners-need-ephemeral-home: the profile isolation
+# drifted back out one driver at a time (7 of 30 had it). Every driver that
+# launches the exe must source scripts/dev/lib/ui-test-driver.sh and call its
+# staleness guard, and every driver must either isolate its profile through it
+# or carry a reasoned `# ui-test-home: opt-out — <reason>` line.
+
+# Drivers held by another session's plan-lock when the ratchet landed, so they
+# could not be migrated in the same change. The list only shrinks: a listed
+# driver that now complies (or no longer exists) fails the suite until removed.
+RATCHET_PENDING=(test-ui-tracker-first-run-setup.sh)
+
+# _noncomment <file> — the file minus whole-line comments.
+_noncomment() { grep -vE '^[[:space:]]*#' "$1" || true; }
+
+# driver_preamble_problems <driver> — one line per missing piece; empty = compliant.
+driver_preamble_problems() {
+    local d="$1" name body
+    name="$(basename "$d")"
+    body="$(_noncomment "$d")"
+    # shellcheck disable=SC2016 # the literal text "$EXE" marks a driver that launches the exe
+    if grep -qF '"$EXE"' <<<"$body"; then
+        grep -qE '^[[:space:]]*(\.|source)[[:space:]].*lib/ui-test-driver\.sh' <<<"$body" \
+            || echo "NO-HELPER: $name launches the exe but does not source scripts/dev/lib/ui-test-driver.sh"
+        grep -qE '^[[:space:]]*ui_test_require_fresh_exe[[:space:]]' <<<"$body" \
+            || echo "NO-STALE-GUARD: $name launches the exe without ui_test_require_fresh_exe"
+    fi
+    if ! grep -qE '^[[:space:]]*ui_test_isolate_home([[:space:]]|$)' <<<"$body" \
+        && ! grep -qE '^[[:space:]]*# ui-test-home: opt-out — .{20,}' "$d"; then
+        echo "NO-ISOLATION: $name neither calls ui_test_isolate_home nor carries a reasoned '# ui-test-home: opt-out — <reason>' line"
+    fi
+}
+
+# check_driver_preambles <drivers-dir> [pending-basename...] — return 1 on any problem.
+check_driver_preambles() {
+    local dir="$1" d name p rc=0 problems
+    shift
+    while IFS= read -r d; do
+        name="$(basename "$d")"
+        for p in "$@"; do [ "$p" = "$name" ] && continue 2; done
+        problems="$(driver_preamble_problems "$d")"
+        if [ -n "$problems" ]; then
+            echo "$problems"
+            rc=1
+        fi
+    done < <(ui_drivers "$dir")
+    return "$rc"
+}
+
+@test "every bucket-E driver sources the shared preamble and isolates its profile (or opts out with a reason)" {
+    run check_driver_preambles "$DEV" "${RATCHET_PENDING[@]}"
+    echo "$output"
+    [ "$status" -eq 0 ]
+}
+
+@test "the ratchet's pending list only names drivers that still need migrating" {
+    local p
+    for p in "${RATCHET_PENDING[@]}"; do
+        [ -f "$DEV/$p" ] || { echo "$p no longer exists — drop it from RATCHET_PENDING"; return 1; }
+        [ -n "$(driver_preamble_problems "$DEV/$p")" ] || {
+            echo "$p now complies — drop it from RATCHET_PENDING so the ratchet holds it"
+            return 1
+        }
+    done
+}
+
+# _mk_raw_driver <path> <line>... — a fixture driver whose body is the given lines verbatim.
+_mk_raw_driver() {
+    local out="$1"
+    shift
+    { echo '#!/usr/bin/env bash'; printf '%s\n' "$@"; } > "$out"
+}
+
+# Fixture-driver lines, single-quoted on purpose: they are written verbatim.
+# shellcheck disable=SC2016
+L_SRC='. "$(dirname "$0")/lib/ui-test-driver.sh"'
+# shellcheck disable=SC2016
+L_STALE='ui_test_require_fresh_exe "$EXE" || exit 2'
+# shellcheck disable=SC2016
+L_RUN='RAW="$("$EXE" cmd ui_test.run)"'
+
+@test "the preamble ratchet reds on a driver that skips the helper, the stale guard, or the isolation" {
+    _mk_raw_driver "$FIX/dev/test-ui-bare.sh" "$L_RUN"
+    _mk_raw_driver "$FIX/dev/test-ui-nostale.sh" "$L_SRC" 'ui_test_isolate_home --seed' "$L_RUN"
+    _mk_raw_driver "$FIX/dev/test-ui-thin-reason.sh" "$L_SRC" "$L_STALE" '# ui-test-home: opt-out — tbd' "$L_RUN"
+    run check_driver_preambles "$FIX/dev"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    grep -q "NO-HELPER: test-ui-bare.sh" <<<"$output"
+    grep -q "NO-STALE-GUARD: test-ui-bare.sh" <<<"$output"
+    grep -q "NO-ISOLATION: test-ui-bare.sh" <<<"$output"
+    grep -q "NO-STALE-GUARD: test-ui-nostale.sh" <<<"$output"
+    [[ "$output" != *"NO-ISOLATION: test-ui-nostale.sh"* ]]
+    grep -q "NO-ISOLATION: test-ui-thin-reason.sh" <<<"$output"
+}
+
+@test "the preamble ratchet passes a migrated driver, a reasoned opt-out and an exe-less wrapper" {
+    _mk_raw_driver "$FIX/dev/test-ui-good.sh" "$L_SRC" "$L_STALE" 'ui_test_isolate_home' "$L_RUN"
+    _mk_raw_driver "$FIX/dev/test-ui-optout.sh" "source ${L_SRC#. }" "$L_STALE" \
+        '# ui-test-home: opt-out — needs the real profile for a reason spelled out here' "$L_RUN"
+    _mk_raw_driver "$FIX/dev/test-ui-wrapper.sh" \
+        '# ui-test-home: opt-out — launches no exe; the exec-ed driver isolates the profile' 'exec bash other.sh'
+    run check_driver_preambles "$FIX/dev"
+    echo "$output"
+    [ "$status" -eq 0 ]
+}
+
+@test "a commented-out helper call does not satisfy the ratchet" {
+    _mk_raw_driver "$FIX/dev/test-ui-commented.sh" "# $L_SRC" "# $L_STALE" '# ui_test_isolate_home' "$L_RUN"
+    run check_driver_preambles "$FIX/dev"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    grep -q "NO-HELPER: test-ui-commented.sh" <<<"$output"
+    grep -q "NO-STALE-GUARD: test-ui-commented.sh" <<<"$output"
+    grep -q "NO-ISOLATION: test-ui-commented.sh" <<<"$output"
 }

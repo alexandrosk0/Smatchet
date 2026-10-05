@@ -28,6 +28,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 # Default to the clang ASan UI-test build; override with SMATCHET_EXE for the
 # MSVC ASan build (build/ninja-ui-test-asan-msvc/Smatchet.exe) or a plain
 # ninja-ui-test-msvc exe (non-sanitized smoke — passes but proves nothing about
@@ -45,6 +49,13 @@ if [ ! -f "$EXE" ]; then
     echo "  cmake --build --preset ninja-ui-test-asan-clang --target SmatchetStandalone" >&2
     exit 2
 fi
+
+ui_test_require_fresh_exe "$EXE" || exit 2
+
+# Throwaway seeded profile (scripts/dev/lib/ui-test-driver.sh): the run never
+# reads or writes the developer's real config / imgui.ini, and no first-run
+# banner or update modal sits over the widgets under test.
+ui_test_isolate_home --seed
 
 echo "[test-ui-mcp-lua-fresh-state-race] launching ephemeral Smatchet (exe=$EXE port=$TEST_PORT)..."
 # ASan options: abort (don't continue) on the first error so the run fails fast
