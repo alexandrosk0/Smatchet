@@ -233,6 +233,13 @@ case "${1:-}" in
         ;;
 esac
 export SCOPE
+# This script as the project's checkout spells it, for the baseline header's
+# regeneration command: agent-layer/agents/... once the layer is the project's
+# agent-layer/ submodule, agents/... otherwise (as layer_paths.py does).
+TML_SELF_FROM_PROJECT="agents/scripts/core/test-markdown-links.sh"
+_tml_self_phys="$(cd "$(dirname "$_tml_self")" && pwd -P)/$(basename "$_tml_self")"
+case "$_tml_self_phys" in "$(pwd -P)"/agent-layer/*) TML_SELF_FROM_PROJECT="${_tml_self_phys#"$(pwd -P)"/}" ;; esac
+export TML_SELF_FROM_PROJECT
 
 "$PY" - <<'PY'
 import os
@@ -309,8 +316,9 @@ def render_baseline(entries):
     out = [
         "# Dangling markdown links — grandfathered baseline",
         "",
-        "_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-markdown-links.sh "
-        "--baseline` and commit._",
+        "_Auto-generated. Do not hand-edit; run `bash %s "
+        "--baseline` and commit._" % os.environ.get(
+            "TML_SELF_FROM_PROJECT", "agents/scripts/core/test-markdown-links.sh"),
         "_Scope: `--all` (repo-wide). The DEFAULT diff-scope mode does not consult this file — it "
         "already grandfathers by scope, only ever checking markdown a change actually touches._",
         "_Keyed by `source::href`, not by line number, so an edit above a grandfathered link does "

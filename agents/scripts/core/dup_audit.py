@@ -55,6 +55,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comment_lib as cl
+import layer_paths
 
 # --- scope (KEEP IN SYNC with comment_audit.py / function_size_audit.py SWEEP_ROOTS) ----------
 SWEEP_ROOTS = ("Source/Core/", "Source/Plugins/", "Source/Standalone/")
@@ -611,7 +612,7 @@ def run_baseline_md():
     print("# Duplication — grandfathered baseline")
     print()
     print("_Auto-generated. Do not hand-edit; run "
-          "`bash agents/scripts/project/test-lint-rules.sh --dup-baseline` and commit._")
+          "`bash %s --dup-baseline` and commit._" % layer_paths.from_project("agents/scripts/project/test-lint-rules.sh"))
     print("_The gate is a live merge-base delta vs `origin/develop` (dup_audit.py --diff); this "
           "file is an informational snapshot, not the gate input._")
     print()
