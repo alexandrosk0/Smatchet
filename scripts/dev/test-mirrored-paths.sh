@@ -12,10 +12,13 @@
 #
 #   Before the flip both roots are this checkout and the gate proves only that the
 #   list names real files. After it, AGENT_LAYER_ROOT is the agent-layer/ submodule
-#   and the comparison is real. Where the roots still resolve to one tree while an
-#   agent-layer/ mount exists (a host run before row 12 teaches the resolution the
-#   mount), the mount is the layer: comparing the host with itself would pass on
-#   any drift.
+#   and the comparison is real. Where the roots still resolve to one tree while a
+#   populated agent-layer/ mount exists (SMATCHET_PROJECT_ROOT_OVERRIDE=1 aiming both
+#   at the host), the mount is the layer: comparing the host with itself would pass
+#   on any drift. "Populated" uses project-config.sh's own marker, the mount's
+#   scripts/dev/project-config.sh. An agent-layer/ directory without it (a submodule
+#   that was never initialised) leaves nothing to compare, so the gate refuses
+#   rather than pass the host against itself.
 #
 # USAGE
 #   bash scripts/dev/test-mirrored-paths.sh             # compare PROJECT_ROOT and AGENT_LAYER_ROOT
@@ -24,7 +27,8 @@
 # ENV  MIRRORED_PATHS_FILE  the list (default: $PROJECT_ROOT/docs/mirrored-paths.txt)
 #
 # EXIT 0 every listed path is identical in both trees; 1 a path differs or is
-#      missing, or the list names no path; 2 the roots cannot be resolved.
+#      missing, or the list names no path; 2 the roots cannot be resolved, or the
+#      agent-layer/ mount is not checked out.
 #
 # selftest: asserts-failure
 set -uo pipefail
@@ -66,12 +70,20 @@ check_mirrors() {
 }
 
 # layer_root_for <project_root> <layer_root> — the tree holding the canonical copies.
+# A mount counts only when populated, by the marker project-config.sh resolves it by.
 layer_root_for() {
-    if [ "$1" = "$2" ] && [ -d "$1/agent-layer" ]; then
+    if [ "$1" = "$2" ] && [ -f "$1/agent-layer/scripts/dev/project-config.sh" ]; then
         printf '%s\n' "$1/agent-layer"
     else
         printf '%s\n' "$2"
     fi
+}
+
+# empty_mount <project_root> <layer_root> — one resolved root beside an agent-layer/
+# directory that holds no layer: the canonical copies are not on disk to compare.
+empty_mount() {
+    [ "$1" = "$2" ] && [ -d "$1/agent-layer" ] \
+        && [ ! -f "$1/agent-layer/scripts/dev/project-config.sh" ]
 }
 
 selftest() {
@@ -94,11 +106,30 @@ selftest() {
         && { echo "selftest: an empty list was accepted"; rc=1; }
     check_mirrors "$tmp/host" "$tmp/layer" "$tmp/no-such-list" >/dev/null \
         && { echo "selftest: a missing list was accepted"; rc=1; }
-    # One resolved root with an agent-layer/ mount: the mount is compared, so a
-    # drifted canonical copy reds instead of the host matching itself.
-    mkdir -p "$tmp/host/agent-layer/scripts"
-    printf 'b\n' > "$tmp/host/agent-layer/scripts/x.sh"
+    # One resolved root beside an empty agent-layer/ (a submodule never initialised):
+    # it is not taken as the layer, and the main path refuses rather than compare
+    # the host with itself.
+    mkdir -p "$tmp/host/agent-layer"
+    printf 'a\n' > "$tmp/host/scripts/x.sh"
     printf 'scripts/x.sh\n' > "$tmp/list"
+    [ "$(layer_root_for "$tmp/host" "$tmp/host")" = "$tmp/host" ] \
+        || { echo "selftest: an empty mount was taken as the layer"; rc=1; }
+    empty_mount "$tmp/host" "$tmp/host" \
+        || { echo "selftest: an empty mount was not detected"; rc=1; }
+    local main_out
+    main_rc=0
+    main_out="$(MIRRORED_PATHS_FILE="$tmp/list" PROJECT_ROOT="$tmp/host" AGENT_LAYER_ROOT="$tmp/host" \
+        SMATCHET_PROJECT_ROOT_OVERRIDE=1 bash "$_tmp_self" 2>&1)" || main_rc=$?
+    if [ "$main_rc" -ne 2 ] || [[ "$main_out" != *"$tmp/host/agent-layer/ is not checked out"* ]]; then
+        echo "selftest: the main path did not refuse an empty mount (rc $main_rc, want 2)"
+        rc=1
+    fi
+    # One resolved root with a populated agent-layer/ mount (it carries the
+    # resolver's marker): the mount is compared, so a drifted canonical copy reds
+    # instead of the host matching itself.
+    mkdir -p "$tmp/host/agent-layer/scripts/dev"
+    : > "$tmp/host/agent-layer/scripts/dev/project-config.sh"
+    printf 'b\n' > "$tmp/host/agent-layer/scripts/x.sh"
     [ "$(layer_root_for "$tmp/host" "$tmp/host")" = "$tmp/host/agent-layer" ] \
         || { echo "selftest: one root with a mount did not resolve to the mount"; rc=1; }
     [ "$(layer_root_for "$tmp/host" "$tmp/layer")" = "$tmp/layer" ] \
@@ -109,7 +140,6 @@ selftest() {
     # that stopped using layer_root_for would compare the host with itself.
     # The output is checked too, so the rc 1 can only come from that drift (a lost
     # override would also exit 1, comparing the real checkout instead).
-    local main_out
     main_rc=0
     main_out="$(MIRRORED_PATHS_FILE="$tmp/list" PROJECT_ROOT="$tmp/host" AGENT_LAYER_ROOT="$tmp/host" \
         SMATCHET_PROJECT_ROOT_OVERRIDE=1 bash "$_tmp_self" 2>&1)" || main_rc=$?
@@ -120,7 +150,7 @@ selftest() {
     fi
     rm -rf "$tmp"
     if [ "$rc" -eq 0 ]; then
-        echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list, drift in a mounted layer)"
+        echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list, drift in a mounted layer; refuses an empty mount)"
     fi
     return "$rc"
 }
@@ -134,6 +164,10 @@ esac
 # shellcheck source=scripts/dev/project-config.sh
 PC_ROOTS_ONLY=1 . "$_tmp_root/scripts/dev/project-config.sh" \
     || { echo "test-mirrored-paths: cannot resolve the project and agent-layer roots" >&2; exit 2; }
+if empty_mount "$PROJECT_ROOT" "$AGENT_LAYER_ROOT"; then
+    printf 'test-mirrored-paths: %s/agent-layer/ is not checked out, so there is no layer copy to compare (git submodule update --init agent-layer)\n' "$PROJECT_ROOT" >&2
+    exit 2
+fi
 layer="$(layer_root_for "$PROJECT_ROOT" "$AGENT_LAYER_ROOT")"
 printf 'host:  %s\nlayer: %s\n' "$PROJECT_ROOT" "$layer"
 check_mirrors "$PROJECT_ROOT" "$layer" "${MIRRORED_PATHS_FILE:-$PROJECT_ROOT/docs/mirrored-paths.txt}"

@@ -96,6 +96,8 @@ PROBES=(
     # which is what checks it — so it carries no control of its own.
     $'setup-harness\trc\t-\tbash {L}agents/scripts/core/setup-harness.sh claude-code'
     $'adapter-drift\tmatch:PASS\tctl\tbash {L}agents/scripts/core/test-adapter-drift.sh'
+    # The codex adapter's custom agents include the host's agents/project/.
+    $'setup-harness-codex\tmatch:^# Source: agents/project/\tctl\tbash {L}agents/scripts/core/setup-harness.sh codex >/dev/null && grep -h "^# Source: agents/project/" .codex/agents/*.toml'
     $'harness-provisioned\tsame\tctl\tbash {L}agents/scripts/core/check-harness-provisioned.sh'
     $'followup-due-nudge\tsame\tctl\tbash {L}agents/scripts/core/followup-due-nudge.sh'
     $'plan-archival-owed\tmatch:plan archival owed: flip-probe-fixture\tctl\tbash {L}agents/scripts/core/plan-archival-owed.sh --list'
