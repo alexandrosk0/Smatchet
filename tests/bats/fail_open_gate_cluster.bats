@@ -72,7 +72,6 @@ run_driver() {
 # ---------------------------------------------------------------------------
 ZERO_MATCH_DRIVERS=(
     test-ui-mcp-lua-fresh-state-race.sh
-    test-ui-agent-proposal-store-sqlite.sh
     test-ui-ai-assistant-preferences.sh
     test-ui-description-tooltip-markdown-render.sh
     test-ui-spawn-warmup-deterministic-gate.sh

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# test-ui-omnibar-search-apply.sh — bucket-E driver for the global JQL/ticket
-# omnibox apply path (docs/plans/shipped/jql-omnibox-search.md, Stream B slices
-# 2b/2c): typing + Enter in the "##SmatchetOmnibar" side-bar routes to the right
-# focused-pane side effect per Jql|TicketKey|TitleSearch, in
-# tests/ui/omnibar_search_apply.test.cpp.
+# test-ui-grid-search-apply.sh — bucket-E driver for the grid header search
+# box's Enter-apply path: typing + Enter in the focused pane's "##GridFilter"
+# input routes to the right per-pane side effect per Jql|TicketKey|TitleSearch,
+# in tests/ui/grid_search_apply.test.cpp. (Successor of the omnibar driver: the
+# side-bar omnibox and its omnibar_search_apply.test.cpp TU are gone, so the old
+# "Omnibar" filter matched zero tests.)
 #
 # Mirrors test-ui-grid-pane-windows.sh: injects the deterministic Jira fixture via
 # SMATCHET_TEST_JIRA_BACKEND_FIXTURE so the focused pane renders real tickets
-# (SMAT-1/SMAT-2); without it the Omnibar tests SKIP.
+# (SMAT-1/SMAT-2); without it the GridSearch tests SKIP.
 #
 # Exit codes:
 #   0 — every test passed
@@ -19,9 +20,10 @@ set -euo pipefail
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58772}"
-# imgui_test_engine filter — matches the Omnibar test group registered in
-# tests/ui/omnibar_search_apply.test.cpp.
-FILTER="${UI_TEST_FILTER:-Omnibar}"
+# imgui_test_engine filter — matches the GridSearch test group registered in
+# tests/ui/grid_search_apply.test.cpp (TitleSearch_FiltersLoadedRows /
+# Jql_ReplacesPaneViewQuery / TicketKey_JumpsToLoadedRow).
+FILTER="${UI_TEST_FILTER:-GridSearch}"
 FIXTURE_DIR="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}"
 FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-$FIXTURE_DIR/basic-grid.json}"
 
@@ -46,7 +48,7 @@ cat > "$TMPDIR_DATA/smatchet_config.json" <<'CFG'
 {"read_only_mode": false, "whisper_setup_completed": true, "backend_has_been_reachable": true}
 CFG
 
-echo "[test-ui-omnibar-search-apply] launching ephemeral Smatchet (port $TEST_PORT)..."
+echo "[test-ui-grid-search-apply] launching ephemeral Smatchet (port $TEST_PORT)..."
 echo "  fixture: $FIXTURE"
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
