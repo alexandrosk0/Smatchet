@@ -31,7 +31,9 @@ name: All checks green
 # queue, add `merge_group:` handling before requiring this context.
 #
 # Re-evaluation: label changes re-run it (the out-of-band downgrades are read
-# live); so do pushes, reopen and ready-for-review. A red verdict does NOT clear
+# live); so do pushes, reopen, ready-for-review and PR-body edits (`edited` — a
+# body-reading gate such as `Intent section` goes green on an edit, and this
+# check must not keep the red it saw before). A red verdict does NOT clear
 # itself when the red check is later re-run green or a timed-out pending check
 # finishes — re-run this job (or toggle any label) after fixing / re-running.
 #
@@ -44,7 +46,7 @@ name: All checks green
 on:
   pull_request:
     branches: [develop]
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
 
 # One live evaluation per PR: a newer event (push, label) cancels the older run.
 # A newer head gets its own run; a cancelled run on a superseded head is moot.
