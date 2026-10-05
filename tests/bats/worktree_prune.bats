@@ -16,14 +16,27 @@ setup() {
     ( cd "$MAIN" && echo seed > s && git add -A && git commit -qm seed )
     WT="$(mktemp -d)/wt-x"
     git -C "$MAIN" worktree add -q -b feat/x "$WT" >/dev/null 2>&1
+    # A just-created worktree is "active" under the default 24 h idle guard; age
+    # it so the reap paths below exercise the default threshold.
+    age_worktree "$WT" 48
     STUB="$(mktemp -d)"
     printf '#!/usr/bin/env bash\nprintf "feat/x\\tMERGED\\n"\n' > "$STUB/gh"
     chmod +x "$STUB/gh"
+    # Pin the protected-branch config to a fixture (rung 0 of project-config.sh)
+    # so the real project.config.json never leaks into these assertions.
+    printf '{"vcs": {"protected_branches": ["asset-store"]}}\n' > "$STUB/project.config.json"
+    export PC_CONFIG_FILE="$STUB/project.config.json"
 }
 teardown() { rm -rf "$MAIN" "$WT" "$STUB" 2>/dev/null || true; }
 
 # Run the script in $MAIN with gh stubbed (real PATH preserved for git/awk/etc).
 prune() { ( cd "$MAIN" && PATH="$STUB:$PATH" bash "$SCRIPT" "$@" ); }
+
+# Backdate a worktree's HEAD, index and HEAD reflog by <hours>.
+age_worktree() {  # <worktree> <hours>
+    local gd; gd="$(git -C "$1" rev-parse --absolute-git-dir)"
+    touch -d "@$(( $(date +%s) - $2 * 3600 ))" "$gd/HEAD" "$gd/index" "$gd/logs/HEAD"
+}
 
 @test "--selftest passes" {
     run bash "$SCRIPT" --selftest
@@ -57,6 +70,53 @@ prune() { ( cd "$MAIN" && PATH="$STUB:$PATH" bash "$SCRIPT" "$@" ); }
     [ "$status" -eq 0 ]
     [[ "$output" == *"skip(dirty)"*"feat/x"* ]]
     [ -d "$WT" ]
+}
+
+@test "--apply SKIPS a merged worktree holding only UNTRACKED files (dirty, not FAILED)" {
+    # `git worktree remove` refuses untracked files, so before they counted as
+    # dirty this surfaced as a FAILED reap with rc=1.
+    echo scratch > "$WT/untracked.txt"
+    run prune --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skip(dirty)"*"feat/x"* ]]
+    [[ "$output" != *"FAILED"* ]]
+    [ -f "$WT/untracked.txt" ]
+}
+
+@test "a merged worktree touched inside the idle threshold is skipped as active" {
+    age_worktree "$WT" 2
+    run prune --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skip(active)"*"feat/x"* ]]
+    [ -d "$WT" ]
+    # A tighter threshold makes the same worktree idle enough to reap.
+    run prune --apply --idle-hours 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"reaped"*"feat/x"* ]]
+    [ ! -d "$WT" ]
+}
+
+@test "--idle-hours 0 turns the idle guard off" {
+    age_worktree "$WT" 0
+    run prune --idle-hours 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would-reap"*"feat/x"* ]]
+}
+
+@test "--idle-hours rejects a non-number" {
+    run prune --idle-hours soon
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"whole number"* ]]
+}
+
+@test "a branch in project.config.json vcs.protected_branches is never reaped" {
+    printf '{"vcs": {"protected_branches": ["feat/x"]}}\n' > "$PC_CONFIG_FILE"
+    run prune --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"reaped"*"feat/x"* ]]
+    [ -d "$WT" ]
+    run git -C "$MAIN" branch --list feat/x
+    [ -n "$output" ]
 }
 
 @test "the develop integration tree is never reaped" {
