@@ -16,7 +16,21 @@
 #   --refresh           regenerate the baseline from the current tree
 # Baseline: docs/high-integrity/portable-purity-baseline.txt (sorted file:literal).
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)" || exit 1
+# The portable dirs and the baseline are layer content, so the scan runs in this
+# script's own tree; the project literals it hunts for are the host's, read from
+# the host's project.config.json (PROJECT_ROOT). Before the flip, and in the
+# standalone layer, the two are one tree. Not the caller's git top level: that is
+# the host once the layer is a submodule, and its git ls-files lists no portable
+# path, so the gate would pass having scanned nothing.
+_tpp_layer="$(cd "$(dirname "$0")/../../.." && pwd)" || exit 1
+if [ -f "$_tpp_layer/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tpp_layer/scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+TPP_CONFIG="${PROJECT_ROOT:-$_tpp_layer}/project.config.json"
+cd "$_tpp_layer" || exit 1
 
 BASELINE="docs/high-integrity/portable-purity-baseline.txt"
 PORTABLE_DIRS=(agents/core agents/_shared docs/agent-rules docs/harness)
@@ -30,10 +44,10 @@ PY=""; for _c in python3 python py; do
 done
 [ -z "$PY" ] && { echo "test-portable-purity: python not found" >&2; exit 2; }
 
-current="$("$PY" - "$BASELINE" <<'PY'
+current="$("$PY" - "$BASELINE" "$TPP_CONFIG" <<'PY'
 import json, os, re, sys
 
-cfg = json.load(open("project.config.json", encoding="utf-8"))
+cfg = json.load(open(sys.argv[2], encoding="utf-8"))
 p = cfg.get("project", {})
 terms = set(filter(None, [p.get("name"), p.get("env_prefix")]))
 terms |= set(p.get("literals", []))

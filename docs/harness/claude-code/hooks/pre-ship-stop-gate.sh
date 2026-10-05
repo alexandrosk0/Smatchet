@@ -54,7 +54,12 @@ git rev-parse --verify --quiet origin/develop >/dev/null 2>&1 || exit 0
 ahead="$(git rev-list --count origin/develop..HEAD 2>/dev/null || echo 0)"
 [ "${ahead:-0}" -gt 0 ] || exit 0
 
-LINT="$PROJ_DIR/agents/scripts/project/test-lint-rules.sh"
+# The gate is layer content (the agent-layer/ mount once the layer is a
+# submodule); it runs from the project dir, the tree it checks.
+HOOK_LAYER="$PROJ_DIR"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$PROJ_DIR"
+LINT="$HOOK_LAYER/agents/scripts/project/test-lint-rules.sh"
 [ -f "$LINT" ] || exit 0
 
 # Run the EXACT delta gate CI runs. Its exit code mirrors CI's verdict:

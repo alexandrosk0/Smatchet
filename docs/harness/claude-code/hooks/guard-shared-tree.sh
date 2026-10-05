@@ -58,11 +58,15 @@ PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 # Integration tree only (main worktree has a .git directory).
 [ -d "$PROJ/.git" ] || exit 0
 
-# Shared liveness lib. This hook is COPIED into .claude/hooks/ at setup, so it
-# can't source a sibling — resolve via CLAUDE_PROJECT_DIR (runtime), then the git
-# top-level of the hook's own location (covers the in-repo source path the bats
-# suite runs). Missing lib -> fail OPEN (advisory guard never false-blocks).
-_sr_lib="$PROJ/agents/scripts/core/session-registry-lib.sh"
+# Shared liveness lib — layer content. Resolve the layer from CLAUDE_PROJECT_DIR
+# (layer-root.sh, copied beside this hook: the agent-layer/ mount once the layer is
+# a submodule), then the git top-level of the hook's own location (covers the
+# in-repo source path the bats suite runs). Missing lib -> fail OPEN (advisory
+# guard never false-blocks).
+HOOK_LAYER="$PROJ"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$PROJ"
+_sr_lib="$HOOK_LAYER/agents/scripts/core/session-registry-lib.sh"
 if [ ! -f "$_sr_lib" ]; then
   _sr_top="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)"
   [ -n "$_sr_top" ] && _sr_lib="$_sr_top/agents/scripts/core/session-registry-lib.sh"

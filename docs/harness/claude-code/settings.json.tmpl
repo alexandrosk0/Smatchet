@@ -6,72 +6,72 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/clear-session-context.sh",
             "timeout": 3000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/memory-drain-nudge.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/memory-drain-nudge.sh",
             "timeout": 3000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/postmortem-owed.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/postmortem-owed.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/followup-due-nudge.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/followup-due-nudge.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/unwatched-pr-nudge.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/cost-ceiling-nudge.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/cost-ceiling-nudge.sh",
             "timeout": 5000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/plan-archival-owed.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/plan-archival-owed.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/work-item-owed.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/work-item-owed.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/audit-doc-status-owed.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/audit-doc-status-owed.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/repo-health-facts-nudge.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/repo-health-facts-nudge.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/historical-review-ledger-reconcile.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/merge-watcher-stuck-nudge.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/merge-watcher-stuck-nudge.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/develop-tip-required-green.sh\" --nudge",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/develop-tip-required-green.sh --nudge",
             "timeout": 10000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/session-tree-banner.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/session-tree-banner.sh",
             "timeout": 3000
           }
         ]
@@ -248,12 +248,12 @@
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/check-main-repo-clean.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/check-main-repo-clean.sh",
             "timeout": 5000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/session-heartbeat.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/session-heartbeat.sh",
             "timeout": 2000
           }
         ]

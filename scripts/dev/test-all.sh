@@ -251,8 +251,21 @@ for script in "${TESTS[@]}"; do
     # nonzero value). The result was every script after the first failure
     # being misreported as failed in the final summary.
     RC=0
+    # A layer bats suite after the flip (the layer is the agent-layer/ mount, not
+    # cwd) runs as the layer's own CI runs it: with the layer as its project. It
+    # unit-tests layer scripts, and several of its assertions are about the
+    # layer's own tree (its config's contexts, its shell-lint targets, its link
+    # baseline); with the host's roots they fail on a premise, not a defect. A
+    # gate script (test-lint-rules.sh, test-portable-purity.sh, the doc checks)
+    # keeps the host's roots: checking the host is its job here. So does a suite
+    # whose subject is host-side (LAYER_HOST_SUT_RE): the host is what it tests.
+    _ta_env=()
+    if [ -n "$_ta_layer_prefix" ] && [[ "$script" == "$_ta_layer_prefix"* ]] \
+       && [[ "$script_base" == *-bats ]] && ! [[ "$script_base" =~ $LAYER_HOST_SUT_RE ]]; then
+        _ta_env=(PROJECT_ROOT="$AGENT_LAYER_ROOT" SMATCHET_PROJECT_ROOT_OVERRIDE=1)
+    fi
     # Capture output but stream to terminal too.
-    OUT=$(bash "$script" 2>&1) || RC=$?
+    OUT=$(env ${_ta_env[@]+"${_ta_env[@]}"} bash "$script" 2>&1) || RC=$?
     echo "$OUT"
 
     if [ "$RC" -eq 2 ]; then

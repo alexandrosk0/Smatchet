@@ -211,6 +211,12 @@ link_file() {
   if [[ -e "$link" ]]; then
     return 0
   fi
+  # A dangling link is not "already linked": its target moved (the layer's files,
+  # once the layer is the agent-layer/ submodule), and `ln -s` onto it fails under
+  # set -e. Replace it, as link_dir does.
+  if [[ -L "$link" ]]; then
+    rm -f "$link"
+  fi
   mkdir -p "$(dirname "$link")"
   if [[ "$IS_WINDOWS" == "1" ]]; then
     local link_win target_win
@@ -289,6 +295,12 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
   copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
   copy_template "docs/harness/claude-code/hooks/capture-intent.sh"       ".claude/hooks/capture-intent.sh"
+  copy_template "docs/harness/claude-code/hooks/pretool-workflow-fleet-preflight.sh" ".claude/hooks/pretool-workflow-fleet-preflight.sh"
+  # The settings.json hooks run layer scripts through layer-run.sh, and the hooks
+  # above find the layer with layer-root.sh: before the flip it is this tree, after
+  # it the agent-layer/ mount.
+  copy_template "docs/harness/claude-code/hooks/layer-root.sh"           ".claude/hooks/layer-root.sh"
+  copy_template "docs/harness/claude-code/hooks/layer-run.sh"            ".claude/hooks/layer-run.sh"
   # Always deployed; self-gates on SMATCHET_AGENT_VCS=p4 (exits 0 immediately in
   # the default git mode), so it is inert unless the session opts into p4.
   copy_template "docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh" ".claude/hooks/pretool-edit-p4-lock-check.sh"

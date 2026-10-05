@@ -21,6 +21,7 @@
 #
 # USAGE
 #   agent-layer-flip-probe.sh [--rev REV] [--dir DIR] [--keep] [--only NAME]...
+#   agent-layer-flip-probe.sh --suite [--rev REV] [--dir DIR] [--keep]
 #   agent-layer-flip-probe.sh --list
 #
 #   --rev REV    Commit to probe (default HEAD). Built from git objects, so
@@ -28,6 +29,9 @@
 #   --dir DIR    Where to build. Must not exist. Default: a mktemp dir.
 #   --keep       Keep DIR after a green run (a red run always keeps it).
 #   --only NAME  Run only this probe (repeatable).
+#   --suite      Instead of the probes, run the whole host suite
+#                (scripts/dev/test-all.sh --ci) in today/ and in both post-flip
+#                modes, and compare the failing scripts. See SUITE below.
 #   --list       Print the probes and exit.
 #
 # LAYOUT (under DIR)
@@ -58,6 +62,15 @@
 # a fixture (fixture_<name> below) that gives the host something to report. A
 # probe marked - reads only layer content or provisions: a wrong layer path fails
 # its local and ci runs outright, so a control would add nothing.
+#
+# SUITE — the probes cover the invocations someone thought to list; the suite
+# covers every test driver test-all.sh enrols, which is row 11c's battery. A
+# script that fails after the flip but not today is a regression, named with its
+# owner: one under agent-layer/ is layer content, which the seed must carry fixed,
+# so it FAILS the run; a host script still naming a layer path is the flip PR's to
+# rewire (rows 11-16), so it is PENDING. Fewer scripts after the flip than today
+# FAILS too: a root guard skipped a root (row 9d). Three full runs, so it takes
+# a while; run it before the seed and on the flip's base.
 #
 # EXPECTATIONS — per probe, against the today run:
 #   rc            local and ci exit as today does
@@ -99,7 +112,14 @@ PROBES=(
     # The codex adapter's custom agents include the host's agents/project/.
     $'setup-harness-codex\tmatch:^# Source: agents/project/\tctl\tbash {L}agents/scripts/core/setup-harness.sh codex >/dev/null && grep -h "^# Source: agents/project/" .codex/agents/*.toml'
     $'harness-provisioned\tsame\tctl\tbash {L}agents/scripts/core/check-harness-provisioned.sh'
-    $'followup-due-nudge\tsame\tctl\tbash {L}agents/scripts/core/followup-due-nudge.sh'
+    # The deployed SessionStart commands, run as Claude Code runs them: the session
+    # baseline the HEAD-drift guard reads, and the resync that carries hook fixes
+    # into .claude/hooks/. A layer script named from the project dir exits 127.
+    $'session-banner\tmatch:^branch=\t-\tc="$(jq -r \'.hooks.SessionStart[].hooks[].command | select(contains("session-tree-banner"))\' .claude/settings.json)" && echo \'{"session_id":"flip-probe"}\' | CLAUDE_PROJECT_DIR="$PWD" bash -c "$c" >/dev/null 2>&1; cat .claude/.active-sessions/flip-probe'
+    $'hook-sync\tmatch:^synced$\t-\techo "# flip-probe: stale copy" >> .claude/hooks/guard-head-drift.sh && c="$(jq -r \'.hooks.SessionStart[].hooks[].command | select(contains("clear-session-context"))\' .claude/settings.json)" && echo \'{}\' | CLAUDE_PROJECT_DIR="$PWD" bash -c "$c" >/dev/null 2>&1; if cmp -s .claude/hooks/guard-head-drift.sh {L}docs/harness/claude-code/hooks/guard-head-drift.sh; then echo synced; else echo stale; fi'
+    # The stand-in gh: a pr-count trigger counts live merges otherwise, which moves
+    # between two runs of one probe; offline it counts each tree's own history.
+    $'followup-due-nudge\tsame\tctl\tPATH="{STUB}:$PATH" bash {L}agents/scripts/core/followup-due-nudge.sh'
     $'plan-archival-owed\tmatch:plan archival owed: flip-probe-fixture\tctl\tbash {L}agents/scripts/core/plan-archival-owed.sh --list'
     $'work-item-owed\tmatch:99-flip-probe-fixture\tctl\tbash {L}agents/scripts/core/work-item-owed.sh --list'
     $'audit-doc-status-owed\tmatch:FLIP_PROBE_FIXTURE_AUDIT\\.md\tctl\tbash {L}agents/scripts/core/audit-doc-status-owed.sh --list'
@@ -210,6 +230,7 @@ REV="HEAD"
 DIR=""
 KEEP=0
 ONLY=()
+SUITE=0
 
 usage() {
     sed -n '2,/^set -uo pipefail$/p' "$_SCRIPT_PATH" | sed -e '$d' -e 's/^# \{0,1\}//'
@@ -239,6 +260,7 @@ parse_args() {
             --dir=*)   DIR="${1#--dir=}"; shift ;;
             --only)    [ "$#" -ge 2 ] || die 2 "--only needs a value"; ONLY+=("$2"); shift 2 ;;
             --only=*)  ONLY+=("${1#--only=}"); shift ;;
+            --suite)   SUITE=1; shift ;;
             *)         usage >&2; die 2 "unknown argument: $1" ;;
         esac
     done
@@ -248,6 +270,91 @@ parse_args() {
         for p in "${PROBES[@]}"; do [ "$(probe_field "$p" 1)" = "$name" ] && found=1; done
         [ "$found" -eq 1 ] || die 2 "unknown probe: $name (see --list)"
     done
+}
+
+# suite_failures <test-all output> — its failing scripts, the mount prefix stripped
+# so a post-flip path compares with today's.
+suite_failures() {
+    sed -n '/^Failed scripts:$/,$p' "$1" | sed -n 's/^  - \([^ ]*\) (.*/\1/p' \
+        | sed 's|^agent-layer/||' | sort -u
+}
+
+# suite_exit2 <test-all output> — scripts --ci turned into a skip for exiting 2,
+# the mount prefix stripped. Exit 2 is how a wrapper reports a tree it cannot
+# reach (`cd … || exit 2`), and --ci never lists those as failures.
+suite_exit2() {
+    awk '/^#{50}$/ { if ((getline line) > 0 && line ~ /^# /) name = substr(line, 3); next }
+         /^SKIPPED \(ci\): exit 2/ { print name }' "$1" | sed 's|^agent-layer/||' | sort -u
+}
+
+# suite_bad <test-all output> — every script that failed or exited 2.
+suite_bad() {
+    { suite_failures "$1"; suite_exit2 "$1"; } | sort -u
+}
+
+suite_count() { # suite_count <test-all output> — the Scripts: total, empty when absent
+    sed -n 's/^AGGREGATE .*Scripts: \([0-9][0-9]*\).*/\1/p' "$1" | tail -n 1
+}
+
+# run_suite — test-all.sh in today/, host/ (local) and host-ci/ (ci), concurrently;
+# then compare each post-flip run's failing scripts and count with today's.
+run_suite() {
+    local scrub=(-u PROJECT_ROOT -u AGENT_LAYER_ROOT -u PC_CONFIG_FILE -u SMATCHET_PROJECT_CONFIG
+                 -u CLAUDE_PROJECT_DIR -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE)
+    # Provision .claude/ first, as CI's agentic-selftests lane does: the hook
+    # suites run the deployed hooks, and with none deployed they fail in every
+    # tree alike, which the comparison would read as no regression.
+    local tree pre
+    for tree in today host host-ci; do
+        pre=""; [ "$tree" = today ] || pre="agent-layer/"
+        ( cd "$DIR/$tree" && env "${scrub[@]}" bash "${pre}agents/scripts/core/setup-harness.sh" claude-code ) \
+            > "$DIR/suite-setup-$tree.txt" 2>&1 < /dev/null \
+            || die 1 "setup-harness failed in $tree/ — see $DIR/suite-setup-$tree.txt"
+    done
+    ( cd "$DIR/today" && env "${scrub[@]}" bash scripts/dev/test-all.sh --ci ) > "$DIR/suite-today.txt" 2>&1 < /dev/null &
+    local p_today=$!
+    ( cd "$DIR/host" && env "${scrub[@]}" bash scripts/dev/test-all.sh --ci ) > "$DIR/suite-local.txt" 2>&1 < /dev/null &
+    local p_local=$!
+    ( cd "$DIR/host-ci" && env "${scrub[@]}" PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer \
+        bash scripts/dev/test-all.sh --ci ) > "$DIR/suite-ci.txt" 2>&1 < /dev/null &
+    local p_ci=$!
+    wait "$p_today" "$p_local" "$p_ci"   # test-all exits 1 on any failure; the outputs are compared below
+
+    local t_count mode count failed=0 pending=0 path
+    t_count="$(suite_count "$DIR/suite-today.txt")"
+    [ -n "$t_count" ] || die 1 "today's suite printed no AGGREGATE line — see $DIR/suite-today.txt"
+    say "today: $t_count script(s), $(suite_bad "$DIR/suite-today.txt" | wc -l | tr -d ' ') failing or exiting 2"
+    for mode in local ci; do
+        count="$(suite_count "$DIR/suite-$mode.txt")"
+        if [ -z "$count" ]; then
+            say "FAIL  $mode: no AGGREGATE line — see $DIR/suite-$mode.txt"; failed=$((failed + 1)); continue
+        fi
+        if [ "$count" -lt "$t_count" ]; then
+            say "FAIL  $mode: $count script(s) after the flip, $t_count today — a root was skipped"
+            failed=$((failed + 1))
+        fi
+        while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            if [ -e "$DIR/host/agent-layer/$path" ]; then
+                say "FAIL  $mode: $path (layer content: it fails after the flip, not today)"
+                failed=$((failed + 1))
+            else
+                say "PENDING  $mode: $path (host content: owed to the flip PR)"
+                pending=$((pending + 1))
+            fi
+        done < <(comm -13 <(suite_bad "$DIR/suite-today.txt") <(suite_bad "$DIR/suite-$mode.txt"))
+    done
+    if [ "$failed" -ne 0 ]; then
+        say "RED — $failed layer regression(s) or skipped root(s) after the flip; layout and outputs kept at $DIR"
+        exit 1
+    fi
+    if [ "$KEEP" -eq 1 ]; then
+        say "GREEN — no layer script regresses after the flip; $pending host script(s) owed to the flip PR; layout kept at $DIR"
+    else
+        rm -rf "$DIR"
+        say "GREEN — no layer script regresses after the flip; $pending host script(s) owed to the flip PR"
+    fi
+    exit 0
 }
 
 selected() { # selected <name>
@@ -260,7 +367,10 @@ selected() { # selected <name>
 # Build today/, layer/ and host/ under $DIR from the commit $1.
 build_layout() {
     local src="$1" sha="$2"
-    { git clone -q --no-hardlinks "$src" "$DIR/today" && git -C "$DIR/today" checkout -q --detach "$sha"; } \
+    # On a branch named as host/'s is: a detached HEAD changes what some hooks do
+    # (the session banner writes no baseline without a branch), so today/ must
+    # differ from host/ only in the flip.
+    { git clone -q --no-hardlinks "$src" "$DIR/today" && git -C "$DIR/today" checkout -q -B flip-probe "$sha"; } \
         || die 2 "cannot clone $sha into $DIR/today"
     bash "$SIM_SCRIPT" --build-only --rev "$sha" --dir "$DIR/layer" >/dev/null \
         || die 2 "cannot build the layer image of $sha"
@@ -387,6 +497,7 @@ main() {
     parse_args "$@"
     local tool
     for tool in git bash tar; do command -v "$tool" >/dev/null 2>&1 || die 2 "$tool not on PATH"; done
+    command -v jq >/dev/null 2>&1 || die 2 "jq not on PATH (the hook probes read .claude/settings.json with it)"
     [ -f "$SIM_SCRIPT" ] || die 2 "simulator missing: $SIM_SCRIPT"
 
     local src sha
@@ -401,6 +512,7 @@ main() {
     fi
     build_layout "$src" "$sha"
     say "layout: $DIR  (today/, layer/ + layer-ctl/, host/ + host-ci/ with agent-layer/ mounted — commit $sha)"
+    [ "$SUITE" -eq 0 ] || run_suite
 
     local entry name expect ctl cmd ran=0 failed=0 pending=0 t l c x t_rc l_rc c_rc x_rc mode verdict re owed
     printf '%-28s %-6s %-6s %-6s %-6s %s\n' PROBE TODAY LOCAL CI CTL RESULT

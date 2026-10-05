@@ -30,5 +30,7 @@ for _c in python3 python py; do
 done
 [ -z "$PY" ] && exit 0 # no python: fail open, never block SessionStart
 
-"$PY" "$PROJECT_DIR/agents/scripts/core/cost-ceiling-check.py" --session "$SESSION_ID" || true
+# The check is this script's sibling (layer content); PROJECT_DIR stays the tree
+# whose token log it reads.
+"$PY" "$(cd "$(dirname "$0")" && pwd)/cost-ceiling-check.py" --session "$SESSION_ID" || true
 exit 0

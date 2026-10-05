@@ -10,7 +10,13 @@
 # ----------------------------------------------------------------------------
 
 setup() {
-    REPO_ROOT="$(git rev-parse --show-toplevel)"
+    # This suite's subject is host content (scripts/), the scripts it pairs with
+    # are layer content (agents/). Once the layer is the host's agent-layer/
+    # submodule the suite lives in the layer, so the host comes from
+    # project-config.sh (the superproject) and the layer from this suite's own tree.
+    # Before the flip both are this checkout.
+    LAYER_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    REPO_ROOT="$(PC_ROOTS_ONLY=1 . "$LAYER_ROOT/scripts/dev/project-config.sh" >/dev/null 2>&1; printf '%s' "${PROJECT_ROOT:-$LAYER_ROOT}")"
     HOOK="$REPO_ROOT/scripts/git-hooks/pre-push"
     TMP="$(mktemp -d)"
     git -C "$TMP" init -q -b feature
@@ -74,7 +80,7 @@ run_push() {
 planlock_fixture() {
     mkdir -p "$TMP/agents/scripts/core"
     for x in lock-table-cache.sh _lock-json.py session-registry-lib.sh locks-show.sh; do
-        cp "$REPO_ROOT/agents/scripts/core/$x" "$TMP/agents/scripts/core/$x"
+        cp "$LAYER_ROOT/agents/scripts/core/$x" "$TMP/agents/scripts/core/$x"
     done
     git -C "$TMP" update-ref refs/remotes/origin/develop HEAD       # base = current commit
     ( cd "$TMP" && mkdir -p Source/Core/src/Sync && echo y > Source/Core/src/Sync/Foo.cpp \

@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)" || exit 2
+cd "$(dirname "$0")/../../.." || exit 2   # the oracle lives in this script's own tree (the layer)
 
 # Resolve a python interpreter by PROBE-EXECUTING each candidate — a bare
 # `command -v python3` on Windows finds the Microsoft Store alias stub that
