@@ -3152,10 +3152,14 @@ End to end, after S13. Each slice's own verification is in its PR.
 
 Run on a Windows desktop against a test Jira project with at least 3 workflow statuses, 2 issue types, components, a sprint board and attachments. Keep a browser on the same Jira to check results and make conflicting edits, the perf panel open (`perf.toggle_panel`) and the log visible.
 
-**Going offline** (edit `hosts`, then `ipconfig /flushdns`; remove the line to reconnect). Run each phase in this order:
-1. Slow failure, which is where freezes show: `10.255.255.1 <site>.atlassian.net` (connections time out).
-2. Fast failure: `0.0.0.0 <site>.atlassian.net`.
-3. Real disconnect: Wi-Fi off.
+**Going offline.** Apply one method, run the phases, then undo it to reconnect. Use the methods in this order:
+1. **Slow failure** (requests hang until they time out; this is where freezes show). Point the site at this machine and run a listener that accepts connections but never answers:
+   - `hosts`: add `127.0.0.1 <site>.atlassian.net` and `::1 <site>.atlassian.net`, then run `ipconfig /flushdns`.
+   - PowerShell: `$l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 443); $l.Start()`.
+   - Undo: `$l.Stop()`, remove both `hosts` lines, run `ipconfig /flushdns`.
+   - A `hosts` change also cuts this machine's browser off from Jira, so check Jira from another device in this phase. Don't use a firewall rule here: Windows rejects a blocked outbound connection at once, which is the fast case.
+2. **Fast failure**, blocking only Smatchet so this machine's browser still reaches Jira. In an elevated PowerShell: `New-NetFirewallRule -DisplayName "Smatchet offline test" -Direction Outbound -Program "<path>\Smatchet.exe" -Action Block`. Undo: `Remove-NetFirewallRule -DisplayName "Smatchet offline test"`.
+3. **Real disconnect**: Wi-Fi off.
 
 **Phase 0 — warm-up online:** open the status combo on 3 issues and comments on 2; open the components editor, the project picker, 2 attachments, watchers and User Info; use assignee autocomplete.
 
