@@ -4,7 +4,7 @@
   `FieldCatalogCache::ListCachedProjects()` on every frame the picker combo is open. That call reads
   the field-catalog cache from disk and parses its JSON, so an open picker does synchronous file I/O
   plus a parse on the render path (Quality Pillar 2). The cost grows with the number of cached
-  projects. Found by the offline-first sweep (docs/plans/active/offline-first.md).
+  projects. Found by the offline-first sweep (docs/plans/offline-first.md).
 
   Concrete next action: load the list once when the popup opens, on a worker, and keep it in the
   picker's state until the popup closes. Show the previous list, or an empty list, while that load

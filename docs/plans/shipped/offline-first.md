@@ -1,8 +1,9 @@
 # Plan — Offline-first: fix the regressions, sweep the class, gate it like DRY
+<!-- plan-date: 2026-09-24 -->
 
 > **Slug**: `offline-first` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — 13 slices (S1–S13), one PR each, in order. Written for implementation by Claude Haiku 4.5 sessions. Every code anchor was verified against `develop` @ `5b4b1c3` (2026-09-24); line numbers are hints only — locate edits by the quoted text.
+> **Status**: `shipped` — all 13 slices (S1–S13) merged, one PR each, in order (see § Implementation log); archived 2026-10-05. The manual end-to-end pass is still open (§ Verification (actual)). Written for implementation by Claude Haiku 4.5 sessions. Every code anchor was verified against `develop` @ `5b4b1c3` (2026-09-24); line numbers are hints only — locate edits by the quoted text.
 
 ## Context
 
@@ -142,7 +143,7 @@ Offline editing/deleting of existing comments; offline issue search; the three P
 files (per-frame pending-count SELECTs, UI-thread `SaveTicket`, per-frame project-picker cache read).
 
 ## Implementation log` of
-    `docs/plans/active/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
+    `docs/plans/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
     docs-only follow-up commit on your next slice's branch, or on the same PR before merge.
 
 ## Slice index
@@ -174,7 +175,7 @@ catalog is cleared, the grid turns read-only and pending edits are discarded."
 
 | File | Change |
 |---|---|
-| `docs/plans/active/offline-first.md` | NEW — copy of this plan (first commit `wip(plan): offline-first`) |
+| `docs/plans/offline-first.md` | NEW — copy of this plan (first commit `wip(plan): offline-first`) |
 | `Source/Core/include/CatalogOfflinePolicyPure.h` | NEW pure header |
 | `Source/Core/src/Tracker/TrackerFieldCatalog.cpp` | classify every failure exit |
 | `Source/Core/include/Tracker/JiraClient.h` | add a defaulted `outClassified` param |
@@ -190,7 +191,7 @@ catalog is cleared, the grid turns read-only and pending edits are discarded."
 
 ### S1 steps
 
-**Step 0 — plan doc (already done).** The planning session committed this file as `wip(plan): offline-first` on the S1 branch. Verify `docs/plans/active/offline-first.md` exists; do not recreate it. After S1 merges, append to its `## Implementation log` (contract §14).
+**Step 0 — plan doc (already done).** The planning session committed this file as `wip(plan): offline-first` on the S1 branch. Verify `docs/plans/offline-first.md` exists; do not recreate it. After S1 merges, append to its `## Implementation log` (contract §14).
 
 **Step 1 — create `Source/Core/include/CatalogOfflinePolicyPure.h`** with exactly this content:
 ```cpp
@@ -2965,7 +2966,7 @@ This plan touches `Source/Core/`.
   - `offline-write-bypasses-queue` graduated to absolute-0 over the whole tree.
 - Tests: `AnnotateContextCommentPure` (through the real Markdown→ADF conversion), worklog payload round trip, `PendingActionQueueService` worklog and watch cases, the `ticket.*` queued envelopes (`BuiltinFacetCommands`), two bats cases for the absolute-0 gate, and the bucket-E test `OfflineFirst/Worklog_OfflineQueues`.
 
-### S10 — fixes [#2261](https://github.com/alexandrosk0/Smatchet/issues/2261) and [#2260](https://github.com/alexandrosk0/Smatchet/issues/2260)
+### S10 — [#2262](https://github.com/alexandrosk0/Smatchet/pull/2262) (fixes [#2261](https://github.com/alexandrosk0/Smatchet/issues/2261) and [#2260](https://github.com/alexandrosk0/Smatchet/issues/2260))
 - Shipped:
   - Every field edit — grid, `ticket.set_field` / `ticket.transition` / `ticket.set_fields` (CLI, palette, MCP), Lua `Ticket:set_field` / `Ticket:transition`, Annotate assign — commits through `FieldEditPipelineService::CommitOrQueue`: queued straight away while the tracker is offline, else sent with a queue fallback. The facet method is `SubmitFieldEditOrQueue`, reporting Sent / Queued / Failed. Commands add `"queued": true, "offlineId": <id>`; Lua returns `(true, "queued")`.
   - Each edit is bound to the pane the user acted in (#2260). `PendingActionTarget` now also carries the pane id and its backend generation. The send, the editmeta fetch (`EnsureIssueEditMetaLoadedFor` / `RefreshIssueEditMetaFor`), the queue row's namespace and the optimistic update all use that pane, and a pane that was closed or switched tracker gets no local update. Grid edits latch their pane when the pane enqueues them (`LatchPendingActionTargetForPane`). The Annotate focus check is gone.
@@ -2974,7 +2975,7 @@ This plan touches `Source/Core/`.
   - Annotate assigns stay enabled under a tracker error banner, like comments; the status line says which of an assign and its comment was sent and which was saved offline.
 - Tests: `FieldEditPipelineService` (ported to `CommitOrQueue`; sprint / estimate queueing; focus moving between the edit and its commit), `OfflineQueueServiceRuntime` (`sprint_add` and estimate replay, a sprint conflict's "mine", resolving sprint / estimate conflicts), `TrackerFieldPayloadPure` (now also in `SmatchetTsanTests`), `BulkImportStatusPure`, the `ticket.*` queued envelopes (`BuiltinFacetCommands`) and the Lua queued result (`LuaBindings`).
 
-### S11 — fixes [#2264](https://github.com/alexandrosk0/Smatchet/issues/2264)
+### S11 — [#2265](https://github.com/alexandrosk0/Smatchet/pull/2265) (fixes [#2264](https://github.com/alexandrosk0/Smatchet/issues/2264))
 - Shipped:
   - Per-project component options live in `ProjectComponentsCacheService`: one `KeyedLookupCache` keyed by (tracker, project) replaces the per-pane in-flight / retry-after maps that the lazy loader and the post-sync warm each hand-rolled. No fetch while offline, a backoff after a failure, a retry on reconnect. Each live list is saved to `lookup_cache` (`project_components`) and the saved lists are loaded once per tracker.
   - The components editor draws a `DataFreshnessCue` instead of "Loading components…". With nothing cached it uses the catalog's components only when the catalog was fetched for the row's own project; component cells resolve names the same way.
@@ -2983,7 +2984,7 @@ This plan touches `Source/Core/`.
   - One loader for saved rows (`StoreLoadLatch` + `LoadSavedRowsOnce`) serves transitions, components and edit permissions. A reconnect clears every lookup's backoff.
 - Tests: `FieldOptionsJsonPure`, `LookupPayloadsPure`, `ProjectComponentsCacheService` (with `ComponentOptionsPickPure`), `StoreLoadLatch` cases in `KeyedLookupCache.test.cpp`, the new `EditMetaCacheService` persistence / namespace / prune / reconnect cases, the fixture's `catalog.users` and `projectComponents` keys, and the bucket-E tests `OfflineFirst/Components_OfflineShowsSavedOptions` and `OfflineFirst/Users_RestoredFromSavedRoster`.
 
-### S12 — fixes [#2266](https://github.com/alexandrosk0/Smatchet/issues/2266)
+### S12 — [#2267](https://github.com/alexandrosk0/Smatchet/pull/2267) (fixes [#2266](https://github.com/alexandrosk0/Smatchet/issues/2266))
 - Shipped:
   - `ITrackerConnectivity::ListProjectsTyped` keeps each failure's kind in all four clients (an unreachable host is `Transport`); `ListProjects()` is its best-effort wrapper. The project picker loads through `ProjectListLookup` on a worker: a live list is saved (`lookup_cache` kind `projects`), offline no request is sent and the saved list is shown, and a failed listing shows the saved list with a `DataFreshnessCue` and a Retry. "No projects found." only describes a live, empty list.
   - The Views Fields tab keeps cached fields visible and editable while the catalog refreshes; with no catalog and a failed fetch it shows the error and a Retry.
@@ -2991,7 +2992,7 @@ This plan touches `Source/Core/`.
   - A pane whose own catalog fetch fails loads the catalog snapshot saved for its tracker, applied only to a pane with no catalog and marked so the next sync still tries the live fetch.
 - Tests: `ListProjectsTyped` for Jira, Plane, GitHub and Linear over the loopback fixtures; `ProjectListLookup`; the `projects` codec in `LookupPayloadsPure`; `ClassifyUserLookupOutcome` and `FindRosterUserForP4User`; the fixture's `projects` key; the bucket-E test `OfflineFirst/ProjectPicker_OfflineShowsSavedProjects`.
 
-### S13 — fixes [#2269](https://github.com/alexandrosk0/Smatchet/issues/2269)
+### S13 — [#2271](https://github.com/alexandrosk0/Smatchet/pull/2271) (fixes [#2269](https://github.com/alexandrosk0/Smatchet/issues/2269))
 - Shipped:
   - **Attachments.** Every previewed or opened attachment is kept on disk at `attachment_cache/<sha256 of the URL>/` (`AttachmentDiskCache`, rules in `AttachmentCachePure`).
     - Eviction is least-recently-used with a 256 MB cap. An entry used in the last 10 minutes is never evicted, and an interrupted download is removed once that window passes.
@@ -3140,9 +3141,80 @@ End to end, after S13. Each slice's own verification is in its PR.
 - **Linux (cloud container):**
   - `bash scripts/dev/pre-ship.sh origin/develop` passes. The only output besides passes is advisory WARNs: the TU line ceiling, the comment ratio of an untouched header, and the offline heuristics listed in `docs/high-integrity/offline-calibration.md`.
   - `posix-core-check` compiles every core TU.
-  - `SmatchetTsanTests`: 823 of 823 pass with no ThreadSanitizer report. That run temporarily included `JiraFakeTrackerFixture.test.cpp`, which is Windows-only, so the new fixture keys ran here too. The new `TrackerIssueReaderDefaults` suite passes 3 of 3.
+  - `SmatchetTsanTests`: 823 of 823 pass. That run temporarily included `JiraFakeTrackerFixture.test.cpp`, which is Windows-only, so the new fixture keys ran here too. The new `TrackerIssueReaderDefaults` suite passes 3 of 3. This local run used the `ninja-test-linux` preset, which builds the suite without a sanitizer; the race evidence is the PR check below.
+- **ThreadSanitizer:** the PR check `TSan Linux subset (Clang)` (`ninja-tsan-linux`, `halt_on_error=1`) passed on every slice that changed code: S1, S2 and S5–S13, and the #2268 follow-up (#2273). S3 and S4 touched no path that triggers it.
   - The whole-tree `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, down from 35. Each hit is classified in the calibration record.
 - **Windows CI:** `SmatchetTests`, ASan/UBSan and the bucket-E lanes (`JiraDeterministic`, `OfflineFirst` with the two new S13 tests) gate the S13 merge.
-- **Manual (hosts-file block of the tracker, restart offline, reconnect):** not run. It needs a Windows desktop session, which the cloud container does not have. It stays with the user.
+- **Manual (hosts-file block of the tracker, restart offline, reconnect):** not run. It needs a Windows desktop session, which the cloud container does not have. It stays with the user; the checklist is § Manual end-to-end test plan below.
+- **Closeout audit (2026-10-05, `develop` @ `c81d450d`):** every file and symbol the slices name exists; each slice's done-when check holds (no `TODO(#21b`, no "Loading transitions" or "Loading components", Status edits queueable, pending grid edits held under a banner); all 34 planned test suites are registered; `SmatchetTsanTests` (uninstrumented `ninja-test-linux`) passes 822 of 822; the hard `Run offline-first bucket-E` step with its 12 tests is green on `develop`; `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, matching the calibration record. Open follow-ups: the four debt entries this plan filed (`2026-09-24-pending-counts-sqlite-select-per-frame`, `2026-09-24-updateticket-savesticket-on-ui-thread`, `2026-09-24-project-picker-reads-catalog-cache-file-per-frame`, `2026-09-29-bulk-hydration-prefetch-retries-every-frame`), [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270), and the two graduation proposals in `docs/high-integrity/offline-calibration.md`, which wait for the maintainer.
+
+### Manual end-to-end test plan
+
+Run on a Windows desktop against a test Jira project with at least 3 workflow statuses, 2 issue types, components, a sprint board and attachments. Keep a browser on the same Jira to check results and make conflicting edits, the perf panel open (`perf.toggle_panel`) and the log visible.
+
+**Going offline.** Apply one method, run the phases, then undo it to reconnect. Use the methods in this order:
+1. **Slow failure** (requests hang until they time out; this is where freezes show). Point the site at this machine and run a listener that accepts connections but never answers:
+   - `hosts`: add `127.0.0.1 <site>.atlassian.net` and `::1 <site>.atlassian.net`, then run `ipconfig /flushdns`.
+   - PowerShell: `$l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 443); $l.Start()`.
+   - Undo: `$l.Stop()`, remove both `hosts` lines, run `ipconfig /flushdns`.
+   - A `hosts` change also cuts this machine's browser off from Jira, so check Jira from another device in this phase. Don't use a firewall rule here: Windows rejects a blocked outbound connection at once, which is the fast case.
+2. **Fast failure**, blocking only Smatchet so this machine's browser still reaches Jira. In an elevated PowerShell: `New-NetFirewallRule -DisplayName "Smatchet offline test" -Direction Outbound -Program "<path>\Smatchet.exe" -Action Block`. Undo: `Remove-NetFirewallRule -DisplayName "Smatchet offline test"`.
+3. **Real disconnect**: Wi-Fi off.
+
+**Phase 0 — warm-up online:** open the status combo on 3 issues and comments on 2; open the components editor, the project picker, 2 attachments, watchers and User Info; use assignee autocomplete.
+
+**Phase 1 — offline reads.** Pass bar for every row: nothing seen before shows a loading-only state, and no UI hitch exceeds 100 ms in slow-failure mode.
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Wait for the probe; refresh the catalog | Warning banner "Offline: using cached … field catalog"; the grid stays editable; columns intact |
+| 2 | Status combo on a warmed issue | Opens instantly; "Saved workflow (last seen online)"; learned moves plus the current status |
+| 3 | Status combo on an unseen issue of the same project, type and status | The same learned moves |
+| 4 | Status combo on an unseen issue type | "All statuses shown — an invalid move is rejected when it syncs" |
+| 5 | Comments on a warmed issue | Thread at once, "Offline — showing saved data" |
+| 6 | Comments on a never-opened issue | "Comments are not available offline yet." plus Retry; the hover tooltip sends nothing |
+| 7 | Components editor; assignee autocomplete | Saved options and names, with a cue |
+| 8 | Project picker; Views → Fields tab | Saved list with a cue and Retry, never "No projects found."; cached fields stay editable |
+| 9 | A viewed attachment; a never-viewed one | Opens with no request; "Not downloaded yet — available once online" |
+| 10 | Watchers; User Info; Annotate user lookup | Earlier list with a cue; offline text plus Retry; roster name or "Unknown (offline)", never "Past Employee" |
+
+**Phase 2 — offline writes**
+
+| # | Do | Expect |
+|---|---|---|
+| 11 | Grid edits: status, summary, labels, assignee, sprint, estimate | Each queued at once (no 30–90 s wait); the cell shows pending; the Offline Queue panel lists it |
+| 12 | Post a comment; log work; Watch | "Comment Queued" and "(waiting to sync)"; "Worklog queued offline"; "(watch queued)" |
+| 13 | Annotate template comment and assign | Both queued |
+| 14 | `ticket.set_field`, `ticket.transition`, `ticket.add_comment`, `ticket.add_worklog`; then `offline.list_pending` | Each returns `"queued": true, "offlineId": N`; all listed. Lua `Ticket:set_field` returns `(true, "queued")` |
+| 15 | New Issue; a 2-row Bulk Import | "queued offline #N" |
+| 16 | Preferences Read-only on, then edit | Rejected, not queued (turn it back off) |
+
+**Phase 3 — restart while still offline**
+
+| # | Do | Expect |
+|---|---|---|
+| 17 | Quit and relaunch | "Working offline:" banner; grid and catalog from cache; every queued item still listed and counted in the status bar; learned status moves still offered |
+
+**Phase 4 — reconnect**
+
+| # | Do | Expect |
+|---|---|---|
+| 18 | Before reconnecting, change a queued field in the browser | On replay the conflict dialog shows mine and theirs; either choice lands correctly |
+| 19 | Remove the block | The banner clears within a probe interval; the queue drains (or `offline.replay_now`); every write lands exactly once in Jira (no duplicate comments, worklogs or issues); the audit trail lists the replays; the count reaches 0 |
+| 20 | Before reconnecting, queue a status move the workflow forbids | Rejected on replay; it moves to Failed, where Retry and Discard work |
+| 21 | After reconnecting, reopen comments, components and the status combo | Live data loads and the cues disappear |
+
+**Phase 5 — edge cases**
+
+| # | Do | Expect |
+|---|---|---|
+| 22 | Cut the network while a comment, then a worklog, is sending | The comment posts exactly once after reconnect; the worklog shows "needs review" and is never resent blind |
+| 23 | With items queued, switch to another Jira site and back | Held for their own site, never sent to the other; replayed after switching back |
+| 24 | Offline, `debug.grid.edit-burst` (or about 200 edits) | Record frame times; this measures the per-frame queue-count debt |
+| 25 | Stay offline 30+ minutes | No per-frame or per-issue warning spam in the log; memory steady (`perf.memory`) |
+
+**Other trackers (Plane, Linear, GitHub):** spot-check rows 1, 8, 11, 12 and 19. The status combo sends no transitions request there.
+
+**Exit:** every row passes; file each failure as a GitHub Issue with its `area:` label.
 
 ## Archive

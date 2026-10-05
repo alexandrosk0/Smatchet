@@ -64,7 +64,32 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
     }
 }
 
-void EmitInlineTextNode(const json& node, std::ostringstream& out) {
+// Inline Markdown output for one run of ADF inline nodes. Plain text is held until the next markup (or
+// Flush) and then escaped as one run: an entity reference split across adjacent text nodes, or across
+// marks that render as nothing (underline, text color), would otherwise re-form in the joined Markdown.
+// Markup ends a run safely: each markup string begins with a character that cannot be part of a
+// reference, or (a card URL) reaches one before any ';'.
+class InlineMdOut {
+  public:
+    explicit InlineMdOut(std::ostringstream& sink) : md(sink) {}
+    void Text(const std::string& plain) { pending += plain; }
+    std::ostringstream& Markup() {
+        Flush();
+        return md;
+    }
+    void Flush() {
+        if (!pending.empty()) {
+            WriteMdTextEscapingEntities(md, pending);
+            pending.clear();
+        }
+    }
+
+  private:
+    std::ostringstream& md;
+    std::string pending;
+};
+
+void EmitInlineTextNode(const json& node, InlineMdOut& o) {
     // nlohmann value() throws type_error when the key exists but is not a string
     // (e.g. a malformed server node with a numeric "text"), which would escape
     // AdfToMarkdown and abort the offline-queue merge. Read it type-safely.
@@ -81,34 +106,39 @@ void EmitInlineTextNode(const json& node, std::ostringstream& out) {
     bool isCode = false;
     CollectInlineMarks(node, openWrap, closeWrap, href, isCode);
     if (isCode) {
-        // Inline code wins: drop other emphasis on this run.
-        out << "`" << text << "`";
+        // Inline code wins: drop other emphasis on this run. md4c decodes no entity inside code.
+        o.Markup() << "`" << text << "`";
         return;
     }
-    for (const auto& w : openWrap)
-        out << w;
     // Autolink shortcut: when the visible text equals the link target, emit a bare URL
     // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
     // on save, so round-trip semantics are preserved with a cleaner editor surface.
-    const bool autolink = !href.empty() && text == href;
-    if (!href.empty() && !autolink)
-        out << "[";
-    out << text;
-    if (!href.empty() && !autolink) {
-        out << "](" << href << ")";
+    const bool autolink = !href.empty() && text == href && !HasMdEntityReference(text);
+    const bool bracketed = !href.empty() && !autolink;
+    if (bracketed || !openWrap.empty()) {
+        std::ostringstream& md = o.Markup();
+        for (const auto& w : openWrap)
+            md << w;
+        if (bracketed)
+            md << "[";
     }
-    for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it) {
-        out << *it;
+    o.Text(text);
+    if (bracketed || !closeWrap.empty()) {
+        std::ostringstream& md = o.Markup();
+        if (bracketed)
+            md << "](" << href << ")";
+        for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it)
+            md << *it;
     }
 }
 
-void EmitInlineHardBreak(const json&, std::ostringstream& out) { out << "  \n"; }
+void EmitInlineHardBreak(const json&, InlineMdOut& o) { o.Markup() << "  \n"; }
 
-void EmitInlineEmoji(const json& node, std::ostringstream& out) {
-    out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+void EmitInlineEmoji(const json& node, InlineMdOut& o) {
+    o.Markup() << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
 }
 
-void EmitInlineCard(const json& node, std::ostringstream& out) {
+void EmitInlineCard(const json& node, InlineMdOut& o) {
     // Jira smart link / Atlassian inline card. Render as a bare URL — Markdown's permissive
     // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
     // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
@@ -116,22 +146,22 @@ void EmitInlineCard(const json& node, std::ostringstream& out) {
     if (node.contains("attrs") && node["attrs"].is_object()) {
         const std::string url = node["attrs"].value("url", std::string());
         if (!url.empty()) {
-            out << url;
+            o.Markup() << url;
         }
     }
 }
 
-void EmitInlineMention(const json& node, std::ostringstream& out) {
+void EmitInlineMention(const json& node, InlineMdOut& o) {
     // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
     if (node.contains("attrs") && node["attrs"].is_object()) {
         std::string mtxt = node["attrs"].value("text", std::string());
         if (mtxt.empty())
             mtxt = std::string("@") + node["attrs"].value("id", std::string());
-        out << mtxt;
+        o.Text(mtxt);
     }
 }
 
-void EmitInlineMedia(const json& node, std::ostringstream& out) {
+void EmitInlineMedia(const json& node, InlineMdOut& o) {
     const json attrs = node.value("attrs", json::object());
     std::string url = attrs.value("url", std::string());
     if (url.empty()) {
@@ -139,18 +169,10 @@ void EmitInlineMedia(const json& node, std::ostringstream& out) {
         if (!id.empty())
             url = "attachment:" + id;
     }
-    std::string alt = attrs.value("alt", std::string());
-    std::string escAlt;
-    escAlt.reserve(alt.size() + 4);
-    for (char ch : alt) {
-        if (ch == ']' || ch == '\\')
-            escAlt += '\\';
-        escAlt += ch;
-    }
-    out << "![" << escAlt << "](" << url << ")";
+    o.Markup() << "![" << EscapeMdImageAlt(attrs.value("alt", std::string())) << "](" << url << ")";
 }
 
-using InlineEmitter = void (*)(const json&, std::ostringstream&);
+using InlineEmitter = void (*)(const json&, InlineMdOut&);
 
 const std::unordered_map<std::string, InlineEmitter>& InlineEmitters() {
     static const std::unordered_map<std::string, InlineEmitter> m = {
@@ -161,14 +183,14 @@ const std::unordered_map<std::string, InlineEmitter>& InlineEmitters() {
     return m;
 }
 
-void EmitInlineText(const json& node, std::ostringstream& out) {
+void EmitInlineText(const json& node, InlineMdOut& o) {
     if (!node.is_object())
         return;
     const std::string type = node.value("type", std::string());
     const auto& emitters = InlineEmitters();
     const auto it = emitters.find(type);
     if (it != emitters.end()) {
-        it->second(node, out);
+        it->second(node, o);
         return;
     }
     // Unmapped inline node (status lozenge, inline extension, ...): keep its display text, as the
@@ -177,7 +199,7 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     if (attrs != node.end() && attrs->is_object()) {
         const auto text = attrs->find("text");
         if (text != attrs->end() && text->is_string())
-            out << text->get_ref<const std::string&>();
+            o.Text(text->get_ref<const std::string&>());
     }
 }
 
@@ -211,6 +233,7 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
     if (!paraContent.is_array())
         return;
     constexpr size_t kSkip = 4;
+    InlineMdOut o(out);
     bool firstText = true;
     for (const auto& c : paraContent) {
         if (firstText && c.is_object() && c.value("type", std::string()) == "text") {
@@ -218,25 +241,28 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
             if (t.size() > kSkip) {
                 json c2 = c;
                 c2["text"] = t.substr(kSkip);
-                EmitInlineText(c2, out);
+                EmitInlineText(c2, o);
             } else if (t.size() < kSkip) {
-                EmitInlineText(c, out);
+                EmitInlineText(c, o);
             }
             firstText = false;
             continue;
         }
-        EmitInlineText(c, out);
+        EmitInlineText(c, o);
         if (c.is_object() && c.value("type", std::string()) == "text")
             firstText = false;
     }
+    o.Flush();
 }
 
 void EmitInlineRun(const json& contentArr, std::ostringstream& out) {
     if (!contentArr.is_array())
         return;
+    InlineMdOut o(out);
     for (const auto& child : contentArr) {
-        EmitInlineText(child, out);
+        EmitInlineText(child, o);
     }
+    o.Flush();
 }
 
 // Flatten one inline run to a single line (GFM cells are single-line — collapse any newline).
@@ -490,7 +516,9 @@ void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& ch : node["content"]) {
             if (ch.value("type", std::string()) == "media") {
-                EmitInlineText(ch, s.out);
+                InlineMdOut o(s.out);
+                EmitInlineText(ch, o);
+                o.Flush();
             }
         }
     }
@@ -624,60 +652,28 @@ const std::unordered_set<std::string>& HtmlAllowedTags() {
     return tags;
 }
 
+// Decode the character references in HTML text or an attribute value into plain text: every numeric
+// reference and every HTML5 named reference ending in ';' (md4c's grammar and table, shared with
+// Markdown -> ADF). The caller escapes the result for Markdown, so nothing may stay encoded here.
+// `&nbsp;` becomes a plain space so it does not reach the editor as an invisible character. A legacy
+// reference without its ';' and an unknown name stay literal, as a browser shows them.
 std::string DecodeHtmlEntities(const std::string& s) {
-    // Static map built once; O(1) lookup replaces O(entity-list-len) linear scan (§2.2).
-    static const std::unordered_map<std::string, char> kNamedEntities = {
-        {"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'}, {"apos", '\''}, {"#39", '\''}, {"nbsp", ' '},
-    };
+    if (s.find('&') == std::string::npos)
+        return s;
     std::string out;
     out.reserve(s.size());
-    for (size_t i = 0; i < s.size();) {
-        if (s[i] == '&') {
-            const size_t end = s.find(';', i);
-            if (end != std::string::npos && end - i <= 8) {
-                const std::string ent = s.substr(i + 1, end - i - 1);
-                const auto it = kNamedEntities.find(ent);
-                if (it != kNamedEntities.end()) {
-                    out += it->second;
-                    i = end + 1;
-                    continue;
-                }
-                if (!ent.empty() && ent[0] == '#') {
-                    int code = 0;
-                    if (ent.size() > 2 && (ent[1] == 'x' || ent[1] == 'X')) {
-                        for (size_t k = 2; k < ent.size(); ++k) {
-                            const char c = ent[k];
-                            if (c >= '0' && c <= '9')
-                                code = code * 16 + (c - '0');
-                            else if (c >= 'a' && c <= 'f')
-                                code = code * 16 + (c - 'a' + 10);
-                            else if (c >= 'A' && c <= 'F')
-                                code = code * 16 + (c - 'A' + 10);
-                            else {
-                                code = 0;
-                                break;
-                            }
-                        }
-                    } else {
-                        for (size_t k = 1; k < ent.size(); ++k) {
-                            const char c = ent[k];
-                            if (c < '0' || c > '9') {
-                                code = 0;
-                                break;
-                            }
-                            code = code * 10 + (c - '0');
-                        }
-                    }
-                    if (code > 0 && code < 128) {
-                        out += static_cast<char>(code);
-                        i = end + 1;
-                        continue;
-                    }
-                }
-            }
+    for (std::size_t i = 0; i < s.size();) {
+        const std::size_t len = s[i] == '&' ? MdEntityReferenceLength(s, i) : 0;
+        if (len == 0) {
+            out += s[i];
+            ++i;
+            continue;
         }
-        out += s[i];
-        ++i;
+        if (s.compare(i, len, "&nbsp;") == 0)
+            out += ' ';
+        else
+            AppendDecodedMdEntity(out, s.data() + i, static_cast<MD_SIZE>(len));
+        i += len;
     }
     return out;
 }
@@ -839,13 +835,46 @@ struct HtmlMdCtx {
     std::string cellAcc;
     int tableNest = 0;
     bool fellBack = false;
+    // Decoded text not yet written to the current sink. It is held until the next markup so a run split
+    // by tags that emit nothing (span, u, unknown tags) is escaped as one: an entity reference split
+    // across two chunks would otherwise re-form in the joined Markdown. Code and pre text stay verbatim,
+    // since md4c reads no entity reference or escape there.
+    std::string pendingText;
+    bool pendingVerbatim = false;
 
     HtmlMdCtx() { outPtrStack.push_back(&buffer); }
 
-    std::string& tail() { return *outPtrStack.back(); }
+    void appendText(const std::string& decoded, bool verbatim) {
+        if (pendingVerbatim != verbatim)
+            flushText();
+        pendingText += decoded;
+        pendingVerbatim = verbatim;
+    }
+
+    void flushText() {
+        if (pendingText.empty())
+            return;
+        std::string& sink = *outPtrStack.back();
+        if (pendingVerbatim)
+            sink += pendingText;
+        else
+            AppendMdTextEscapingEntities(sink, pendingText);
+        pendingText.clear();
+    }
+
+    // The current sink, for markup: pending text is written first.
+    std::string& tail() {
+        flushText();
+        return *outPtrStack.back();
+    }
+
+    bool insideCode() const {
+        return std::any_of(stack.begin(), stack.end(),
+                           [](const HtmlMdFrame& f) { return f.tag == "code" || f.tag == "pre"; });
+    }
 
     void flushBuffer(bool addBlankLine) {
-        std::string& tref = *outPtrStack.back();
+        std::string& tref = tail();
         if (outPtrStack.size() == 1) {
             if (!tref.empty()) {
                 out << tref;
@@ -934,6 +963,7 @@ void HtmlOpenTr(HtmlMdCtx& c, const HtmlTagToken&) {
 }
 
 void HtmlOpenCell(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.flushText();
     c.cellAcc.clear();
     c.outPtrStack.push_back(&c.cellAcc);
     c.stack.push_back({tok.name, 0, 0}); // td / th
@@ -993,9 +1023,16 @@ void HtmlOpenPre(HtmlMdCtx& c, const HtmlTagToken&) {
     c.tail() += "\n```\n";
 }
 
+// <u> emits nothing, so it leaves the pending text run open.
+void AppendHtmlInlineMark(HtmlMdCtx& c, const std::string& tag) {
+    const std::string md = HtmlInlineOpenMd(tag);
+    if (!md.empty())
+        c.tail() += md;
+}
+
 void HtmlOpenInlineMark(HtmlMdCtx& c, const HtmlTagToken& tok) {
     c.stack.push_back({tok.name, 0, 0});
-    c.tail() += HtmlInlineOpenMd(tok.name);
+    AppendHtmlInlineMark(c, tok.name);
 }
 
 void HtmlOpenAnchor(HtmlMdCtx& c, const HtmlTagToken& tok) {
@@ -1014,13 +1051,7 @@ void HtmlVoidBr(HtmlMdCtx& c, const HtmlTagToken&) { c.tail() += "  \n"; }
 void HtmlVoidHr(HtmlMdCtx& c, const HtmlTagToken&) { c.tail() += "\n---\n\n"; }
 
 void HtmlVoidImg(HtmlMdCtx& c, const HtmlTagToken& tok) {
-    std::string escAlt;
-    for (char ch : tok.alt) {
-        if (ch == ']' || ch == '\\')
-            escAlt += '\\';
-        escAlt += ch;
-    }
-    c.tail() += "![" + escAlt + "](" + tok.src + ")";
+    c.tail() += "![" + EscapeMdImageAlt(tok.alt) + "](" + tok.src + ")";
 }
 
 // Close-tag handlers: pop the matching open frame off the stack (shared
@@ -1053,6 +1084,7 @@ std::string HtmlCloseGenericPop(HtmlMdCtx& c, const std::string& t) {
 }
 
 void HtmlCloseCell(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.flushText();
     if (c.outPtrStack.size() > 1 && c.outPtrStack.back() == &c.cellAcc) {
         std::string finished = std::move(c.cellAcc);
         c.cellAcc.clear();
@@ -1094,7 +1126,7 @@ void HtmlClosePre(HtmlMdCtx& c, const HtmlTagToken&) {
 
 void HtmlCloseInlineMark(HtmlMdCtx& c, const HtmlTagToken& tok) {
     HtmlCloseGenericPop(c, tok.name);
-    c.tail() += HtmlInlineOpenMd(tok.name);
+    AppendHtmlInlineMark(c, tok.name);
 }
 
 void HtmlCloseAnchor(HtmlMdCtx& c, const HtmlTagToken&) {
@@ -1192,7 +1224,7 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
         if (html[pos] != '<') {
             const size_t lt = html.find('<', pos);
             const size_t end = (lt == std::string::npos) ? html.size() : lt;
-            c.tail() += DecodeHtmlEntities(html.substr(pos, end - pos));
+            c.appendText(DecodeHtmlEntities(html.substr(pos, end - pos)), c.insideCode());
             pos = end;
             continue;
         }
@@ -1226,7 +1258,8 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
     }
 
     // Malformed HTML (e.g. unclosed <td>) can leave a nested text sink active — merge back and
-    // flag fallback so callers can prefer raw-mode.
+    // flag fallback so callers can prefer raw-mode. Pending text belongs to the innermost sink.
+    c.flushText();
     while (c.outPtrStack.size() > 1) {
         c.fellBack = true;
         std::string orphan = std::move(*c.outPtrStack.back());

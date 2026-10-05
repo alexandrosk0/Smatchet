@@ -5,7 +5,7 @@
   UI thread (`ApplyFieldEditResult` through the grid pipeline's main-thread post-back). The write runs
   inside `RunWriteTxnWithBusyRetry`, whose busy-retry deadline can hold the frame, so a contended
   cache stalls the UI (Quality Pillar 2). Every queued offline edit also passes through this path when
-  it is applied locally. Found by the offline-first sweep (docs/plans/active/offline-first.md).
+  it is applied locally. Found by the offline-first sweep (docs/plans/offline-first.md).
 
   Concrete next action: post the `SaveTicket` call to a worker. Keep the key-and-generation latch
   that precedes it (issue #1081), and pass the latched key into the worker so the write still lands
