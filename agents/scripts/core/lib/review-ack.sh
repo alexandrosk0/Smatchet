@@ -250,7 +250,7 @@ _ra_enforcement_diff() {
 # and return 0; return 1 (printing nothing) when the surface is untouched.
 ra_touches_enforcement_surface() {
     local -a hits=()
-    mapfile -t hits < <(_ra_enforcement_diff "$1" "${2:-origin/develop}" --name-only)
+    mapfile -t hits < <(_ra_enforcement_diff "$1" "${2:-origin/develop}" "--name-only")
     [ "${#hits[@]}" -gt 0 ] && [ -n "${hits[0]}" ] || return 1
     printf '%s\n' "${hits[0]}"
 }
