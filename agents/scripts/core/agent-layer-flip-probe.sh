@@ -138,6 +138,8 @@ PROBES=(
     # Host-only gate (the layer does not carry it), so no control. The scope check
     # is the point: post-flip the comparison must be against the agent-layer/
     # mount, and a gate comparing the host with itself prints the host instead.
+    # The admin-merge guard's required contexts: the HOST's, not the layer's three.
+    $'admin-merge-contexts\tmatch:Windows \\+ MSVC\tctl\t. {L}agents/scripts/core/safe-admin-merge.sh >/dev/null 2>&1; read_required_contexts'
     $'mirrored-paths\tmatch:^layer: .*/agent-layer$\t-\tbash scripts/dev/test-mirrored-paths.sh'
 )
 

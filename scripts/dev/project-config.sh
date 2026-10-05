@@ -57,14 +57,16 @@ PC_CONFIG_FILE="$(_pc_resolve_config)"
 # and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
 # Source/ and project.config.json. Pre-flip both are the repo root, so every
 # consumer rewritten to address a tree through one of these is a provable no-op.
-# AGENT_LAYER_ROOT honours a caller-set value: the flip's CI sets it to agent-layer
-# for the host's own scripts. PROJECT_ROOT honours one only when it names the host
-# this copy resolves by itself (the rungs above) — CI's `.`, the standalone layer's
-# PROJECT_ROOT=$AGENT_LAYER_ROOT and every runner that exports its own tree all do.
-# Any other value is ignored with a WARN: the bare name is common, and a stale export
-# from a sibling checkout would otherwise aim every gate at that tree, readers and
-# writers alike, with nothing to say so. A caller that really means another tree (a
-# test fixture) says so with SMATCHET_PROJECT_ROOT_OVERRIDE=1.
+# Each honours a caller-set value only when it names a tree this copy would resolve
+# by itself: PROJECT_ROOT the host the rungs above find; AGENT_LAYER_ROOT this copy's
+# own tree or that host's agent-layer/ mount (the flip's CI value for the host's own
+# scripts). CI's `.`, the standalone layer, the simulator and every runner that
+# exports its own tree all pass. Any other value is ignored with a WARN — and the two
+# are checked together, because they are exported together: a stale export from a
+# sibling checkout carries both, and honouring either half alone splits the pair
+# (setup-harness then links this checkout's .claude/ into the sibling's layer). A
+# caller that really means another tree (a test fixture) says so with
+# SMATCHET_PROJECT_ROOT_OVERRIDE=1, which covers both.
 #
 # Both are made absolute. CI sets the pair relative to the workspace
 # (`PROJECT_ROOT: .`), and a consumer that cds into one root and then builds a path
@@ -82,19 +84,28 @@ _pc_abs() {
   if [ -d "$1" ]; then (CDPATH='' cd -- "$1" && pwd); else printf '%s\n' "$1"; fi
 }
 _pc_export_roots() {
-  local own given
+  local own given own_layer layer override="${SMATCHET_PROJECT_ROOT_OVERRIDE:-0}"
   own="$(_pc_abs "$(dirname "$PC_CONFIG_FILE")")"
+  own_layer="$(_pc_abs "$_pc_layer_root")"
+  given="$own"
   if [ -n "${PROJECT_ROOT:-}" ]; then
     given="$(_pc_abs "$PROJECT_ROOT")"
-    if [ "$given" != "$own" ] && [ "${SMATCHET_PROJECT_ROOT_OVERRIDE:-0}" != 1 ]; then
+    if [ "$given" != "$own" ] && [ "$override" != 1 ]; then
       printf 'project-config.sh: WARN — ignoring PROJECT_ROOT=%s: this checkout resolves its host to %s (SMATCHET_PROJECT_ROOT_OVERRIDE=1 aims it at another tree)\n' \
         "$PROJECT_ROOT" "$own" >&2
       given="$own"
     fi
-  else
-    given="$own"
   fi
-  AGENT_LAYER_ROOT="$(_pc_abs "${AGENT_LAYER_ROOT:-$_pc_layer_root}")"
+  layer="$own_layer"
+  if [ -n "${AGENT_LAYER_ROOT:-}" ]; then
+    layer="$(_pc_abs "$AGENT_LAYER_ROOT")"
+    if [ "$layer" != "$own_layer" ] && [ "$layer" != "$own/agent-layer" ] && [ "$override" != 1 ]; then
+      printf 'project-config.sh: WARN — ignoring AGENT_LAYER_ROOT=%s: this copy'"'"'s layer is %s (or %s/agent-layer; SMATCHET_PROJECT_ROOT_OVERRIDE=1 aims it at another tree)\n' \
+        "$AGENT_LAYER_ROOT" "$own_layer" "$own" >&2
+      layer="$own_layer"
+    fi
+  fi
+  AGENT_LAYER_ROOT="$layer"
   PROJECT_ROOT="$given"
   PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
   PC_PROJECT_ROOT="$PROJECT_ROOT"

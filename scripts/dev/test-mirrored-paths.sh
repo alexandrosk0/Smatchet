@@ -107,11 +107,17 @@ selftest() {
         && { echo "selftest: drift in the mounted layer was accepted"; rc=1; }
     # ...and through the script's own main path, not just its helpers: a call site
     # that stopped using layer_root_for would compare the host with itself.
+    # The output is checked too, so the rc 1 can only come from that drift (a lost
+    # override would also exit 1, comparing the real checkout instead).
+    local main_out
     main_rc=0
-    MIRRORED_PATHS_FILE="$tmp/list" PROJECT_ROOT="$tmp/host" AGENT_LAYER_ROOT="$tmp/host" \
-        SMATCHET_PROJECT_ROOT_OVERRIDE=1 bash "$_tmp_self" >/dev/null 2>&1 || main_rc=$?
-    [ "$main_rc" -eq 1 ] \
-        || { echo "selftest: the main path did not report drift in the mounted layer (rc $main_rc, want 1)"; rc=1; }
+    main_out="$(MIRRORED_PATHS_FILE="$tmp/list" PROJECT_ROOT="$tmp/host" AGENT_LAYER_ROOT="$tmp/host" \
+        SMATCHET_PROJECT_ROOT_OVERRIDE=1 bash "$_tmp_self" 2>&1)" || main_rc=$?
+    if [ "$main_rc" -ne 1 ] || [[ "$main_out" != *"layer: $tmp/host/agent-layer"* ]] \
+       || [[ "$main_out" != *"scripts/x.sh: the host copy differs"* ]]; then
+        echo "selftest: the main path did not report drift in the mounted layer (rc $main_rc, want 1)"
+        rc=1
+    fi
     rm -rf "$tmp"
     if [ "$rc" -eq 0 ]; then
         echo "test-mirrored-paths: selftest PASS (accepts identical copies; reds on drift, a missing copy, an empty list, a missing list, drift in a mounted layer)"

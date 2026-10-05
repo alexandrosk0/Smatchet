@@ -140,33 +140,46 @@ make_config_dir() {
 }
 
 @test "caller-set roots are honoured (the flip and standalone CI both rely on this)" {
-    # AGENT_LAYER_ROOT as given: the flip's CI points the host's scripts at agent-layer/.
-    local layer
-    layer="$(root_of PC_AGENT_LAYER_ROOT env AGENT_LAYER_ROOT="$TMP")"
-    [ "$layer" = "$TMP" ]
-    # PROJECT_ROOT naming the host this copy resolves itself (CI's `.`, the
-    # standalone layer, a runner exporting its own tree) is taken, silently.
-    run bash -c 'PROJECT_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
+    # Roots naming the trees this copy resolves itself (CI's `.`, the standalone
+    # layer, a runner exporting its own tree) are taken, silently.
+    run bash -c 'PROJECT_ROOT="$REPO_ROOT" AGENT_LAYER_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+    # The host's agent-layer/ mount is the flip's CI value for the host's own
+    # scripts: a host copy of this file takes it, silently.
+    local host="$TMP/mount-host"
+    make_config_dir "$host"
+    mkdir -p "$host/scripts/dev" "$host/agent-layer"
+    cp "$CONFIG_SH" "$host/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN"* ]]
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host/agent-layer" && pwd)"* ]]
     # Another tree is taken only on the explicit override (a test fixture).
-    local project
+    local project layer
     project="$(root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT="$TMP")"
     [ "$project" = "$TMP" ]
+    layer="$(root_of PC_AGENT_LAYER_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 AGENT_LAYER_ROOT="$TMP")"
+    [ "$layer" = "$TMP" ]
 }
 
-@test "a caller-set PROJECT_ROOT naming another tree is ignored, with a warning" {
+@test "caller-set roots naming another tree are ignored, with a warning" {
     # The bare name is common, and a stale export from a sibling checkout (which
-    # has a project.config.json of its own) would aim every gate at that tree.
-    local sibling="$TMP/sibling"
+    # has a project.config.json of its own) carries BOTH roots — honouring either
+    # half alone would split the pair.
+    local sibling="$TMP/sibling" host
+    host="$(cd "$REPO_ROOT" && pwd)"   # pwd spelling: git-bash prints C:/ for rev-parse, /c/ for pwd
     mkdir -p "$sibling"
     printf '{}\n' > "$sibling/project.config.json"
-    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$1" bash "$CONFIG_SH" 2>&1 >/dev/null' _ "$sibling"
+    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$1" AGENT_LAYER_ROOT="$1" bash "$CONFIG_SH" 2>&1 >/dev/null' _ "$sibling"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"WARN"*"ignoring PROJECT_ROOT=$sibling"*"$REPO_ROOT"* ]]
-    local project
-    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" 2>/dev/null)"
-    [ "$project" = "$(cd "$REPO_ROOT" && pwd)" ]
+    [[ "$output" == *"WARN"*"ignoring PROJECT_ROOT=$sibling"*"$host"* ]]
+    [[ "$output" == *"WARN"*"ignoring AGENT_LAYER_ROOT=$sibling"* ]]
+    local project layer
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" AGENT_LAYER_ROOT="$sibling" 2>/dev/null)"
+    layer="$(root_of PC_AGENT_LAYER_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" AGENT_LAYER_ROOT="$sibling" 2>/dev/null)"
+    [ "$project" = "$host" ]
+    [ "$layer" = "$host" ]
 }
 
 @test "PC_SCHEMA_FILE follows the resolved config, not the script's own root" {
@@ -191,9 +204,9 @@ make_config_dir() {
     # that cds into one root and reads the other must still name the right tree.
     mkdir -p "$TMP/ws/agent-layer"
     local project layer
-    # $TMP/ws is not this copy's host, so the PROJECT_ROOT half needs the override.
+    # $TMP/ws is not this copy's host, so the pair needs the override.
     project="$(cd "$TMP/ws" && root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
-    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer 2>/dev/null)"
+    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
     [ "$project" = "$(cd "$TMP/ws" && pwd)" ]
     [ "$layer" = "$(cd "$TMP/ws/agent-layer" && pwd)" ]
 }
