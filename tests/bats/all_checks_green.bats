@@ -158,15 +158,35 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     [[ "$output" == *"RED         Mobile texture-guard smoke (Mesa headless GL, advisory) (failure)"* ]]
 }
 
-@test "plan-lock-out-of-band downgrades a red Plan-lock gate (and only that check)" {
+@test "plan-lock-out-of-band ALONE does not downgrade a red Plan-lock gate (poller parity)" {
     replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\")"
     run bash "$ACG" --fixture "$SNAP"
     [ "$status" -eq 1 ]
+    # The merge-gates poller requires a plan-lock-disposition trail too; the
+    # aggregate must not be laxer than the poller it stands in for.
     replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"]"
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"RED         Plan-lock gate (failure)"* ]]
+    # A disposition without the out-of-band label is not an override either.
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-disposition:sibling-merged\"]"
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 1 ]
+}
+
+@test "plan-lock-out-of-band + a plan-lock-disposition (label or body) downgrades only the Plan-lock gate" {
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\", \"plan-lock-disposition:sibling-merged\"]"
     run bash "$ACG" --fixture "$SNAP"
     [ "$status" -eq 0 ]
     [[ "$output" == *"DOWNGRADED  Plan-lock gate (failure)"* ]]
-    replay final "$GREEN_EDIT | setrun(\"Pillar 2 scanner\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"]"
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [{name: \"plan-lock-out-of-band\"}] | .body = \"- plan-lock-disposition: overlap is docs-only\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 0 ]
+    # An empty body marker is not a disposition.
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"] | .body = \"plan-lock-disposition:   \""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 1 ]
+    replay final "$GREEN_EDIT | setrun(\"Pillar 2 scanner\"; \"failure\") | .labels = [\"plan-lock-out-of-band\", \"plan-lock-disposition:x\"]"
     run bash "$ACG" --fixture "$SNAP"
     [ "$status" -eq 1 ]
 }

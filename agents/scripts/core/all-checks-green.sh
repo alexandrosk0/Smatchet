@@ -33,8 +33,9 @@
 #     status on the head yet counts as pending (it has not reported);
 #   * the poller's out-of-band downgrades: tests-out-of-band (Test-delta gate),
 #     perf-out-of-band (Perf PR-fast*), intent-out-of-band (Intent section),
-#     plan-lock-out-of-band (Plan-lock gate), and cr-out-of-band PAIRED with a
-#     cr-disposition (label `cr-disposition:<why>` or a PR-body marker) for the
+#     plan-lock-out-of-band PAIRED with a plan-lock-disposition (label
+#     `plan-lock-disposition:<why>` or a PR-body marker) for the Plan-lock gate,
+#     and cr-out-of-band PAIRED with a cr-disposition (same two forms) for the
 #     CR finding check + `CR findings*` status — red OR pending. The poller's
 #     stale-override freshness conjunct is NOT ported: the two label-reactive
 #     checks it guards are themselves required contexts, so GitHub still waits on
@@ -85,14 +86,19 @@ command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 # absent, downgraded, exempt, total, fingerprint}.
 # shellcheck disable=SC2016  # single-quoted jq program — $-refs are jq variables
 ACG_FILTER='
+# disposition — the same reader as merge-gates.d/10-gate-filter.sh: a
+# `<prefix>:` label, or a `<prefix>:<reason>` PR-body marker.
+def disposition($labels; $body; $prefix):
+  ($labels | any(startswith($prefix + ":")))
+  or (($body // "") | test($prefix + ":[[:space:]]*[^[:space:]]"; "i"));
 ([.labels[]? | if type == "object" then (.name // "") else . end]) as $labels
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
-| (($labels | any(startswith("cr-disposition:")))
-   or ((.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crdisp
+| disposition($labels; .body; "cr-disposition") as $crdisp
+| disposition($labels; .body; "plan-lock-disposition") as $planlockdisp
 | ([$req[] | select(. != $self)]) as $reqNames
 | ([.check_runs[]? | select((.name // "") != $self)]
    | group_by(.name // "")
@@ -121,7 +127,7 @@ ACG_FILTER='
   def downgraded: ($tests and .kind == "check" and .name == "Test-delta gate")
                   or ($perf and .kind == "check" and (.name | startswith("Perf PR-fast")))
                   or ($intent and .kind == "check" and .name == "Intent section")
-                  or ($planlock and .kind == "check" and .name == "Plan-lock gate")
+                  or ($planlock and $planlockdisp and .kind == "check" and .name == "Plan-lock gate")
                   or crwaived;
   def show: "\(.name) (\(.detail))";
   ([$all[] | select(.state == "fail" and (exempt | not) and (downgraded | not))]) as $failing
