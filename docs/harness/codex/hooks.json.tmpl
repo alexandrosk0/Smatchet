@@ -20,6 +20,13 @@
           },
           {
             "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/merge-snapshot-holes.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/merge-snapshot-holes.sh\" --nudge'",
+            "statusMessage": "Checking merge-snapshot ledger holes",
+            "timeout": 60
+          },
+          {
+            "type": "command",
             "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge'",
             "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge'",
             "statusMessage": "Checking for unwatched open agent PRs",
