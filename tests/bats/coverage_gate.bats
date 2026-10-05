@@ -124,7 +124,7 @@ run_cov() {
     [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
 }
 
-@test "coverage.sh: a persistent capture crash is INFRA — exit 3 + COVERAGE-INFRA-CRASH, never a 0% red" {
+@test "coverage.sh: a persistent capture crash is INFRA -  exit 3 + COVERAGE-INFRA-CRASH, never a 0% red" {
     cov_stub_setup
     run_cov "crash crash ok" "ok" "0.80"
     [ "$status" -eq 3 ]

@@ -70,7 +70,7 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     [[ "$output" == *"PENDING     Sanitizer (UBSan via Clang) (in_progress)"* ]]
 }
 
-@test "#2286 @ 01:59:29Z (last required check green — GitHub merged): aggregate still red" {
+@test "#2286 @ 01:59:29Z (last required check green -  GitHub merged): aggregate still red" {
     replay "2026-10-04T01:59:29Z"
     run bash "$ACG" --fixture "$SNAP"
     [ "$status" -eq 1 ]

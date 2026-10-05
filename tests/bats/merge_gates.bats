@@ -1701,7 +1701,7 @@ planlock_waived_fixture() {
     plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}]'
 }
 
-@test "stale Plan-lock red (colliding lock now past the 14-day cutoff) -> override REFUSED, 'stale red — re-run'" {
+@test "stale Plan-lock red (colliding lock now past the 14-day cutoff) -> override REFUSED, 'stale red -  re-run'" {
     # The #2213 replay: the lock that reddened the gate has aged out, so the
     # gate would pass on a re-run — the override must not be what clears it.
     local f rows="$BATS_TEST_TMPDIR/lock-rows"
