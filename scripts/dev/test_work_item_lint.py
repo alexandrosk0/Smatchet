@@ -31,7 +31,9 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # The linter is agent-layer content: the agent-layer/ mount once it holds the
 # layer's project-config.sh (plan agent-surface-extraction-repo, row 12), else
-# this tree.
+# this tree. No superproject guard as in project-config.sh: this file is
+# host-only (not seeded), and the host may itself be someone's submodule yet
+# own its mount.
 LAYER = os.path.join(ROOT, "agent-layer")
 if not os.path.isfile(os.path.join(LAYER, "scripts", "dev", "project-config.sh")):
     LAYER = ROOT

@@ -142,7 +142,9 @@ command -v jq >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'jq' not
 # the polling path only, AFTER the pure --selftest early-exit, so --selftest
 # stays dependency-free. merge-gates.sh is agent-layer content: the agent-layer/
 # mount once it holds the layer's project-config.sh (plan
-# agent-surface-extraction-repo, row 12), else this tree.
+# agent-surface-extraction-repo, row 12), else this tree. No superproject guard
+# as in project-config.sh: this script is host-only (not seeded), and the host
+# may itself be someone's submodule yet own its mount.
 _psw_layer="$REPO_ROOT"
 [ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] && _psw_layer="$REPO_ROOT/agent-layer"
 # shellcheck source=agents/scripts/core/merge-gates.sh

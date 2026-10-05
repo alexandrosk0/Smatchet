@@ -40,6 +40,8 @@ set -euo pipefail
 # before the cd below, so a relative path to this script still resolves. The lib
 # is agent-layer content: the agent-layer/ mount once it holds the layer's
 # project-config.sh (plan agent-surface-extraction-repo, row 12), else this tree.
+# No superproject guard as in project-config.sh: this script is host-only (not
+# seeded), and the host may itself be someone's submodule yet own its mount.
 _ms_layer="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ -f "$_ms_layer/agent-layer/scripts/dev/project-config.sh" ] && _ms_layer="$_ms_layer/agent-layer"
 
