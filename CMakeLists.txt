@@ -741,8 +741,9 @@ FetchContent_MakeAvailable(httplib)
 
 
 # md4c is the Markdown parser backing the rich-text editing pipeline (md ↔ ADF/HTML for Jira/Plane
-# description fields). We compile only `md4c.c` ourselves rather than using upstream's CMake project,
-# which also builds md4c-html and the md2html CLI we don't need. See docs/plans/rich-text-editing-v2-remaining.md.
+# description fields). We compile only `md4c.c` and `entity.c` (its HTML5 named-entity table, which
+# Markdown -> ADF uses to decode entity references) rather than using upstream's CMake project, which
+# also builds md4c-html and the md2html CLI we don't need. See docs/plans/rich-text-editing-v2-remaining.md.
 smatchet_fetch_status("Fetching md4c (CommonMark/GFM parser)...")
 FetchContent_Declare(md4c
     GIT_REPOSITORY https://github.com/mity/md4c.git
@@ -762,7 +763,7 @@ if(NOT md4c_POPULATED)
     FetchContent_Populate(md4c)
 endif()
 if(NOT TARGET md4c)
-    add_library(md4c STATIC "${md4c_SOURCE_DIR}/src/md4c.c")
+    add_library(md4c STATIC "${md4c_SOURCE_DIR}/src/md4c.c" "${md4c_SOURCE_DIR}/src/entity.c")
     target_include_directories(md4c PUBLIC "${md4c_SOURCE_DIR}/src")
     set_target_properties(md4c PROPERTIES C_STANDARD 99)
     if(MSVC)
