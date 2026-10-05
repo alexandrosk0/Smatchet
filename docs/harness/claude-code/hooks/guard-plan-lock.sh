@@ -69,11 +69,14 @@ FP="$(json_field '.tool_input.file_path' 'file_path')"
 SID="$(json_field '.session_id' 'session_id')"
 [ -n "$SID" ] || SID="${CLAUDE_SESSION_ID:-}"
 
-# Shared substrate lib. The hook is COPIED into .claude/hooks/ at setup, so it
-# can't source a sibling — resolve via CLAUDE_PROJECT_DIR (runtime), then the git
-# top-level of the hook's own location (the in-repo source path the bats run).
-# Missing lib -> fail OPEN.
-_ltc_lib="$PROJ/agents/scripts/core/lock-table-cache.sh"
+# Shared substrate lib — layer content. Resolve the layer from CLAUDE_PROJECT_DIR
+# (layer-root.sh, copied beside this hook: the agent-layer/ mount once the layer is
+# a submodule), then the git top-level of the hook's own location (the in-repo
+# source path the bats run). Missing lib -> fail OPEN.
+HOOK_LAYER="$PROJ"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$PROJ"
+_ltc_lib="$HOOK_LAYER/agents/scripts/core/lock-table-cache.sh"
 if [ ! -f "$_ltc_lib" ]; then
   _top="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)"
   [ -n "$_top" ] && _ltc_lib="$_top/agents/scripts/core/lock-table-cache.sh"

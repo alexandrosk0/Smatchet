@@ -275,7 +275,7 @@ ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
     local base="$1" aud py
-    aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    aud="${LAYER_ROOT:-$REPO_ROOT}/agents/scripts/core/comment_audit.py"   # layer content; REPO_ROOT is the scanned host
     py="$(resolve_python || true)"
     [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
     [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true

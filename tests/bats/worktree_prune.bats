@@ -7,7 +7,13 @@
 # ----------------------------------------------------------------------------
 
 setup() {
-    REPO_ROOT="$(git rev-parse --show-toplevel)"
+    # This suite's subject is host content (scripts/), the scripts it pairs with
+    # are layer content (agents/). Once the layer is the host's agent-layer/
+    # submodule the suite lives in the layer, so the host comes from
+    # project-config.sh (the superproject) and the layer from this suite's own tree.
+    # Before the flip both are this checkout.
+    LAYER_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    REPO_ROOT="$(PC_ROOTS_ONLY=1 . "$LAYER_ROOT/scripts/dev/project-config.sh" >/dev/null 2>&1; printf '%s' "${PROJECT_ROOT:-$LAYER_ROOT}")"
     SCRIPT="$REPO_ROOT/scripts/dev/worktree-prune.sh"
     MAIN="$(mktemp -d)/main"
     git init -q -b develop "$MAIN"
@@ -79,7 +85,7 @@ prune() { ( cd "$MAIN" && PATH="$STUB:$PATH" bash "$SCRIPT" "$@" ); }
 resync_script() {  # <tree> — path to a worktree.sh whose REPO_ROOT is <tree>
     mkdir -p "$1/scripts/dev" "$1/agents/scripts/core"
     cp "$REPO_ROOT/scripts/dev/worktree.sh" "$1/scripts/dev/worktree.sh"
-    cp "$REPO_ROOT/agents/scripts/core/session-registry-lib.sh" "$1/agents/scripts/core/" 2>/dev/null || true
+    cp "$LAYER_ROOT/agents/scripts/core/session-registry-lib.sh" "$1/agents/scripts/core/" 2>/dev/null || true
     printf '%s/scripts/dev/worktree.sh' "$1"
 }
 

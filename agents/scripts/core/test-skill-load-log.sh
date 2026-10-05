@@ -17,11 +17,20 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" >&2; exit 2; }
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+# Two trees: the log, the skill links and the deployed hook are the project's
+# .claude/ (PROJECT_ROOT, the superproject once the layer is the agent-layer/
+# submodule); the hook source and setup-harness are layer content (LAYER_DIR, this
+# script's own tree). Before the flip the two are one checkout.
+LAYER_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$LAYER_DIR/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$LAYER_DIR/scripts/dev/project-config.sh" || true
+fi
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_ROOT:-$LAYER_DIR}}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 cd "$PROJ_DIR"
 
-HOOK="$PROJ_DIR/agents/_shared/token-tracking/skill-load-log.py"
+HOOK="$LAYER_DIR/agents/_shared/token-tracking/skill-load-log.py"
 LOG="$PROJ_DIR/.claude/.skill-loads.jsonl"
 TMP_BACKUP=""
 
@@ -125,7 +134,7 @@ note "Test 5 — project skill resolves SKILL.md path + approx_tokens > 0"
 # Requires .claude/skills/perf-measure to exist (Phase 0 setup-harness).
 if [[ ! -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     note "  (running setup-harness.sh claude-code to seed perf-measure link)"
-    bash "$PROJ_DIR/agents/scripts/core/setup-harness.sh" claude-code >/dev/null 2>&1 || true  # seed-only; the -e check below reports if the link is still absent
+    bash "$LAYER_DIR/agents/scripts/core/setup-harness.sh" claude-code >/dev/null 2>&1 || true  # seed-only; the -e check below reports if the link is still absent
 fi
 if [[ -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     rm -f "$LOG"

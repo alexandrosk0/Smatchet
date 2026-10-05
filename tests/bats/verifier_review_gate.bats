@@ -22,7 +22,13 @@
 # score or wedge nearly every commit.
 
 setup() {
-    ROOT="$(git rev-parse --show-toplevel)"
+    # This suite's subject is host content (scripts/), the scripts it pairs with
+    # are layer content (agents/). Once the layer is the host's agent-layer/
+    # submodule the suite lives in the layer, so the host comes from
+    # project-config.sh (the superproject) and the layer from this suite's own tree.
+    # Before the flip both are this checkout.
+    LAYER="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    ROOT="$(PC_ROOTS_ONLY=1 . "$LAYER/scripts/dev/project-config.sh" >/dev/null 2>&1; printf '%s' "${PROJECT_ROOT:-$LAYER}")"
     export ROOT
     REPO_TMP="$(mktemp -d)"
     export REPO_TMP
@@ -34,8 +40,8 @@ setup() {
         "$REPO_TMP/Source/Core/src/Sync" \
         "$REPO_TMP/docs"
     cp "$ROOT/scripts/git-hooks/pre-commit" "$REPO_TMP/scripts/git-hooks/pre-commit"
-    cp "$ROOT/agents/scripts/core/review-ack.sh" "$REPO_TMP/agents/scripts/core/review-ack.sh"
-    cp "$ROOT/agents/scripts/core/lib/review-ack.sh" "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
+    cp "$LAYER/agents/scripts/core/review-ack.sh" "$REPO_TMP/agents/scripts/core/review-ack.sh"
+    cp "$LAYER/agents/scripts/core/lib/review-ack.sh" "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
     chmod +x "$REPO_TMP/scripts/git-hooks/pre-commit"
     printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > "$REPO_TMP/project.config.json"
     echo "// base" > "$REPO_TMP/Source/Core/src/Sync/S.cpp"
@@ -260,7 +266,7 @@ _panel_py() {
         if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
     done
     [ -n "$PY" ] || skip "no working python interpreter"
-    PV="$ROOT/agents/scripts/core/panel_verdicts.py"
+    PV="$LAYER/agents/scripts/core/panel_verdicts.py"
     SIDECAR="$ROOT/scripts/dev/verifier-sidecar.py"
     if command -v cygpath >/dev/null 2>&1; then
         PV="$(cygpath -m "$PV")"; SIDECAR="$(cygpath -m "$SIDECAR")"

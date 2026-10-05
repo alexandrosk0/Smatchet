@@ -13,14 +13,20 @@
 # unrelated reason. The layer states get their own cases below.
 
 setup() {
-    REPO_ROOT="$(git rev-parse --show-toplevel)"
+    # This suite's subject is host content (scripts/), the scripts it pairs with
+    # are layer content (agents/). Once the layer is the host's agent-layer/
+    # submodule the suite lives in the layer, so the host comes from
+    # project-config.sh (the superproject) and the layer from this suite's own tree.
+    # Before the flip both are this checkout.
+    LAYER_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    REPO_ROOT="$(PC_ROOTS_ONLY=1 . "$LAYER_ROOT/scripts/dev/project-config.sh" >/dev/null 2>&1; printf '%s' "${PROJECT_ROOT:-$LAYER_ROOT}")"
     TMP_TREE="$(mktemp -d)"
     mkdir -p "$TMP_TREE/scripts/dev" "$TMP_TREE/agents/scripts/core/lib" \
         "$TMP_TREE/agents/core" "$TMP_TREE/agents/project"
     cp "$REPO_ROOT/scripts/dev/doctor.sh" "$TMP_TREE/scripts/dev/"
-    cp "$REPO_ROOT/agents/scripts/core/check-harness-provisioned.sh" \
+    cp "$LAYER_ROOT/agents/scripts/core/check-harness-provisioned.sh" \
         "$TMP_TREE/agents/scripts/core/"
-    cp "$REPO_ROOT/agents/scripts/core/lib/agents-dir-current.sh" \
+    cp "$LAYER_ROOT/agents/scripts/core/lib/agents-dir-current.sh" \
         "$TMP_TREE/agents/scripts/core/lib/"
     printf 'canonical v1\n' > "$TMP_TREE/agents/core/sample-agent.md"
 }

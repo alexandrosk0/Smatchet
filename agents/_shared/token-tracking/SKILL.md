@@ -12,10 +12,12 @@ Print the per-agent token usage report for the current project.
 Run the report script and emit its stdout verbatim into the chat. The user-provided arguments after `/agent-tokens` pass through unchanged.
 
 ```bash
-python "$CLAUDE_PROJECT_DIR/agents/scripts/core/agent-tokens-report.py" $ARGUMENTS
+L="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+[ -f "$L/agent-layer/scripts/dev/project-config.sh" ] && L="$L/agent-layer"
+python "$L/agents/scripts/core/agent-tokens-report.py" $ARGUMENTS
 ```
 
-If `$CLAUDE_PROJECT_DIR` is unset, fall back to the repo root (`$(pwd)`).
+The report script is agent-layer content: under the project root, or under its `agent-layer/` mount when the layer is a submodule. If `$CLAUDE_PROJECT_DIR` is unset, the repo root (`$(pwd)`) stands in for it.
 
 ## Expected arguments
 

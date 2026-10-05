@@ -28,7 +28,17 @@
 # empty queue glob) are likewise guarded.
 set -euo pipefail
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+# Two trees. The deployed hooks, their queue and the files they lint are the
+# project's (.claude/, tests/fixtures/): PROJECT_ROOT, the superproject once the
+# layer is the agent-layer/ submodule. The scripts and canonical hooks under test,
+# and the committed probe fixture, are layer content: LAYER_DIR, this script's
+# own tree. Before the flip the two are one checkout.
+LAYER_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$LAYER_DIR/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$LAYER_DIR/scripts/dev/project-config.sh" || true
+fi
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_ROOT:-$LAYER_DIR}}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 
 CLAUDE_DIR="$PROJ_DIR/.claude"
@@ -69,7 +79,15 @@ cleanup() {
     rm -f "$PROJ_DIR/tests/fixtures/lint_hook_fault.cpp" 2>/dev/null || true
     rm -f "$PROJ_DIR"/tests/fixtures/lint_hook_chunk_*.cpp 2>/dev/null || true
 }
-trap cleanup EXIT
+# The probe copied into a separate project tree (below) outlives every per-test
+# cleanup and goes at exit — never the canonical one.
+cleanup_on_exit() {
+    cleanup
+    if [[ "${PROBE_COPIED:-0}" == 1 ]]; then
+        rm -f "$PROJ_DIR/tests/fixtures/lint_hook_probe.cpp" 2>/dev/null || true
+    fi
+}
+trap cleanup_on_exit EXIT
 
 cleanup  # start from a known-clean state
 
@@ -78,6 +96,14 @@ cleanup  # start from a known-clean state
 # legitimate-but-unrelated format fixes in place, contaminating the working
 # tree. The fixture is intentionally trivial and stable.
 PROBE_FILE="$PROJ_DIR/tests/fixtures/lint_hook_probe.cpp"
+# After the flip the committed fixture is in the layer, but the hook lints project
+# files only, so the probe is copied into the project for the run.
+PROBE_COPIED=0
+if [[ ! -f "$PROBE_FILE" && "$PROJ_DIR" != "$LAYER_DIR" && -f "$LAYER_DIR/tests/fixtures/lint_hook_probe.cpp" ]]; then
+    mkdir -p "$PROJ_DIR/tests/fixtures"
+    cp "$LAYER_DIR/tests/fixtures/lint_hook_probe.cpp" "$PROBE_FILE"
+    PROBE_COPIED=1
+fi
 if [[ ! -f "$PROBE_FILE" ]]; then
     note "probe fixture missing: $PROBE_FILE"
     exit 1
@@ -286,7 +312,7 @@ note "Test 8 — manual flush via agents/scripts/core/lint-flush.sh"
 cleanup
 echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh" || true
 flush_rc=0
-bash "$PROJ_DIR/agents/scripts/core/lint-flush.sh" >/dev/null 2>&1 || flush_rc=$?
+bash "$LAYER_DIR/agents/scripts/core/lint-flush.sh" >/dev/null 2>&1 || flush_rc=$?
 collect_queue_files
 if [[ ${#QUEUE_REAL[@]} -eq 0 ]]; then
     ok "lint-flush drained the queue (rc=$flush_rc)"
@@ -391,7 +417,7 @@ cleanup
 : > "$CLAUDE_DIR/.tree-dirty"
 
 # clear-session-context.sh reads optional JSON on stdin. Empty stdin is fine.
-echo '' | bash "$PROJ_DIR/agents/scripts/core/clear-session-context.sh" >/dev/null 2>&1 || true
+echo '' | bash "$LAYER_DIR/agents/scripts/core/clear-session-context.sh" >/dev/null 2>&1 || true
 
 shopt -s nullglob
 ORPHANS=("$CLAUDE_DIR"/.lint-queue.*)
@@ -413,7 +439,7 @@ fi
 # so the PCH version-drift FP patterns (PR-6) stay enrolled in CI.
 note "Test 12 — lint-syntax-both.py --selftest (PCH-drift FP classification)"
 cleanup
-SYNTAX_HOOK="$PROJ_DIR/docs/harness/claude-code/hooks/lint-syntax-both.py"
+SYNTAX_HOOK="$LAYER_DIR/docs/harness/claude-code/hooks/lint-syntax-both.py"
 if [[ -z "$PY_BIN" ]]; then
     skip "Test 12 — python not on PATH"
 elif [[ ! -f "$SYNTAX_HOOK" ]]; then

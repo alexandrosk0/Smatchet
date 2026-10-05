@@ -1,4 +1,4 @@
-agents/scripts/core/agent-layer-flip-probe.sh	Source/,docs/plans/	AGENTS.md,agents/,docs/agent-rules/	dual
+agents/scripts/core/agent-layer-flip-probe.sh	Source/,docs/plans/	AGENTS.md,agents/,docs/agent-rules/,docs/harness/	dual
 agents/scripts/core/agent-layer-sim.sh	docs/plans/	agents/	dual
 agents/scripts/core/agent-progress.sh	-	agents/	layer-only
 agents/scripts/core/archive-backlog-entry.sh	docs/self-improvement/	agents/	dual
@@ -11,7 +11,7 @@ agents/scripts/core/check-pr-intent.sh	-	agents/,docs/agent-rules/	layer-only
 agents/scripts/core/check-test-list.sh	-	-	self-locating
 agents/scripts/core/classify-layer-consumers.sh	Source/,backlog/,docs/plans/,docs/self-improvement/,project.config.json,LTC_PROJ=	agents/,docs/agent-rules/,docs/harness/	dual
 agents/scripts/core/clear-session-context.sh	project.config.json	AGENTS.md,agents/,docs/agent-rules/,docs/harness/	dual
-agents/scripts/core/cost-ceiling-nudge.sh	-	agents/	layer-only
+agents/scripts/core/cost-ceiling-nudge.sh	-	-	self-locating
 agents/scripts/core/cr-oob-review-backfill.sh	docs/self-improvement/	docs/agent-rules/	dual
 agents/scripts/core/develop-tip-required-green.sh	-	docs/harness/	layer-only
 agents/scripts/core/dump-triage.sh	-	docs/agent-rules/	layer-only
@@ -69,7 +69,7 @@ agents/scripts/core/setup-harness.sh	Source/,docs/plans/,docs/self-improvement/	
 agents/scripts/core/setup-locks-ruleset.sh	docs/plans/	agents/	dual
 agents/scripts/core/smatchet-notify.sh	docs/plans/	agents/	dual
 agents/scripts/core/sort-applied-md.sh	docs/self-improvement/	agents/,docs/agent-rules/	dual
-agents/scripts/core/sync-settings-hooks.sh	-	-	self-locating
+agents/scripts/core/sync-settings-hooks.sh	-	agents/	layer-only
 agents/scripts/core/tail-agent.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-adapter-drift.sh	-	agents/	layer-only
 agents/scripts/core/test-agent-build-facts.sh	-	AGENTS.md,agents/	layer-only
@@ -108,6 +108,7 @@ agents/scripts/core/test-guard-shared-tree-bats.sh	-	AGENTS.md,docs/harness/	lay
 agents/scripts/core/test-harness-provisioned-bats.sh	-	AGENTS.md	layer-only
 agents/scripts/core/test-historical-review-ledger-reconcile-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-historical-review-survivors-bats.sh	-	AGENTS.md	layer-only
+agents/scripts/core/test-hook-layer-paths.sh	-	agents/,docs/harness/	layer-only
 agents/scripts/core/test-include-cycle-audit-bats.sh	-	AGENTS.md	layer-only
 agents/scripts/core/test-is-pure-docs-diff-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-issue-sweep-bats.sh	-	-	self-locating

@@ -50,7 +50,11 @@ if [ -z "$ROOT" ]; then
     ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 [ -n "$ROOT" ] || { echo "[fleet-preflight-hook] cannot resolve repo root — skipping (fail-open)" >&2; exit 0; }
-PREFLIGHT="$ROOT/agents/scripts/core/fleet-preflight.sh"
+# The preflight is layer content: the agent-layer/ mount once the layer is a submodule.
+HOOK_LAYER="$ROOT"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$ROOT"
+PREFLIGHT="$HOOK_LAYER/agents/scripts/core/fleet-preflight.sh"
 [ -f "$PREFLIGHT" ] || { echo "[fleet-preflight-hook] fleet-preflight.sh not found — skipping (fail-open)" >&2; exit 0; }
 
 # --- read tool-input JSON ----------------------------------------------------

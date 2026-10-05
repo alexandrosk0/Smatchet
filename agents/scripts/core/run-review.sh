@@ -68,6 +68,14 @@ _rr_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || die "cannot resolve t
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git work tree"
 cd "$ROOT" || die "cannot cd to repo root"
+# The skills and rule docs a prose prompt points at are layer content, named
+# relative to cwd: the agent-layer/ mount once the layer is a submodule of ROOT.
+# Both sides are pwd's spelling (git-bash prints C:/ for rev-parse and /c/ for
+# pwd, so a strip across the two would never match).
+_rr_layer="$(cd "$_rr_dir/../../.." && pwd)" || die "cannot resolve the layer root"
+_rr_here="$(pwd)"
+_rr_lp=""
+[ "$_rr_layer" = "$_rr_here" ] || _rr_lp="${_rr_layer#"$_rr_here"/}/"
 
 # shellcheck source=lib/review-guard.sh
 source "$_rr_dir/lib/review-guard.sh" || die "cannot load $_rr_dir/lib/review-guard.sh"
@@ -248,7 +256,7 @@ get_leg_command() {
         # cursor has no slash command; point it at the shared skill in prose.
         cursor)
             local ask
-            ask="$(quote_sh "Run the $GATE review of '$SUBJ_ARG' following agents/_shared/skills/$SKILL/SKILL.md and docs/agent-rules/review-panels.md. Write your findings to $outfile.")"
+            ask="$(quote_sh "Run the $GATE review of '$SUBJ_ARG' following ${_rr_lp}agents/_shared/skills/$SKILL/SKILL.md and ${_rr_lp}docs/agent-rules/review-panels.md. Write your findings to $outfile.")"
             echo "cursor-agent --force -p $sel $ask" ;;
         *) die "No command template for harness '$harness'." ;;
     esac

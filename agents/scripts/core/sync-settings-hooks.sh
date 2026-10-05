@@ -15,6 +15,16 @@
 # clobbering a per-machine customisation (the exact failure copy_template's skip
 # avoids). Template renames/removals still need a manual re-provision.
 #
+# One rewrite, and only one: a layer script named straight from the project dir
+# (`bash "$CLAUDE_PROJECT_DIR/agents/…" …`) becomes the same call through
+# .claude/hooks/layer-run.sh, but only when the template holds exactly that
+# rewritten command and layer-run.sh is deployed beside the settings file (a
+# rewrite to a missing dispatcher would fail every hook, the resync included).
+# The old form breaks once the layer is the agent-layer/ submodule (bash exits
+# 127, every nudge goes silent), and adding the new form beside it would run each
+# hook twice before the flip. A dispatcher command left in a group twice (the new
+# form already there, or two copies of the old) is kept once.
+#
 # The additive-only design has one blind spot (hooks-session-lifecycle-03): a hook
 # the template REMOVED or RENAMED lingers in the deployed file forever — the sync
 # never surfaces it. `--check` is the read-only audit for that: it lists every
@@ -68,9 +78,30 @@ fi
 # hooks whose `.command` is not already in that group. Keyed on command string
 # so re-runs are idempotent; only `.hooks[<event>]` is ever assigned, so the
 # top-level `permissions` block and key order survive untouched.
+haverun=false
+[ -f "$(dirname "$dst")/hooks/layer-run.sh" ] && haverun=true
 tmp="$(mktemp "${dst}.XXXXXX")" || exit 0
-if jq -n --slurpfile dd "$dst" --slurpfile tt "$tmpl" '
-      $dd[0] as $D | $tt[0] as $T
+if jq -n --slurpfile dd "$dst" --slurpfile tt "$tmpl" --argjson haverun "$haverun" '
+      $tt[0] as $T
+      | "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" " as $lr
+      | ($T.hooks // {} | [.[][]?.hooks[]?.command]) as $tcmds
+      | ($dd[0] | if $haverun and (.hooks | type) == "object" then
+            .hooks |= with_entries(.value |= (if type == "array" then map(
+              if type == "object" and (.hooks | type) == "array" then
+                .hooks |= (map(
+                  if type == "object" and (.command | type) == "string"
+                     and (.command | test("^bash \"\\$CLAUDE_PROJECT_DIR/agents/[^\"]+\""))
+                  then (.command | sub("^bash \"\\$CLAUDE_PROJECT_DIR/(?<p>agents/[^\"]+)\"";
+                          "\($lr)\(.p)")) as $n
+                       | if ($tcmds | index($n)) != null then .command = $n else . end
+                  else . end)
+                  | reduce .[] as $h ([];
+                      if ($h | type) == "object" and (($h.command // "") | type) == "string"
+                         and ($h.command // "" | startswith($lr))
+                         and any(.[]; type == "object" and .command == $h.command)
+                      then . else . + [$h] end))
+              else . end) else . end))
+            else . end) as $D
       | $D
       | reduce ($T.hooks | to_entries[]) as $ev (.;
           reduce $ev.value[] as $g (.;
@@ -89,7 +120,7 @@ if jq -n --slurpfile dd "$dst" --slurpfile tt "$tmpl" '
         rm -f "$tmp"          # already in sync — no write
     else
         mv "$tmp" "$dst"      # atomic replace (same dir)
-        echo "  sync  $dst (added missing template hooks)"
+        echo "  sync  $dst (template hooks synced)"
     fi
 else
     rm -f "$tmp"

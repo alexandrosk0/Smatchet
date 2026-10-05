@@ -18,7 +18,13 @@
 #   3. Backend healthy => verdict attached; the score is advisory, only hard_veto blocks.
 
 setup() {
-    ROOT="$(git rev-parse --show-toplevel)"
+    # This suite's subject is host content (scripts/), the scripts it pairs with
+    # are layer content (agents/). Once the layer is the host's agent-layer/
+    # submodule the suite lives in the layer, so the host comes from
+    # project-config.sh (the superproject) and the layer from this suite's own tree.
+    # Before the flip both are this checkout.
+    LAYER="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    ROOT="$(PC_ROOTS_ONLY=1 . "$LAYER/scripts/dev/project-config.sh" >/dev/null 2>&1; printf '%s' "${PROJECT_ROOT:-$LAYER}")"
     export ROOT
     REPO_TMP="$(mktemp -d)"
     export REPO_TMP
@@ -31,7 +37,7 @@ setup() {
     cp "$ROOT/scripts/dev/pre-ship.sh" "$REPO_TMP/scripts/dev/pre-ship.sh"
     cp "$ROOT/scripts/dev/verifier-produce.py" "$REPO_TMP/scripts/dev/verifier-produce.py"
     cp "$ROOT/scripts/dev/verifier-sidecar.py" "$REPO_TMP/scripts/dev/verifier-sidecar.py"
-    cp "$ROOT/agents/scripts/core/lib/review-ack.sh" "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
+    cp "$LAYER/agents/scripts/core/lib/review-ack.sh" "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
     printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > "$REPO_TMP/project.config.json"
     echo "// base" > "$REPO_TMP/Source/Core/src/Sync/S.cpp"
     git -C "$REPO_TMP" add -A

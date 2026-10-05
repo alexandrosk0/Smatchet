@@ -22,7 +22,18 @@
 # Advisory — exit 0 always; untracked file / no git → silent skip.
 
 set -uo pipefail
-cd "$(dirname "$0")/../../.." || exit 0
+# The facts file is host content: read it from PROJECT_ROOT, which is the
+# superproject once the layer is the agent-layer/ submodule. This script's own
+# tree would then be the layer, where the file never exists and the nudge would
+# go silent.
+_rhf_self="$(cd "$(dirname "$0")" && pwd)" || exit 0
+if [ -f "$_rhf_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_rhf_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_rhf_self/../../..}" || exit 0
 
 MODE="nudge"
 case "${1:-}" in
