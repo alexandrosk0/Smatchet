@@ -324,27 +324,27 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
         break;
     case MD_SPAN_IMG: {
         std::string src;
-        if (PopImageSrc(b.img, src)) {
+        std::string alt;
+        if (LeaveImageSpan(b.img, src, alt)) {
             static const std::string kAttachmentPrefix = "attachment:";
             if (src.compare(0, kAttachmentPrefix.size(), kAttachmentPrefix) == 0) {
                 json attrs = json::object();
                 attrs["type"] = "file";
                 attrs["id"] = src.substr(kAttachmentPrefix.size());
-                if (!b.img.alt.empty()) {
-                    attrs["alt"] = b.img.alt;
+                if (!alt.empty()) {
+                    attrs["alt"] = std::move(alt);
                 }
                 b.topContent()->push_back(json{{"type", "mediaInline"}, {"attrs", std::move(attrs)}});
             } else {
                 // External image URLs are not valid in Jira ADF `mediaInline` (which requires a
                 // file-store `id`). Fall back to a text link so the URL is preserved and the
                 // payload validates. The image-as-image is lost; the image-as-link is kept.
-                const std::string display = b.img.alt.empty() ? src : b.img.alt;
+                const std::string display = alt.empty() ? src : alt;
                 json mark = {{"type", "link"}, {"attrs", {{"href", src}}}};
                 json textNode = {{"type", "text"}, {"text", display}, {"marks", json::array({std::move(mark)})}};
                 b.topContent()->push_back(std::move(textNode));
             }
         }
-        LeaveImageSpan(b.img);
         break;
     }
     default:

@@ -210,6 +210,23 @@ TEST_CASE("MarkdownToHtml: images take their alt text from the description") {
     CHECK(Html("```\n![a](b)\n```\n") == "<pre><code>![a](b)\n</code></pre>");
 }
 
+TEST_CASE("MarkdownToHtml: an image description is plain alt text (#2284)") {
+    // Span markup inside the description is alt text, not tags around the image.
+    CHECK(Html("![a *b* c](u.png)") == "<p><img src=\"u.png\" alt=\"a b c\"/></p>");
+    CHECK(Html("![a **b** `c` ~~d~~](u.png)") == "<p><img src=\"u.png\" alt=\"a b c d\"/></p>");
+    CHECK(Html("![foo [bar](/url)](/url2)") == "<p><img src=\"/url2\" alt=\"foo bar\"/></p>");
+    // An entity reference md4c validated stays one reference; literal text is escaped once.
+    CHECK(Html("![`code` &amp; text](u.png)") == "<p><img src=\"u.png\" alt=\"code &amp; text\"/></p>");
+    CHECK(Html("![a &copy; b](u.png)") == "<p><img src=\"u.png\" alt=\"a &copy; b\"/></p>");
+    CHECK(Html("![a & b \"q\" <t>](u.png)") == "<p><img src=\"u.png\" alt=\"a &amp; b &quot;q&quot; &lt;t&gt;\"/></p>");
+    // A nested image adds its description to the outer alt text; only the outer image is emitted.
+    CHECK(Html("![outer ![inner](i.png) tail](o.png)") == "<p><img src=\"o.png\" alt=\"outer inner tail\"/></p>");
+    CHECK(Html("![a **b** ![c *d*](x.png) e](y.png)") == "<p><img src=\"y.png\" alt=\"a b c d e\"/></p>");
+    CHECK(Html("![![](i.png)](o.png)") == "<p><img src=\"o.png\" alt=\"\"/></p>");
+    // Markup around the image is unchanged.
+    CHECK(Html("*![em](u.png)*") == "<p><em><img src=\"u.png\" alt=\"em\"/></em></p>");
+}
+
 TEST_CASE("MarkdownToHtml: headings h1-h6") {
     CHECK(Html("# Title\n\nBody text.") == "<h1>Title</h1><p>Body text.</p>");
     CHECK(Html("###### Deep") == "<h6>Deep</h6>");

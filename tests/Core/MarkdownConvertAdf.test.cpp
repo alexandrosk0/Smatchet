@@ -306,6 +306,29 @@ TEST_CASE("MarkdownToAdf: attachment image keeps mediaInline with type=file") {
     CHECK((*media)["attrs"].value("alt", std::string()) == "Screenshot");
 }
 
+TEST_CASE("MarkdownToAdf: an image description folds into one node for the outermost image (#2284)") {
+    SUBCASE("external image: one link text, no marks from inside the description") {
+        const json adf = MarkdownConvert::MarkdownToAdf("![a *b* [c](/u) ![d](i.png) e](o.png)");
+        CHECK(CountByType(adf, "text") == 1);
+        const json* text = FindFirst(adf, "text");
+        REQUIRE(text != nullptr);
+        CHECK(text->value("text", std::string()) == "a b c d e");
+        REQUIRE(text->contains("marks"));
+        REQUIRE((*text)["marks"].size() == 1);
+        CHECK((*text)["marks"][0].value("type", std::string()) == "link");
+        CHECK((*text)["marks"][0]["attrs"].value("href", std::string()) == "o.png");
+    }
+    SUBCASE("attachment image: one mediaInline for the outer attachment") {
+        const json adf = MarkdownConvert::MarkdownToAdf("![x ![y](attachment:1) z](attachment:2)");
+        CHECK(CountByType(adf, "mediaInline") == 1);
+        CHECK(CountByType(adf, "text") == 0);
+        const json* media = FindFirst(adf, "mediaInline");
+        REQUIRE(media != nullptr);
+        CHECK((*media)["attrs"].value("id", std::string()) == "2");
+        CHECK((*media)["attrs"].value("alt", std::string()) == "x y z");
+    }
+}
+
 // BACKLOG B5 — table cells used to emit only first-level paragraphs, running multiple paragraphs
 // together and silently dropping lists. They now join blocks with <br> and represent list items.
 namespace {

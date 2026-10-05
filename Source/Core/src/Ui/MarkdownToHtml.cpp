@@ -52,20 +52,10 @@ void HtmlEscape(std::ostringstream& out, const std::string& text) {
 
 void HtmlEscapeAttr(std::ostringstream& out, const std::string& text) {
     for (char c : text) {
-        switch (c) {
-        case '&':
-            out << "&amp;";
-            break;
-        case '"':
-            out << "&quot;";
-            break;
-        case '<':
-            out << "&lt;";
-            break;
-        case '>':
-            out << "&gt;";
-            break;
-        default:
+        const char* escaped = HtmlAttrEscape(c);
+        if (escaped) {
+            out << escaped;
+        } else {
             out << c;
         }
     }
@@ -248,14 +238,13 @@ int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
         break;
     case MD_SPAN_IMG: {
         std::string src;
-        if (PopImageSrc(b.img, src)) {
+        std::string alt;
+        if (LeaveImageSpan(b.img, src, alt)) {
             b.out << "<img src=\"";
             HtmlEscapeAttr(b.out, src);
-            b.out << "\" alt=\"";
-            HtmlEscapeAttr(b.out, b.img.alt);
-            b.out << "\"/>";
+            // The alt text is already attribute-encoded (MdAltEncoding::HtmlAttribute).
+            b.out << "\" alt=\"" << alt << "\"/>";
         }
-        LeaveImageSpan(b.img);
         break;
     }
     default:
