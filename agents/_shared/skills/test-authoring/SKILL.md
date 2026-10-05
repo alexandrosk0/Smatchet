@@ -48,7 +48,8 @@ Gotchas the wire-up hit (record once, save the next agent):
 - `IMGUI_TEST_ENGINE_ENABLE_CAPTURE` MUST stay 1 — `imgui_te_engine.cpp` calls `ImGuiCaptureContext::*` unconditionally (no `#if` guards). Disabling capture loses link-time symbols. We never wire a `ScreenCaptureFunc` so the runtime cost is zero.
 - `IMGUI_DEFINE_MATH_OPERATORS` must be defined BEFORE `imgui.h`. Setting it in `SmatchetImConfig.h` (read at `imgui.h` start via `IMGUI_USER_CONFIG`) is the right hook point.
 - The engine's filter language is substring + `^` / `$` / `,` modifiers, NOT shell glob. Don't write `Views/*` — write `Views` or `^Views/`.
-- Fresh-profile drivers MUST seed `whisper_setup_completed=true` (and ideally `backend_has_been_reachable=true`) in the test config — otherwise the first-launch `##WhisperSetupBanner` overlays the UI and silently swallows `ItemClick`s, failing click-driven tests with no obvious cause.
+- Fresh-profile drivers MUST seed `whisper_setup_completed=true` (and ideally `backend_has_been_reachable=true`) in the test config — otherwise the first-launch `##WhisperSetupBanner` overlays the UI and silently swallows `ItemClick`s, failing click-driven tests with no obvious cause. The shared driver preamble (`scripts/dev/lib/ui-test-driver.sh`) does this with `ui_test_isolate_home --seed`; leave the seed off only for a suite that asserts first-run defaults.
+- An item ref that resolves to nothing must HARD-FAIL with the literal ref text in the failure message — never `IM_CHECK_NO_RET(found); if (!found) return;`, which logs one failed check and then reads like a clean skip, so a renamed label silently degrades the test to a no-op. Keep a checkbox / button label that doubles as an item ref in ONE shared constant with the `T(key, fallback)` fallback string it mirrors, so a rename cannot drift the label and the ref independently.
 - Any bucket-E test that performs a queue/field-edit WRITE MUST use `BucketE::UiTestWriteScope` (`tests/ui/_helpers/UiTestWriteScope.h`) to flip the fresh-profile `ReadOnlyMode=true` default OFF, and MUST HARD-FAIL — not skip — on a write failure once its env gates are met. A fresh profile defaults read-only, so an unscoped write is silently rejected and the test goes vacuously green.
 
 If a future bucket-E test needs synthetic input that the existing engine doesn't cover, the fallback is a recorded one-shot (mouse / key event log replayed via `ImGuiIO`) — but record the recipe so the next bucket-E item stays cheap.
@@ -133,6 +134,20 @@ For visual regressions (red text, icon visible, layout shift), use `debug.window
 Coordinate-based slicing of the PPM is brittle; prefer counting global colour-class occurrences (e.g. "≥ 100 pixels with R≥240 G≤80 B≤80 → red ErrorItems present"). Pink-clear (`glClearColor(1,0,1,1)`) is the existing pattern for UI-gap detection — see AGENTS.md § Debug techniques.
 
 Prefer dual-capture-no-golden patterns (`scripts/dev/test-theme-roundtrip.sh`) when both states are produced at runtime within the same test — no checked-in artefact to enshrine.
+
+#### Golden determinism recipe
+
+A golden is trustworthy only if two fresh captures on the same machine self-diff within tolerance AND the capture does not depend on whose machine took it. A scenario that skips these steps renders ambient state, fails every fresh local diff, and teaches people to ignore the lane. Before bootstrapping a golden, make the driver + scenario:
+
+1. **Isolate user data** — boot each capture against its own throwaway, empty user-data dir (the `<ENV_PREFIX>_USER_DATA` override; `env_prefix` in `project.config.json`). A real profile carries cached tracker credentials, so the frame shows a live backend: grid rows, async "Loading…", sync toasts, relative dates that rot with the wall clock.
+2. **Turn the startup update check off** (`<ENV_PREFIX>_UPDATE_CHECK=0`) — its completion is network-timed and can paint the update modal over the capture frame.
+3. **Pin the UI mode** in the scenario's start hook (and restore it on finish / cancel) — an auto mode keyed on framebuffer width can switch a narrow capture into a different shell that never draws the window under test.
+4. **Dismiss live toasts** on the capture frame (the toast manager's dismiss-all) — wall-clock-timed toasts land on a different frame each run.
+5. **Fast-fail every network / subprocess leg** the frame shows — clear the identity / credential / repo inputs so each async leg resolves synchronously to fixed text instead of racing a loading cue against a resolved state.
+6. **Pin first-run state** — mark first-run setup flows completed so their banners never overlay the frame.
+7. **One scenario tick per rendered frame.** The runner ticks once per frame (a former second tick site on the spawn loop is gone), so `--warmupFrames=N` means N rendered frames. A golden that flip-flops between two states run-to-run — widgets submitted twice, or a capture taken at half the intended warm-up — is the signature of a second tick site: fix the tick, never loosen the tolerance.
+
+Then prove it: capture twice back-to-back and require the self-diff within tolerance before committing the golden.
 
 ### Pattern D — Sanitizer build run
 
