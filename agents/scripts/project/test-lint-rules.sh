@@ -42,8 +42,9 @@
 #   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
 #                          nlohmann::json/sol::object param with no depth/budget token (WARN)
 #   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
-#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking; absolute-0 / delta per file)
-#   (advisory)             offline-* heuristics (Pillar 6, WARN-first; 74-offline-heuristic.sh)
+#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking; absolute-0)
+#   offline-failure-cached-as-loaded / offline-cache-cleared  Pillar 6 graduated heuristics (blocking; delta per file)
+#   (advisory)             the other offline-* heuristics (Pillar 6, WARN-first; 74-offline-heuristic.sh)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -489,7 +490,7 @@ case "$MODE" in
     if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_miss" 2>&1 1>/dev/null)" ]; then
         echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
     # --- offline-first rules (Pillar 6; ADR-0026) — assert each is documented + fires correctly. ---
-    for r in "${OFFLINE_EXACT_RULES[@]}" "${OFFLINE_WARN_RULES[@]}"; do
+    for r in "${OFFLINE_EXACT_RULES[@]}" "${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}" "${OFFLINE_WARN_RULES[@]}"; do
         if ! grep -qF "$r" "$_tlr_agents_md"; then echo "SELFTEST FAIL: offline rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # selftest: offline-write-bypasses-queue fires on a direct backend write outside the queue seam.
@@ -604,6 +605,19 @@ case "$MODE" in
     printf 'void K() {\n    s.FetchInFlight = true;\n    ScopeExit g([](){});\n    app.LaunchBackgroundTask([](){});\n}\n' > "$_off_tmp"
     if grep -q "offline-inflight-latch-unguarded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
         echo "SELFTEST FAIL: offline-inflight-latch-unguarded fired despite ScopeExit guard" >&2; miss=1; fi
+    # selftest: the graduated heuristics fire, and a deviation in the 3 lines above escapes them.
+    printf 'void L() {\n    if (!ok) {\n        LOG_WARN("lookup failed: %%s", e);\n        s.loaded = true;\n    }\n}\n' > "$_off_tmp"
+    if ! grep -q "offline-failure-cached-as-loaded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-failure-cached-as-loaded did not fire on a failure marked loaded" >&2; miss=1; fi
+    printf 'void L() {\n    if (!ok) {\n        LOG_WARN("lookup failed: %%s", e);\n        s.retryAfter = now + kBackoff;\n        s.loaded = true;\n    }\n}\n' > "$_off_tmp"
+    if grep -q "offline-failure-cached-as-loaded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-failure-cached-as-loaded fired despite a retry-after next to it" >&2; miss=1; fi
+    printf 'void C() {\n    cat.AvailableFields.clear();\n}\n' > "$_off_tmp"
+    if ! grep -q "offline-cache-cleared" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-cache-cleared did not fire on a cleared catalog" >&2; miss=1; fi
+    printf 'void C() {\n    // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=t; owner=x; revisit=2099-01-01)\n    cat.AvailableFields.clear();\n}\n' > "$_off_tmp"
+    if grep -q "offline-cache-cleared" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-cache-cleared fired despite a deviation above it" >&2; miss=1; fi
     rm -f "$_off_tmp" 2>/dev/null || true
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
@@ -955,15 +969,17 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
     fi
 
-    # --- Quality Pillar 6 offline-first EXACT rules (BLOCKING; 72-offline-exact.sh; ADR-0026) ---
-    # offline-write-bypasses-queue is ABSOLUTE-0 over the whole tree: every tracker write goes through a
-    # queue, so any hit is a regression. tracker-error-kind-collapsed stays delta-gated: a changed file
-    # fails only when it has MORE hits than its merge-base copy (existing hits are grandfathered). A
-    # SMATCHET_DEVIATION(rule=<id>; ...) on the line above escapes either.
+    # --- Quality Pillar 6 offline-first BLOCKING rules (72-offline-exact.sh + 74-offline-heuristic.sh) ---
+    # The two exact rules are ABSOLUTE-0 over the whole tree (every tracker write goes through a queue, and
+    # no tracker failure is flattened to Unknown), so any hit is a regression. The graduated heuristics
+    # (offline-failure-cached-as-loaded, offline-cache-cleared) are delta-gated: a changed .cpp fails only
+    # when it has MORE hits than its merge-base copy. A SMATCHET_DEVIATION(rule=<id>; ...) escapes a reviewed
+    # exception: on the line above an exact hit, within the 3 lines above a heuristic hit.
     ofx_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
     ofx_out="$({
         compute_offline_write_violations
-        offline_delta_hits scan_offline_exact_file "$ofx_mb" tracker-error-kind-collapsed
+        compute_offline_kind_violations
+        offline_delta_hits scan_offline_heuristic_file "$ofx_mb" "${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}"
     } | grep -E . || true)"
     if [ -n "$ofx_out" ]; then
         rc=1
@@ -972,9 +988,11 @@ case "$MODE" in
         printf '%s\n' "$ofx_out" | sed 's/^/  /'
         echo "  offline-write-bypasses-queue: route the write through the offline queue so it replays on reconnect."
         echo "  tracker-error-kind-collapsed: classify at the failure site (ClassifyRejectedHttpStatus / TrackerErrorFromHttpStatus / TrackerErrorParse)."
+        echo "  offline-failure-cached-as-loaded: record a failure with a retry-after (KeyedLookupCache::CompleteFailure), never as loaded."
+        echo "  offline-cache-cleared: keep cached catalog / user / component state on a failure; only a backend switch or pane retirement resets it."
         echo "  Genuine exception: add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
     else
-        echo "[test-lint-rules] PASS — no new Pillar 6 offline-first exact-rule hit"
+        echo "[test-lint-rules] PASS — no new Pillar 6 offline-first blocking-rule hit"
     fi
 
     # --- no-ui-include-in-domain (domain subsystems; ABSOLUTE-0) ---

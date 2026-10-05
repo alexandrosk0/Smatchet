@@ -82,7 +82,7 @@ Six north-star quality invariants in two sub-groups. **UX Pillars** (1-4 and 6) 
 3. Every tracker write goes through the offline queue when the tracker is unreachable (`RouteWrite` → queue immediately) and replays on reconnect; toasts say what actually happened ("Queued offline" vs "Saved").
 4. A `TrackerError` keeps its `Transport` kind wherever it is flattened; `TrackerErrorUnknown(<string>)` is never how a failure is reported.
 
-**Gates**: `offline-write-bypasses-queue` (absolute-0, whole tree) and `tracker-error-kind-collapsed` (delta-gated) block; `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared` and `offline-network-read-ungated` warn first (mechanics: [`cpp-rules.md`](cpp-rules.md) § Tiered enforcement). **Tests**: bucket A with `GlobalFakeNetwork()` (`tests/support/FakeNetworkSwitch.h`); bucket E with `scripts/dev/test-ui-offline-first.sh`. **Tools**: `Source/Core/include/OfflineFirstPure.h`, `KeyedLookupCache.h`, `DataFreshnessCue.h`; whole-tree sweep `bash agents/scripts/project/test-lint-rules.sh --scan-offline`.
+**Gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` (absolute-0, whole tree) and `offline-failure-cached-as-loaded` and `offline-cache-cleared` (delta-gated per changed `.cpp`) block; `offline-loading-only-render`, `offline-inflight-latch-unguarded` and `offline-network-read-ungated` warn first (mechanics: [`cpp-rules.md`](cpp-rules.md) § Tiered enforcement). **Tests**: bucket A with `GlobalFakeNetwork()` (`tests/support/FakeNetworkSwitch.h`); bucket E with `scripts/dev/test-ui-offline-first.sh`. **Tools**: `Source/Core/include/OfflineFirstPure.h`, `KeyedLookupCache.h`, `DataFreshnessCue.h`; whole-tree sweep `bash agents/scripts/project/test-lint-rules.sh --scan-offline`.
 
 ## Agent ownership
 
@@ -93,4 +93,4 @@ Six north-star quality invariants in two sub-groups. **UX Pillars** (1-4 and 6) 
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
 | 5. DRY (Engineering) | `code-review` (reviewer-of-record + exemption sign-off) | `dup_audit.py` delta-gate is blocking; duplication triage + the coupling-CRITICAL guardrail are the reviewer's. |
-| 6. Offline-first | `offline-sync` (implementer), `code-review` (reviewer-of-record) | Two blocking offline gates + five WARN heuristics; the offline test lanes are the backstop. |
+| 6. Offline-first | `offline-sync` (implementer), `code-review` (reviewer-of-record) | Four blocking offline gates + three WARN heuristics; the offline test lanes are the backstop. |

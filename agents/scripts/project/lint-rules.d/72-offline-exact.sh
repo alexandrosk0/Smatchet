@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # 72-offline-exact.sh — Quality Pillar 6 (offline-first) EXACT rules (sourced by test-lint-rules.sh, not
-# run directly). Both BLOCKING (ADR-0026): offline-write-bypasses-queue is ABSOLUTE-0 over the whole
-# first-party tree (compute_offline_write_violations); tracker-error-kind-collapsed is delta-gated per
-# changed file (a file fails only when it has MORE hits than its merge-base copy; existing hits are
-# grandfathered).
+# run directly). Both BLOCKING and ABSOLUTE-0 over the whole first-party tree (ADR-0026):
+# compute_offline_write_violations and compute_offline_kind_violations. Any hit anywhere fails; nothing is
+# grandfathered.
 #
 # offline-write-bypasses-queue — a tracker write (comment, worklog, watcher, field update, create,
 # attach, sprint) called straight on the backend outside the queue seam. Offline, that write is lost;
@@ -191,6 +190,21 @@ compute_offline_write_violations() {
         grep -qwE "${OFFLINE_WRITE_METHODS}" "$f" 2>/dev/null || continue
         scan_offline_exact_file "$f"
     done < <(list_first_party_cpp_files) | grep -F $'offline-write-bypasses-queue\t' || true
+}
+
+compute_offline_kind_violations() {
+    # Whole-tree tracker-error-kind-collapsed hits (the absolute-0 gate). Only files in the rule's tracker
+    # scope that name TrackerErrorUnknown at all are lexed; the scope test mirrors scan_offline_exact_file's.
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case "$f" in
+            Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) ;;
+            *) continue ;;
+        esac
+        grep -qw "TrackerErrorUnknown" "$f" 2>/dev/null || continue
+        scan_offline_exact_file "$f"
+    done < <(list_first_party_cpp_files) | grep -F $'tracker-error-kind-collapsed\t' || true
 }
 
 offline_delta_hits() {
