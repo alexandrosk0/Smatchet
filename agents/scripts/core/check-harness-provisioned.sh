@@ -174,14 +174,23 @@ check_tree() {
 # — the legacy form once the layer is the agent-layer/ submodule: it exits 127 at
 # every session start with nothing else saying so (the nudges go silent, the
 # session baseline the guards read is never written), and re-provisioning
-# reroutes it through .claude/hooks/layer-run.sh. A hook script that exists
-# nowhere (an entry an older template had, kept by the additive settings sync), or
-# a layer-run.sh target the layer lacks, is warned about but returns 0: running
-# setup-harness does not remove it, so failing would name a remedy that cannot
-# work. No settings file is check_tree's unprovisioned story, not this one's.
+# reroutes it through .claude/hooks/layer-run.sh. Also returns 1 when a
+# layer-run.sh target the layer's own settings template names is missing from the
+# layer: the layer checkout is incomplete, and the hook cannot run until it is
+# restored. A hook script that exists nowhere and that the template does not name
+# (an entry an older template had, kept by the additive settings sync) is warned
+# about but returns 0: running setup-harness does not remove it, so failing would
+# name a remedy that cannot work. No settings file is check_tree's unprovisioned
+# story, not this one's.
+layer_run_targets() {
+    { grep -o 'layer-run\.sh\\" [^" \\]*' "$1" || true; } | sed 's|^layer-run\.sh\\" ||' | sort -u
+}
+
 check_hook_paths() {
-    local tree="$1" quiet="$2" layer_root="$3" settings="$1/.claude/settings.json" p fixable="" stale=""
+    local tree="$1" quiet="$2" layer_root="$3" settings="$1/.claude/settings.json"
+    local template="$3/docs/harness/claude-code/settings.json.tmpl" p fixable="" incomplete="" stale="" shipped=""
     [ -f "$settings" ] || return 0
+    [ -f "$template" ] && shipped="$(layer_run_targets "$template")"
     while IFS= read -r p; do
         [ -n "$p" ] || continue
         [ -e "$tree/$p" ] && continue
@@ -193,8 +202,13 @@ check_hook_paths() {
     done < <(grep -o '\$CLAUDE_PROJECT_DIR/[^" \\]*' "$settings" | sed 's|^\$CLAUDE_PROJECT_DIR/||' | sort -u)
     while IFS= read -r p; do
         [ -n "$p" ] || continue
-        [ -e "$layer_root/$p" ] || stale="$stale layer:$p"
-    done < <(grep -o 'layer-run\.sh\\" [^" \\]*' "$settings" | sed 's|^layer-run\.sh\\" ||' | sort -u)
+        [ -e "$layer_root/$p" ] && continue
+        if printf '%s\n' "$shipped" | grep -Fqx -- "$p"; then
+            incomplete="$incomplete $p"
+        else
+            stale="$stale layer:$p"
+        fi
+    done < <(layer_run_targets "$settings")
     if [ -n "$stale" ]; then
         {
             echo "⚠ stale hook entries: $settings names scripts that exist nowhere:"
@@ -213,8 +227,18 @@ check_hook_paths() {
             echo "  through .claude/hooks/layer-run.sh:"
             echo "      bash agent-layer/agents/scripts/core/setup-harness.sh claude-code"
         } >&2
-        return 1
     fi
+    if [ -n "$incomplete" ]; then
+        {
+            echo "⚠ hook scripts MISSING from the layer: $settings runs, through layer-run.sh,"
+            echo "  scripts the layer's own template names but $layer_root does not have:"
+            for p in $incomplete; do echo "      $p"; done
+            echo "  Each fails at every session start. The layer checkout is incomplete; restore it"
+            echo "  (after the flip: git submodule update --init agent-layer). If they are still"
+            echo "  missing, the template names a script the layer does not ship."
+        } >&2
+    fi
+    [ -z "$fixable$incomplete" ] || return 1
     [ "$quiet" = "1" ] || [ -n "$stale" ] || echo "check-harness-provisioned: OK — every .claude/settings.json hook script exists"
     return 0
 }
@@ -279,7 +303,7 @@ selftest() {
     # --- check_hook_paths ----------------------------------------------------
     # A host hook and a layer-run target that exist → 0; a layer script named from
     # the project dir that is not there (the post-flip legacy form) → 1, and a
-    # layer-run target missing from the layer → 1.
+    # layer-run target the layer's template names but the layer lacks → 1.
     mkdir -p "$lay/agents/scripts/core"
     : > "$lay/agents/scripts/core/nudge.sh"
     : > "$tmp/.claude/hooks/layer-run.sh"
@@ -311,6 +335,21 @@ selftest() {
     fi
     if [[ "$(check_hook_paths "$tmp" 1 "$lay" 2>&1 >/dev/null)" != *"stale hook entries"*"retired-nudge.sh"*"layer:agents/scripts/core/gone.sh"* ]]; then
         echo "selftest FAIL: stale hook entries were not reported" >&2
+        rc=1
+    fi
+    # The same missing target, named by the layer's own template: the layer is
+    # incomplete, and that fails.
+    mkdir -p "$lay/docs/harness/claude-code"
+    printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/gone.sh"}]}]}}' \
+        > "$lay/docs/harness/claude-code/settings.json.tmpl"
+    # selftest: asserts-failure
+    if check_hook_paths "$tmp" 1 "$lay" >/dev/null 2>&1; then
+        echo "selftest FAIL: a template-named layer-run target missing from the layer should return non-zero" >&2
+        rc=1
+    fi
+    if [[ "$(check_hook_paths "$tmp" 1 "$lay" 2>&1 >/dev/null)" != *"MISSING from the layer"*"agents/scripts/core/gone.sh"* ]]; then
+        echo "selftest FAIL: a template-named layer-run target missing from the layer was not reported" >&2
         rc=1
     fi
 
