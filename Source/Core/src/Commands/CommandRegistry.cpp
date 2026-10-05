@@ -53,9 +53,9 @@ bool CommandRegistry::Contains(const std::string& name) const {
 }
 
 const Command* CommandRegistry::FindLocked(const std::string& name) const {
-    // The UI thread resolves labels through this while a worker can Register (a Lua snippet run by
-    // debug.lua_eval from an MCP or automation thread): an unlocked find racing an insert's rehash
-    // is a data race. The pointer itself outlives the lock (see the header).
+    // The UI thread resolves labels through this while another thread can Register: an unlocked
+    // find racing an insert's rehash is a data race. The pointer itself outlives the lock (see the
+    // header).
     std::lock_guard<std::mutex> lk(mutex_);
     return FindHoldingLock(name);
 }

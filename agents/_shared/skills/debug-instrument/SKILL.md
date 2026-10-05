@@ -154,9 +154,9 @@ Command groups (details via the discovery commands above):
 
 | Safe (inline, answers while the UI thread is stuck) | Will block forever (marshals to the UI thread) |
 |---|---|
-| `debug.log_tail` · `debug.dump_self` · `debug.log` · `debug.mcp_status` | `debug.dock.dump` · `debug.dock.reset` · `debug.window.resize` · `debug.window.screenshot` · `debug.grid.edit-burst` |
+| `debug.log_tail` · `debug.dump_self` · `debug.log` · `debug.mcp_status` | `debug.dock.dump` · `debug.dock.reset` · `debug.window.resize` · `debug.window.screenshot` · `debug.grid.edit-burst` · `debug.lua_eval` · `debug.lua_log_test` |
 
-`debug.lua_eval` is inline but does not belong in the safe column: it is destructive and drives the shared Lua state on the calling thread, so during a hang it races the wedged thread rather than observing it.
+`debug.lua_eval` / `debug.lua_log_test` marshal to the UI thread because the main Lua state is UI-thread-owned, so during a hang they block like the others rather than observe it.
 
 A `--spawn` child proves MCP reachability before its command dispatches, so a child that then wedges still has a live server on a known port — `debug.dump_self` against it is the capture path.
 - `scenario.*` — `list` (discover deterministic scenarios) · `run --name=<n> --frames=<N> --yes` · `cancel` (stop active automation).

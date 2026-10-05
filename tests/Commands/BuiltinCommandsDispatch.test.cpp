@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <set>
 #include <string>
 #include <thread>
@@ -421,4 +422,39 @@ TEST_CASE("builtins — issue.quick_create.open registers as a non-destructive o
     CHECK_FALSE(c->Destructive);
     CHECK(c->Idempotent);
     CHECK(c->AsyncSafe);
+}
+
+TEST_CASE("builtins — debug.lua_eval runs on the UI thread, never on the dispatching worker") {
+    // The snippet runs on the UI-thread-owned main Lua state, while MCP and automation
+    // workers dispatch this command too. Dispatched from a worker, the handler must wait
+    // for the UI thread to drain it; it must never complete on the worker by itself.
+    BuiltinsFixture fx;
+    CommandContext ctx = fx.Ctx;
+    ctx.ConfirmedDestructive = true;
+    std::atomic<bool> done{false};
+    CommandResult result = CommandResult::Failure(ErrorCode::HandlerError, "not run");
+    std::thread worker([&fx, &ctx, &done, &result] {
+        result = fx.Reg.Dispatch("debug.lua_eval", nlohmann::json{{"code", "return 1"}}, ctx);
+        done.store(true);
+    });
+
+    // The handler must post its body to the UI-thread queue and wait there: wait (bounded)
+    // for that post, then confirm nothing finished while no one drained it.
+    for (int i = 0; i < 1000 && fx.App.mainThreadDispatcher.QueueLen() == 0 && !done.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(fx.App.mainThreadDispatcher.QueueLen() >= 1);
+    CHECK_FALSE(done.load());
+
+    // Act as the UI thread: drain until the worker's result arrives (bounded).
+    for (int i = 0; i < 1000 && !done.load(); ++i) {
+        fx.App.mainThreadDispatcher.Drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    // Fail fast rather than hang: a still-running worker at REQUIRE's unwind terminates.
+    REQUIRE(done.load());
+    worker.join();
+    // The body itself ran on the UI thread: a Lua build evaluates the snippet, a Lua-less
+    // build reports the feature as absent — never a dispatch-shutdown error.
+    CHECK((result.Ok || result.Error.Message.find("Lua") != std::string::npos));
 }
