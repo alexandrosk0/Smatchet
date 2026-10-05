@@ -26,11 +26,20 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace {
+
+// Drain until empty: one Drain() stops at its time budget, which a sanitizer build can hit.
+void DrainAll(MainThreadDispatcher& dispatcher) {
+    do {
+        dispatcher.Drain();
+    } while (dispatcher.QueueLen() > 0);
+}
 
 // 4 producers x 512 = 2048 total tasks, kept strictly below kMaxQueueSize (4096) so the
 // drop-oldest-on-overflow path never fires regardless of producer/drainer interleaving — that
@@ -146,4 +155,99 @@ TEST_CASE("MainThreadDispatcher: BeginShutdown races concurrent posters without 
     // The post-shutdown task is the only one that would have added +1; it was rejected, and every
     // pre-shutdown producer task adds 0, so the counter never moved.
     CHECK(drainedAfterShutdown.load() == 0);
+}
+
+// ---- Completion posts (debt 2026-09-27-post-back-loss-strands-ui-latches) ----
+// A completion releases a caller's in-flight latch, so the droppable overflow must never evict it,
+// every loss must be counted, and completions keep their FIFO place among droppable tasks.
+
+TEST_CASE("MainThreadDispatcher: a droppable overflow evicts droppable tasks only and is counted") {
+    MainThreadDispatcher dispatcher;
+    const std::size_t cap = MainThreadDispatcher::kMaxQueueSize; // local copy: no ODR-use of the member
+    std::vector<long> order;
+    dispatcher.PostCompletionToMainThread([&order] { order.push_back(-1); });
+    for (std::size_t i = 0; i < cap + 10; ++i) {
+        dispatcher.PostToMainThread([&order, i] { order.push_back(static_cast<long>(i)); });
+    }
+    CHECK(dispatcher.DroppedTaskCount() == 10u);
+    CHECK(dispatcher.QueueLen() == cap + 1);
+
+    DrainAll(dispatcher);
+    REQUIRE(order.size() == cap + 1);
+    CHECK(order.front() == -1);                        // the completion survived, in its FIFO place
+    CHECK(order[1] == 10);                             // the 10 oldest droppable tasks were evicted
+    CHECK(order.back() == static_cast<long>(cap + 9)); // the newest droppable task ran
+    CHECK(dispatcher.DroppedTaskCount() == 10u);
+}
+
+TEST_CASE("MainThreadDispatcher: completions and droppable tasks drain together in FIFO order") {
+    MainThreadDispatcher dispatcher;
+    std::vector<int> order;
+    dispatcher.PostToMainThread([&order] { order.push_back(0); });
+    dispatcher.PostCompletionToMainThread([&order] { order.push_back(1); });
+    dispatcher.PostToMainThread([&order] { order.push_back(2); });
+    dispatcher.PostCompletionToMainThread([&order] { order.push_back(3); });
+    dispatcher.Drain();
+    REQUIRE(order.size() == 4u);
+    for (int i = 0; i < 4; ++i) {
+        CHECK(order[static_cast<std::size_t>(i)] == i);
+    }
+    CHECK(dispatcher.DroppedTaskCount() == 0u);
+}
+
+TEST_CASE("MainThreadDispatcher: past the completion cap the oldest completion is dropped and counted") {
+    MainThreadDispatcher dispatcher;
+    const std::size_t cap = MainThreadDispatcher::kMaxCompletionQueueSize;
+    std::vector<long> order;
+    for (std::size_t i = 0; i < cap + 3; ++i) {
+        dispatcher.PostCompletionToMainThread([&order, i] { order.push_back(static_cast<long>(i)); });
+    }
+    CHECK(dispatcher.DroppedTaskCount() == 3u);
+    DrainAll(dispatcher);
+    REQUIRE(order.size() == cap);
+    CHECK(order.front() == 3);
+    CHECK(order.back() == static_cast<long>(cap + 2));
+}
+
+TEST_CASE("MainThreadDispatcher: concurrent completion and droppable posters past the cap lose no completion") {
+    MainThreadDispatcher dispatcher;
+    // Completions stay far below their own cap, droppable posts far above theirs, so how the
+    // producers and the drainer interleave decides only how many droppable tasks are evicted.
+    constexpr int kCompletionsPerProducer = 256;
+    constexpr int kDroppablePerProducer = 2048;
+    constexpr long kCompletions = static_cast<long>(kProducers) * kCompletionsPerProducer;
+    constexpr long kDroppable = static_cast<long>(kProducers) * kDroppablePerProducer;
+
+    long completionsRan = 0; // non-atomic: only drained tasks touch these (TSan-checked serialisation)
+    long droppableRan = 0;
+    std::atomic<bool> producersDone(false);
+    std::thread drainer([&] {
+        while (!producersDone.load(std::memory_order_acquire)) {
+            dispatcher.Drain();
+            std::this_thread::yield();
+        }
+        DrainAll(dispatcher); // everything posted before producersDone was set
+    });
+
+    std::vector<std::thread> producers;
+    producers.reserve(kProducers);
+    for (int p = 0; p < kProducers; ++p) {
+        producers.emplace_back([&] {
+            for (int i = 0; i < kDroppablePerProducer; ++i) {
+                dispatcher.PostToMainThread([&droppableRan] { ++droppableRan; });
+                if (i % (kDroppablePerProducer / kCompletionsPerProducer) == 0) {
+                    dispatcher.PostCompletionToMainThread([&completionsRan] { ++completionsRan; });
+                }
+            }
+        });
+    }
+    for (std::thread& t : producers) {
+        t.join();
+    }
+    producersDone.store(true, std::memory_order_release);
+    drainer.join();
+
+    CHECK(completionsRan == kCompletions); // every completion ran exactly once
+    CHECK(droppableRan + static_cast<long>(dispatcher.DroppedTaskCount()) == kDroppable);
+    CHECK(dispatcher.QueueLen() == 0u);
 }

@@ -4,9 +4,10 @@
 // pending-action queue (comments, worklogs, watches; Quality Pillar 6). The submit blocks on the
 // network while online (Pillar 2: never on the UI thread), and its outcome is posted to the UI thread
 // even when the submit throws (as a Failed result), so a caller's in-flight latch clears.
-// The one path it cannot cover is the post itself failing: the dispatcher throws only when its queue
-// cannot allocate, and then both the result post and the Failed retry are logged and lost. The same
-// limit applies to every post-back in the app (debt entry 2026-09-27-post-back-loss-strands-ui-latches).
+// Both posts go through PostCompletionToMainThread, so a poster that routes completions to
+// MainThreadDispatcher::PostCompletionToMainThread keeps them when its queue overflows. A post the
+// dispatcher cannot queue at all (no memory) is counted and logged there; the exit guard below also
+// retries with a Failed result if a post throws.
 
 #include "Commands/IAppThreading.h"
 #include "Logger.h"
@@ -34,7 +35,7 @@ void SubmitPendingActionAsync(IAppThreading& threading, SubmitFn submit, ApplyFn
                 return;
             }
             try {
-                threadingPtr->PostToMainThread(
+                threadingPtr->PostCompletionToMainThread(
                     [applyFailed = *applyPtr]() { applyFailed(PendingActionSubmitResult()); });
             } catch (const std::exception& ex) {
                 LOG_ERROR("SubmitPendingActionAsync: could not report a failed submit: %s", ex.what());
@@ -44,7 +45,7 @@ void SubmitPendingActionAsync(IAppThreading& threading, SubmitFn submit, ApplyFn
             }
         });
         const PendingActionSubmitResult result = submit();
-        threadingPtr->PostToMainThread([apply, result]() { apply(result); });
+        threadingPtr->PostCompletionToMainThread([apply, result]() { apply(result); });
         posted = true;
     });
 }
