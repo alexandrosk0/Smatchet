@@ -97,6 +97,20 @@ TEST_CASE("CallstackParser::ParseCallstackText handles Clang/GDB path:line[:col]
         CHECK(f.FilePath == "C:/Dev/Foo/bar.hpp");
         CHECK(f.LineNumber == 10);
     }
+
+    SUBCASE("Unreal [path:line] frame with a 200-character path") {
+        // The line has no `(`+digit pair, so the MSVC-format regex — whose scan of a long
+        // slash-separated token is the costliest in the parser — is not run on it at all.
+        std::string path = "D:\\build";
+        for (int i = 0; i < 24; ++i) {
+            path += "\\Runtime";
+        }
+        path += "\\LevelTick.cpp";
+        const ParsedCallstackFrame f = ParseSingleLine("UnrealEditor-Engine.dll!UWorld::Tick() [" + path + ":1234]");
+        CHECK(f.FilePath == path);
+        CHECK(f.LineNumber == 1234);
+        CHECK(f.Function == "UWorld::Tick()");
+    }
 }
 
 TEST_CASE("CallstackParser::ParseCallstackText skips lines without a path:line marker") {
@@ -290,12 +304,15 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
     }
 
     SUBCASE("1 KiB single line completes under 2000 ms (ReDoS sentinel)") {
-        // Build one line of 1 KiB 'a' chars followed by a real frame on the next line.
-        // 1 KiB sits below the parser's per-line cap (kMaxLineLengthForRegex = 16 KiB in
-        // CallstackParser.cpp), so this case still flows through the regex set and exercises the
-        // worst-case backtracking ceiling for a realistic-but-noisy paste. The hostile line must
-        // not match any of the three format regexes; the trailing real frame may or may not be
-        // recovered but no frame may reference the 'a'-noise content.
+        // Build one line of 1 KiB 'a' chars ending in "(1):2", followed by a real frame on the
+        // next line. 1 KiB sits below the parser's per-line cap (kMaxLineLengthForRegex = 16 KiB in
+        // CallstackParser.cpp), and the "(1):2" tail carries the `(`+digit and `:`+digit pairs the
+        // parser looks for before it runs a format regex, so this case still flows through the
+        // regex set and exercises the worst-case backtracking ceiling for a realistic-but-noisy
+        // paste. The hostile line must not match any of the three format regexes, whether the
+        // matcher scans it to the end or gives up with std::regex_error (the MSVC STL from toolset
+        // 14.51 on does, on its per-search complexity budget); the real frame on the next line is
+        // recovered either way.
         // 2000 ms budget accommodates slow CI runners; true catastrophic ReDoS on 1 KiB would
         // take seconds-to-minutes, so this threshold still catches the failure class it guards.
         // Under AddressSanitizer the instrumentation adds a large CONSTANT overhead (~3-10x) a
@@ -304,6 +321,7 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
         // (seconds-to-minutes even un-instrumented), so a 10x ceiling under ASan still catches
         // the failure class while tolerating the constant slowdown.
         std::string noise(1 * 1024, 'a');
+        noise += "(1):2";
         const std::string text = noise + "\nC:\\real.cpp(7)\n";
         const auto t0 = std::chrono::steady_clock::now();
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
@@ -324,6 +342,20 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
             CHECK(frames[i].FilePath.find(noise) == std::string::npos);
             CHECK(frames[i].RawLine.find(noise) == std::string::npos);
         }
+        REQUIRE(frames.size() == 1);
+        CHECK(frames.front().LineNumber == 7);
+    }
+
+    SUBCASE("a line the MSVC format gives up on still reaches the path:line format") {
+        // The 1 KiB unbroken token ahead of "(1)" makes the MSVC-format regex scan the whole
+        // line without a match — or, where the matcher has a complexity budget, throw
+        // std::regex_error. Either way that format reports no match and the path:line format
+        // still finds the frame at the end of the line.
+        const std::string text = std::string(1 * 1024, 'a') + "(1) /home/dev/baz.cpp:20";
+        const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
+        REQUIRE(frames.size() == 1);
+        CHECK(frames.front().FilePath == "/home/dev/baz.cpp");
+        CHECK(frames.front().LineNumber == 20);
     }
 
     SUBCASE("64 KiB single line bypasses regex via length cap (DoS guard)") {
