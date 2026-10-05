@@ -925,6 +925,29 @@ _resolve_py() {
     grep -q 'header line one' "$tmp/Source/Core/include/X.h"
 }
 
+@test "comment_audit.py --diff grandfathers a relocated/re-indented comment but flags a new copy" {
+    PY="$(_resolve_py)" || skip "no working python interpreter"
+    AUDIT="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    # Base: a pre-existing commented-out-code line inside a nested block.
+    printf 'void A() {\n    if (x) {\n        // int legacy = compute();\n        run();\n    }\n}\nvoid B() {\n}\n' \
+        > "$tmp/Source/Core/src/R.cpp"
+    ( cd "$tmp" && git init -q && git config user.email a@b.c && git config user.name t \
+        && git add -A && git commit -qm base ) >/dev/null 2>&1
+    # Relocate the SAME comment (re-indented) into the less-nested helper B.
+    printf 'void A() {\n    if (x) {\n        run();\n    }\n}\nvoid B() {\n    // int legacy = compute();\n}\n' \
+        > "$tmp/Source/Core/src/R.cpp"
+    run bash -c "cd '$tmp' && '$PY' '$AUDIT' --diff HEAD"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"comment-commented-out-code"* ]]
+    # A second, genuinely new copy beyond the one removed still flags.
+    printf 'void C() {\n    // int legacy = compute();\n}\n' >> "$tmp/Source/Core/src/R.cpp"
+    run bash -c "cd '$tmp' && '$PY' '$AUDIT' --diff HEAD"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"comment-commented-out-code"*"R.cpp:10"* ]]
+}
+
 # ---------- catalog: format + determinism ----------
 
 @test "--catalog emits the rule-id sections + Totals" {

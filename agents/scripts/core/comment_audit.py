@@ -15,6 +15,7 @@ See docs/plans/shipped/reduce-source-comment-bloat.md.
 """
 
 import argparse
+import collections
 import json
 import os
 import re
@@ -363,12 +364,51 @@ def _merge_base_or_ref(ref):
     return ref
 
 
+def _in_sweep_scope(path):
+    """True for a first-party C++ path the comment sweep covers."""
+    return path.endswith(CPP_EXT) and path.startswith(SWEEP_ROOTS) \
+        and not any(s in path for s in EXCLUDE_SUBSTR)
+
+
+def _removed_comment_counter(diff):
+    """Counter of the `.strip()`-normalised full-line comments REMOVED in a unified diff (in-scope
+    files only). A comment that is moved or re-indented (clang-format reflow, relocation into a
+    less-nested helper) shows up as one removed + one added line with the same stripped text."""
+    removed = collections.Counter()
+    cur_file = None
+    for ln in diff.splitlines():
+        if ln.startswith("--- "):
+            cur_file = ln[6:] if ln.startswith("--- a/") else None
+        elif ln.startswith("-") and cur_file and _in_sweep_scope(cur_file):
+            body = ln[1:]
+            kinds = cl.classify_line_kinds(body + "\n")
+            if kinds and kinds[0] == "full_comment":
+                removed[body.strip()] += 1
+    return removed
+
+
+def _drop_relocated(hits, removed):
+    """Drop each added-line hit whose stripped text matches a still-unconsumed REMOVED comment
+    from the same diff, consuming one count per match: a relocated/re-indented pre-existing comment
+    is grandfathered, while a genuinely NEW copy beyond what was removed still flags."""
+    left = collections.Counter(removed)
+    kept = []
+    for hit in hits:
+        key = hit[4].strip()
+        if left[key] > 0:
+            left[key] -= 1
+            continue
+        kept.append(hit)
+    return kept
+
+
 def _scan_added_noise(ref):
     """Scan lines ADDED vs the merge-base of <ref>; return the noise-bucket hits as
     [(path, line_no, bucket, rule_id, body), ...]. `line_no` is the working-tree (new-side)
     line number; `bucket` is the classify_comment id; `rule_id` is the gate rule name.
-    Deviation-suppressed lines are excluded. Shared by --diff (report) and --fix (strip) so
-    both see an identical set."""
+    Deviation-suppressed lines are excluded, as are added lines that merely relocate or
+    re-indent a comment the same diff removed (_drop_relocated). Shared by --diff (report) and
+    --fix (strip) so both see an identical set."""
     ref = _merge_base_or_ref(ref)
     rule_for = {
         "cut-blank": "comment-blank-run",
@@ -435,8 +475,7 @@ def _scan_added_noise(ref):
             cur_line = int(m.group(1)) if m else 0
         elif ln.startswith("+") and not ln.startswith("+++"):
             body = ln[1:]
-            if cur_file and cur_file.endswith(CPP_EXT) and cur_file.startswith(SWEEP_ROOTS) \
-                    and not any(s in cur_file for s in EXCLUDE_SUBSTR):
+            if cur_file and _in_sweep_scope(cur_file):
                 kinds = cl.classify_line_kinds(body + "\n")
                 if kinds and kinds[0] == "full_comment":
                     b = classify_comment(body.strip(), body)
@@ -445,7 +484,7 @@ def _scan_added_noise(ref):
                             and not (b == "cut-blank" and allowed_separator(cur_file, cur_line)):
                         hits.append((cur_file, cur_line, b, rule_for[b], body))
             cur_line += 1
-    return hits
+    return _drop_relocated(hits, _removed_comment_counter(diff))
 
 
 def run_diff_mode(ref):
@@ -643,10 +682,43 @@ def run_selftest():
                   % (expected, got, lines))
             fails += 1
 
+    # Relocation/re-indent grandfathering: a comment the SAME diff removed and re-added (moved
+    # into a less-nested helper, or re-indented) is not new noise — one removed line consumes
+    # exactly one matching added hit; a second, genuinely new copy still flags. Removed CODE
+    # lines and out-of-scope files never feed the counter.
+    reloc_diff = "\n".join([
+        "diff --git a/Source/Core/src/A.cpp b/Source/Core/src/A.cpp",
+        "--- a/Source/Core/src/A.cpp",
+        "+++ b/Source/Core/src/A.cpp",
+        "@@ -10 +9,0 @@",
+        "-    // int legacy = compute();",
+        "-    int live = 0;",
+        "@@ -0,0 +20,2 @@",
+        "+        // int legacy = compute();",
+        "+        // int legacy = compute();",
+        "diff --git a/Source/Core/ThirdParty/x.cpp b/Source/Core/ThirdParty/x.cpp",
+        "--- a/Source/Core/ThirdParty/x.cpp",
+        "+++ b/Source/Core/ThirdParty/x.cpp",
+        "@@ -1 +0,0 @@",
+        "-// int vendored = 1;",
+    ])
+    removed = _removed_comment_counter(reloc_diff)
+    if dict(removed) != {"// int legacy = compute();": 1}:
+        print("FAIL: _removed_comment_counter expected one in-scope removed comment, got %r" % dict(removed))
+        fails += 1
+    reloc_hits = [("Source/Core/src/A.cpp", 20, "flag-commented-code", "comment-commented-out-code",
+                   "        // int legacy = compute();"),
+                  ("Source/Core/src/A.cpp", 21, "flag-commented-code", "comment-commented-out-code",
+                   "        // int legacy = compute();")]
+    kept = _drop_relocated(reloc_hits, removed)
+    if [h[1] for h in kept] != [21]:
+        print("FAIL: _drop_relocated expected only the second (new) copy to flag, kept %r" % kept)
+        fails += 1
+
     if fails:
         print("comment_audit --selftest: FAIL (%d)" % fails)
         return 1
-    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator + %d deviation-wrap)"
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator + %d deviation-wrap + relocation)"
           % (len(flag), len(prose), len(sep_ok), len(dev_cases)))
     return 0
 
