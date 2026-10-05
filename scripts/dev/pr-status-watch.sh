@@ -140,9 +140,13 @@ command -v jq >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'jq' not
 # duplicated literal — change it there and this watch follows). The source is
 # side-effect-free when sourced (its CLI entry-point is `$0`-guarded). Done in
 # the polling path only, AFTER the pure --selftest early-exit, so --selftest
-# stays dependency-free.
+# stays dependency-free. merge-gates.sh is agent-layer content: the agent-layer/
+# mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_psw_layer="$REPO_ROOT"
+[ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] && _psw_layer="$REPO_ROOT/agent-layer"
 # shellcheck source=agents/scripts/core/merge-gates.sh
-source "$REPO_ROOT/agents/scripts/core/merge-gates.sh"
+source "$_psw_layer/agents/scripts/core/merge-gates.sh"
 if [ -z "${MERGE_GATES_BLOCK_ALLOWLIST_RE:-}" ]; then
     echo "pr-status-watch: merge-gates.sh did not export MERGE_GATES_BLOCK_ALLOWLIST_RE" >&2
     exit 2

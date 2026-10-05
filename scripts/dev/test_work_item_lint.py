@@ -29,7 +29,13 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT, "agents", "scripts", "core"))
+# The linter is agent-layer content: the agent-layer/ mount once it holds the
+# layer's project-config.sh (plan agent-surface-extraction-repo, row 12), else
+# this tree.
+LAYER = os.path.join(ROOT, "agent-layer")
+if not os.path.isfile(os.path.join(LAYER, "scripts", "dev", "project-config.sh")):
+    LAYER = ROOT
+sys.path.insert(0, os.path.join(LAYER, "agents", "scripts", "core"))
 import work_item_lint as wil  # noqa: E402
 
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "qa-mini-item")
@@ -446,7 +452,7 @@ class CitationsTests(TempRepoCase):
 class CliTests(unittest.TestCase):
     """Flag-contract checks through the real CLI (Whip scenario 18)."""
 
-    SCRIPT = os.path.join(ROOT, "agents", "scripts", "core", "work_item_lint.py")
+    SCRIPT = os.path.join(LAYER, "agents", "scripts", "core", "work_item_lint.py")
 
     def run_cli(self, *args):
         return subprocess.run(

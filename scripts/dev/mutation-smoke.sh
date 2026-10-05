@@ -72,11 +72,15 @@ if [ "${SMATCHET_SKIP_MUTATION_SMOKE:-}" = "1" ]; then
 fi
 
 [ -f "$CORPUS" ] || { echo "mutation-smoke: corpus not found: $CORPUS" >&2; exit 3; }
-# shellcheck source=agents/scripts/core/lib/resolve-py.sh
 # Anchored to THIS SCRIPT's location, not $REPO_ROOT: the bats suite runs
 # mutation-smoke.sh with cwd inside throwaway fixture repos, where
-# `git rev-parse --show-toplevel` resolves to the fixture (no lib there).
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+# `git rev-parse --show-toplevel` resolves to the fixture (no lib there). The lib
+# is agent-layer content: the agent-layer/ mount once it holds the layer's
+# project-config.sh (plan agent-surface-extraction-repo, row 12), else this tree.
+_ms_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_ms_layer/agent-layer/scripts/dev/project-config.sh" ] && _ms_layer="$_ms_layer/agent-layer"
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$_ms_layer/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "mutation-smoke: python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # Resolve the test exe. Default to the conventional path; if absent, locate the
