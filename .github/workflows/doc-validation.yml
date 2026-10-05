@@ -24,33 +24,15 @@ on:
       - '**/*.md'
       - 'AGENTS.md'
       - 'agents/**'
-      - 'docs/agent-rules/**'
+      # The layer is the agent-layer/ submodule: a change to it reaches this repo
+      # as the gitlink (a pointer bump) or as .gitmodules.
+      - 'agent-layer'
+      - '.gitmodules'
       - 'docs/self-improvement/**'
       - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
-      - 'agents/scripts/core/test-doc-anchors.sh'
-      - 'agents/scripts/core/test_doc_anchors.py'
-      - 'agents/scripts/core/test-agent-contract.sh'
-      - 'agents/scripts/core/test-agent-build-facts.sh'
-      - 'agents/scripts/core/test-plan-index.sh'
-      - 'agents/scripts/core/test-plan-ref-integrity.sh'
-      - 'agents/scripts/core/test-plan-claim-anchors.sh'
       - 'docs/high-integrity/plan-claim-anchor-baseline.md'
-      - 'agents/scripts/core/test-portable-purity.sh'
-      - 'agents/scripts/core/test-config-globs.sh'
-      - 'agents/scripts/core/test-required-context-parity.sh'
-      - 'agents/scripts/core/lib/ci-check-resolve.sh'
-      - 'agents/scripts/core/test-plan-naming.sh'
-      - 'agents/scripts/core/test-markdown-links.sh'
-      - 'agents/scripts/core/test-agent-discovery-fixture.sh'
-      - 'agents/scripts/project/test-subsystem-docs.sh'
-      - 'agents/scripts/core/agent_size_audit.py'
-      # test-gate-selftests scans these dirs for --selftest-exposing scripts, so
-      # any added/changed gate must re-trigger the convention-check.
-      - 'agents/scripts/core/test-gate-selftests.sh'
-      - 'agents/scripts/core/**'
-      - 'agents/scripts/project/**'
       - 'scripts/dev/**'
       - 'tests/bats/**'
       - 'CONTEXT-MAP.md'
@@ -58,7 +40,6 @@ on:
       - 'Source/Core/src/**/CONTEXT.md'
       - 'Source/Core/src/**/README.md'
       - 'scripts/dev/project-config.sh'
-      - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
   # NO paths: filter here — DELIBERATE. `Doc anchors + agent contract` is a
   # REQUIRED branch-protection context (project.config.json § branch_protection).
@@ -99,7 +80,7 @@ concurrency:
 env:
   # Agent-layer indirection: both roots are the checkout root pre-flip, so every
   # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
-  AGENT_LAYER_ROOT: .
+  AGENT_LAYER_ROOT: agent-layer
   PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
@@ -323,7 +304,7 @@ jobs:
           # wrapper-only edit/deletion there must set docs=true so the orphan check
           # runs — else a suite can be un-wired by a scripts/dev-only PR while the
           # required doc job stays green. Mirrors the gate's `--include=test-*.sh`.
-          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^scripts/dev/test_.*\.py$|^\.github/workflows/doc-validation\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^agent-layer$|^\.gitmodules$|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^scripts/dev/test_.*\.py$|^\.github/workflows/doc-validation\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "doc-relevant changes detected — running full doc validation."
           else

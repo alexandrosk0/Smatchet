@@ -15,15 +15,13 @@
 # Plan-lock coordination infrastructure (git-ref-plan-locks)
 # ---------------------------------------------------------------------------
 
-# The primitive scripts + helpers that touch refs/locks/* on origin. A
-# malicious or buggy edit here can race-corrupt any in-flight slice's claim.
-agents/scripts/core/lock-claim.sh              @alexandrosk0
-agents/scripts/core/lock-claim-update.sh       @alexandrosk0
-agents/scripts/core/lock-release.sh            @alexandrosk0
-agents/scripts/core/locks-show.sh              @alexandrosk0
-agents/scripts/core/locks-render-markdown.sh   @alexandrosk0
-agents/scripts/core/_lock-json.py              @alexandrosk0
-agents/scripts/core/test-lock-primitives.sh    @alexandrosk0
+# The primitive scripts + helpers that touch refs/locks/* on origin live in the
+# agent layer (the agent-layer/ submodule, the-unwilling-agentic-bunch), whose
+# own CODEOWNERS covers them. Here a change to them arrives as a pointer bump of
+# the gitlink, so the mount itself is the sensitive path. A malicious or buggy
+# edit there can race-corrupt any in-flight slice's claim.
+/agent-layer                           @alexandrosk0
+/.gitmodules                           @alexandrosk0
 
 # Workflows that hold delete-ref + open-issue + open-PR privileges with the
 # default GITHUB_TOKEN. Self-modification risk: a PR could edit the workflow
@@ -56,7 +54,7 @@ docs/design/_plan-locks-archive.md     @alexandrosk0
 Source/Core/include/ITracker*.h        @alexandrosk0
 Source/Core/include/Commands/          @alexandrosk0
 
-# Top-level agent + project rules. AGENTS.md drives every agent's behaviour
-# in the canonical tree; CLAUDE.md mirrors for Claude Code's auto-load path.
+# Top-level agent entry point. AGENTS.md is the stub that imports the layer's
+# rulebook (agent-layer/AGENTS.md); CLAUDE.md is Claude Code's auto-load path.
 /AGENTS.md                             @alexandrosk0
 /.claude/CLAUDE.md                     @alexandrosk0
