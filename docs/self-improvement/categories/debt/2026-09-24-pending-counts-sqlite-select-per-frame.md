@@ -12,5 +12,6 @@
   Concrete next action: keep both counts in `OfflineQueueService` as atomics. Update them on the worker
   after every enqueue, replay, archive and restore (the same places that already touch the tables).
   The UI then reads the atomics and never queries SQLite in a frame.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the create count is fixed (backlog-sweep PR #2296: GetPendingCreateCount() and a new GetPendingFieldEditCount() are atomic loads, recounted on a worker after enqueue/delete/restore/sweep, at the end of each replay pass, on a new cache object and on a replay-tick mismatch; the offline.replay_now dry-run uses the exact count). Remaining: Ui/SmatchetUI.cpp still sets d.cachedPendingFieldEditCount from app.GetPendingFieldEdits().size() every frame — routing it to the new atomic needs an AppController::GetPendingFieldEditCount() delegator in AppController.h, which was in another session's plan-lock.
   Status: open
-  Last-reviewed: 2026-09-24
+  Last-reviewed: 2026-10-04
