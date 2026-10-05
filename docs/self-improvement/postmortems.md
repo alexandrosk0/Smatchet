@@ -184,7 +184,7 @@ none — not agent-reviewable. The escape is a merge-path and CI-configuration g
 
 ### Filed as
 - [`categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md) (P1 — the required aggregate context)
-- [`categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md`](categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md) (P1 — the detector fail-loud + chunked fetch)
+- [`categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md`](categories/applied.md) (P1 — the detector fail-loud + chunked fetch)
 
 ## 2026-09-24 · PR #2234 · design escape: the status combo stopped working offline (no gate existed)
 

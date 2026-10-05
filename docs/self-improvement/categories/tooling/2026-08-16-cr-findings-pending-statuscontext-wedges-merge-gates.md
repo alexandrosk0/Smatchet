@@ -19,7 +19,7 @@
     § Friction A the aggregator posts `pending` on `pull_request` and flips to
     `success` only on a CR **review node**. When CR cannot produce one — an
     exhausted rate limit on an already-seen head
-    ([`2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md`](2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md)
+    ([`2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md`](../applied.md)
     § (b)), or the OSS `Review skipped: manual review required for this OSS
     repository` threshold — the pending is permanent by construction. Those
     entries call it "correctly pending forever" from CR's side; what is new here
@@ -66,5 +66,6 @@
     that is a *gate defect*, not a real block — record the disposition and merge
     rather than polling to the cap. Est ~0.5d for (1)+(3); (2) is a design call
     that wants a human. (1) is independently shippable.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): part 1 landed (backlog-sweep PR #2296: the pure-docs rate-limit auto-downgrade discounts a pending CR findings* context from ci_pend), which also makes part 3's interim workaround doc unnecessary. Part 2 — whether any non-required PENDING StatusContext should block indefinitely, and a generic per-context waiver or bounded wait — is a design call for a human.
   Status: open
-  Last-reviewed: 2026-08-16
+  Last-reviewed: 2026-10-04

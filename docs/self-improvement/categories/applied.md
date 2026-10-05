@@ -8099,3 +8099,839 @@ Applied 2026-10-03:
 
 Status: applied
 Last-reviewed: 2026-10-03
+
+- 2026-08-16 · orchestrator · [tooling] · P2 — the CR finding gate re-triggers on `issue_comment` / `pull_request_review*`, and those runs execute the **default branch's** action code, not the PR's; so a fix to the gate cannot be trusted on its own PR — develop's old logic keeps overwriting the head's status and the last writer wins
+  Details: Found while merging #2036, which closes a fail-open in
+    [`cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
+    (a `Review skipped: manual review required` status was being read as a
+    clean pass). On head `702b5b57` the gate posted three statuses within 70
+    seconds and they disagreed:
+    - `19:11:14Z` run, event `pull_request`, `head_branch` = the PR branch →
+      PENDING, "awaiting CodeRabbit review on current head". Correct: this ran
+      the fixed action from the PR.
+    - `19:11:19Z` and `19:11:45Z` runs, event `issue_comment`, `head_branch`
+      **develop**, `head_sha` **dcf4cd3f** → SUCCESS, "CodeRabbit completed
+      with no review on head (skipped/clean)" at `19:11:35Z` and `19:12:23Z`.
+      Those ran develop's action — the code the PR exists to replace.
+    GitHub resolves a workflow triggered by a non-PR event against the default
+    branch, so `issue_comment` / `pull_request_review*` runs check out and
+    execute develop, whatever the PR changed. The gate depends on exactly those
+    events to un-stick itself when CR finishes (documented at the top of
+    [`cr-finding-gate.yml`](../../../.github/workflows/cr-finding-gate.yml)),
+    so the mixed-code path is not incidental — it is the common path. Statuses
+    have no precedence, only recency, so the newest writer wins and the stale
+    logic decides the visible state.
+    Why this is worth a rule and not just a note: the failure is
+    self-concealing in the one place it matters most. Dogfooding a gate fix on
+    its own PR is the repo's normal proof, and it silently proves the wrong
+    thing here — the first `pull_request` run shows the new behaviour, then a
+    comment lands and develop's code overwrites it with the old behaviour. A
+    reader checking the cell after the fact sees green and concludes the fix
+    did not work, or worse, that the old behaviour was correct. It also means
+    the gate's protection against the class it was hardened for is only as new
+    as develop for as long as the fix is in flight.
+    Not a merge blocker for #2036: merging IS the fix, since after the squash
+    every trigger path runs the new code. What the merge cannot fix is the
+    reading — the green cell on that PR must not be cited as review evidence,
+    and CR's own posted verdict has to be read instead.
+  Concrete next action: two cheap, independent pieces.
+    (1) Note it where it is read: a line in
+    [`merge-gates.md`](../../agent-rules/merge-gates.md) § CodeRabbit —
+    *a change to a gate's own action/workflow is NOT proven by its check on
+    its own PR; comment- and review-triggered runs execute the default
+    branch's code, so verify against the `pull_request` run's log (or a
+    scratch PR opened after the merge), never the final status cell.*
+    (2) Make it visible instead of inferred: have the action print which ref
+    it is running from (`GITHUB_EVENT_NAME` + the workflow ref) into the job
+    summary and into the status description on a disagreement, so a mixed-code
+    sequence is legible from the PR page rather than from three API calls.
+    Neither needs new infrastructure; (2) is the one with teeth.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — cr-finding-gate.yml gained an always-run 'Record which gate code this run executes' step (event, ref, sha, workflow_sha, PR head to the step summary; NOTE when the checked-out ref is not refs/pull/*), plus the merge-gates.md line that a comment-triggered run does not prove a change to the gate's own code; structural bats.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# The default merge path arms auto-merge and `exec`s away — no actor writes the ledger row
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-19
+- **Observed on**: PR #2115 (permanent hole, past the janitor's 6 h repair window), PR #2134 (hole closed by
+  hand ~1 h later, by this entry's PR #2137), and PR #2137 itself (the predicted regress, observed: it armed
+  through `safe-merge.sh`, merged at `e272d630`, and left no row — closed by hand in the follow-up PR)
+- **Status**: open
+
+## What happened
+
+`agents/scripts/core/safe-merge.sh` is the **sanctioned default non-admin merge path**
+(`docs/agent-rules/ship-loops.md` § step 3, PR-1: "an armed or autonomous merge MUST go through
+`safe-merge.sh` — never a bare `--auto`"). Its last statement is:
+
+```bash
+# agents/scripts/core/safe-merge.sh:555
+exec gh pr merge "$pr" --squash --auto
+```
+
+`exec` replaces the shell process. There is no code path after the arm **by construction**, so the
+script cannot observe its own merge and cannot append the ADR-0017 gate-verdict snapshot. Grepping
+the script for `merge-snapshot-append` / `append_merge_snapshot` returns nothing; the repo-wide
+referrer set is `git-janitor.sh`, `postmortem-owed.sh`, `safe-admin-merge.sh` (plus docs + bats).
+The default path is absent from it.
+
+The rule exists — it is just prose. `ship-loops.md` § step 3 names a **"Fourth writer — the session
+that ARMED an auto-merge"**, which must run the helper with actor `orchestrator-automerge` and
+`SNAPSHOT_MERGED_AT=<mergedAt>` on receiving the merged notification. Nothing enforces or performs
+it, so coverage equals whatever the orchestrator remembers. The ledger shows both outcomes in the
+same week: rows for #2114 / #2015 carry `"mergeActor":"orchestrator-automerge"` (remembered), and:
+
+| PR | merged | ledger row | status |
+|---|---|---|---|
+| #2115 | 2026-08-18T14:15:44Z | **none** | permanent — past `SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS` (6 h), and the retro-compose prohibition forbids reconstructing it now |
+| #2134 | 2026-08-19T12:08:35Z | appended by hand | closed ~1 h post-merge, only because the hole was noticed |
+
+#2115's own title is `chore(ledger): merge-time gate snapshot for PR #2114` — the PR that closed one
+hole opened the next one.
+
+## Why it matters
+
+ADR-0017 § Distributed-write contract states the mitigation as *"all three actors are named **and
+wired** … behind one shared helper so they stay consistent."* For the path that carries most merges,
+"wired" is not true: `safe-admin-merge.sh` (the narrow stale-BLOCKED carve-out) appends in code, and
+`git-janitor.sh --post-merge` Step 5.5 backfills in code, but the **default** path does not. Ledger
+coverage is therefore biased *away* from ordinary merges and *toward* the exceptional ones.
+
+A hole costs losslessness, not blindness — `postmortem-owed.sh` falls back to the live
+`statusCheckRollup`. But that fallback is exactly what ADR-0017 calls provably lossy: GitHub
+overwrites rollup contexts by name on re-run and strips override labels post-merge. So the merges
+whose gate truth is recoverable are the rare ones, and the merges whose truth silently degrades are
+the routine ones.
+
+There is also a **regress** the current design does not terminate: a `chore(ledger)` PR is itself a
+merge that owes a row, so landing row N opens hole N+1. The only terminators are (a) the janitor's
+6 h backfill actually running, or (b) batching the row into an unrelated develop-bound commit. This
+entry's own PR #2137 is an instance, and the prediction held: it landed #2134's row, armed through
+`safe-merge.sh`, merged at `e272d630` on a 22/22 `GATES_PASSED` poll, and wrote nothing. Its row is in
+the follow-up PR carrying this edit — which is itself instance four. The chain does not converge by
+hand-appending; only action 1 below ends it.
+
+## Concrete next action
+
+Ranked, cheapest first.
+
+1. **Make `safe-merge.sh` the fifth code writer.** Drop the `exec` (call `gh pr merge --squash
+   --auto` normally), then poll `gh pr view "$pr" --json state,mergeCommit,mergedAt` on a short
+   bounded budget and, on `MERGED`, call `append_merge_snapshot "$pr" <mergeCommit> <headSha>
+   GATES_PASSED "<downgraded-csv>" "<override-csv>" orchestrator-automerge` with
+   `SNAPSHOT_MERGED_AT` from the API. A short budget suffices because the script only arms **after**
+   `GATES_PASSED` — every check is already terminal-green, so GitHub merges in seconds. The
+   `redChecks` projection needs no new logic: `safe-merge.sh` already parses the poll's
+   `GATE_SNAPSHOT cr_override=… downgraded=…` line at line 156 (`loadbearing_oob_labels`) for its
+   obligation-stub path, and holds the label list in the same scope.
+2. **Make the timeout branch mechanical, not remembered.** If the bounded wait expires (auto-merge
+   still queued), print the ready-to-paste `merge-snapshot-append.sh` invocation with all 7 args
+   pre-filled and `SNAPSHOT_MERGED_AT=` stubbed. Precedent in the same script: `file_obligation_stub`
+   already converts a would-be-remembered obligation into a written artefact.
+3. **Detect the residual hole inside the repair window.** Have the SessionStart nudge (or
+   `postmortem-owed.sh`) flag any PR merged in the last 6 h with no ledger row, so a miss surfaces
+   while `git-janitor --post-merge` can still legitimately backfill it — instead of hardening into a
+   permanent hole like #2115.
+
+**Enumerator + replay** (per AGENT_SELF_IMPROVEMENT.md): the gate is a new case in the existing
+`tests/bats/safe_merge.bats` (205 lines, 14 `@test`s), asserting that after a PASS-gated arm exactly
+one row lands in `MERGE_SNAPSHOT_LEDGER` (an existing env seam in `merge-snapshot-append.sh`) with
+`.pr` = the PR, `.mergeActor` = `orchestrator-automerge`, `.gates` = `GATES_PASSED`.
+
+Replayed against the script as it stands, that case **cannot pass**: `exec` at line 555 replaces the
+process, so no append can run and the temp ledger stays empty — the #2115 / #2134 shape exactly.
+
+Writing the case also needs one seam the fix must add. Today the arm block short-circuits on
+`[ "${SAFE_MERGE_DRY_RUN:-}" = "true" ] || [ -n "${SAFE_MERGE_STUB_GATE:-}" ]`, so stubbing the gate
+*forces* the `DRY-RUN: would run: gh pr merge …` exit — which is precisely what the existing
+`arms auto-merge when the gate PASSES (exit 0)` bats case asserts on, and why it stops one line
+short of the behaviour at issue. Separate the two conditions (keep the DRY-RUN exit; let a stubbed
+gate proceed against a stub `gh` on `PATH` reporting `MERGED` + a merge oid) and the post-arm write
+becomes testable. The 13 `--selftest` cases are unaffected — they exercise helpers
+(`loadbearing_oob_labels`, `maybe_file_obligations`, `run_gate`, `default_flip_ready`) directly and
+never enter the arm block at all.
+
+Related: [`docs/adr/0017-merge-time-snapshot-ledger.md`](../../adr/0017-merge-time-snapshot-ledger.md)
+(the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../agent-rules/ship-loops.md)
+§ step 3 (the prose fourth-writer rule this entry proposes to turn into code).
+
+## Follow-up measurement — 2026-09-12 (PR #2184)
+
+Re-measured. **The entry's prediction held completely, and the hole is no longer occasional — it is
+total.**
+
+- **`safe-merge.sh` still `exec`s away.** `exec gh pr merge "$pr" --squash --auto` is still the last
+  statement (line 555, unchanged), and `grep -n 'append_merge_snapshot' agents/scripts/core/safe-merge.sh`
+  still returns nothing. Action 1 is untouched.
+- **Ledger coverage since this entry: 0%.** The newest row in
+  `docs/self-improvement/merge-snapshots.jsonl` is **#2137, 2026-08-19T13:13:10Z** — this entry's own
+  PR, hand-appended. Since that timestamp **58 PRs have merged into `develop` and 0 carry a row**
+  (152 rows total, none newer). The baseline was 1 permanent + 1 hand-closed hole across 5 session
+  merges; the measured reality is 58 for 58.
+- **Fresh instance, observed live.** PR #2184 merged 2026-09-12T12:30:00Z as `0685b5f0bbd6`, armed
+  through `safe-merge.sh` on a clean `GATES_PASSED` poll (CI 22/22, `GATE_SNAPSHOT cr_override=0
+  downgraded=`). No row was written. That snapshot line is exactly the data the ledger wants and it
+  was discarded at `exec`.
+- **The hand-append terminator is now decisively disproven.** This entry predicted that landing row N
+  opens hole N+1 and that only action 1 converges. Over 58 merges nobody hand-appended even once, so
+  the practice did not merely regress — it stopped entirely. Any future backfill is also blocked:
+  all 58 are far past `SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS` (6 h), and the retro-compose
+  prohibition forbids reconstructing them. **The ledger has a permanent 58-PR hole**, an order of
+  magnitude past the 28-PR hole that
+  [`2026-08-18-merge-snapshot-ledger-28-pr-hole.md`](applied.md)
+  was raised for.
+- **Consequence now visible in practice:** the #2160 gate-escape postmortem filed 2026-09-12 could
+  not recover *why* `plan-lock-out-of-band` was applied, precisely because the ledger row that would
+  have captured the override does not exist and GitHub had stripped the label 43 s after the merge.
+  That is ADR-0017's losslessness argument failing in the exact way it predicted.
+
+Suggested priority bump: **P1 → P0**. The permanent-loss rate is 100% of merges and each day adds
+irrecoverable rows.
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=check whether safe-merge.sh appends its own snapshot row, and re-measure the share of merged PRs with a ledger row; baseline=1 permanent hole (#2115) and 1 hand-closed hole (#2134) across 5 session merges on 2026-08-18/19; fired=2026-09-12
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — safe-merge.sh no longer execs away: after arming it polls the PR (bounded by SAFE_MERGE_SNAPSHOT_WAIT_SECONDS), appends the ledger row (actor orchestrator-automerge, redChecks/overrideLabels, crState) on merge, else prints the paste-ready append line; DRY_RUN split from STUB_GATE; bats asserts exactly one row.
+  Status: applied (2026-10-04)
+
+# Merge-snapshot ledger has a 28-PR hole: no row written between #2067 and #2111
+
+- **Category**: process
+- **Priority**: P1
+- **Date**: 2026-08-18
+- **Found during**: appending the mandatory merge-time snapshot after
+  [PR #2111](https://github.com/alexandrosk0/Smatchet/pull/2111) merged
+
+## Symptom
+
+`docs/self-improvement/merge-snapshots.jsonl` holds 147 rows. The last row before this
+one is `#2067`; the next is `#2111`. Every PR merged in between has **no row**:
+
+```
+$ gh pr list --state merged --limit 60 --json number \
+    -q '[.[] | select(.number > 2067 and .number < 2111)] | length'
+28
+```
+
+All 28 (#2068 … #2108) merged between 2026-08-16T21:33Z and 2026-08-18T12:10Z, all with
+`mergedBy = alexandrosk0`. Two full days of ship-loop activity left no gate-verdict
+capture at all.
+
+## Cause
+
+Not yet diagnosed — this entry records the gap, not the fix. What is already known:
+
+[`ship-loops.md:44`](../../agent-rules/ship-loops.md) names four writers, and
+`ship-loops.md:57` adds two that are code rather than rule (merge-pipeline-02):
+`safe-admin-merge.sh` appends its own row, and `git-janitor.sh --post-merge` Step 5.5
+backfills a row for a merge **no** actor recorded (verdict `BACKFILLED`, actor
+`git-janitor`). That backfill is the designed net for exactly this case — a human/UI
+merge — so the hole means either the in-session actor never reached its append **and**
+`--post-merge` never ran, or it ran outside its age cap.
+
+The cap is what makes this unrecoverable: Step 5.5 is bounded by
+`SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS` (default 6 h, undatable fails closed to skip),
+and `ship-loops.md:55` prohibits retro-composing older rows outright — *"do not
+retro-compose rows hours later from a possibly re-run rollup, a stale line is worse than
+a hole."* Every one of the 28 is now past the cap. The data is gone, by design; only the
+recurrence is fixable.
+
+## Why it matters
+
+The ledger exists because the merge-decision instant is the **only** lossless capture —
+GitHub overwrites `statusCheckRollup` contexts on re-run and strips override labels
+post-merge ([ADR-0017](../../adr/0017-merge-time-snapshot-ledger.md)). A hole is not a
+cosmetic gap in a log: it is the permanent loss of the evidence that a given merge was
+gated, over precisely the window in which 10 `*-out-of-band` labels were left behind on
+merged PRs (surfaced by the same closeout's `issue-sweep.sh` dry-run: #2105, #2100, #2096,
+#2088, #2075, #2074, #2071, #2070, #2069 `cr-out-of-band`; #2097
+`plan-lock-out-of-band`). Those are the merges whose override rationale most needed
+capturing, and they are the merges with no row.
+
+It is filed **P1** rather than P2 because the failure is silent and the loss is
+irreversible: nothing warned that 28 consecutive merges skipped a step documented as
+*mandatory*, and by the time the gap is visible in the file, the age cap has already
+closed the only sanctioned repair. `postmortem-owed.sh` keeps a live `statusCheckRollup`
+fallback for un-snapshotted merges, but that fallback reads current state — the exact
+thing the ledger exists because it cannot trust.
+
+## Proposed fix
+
+Two independent gaps, either of which alone would have prevented this:
+
+1. **Detect the hole while it is still repairable.** A SessionStart or closeout check
+   comparing merged-PR numbers against ledger rows over the last N hours, nagging while
+   the merges are inside the Step 5.5 age cap. The nag has to fire on the *gap*, not on
+   any single session's behaviour — no session that skipped its own append is going to
+   notice it skipped.
+2. **Close the actor-taxonomy gap this closeout hit.** The valid `mergeActor` tokens are
+   `orchestrator`, `git-janitor`, `merge-watcher`, `safe-admin-merge`,
+   `orchestrator-automerge`. None describes what happened here: an in-session orchestrator
+   polled the gates to `GATES_PASSED` and the **user** then merged through the GitHub UI.
+   The row was written with `orchestrator` (accurate as the *writer* — that is the sense
+   the `git-janitor`/`BACKFILLED` case already uses, where the actor did not merge either),
+   but a reader cannot distinguish "the orchestrator merged" from "the orchestrator
+   verified and a human merged". A distinct token would make that legible instead of
+   leaving it to the reader.
+
+Both are small; the value is that (1) turns a permanent hole into a recoverable one.
+
+## Note on scope
+
+The 28 missing rows were deliberately **not** backfilled — that is the retro-compose
+prohibition above, and a fabricated row is worse than the hole it fills.
+
+## Recurrence (2026-10-04)
+
+The hole reopened right after the #2212 row and is now larger than the one recorded above. On `develop` at `d8b4371e`, `merge-snapshots.jsonl` ends at #2212 (merged 2026-09-12). The 49 develop merges after it (#2213 … #2294) have no row, apart from #2290 and #2294. This note's PR lands those two rows; the in-session orchestrator wrote each one right after its merge call. The other 47 are permanent holes: all are past the janitor's 6 h repair window, and the retro-compose prohibition covers them.
+
+Among the 47:
+- #2213, the PR that landed #2212's row. That is the regress `categories/tooling/2026-08-19-safe-merge-arms-automerge-and-execs-away-before-writing-a-snapshot-row.md` predicts.
+- #2262, #2272, #2273, #2277, #2280 and #2289, which one in-session orchestrator merged over REST without running the append.
+- #2286, which native auto-merge took past a red bucket-E lane, and #2280 and #2213, which merged under `plan-lock-out-of-band`. Their postmortems in `postmortems.md` had to rebuild each merge instant from the PR timeline because no row existed.
+
+Neither proposed fix has landed. No check reports the gap, and the default merge paths still do not write the row in code. Nothing flagged 47 consecutive skipped writes; this recurrence was found by hand while drafting the #2286 postmortem.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — (1) agents/scripts/core/merge-snapshot-holes.sh (--list/--nudge/--selftest, REST, bounded pages, SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS window; 'window NOT scanned' on fetch failure) wired into SessionStart for Claude Code and Codex; (2) the 'user' mergeActor token (orchestrator verified, human merged) is canonical in merge-snapshot-append.sh's header and ship-loops.md. Root cause closed by the safe-merge snapshot fix.
+  Status: applied (2026-10-04)
+
+- 2026-08-16 · orchestrator · [process] · P2 — a backlog entry asserted a third-party system's *policy* ("CodeRabbit ignores bot-authored triggers") on the strength of one non-response; a positive observation 85 minutes later contradicted it, on the same PR, before the entry had even merged
+  Details: The sequence is worth keeping because nothing in it looks careless
+    at the time. A nudge posted at `17:17:12Z` drew no CR response. Twelve
+    minutes of nothing, plus a sibling entry recording a similar silence under
+    a different bot identity, plus a plausible mechanism ready to hand (loop
+    prevention — bots must not trigger bots), and the inference wrote itself. I
+    filed it as a P2 with a settled-sounding title and three remediation
+    options, one of which cost a repo secret. At `18:42:19Z` CR replied
+    "`@github-actions`[bot] Reviewing `#2036` …" to a nudge from exactly that
+    identity. The mechanism was never real.
+    The defect is not the wrong guess — it is the *grade of claim*. Two
+    genuinely different things got written in the same voice:
+    - `17:17:12Z` produced no response — an **observation**, cheap and
+      permanent; and
+    - CR ignores bot-authored comments — a **mechanism**, which absence of a
+      response cannot establish, because every competing explanation (quota,
+      coalescing, a dropped webhook, an outage) produces the identical
+      non-event.
+    A non-response is compatible with every hypothesis, so it discriminates
+    between none of them. Only a *positive* observation — a system doing
+    something under condition A that it does not under condition B — licenses a
+    mechanism. Silence licenses "unexplained".
+    The cost is real even when caught. A wrong mechanism in the backlog is a
+    wrong mechanism a later session will implement: the entry's cheapest-first
+    remediation was to buy a PAT and store it as a repo secret, which would
+    have added a rotating credential to the repo to solve a problem that did
+    not exist. It also seeded a false sentence into a sibling entry's action
+    item, which was queued for a rule-doc. Fabricated mechanisms propagate the
+    same way fabricated quotes do, and the existing class-sweep rule in
+    [`process-rules.md`](../../agent-rules/process-rules.md) already covers
+    the sweep once one is found — what is missing is the guard that stops it
+    being written in the first place.
+  Concrete next action: add one line to
+    [`process-rules.md`](../../agent-rules/process-rules.md) § Self-improvement
+    entries — *an entry may state what was observed at any time; it may state
+    WHY a third-party system behaved that way only from a positive observation.
+    An inference drawn from a non-response is labelled `Hypothesis:` in the
+    entry and MUST NOT appear in the entry's title, priority rationale, or any
+    remediation that spends money, adds a credential, or lands in a rule-doc.*
+    Mechanical to apply, and it would have downgraded this exact entry to
+    "unexplained silence, experiment pending" — which is what it always was.
+    Pairs with the class-sweep rule already there: that one cleans up after a
+    false claim, this one keeps it out of the title.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — the observation-vs-mechanism rule is in AGENT_SELF_IMPROVEMENT.md § Workflow step 2; the class sweep reworded the unqualified 'CodeRabbit ignores bot-authored triggers' claim in cr-finding-gate/action.yml, merge-gates.md, merge-gates.sh and scripts/dev/trigger-coderabbit-review.sh as an observed asymmetry.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# `postmortem-owed.sh`'s batched GraphQL fetch times out at the default window, and the failure reads as "last 20 merges clean"
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-10-04
+- **Observed on**: PR #2286 (merged 2026-10-04T01:59:46Z past a red `Bucket-E UI tests (Mesa headless GL)`). PR #2280 (merged with `Plan-lock gate` red under `plan-lock-out-of-band`) was hidden by the same blind spot. Reproduced from worktree `gracious-kilby-73a454` at `c9479274d`, which is the `origin/develop` tip on 2026-10-04.
+- **Status**: open
+
+## What happened
+
+At SessionStart, `postmortem-owed.sh --list` printed `postmortem-owed: no gate escapes owed a postmortem (last 20 merges clean).` and the `--nudge` hook stayed silent. Both were wrong: #2286 had merged past a red check earlier the same day.
+
+Trigger 1+2 reads every merged PR's checks in a single batched call (`agents/scripts/core/postmortem-owed.sh:707-709`):
+
+```bash
+done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
+            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null \
+            | tr -d '\r' || true)
+```
+
+`FETCH_N` defaults to `SCAN_N * 3` = 60 (`:612`). Each develop PR now carries about 52 check runs, and at `--limit 60` the GraphQL query returns `HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)`. That reproduced 3 times out of 3 on 2026-10-04. `--limit 20`, `30` and `40` all succeed.
+
+`2>/dev/null` drops the error and `|| true` drops the exit code, so `ROWS` stays empty. With no rows, every trigger-1/2 check is skipped. The script then reaches the success branch at `:1092` and reports the 20-merge window as clean, even though it read 0 merges.
+
+With the fetch inside the timeout, the same script on the same tree reports both owed escapes:
+
+```text
+$ POSTMORTEM_FETCH_N=30 bash agents/scripts/core/postmortem-owed.sh --list
+postmortem owed: PR #2280 — red-check: Plan-lock gate; override: plan-lock-out-of-band
+postmortem owed: PR #2286 — red-check: Bucket-E UI tests (Mesa headless GL)
+```
+
+## Why it matters
+
+This script is the post-merge safety net for every merge path that skips the poller (see the companion entry, [`2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md)). When it fails, it says "clean", which is the one output that tells the reader nothing needs doing. Its header calls the default modes advisory and fail-open when `gh` is missing. But a missing `gh` prints a "skipped (advisory)" notice (`:105`, `:148`). A failed fetch prints a clean bill of health instead. The silence grows as rollups grow, so every new check context added to develop moves the detector further past the timeout. Nothing in the window was ever going to be caught.
+
+## Concrete next action
+
+1. **Fail loud, not clean.** Keep the fetch's exit status and stderr. If the fetch fails, or returns zero rows when the window should contain merges, print `postmortem-owed: merged-PR fetch failed (<first stderr line>) — window NOT scanned`. Print it on stderr in `--list` and `--nudge`, and exit non-zero in `--blocking`. Never fall through to the "merges clean" line. `:1092` should only be reachable when `${#ROWS[@]} -gt 0`.
+2. **Fit the fetch under the timeout.** Page the window in chunks of at most 20, either with `gh api graphql --paginate` and `first: 20`, or with a loop of 20-PR `gh pr list --search "merged:<…"` calls. Alternatively, drop `statusCheckRollup` from the batch and read check runs per PR over REST (`commits/{sha}/check-runs`) only for the `SCAN_N` merges kept. Either way the cost scales with checks per PR, not the window size.
+3. **Bats regression.** Run with a stub `gh` on `PATH` that exits 1 with `HTTP 504` for `pr list`. Assert the output does **not** contain `merges clean` and does contain `NOT scanned`. Also assert `--blocking` exits non-zero.
+
+**Enumerator + replay**: the enumerator is the `gh pr list --state merged --limit $FETCH_N` row set (`ROWS`, `:704-709`). Replayed on 2026-10-04 at the default `FETCH_N=60`, the call 504s and `ROWS` is empty, so action 1 prints `window NOT scanned` instead of `clean`. With action 2's 20-row chunks, the first chunk contains #2286 with `Bucket-E UI tests (Mesa headless GL)` as its curated red check, and it is flagged. That is the `POSTMORTEM_FETCH_N=30` output above.
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-10-04;n=10; action=re-run postmortem-owed.sh --list at the default window and confirm it either scans or says NOT scanned, never a false clean; baseline=HTTP 504 at --limit 60 (3/3) and a false "last 20 merges clean" hiding #2280 + #2286, 2026-10-04; fired=never
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — postmortem-owed.sh keeps the fetch's rc + first stderr line, retries a 5xx/timeout at a halved --limit (60→30→15), prints 'merged-PR fetch failed (…) — window NOT scanned' and exits 3 under --blocking; the clean line is reachable only when rows were read and reports the real count. Not done (optional): ≤20-per-page chunking, so a degraded retry scans fewer merges.
+  Status: applied (2026-10-04)
+
+- 2026-08-16 · orchestrator · [tooling] · P2 — two silent ways an `@coderabbitai review` trigger does nothing: posted under a BOT identity it is dropped with no ack, and posted after a RATE-LIMITED pass on the same head it is a no-op because the head is already "seen" — both are indistinguishable from ordinary throttling, and each cost a full check-in cycle on PR #2023
+  Details: **(a) Identity.** In the remote environment `$GITHUB_TOKEN` posts as
+    `claude[bot]`, while `mcp__github__add_issue_comment` posts as the user.
+    Evidence from #2023: all 8 triggers CR ever acted on were authored by
+    `alexandrosk0`; the one posted via `curl` + `$GITHUB_TOKEN` sat for 31
+    minutes with no ack, no rate-limit notice, and no review. There is no
+    negative signal — the comment posts 201 and is simply never read — so the
+    natural reading is "still throttled", and the wait is unbounded.
+    **Correction (same day, from #2036):** this originally read "CodeRabbit
+    ignores bot-authored comments (loop prevention)". That mechanism is wrong
+    as stated — CR demonstrably acted on a `github-actions[bot]` trigger,
+    acking it by name and reviewing the head. What survives is the narrower
+    observation above: a `claude[bot]`-authored trigger drew nothing for 31
+    min. Treat that as an unexplained result for that one app identity, not a
+    policy, and read
+    [`2026-08-16-cr-gate-nudge-403-and-the-withdrawn-bot-identity-claim.md`](tooling/2026-08-16-cr-gate-nudge-403-and-the-withdrawn-bot-identity-claim.md)
+    for the full timeline and the experiment that would settle it. Note this does NOT retract the
+    `curl -X PATCH` advice in the sibling entry
+    [`2026-08-16-verdict-head-hex-hand-copied-into-pr-body.md`](applied.md):
+    PR-*body* edits are identity-neutral and the token is the cheap path there.
+    The split is the rule — bot token for body edits, user identity for anything
+    CR must READ.
+    **(b) Rate-limited head is consumed.** CR is incremental and "does not
+    re-review already reviewed commits". A pass that reaches the head and THEN
+    hits the limit still marks it seen, so the follow-up `@coderabbitai review`
+    returns "Reviews are available now" and produces no review node — the
+    `CR findings` gate stays correctly pending forever. The escape is
+    `@coderabbitai full review`, which is exactly what the repo's own
+    `cr-finding-gate` auto-nudge posts for this state; it worked first try
+    (review node on head, `Merge Risk … up to 6b545`, 0 actionable).
+    **(c) Gate-coverage gap found while diagnosing (b).** The auto-nudge did not
+    fire here. Its clean-pass guard greps `no actionable (comments|findings)`,
+    but CR's targeted verification reply said only "No findings", so `clean_ts`
+    never advanced past `busy_ts` and the nudge stayed suppressed in precisely
+    its target scenario. The rate-limit notice wording match has the same
+    brittleness: it looks for `next review available`, while the follow-up said
+    "Reviews are available now".
+  Concrete next action: (1) add the already-settled rule to the CR rate-limit
+    playbook in [`merge-gates.md`](../../agent-rules/merge-gates.md) §
+    CodeRabbit rate-limit playbook — *after any rate-limited pass on the
+    current head, escalate to `full review` rather than repeating `review`,
+    since a plain re-trigger is a no-op on an already-seen commit*. The
+    identity half of this action item (*"never post under the bot token"*) is
+    **on hold** pending the experiment in the sibling entry above — do not
+    write it into a rule-doc until a positive observation supports it. Add the
+    diagnostic tell: **a trigger that
+    draws no CR response AND no limit notice within ~15 min is an authorship or
+    already-seen problem, not throttling.** (2) Widen the `cr-finding-gate`
+    clean-pass regex to also accept a bare `no findings` (and the busy regex to
+    accept `reviews are available`), with a bats case per wording — the guard
+    is only as good as its vocabulary, and it silently under-fires when CR
+    rephrases. Est ~0.5d total; (2) is the part with a gate behind it.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — merge-gates.md rate-limit playbook rule 3 (after a rate-limited pass post @coderabbitai full review; no reply and no limit notice in ~15 min = authorship / already-seen, not throttling); the identity half cites the OSS human-trigger invariant; the clean-pass regex accepts 'no actionable (comments|findings)|no findings' with a bats case per wording; 'Reviews are available' pinned as NOT busy.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-08-16 · orchestrator · [tooling] · P2 — the `(head=<12-hex>)` the Intent gate checks is transcribed BY HAND into the PR body while `record-review-verdict.sh` already prints the exact line; one mistyped hex red-flagged the gate on PR #2023, and every re-push needs the same manual re-transcription
+  Details: `record-review-verdict.sh` writes the local marker AND echoes the
+    canonical line `adversarial-code-review: <verdict> (head=<12-hex>)`. The PR
+    body must carry that same line for the Intent-section check
+    (`check-pr-intent.sh` matches `(head=<12-hex>)` against the PR head). Nothing
+    connects the two: the orchestrator reads the script's output and retypes it
+    into the body. On PR #2023 I predicted the hex before the commit existed and
+    wrote `498f7ad2b3f4` when the real head was `498f7ad2c1f3` — the gate caught
+    it correctly, but it cost a red check, a diagnosis detour, and a body edit.
+    The same PR then needed the line re-transcribed on SIX subsequent pushes
+    (rounds 1-6), each an opportunity for the same typo. Related cost: every one
+    of those body edits re-sent the ENTIRE body through the PR-update tool
+    (~8 KB), when a `curl -X PATCH` with `$GITHUB_TOKEN` (present in the remote
+    environment) does it far more cheaply — worth codifying alongside.
+  Concrete next action: teach `record-review-verdict.sh` an opt-in
+    `--sync-pr <n>` (or a sibling `sync-verdict-to-pr.sh`) that, after writing
+    the local marker, PATCHes the PR body: replace the existing
+    `^adversarial-code-review: .*$` line with the freshly generated one, or
+    append it when absent. The script already owns the canonical string and the
+    head SHA, so the transcription step — and its typo class — disappears. Guard
+    it: no-op with a clear message when `$GITHUB_TOKEN` is unset or `--sync-pr`
+    is omitted (local-only runs must keep working), and never invent a PR
+    number. Bats-testable against a stub API endpoint. Est ~0.5d.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — record-review-verdict.sh --sync-pr <n> upserts the head-bound verdict line into the PR body through agents/scripts/core/lib/pr-body-edit.sh (refuses to drop lock-slug:/holds-lock: lines); ship-loops.md item 5 and the PR template name it.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+- 2026-08-16 · orchestrator · [tooling] · P2 — a `lock-slug:` marker left inside the HTML comment the PR template ships it in never releases the lock: `lock-cleanup.yml` anchors its regex to `$`, finds no match, emits a `::notice::` and exits 0, so the job goes **green** with the delete step **skipped** — the failure is invisible on the PR (an HTML comment renders as nothing) and invisible in the checks list (green), and only surfaces days later as a stale `refs/locks/<slug>` in the staleness sweep
+  Details: **(a) The mechanism.**
+    [`lock-cleanup.yml:58-62`](../../../.github/workflows/lock-cleanup.yml)
+    matches `^[[:space:]]*lock-slug:[[:space:]]*[a-z0-9][a-z0-9-]{0,63}[[:space:]]*$`
+    — the trailing `$` after the slug means the template's
+    `<!-- lock-slug: your-slug-here -->` form cannot match, because ` -->`
+    follows the slug. On no match, `:64-68` prints
+    `::notice::No 'lock-slug: <slug>' line found in PR body; no release.` and
+    `exit 0`. The `Delete refs/locks/<slug> if present` step is gated on
+    `steps.parse.outputs.slug != ''` (`:80`), so it reports **skipped**, and the
+    workflow run is **green**. The regex is pinned verbatim as `EXPECTED_PAT` in
+    [`tests/bats/lock_cleanup.bats:19`](../../../tests/bats/lock_cleanup.bats),
+    so the anchor is deliberate and tested — the defect is not the regex, it is
+    that the *only* signal for the miss is a `notice` annotation nobody reads.
+    **(b) The trap is the template itself.**
+    [`.github/pull_request_template.md:50-51`](../../../.github/pull_request_template.md)
+    ships both markers pre-commented, and `:46` instructs "add the trigger line
+    below somewhere in the PR body (**uncomment** + edit)". Leaving the comment
+    delimiters in place is therefore the *default* state of every PR body, and
+    the one keystroke that arms the release is the one nothing checks. The rule
+    itself is unambiguous —
+    [`ship-loops.md:162`](../../agent-rules/ship-loops.md) requires the `open
+    PR` step to write "*the exact line `lock-cleanup.yml` matches*", i.e. the
+    bare form — so this is an operator error, not a doc conflict;
+    it is worth a guard precisely because the correct and incorrect forms are
+    visually identical in the rendered PR body.
+    **(c) Observed, 2026-08-16.** Two of three PRs merged this session
+    (`agent-debug-build-flag`, `windows-cdb-tooling-doc`) carried the commented
+    form. Both cleanup runs were green with the delete step skipped; both locks
+    survived the merge and had to be deleted by hand via
+    `gh api -X DELETE repos/<owner>/<repo>/git/refs/locks/<slug>` — the same call
+    the workflow would have made. `gh run view --log | grep '::notice'` does not
+    surface the annotation (it returns only the `##[group] Run` echo); the notice
+    is reachable only via
+    `gh api repos/<owner>/<repo>/check-runs/<jobid>/annotations`. The existing
+    downstream catch,
+    [`lock-staleness-sweep.sh:177`](../../../agents/scripts/core/lock-staleness-sweep.sh),
+    already names this exact failure in its remediation text ("the PR was missing
+    a `lock-slug: ${slug}` line in its body") — so the class is known and the
+    sweep is the only thing catching it, days late.
+  Concrete next action: (1) **Detect the commented form and fail loudly** — in
+    the parse step, when the body contains `lock-slug:` but the anchored regex
+    matched nothing, `::error::` (not `::notice::`) and exit non-zero with the
+    text *"a `lock-slug:` marker is present but commented out or malformed;
+    uncomment it to a bare line"*. This is the only variant that distinguishes
+    "no lock on this PR" (legitimate and common — pure-docs slices) from "a lock
+    that was meant to release and did not", and it is a two-line change plus a
+    bats case alongside the existing `EXPECTED_PAT` assertions. Deliberately
+    scope it to the *commented-marker* case; a blanket fail-on-no-slug would red
+    every lockless PR. (2) **Remove the trap at the source** — either drop the
+    comment delimiters from the template line (leaving a placeholder slug that
+    fails the grammar check loudly) or move the marker out of an HTML comment
+    entirely, so the armed and unarmed states differ visibly in the rendered
+    body. Keep the informational `holds-lock:` line commented; it is
+    intentionally never matched. (3) Have the ship-loop's `open PR` step
+    self-verify: after creating the PR, re-read the body and assert the bare
+    line matches the same anchored regex, so the miss is caught at PR-open time
+    rather than at merge time. Est ~0.5d total; (1) is the cheapest and has a
+    gate behind it.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — lock-cleanup.yml warns on a commented-out real slug (the template placeholder stays silent); a warning, not an error, because the new branch-keyed release (lock-release-on-close.sh) frees a lock the PR's own branch claimed anyway; template prose now says a commented line is not armed. bats covers all three shapes.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# A single-source Font Awesome fetch red-walls five required CI jobs on an upstream 404, and `--retry-all-errors` burns 5 minutes retrying a permanent failure
+
+- **Category**: infra
+- **Priority**: P1
+- **Date**: 2026-08-18
+- **Found during**: un-wedging [PR #2070](https://github.com/alexandrosk0/Smatchet/pull/2070) — its `Windows + MSVC` attempt 1 failure
+
+## Symptom
+
+`Windows + MSVC` — a **required** check — went red on PR #2070 with a failure that had
+nothing to do with the diff. Step 11, *Fetch Font Awesome 6 Solid TTF (pinned +
+checksum-verified)*:
+
+```
+curl: (22) The requested URL returned error: 404
+```
+
+repeated **eleven times**, then `##[error]Process completed with exit code 22`. A bare
+re-run at 22:37Z cleared the same step and the job went green at 23:05:21Z — the URL was
+transiently serving 404. The diff was never at fault.
+
+The red counted against the PR for hours. Under block-on-any-red it also blocks every other
+open PR that inherits the check, and this fetch runs in **five** jobs
+([`build-and-test.yml`](../../../.github/workflows/build-and-test.yml) lines 338, 436,
+519, 711, 831), so one upstream blip reds the board.
+
+## Cause
+
+[`.github/actions/fetch-fontawesome/action.yml`](../../../.github/actions/fetch-fontawesome/action.yml)
+fetches from exactly one origin with no mirror and no cache:
+
+```bash
+curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
+     "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+     -o assets/fonts/fa-solid-900.ttf
+```
+
+Two compounding problems:
+
+1. **No fallback source.** `github.com/.../raw/` availability is a hard build dependency of
+   five required jobs. The pin itself is right (immutable tag + sha256, per the action's own
+   comment) — the pin is what makes a mirror *safe*, since any source that hashes to
+   `af19d135…` is byte-identical by construction.
+2. **`--retry-all-errors` treats 404 as retryable.** It was added for a real reason (the
+   comment records a ~2h 429 rate-limit on this URL on 2026-07-09), but 429/5xx are
+   transient and 404 is not — `--retry 10 --retry-delay 30` spent ~5 minutes of runner time
+   re-asking a question already answered, then failed anyway. The eleven identical lines in
+   the log are that loop.
+
+## Proposed fix
+
+1. **Add a mirror, try in order** (~1h). jsDelivr (`cdn.jsdelivr.net/gh/FortAwesome/Font-Awesome@${FA_TAG}/webfonts/fa-solid-900.ttf`)
+   serves the same tag from different infrastructure. Loop over an ordered source list,
+   accept the first that passes `sha256sum -c -`, fail only when all are exhausted. The
+   checksum is the trust anchor, so adding sources adds availability without adding trust
+   surface.
+2. **Cache the font by `FA_SHA256`.** `actions/cache` keyed on the hash makes the steady
+   state a cache hit and takes upstream off the hot path entirely for the other four jobs
+   once one has fetched it.
+3. **Stop retrying 404.** Drop `--retry-all-errors` and keep the default retryable set
+   (transient + 429), or gate it behind an explicit status check. Preserves the 2026-07-09
+   fix while failing fast on a permanent error — and a fast failure is what makes the
+   mirror attempt cheap.
+
+## Why it matters
+
+A required gate that reds on third-party CDN weather is a gate whose reds stop being read.
+The correct reflex here was "re-run it" — indistinguishable, at a glance, from the reflex
+that lets a real red through, and the repo has already paid for that confusion once
+([`postmortems.md`](../postmortems.md), #1957 class). The fix is cheap and the pin
+already did the hard part: with a checksum this strict, a second source costs nothing in
+supply-chain risk and removes a single point of failure from five required jobs.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — the font is committed, so the fetch-fontawesome action now only verifies assets/fonts/fa-solid-900.ttf against the pinned FA_SHA256 (scripts/dev/verify-fontawesome.sh, fails closed with a named ::error); no network, no single source; all six call sites unchanged.
+  Status: applied (2026-10-04)
+
+- 2026-08-16 · orchestrator · [infra] · P2 — the TSan lane is documented as advisory in four places but its check name carries no `advisory` token, so the merge poller blocks on it
+  Details: Surfaced while grounding `docs/plans/shipped/autonomous-debug-live-evidence.md`;
+    unrelated to that plan's subject, filed here per `docs/agent-rules/ship-loops.md`
+    § "Unrelated work never shares a PR".
+    `.github/workflows/tsan-linux-nightly.yml:51` publishes the check name
+    **`TSan Linux subset (Clang)`**. The poller's only exemption is a
+    case-insensitive `contains("advisory")` on the check NAME
+    (`agents/scripts/core/merge-gates.d/10-gate-filter.sh:66-70`, `:91-95`) under
+    `MERGE_GATES_BLOCK_ALLOWLIST_RE="."`. That name has no such token, so a red
+    TSan run **blocks the merge gate** — while four places assert the opposite:
+    `tsan-linux-nightly.yml:13-14` ("ADVISORY / non-required"),
+    `docs/plans/active/tsan-imgui-linked-target.md:79` and `:92`, and
+    `docs/plans/active/build-quality-velocity-hardening.md:244`.
+    The exposure is bounded but real: the workflow's `pull_request` trigger is
+    paths-scoped (`CMakeLists.txt`, `CMakePresets.json`, `cmake/Sanitizers.cmake`,
+    `tests/CMakeLists.txt`, `Source/Core/src/Sync/**`, `.../Persistence/**`,
+    `.../Config/**`, `GridLiveContext.cpp`), so it only lands on PR heads touching
+    those paths — but when it does, "advisory" is documentation, not mechanism.
+    This is the inverse of the sibling entry
+    infra/2026-08-16-stale-advisory-lane-docs: there the docs under-state what
+    blocks; here they over-state what doesn't.
+    Note the decision is genuinely open, not merely a doc fix — a required-ish
+    TSan lane may well be *desirable*. What is not defensible is the current state,
+    where the behaviour and the four documents disagree.
+  Concrete next action: pick one and make the other side match. Either
+    (a) rename the check to `TSan Linux subset (Clang, advisory)` so the mechanism
+    matches the four docs, or (b) keep it blocking and correct all four docs plus
+    `AGENTS.md` § Merge gates / `docs/agent-rules/merge-gates.md`'s advisory-token
+    user list. Prefer (a) unless the lane's green-rate on the scoped paths is
+    already high enough to gate on — check the last ~20 scoped runs before
+    deciding. Also worth extending `tests/bats/merge_gates.bats` with a
+    name-vs-intent case so a future lane cannot claim advisory in prose while
+    blocking in fact.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — option (b): tsan-linux-nightly.yml and both plan docs now say the lane is not a required context but blocks under block-on-any-red when it runs on a PR; merge_gates.bats pins a red 'TSan Linux subset (Clang)' as blocking. codeql.yml's twin drift is fixed too (findings advisory, the check is not).
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# Re-running a body-reading gate replays a frozen event payload — and the rollup dedup turns that into a fresh red
+
+- **Category**: process
+- **Priority**: P2
+- **Date**: 2026-09-07
+- **Observed on**: PR #2180 (`claude/agent-layer-a1-seam`) — two `gh run rerun` invocations against run `34139417600`, the second landing a terminal `FAILURE` at `17:03:05Z` where the head had previously carried only a stale `CANCELLED`
+- **Status**: open
+
+## What happened
+
+`Intent section` was red on #2180's head. The reflex remedy — the one `merge-gates.md` documents —
+is `gh run rerun <id>`. It was issued twice. Neither run could ever have passed, and the second one
+made the gate strictly worse than before it ran.
+
+The re-trigger that actually worked was a **PR body edit**, which produced run `34147012343`,
+`SUCCESS` at `17:17:52Z`.
+
+## The mechanics, source-read
+
+1. `.github/workflows/doc-validation.yml:536` passes the body into the check as
+   `PR_BODY: ${{ github.event.pull_request.body }}` — the body **as it stood in the event payload
+   that started the run**, not the body as it stands now. `PR_HEAD_SHA` at line 537 comes from the
+   same frozen payload.
+2. `gh run rerun` re-executes a run against its **original** payload. So a rerun of a `synchronize`
+   run re-reads the body from the moment of that push. If the body was wrong then — a missing
+   `## Intent`, or a `head=` that no longer matches after a later push — it is still wrong on every
+   rerun, forever. The condition being waited on is immutable, so the retry can never converge.
+3. The workflow already knows this and says so, at `doc-validation.yml:73-79`: `edited` is in the
+   trigger list precisely so "a PR that adds or fixes its `## Intent` section via a body edit
+   re-runs the `Intent section` job and self-heals the stale-red — no wasted empty-commit push".
+   The comment documents the cure. Nothing anywhere documents that the *reflex* is a poison.
+4. The rerun is not merely futile — it is **actively regressive**. `merge-gates.sh:30-32`:
+   > Rollup dedup: required CheckRuns with the same `.name` are deduped to the entry with the latest
+   > `.startedAt` so stale FAILUREs from rerun jobs don't falsely block.
+   Latest-`startedAt`-wins is the right rule for its stated purpose, but it cuts both ways: a rerun
+   always carries the newest `startedAt`, so a rerun that fails **displaces whatever was there
+   before**. On #2180 the pre-rerun state was a `CANCELLED` entry that blocked nothing; the post-rerun
+   state was a terminal `FAILURE` that blocked everything. The remedy manufactured the block it was
+   invoked to clear.
+
+## The class, and how small it is
+
+Exactly **one** PR-gating workflow in this repo reads a frozen payload field as its subject:
+
+```
+grep -rln 'github.event.pull_request.body\|github.event.pull_request.title' .github/workflows/
+  .github/workflows/doc-validation.yml     # pull_request: [opened, synchronize, reopened, edited]
+  .github/workflows/lock-cleanup.yml       # pull_request: [closed] — not a gate
+```
+
+That is the whole population today. The bound is what makes a gate cheap; the fact that the
+population is one is also why the trap has never been written down.
+
+## Why the existing docs point the wrong way
+
+[`merge-gates.md`](../../agent-rules/merge-gates.md) is where an agent looks when a check is red,
+and it prescribes `gh run rerun` twice without scoping:
+
+- line 97, halt-code 8 (*Cancelled-while-pending*): "Rerun the named run(s) (`gh run rerun <id>` from
+  the BLOCK output), then re-poll".
+- line 245, in the recovery recipe: `gh run rerun <run-id>  # the run whose job is CANCELLED, not the
+  newer one`, followed by "No push, no force, no PR-body re-pin — none of those touch the stale
+  context."
+
+Both are correct **for the concurrency-collapse case they were written for**, where the run never
+executed and the payload is irrelevant. Neither says "unless the workflow's subject is the event
+payload". The last quoted sentence is the exact inversion of the truth for `doc-validation` — there,
+the PR-body re-pin is the *only* thing that touches it.
+
+## Concrete next action
+
+1. **Scope the rerun remedy where it is prescribed.** Add a one-line carve-out at
+   `merge-gates.md:97` and `:245`: a rerun cannot fix a check whose input is the event payload
+   (`github.event.pull_request.*`); for those, edit the PR body to fire the `edited` trigger.
+   Enumerator: the `grep -rln` above — keep the carve-out keyed on that command, not on a hardcoded
+   workflow name, so it stays true when the population grows.
+2. **Make the workflow say it at the point of temptation.** The `doc-validation.yml:73-79` comment
+   explains why `edited` exists; extend it with the inverse — that `gh run rerun` replays the stale
+   body and can never pass. An agent reading the failing workflow should not have to find the
+   remedy doc to learn the remedy is wrong here.
+3. **Assert the property rather than the instance**, in `tests/bats/workflow_job_mask.bats` (the
+   existing workflow-YAML-shape suite): every `pull_request`-triggered workflow that references
+   `github.event.pull_request.body` or `.title` MUST list `edited` in its `types:`. Without `edited`
+   such a gate has *no* re-trigger at all short of a new commit — the failure mode one config edit
+   away from today's, and the one a name-based carve-out would not catch.
+4. **Record the dedup's second edge.** The `merge-gates.sh:30-32` comment justifies latest-wins in
+   one direction only ("stale FAILUREs … don't falsely block"). Note the other: a rerun's fresh
+   FAILURE displaces an older SUCCESS or a harmless CANCELLED. The rule is still right; a reader
+   deciding whether to rerun needs to know it is not free.
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-09-07;n=20; action=re-check whether the rerun carve-out landed in merge-gates.md, whether any new workflow reads `github.event.pull_request.body` without an `edited` trigger, and whether another rerun-induced FAILURE displaced a green; baseline=1 rerun-manufactured FAILURE on PR #2180 and 1 payload-reading gate repo-wide, 2026-09-07; fired=2026-10-05 (carve-out landed in merge-gates.md halt-code-8 row + 405 recipe; tests/bats/workflow_event_payload.bats finds no payload-reading workflow without `edited`; rerun-displaced-green incidence not checked — needs run history)
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — (1) carve-out in merge-gates.md at the halt-code-8 row and the 405 recipe; (2) the inverse warning in doc-validation.yml's edited comment; (3) tests/bats/workflow_event_payload.bats asserts every pull_request workflow reading the body/title lists edited (closed-only exempt); (4) the dedup's second edge is documented in merge-gates.sh.
+  Status: applied (2026-10-04)
+
+# `merge-gates.sh` passes its ~25 KB jq filter on the `gh` command line, which exceeds the Windows 32 KB `CreateProcess` cap — the poller reports `GH_API_DOWN` on a healthy API
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-19
+- **Found during**: shipping [PR #2124](https://github.com/alexandrosk0/Smatchet/pull/2124) (README screenshot) from a Windows session
+
+## Symptom
+
+Every invocation of the gate poller died immediately, three attempts in a row:
+
+```
+gh: Argument list too long
+```
+
+`poll_merge_gates` mapped that to its API-outage classification and returned **3**
+(`GH_API_DOWN`) — a verdict that says *GitHub is unreachable*. GitHub was fine; plain
+`gh api`, `gh pr view`, and `gh run list` all worked in the same shell seconds later.
+
+Nothing about the failure points at its cause. The operator's reasonable next move —
+retry, then wait for the "outage" to clear — never succeeds, because there is no outage.
+
+## Cause
+
+[`merge-gates.sh:646`](../../../agents/scripts/core/merge-gates.sh) invokes:
+
+```bash
+gh api graphql -f owner=… -f repo=… -F pr=… -f query="$query_body" --jq "$GATE_FILTER"
+```
+
+Both large payloads travel **as command-line arguments**:
+
+- `$GATE_FILTER` — the gate-decision jq program from
+  [`merge-gates.d/10-gate-filter.sh`](../../../agents/scripts/core/merge-gates.d/10-gate-filter.sh),
+  **25,185 bytes** today and growing with every gate refinement;
+- `$query_body` — the GraphQL document from
+  [`merge-gates.graphql`](../../../agents/scripts/core/merge-gates.graphql).
+
+Windows caps a `CreateProcess` command line at 32,767 characters. The two together clear
+it, so the process never launches. On Linux/macOS the equivalent limit (`ARG_MAX`, ~2 MB)
+is far away, which is why CI and the maintainer's non-Windows paths never saw this — the
+gate poller is effectively **unrunnable locally on Windows**, on a repo whose primary
+development host is Windows 11.
+
+The classification is a second, separable defect: a launch failure of the `gh` binary is
+attributed to the *remote* API. `Argument list too long` is an `E2BIG` from the local OS
+and can never mean the API is down.
+
+## Workaround used
+
+A `gh` shell-function shim that intercepts `--jq`, writes the filter to a temp file, and
+pipes the response through local `jq -r -f "$tmp"`. The GraphQL body alone fits under the
+cap, so only the filter needs relocating. With the shim the poller ran normally and
+reached `GATES_PASSED`.
+
+## Proposed fix
+
+1. **Stop passing the filter as an argument** (~20 min). Fetch the raw GraphQL response
+   with `gh api graphql` (no `--jq`) and pipe it through `jq -r -f <file>`, reading the
+   filter from a temp file written by the script. The filter is already assembled in a
+   variable, so this is a call-site change, not a restructure. `jq -f` has no
+   command-line-length exposure at all.
+2. **Also move the GraphQL body off the command line** — `gh api graphql -F query=@file`
+   accepts a file reference, removing the second contributor and leaving headroom as both
+   payloads keep growing.
+3. **Do not classify a local exec failure as an API outage.** Match `Argument list too
+   long` / `E2BIG` on the `gh` invocation and return the usage/dependency code (2) with
+   the real reason, rather than folding it into `GH_API_DOWN` (3). An operator who is told
+   "GitHub API is down" has no path to the actual fix.
+4. **Regression guard**: a bats case in `tests/bats/merge_gates.bats` asserting the
+   assembled filter is never interpolated into an argv position — e.g. that the `gh api
+   graphql` call site carries no `--jq`.
+
+## Why it matters
+
+The gate poller is the enforcement point for AGENTS.md § Merge gates — the thing that
+stands between an agent and a merge past a red check. On Windows it does not run at all,
+and it fails in the one way that discourages investigation: an outage verdict on a
+healthy API, which invites either waiting or reaching for the admin-merge carve-out. A
+gate that is locally unrunnable on the primary dev platform is a gate that gets routed
+around. See also [`2026-08-18-cr-out-of-band-label-inert-until-gate-rerun.md`](applied.md)
+for the other half of the same session's un-wedging cost.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — merge-gates.sh writes the gate filter to a temp file and pipes the raw gh api graphql response through standalone jq -r -f whenever jq is on PATH (gh-failure vs jq-failure classification kept via PIPESTATUS; C2 + GH_ARGV_TOO_LONG arms unchanged); the jq-less gh --jq fallback stays under the argv budget bats case.
+  Status: applied (2026-10-04)
+
+- 2026-06-14 · orchestrator (gate-escape-postmortem) · [infra] · P2 — `ci-infra-flake-reds-masquerade-as-real-breakage`: an OpenCppCoverage instrumentation crash and a transient base-ref diff failure both report identically to genuine breakage, and merged past on non-required lanes (preventing gate from postmortems.md 2026-06-14 PR #1227)
+  Details: PR #1227 merged past two terminal-RED checks, both CI-infra fragility (no product defect): (1) **Coverage (windows-2022 + OpenCppCoverage)** red as `0% - 1 hit, 544 misses` / `No files were found … coverage/coverage.xml` — the instrumented binary produced NO coverage data (an OpenCppCoverage crash), which the job reports identically to a real `--threshold 65` miss, so an infra crash is indistinguishable from real breakage at the rollup. (2) **Pillar 2 scanner** red as `'git diff origin/develop...HEAD' exited 128. Refusing to skip the scan on a diff error.` — the #518 fail-closed base-ref guard tripping on a transient fetch/shallow-clone failure (NOT a real UI-thread sync-I/O finding). Correct to fail closed, but a transient infra failure on a non-required scanner then merged past. (3) A non-required **Mobile texture-guard smoke (Mesa headless GL)** Launch-smoke flake completed FAILURE post-merge — the SAME Mesa flake recurred across #1220/#1212/#1227 this day. The structural why-it-merged (Coverage non-required on GitHub) is the sibling tooling `coverage-required-context` recurrence; THIS entry owns the producers' fragility.
+  Concrete next action: (a) **Coverage** — make "no/empty `coverage.xml`" (or `OpenCppCoverage` non-zero exit) a DISTINCT, retried (1-2×), clearly-labelled INFRA failure (e.g. a `COVERAGE-INFRA-CRASH` marker) that is NOT reported as a `0%` threshold red, so an instrumentation crash is visibly separable from a genuine coverage regression. (b) **Diff-based gates** (Pillar-2 scanner + any `git diff origin/develop...HEAD` consumer) — fetch the base ref robustly before diffing (`git fetch --no-tags origin develop` / unshallow), retry once on exit-128, and only fail-closed after the fetch demonstrably succeeded — distinguishing "diff infra failed" from "scan found a violation". (c) **Mesa Launch-smoke flake** — track the recurring `Mobile texture-guard smoke` boot flake (cross-ref the test.md booted-emulator entry); if it can't be stabilised it should be advisory-only, not a lane adding noise to three same-day merges. Est ~2-3 h across (a)+(b); (c) is triage. Cross-ref: postmortems.md 2026-06-14 #1227; tooling `coverage-required-context` (the bind that would have BLOCKED this); #518 fail-closed design.
+  Update (b) SHIPPED 2026-06-14 (feat/pillar2-fetch-depth): root cause was narrower than "fetch failed" — the gates ran `git fetch --depth=1 origin <base_ref>` AFTER a `fetch-depth: 0` checkout, which re-introduces a `.git/shallow` boundary at develop's tip and breaks the three-dot merge-base, so `git diff <base>...HEAD` exits 128 even though the base ref resolves to a real commit (the #518 guard's `rev-parse` passes, the diff still fails). Fix = drop `--depth=1` from the base-ref fetch (a full fetch keeps the common ancestor; matches the already-passing Doc-anchors + Coverage jobs) across all 5 sites: `pillar2-scan.yml` (the loud fail-closed false-fail #1241), `dup-scan.yml`, `build-and-test.yml` ×2 (the cpp-lint range job was a SILENT fail-open lint under-scan — worse than the loud one), `perf-pr-fast.yml`. Regression lint `tests/bats/delta_gate_base_ref_fetch.bats` (general sweep — NO workflow may shallow-fetch the base ref + negative-fixture self-test) + auto-enrolled wrapper. The retry-on-128 / explicit-unshallow belt-and-braces in the original action was unnecessary once the self-inflicted re-shallow was removed. (a) Coverage + (c) Mesa flake remain open.
+  Update (c) ADDRESSED 2026-06-15 (`feat/mesa-gl-advisory`): the two Mesa-software-GL lanes (`Bucket-E UI tests` + `Mobile texture-guard smoke`) are now fully advisory to the merge-gate poller — `Bucket-` dropped from `MERGE_GATES_BLOCK_ALLOWLIST_RE` in `merge-gates.sh` AND from the lock-step duplicate `ALLOW_LIST_RE` in `postmortem-owed.sh`, so a red bucket-C/E neither jams the poller nor owes a postmortem (the jobs already carry job-level `continue-on-error`, but a job-level flag does NOT green the check-run conclusion the poller's GraphQL reads — the allow-list edit is the load-bearing change). New regression test pins it (`merge_gates.bats` "non-required Bucket-E FAILURE does NOT block"). Honest-red preserved on the lanes (no false-green) so the `bucket-mesa-exe-boot` P1 boot signal stays alive. **Re-add `Bucket-|` to BOTH allow-lists + re-arm the bats test as a BLOCKS case when the Mesa boot is fixed** (the `bucket-mesa-exe-boot` graduation step below). Entry stays open: (a) Coverage-infra marker remains unshipped ((b) shipped on this branch — see above).
+  Update (c) SUPERSEDED 2026-08-29 (stale-doc sweep, infra/2026-08-16-stale-advisory-lane-docs): the "fully advisory" state above no longer holds — the all-gates-blocking flip set `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` (`merge-gates.d/00-common.sh:42`), retiring the meant-to-block allow-list entirely, so the bucket lanes' check-run conclusions BLOCK again (only a check whose NAME contains `advisory` is exempt — today just `Mobile texture-guard smoke (…, advisory)`); `merge_gates.bats` now asserts "non-required Bucket-E FAILURE blocks". The underlying `bucket-mesa-exe-boot` premise was FALSIFIED 2026-06-18 (exe boots ~2 s under llvmpipe; the ~26 s exit was the since-fixed `--spawn` exit-code bug — entry archived to `applied.md`), so the "re-add `Bucket-|` on boot-fix graduation" step is obsolete (nothing to re-add — the allow-list is gone). Residual advisory surface is step-level only: bucket-E per-test run + bucket-C golden diff (roadmap Slice B residuals).
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — item (a), the last open part: scripts/dev/coverage.sh retries a capture once on a tooling failure and the merge once on missing/unusable XML, never reads an empty coverage.xml as 0%, and on a persistent infra failure prints ::error title=COVERAGE-INFRA-CRASH:: and exits 3 (test/threshold failures stay 1); selftest + coverage_gate.bats. (b) shipped earlier, (c) superseded by the all-gates-blocking flip.
+  Status: applied (2026-10-04; was: partially applied (shipped: (b) base-ref fetch fix + tests/bats/delta_gate_base_ref_fetch.bats (feat/pillar2-fetch-depth); (c) superseded by the all-gates-blocking flip — see 2026-08-29 update; remaining: (a) the INFRA/infra-crash/retry marker for empty coverage.xml in coverage.yml))
+  Last-reviewed: 2026-10-04

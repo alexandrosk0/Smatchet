@@ -46,7 +46,7 @@ while releasing is admin-gated. A cheap-to-take, expensive-to-return lock accumu
 ## Why this is not the entries already on file
 
 [`2026-08-17-pr-body-rewrite-drops-lock-slug-marker.md`](2026-08-17-pr-body-rewrite-drops-lock-slug-marker.md)
-and [`2026-08-16-commented-lock-slug-marker-silently-skips-release.md`](2026-08-16-commented-lock-slug-marker-silently-skips-release.md)
+and [`2026-08-16-commented-lock-slug-marker-silently-skips-release.md`](../applied.md)
 are both about the marker being **absent or malformed in a PR body**. Both presuppose a
 PR exists. Here there is no PR and never will be — the detection surface those entries
 propose (inspect the body at close time) cannot fire at all.
@@ -78,3 +78,5 @@ notes *"clear 12 runtime Pillar-2 UI-thread config I/O violations"*.
 Note that PR #2085 has since landed part of that write set: in `Views.cpp` and
 `SmatchetViewsDashboardUi.cpp` the inline config writes are now
 `smatchet::config_save::Enqueue*` calls, so the plan's remaining scope is 22 files, not 24.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): option 3 landed (backlog-sweep PR #2296: .github/workflows/lock-release-dispatch.yml releases one slug as github-actions, sharing lock-release-on-close.sh --slug; the stale-lock Issue names it). Remaining: option 1 (plan-lock-gate.sh treating a lock whose branch is absent from the remote as non-blocking after a grace period) and option 2 (the staleness sweep auto-deleting void locks) — option 2 reverses the sweep's never-delete invariant and needs a decision.

@@ -50,6 +50,7 @@
   routing it through `gh` — pipe the raw response into a standalone `jq -f
   merge-gates.jq` — which removes the ceiling entirely and makes the filter
   diffable, lintable and testable as a file instead of as a quoted blob.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the in-repo jq -f extraction landed (backlog-sweep PR #2296: the gate filter leaves argv whenever standalone jq is on PATH). What remains is a windows-latest smoke lane running the platform-sensitive subset of tests/bats/merge_gates.bats under Git-Bash, so Windows-only exec/quoting/CRLF faults in agents/scripts/** stop shipping green — a CI addition that needs a live Windows run to validate.
   Status: partially-applied (instance fixed 2026-08-18 in PR #2129; the Windows lane and the
     `jq -f` extraction are both open)
-  Last-reviewed: 2026-08-18
+  Last-reviewed: 2026-10-04
