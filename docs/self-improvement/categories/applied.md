@@ -8935,3 +8935,170 @@ for the other half of the same session's un-wedging cost.
   Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — item (a), the last open part: scripts/dev/coverage.sh retries a capture once on a tooling failure and the merge once on missing/unusable XML, never reads an empty coverage.xml as 0%, and on a persistent infra failure prints ::error title=COVERAGE-INFRA-CRASH:: and exits 3 (test/threshold failures stay 1); selftest + coverage_gate.bats. (b) shipped earlier, (c) superseded by the all-gates-blocking flip.
   Status: applied (2026-10-04; was: partially applied (shipped: (b) base-ref fetch fix + tests/bats/delta_gate_base_ref_fetch.bats (feat/pillar2-fetch-depth); (c) superseded by the all-gates-blocking flip — see 2026-08-29 update; remaining: (a) the INFRA/infra-crash/retry marker for empty coverage.xml in coverage.yml))
   Last-reviewed: 2026-10-04
+
+- 2026-08-04 · orchestrator · [test] · P2 — `scripts/dev/test-ui-agent-proposal-store-sqlite.sh` is an **orphaned bucket-E driver**: no test TU named `AgentProposalStore` exists anywhere in `tests/`, so the driver can only ever fail (`ui_test.run matched 0 tests for filter 'AgentProposalStore'`) — and it goes unnoticed because `test-all.sh` **SKIPs** it on any tree without a built `Smatchet.exe`, which is the common local state
+  Details: Surfaced running the full `scripts/dev/test-all.sh` twice for slice 2 of
+    `dev-onboarding-first-run-quickstart` — once on a worktree with a built `ninja-ui-test-msvc`
+    exe (the driver ran and FAILed) and once on a worktree with no build (the driver SKIPped and
+    the suite looked cleaner). That skew is the real lesson: the same commit produces a different
+    failure count depending on whether a build directory happens to exist, so a genuinely broken
+    driver reads as "environment noise" rather than breakage. `grep -rn AgentProposalStore tests/`
+    returns nothing — the only hits are inside the driver itself (its header comment at :3 crediting
+    "slice 9" and its `FILTER="${UI_TEST_FILTER:-AgentProposalStore}"` default at :12). The driver's
+    zero-match fail-closed behaviour is itself correct and was added deliberately by #1192
+    (the 6-HIGH fail-open gate cluster fix) — it is doing its job; what is missing is the TU it was
+    written to drive, which either never landed or was removed without removing its driver.
+  Concrete next action: decide the disposition and act on it in one PR. Either (a) restore the
+    missing `tests/ui/agent_proposal_store.test.cpp` + its registry entry in
+    `tests/ui/ui_tests_registry.cpp` if the SQLite-backed proposal-store lifecycle is still meant to
+    be covered, or (b) delete the driver. Then add the *class* gate so this cannot recur silently: a
+    check that every `scripts/dev/test-ui-*.sh` driver's `UI_TEST_FILTER` default resolves to at
+    least one registered test name — cheap as a bats case that greps each driver's default filter and
+    asserts a matching `SmatchetRegister*Tests` / `IM_REGISTER_TEST` name exists in `tests/ui/`. That
+    runs with no build and no exe, which is exactly the gap that let this sit. Est ~0.5d.
+  Cross-ref: `scripts/dev/test-ui-agent-proposal-store-sqlite.sh` (the orphan);
+    `tests/ui/ui_tests_registry.cpp` (where the registration would live);
+    PR #1192 (added the zero-match fail-closed behaviour that makes the orphan visible);
+    `scripts/dev/test-all.sh` (the SKIP-when-no-exe path that hides it).
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — the agent-proposal-store driver is deleted (no AgentProposal/ProposalStore code remains); the omnibar driver is now test-ui-grid-search-apply.sh (FILTER=GridSearch, 3 live cases); tests/bats/ui_driver_filters.bats asserts every driver's default filter names a string literal in tests/ui and goes red on a reintroduced orphan.
+  Status: applied (2026-10-04; was: open)
+  Last-reviewed: 2026-10-04
+
+# Bucket-E drivers boot against the developer's real `%LOCALAPPDATA%\Smatchet\imgui.ini`
+
+- **Category**: test
+- **Priority**: P1
+- **Date**: 2026-08-05
+- **Status**: open (one driver fixed; the rest unaudited)
+
+## What happened
+
+`scripts/dev/test-ui-window-expand.sh` failed `TabBarToggleClickExpandsThenMinimizes`
+deterministically on one machine and passed on another. The geometry assertion
+(`RectFull.Max.x == BarRect.Max.x`) passed; only `ItemClick` on the docked toggle
+could not land:
+
+```
+Failed to move window 'Views - Jira###SmatchetViewsDashboard'! While trying to make
+space to click at (1245.50,102.50) over window 'WindowOverViewport_.../DockSpace_...'.
+Error 'MouseMove: Unable to Hover 0xED75AA4E ... Hovered id was 0x00000000 in ''.
+```
+
+Root cause: the spawned app resolves its user-data dir via
+`ConfigManager::GetPlatformSharedUserDataDirectory()` → `%LOCALAPPDATA%\Smatchet`,
+so it loads whatever `imgui.ini` the developer's own interactive session last
+wrote. Windows the test never opens were left floating over the dock tab bar,
+making the docked control unhoverable. Pointing `LOCALAPPDATA` at an empty
+throwaway dir took the same binary from 6/7 to **7/7**.
+
+A first fix that assumed z-order (park overlapping floaters, then click) was
+written, built, and re-run — it changed nothing, because the offender was itself
+docked. Worth recording: the *hypothesis* was wrong, and only swapping the
+environment proved which layer owned the failure.
+
+## Why it matters
+
+Any bucket-E (and bucket-C screenshot) lane that boots the real exe inherits
+per-developer, per-boot dock state. That is a silent correctness hole in the test
+bucket that is supposed to keep visual features out of the human-verification
+pause: a green local run is not evidence the layout under test was the shipped
+default, and a red one is not evidence of a product defect.
+
+## Proposed fix
+
+1. Audit every driver that spawns the exe (`scripts/dev/test-ui-*.sh`,
+   `test-screenshot-diff.sh`) for the same exposure.
+2. Factor the isolation into one shared helper rather than the per-driver
+   `mktemp -d` + `export LOCALAPPDATA/APPDATA/XDG_CONFIG_HOME` + `trap` block now
+   in `test-ui-window-expand.sh`.
+3. Consider a first-party knob instead of environment shadowing —
+   `ConfigManager::GetPlatformSharedOverrideRef()` already exists as a
+   programmatic hook and would not depend on the platform's env-var names.
+
+## Evidence
+
+- Same binary, same host: real `LOCALAPPDATA` → `Passed: 6 Failed: 1`;
+  throwaway dir → `Passed: 7 Failed: 0`.
+- Resolution order read from `Source/Core/src/Config/ConfigManager_PathUtils.cpp`
+  (`GetPlatformSharedUserDataDirectory`, `GetImGuiSettingsPath`).
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — scripts/dev/lib/ui-test-driver.sh gives every driver a throwaway SMATCHET_USER_DATA profile (seeded or unseeded per driver, pin + keep-on-exit honoured) with the update check off; 29 of 30 drivers use it (20 newly isolated) and a ratchet in tests/bats/ui_driver_filters.bats keeps it that way. test-ui-automation-reload-hooks-race.sh opts out with a reason (its race needs the profile's Lua-consent state) until that test seeds its own consent. The drivers cannot run here — the next Windows bucket-E run is the behavioural check.
+  Status: applied (2026-10-04)
+
+- 2026-08-07 · claude-code · [tooling] · P2 — extract the ephemeral-`SMATCHET_USER_DATA` hardening into a shared helper; roughly three-quarters of the bucket-E runners still inherit the developer's real profile
+
+  There are **30** `scripts/dev/test-ui-*.sh` runners. Only **7** point `SMATCHET_USER_DATA`
+  at a `mktemp -d` (`data-dependent-windows`, `duration-inline-edit`, `funcsize-grid-render`,
+  `grid-pane-windows`, `jira-deterministic-backend`, `linear-deterministic-backend`,
+  `omnibar-search-apply`), and only **3** of those also seed the config JSON
+  (`duration-inline-edit`, `grid-pane-windows`, `omnibar-search-apply`). So ~23 runners need
+  the ephemeral home and ~27 need the seed.
+
+  The exemplar to copy is [`scripts/dev/test-ui-grid-pane-windows.sh`](../../../scripts/dev/test-ui-grid-pane-windows.sh)
+  lines 38-47, which does both and already carries the rationale in a comment. The seed is:
+
+  ```json
+  {"read_only_mode": false, "whisper_setup_completed": true, "backend_has_been_reachable": true}
+  ```
+
+  Two independent reasons, both applying to every runner:
+
+  - **Correctness.** A *fresh* profile shows the `##WhisperSetupBanner`, which floats over
+    window headers and swallows clicks. A case that clicks anything in the top strip fails
+    for a reason unrelated to the code under test — and, worse, *passes* on a developer
+    machine whose real profile already dismissed the banner. That is a machine-dependent
+    test, which is the failure mode bucket-E exists to avoid.
+  - **Safety.** Without the override the run reads and writes the developer's real
+    `%LOCALAPPDATA%/Smatchet/`, including `imgui.ini`. A docking test that ends mid-layout
+    leaves the developer's actual window arrangement mangled.
+
+  Proposed: extract the seed + `mktemp -d` + trap-cleanup into a sourced helper
+  (`scripts/dev/lib/ui-test-home.sh`) and have every runner source it, so the hardening
+  cannot drift back out one script at a time — which is what the 7-of-30 split shows has
+  already happened.
+
+  A `test-orphan-bats`-style gate would keep it honest: assert every `scripts/dev/test-ui-*.sh`
+  either sources the helper or carries an explicit opt-out comment.
+
+  Separately, `test-ui-window-expand.sh` on the [PR #1966](https://github.com/alexandrosk0/Smatchet/pull/1966)
+  branch (not on `develop`, so not linkable from here) takes a **different** approach to the
+  same problem — it exports `LOCALAPPDATA` / `APPDATA` / `XDG_CONFIG_HOME` to a `mktemp -d`
+  rather than setting `SMATCHET_USER_DATA`, and seeds nothing. Worth reconciling into the one
+  helper when that branch merges rather than letting two idioms coexist.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — the two isolation idioms (platform-dir shadowing and SMATCHET_USER_DATA) are one helper, scripts/dev/lib/ui-test-driver.sh, used by 29 of 30 drivers (one reasoned opt-out), enforced by the ratchet in tests/bats/ui_driver_filters.bats; helper bats in tests/bats/ui_test_driver_lib.bats.
+  Status: applied (2026-10-04)
+
+# bucket-E drivers run a stale exe silently
+
+- **Category**: test
+- **Priority**: P2
+- **Date**: 2026-08-06
+- **Source**: window-expand-button (bucket-E red chased for two build cycles)
+
+## Friction
+
+`scripts/dev/test-ui-window-expand.sh` (and every sibling bucket-E driver) runs
+`build/ninja-ui-test-msvc/Smatchet.exe` unconditionally. If the source edit under test
+landed after the last build, the driver reports a *product* verdict for a binary that does
+not contain the change — and the failure text is indistinguishable from a real one.
+
+Two debug cycles on this feature were spent disproving a hypothesis that had, in fact,
+already been fixed in the working tree but not in the exe. Instrumentation added in the same
+window produced zero log lines, which read as "the code path never runs" rather than "the
+code was never compiled".
+
+`docs/agent-rules/debug-techniques.md` § exe-staleness documents the manual check. A manual
+check that must be remembered at exactly the moment the agent is deepest in a wrong
+hypothesis is the weakest possible placement.
+
+## Proposed fix
+
+Add a staleness guard to the shared bucket-E driver preamble: compare the exe's mtime
+against the newest mtime under `Source/` + `tests/ui/`, and hard-FAIL (exit 2, same class as
+"binary missing") with the offending file named. Cheap — one `find -newer`. Belongs next to
+the existing exit-2 "binary missing" check so every driver inherits it.
+
+## Status
+
+Open.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — scripts/dev/is-exe-fresh.sh takes repeatable --src dirs (Source/ + tests/ui/) and names the newest offending file; the shared driver helper exits 2 on a stale exe (opt-out SMATCHET_ALLOW_STALE_EXE=1, skipped under CI where the exe is a downloaded artifact) and every exe-launching driver calls it.
+  Status: applied (2026-10-04)
