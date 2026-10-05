@@ -1001,7 +1001,9 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(createId > 0);
         smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
 
-        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
+        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent. The
+        // create was written straight to the cache, so it reaches the published queue view through the
+        // retry's reread, as a row another writer left in the database would.
         IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
         app->RetryOfflineQueuesNow();
         const auto actionListed = [app, actionId]() {

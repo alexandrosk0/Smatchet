@@ -463,12 +463,16 @@ void AppController::SendPendingActionAgain(std::int64_t id) {
 }
 
 void AppController::RetryOfflineQueuesNow() {
-    // An explicit retry must not wait out a timer pushed forward during an outage.
+    // An explicit retry must not wait out a timer pushed forward during an outage. It also rereads both
+    // queues (on a worker), so the panel and the replay decide from what the database holds now, rows
+    // written outside the queue services included. Replay starts once the reread view is published.
     const auto now = std::chrono::steady_clock::now();
     if (offlineQueue_) {
+        offlineQueue_->RequestSnapshotRefresh();
         offlineQueue_->RestartReplayTimersNow(now);
     }
     if (pendingActions_) {
+        pendingActions_->RequestSnapshotRefresh();
         pendingActions_->RestartReplayTimersNow(now);
     }
     TickOfflineCreates();
