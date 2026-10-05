@@ -298,18 +298,13 @@ int AdfEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         b.markStack.push_back({{"type", "code"}});
         break;
     case MD_SPAN_A: {
-        auto* d = static_cast<MD_SPAN_A_DETAIL*>(detail);
-        const std::string href = d ? MdAttrToString(d->href) : std::string();
+        const std::string href = MdLinkHref(detail);
         b.markStack.push_back({{"type", "link"}, {"attrs", {{"href", href}}}});
         break;
     }
-    case MD_SPAN_IMG: {
-        auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
-        b.imgSrcStack.push_back(d ? MdAttrToString(d->src) : std::string());
-        ++b.imgSpanDepth;
-        b.imgAltAccum.clear();
+    case MD_SPAN_IMG:
+        EnterImageSpan(b.img, detail);
         break;
-    }
     default:
         break;
     }
@@ -328,31 +323,28 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
             b.markStack.pop_back();
         break;
     case MD_SPAN_IMG: {
-        if (!b.imgSrcStack.empty()) {
-            std::string src = std::move(b.imgSrcStack.back());
-            b.imgSrcStack.pop_back();
+        std::string src;
+        std::string alt;
+        if (LeaveImageSpan(b.img, src, alt)) {
             static const std::string kAttachmentPrefix = "attachment:";
             if (src.compare(0, kAttachmentPrefix.size(), kAttachmentPrefix) == 0) {
                 json attrs = json::object();
                 attrs["type"] = "file";
                 attrs["id"] = src.substr(kAttachmentPrefix.size());
-                if (!b.imgAltAccum.empty()) {
-                    attrs["alt"] = b.imgAltAccum;
+                if (!alt.empty()) {
+                    attrs["alt"] = std::move(alt);
                 }
                 b.topContent()->push_back(json{{"type", "mediaInline"}, {"attrs", std::move(attrs)}});
             } else {
                 // External image URLs are not valid in Jira ADF `mediaInline` (which requires a
                 // file-store `id`). Fall back to a text link so the URL is preserved and the
                 // payload validates. The image-as-image is lost; the image-as-link is kept.
-                const std::string display = b.imgAltAccum.empty() ? src : b.imgAltAccum;
+                const std::string display = alt.empty() ? src : alt;
                 json mark = {{"type", "link"}, {"attrs", {{"href", src}}}};
                 json textNode = {{"type", "text"}, {"text", display}, {"marks", json::array({std::move(mark)})}};
                 b.topContent()->push_back(std::move(textNode));
             }
-            b.imgAltAccum.clear();
         }
-        if (b.imgSpanDepth > 0)
-            --b.imgSpanDepth;
         break;
     }
     default:
@@ -363,30 +355,7 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
 
 int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (type == MD_TEXT_NULLCHAR)
-        return 0;
-    // With MD_FLAG_NOHTML, md4c should not emit raw HTML here; ignore defensively (ABI / dialect).
-    if (type == MD_TEXT_HTML) {
-#ifndef NDEBUG
-        if (!b.debugLoggedMdTextHtml) {
-            b.debugLoggedMdTextHtml = true;
-            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (ADF path, first chunk size=%u)",
-                      static_cast<unsigned>(size));
-        }
-#endif
-        return 0;
-    }
-
-    std::string txt(text, size);
-    if (b.imgSpanDepth > 0 && b.codeBlockDepth == 0) {
-        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
-            b.imgAltAccum += txt;
-            return 0;
-        }
-        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
-            b.imgAltAccum += ' ';
-            return 0;
-        }
+    if (ConsumeNonEmittedMdText(b, "ADF", type, text, size)) {
         return 0;
     }
 
@@ -403,6 +372,8 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
         b.topContent()->push_back({{"type", "hardBreak"}});
         return 0;
     }
+
+    std::string txt(text, size);
 
     if (b.codeBlockDepth > 0) {
         // ADF codeBlock children are plain text — coalesce into a single text node so

@@ -251,6 +251,12 @@ parse_args() {
 }
 
 # ------------------------------------------------------------- phase 1 preflight
+
+# gh_rest_ok — gh can authenticate against the REST API. Every gh call this script
+# makes is REST (api, label create; setup-branch-protection.sh likewise), so that is
+# the probe: `gh auth status` misreports behind a credential proxy, and `gh repo view`
+# is GraphQL, which some environments (fine-grained tokens, sandboxed proxies) refuse.
+gh_rest_ok() { gh api user --jq .login >/dev/null 2>&1; }
 phase1_preflight() {
     head1 "phase 1 — preflight"
 
@@ -267,10 +273,10 @@ phase1_preflight() {
 
     if command -v gh >/dev/null 2>&1; then
         pass "gh on PATH"
-        if gh auth status >/dev/null 2>&1; then
-            pass "gh authenticated"
+        if gh_rest_ok; then
+            pass "gh authenticated (REST)"
         else
-            probe_fail 2 "gh not authenticated — run: gh auth login"
+            probe_fail 2 "gh cannot reach the REST API — run: gh auth login"
         fi
     else
         probe_fail 2 "gh not on PATH"
@@ -292,14 +298,17 @@ phase1_preflight() {
     # makes the phase-5 push a non-fast-forward.
     if [ -z "$TARGET" ]; then
         warn "no --target given — target checks skipped (--simulate)"
-    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        if gh repo view "$TARGET" >/dev/null 2>&1; then
+    elif command -v gh >/dev/null 2>&1 && gh_rest_ok; then
+        if gh api "repos/$TARGET" --jq .full_name >/dev/null 2>&1; then
             pass "target repo exists: $TARGET"
-            local commits
-            commits="$(gh api "repos/$TARGET/commits?per_page=1" --jq 'length' 2>/dev/null)"
-            # An empty repo answers 409 "Git Repository is empty" -> empty $commits.
-            if [ -z "$commits" ] || [ "$commits" = "0" ]; then
-                pass "target repo has zero commits"
+            # Emptiness from the refs, not the commits endpoint: an empty repo answers
+            # that one with HTTP 409 AND prints the error body to stdout, which read as
+            # "has commits". Zero refs is what the phase-5 push actually depends on.
+            local refs
+            if ! refs="$(git ls-remote "https://github.com/$TARGET.git" 2>/dev/null)"; then
+                probe_fail 2 "cannot list the refs of $TARGET — is it reachable with these credentials?"
+            elif [ -z "$refs" ]; then
+                pass "target repo has zero commits (no refs)"
             elif [ "$DRY_RUN" -eq 1 ]; then
                 warn "target repo is NOT empty (ignored: --dry-run)"
             else

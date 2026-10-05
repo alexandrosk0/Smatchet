@@ -60,7 +60,18 @@
 #   1 — at least one violation (Passed: N  Failed: M)
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# The tree linted is PROJECT_ROOT (scripts/dev/project-config.sh): the host before
+# and after the flip — once this script lives in the agent-layer/ submodule it is
+# the superproject, whose own scripts are its job — and the layer itself in the
+# layer's own CI. A climb from this script's path would lint the layer from the host.
+_tsl_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_tsl_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tsl_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_tsl_self/../../..}"
 
 if [ "${SMATCHET_SKIP_SHELL_LINT:-0}" = "1" ]; then
     echo "test-shell-lint: SMATCHET_SKIP_SHELL_LINT=1 — skipping all checks" >&2
@@ -82,8 +93,11 @@ if [ "${1:-}" = "--target" ] && [ -n "${2:-}" ]; then
 else
     while IFS= read -r f; do TARGETS+=("$f"); done < <(
         {
-            find scripts/dev agents/scripts/core agents/scripts/project \
-                -maxdepth 1 -type f -name '*.sh'
+            # Only the roots this tree has: after the flip the host carries no
+            # agents/scripts/, and a missing root must not print find errors.
+            for d in scripts/dev agents/scripts/core agents/scripts/project; do
+                if [ -d "$d" ]; then find "$d" -maxdepth 1 -type f -name '*.sh'; fi
+            done
             if [ -d agents/scripts/core/lib ]; then find agents/scripts/core/lib -type f -name '*.sh'; fi
             if [ -d agents/scripts/project/lint-rules.d ]; then find agents/scripts/project/lint-rules.d -type f -name '*.sh'; fi
             if [ -d scripts/mobile ]; then find scripts/mobile -type f -name '*.sh'; fi

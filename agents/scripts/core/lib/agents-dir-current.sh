@@ -21,10 +21,12 @@
 #   second copy of the same cmp loop — the DRY failure the plan's own § Existing
 #   utilities reused warns about — the probe is lifted here and sourced by both.
 #
-# CONTRACT — agents_dir_current <dest> <layer_root>
+# CONTRACT — agents_dir_current <dest> <layer_root> [<project_root>]
 #   Returns 0 when <dest> is a real directory (not a junction or symlink) holding
-#   exactly the canonical agent set found under <layer_root>/agents/{core,project}/,
-#   with every entry byte-identical to its source. Returns 1 otherwise — a
+#   exactly the canonical agent set — <layer_root>/agents/core/ plus
+#   <project_root>/agents/project/ — with every entry byte-identical to its source.
+#   <project_root> defaults to <layer_root>: the two are one tree before the flip,
+#   and after it agents/project/ stays in the host while agents/core/ moves. Returns 1 otherwise — a
 #   junction/symlink at <dest>, a count mismatch (an agent added or removed), or
 #   any content drift (a stale cp-fallback copy, or a hardlink left behind by a
 #   submodule update). It reads only; it never mutates <dest>.
@@ -40,14 +42,14 @@
 
 # shellcheck shell=bash
 agents_dir_current() {
-  local dest="$1" layer_root="$2" f base exp=0 got=0
+  local dest="$1" layer_root="$2" project_root="${3:-$2}" f base exp=0 got=0
   [ -d "$dest" ] && [ ! -L "$dest" ] || return 1
-  for f in "$layer_root"/agents/core/*.md "$layer_root"/agents/project/*.md; do
+  for f in "$layer_root"/agents/core/*.md "$project_root"/agents/project/*.md; do
     [ -e "$f" ] && exp=$((exp + 1))
   done
   for f in "$dest"/*.md; do [ -e "$f" ] && got=$((got + 1)); done
   [ "$got" -eq "$exp" ] || return 1
-  for f in "$layer_root"/agents/core/*.md "$layer_root"/agents/project/*.md; do
+  for f in "$layer_root"/agents/core/*.md "$project_root"/agents/project/*.md; do
     [ -e "$f" ] || continue
     base="$(basename "$f")"
     cmp -s "$f" "$dest/$base" || return 1

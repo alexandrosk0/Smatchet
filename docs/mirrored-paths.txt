@@ -1,0 +1,21 @@
+# docs/mirrored-paths.txt — files that live in BOTH the host and the agent layer.
+#
+# One repo-relative path per line; `#` comments and blank lines are ignored.
+# The agent layer's copy is canonical and the host's is a byte-identical mirror:
+# a layer PR changes the canonical copy, and the host's pointer-bump PR carries
+# every mirrored copy in the same diff.
+#
+# Why each file is mirrored rather than moved: the host must work before the layer
+# is checked out (the build sources project-config.sh; the split-scripts rule says
+# the code repo builds with no dependency on agents/), and the layer must run its
+# own CI standalone, which needs the two lane runners at their usual paths.
+#
+# Gate: scripts/dev/test-mirrored-paths.sh — every listed path must exist in both
+# trees and the two copies must be identical. Before the flip both "trees" are this
+# checkout, so the gate proves only that the list names real files; it bites once
+# AGENT_LAYER_ROOT points at the agent-layer/ submodule.
+#
+# Plan: docs/plans/agent-surface-extraction-repo.md — Phase B row 8g.
+scripts/dev/project-config.sh
+scripts/dev/test-all.sh
+scripts/dev/test-docs.sh

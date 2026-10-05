@@ -19,9 +19,13 @@ set -euo pipefail
 # `cd "$(dirname "$0")/../../.."` it did before. A fresh or reduced checkout is
 # precisely when setup-harness is run, so it must not acquire a hard dependency
 # on a config load succeeding.
-# shellcheck source=scripts/dev/project-config.sh
 _sh_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-. "$_sh_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_sh_self_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_sh_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${AGENT_LAYER_ROOT:=$_sh_self_root}"
 : "${PROJECT_ROOT:=$_sh_self_root}"
 
@@ -160,10 +164,11 @@ link_dir() {
 link_agents() {
   local dest=".claude/agents" f base
   # Idempotent: skip the clear+relink (and the link-agents echo) when already current.
-  agents_dir_current "$dest" "$ROOT" && return 0
+  agents_dir_current "$dest" "$ROOT" "$PROJECT_ROOT" && return 0
   _clear_dir_link "$dest"
   mkdir -p "$dest"
-  for f in "$ROOT"/agents/core/*.md "$ROOT"/agents/project/*.md; do
+  # agents/core/ is layer content; agents/project/ stays in the host at the flip.
+  for f in "$ROOT"/agents/core/*.md "$PROJECT_ROOT"/agents/project/*.md; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
     # $dest was just cleared, so an existing link here means a same-run basename
@@ -360,10 +365,12 @@ PY
   # that embed project literals (paths, subsystem names) and so cannot live in
   # the portable, purity-gated agents/_shared/workflows/. Both link into the
   # same .claude/workflows/, so all resolve by name (Workflow({name: '<base>'})).
-  if [[ -d "$ROOT/agents/project/workflows" ]]; then
-    for wf in "$ROOT"/agents/project/workflows/*.js; do
+  # They are HOST content (agents/project/ stays in the host at the flip), so the
+  # link source is an absolute host path, which _layer_src passes through.
+  if [[ -d "$PROJECT_ROOT/agents/project/workflows" ]]; then
+    for wf in "$PROJECT_ROOT"/agents/project/workflows/*.js; do
       [[ -e "$wf" ]] || continue
-      link_file ".claude/workflows/$(basename "$wf")" "agents/project/workflows/$(basename "$wf")"
+      link_file ".claude/workflows/$(basename "$wf")" "$wf"
     done
   fi
 
@@ -462,7 +469,7 @@ setup_pi() {
   # the codex branch below.
   local py
   if py="$(find_python)"; then
-    "$py" "$ROOT/agents/scripts/core/gen-pi-agents.py" "$ROOT" "$PROJECT_ROOT/.pi/agents"
+    "$py" "$ROOT/agents/scripts/core/gen-pi-agents.py" "$ROOT" "$PROJECT_ROOT/.pi/agents" "$PROJECT_ROOT"
   else
     echo "  error: python not found — needed to generate .pi/agents/*.md" >&2
     exit 1
@@ -505,7 +512,7 @@ setup_codex() {
 
   local py
   if py="$(find_python)"; then
-    "$py" "$ROOT/agents/scripts/core/gen-codex-agents.py" "$ROOT" "$PROJECT_ROOT/.codex/agents"
+    "$py" "$ROOT/agents/scripts/core/gen-codex-agents.py" "$ROOT" "$PROJECT_ROOT/.codex/agents" "$PROJECT_ROOT"
   else
     echo "  FAIL python not found - needed to generate .codex/agents/*.toml" >&2
     exit 1
@@ -523,14 +530,14 @@ setup_codex() {
   fi
 
   local core_count project_count=0 count duplicate_basenames leaf_count
-  # agents/project/ is the consuming project's; the standalone agent layer has
-  # none. Count it only when present — under pipefail, find on a missing dir would
-  # abort this whole report.
+  # agents/project/ is the consuming project's — host content, read from
+  # $PROJECT_ROOT; the standalone agent layer has none. Count it only when present —
+  # under pipefail, find on a missing dir would abort this whole report.
   local -a agent_dirs=("$ROOT/agents/core")
   core_count="$(find "$ROOT/agents/core" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-  if [[ -d "$ROOT/agents/project" ]]; then
-    agent_dirs+=("$ROOT/agents/project")
-    project_count="$(find "$ROOT/agents/project" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+  if [[ -d "$PROJECT_ROOT/agents/project" ]]; then
+    agent_dirs+=("$PROJECT_ROOT/agents/project")
+    project_count="$(find "$PROJECT_ROOT/agents/project" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
   fi
   count=$((core_count + project_count))
   if [[ "$count" -eq 0 ]]; then

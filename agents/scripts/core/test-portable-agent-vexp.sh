@@ -15,7 +15,12 @@
 # Banned literals (unambiguously vexp; harness-neutral phrasing is fine):
 #   mcp__vexp__   run_pipeline(   get_skeleton(
 #
-# Override scan root (testing): SMATCHET_VEXP_SCAN_ROOT.
+# Roots: agents/core/ is LAYER content, read from this script's own tree;
+# agents/project/ is HOST content, read from PROJECT_ROOT (scripts/dev/
+# project-config.sh — the superproject once the layer is a submodule). Before the
+# flip both are this checkout.
+#
+# Override scan root (testing): SMATCHET_VEXP_SCAN_ROOT — one tree for both.
 #
 # Usage:
 #   bash agents/scripts/core/test-portable-agent-vexp.sh            # scan the tree
@@ -30,11 +35,11 @@ set -uo pipefail
 
 VEXP_RE='mcp__vexp__|run_pipeline\(|get_skeleton\('
 
-# Scan agents/core + agents/project markdown under $1; echo offending files;
-# return 0 clean / 1 a hit.
+# _scan_vexp <layer_root> [<project_root>] — scan <layer_root>/agents/core and
+# <project_root>/agents/project markdown; echo offending files; 0 clean / 1 a hit.
 _scan_vexp() {
-    local root="$1" hits
-    hits="$(grep -rlE "$VEXP_RE" "$root/agents/core" "$root/agents/project" \
+    local root="$1" project="${2:-$1}" hits
+    hits="$(grep -rlE "$VEXP_RE" "$root/agents/core" "$project/agents/project" \
         --include='*.md' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         echo "$hits"
@@ -56,16 +61,32 @@ if [ "${1:-}" = "--selftest" ]; then
     if _scan_vexp "$tmp" >/dev/null; then
         echo "test-portable-agent-vexp --selftest: FAIL — vexp literal not caught"; exit 1
     fi
-    echo "test-portable-agent-vexp --selftest: PASS — clean passes, a vexp literal fails."
+    # Split roots (post-flip): a hit in the HOST's agents/project/ MUST be caught
+    # when the layer tree holding agents/core/ is clean.
+    mkdir -p "$tmp/L/agents/core" "$tmp/H/agents/project"
+    printf '# Reviewer\n' > "$tmp/L/agents/core/code-review.md"
+    printf 'Call mcp__vexp__run.\n' > "$tmp/H/agents/project/ui-host.md"
+    if _scan_vexp "$tmp/L" "$tmp/H" >/dev/null; then
+        echo "test-portable-agent-vexp --selftest: FAIL — a host project-agent hit not caught"; exit 1
+    fi
+    echo "test-portable-agent-vexp --selftest: PASS — clean passes, a vexp literal fails, split roots read each tree."
     exit 0
 fi
 
 ROOT="${SMATCHET_VEXP_SCAN_ROOT:-}"
+PROJECT="$ROOT"
 if [ -z "$ROOT" ]; then
     ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+    if [ -f "$ROOT/scripts/dev/project-config.sh" ]; then
+        # shellcheck source=scripts/dev/project-config.sh
+        PC_ROOTS_ONLY=1 . "$ROOT/scripts/dev/project-config.sh" || true
+    else
+        unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+    fi
+    PROJECT="${PROJECT_ROOT:-$ROOT}"
 fi
 
-if hits="$(_scan_vexp "$ROOT")"; then
+if hits="$(_scan_vexp "$ROOT" "$PROJECT")"; then
     echo "test-portable-agent-vexp: PASS — no vexp literal in portable agent prompts."
     exit 0
 fi

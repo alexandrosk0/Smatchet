@@ -36,6 +36,11 @@
 # ----------------------------------------------------------------------------
 set -uo pipefail
 
+# The audit is layer content beside this script; the tree it scans (Source/, the
+# baseline) is the host root below. After the flip the host has no agents/scripts/.
+# Resolved BEFORE the cd: a relative BASH_SOURCE names the caller's directory.
+_tsha_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "test-small-helper-audit: cannot resolve repo root (git required)" >&2
     echo "Passed: 0  Failed: 0"
@@ -43,7 +48,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$ROOT" || { echo "test-small-helper-audit: cannot cd to repo root" >&2; exit 2; }
 
-AUDIT="$ROOT/agents/scripts/core/small_helper_audit.py"
+AUDIT="$_tsha_dir/small_helper_audit.py"
 BASELINE="docs/high-integrity/small-helper-baseline.md"
 
 # command -v alone is insufficient on Windows: the python3 Store-alias stub passes it

@@ -134,7 +134,7 @@ It must pass the host `shell-lint` lane it will be committed under — `test-lin
 
 ## Phase C — the flip (Smatchet PR)
 
-11. `git rm -r agents/ docs/agent-rules/ docs/harness/` + `git rm docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + `git rm` the 61 layer-coupled bats suites + `git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (absolute public HTTPS URL — both repos public, resolves tokenless from forks and CI alike; 11b has the why-not-relative). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
+11. `git rm` exactly the seed manifest's pathspecs minus the mirrored files (`docs/mirrored-paths.txt`) — that is `agents/{core,_shared,scripts}/`, `docs/agent-rules/`, `docs/harness/`, `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, the two moved baselines, the layer's bats suites and fixtures, `tests/dev/comment_tooling/`, and the root `AGENTS.md` (row 13's stub replaces it in the same PR, before 11c runs); **not** `git rm -r agents/`, which also deletes `agents/project/` (host-side — the seed excludes it) and `agents/README.md` (corrected 2026-10-04, see 11a step 1) — + `git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (absolute public HTTPS URL — both repos public, resolves tokenless from forks and CI alike; 11b has the why-not-relative). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
 
 11a. **Ordered checklist.** Two commits, deliberately — a delete commit and an add commit — so the rollback in 11d has clean granularity and `git log --follow` in the host still traces the deletions:
 
@@ -153,13 +153,18 @@ git add docs/seed-paths.txt && git commit -m "chore(agent-layer): vendor the see
 #    docs/high-integrity baselines and the 61 bats suites, every one of which an
 #    `agents docs/agent-rules docs/harness` listing silently omits.
 awk 'NF && $1 !~ /^#/' docs/seed-paths.txt > /tmp/seed-paths.pathspec   # ls-files has no comment syntax
-git ls-files --pathspec-from-file=/tmp/seed-paths.pathspec > /tmp/pre-flip-inventory.txt
+# `git ls-files` takes no --pathspec-from-file (unlike `git rm`), so pass the specs as argv.
+tr '\n' '\0' < /tmp/seed-paths.pathspec | xargs -0 git ls-files -- > /tmp/pre-flip-inventory.txt
 
-# 1. remove the in-tree surface
-git rm -r -q agents docs/agent-rules docs/harness
-git rm -q docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
-git rm -q docs/high-integrity/portable-purity-baseline.txt docs/high-integrity/agent-size-baseline.md
-grep '^tests/bats/' docs/seed-paths.txt | xargs git rm -q   # the 61, from the vendored manifest
+# 1. remove the in-tree surface: exactly the manifest's pathspecs, minus the files the host
+#    keeps a byte-identical mirror of (docs/mirrored-paths.txt). NOT `git rm -r agents`: that
+#    also deletes agents/project/ — the product's specialist agents, which the seed excludes
+#    and which stay host-side — and agents/README.md. agent-layer-flip-probe.sh builds its
+#    post-flip host with this same rule, so a probe run is a rehearsal of this step.
+grep -vE '^[[:space:]]*(#|$)' docs/mirrored-paths.txt > /tmp/mirrored.txt
+grep -vxFf /tmp/mirrored.txt /tmp/seed-paths.pathspec > /tmp/flip-rm.pathspec
+git rm -r -q --pathspec-from-file=/tmp/flip-rm.pathspec
+test -d agents/project || { echo "agents/project/ was removed — abort"; exit 1; }
 git commit -m "refactor(agent-layer)!: remove the in-tree agent surface"
 
 # 2. mount the layer, pinned at the seed SHA
@@ -168,6 +173,10 @@ git config -f .gitmodules submodule.agent-layer.branch develop
 git -C agent-layer checkout <layer-sha-with-the-row-14-tmpl-fix>
 git add .gitmodules agent-layer
 git commit -m "feat(agent-layer): mount the-unwilling-agentic-bunch as agent-layer"
+
+# 2b. the root AGENTS.md left with the manifest in step 1: row 13's stub replaces it in
+#     this PR, before 11c — .claude/CLAUDE.md's `@../AGENTS.md` import has nothing to
+#     load until it lands.
 
 # 3. relink the harness — .claude/agents is per-file HARDLINKS into the now-deleted
 #    agents/*.md inodes; nothing re-materializes it on its own
@@ -188,7 +197,7 @@ Do **not** add `shallow = true`: the host lanes run the layer's merge-base-delta
 
 **Why the URL is absolute, not relative.** A relative `../the-unwilling-agentic-bunch.git` resolves against the **superproject's** `origin`, so it is correct only for clones of `alexandrosk0/Smatchet` itself. A fork at `github.com/<other>/Smatchet` resolves it to `<other>/the-unwilling-agentic-bunch`, which does not exist, so `git submodule update --init` fails for every forker and every fork-based CI run — and it fails as an auth prompt rather than a clear 404, because GitHub answers 404 for absent-or-private alike. The absolute public HTTPS URL `https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git` is tokenless from any clone, fork or CI checkout, which is the whole point of publishing the layer. A forker who genuinely wants *their own* layer overrides it locally and uncommitted: `git submodule sync agent-layer && git config submodule.agent-layer.url https://github.com/<other>/the-unwilling-agentic-bunch.git && git submodule update --init --recursive`. The order is load-bearing — `git submodule sync` **overwrites** `.git/config`'s `submodule.agent-layer.url` from `.gitmodules`, so the intuitive "set the URL, then sync" sequence discards the override and silently clones the canonical layer instead. Put both the `git submodule update --init --recursive` bootstrap and that override line in the root `AGENTS.md` stub (row 13) and the layer README. **Acceptance:** a fork-clone proof — clone through an origin that is *not* `alexandrosk0/Smatchet` (a real fork, or `git clone --origin upstream` from a mirror path) and assert `git submodule update --init --recursive` exits 0 with no credential prompt; it is a § Verification row and a step of the fresh-clone lane, and a relative URL fails it by construction.
 
-11c. **Verification battery, run locally before push** (each of these is a known post-flip break, not a formality): `bash agent-layer/agents/scripts/core/plan-lock-gate.sh` — it resolves `lib="$root/agents/scripts/core/lock-table-cache.sh"` from `git rev-parse --show-toplevel` and hard-exits 1 when absent, so the CI-invoked fail-CLOSED net reds on the very first post-flip PR unless Phase A rewired it; `bash scripts/dev/test-all.sh` — count the suites and compare against the pre-flip count (a drop means the `[ -d "$root" ]` root guard silently skipped a root, per 9d); `bash scripts/dev/test-docs.sh`; `bash agent-layer/agents/scripts/core/test-agent-discovery-fixture.sh`; `bash agent-layer/agents/scripts/core/test-orphan-bats.sh`.
+11c. **Verification battery, run locally before push** (each of these is a known post-flip break, not a formality): `bash agents/scripts/core/agent-layer-flip-probe.sh --rev <the flip branch's base>`, run from that base before step 1 — it builds this row's post-flip layout from a pre-flip commit and must be GREEN, every PENDING row naming a row this PR lands (it cannot run on the flip's own commits, which no longer carry the seed manifest it reads); `bash agent-layer/agents/scripts/core/plan-lock-gate.sh` — it resolves `lib="$root/agents/scripts/core/lock-table-cache.sh"` from `git rev-parse --show-toplevel` and hard-exits 1 when absent, so the CI-invoked fail-CLOSED net reds on the very first post-flip PR unless Phase A rewired it; `bash scripts/dev/test-all.sh` — count the suites and compare against the pre-flip count (a drop means the `[ -d "$root" ]` root guard silently skipped a root, per 9d); `bash scripts/dev/test-docs.sh`; `bash agent-layer/agents/scripts/core/test-agent-discovery-fixture.sh`; `bash agent-layer/agents/scripts/core/test-orphan-bats.sh`.
 
 11d. **Rollback recipe.** `git revert` restores the *tracked* state and nothing else — empirically it leaves the `[submodule "agent-layer"]` section in `.git/config`, an orphaned `.git/modules/agent-layer`, and `agent-layer/` on disk as an untracked non-empty directory (git itself warns `unable to rmdir agent-layer: Directory not empty`). Full recipe, for a flip that reached `develop` as a squash-merge:
 
@@ -207,7 +216,7 @@ bash agents/scripts/core/setup-harness.sh claude-code   # relink to the restored
 
 Pre-merge (two commits still on the branch) the equivalent is `git revert --no-commit <add-sha> <rm-sha> && git commit` **preceded** by the same three local-state lines (`deinit` → `rm -rf .git/modules/agent-layer` → `rm -rf agent-layer`), for the same reason: `deinit` needs `.gitmodules` still in the tree. **Every sibling worktree needs the local-state lines run independently** — a worktree keeps its own submodule clone under `<main>/.git/worktrees/<wt>/modules/agent-layer`, so clearing the main repo's copy leaves siblings stale.
 
-**Accept (row 11):** `git ls-files | grep -c '^agents/'` is 0; `git submodule status` shows a clean pin with no `+`/`-` prefix; `diff <(sed 's|^|agent-layer/|' /tmp/pre-flip-inventory.txt | sort) <(git -C agent-layer ls-files | sed 's|^|agent-layer/|' | sort)` shows only the seed-time additions; `ls .claude/agents/*.md | wc -l` matches the pre-flip count; every command in 11c exits 0.
+**Accept (row 11):** `git ls-files agents | grep -v '^agents/project/'` prints only `agents/README.md`, `test -d agents/project` holds, and `AGENTS.md` is row 13's stub (step 1 keeps `agents/project/` and `agents/README.md` on purpose, so the count of `^agents/` paths is not 0 — never delete `agents/project/` to make it so); `git submodule status` shows a clean pin with no `+`/`-` prefix; `diff <(sed 's|^|agent-layer/|' /tmp/pre-flip-inventory.txt | sort) <(git -C agent-layer ls-files | sed 's|^|agent-layer/|' | sort)` shows only the seed-time additions; `ls .claude/agents/*.md | wc -l` matches the pre-flip count; every command in 11c exits 0.
 
 12. `scripts/dev/project-config.sh` (or `project.config.json` § paths) — `AGENT_LAYER_ROOT=agent-layer`; `PROJECT_ROOT` stays the Smatchet root.
 

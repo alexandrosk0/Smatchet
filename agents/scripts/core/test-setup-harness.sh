@@ -17,8 +17,26 @@
 
 set -euo pipefail
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+# Two trees. The adapters setup-harness writes (.claude/, .codex/) and the project
+# agents (agents/project/) are HOST content: cwd is the host — PROJECT_ROOT from
+# scripts/dev/project-config.sh (the superproject once the layer is a submodule),
+# the very tree the setup-harness under test writes into, so the snapshot, the
+# restore and every assertion cover what the run wrote. (Not CLAUDE_PROJECT_DIR:
+# set to another checkout, it split the test from the writes — the assertions read
+# a tree nothing wrote, and the real writes went unrestored.) What the test runs
+# and reads from the layer (setup-harness.sh, agents/core/, the skills, the rule
+# docs, the harness templates) is addressed through LAYER, this script's own tree.
+# Before the flip the two are one checkout.
+LAYER="$(cd "$(dirname "$0")/../../.." && pwd)"
+if [ -f "$LAYER/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$LAYER/scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+PROJ_DIR="${PROJECT_ROOT:-$LAYER}"
 cd "$PROJ_DIR" || exit 1
+SETUP_HARNESS="$LAYER/agents/scripts/core/setup-harness.sh"
 
 PY=""
 for _c in python3 python py; do
@@ -75,7 +93,7 @@ trap _restore_harness_snapshot EXIT
 resolve_agent_md() {
     local name="$1"
     local candidate
-    for candidate in "agents/core/${name}.md" "agents/project/${name}.md" "agents/${name}.md"; do
+    for candidate in "$LAYER/agents/core/${name}.md" "$PROJ_DIR/agents/project/${name}.md" "$LAYER/agents/${name}.md"; do
         if [[ -f "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return 0
@@ -87,7 +105,7 @@ resolve_agent_md() {
 # -------------------------------------------------------------------- Test 1
 note "Test 1 — first run links perf-measure + perf-instrument skills"
 # setup-harness.sh is idempotent; if links exist, this is a no-op.
-SETUP_OUT_1=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
+SETUP_OUT_1=$(bash "$SETUP_HARNESS" claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 
 if [[ -e ".claude/skills/perf-measure/SKILL.md" ]]; then
     ok "perf-measure SKILL.md reachable via .claude/skills/"
@@ -121,7 +139,7 @@ done
 
 # -------------------------------------------------------------------- Test 3
 note "Test 3 — re-run produces zero new link-dir lines (idempotency)"
-SETUP_OUT_2=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
+SETUP_OUT_2=$(bash "$SETUP_HARNESS" claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 NEW_LINKS=$(echo "$SETUP_OUT_2" | grep -c '^\s*link-' || true)
 if [[ "$NEW_LINKS" -eq 0 ]]; then
     ok "idempotent re-run (zero new link- lines)"
@@ -142,7 +160,7 @@ done
 # -------------------------------------------------------------------- Test 5
 note "Test 5 — SKILL.md aliases have sync-warning header"
 for skill in perf-measure perf-instrument; do
-    SKILL_FILE="agents/_shared/skills/$skill/SKILL.md"
+    SKILL_FILE="$LAYER/agents/_shared/skills/$skill/SKILL.md"
     if [[ ! -f "$SKILL_FILE" ]]; then
         nope "$SKILL_FILE missing"
         continue
@@ -171,7 +189,7 @@ for agent in perf-detective spike-hunter debug-detective; do
     fi
 done
 
-if grep -q "Claude Code skill alias" "docs/agent-rules/delegation.md"; then
+if grep -q "Claude Code skill alias" "$LAYER/docs/agent-rules/delegation.md"; then
     ok "delegation.md mentions skill-alias availability"
 else
     nope "delegation.md missing skill-alias note"
@@ -179,8 +197,8 @@ fi
 
 # -------------------------------------------------------------------- Test 7
 note "Test 7 — sync-settings-hooks.sh heals missing template hooks (additive, non-destructive)"
-T7_SYNC="agents/scripts/core/sync-settings-hooks.sh"
-T7_TMPL="docs/harness/claude-code/settings.json.tmpl"
+T7_SYNC="$LAYER/agents/scripts/core/sync-settings-hooks.sh"
+T7_TMPL="$LAYER/docs/harness/claude-code/settings.json.tmpl"
 if ! command -v jq >/dev/null 2>&1; then
     ok "Test 7 skipped — jq not installed (sync degrades to a WARN by design)"
 elif [[ ! -f "$T7_SYNC" || ! -f "$T7_TMPL" ]]; then
@@ -257,7 +275,7 @@ fi
 
 # -------------------------------------------------------------------- Test 8
 note "Test 8 - codex setup generates native hooks/agents without clobbering Claude setup"
-SETUP_CODEX_OUT=$(bash agents/scripts/core/setup-harness.sh codex 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
+SETUP_CODEX_OUT=$(bash "$SETUP_HARNESS" codex 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 if echo "$SETUP_CODEX_OUT" | grep -q 'Codex parity report:'; then
     ok "codex setup emits parity report"
 else
@@ -288,7 +306,7 @@ if [[ -f ".codex/config.toml" && -f ".codex/hooks.json" ]]; then
 else
     nope ".codex config or hooks missing after codex setup"
 fi
-CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) ))
+CANONICAL_AGENT_COUNT=$(( $(find "$LAYER/agents/core" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) + $(find "$PROJ_DIR/agents/project" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) ))
 CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ' || true)
 if [[ "$CODEX_AGENT_COUNT" -eq "$CANONICAL_AGENT_COUNT" ]]; then
     ok ".codex/agents count matches canonical agent count"

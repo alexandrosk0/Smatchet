@@ -90,6 +90,7 @@ STEPS=(
   "test-markdown-links|bash $CORE/test-markdown-links.sh$MDLINKS_SCOPE"
   "test-orphan-bats|bash $CORE/test-orphan-bats.sh --selftest && bash $CORE/test-orphan-bats.sh"
   "work_item_lint|$PY $CORE/work_item_lint.py --selftest && $PY $CORE/work_item_lint.py --all && bash scripts/dev/test-work-item-lint.sh"
+  "test-mirrored-paths|bash scripts/dev/test-mirrored-paths.sh --selftest && bash scripts/dev/test-mirrored-paths.sh"
 )
 
 # Standalone agent-layer subset (plan agent-surface-extraction-repo row 9b). This
@@ -108,6 +109,7 @@ declare -A HOST_ONLY_STEPS=(
   [test-required-context-adr-consistency]="reads docs/adr/ and docs/plans/shipped/"
   [test-agent-build-facts]="resolves the product's CMakePresets.json"
   [work_item_lint]="reads docs/work/"
+  [test-mirrored-paths]="compares the host's mirrored files with the layer's; a standalone layer is one tree"
 )
 # Steps that run in the standalone layer. A new STEPS entry breaks this count on
 # purpose: classify it — layer-runnable (bump this) or host-only (add it above).

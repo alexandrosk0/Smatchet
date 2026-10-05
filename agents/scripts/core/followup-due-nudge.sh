@@ -40,7 +40,18 @@
 #   FOLLOWUP_PLANS_DIR (where plan-shipped looks; default docs/plans/shipped).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.." || exit 0
+# Host content (docs/self-improvement/, docs/plans/) is read from PROJECT_ROOT: scripts/dev/
+# project-config.sh resolves it to the superproject once this script lives in the
+# agent-layer/ submodule, and to this checkout before the flip. A climb from this
+# script's own path would land in the layer after the flip and find nothing.
+_fdn_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_fdn_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_fdn_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_fdn_self/../../..}" || exit 0
 
 MODE="nudge"
 case "${1:-}" in

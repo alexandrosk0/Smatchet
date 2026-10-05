@@ -62,7 +62,18 @@
 #   2 — missing binary (python)
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# The tree whose markdown is checked is PROJECT_ROOT (scripts/dev/project-config.sh):
+# the host before and after the flip — once this script lives in the agent-layer/
+# submodule it is the superproject — and the layer itself in the layer's own CI. A
+# climb from this script's path would check the layer's markdown from the host.
+_tml_self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+if [ -f "$(dirname "$_tml_self")/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$(dirname "$_tml_self")/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$(dirname "$_tml_self")/../../..}"
 
 if [ "${SMATCHET_SKIP_MARKDOWN_LINK_CHECK:-0}" = "1" ]; then
     echo "test-markdown-links: SMATCHET_SKIP_MARKDOWN_LINK_CHECK=1 — skipping" >&2
@@ -111,14 +122,14 @@ if [ "${1:-}" = "--selftest" ]; then
     # (like most of agents/scripts/core), so executing it directly fails with
     # "permission denied" on a POSIX checkout — which made BOTH assertions below
     # read the same non-zero exit and reported the second one as a false failure.
-    if bash "$0" >/dev/null 2>&1; then
+    if bash "$_tml_self" >/dev/null 2>&1; then
         echo "test-markdown-links --selftest: FAIL — untracked dangling link NOT detected (scope skipped untracked)" >&2
         fail=1
     fi
     rm -f "$bad"
     # A clean untracked markdown (no relative links) must PASS.
     printf '# selftest\n\nno relative links here\n' > "$good"
-    if ! bash "$0" >/dev/null 2>&1; then
+    if ! bash "$_tml_self" >/dev/null 2>&1; then
         echo "test-markdown-links --selftest: FAIL — clean untracked file wrongly flagged" >&2
         fail=1
     fi

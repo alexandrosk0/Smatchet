@@ -21,11 +21,14 @@
 # USAGE
 #   agent-layer-sim.sh [--rev REV] [--dir DIR] [--keep] [--lane NAME]... [--help]
 #   agent-layer-sim.sh --run-only DIR [--lane NAME]...
+#   agent-layer-sim.sh --build-only [--rev REV] [--dir DIR]
 #
 #   --rev REV       Commit to image (default HEAD). The image is built from git
 #                   objects, so uncommitted edits are NOT simulated.
 #   --dir DIR       Where to build the image. Must not exist. Default: a mktemp dir.
 #   --keep          Keep the image after a green run (a red run always keeps it).
+#   --build-only    Build the image and stop: no lanes, the image is kept. The
+#                   flip probe (agent-layer-flip-probe.sh) mounts it as a submodule.
 #   --run-only DIR  Skip the build; run the lanes in an existing layer tree. Used
 #                   by seed phase 4c on the rewritten clone. The tree must start
 #                   clean, and anything the lanes leave behind — a modified tracked
@@ -81,6 +84,7 @@ REV="HEAD"
 DIR=""
 KEEP=0
 RUN_ONLY=""
+BUILD_ONLY=0
 LANES=()
 ADDED_ORIGIN=0
 ORIGIN_MIRROR=""
@@ -102,6 +106,7 @@ parse_args() {
         case "$1" in
             --help|-h)     usage; exit 0 ;;
             --keep)        KEEP=1; shift ;;
+            --build-only)  BUILD_ONLY=1; shift ;;
             --rev)         [ "$#" -ge 2 ] || die 2 "--rev needs a value"
                            REV="$2"; shift 2 ;;
             --rev=*)       REV="${1#--rev=}"; shift ;;
@@ -117,7 +122,10 @@ parse_args() {
             *)             usage >&2; die 2 "unknown argument: $1" ;;
         esac
     done
-    if [ "${#LANES[@]}" -eq 0 ]; then
+    if [ "$BUILD_ONLY" -eq 1 ] && { [ -n "$RUN_ONLY" ] || [ "${#LANES[@]}" -gt 0 ]; }; then
+        die 2 "--build-only runs no lanes; it cannot be combined with --run-only or --lane"
+    fi
+    if [ "${#LANES[@]}" -eq 0 ] && [ "$BUILD_ONLY" -eq 0 ]; then
         LANES=("${LANE_ORDER[@]}")
     fi
     local lane
@@ -270,6 +278,10 @@ check_no_exit2_skips() {
 }
 
 main() {
+    # An inherited GIT_DIR (a hook, a linked worktree) would aim every `git -C` below
+    # at the SOURCE repository — git honours GIT_DIR over -C — so a checkout or an
+    # update-ref meant for a scratch clone would move the source's HEAD and refs.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     parse_args "$@"
     preflight
 
@@ -279,6 +291,10 @@ main() {
         KEEP=1
     else
         build_image
+    fi
+    if [ "$BUILD_ONLY" -eq 1 ]; then
+        say "built — no lanes run (--build-only); image kept at $DIR"
+        exit 0
     fi
     # The post-run check attributes every change in the tree to the lanes, so the
     # tree has to start clean: nothing modified, nothing untracked outside .gitignore.

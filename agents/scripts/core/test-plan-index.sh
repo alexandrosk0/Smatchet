@@ -45,8 +45,13 @@ fi
 # tree holding ONLY agents/scripts/core/ — no scripts/dev/ at all — so a hard
 # dependency on project-config.sh would make this gate unrunnable there. The
 # fallback keeps every reduced tree behaving exactly as it does today.
-# shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+_tpi_pc="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+if [ -f "$_tpi_pc" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_tpi_pc" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${PROJECT_ROOT:=$(pwd)}"
 
 # docs/plans/ is HOST content and stays host-side; this script moves into the
@@ -169,8 +174,11 @@ if [ "$MODE" = "selftest" ]; then
     # the re-invocations below. Without this the defaults anchor on the real
     # repo's root (they no longer follow `git rev-parse --show-toplevel`, which
     # is the whole point of row 5b) and every assertion here would silently read
-    # the real docs/plans/ instead of the fixture it just built.
-    export PROJECT_ROOT="$_st_tmp"
+    # the real docs/plans/ instead of the fixture it just built. The override is
+    # what makes project-config.sh take a root that is not this checkout's host;
+    # without it the re-invocations would warn and fall back to the REAL tree,
+    # where --fix writes.
+    export PROJECT_ROOT="$_st_tmp" SMATCHET_PROJECT_ROOT_OVERRIDE=1
     git init -q || exit 90
     git config user.email t@t.t || exit 90
     git config user.name t || exit 90

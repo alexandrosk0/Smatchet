@@ -110,7 +110,8 @@
 #                                  (newline/comma-separated). When set (even ""),
 #                                  bypasses the project.config.json read. Tests
 #                                  inject a fixture-matching set this way.
-#   SAFE_ADMIN_MERGE_CONFIG_FILE — override project.config.json path.
+#   SAFE_ADMIN_MERGE_CONFIG_FILE — override project.config.json path (default: the
+#                                  host config merge-gates.sh resolved).
 #   SAFE_ADMIN_MERGE_STUB_ROLLUP — TEST-ONLY: a JSON blob used in place of the
 #                                  `gh pr view` call (the full --json object:
 #                                  {statusCheckRollup,state,labels,commits}). Lets
@@ -178,7 +179,9 @@ read_required_contexts() {
         printf '%s\n' "${SAFE_ADMIN_MERGE_REQUIRED_CONTEXTS//,/$'\n'}"
         return 0
     fi
-    local config_file="${SAFE_ADMIN_MERGE_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}"
+    # The HOST's config, as merge-gates.sh resolved it (PC_CONFIG_FILE): after the
+    # flip this script's own tree is the layer, whose config names only its 3 lanes.
+    local config_file="${SAFE_ADMIN_MERGE_CONFIG_FILE:-${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}}"
     if [ -f "$config_file" ] && command -v jq >/dev/null 2>&1; then
         jq -r '.branch_protection.required_contexts[]? // empty' "$config_file" 2>/dev/null || true
     fi
@@ -330,8 +333,16 @@ detect_cr_installed() {
         printf '%s' "$SAFE_ADMIN_MERGE_CR_INSTALLED"
         return 0
     fi
-    local root="$SCRIPT_DIR/../../.."
-    if [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
+    # The HOST repo's CodeRabbit config: PROJECT_ROOT (loaded through merge-gates.sh)
+    # is the superproject once this script lives in the agent-layer/ submodule, which
+    # carries a .coderabbit.yaml of its own.
+    # Fail closed: only a tree that is recognisably a host (it carries
+    # project.config.json) may answer "not installed". Anything else — an empty or
+    # foreign root — counts as installed, so the gate waits for a review rather than
+    # waving the merge through.
+    local root="${PROJECT_ROOT:-$SCRIPT_DIR/../../..}"
+    if [ ! -f "$root/project.config.json" ] \
+       || [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
         printf 'true'
     else
         printf 'false'
@@ -486,7 +497,7 @@ downgraded_red_checks() {
 # ----------------------------------------------------------------------------
 override_labels_csv() {
     local view_json="$1"
-    local cfg="${SAFE_ADMIN_MERGE_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}"
+    local cfg="${SAFE_ADMIN_MERGE_CONFIG_FILE:-${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}}"
     local cfg_json='[]'
     if [ -f "$cfg" ]; then
         cfg_json=$(jq -c '[.merge_gates.override_labels[]?]' "$cfg" 2>/dev/null) || cfg_json='[]'

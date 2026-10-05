@@ -50,8 +50,8 @@ nlohmann::json MarkdownToAdf(const std::string& md) {
     parser.flags = Md4cParserFlags();
     parser.enter_block = md_detail::AdfEnterBlock;
     parser.leave_block = md_detail::AdfLeaveBlock;
-    parser.enter_span = md_detail::AdfEnterSpan;
-    parser.leave_span = md_detail::AdfLeaveSpan;
+    parser.enter_span = md_detail::SpanOutsideImageDescription<md_detail::AdfBuilder, md_detail::AdfEnterSpan>;
+    parser.leave_span = md_detail::SpanOutsideImageDescription<md_detail::AdfBuilder, md_detail::AdfLeaveSpan>;
     parser.text = md_detail::AdfTextCallback;
     parser.debug_log = Md4cDebugLogShim;
     parser.syntax = nullptr;
@@ -86,8 +86,8 @@ std::string MarkdownToHtml(const std::string& md) {
     parser.flags = Md4cParserFlags();
     parser.enter_block = md_detail::HtmlEnterBlock;
     parser.leave_block = md_detail::HtmlLeaveBlock;
-    parser.enter_span = md_detail::HtmlEnterSpan;
-    parser.leave_span = md_detail::HtmlLeaveSpan;
+    parser.enter_span = md_detail::SpanOutsideImageDescription<md_detail::HtmlBuilder, md_detail::HtmlEnterSpan>;
+    parser.leave_span = md_detail::SpanOutsideImageDescription<md_detail::HtmlBuilder, md_detail::HtmlLeaveSpan>;
     parser.text = md_detail::HtmlTextCallback;
     parser.debug_log = Md4cDebugLogShim;
     parser.syntax = nullptr;

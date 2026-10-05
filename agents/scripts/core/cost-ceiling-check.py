@@ -28,13 +28,28 @@ Exit: 0 = under ceiling / disabled / no data (and on hit unless --blocking);
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 
 def _project_dir() -> Path:
-    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[3])
+    """The HOST tree: CLAUDE_PROJECT_DIR in a hook, else PROJECT_ROOT, else — run by
+    hand — the superproject of the agent-layer/ submodule this file lives in, or this
+    file's own tree (before the flip, and in the standalone layer)."""
+    env = os.environ.get("CLAUDE_PROJECT_DIR") or os.environ.get("PROJECT_ROOT")
+    if env:
+        return Path(env)
+    layer = Path(__file__).resolve().parents[3]
+    try:
+        sup = subprocess.run(
+            ["git", "-C", str(layer), "rev-parse", "--show-superproject-working-tree"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        sup = ""
+    return Path(sup) if sup else layer
 
 
 def read_ceiling(config_path: Path) -> int:

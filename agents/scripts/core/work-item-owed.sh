@@ -20,7 +20,18 @@
 # blocks. Exit 0 always in --list/--nudge (pure filesystem scan, no gh).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Host content (docs/work/) is read from PROJECT_ROOT: scripts/dev/
+# project-config.sh resolves it to the superproject once this script lives in the
+# agent-layer/ submodule, and to this checkout before the flip. A climb from this
+# script's own path would land in the layer after the flip and find nothing.
+_wio_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_wio_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_wio_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_wio_self/../../..}" || exit 2
 
 MODE="list"
 case "${1:-}" in
@@ -132,7 +143,7 @@ if [ "$MODE" = "selftest" ]; then
           "$items/09-multi-closed/5-review-2-codex-sol.md" \
           "$items/09-multi-closed/5-resolution-2-claude-opus.md"
     out="$tmp/out"
-    WORK_ITEMS_DIR="$items" bash agents/scripts/core/work-item-owed.sh --list > "$out" || true
+    WORK_ITEMS_DIR="$items" bash "$_wio_self/work-item-owed.sh" --list > "$out" || true
     assert_next() {
         grep -qF "work item open: $1 — next: $2" "$out" \
             || { echo "FAIL: $1 expected next '$2'; got: $(grep -F "$1" "$out" || echo '<missing>')"; fail=1; }
@@ -150,10 +161,10 @@ if [ "$MODE" = "selftest" ]; then
     assert_next "09-multi-closed"  "retro + close (drain Spawned.md, collapse to docs/work/closed/ — close-work-item skill)"
     # Empty items dir → silent nudge (no block emitted).
     empty="$tmp/empty"; mkdir -p "$empty"
-    nout="$(WORK_ITEMS_DIR="$empty" bash agents/scripts/core/work-item-owed.sh --nudge)"
+    nout="$(WORK_ITEMS_DIR="$empty" bash "$_wio_self/work-item-owed.sh" --nudge)"
     [ -z "$nout" ] || { echo "FAIL: nudge not silent on empty items dir"; fail=1; }
     # Missing items dir → silent, exit 0 (fresh clone before Phase 1 tree).
-    mout="$(WORK_ITEMS_DIR="$tmp/nonexistent" bash agents/scripts/core/work-item-owed.sh --nudge)" \
+    mout="$(WORK_ITEMS_DIR="$tmp/nonexistent" bash "$_wio_self/work-item-owed.sh" --nudge)" \
         || { echo "FAIL: missing items dir must exit 0"; fail=1; }
     [ -z "$mout" ] || { echo "FAIL: nudge not silent on missing items dir"; fail=1; }
     if [ "$fail" = "0" ]; then echo "work-item-owed --selftest: PASS (11/11)"; exit 0; fi
