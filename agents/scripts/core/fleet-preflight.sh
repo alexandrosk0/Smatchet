@@ -43,7 +43,18 @@
 #                              (default min(16, nproc-2)).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Host content (.claude/.active-sessions, the caller's workflow paths) is read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to
+# the superproject once this script lives in the agent-layer/ submodule, and to this
+# checkout before the flip. A climb from this script's own path would land in the
+# layer after the flip.
+_ffp_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_ffp_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_ffp_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_ffp_self/../../..}"
 
 usage() { echo "usage: fleet-preflight.sh <workflow-script> [fleet-dir] [--strict] | --selftest" >&2; }
 
@@ -51,15 +62,15 @@ usage() { echo "usage: fleet-preflight.sh <workflow-script> [fleet-dir] [--stric
 # Proves the gate's contract from inline fixtures: the canonical hard violation
 # (a multi-agent fan-out with no model: pin — failure 2) must exit non-zero
 # under --strict, and a clean fan-out must exit 0. Synths the fixtures in a
-# temp dir and re-invokes this script via its repo-relative path (post-`cd` cwd
-# is repo-root), matching the sibling convention (plan-archival-owed.sh).
+# temp dir and re-invokes this script by its own absolute path (cwd is the host
+# root, which after the flip carries no agents/scripts/ of its own).
 # selftest: asserts-failure — the violating fixture MUST exit non-zero under
 # --strict; if it does not, the gate is inert and the selftest FAILs.
 run_selftest() {
     local fail=0 tmp out rc
     tmp="$(mktemp -d)" || { echo "fleet-preflight selftest: mktemp failed" >&2; return 2; }
     trap 'rm -rf "$tmp"' RETURN
-    self="agents/scripts/core/fleet-preflight.sh"
+    self="$_ffp_self/fleet-preflight.sh"
 
     # Pin the check-6 slot count so the selftest isolates the model-pin behavior
     # it targets. Without this, check 6 falls back to min(16, nproc-2); on a host

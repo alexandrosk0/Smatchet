@@ -21,7 +21,18 @@
 # blocks. Exit 0 always on the scan paths (filesystem-only; no gh needed).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Host content (root *_AUDIT.md, docs/plans/) is read from PROJECT_ROOT: scripts/dev/
+# project-config.sh resolves it to the superproject once this script lives in the
+# agent-layer/ submodule, and to this checkout before the flip. A climb from this
+# script's own path would land in the layer after the flip and find nothing.
+_ads_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_ads_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_ads_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_ads_self/../../..}" || exit 2
 
 MODE="list"
 case "${1:-}" in
@@ -78,7 +89,7 @@ if [ "$MODE" = "selftest" ]; then
     # Fixture 3: no shipped companion → not owed (remediation still in flight).
     printf '# Audit C\nFinding 1: open.\n' > "$tmp/root/FRESH_AUDIT.md"
     AUDIT_ROOT="$tmp/root" SHIPPED_DIR="$tmp/shipped" \
-        bash agents/scripts/core/audit-doc-status-owed.sh --list 2>/dev/null > "$tmp/out" || true
+        bash "$_ads_self/audit-doc-status-owed.sh" --list 2>/dev/null > "$tmp/out" || true
     assert_has()  { grep -q "audit-doc status owed: $1" "$tmp/out" || { echo "FAIL: expected $1 owed"; fail=1; }; }
     assert_miss() { if grep -q "audit-doc status owed: $1" "$tmp/out"; then echo "FAIL: $1 should NOT be owed"; fail=1; fi; }
     # selftest: asserts-failure — a shipped-companion + unmarked audit fixture must be flagged.

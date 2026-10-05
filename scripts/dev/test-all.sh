@@ -153,9 +153,13 @@ LAYER_HOST_SUT_RE='^(test-android-openssl-failfast-bats|test-harness-provisioned
 # cwd is the host tree and the layer is either that same directory (pre-flip) or
 # a subdirectory of it (agent-layer/, post-flip), so a relative prefix is always
 # expressible — and it keeps every discovered path, and so every heading this
-# script prints and every path CI_SKIP_RE matches against, byte-identical to what
-# it printed before. An absolute prefix would work but would churn the output of
-# a runner whose whole job is a comparable log.
+# script prints, byte-identical to what it printed before. An absolute prefix
+# would work but would churn the output of a runner whose whole job is a
+# comparable log. project-config.sh hands both roots over absolute (CI's relative
+# `AGENT_LAYER_ROOT: .` included), so pre-flip the prefix is empty in CI as well as
+# locally — CI's headings read `# agents/…`, as a local run's do, where they once
+# read `# ./agents/…`. The skip lists match on the basename, so neither form moves
+# a skip.
 _ta_layer_prefix=""
 if [ "$AGENT_LAYER_ROOT" != "$(pwd)" ]; then
     # The strip is a no-op when the layer is NOT under cwd (an explicitly-set

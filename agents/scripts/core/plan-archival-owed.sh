@@ -21,7 +21,18 @@
 # Exit 0 always (even without gh: the filesystem marker is self-sufficient).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Host content (docs/plans/) is read from PROJECT_ROOT: scripts/dev/
+# project-config.sh resolves it to the superproject once this script lives in the
+# agent-layer/ submodule, and to this checkout before the flip. A climb from this
+# script's own path would land in the layer after the flip and find nothing.
+_pao_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_pao_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_pao_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_pao_self/../../..}" || exit 2
 
 MODE="list"
 case "${1:-}" in
@@ -39,7 +50,7 @@ ACTIVE_DIR="${PLAN_ACTIVE_DIR:-docs/plans/active}"
 # unresolved slug does NOT block — it only disables the optional gh consistency
 # note (GH_OK gates on a non-empty REPO below).
 # shellcheck source=agents/scripts/core/lib/resolve-repo.sh
-. agents/scripts/core/lib/resolve-repo.sh
+. "$_pao_self/lib/resolve-repo.sh"
 REPO="$(resolve_repo || true)"
 
 # is_shipped_marker <file> — true if the plan's Status header VALUE is `shipped`.
@@ -133,7 +144,7 @@ EOF
     # not redirect the scan back at the real active/ tree. Run from repo-root
     # (current cwd post-`cd`) via the repo-relative script path.
     PLAN_ACTIVE_DIR="$act" REPO="x/y" \
-        bash agents/scripts/core/plan-archival-owed.sh --list 2>/dev/null > "$tmp/out" || true
+        bash "$_pao_self/plan-archival-owed.sh" --list 2>/dev/null > "$tmp/out" || true
     assert_has()  { grep -q "plan archival owed: $1\b" "$tmp/out" || { echo "FAIL: expected $1 owed"; fail=1; }; }
     assert_miss() { grep -q "plan archival owed: $1\b" "$tmp/out" && { echo "FAIL: $1 should NOT be owed"; fail=1; } || true; }
     # selftest: asserts-failure — a shipped-but-unarchived plan fixture must be detected as owed (the gate's flag path).

@@ -32,6 +32,13 @@
 #   self-locating  names neither by literal; resolves everything from its own
 #                  location -> survives the flip untouched
 #
+# AN INVENTORY, NOT A PROOF. The class records which trees a script NAMES, not
+# whether it reaches them through the right root — a dual script that routes its
+# host paths through $PROJECT_ROOT classifies exactly like one that does not. The
+# proof that the rewire holds is agent-layer-flip-probe.sh, which runs the host's
+# layer invocations in the post-flip layout. Nothing gates on this baseline; refresh
+# it with --regen when a slice changes which trees a script names.
+#
 # A "path" here is a literal appearing anywhere in the file, comments included.
 # That is deliberate: a stale comment naming a path that no longer resolves is
 # itself a defect this sweep should surface, and excluding comments would need a

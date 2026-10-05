@@ -61,11 +61,16 @@ note() { echo "$*"; }
 # value-taking flag with no value would spin the parse loop forever.
 need_val() { [ $# -ge 2 ] || die "$1 requires a value"; }
 
+# The guard is layer content beside this script — after the flip the host root below
+# has no agents/scripts/core/ of its own. Resolved BEFORE the cd: a relative
+# BASH_SOURCE names the caller's directory, not the root's.
+_rr_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || die "cannot resolve this script's directory"
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git work tree"
 cd "$ROOT" || die "cannot cd to repo root"
 
 # shellcheck source=lib/review-guard.sh
-source "$ROOT/agents/scripts/core/lib/review-guard.sh"
+source "$_rr_dir/lib/review-guard.sh" || die "cannot load $_rr_dir/lib/review-guard.sh"
 
 # Same interpreter dance as scripts/dev/test-docs.sh: on Windows `python3` is
 # the Store alias stub, so resolve by actually executing a candidate.
@@ -95,7 +100,7 @@ while [ $# -gt 0 ]; do
         --smoke-test)      SMOKE_TEST=1; shift ;;
         # generic-only in the original; the generic gate was not ported.
         --brief)           die "--brief applies only to the 'generic' gate, which is not ported" ;;
-        -h|--help)         sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)         sed -n '2,60p' "$_rr_dir/$(basename "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)                 die "unknown argument: $1 (see --help)" ;;
     esac
 done

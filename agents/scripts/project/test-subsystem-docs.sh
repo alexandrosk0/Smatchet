@@ -25,7 +25,21 @@
 # ----------------------------------------------------------------------------
 set -uo pipefail
 
-cd "$(dirname "$0")/../../.."
+# Host content (CONTEXT-MAP.md, the Source/ leaf docs) is read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to
+# the superproject once this script lives in the agent-layer/ submodule, and to this
+# checkout before the flip. A climb from this script's own path would land in the
+# layer after the flip.
+# The central checklist (agents/core/code-review.md) is layer content, read from
+# this script's own tree.
+_tsd_self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+_tsd_layer="$(cd "$(dirname "$_tsd_self")/../../.." && pwd)"
+if [ -f "$_tsd_layer/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_tsd_layer/scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_tsd_layer}"
 
 # MAP/SRC_GLOB are read-only override seams (no command-from-env injection) so
 # --selftest can point check 1 (registered-leaf-missing-on-disk) at a synthetic
@@ -34,7 +48,7 @@ cd "$(dirname "$0")/../../.."
 # a logic change. SUBSYS_DOCS_NEGCHECK guards against selftest re-entrancy.
 MAP="${SUBSYS_DOCS_MAP:-CONTEXT-MAP.md}"
 SRC_GLOB="${SUBSYS_DOCS_SRC_GLOB:-Source/Core/src}"
-CENTRAL="agents/core/code-review.md"
+CENTRAL="$_tsd_layer/agents/core/code-review.md"
 
 # Default (no args, as test-all.sh invokes it): structural checks + staleness vs
 # origin/develop when that ref resolves. --diff names an explicit ref; --selftest
@@ -70,7 +84,7 @@ if [[ "$MODE" == "selftest" && "${SUBSYS_DOCS_NEGCHECK:-0}" != "1" ]]; then
 EOF
   mkdir -p "$_neg_tmp/src"   # SRC_GLOB root exists but holds no */AGENTS.md
   if SUBSYS_DOCS_NEGCHECK=1 SUBSYS_DOCS_MAP="$_neg_tmp/MAP.md" \
-       SUBSYS_DOCS_SRC_GLOB="$_neg_tmp/src" bash "$0" --selftest >/dev/null 2>&1; then
+       SUBSYS_DOCS_SRC_GLOB="$_neg_tmp/src" bash "$_tsd_self" --selftest >/dev/null 2>&1; then
     echo "test-subsystem-docs selftest: FAIL — a registry naming a missing-on-disk leaf was NOT detected" >&2
     exit 1
   fi

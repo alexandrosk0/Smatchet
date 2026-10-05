@@ -59,8 +59,12 @@ set -euo pipefail
 # config must degrade to the original guard-hook-only behaviour rather than
 # abort. AGENT_LAYER_ROOT then falls back to the script's own climb.
 _chp_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-. "$_chp_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_chp_self_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_chp_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_chp_self_root}"
 
 # The content probe is itself LAYER content, so it can be missing for exactly the
@@ -126,9 +130,11 @@ check_layer() {
     # Content freshness. Skipped when .claude/agents was never built at all —
     # that is the unprovisioned state check_tree already reports, and claiming
     # "stale" for it would name the wrong remedy.
-    if [ -d "$agents_dest" ] && ! agents_dir_current "$agents_dest" "$layer_root"; then
+    # agents/project/ is host content: it stays in TREE at the flip, so it is
+    # compared from there while agents/core/ follows the layer.
+    if [ -d "$agents_dest" ] && ! agents_dir_current "$agents_dest" "$layer_root" "$tree"; then
         {
-            echo "⚠ agent links STALE: $agents_dest does not match $layer_root/agents/{core,project}/."
+            echo "⚠ agent links STALE: $agents_dest does not match $layer_root/agents/core/ + $tree/agents/project/."
             echo "  On Windows these are HARDLINKS, which share an inode with the canonical"
             echo "  file. \`git submodule update\` checks out NEW files rather than editing in"
             echo "  place, so advancing the layer leaves every existing link on the OLD inode,"

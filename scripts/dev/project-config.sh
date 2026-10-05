@@ -3,6 +3,9 @@
 #
 # Usage:  . scripts/dev/project-config.sh        # source it; sets PC_* in caller
 #         bash scripts/dev/project-config.sh      # print the exports (debug)
+#         PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh
+#                                                 # the dual-root pair only: no python,
+#                                                 # no JSON parse, no config-file check
 #
 # The portable agentic layer (agents/core, agents/_shared, docs/agent-rules,
 # docs/harness, generic scripts) must read project-specific values from here
@@ -50,6 +53,94 @@ _pc_resolve_config() {
 }
 PC_CONFIG_FILE="$(_pc_resolve_config)"
 
+# Dual-root pair. AGENT_LAYER_ROOT is the tree holding agents/, docs/agent-rules/
+# and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
+# Source/ and project.config.json. Pre-flip both are the repo root, so every
+# consumer rewritten to address a tree through one of these is a provable no-op.
+# Each honours a caller-set value only when it names a tree this copy would resolve
+# by itself: PROJECT_ROOT the host the rungs above find; AGENT_LAYER_ROOT this copy's
+# own tree or that host's agent-layer/ mount (the flip's CI value for the host's own
+# scripts). CI's `.`, the standalone layer, the simulator and every runner that
+# exports its own tree all pass. Any other value is ignored with a WARN — and the two
+# are checked together, because they are exported together: a stale export from a
+# sibling checkout carries both, and honouring either half alone splits the pair
+# (setup-harness then links this checkout's .claude/ into the sibling's layer). A
+# caller that really means another tree (a test fixture) says so with
+# SMATCHET_PROJECT_ROOT_OVERRIDE=1, which covers both.
+#
+# Both are made absolute. CI sets the pair relative to the workspace
+# (`PROJECT_ROOT: .`), and a consumer that cds into one root and then builds a path
+# from the other would resolve a relative value against the wrong tree — after the
+# flip, `cd "$AGENT_LAYER_ROOT"` followed by "$PROJECT_ROOT/Source" names
+# agent-layer/Source. A value that is not an existing directory is kept as given.
+#
+# Note the bare name PROJECT_ROOT is also a LOCAL variable in the Unreal-plugin
+# scripts under scripts/dev/local/ and scripts/publish/, where it means "the
+# Unreal project to deploy into". None of those source this file and each assigns
+# the variable before first use, so the export cannot leak in — do not "fix" the
+# apparent collision. PC_PROJECT_ROOT is the namespaced alias for callers that
+# prefer to avoid the bare name entirely.
+_pc_abs() {
+  if [ -d "$1" ]; then (CDPATH='' cd -- "$1" && pwd); else printf '%s\n' "$1"; fi
+}
+_pc_export_roots() {
+  local own given own_layer layer override="${SMATCHET_PROJECT_ROOT_OVERRIDE:-0}"
+  own="$(_pc_abs "$(dirname "$PC_CONFIG_FILE")")"
+  own_layer="$(_pc_abs "$_pc_layer_root")"
+  # Phase C row 12: after the flip this file is mirrored in the host, and the host's
+  # copy must name the agent-layer/ mount as the layer. A copy inside a submodule is
+  # the layer itself ($_pc_super set), and a tree with no populated mount (pre-flip,
+  # the standalone layer, an uninitialised submodule) is its own layer — so before
+  # the flip this changes nothing. A convention, not a config key: roots-only mode
+  # resolves without parsing the JSON, and the mount's name is fixed by .gitmodules.
+  if [ -z "$_pc_super" ] && [ -f "$own_layer/agent-layer/scripts/dev/project-config.sh" ]; then
+    own_layer="$own_layer/agent-layer"
+  fi
+  given="$own"
+  if [ -n "${PROJECT_ROOT:-}" ]; then
+    given="$(_pc_abs "$PROJECT_ROOT")"
+    if [ "$given" != "$own" ] && [ "$override" != 1 ]; then
+      printf 'project-config.sh: WARN — ignoring PROJECT_ROOT=%s: this checkout resolves its host to %s (SMATCHET_PROJECT_ROOT_OVERRIDE=1 aims it at another tree)\n' \
+        "$PROJECT_ROOT" "$own" >&2
+      given="$own"
+    fi
+  fi
+  layer="$own_layer"
+  if [ -n "${AGENT_LAYER_ROOT:-}" ]; then
+    layer="$(_pc_abs "$AGENT_LAYER_ROOT")"
+    if [ "$layer" != "$own_layer" ] && [ "$layer" != "$own/agent-layer" ] && [ "$override" != 1 ]; then
+      printf 'project-config.sh: WARN — ignoring AGENT_LAYER_ROOT=%s: this copy'"'"'s layer is %s (or %s/agent-layer; SMATCHET_PROJECT_ROOT_OVERRIDE=1 aims it at another tree)\n' \
+        "$AGENT_LAYER_ROOT" "$own_layer" "$own" >&2
+      layer="$own_layer"
+    fi
+  fi
+  AGENT_LAYER_ROOT="$layer"
+  PROJECT_ROOT="$given"
+  PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
+  PC_PROJECT_ROOT="$PROJECT_ROOT"
+  export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
+}
+
+# The roots depend on neither python nor the parse, so they are exported before
+# either can fail: a best-effort full source (`. project-config.sh || true`) on a box
+# without a working python still finds the host instead of falling back to the
+# caller's own tree — which after the flip is the layer.
+_pc_export_roots
+
+# Roots-only mode, for layer scripts that need only to find the host tree (the
+# session-start nudges among them): the same rungs, without the python start-up or
+# the config parse, and without requiring the config file to exist. Cleared here so
+# a later full source in the same shell is not silently truncated.
+if [ "${PC_ROOTS_ONLY:-0}" = 1 ]; then
+  unset PC_ROOTS_ONLY
+  if (return 0 2>/dev/null); then
+    return 0
+  fi
+  printf 'export PC_PROJECT_ROOT=%s\n' "$(printf '%q' "$PC_PROJECT_ROOT")"
+  printf 'export PC_AGENT_LAYER_ROOT=%s\n' "$(printf '%q' "$PC_AGENT_LAYER_ROOT")"
+  exit 0
+fi
+
 if [ ! -f "$PC_CONFIG_FILE" ]; then
   echo "project-config.sh: $PC_CONFIG_FILE not found" >&2
   return 1 2>/dev/null || exit 1
@@ -76,26 +167,6 @@ fi
 # one repo's config with another's schema would validate the wrong required-key
 # list, and the FileNotFoundError branch below would silently skip the gate.
 PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$(dirname "$PC_CONFIG_FILE")/project.config.schema.json}"
-
-# Dual-root pair. AGENT_LAYER_ROOT is the tree holding agents/, docs/agent-rules/
-# and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
-# Source/ and project.config.json. Pre-flip both are the repo root, so every
-# consumer rewritten to address a tree through one of these is a provable no-op.
-# Both honour a caller-set value, which is what lets the layer's standalone CI
-# force PROJECT_ROOT=$AGENT_LAYER_ROOT and the flip set AGENT_LAYER_ROOT=agent-layer
-# without touching the resolution logic above.
-#
-# Note the bare name PROJECT_ROOT is also a LOCAL variable in the Unreal-plugin
-# scripts under scripts/dev/local/ and scripts/publish/, where it means "the
-# Unreal project to deploy into". None of those source this file and each assigns
-# the variable before first use, so the export cannot leak in — do not "fix" the
-# apparent collision. PC_PROJECT_ROOT is the namespaced alias for callers that
-# prefer to avoid the bare name entirely.
-AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_pc_layer_root}"
-PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}"
-PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
-PC_PROJECT_ROOT="$PROJECT_ROOT"
-export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
 
 # Emit `KEY=value` lines (arrays space-joined). eval them into the caller.
 # Fail-fast (exit 2) on a malformed config or a missing required top-level key

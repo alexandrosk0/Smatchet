@@ -46,8 +46,12 @@ _msa_self="${BASH_SOURCE[0]:-$0}"
 # that does NOT pass the path — the ledger is HOST content and both must follow
 # $PROJECT_ROOT. Bootstrap is location-relative per row 3a.
 _msa_root="$(cd "$(dirname "$_msa_self")/../../.." && pwd)"
-# shellcheck source=scripts/dev/project-config.sh
-. "$_msa_root/scripts/dev/project-config.sh" 2>/dev/null || true
+if [ -f "$_msa_root/scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    . "$_msa_root/scripts/dev/project-config.sh" 2>/dev/null || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
 : "${MERGE_SNAPSHOT_LEDGER:=${PROJECT_ROOT:-$_msa_root}/docs/self-improvement/merge-snapshots.jsonl}"
 
 # csv_to_json_array <csv> — turn "a,b , c" into a JSON array ["a","b","c"],

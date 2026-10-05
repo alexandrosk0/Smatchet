@@ -25,6 +25,11 @@ setup() {
     # under test.
     unset PC_CONFIG_FILE PC_SCHEMA_FILE SMATCHET_PROJECT_CONFIG
     unset PROJECT_ROOT AGENT_LAYER_ROOT PC_PROJECT_ROOT PC_AGENT_LAYER_ROOT
+    # ...and every other PC_* a parent's full load exported (test-all.sh sources
+    # this script, so PC_PROJECT_NAME and the rest arrive set): a test asserting
+    # what a load did NOT set would otherwise read the parent's value.
+    local v
+    while IFS= read -r v; do unset "$v"; done < <(compgen -e | grep '^PC_' || true)
 
     TMP="$(mktemp -d)"
     export TMP
@@ -135,12 +140,65 @@ make_config_dir() {
 }
 
 @test "caller-set roots are honoured (the flip and standalone CI both rely on this)" {
-    local layer
-    layer="$(root_of PC_AGENT_LAYER_ROOT env AGENT_LAYER_ROOT="$TMP")"
-    [ "$layer" = "$TMP" ]
-    local project
-    project="$(root_of PC_PROJECT_ROOT env PROJECT_ROOT="$TMP")"
+    # Roots naming the trees this copy resolves itself (CI's `.`, the standalone
+    # layer, a runner exporting its own tree) are taken, silently.
+    run bash -c 'PROJECT_ROOT="$REPO_ROOT" AGENT_LAYER_ROOT="$REPO_ROOT" bash "$CONFIG_SH" 2>&1 >/dev/null'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # The host's agent-layer/ mount is the flip's CI value for the host's own
+    # scripts: a host copy of this file takes it, silently.
+    local host="$TMP/mount-host"
+    make_config_dir "$host"
+    mkdir -p "$host/scripts/dev" "$host/agent-layer"
+    cp "$CONFIG_SH" "$host/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN"* ]]
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host/agent-layer" && pwd)"* ]]
+    # Another tree is taken only on the explicit override (a test fixture).
+    local project layer
+    project="$(root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT="$TMP")"
     [ "$project" = "$TMP" ]
+    layer="$(root_of PC_AGENT_LAYER_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 AGENT_LAYER_ROOT="$TMP")"
+    [ "$layer" = "$TMP" ]
+}
+
+@test "caller-set roots naming another tree are ignored, with a warning" {
+    # The bare name is common, and a stale export from a sibling checkout (which
+    # has a project.config.json of its own) carries BOTH roots — honouring either
+    # half alone would split the pair.
+    local sibling="$TMP/sibling" host
+    host="$(cd "$REPO_ROOT" && pwd)"   # pwd spelling: git-bash prints C:/ for rev-parse, /c/ for pwd
+    mkdir -p "$sibling"
+    printf '{}\n' > "$sibling/project.config.json"
+    run bash -c 'PC_ROOTS_ONLY=1 PROJECT_ROOT="$1" AGENT_LAYER_ROOT="$1" bash "$CONFIG_SH" 2>&1 >/dev/null' _ "$sibling"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN"*"ignoring PROJECT_ROOT=$sibling"*"$host"* ]]
+    [[ "$output" == *"WARN"*"ignoring AGENT_LAYER_ROOT=$sibling"* ]]
+    local project layer
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" AGENT_LAYER_ROOT="$sibling" 2>/dev/null)"
+    layer="$(root_of PC_AGENT_LAYER_ROOT env PC_ROOTS_ONLY=1 PROJECT_ROOT="$sibling" AGENT_LAYER_ROOT="$sibling" 2>/dev/null)"
+    [ "$project" = "$host" ]
+    [ "$layer" = "$host" ]
+}
+
+@test "row 12: the host's copy takes a populated agent-layer/ mount as its layer" {
+    # Post-flip layout: the host carries the mirrored project-config.sh, and the layer
+    # is mounted at agent-layer/ with its own copy. No root variables (a hook, a shell).
+    local host="$TMP/flip-host"
+    make_config_dir "$host"
+    mkdir -p "$host/scripts/dev" "$host/agent-layer/scripts/dev"
+    cp "$CONFIG_SH" "$host/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    # An unpopulated mount (an uninitialised submodule) is not a layer: the host stays.
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host" && pwd)"* ]]
+    cp "$CONFIG_SH" "$host/agent-layer/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host/agent-layer" && pwd)"* ]]
+    [[ "$output" == *"PC_PROJECT_ROOT=$(cd "$host" && pwd)"* ]]
+    [[ "$output" != *"WARN"* ]]
 }
 
 @test "PC_SCHEMA_FILE follows the resolved config, not the script's own root" {
@@ -158,4 +216,66 @@ make_config_dir() {
     run env SMATCHET_PROJECT_CONFIG="$TMP/host" bash "$CONFIG_SH"
     [ "$status" -ne 0 ]
     [[ "$output" == *"missing required key"* ]]
+}
+
+@test "relative caller-set roots are made absolute" {
+    # CI sets the pair relative to the workspace (`PROJECT_ROOT: .`); a consumer
+    # that cds into one root and reads the other must still name the right tree.
+    mkdir -p "$TMP/ws/agent-layer"
+    local project layer
+    # $TMP/ws is not this copy's host, so the pair needs the override.
+    project="$(cd "$TMP/ws" && root_of PC_PROJECT_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    layer="$(cd "$TMP/ws" && root_of PC_AGENT_LAYER_ROOT env SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT=. AGENT_LAYER_ROOT=agent-layer)"
+    [ "$project" = "$(cd "$TMP/ws" && pwd)" ]
+    [ "$layer" = "$(cd "$TMP/ws/agent-layer" && pwd)" ]
+}
+
+@test "roots-only: sourcing exports the pair without loading the config" {
+    # The flag is EXPORTED, not a prefix assignment: bash scopes `PC_ROOTS_ONLY=1 .`
+    # to the builtin, which would clear it whether or not the script does.
+    run bash -c 'export PC_ROOTS_ONLY=1; . "$CONFIG_SH" && printf "%s|%s|%s|%s\n" \
+        "$PROJECT_ROOT" "$AGENT_LAYER_ROOT" "${PC_PROJECT_NAME:-none}" "${PC_ROOTS_ONLY:-cleared}"'
+    [ "$status" -eq 0 ]
+    IFS='|' read -r p l name flag <<<"$output"
+    [ "$p" = "$(cd "$REPO_ROOT" && pwd)" ]
+    [ "$l" = "$p" ]
+    [ "$name" = "none" ]
+    [ "$flag" = "cleared" ]
+}
+
+@test "roots-only: a later full source in the same shell still loads the config" {
+    run bash -c 'export PC_ROOTS_ONLY=1; . "$CONFIG_SH" && . "$CONFIG_SH" && printf "%s\n" "${PC_PROJECT_NAME:-none}"'
+    [ "$status" -eq 0 ]
+    [ "$output" != "none" ]
+    [ -n "$output" ]
+}
+
+@test "roots-only: needs no config file and follows the same rungs" {
+    # Rung 0 names a config that does not exist: a full load fails (tested above),
+    # roots-only still resolves PROJECT_ROOT to that file's directory.
+    mkdir -p "$TMP/host"
+    local project
+    project="$(root_of PC_PROJECT_ROOT env PC_ROOTS_ONLY=1 PC_CONFIG_FILE="$TMP/host/project.config.json")"
+    [ "$project" = "$(cd "$TMP/host" && pwd)" ]
+}
+
+@test "roots-only: a copy inside a submodule resolves the superproject" {
+    local layer="$TMP/layer" super="$TMP/super"
+    mkdir -p "$layer/scripts/dev"
+    cp "$CONFIG_SH" "$layer/scripts/dev/project-config.sh"
+    make_config_dir "$layer"
+    git -C "$layer" init -q
+    git -C "$layer" add -A
+    git -C "$layer" -c user.email=t@t -c user.name=t commit -qm init
+    make_config_dir "$super"
+    git -C "$super" init -q
+    git -C "$super" add -A
+    git -C "$super" -c user.email=t@t -c user.name=t commit -qm init
+    git -C "$super" -c protocol.file.allow=always submodule add -q "$layer" agent-layer
+
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 . scripts/dev/project-config.sh && printf "%s|%s\n" "$PROJECT_ROOT" "$AGENT_LAYER_ROOT"' _ "$super/agent-layer"
+    [ "$status" -eq 0 ]
+    IFS='|' read -r p l <<<"$output"
+    [ "$p" = "$(cd "$super" && pwd)" ]
+    [ "$l" = "$(cd "$super/agent-layer" && pwd)" ]
 }

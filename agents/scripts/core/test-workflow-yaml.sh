@@ -11,7 +11,18 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# The host's .github/workflows/ is read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to
+# the superproject once this script lives in the agent-layer/ submodule, and to this
+# checkout before the flip. A climb from this script's own path would land in the
+# layer after the flip.
+_twy_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_twy_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_twy_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+REPO_ROOT="${PROJECT_ROOT:-$(cd "$_twy_self/../../.." && pwd)}"
 cd "$REPO_ROOT" || { echo "ERROR: cd to $REPO_ROOT failed" >&2; exit 1; }
 
 PY="${PYTHON:-python}"

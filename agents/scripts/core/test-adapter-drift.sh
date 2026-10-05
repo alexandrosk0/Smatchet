@@ -15,7 +15,12 @@
 # cleanly when .claude/agents is absent. Auto-enrolled by scripts/dev/test-all.sh
 # (the local full suite), NOT a GitHub job.
 #
-# Override root (testing): SMATCHET_ADAPTER_ROOT.
+# Roots: agents/core/ is LAYER content, read from this script's own tree;
+# agents/project/ and the .claude/ adapter are HOST content, read from PROJECT_ROOT
+# (scripts/dev/project-config.sh — the superproject once the layer is a submodule).
+# Before the flip both are this checkout.
+#
+# Override root (testing): SMATCHET_ADAPTER_ROOT — one tree for both.
 #
 # Usage:
 #   bash agents/scripts/core/test-adapter-drift.sh            # check the tree
@@ -28,12 +33,13 @@
 
 set -uo pipefail
 
-# Compare canonical agents/{core,project}/*.md under $root against
-# $root/.claude/agents/<basename>. Echo drift/missing lines; 0 in-sync /
+# _check_adapter <layer_root> [<project_root>] — compare canonical
+# <layer_root>/agents/core/*.md and <project_root>/agents/project/*.md against
+# <project_root>/.claude/agents/<basename>. Echo drift/missing lines; 0 in-sync /
 # 1 drift / returns 0 (skip) when the adapter dir is absent.
 _check_adapter() {
-    local root="$1"
-    local adapter="$root/.claude/agents"
+    local root="$1" project="${2:-$1}"
+    local adapter="$project/.claude/agents"
     [ -d "$adapter" ] || { echo "__SKIP__"; return 0; }
     local f base copy drift=0
     while IFS= read -r f; do
@@ -48,7 +54,7 @@ _check_adapter() {
             echo "DRIFT: $f vs $copy differ (stale adapter — re-run setup-harness.sh)"
             drift=1
         fi
-    done < <(find "$root/agents/core" "$root/agents/project" -maxdepth 1 -name '*.md' 2>/dev/null | sort)
+    done < <(find "$root/agents/core" "$project/agents/project" -maxdepth 1 -name '*.md' 2>/dev/null | sort)
     return "$drift"
 }
 
@@ -71,16 +77,37 @@ if [ "${1:-}" = "--selftest" ]; then
     if [ "$(_check_adapter "$tmp")" != "__SKIP__" ]; then
         echo "test-adapter-drift --selftest: FAIL — absent adapter did not skip"; exit 1
     fi
-    echo "test-adapter-drift --selftest: PASS — in-sync passes, stale fails, absent skips."
+    # Split roots (post-flip): core in the layer, project + adapter in the host.
+    # A project agent missing from the adapter MUST be caught from the host.
+    mkdir -p "$tmp/L/agents/core" "$tmp/H/agents/project" "$tmp/H/.claude/agents"
+    printf 'core\n' > "$tmp/L/agents/core/a.md"
+    printf 'project\n' > "$tmp/H/agents/project/b.md"
+    cp "$tmp/L/agents/core/a.md" "$tmp/H/agents/project/b.md" "$tmp/H/.claude/agents/"
+    if ! _check_adapter "$tmp/L" "$tmp/H" >/dev/null; then
+        echo "test-adapter-drift --selftest: FAIL — in-sync split roots flagged"; exit 1
+    fi
+    rm "$tmp/H/.claude/agents/b.md"
+    if _check_adapter "$tmp/L" "$tmp/H" >/dev/null; then
+        echo "test-adapter-drift --selftest: FAIL — a host project agent missing from the adapter not caught"; exit 1
+    fi
+    echo "test-adapter-drift --selftest: PASS — in-sync passes, stale fails, absent skips, split roots read each tree."
     exit 0
 fi
 
 ROOT="${SMATCHET_ADAPTER_ROOT:-}"
+PROJECT="$ROOT"
 if [ -z "$ROOT" ]; then
     ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+    if [ -f "$ROOT/scripts/dev/project-config.sh" ]; then
+        # shellcheck source=scripts/dev/project-config.sh
+        PC_ROOTS_ONLY=1 . "$ROOT/scripts/dev/project-config.sh" || true
+    else
+        unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+    fi
+    PROJECT="${PROJECT_ROOT:-$ROOT}"
 fi
 
-out="$(_check_adapter "$ROOT")"; rc=$?
+out="$(_check_adapter "$ROOT" "$PROJECT")"; rc=$?
 if [ "$out" = "__SKIP__" ]; then
     echo "test-adapter-drift: SKIP — .claude/agents absent (harness not set up locally)."
     exit 0

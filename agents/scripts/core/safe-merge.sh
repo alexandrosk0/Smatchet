@@ -106,7 +106,11 @@ if [ -z "${MERGE_GATES_BLOCK_ALLOWLIST_RE:-}" ]; then
     exit 2
 fi
 
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# The host tree (the obligation stub lands in its backlog). merge-gates.sh, sourced
+# above, loads scripts/dev/project-config.sh, whose PROJECT_ROOT is the
+# superproject once this script lives in the agent-layer/ submodule; a climb from
+# this script's own path would file the stub in the layer instead.
+REPO_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 
 # ----------------------------------------------------------------------------
 # Strict-zone / trust-boundary path matcher — SINGLE SOURCE for the obligation

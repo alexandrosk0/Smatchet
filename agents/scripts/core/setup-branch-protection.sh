@@ -57,7 +57,20 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../../.."
+# The protected repo — resolved by `gh repo view` in cwd — and its project.config.json is read from PROJECT_ROOT: scripts/dev/project-config.sh resolves it to
+# the superproject once this script lives in the agent-layer/ submodule, and to this
+# checkout before the flip. A climb from this script's own path would land in the
+# layer after the flip.
+# Run from the layer's own tree, `gh repo view` would name the LAYER repo and this
+# script would rewrite the wrong repo's branch protection.
+_sbp_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_sbp_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_sbp_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_sbp_self/../../..}"
 
 command -v gh >/dev/null 2>&1 || { echo "setup-branch-protection: gh CLI is required" >&2; exit 2; }
 
@@ -66,7 +79,7 @@ command -v gh >/dev/null 2>&1 || { echo "setup-branch-protection: gh CLI is requ
 # this script mutates branch protection, so silently targeting the wrong repo is
 # worse than not running.
 # shellcheck source=agents/scripts/core/lib/resolve-repo.sh
-. agents/scripts/core/lib/resolve-repo.sh
+. "$_sbp_self/lib/resolve-repo.sh"
 REPO="$(resolve_repo)" || { echo "setup-branch-protection: cannot resolve target repo (set REPO=owner/name, or run 'gh auth login' in this checkout)" >&2; exit 2; }
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1

@@ -49,11 +49,17 @@
 # ----------------------------------------------------------------------------
 set -uo pipefail
 
+# The resolver is layer content beside this script — after the flip the host root
+# below has no agents/scripts/core/ of its own. Resolved BEFORE the cd: a relative
+# BASH_SOURCE names the caller's directory, not the root's.
+_trcp_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "test-required-context-parity: cannot cd to repo root" >&2; exit 2; }
 
 # shellcheck source=agents/scripts/core/lib/ci-check-resolve.sh
-. "$ROOT/agents/scripts/core/lib/ci-check-resolve.sh"
+. "$_trcp_dir/lib/ci-check-resolve.sh" \
+    || { echo "test-required-context-parity: cannot load $_trcp_dir/lib/ci-check-resolve.sh" >&2; exit 2; }
 
 CONFIG="${CI_PARITY_CONFIG:-project.config.json}"
 

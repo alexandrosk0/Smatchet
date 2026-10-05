@@ -24,7 +24,20 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../../.."
+# cwd is this script's tree: the skills and agents/core/ are layer content.
+# agents/project/ is HOST content (it stays in the host at the flip), so it is read
+# from PROJECT_ROOT — scripts/dev/project-config.sh, the superproject once the layer
+# is a submodule. Before the flip both are this checkout. The roots are resolved
+# BEFORE the cd: a relative root from CI (PROJECT_ROOT=.) names the caller's tree.
+_svap_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_svap_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_svap_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "$_svap_self/../../.."
+PROJECT_AGENTS_DIR="${PROJECT_ROOT:-$(pwd)}/agents/project"
 
 PASS=0
 FAIL=0
@@ -63,7 +76,7 @@ is_skill_only() {
 resolve_agent_md() {
     local name="$1"
     local candidate
-    for candidate in "agents/core/${name}.md" "agents/project/${name}.md" "agents/${name}.md"; do
+    for candidate in "agents/core/${name}.md" "$PROJECT_AGENTS_DIR/${name}.md" "agents/${name}.md"; do
         if [ -f "$candidate" ]; then
             printf '%s\n' "$candidate"
             return 0

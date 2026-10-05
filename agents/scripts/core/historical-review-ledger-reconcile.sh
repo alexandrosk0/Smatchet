@@ -36,12 +36,23 @@
 #
 # Sibling of postmortem-owed.sh / plan-archival-owed.sh / followup-due-nudge.sh.
 set -uo pipefail
-cd "$(dirname "$0")/../../.." || exit 0
+# Host content (the historical-review ledger) is read from PROJECT_ROOT: scripts/dev/
+# project-config.sh resolves it to the superproject once this script lives in the
+# agent-layer/ submodule, and to this checkout before the flip. A climb from this
+# script's own path would land in the layer after the flip and find nothing.
+_hrl_self="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$_hrl_self/../../../scripts/dev/project-config.sh" ]; then
+    # shellcheck source=scripts/dev/project-config.sh
+    PC_ROOTS_ONLY=1 . "$_hrl_self/../../../scripts/dev/project-config.sh" || true
+else
+    unset PROJECT_ROOT AGENT_LAYER_ROOT  # no config beside this script (a fixture copy): its own tree, never an inherited root
+fi
+cd "${PROJECT_ROOT:-$_hrl_self/../../..}" || exit 0
 
 LEDGER="${HRL_LEDGER:-docs/self-improvement/historical-review-findings.md}"
 STALE_DAYS="${LEDGER_STALE_DAYS:-14}"
 TODAY="${HRL_TODAY:-$(date +%Y-%m-%d 2>/dev/null || echo 1970-01-01)}"
-CORE_DIR="$(dirname "$0")"
+CORE_DIR="$_hrl_self"
 
 MODE="reconcile"
 case "${1:-}" in

@@ -37,6 +37,11 @@
 # ----------------------------------------------------------------------------
 set -uo pipefail
 
+# The audit is layer content beside this script; the tree it scans (Source/, the
+# baseline) is the host root below. After the flip the host has no agents/scripts/.
+# Resolved BEFORE the cd: a relative BASH_SOURCE names the caller's directory.
+_tdea_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "test-dead-export-audit: cannot resolve repo root (git required)" >&2
     echo "Passed: 0  Failed: 0"
@@ -44,7 +49,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$ROOT" || { echo "test-dead-export-audit: cannot cd to repo root" >&2; exit 2; }
 
-AUDIT="$ROOT/agents/scripts/core/dead_export_audit.py"
+AUDIT="$_tdea_dir/dead_export_audit.py"
 BASELINE="docs/high-integrity/dead-export-baseline.md"
 
 # command -v alone is insufficient on Windows: the python3 Store-alias stub passes it

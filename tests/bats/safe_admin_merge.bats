@@ -429,3 +429,30 @@ JSON
     [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
     [[ "$output" == *"ledger snapshot NOT written"* ]]
 }
+
+# ---------- CodeRabbit-installed detection fails closed ----------
+# Only a tree that is recognisably a host (project.config.json) may report "not
+# installed"; an empty or foreign root counts as installed, so the CR gate waits
+# instead of waving an unreviewed head through (the #1332 race).
+
+_cr_installed() { # _cr_installed [env assignments...] — detect_cr_installed's answer
+    env -u SAFE_ADMIN_MERGE_CR_INSTALLED "$@" bash -c '. "$SCRIPT" >/dev/null 2>&1; detect_cr_installed'
+}
+
+@test "cr-installed: a host tree with no CodeRabbit config reports not installed" {
+    local host="$STUB_BIN_DIR/host"
+    mkdir -p "$host"
+    printf '{}\n' > "$host/project.config.json"
+    run _cr_installed SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT="$host"
+    [ "$output" = "false" ]
+}
+
+@test "cr-installed: a root that is not a host fails closed (installed)" {
+    local empty="$STUB_BIN_DIR/empty"
+    mkdir -p "$empty"
+    run _cr_installed SMATCHET_PROJECT_ROOT_OVERRIDE=1 PROJECT_ROOT="$empty"
+    [ "$output" = "true" ]
+    # Without the override the foreign root is not taken at all: the real host answers.
+    run _cr_installed PROJECT_ROOT="$empty"
+    [ "$output" = "true" ]
+}
