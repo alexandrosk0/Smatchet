@@ -410,6 +410,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     is cpr/ImGui-free; BackendAuditTrail + ConfigManager already linked above. Needs
         #     SMATCHET_WITH_AI (target-wide below — ConfigManager carries one AI-gated field).
         Core/AiAssistantStreamHandoff.test.cpp
+        # The StubAiClient's own cancel contract (a worker thread streams while the test
+        # thread flips the AiCancelToken) — header-only stub, no extra .cpp source.
+        Core/StubAiClientCancel.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiAssistantController.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
