@@ -14,11 +14,13 @@
 #   1 — at least one bats test failed
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools)
 set -uo pipefail
-# Resolve + verify the git root BEFORE cd: `cd "$(...)"` swallows an empty
+# Resolve + verify the suite's tree BEFORE cd: `cd "$(...)"` swallows an empty
 # command-substitution (cd "" returns 0, leaving $PWD wherever the caller was),
-# so a non-repo invocation would silently run against the wrong tree. Capture,
-# require non-empty AND git success, else exit 2.
-_GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 2
+# so a failed resolution would silently run against the wrong tree. Capture,
+# require non-empty AND success, else exit 2. The suite lives in this script's
+# own tree (the agent layer), not the caller's git top level, which is the host
+# once the layer is a submodule.
+_GIT_ROOT="$(CDPATH='' cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)" || exit 2
 [ -n "$_GIT_ROOT" ] || exit 2
 cd "$_GIT_ROOT" || exit 2
 

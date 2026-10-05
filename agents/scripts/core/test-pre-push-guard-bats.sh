@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)" || exit 2
+CDPATH='' cd "$(dirname "$0")/../../.." || exit 2
 
 if ! command -v bats >/dev/null 2>&1; then
     cat >&2 <<'MSG'

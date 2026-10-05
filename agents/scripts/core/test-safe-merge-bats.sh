@@ -14,7 +14,7 @@
 #   1 — at least one bats test failed
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools)
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)" || exit 2
+CDPATH='' cd "$(dirname "$0")/../../.." || exit 2
 
 if ! command -v bats >/dev/null 2>&1; then
     echo "test-safe-merge-bats: bats not on PATH (npm i -g bats). See BUILD.md § Dev-script CLI tools." >&2
