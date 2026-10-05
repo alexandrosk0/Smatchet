@@ -137,3 +137,37 @@ stamp_artifact() {
     [[ "$output" == *"WARN"* ]]
     [[ "$output" == *"bypassed"* ]]
 }
+
+# ---- enforcement-surface advisory (WARN-first, process 2026-09-14) ----------
+# A diff touching only the review-enforcement scripts is never substantive under
+# the C++-only test, so pre-ship WARNs (never blocks) until an `--ack-review`
+# records a matching `enforcement` fingerprint; a later edit re-arms the WARN.
+
+@test "a gate-script-only diff WARNs (exit 0) until acked, and re-arms after an edit" {
+    git -C "$REPO_TMP" checkout --quiet -b scripts base
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$REPO_TMP/scripts/dev/new-gate.sh"
+    git -C "$REPO_TMP" add scripts/dev/new-gate.sh
+    git -C "$REPO_TMP" commit --quiet -m gate
+    run preship base
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN"*"review-enforcement surface (scripts/dev/new-gate.sh)"* ]]
+    run preship --ack-review base
+    [ "$status" -eq 0 ]
+    grep -q "^enforcement" "$REPO_TMP/.review-ack"
+    run preship base
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"review-enforcement surface"* ]]
+    echo "echo changed" >> "$REPO_TMP/scripts/dev/new-gate.sh"
+    run preship base
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"review-enforcement surface"* ]]
+}
+
+@test "a docs-only diff raises no enforcement-surface WARN" {
+    git -C "$REPO_TMP" checkout --quiet -b docs2 base
+    echo "more" >> "$REPO_TMP/README.md"
+    git -C "$REPO_TMP" commit --quiet -am docs
+    run preship base
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"review-enforcement surface"* ]]
+}

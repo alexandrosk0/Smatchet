@@ -665,6 +665,10 @@ if [ "$ack_review" -eq 1 ]; then
         ra_write_marker branch "$preship_fp"
         echo "pre-ship: review ACK recorded for the current diff vs $base_ref (.review-ack)."
     fi
+    # The ack also covers a gate/hook-script diff (the enforcement-surface advisory below).
+    if ra_touches_enforcement_surface branch "$base_ref" >/dev/null; then
+        ra_write_marker enforcement "$(ra_enforcement_fingerprint branch "$base_ref")"
+    fi
     echo "pre-ship: PASS (ack) — gates clean + review acknowledged. Safe to push."
     exit 0
 fi
@@ -711,6 +715,16 @@ EOF
     fi
 else
     echo "pre-ship: code-review gate N/A — diff is not substantive ($RA_SUBSTANTIVE_REASON)."
+fi
+
+# --- Enforcement-surface review advisory (WARN-first, never blocks) -------------------
+# The substantive test above is C++-only, so a diff to the review-enforcement scripts
+# themselves (agents/scripts/core, scripts/dev, scripts/git-hooks) never needs an ack.
+# Calibration phase: WARN when such a diff has no matching `enforcement` ack record.
+if [ "${SMATCHET_SKIP_REVIEW_GATE:-0}" != "1" ] &&
+    preship_enf_hit="$(ra_touches_enforcement_surface branch "$base_ref")" &&
+    [ "$(ra_read_marker enforcement)" != "$(ra_enforcement_fingerprint branch "$base_ref")" ]; then
+    echo "pre-ship: WARN — diff touches the review-enforcement surface ($preship_enf_hit) with no matching .review-ack (advisory; review it, then: bash scripts/dev/pre-ship.sh --ack-review $base_ref)." >&2
 fi
 
 # Staleness caveat is emitted HERE, immediately before the PASS line, not at

@@ -222,6 +222,39 @@ commit_in_fixture() {
     [ "$status" -eq 2 ]
 }
 
+# ---- enforcement-surface advisory trigger (WARN-first, process 2026-09-14) ----
+# ra_touches_enforcement_surface flags a diff to the gate/hook scripts themselves,
+# which the C++-only substantive test never sees. It is a SEPARATE glob set: the
+# staged commit gate (RA_CPP_GLOBS / ra_fingerprint) must stay N/A for it.
+
+@test "ra_touches_enforcement_surface flags a staged gate-script edit; the commit gate stays N/A" {
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$REPO_TMP/scripts/git-hooks/extra-gate.sh"
+    git -C "$REPO_TMP" add scripts/git-hooks/extra-gate.sh
+    run bash -c "cd '$REPO_TMP' && . agents/scripts/core/lib/review-ack.sh && ra_touches_enforcement_surface staged"
+    [ "$status" -eq 0 ]
+    [ "$output" = "scripts/git-hooks/extra-gate.sh" ]
+    # The fingerprint is a real sha256 that moves with the surface diff.
+    run bash -c "cd '$REPO_TMP' && . agents/scripts/core/lib/review-ack.sh && ra_enforcement_fingerprint staged"
+    [[ "$output" =~ ^[0-9a-f]{64}$ ]]
+    local fp1="$output"
+    echo "echo more" >> "$REPO_TMP/scripts/git-hooks/extra-gate.sh"
+    git -C "$REPO_TMP" add scripts/git-hooks/extra-gate.sh
+    run bash -c "cd '$REPO_TMP' && . agents/scripts/core/lib/review-ack.sh && ra_enforcement_fingerprint staged"
+    [ "$output" != "$fp1" ]
+    # Out of RA_CPP_GLOBS on purpose: the commit-time gate is unchanged (N/A).
+    run check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"N/A"* ]]
+}
+
+@test "ra_touches_enforcement_surface is quiet for a docs-only diff" {
+    echo note > "$REPO_TMP/docs/n.md"
+    git -C "$REPO_TMP" add docs/n.md
+    run bash -c "cd '$REPO_TMP' && . agents/scripts/core/lib/review-ack.sh && ra_touches_enforcement_surface staged"
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
 # ---- check (A): the Pillar-2 scan must not depend on a mode bit -------------
 # The hook once guarded the scan with `[[ -x ... ]]` while the scanner was
 # tracked 100644, so every Linux/macOS commit skipped it silently. Git Bash on
