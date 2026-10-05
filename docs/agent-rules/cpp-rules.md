@@ -34,6 +34,10 @@ Source files in `Source/Core/` and `Source/Plugins/` stay under **67 KB** (the G
 
 Approaching **200 lines**, use the section-helper pattern (`DrawCtx` + `DrawHeader`/`DrawBody`/`DrawFooter`/`DrawModals`/`HandleHotkeys`, perf scopes reused verbatim at section seams, `static` locals hoisted to a `<Foo>WindowState` member) — see [`docs/guides/imgui-draw-pattern.md`](../guides/imgui-draw-pattern.md); enforced by the `function-too-long` / `function-too-branchy` gate. Existing monoliths are **ride-along only** (decompose when a feature already opens the file; no dedicated sweep).
 
+## Localization
+
+`T(key, fallback)` does **not** render the localization table's English column for en-US — it returns the **call-site `fallback`**; the table's English string is only the key that user overrides are looked up by (other languages render their own column). So a label renamed only in the table changes nothing on screen in English, and one renamed only at the call site leaves the table (and every override keyed on it) behind — a bucket-E test that targets the new label then never resolves its item. **Edit the call-site fallback and the table's English column together, in the same diff.** `bash agents/scripts/project/test-localization-drift.sh` compares every literal `T("<key>", "<fallback>")` against the table after decoding C escapes (rule `localization-english-fallback-drift`, WARN-first): default `--diff origin/develop` checks call sites on added lines plus every call site of a key whose table row changed; `--all` sweeps the tree.
+
 ## Lint
 
 Your harness may run an automatic lint pass after C++ edits. Claude Code does so via a `PostToolUse` hook wired by `bash agents/scripts/core/setup-harness.sh claude-code` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source/Core` / `Plugins` / `Source/Standalone` and fix all reported issues before responding.
