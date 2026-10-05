@@ -182,6 +182,25 @@ make_config_dir() {
     [ "$layer" = "$host" ]
 }
 
+@test "row 12: the host's copy takes a populated agent-layer/ mount as its layer" {
+    # Post-flip layout: the host carries the mirrored project-config.sh, and the layer
+    # is mounted at agent-layer/ with its own copy. No root variables (a hook, a shell).
+    local host="$TMP/flip-host"
+    make_config_dir "$host"
+    mkdir -p "$host/scripts/dev" "$host/agent-layer/scripts/dev"
+    cp "$CONFIG_SH" "$host/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    # An unpopulated mount (an uninitialised submodule) is not a layer: the host stays.
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host" && pwd)"* ]]
+    cp "$CONFIG_SH" "$host/agent-layer/scripts/dev/project-config.sh"
+    run bash -c 'cd "$1" && PC_ROOTS_ONLY=1 bash scripts/dev/project-config.sh 2>&1' _ "$host"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PC_AGENT_LAYER_ROOT=$(cd "$host/agent-layer" && pwd)"* ]]
+    [[ "$output" == *"PC_PROJECT_ROOT=$(cd "$host" && pwd)"* ]]
+    [[ "$output" != *"WARN"* ]]
+}
+
 @test "PC_SCHEMA_FILE follows the resolved config, not the script's own root" {
     # A config missing a required key next to a schema that demands it must trip
     # the no-deps required-key gate (exit 2). If the schema were still read from

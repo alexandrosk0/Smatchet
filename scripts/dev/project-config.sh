@@ -87,6 +87,15 @@ _pc_export_roots() {
   local own given own_layer layer override="${SMATCHET_PROJECT_ROOT_OVERRIDE:-0}"
   own="$(_pc_abs "$(dirname "$PC_CONFIG_FILE")")"
   own_layer="$(_pc_abs "$_pc_layer_root")"
+  # Phase C row 12: after the flip this file is mirrored in the host, and the host's
+  # copy must name the agent-layer/ mount as the layer. A copy inside a submodule is
+  # the layer itself ($_pc_super set), and a tree with no populated mount (pre-flip,
+  # the standalone layer, an uninitialised submodule) is its own layer — so before
+  # the flip this changes nothing. A convention, not a config key: roots-only mode
+  # resolves without parsing the JSON, and the mount's name is fixed by .gitmodules.
+  if [ -z "$_pc_super" ] && [ -f "$own_layer/agent-layer/scripts/dev/project-config.sh" ]; then
+    own_layer="$own_layer/agent-layer"
+  fi
   given="$own"
   if [ -n "${PROJECT_ROOT:-}" ]; then
     given="$(_pc_abs "$PROJECT_ROOT")"
