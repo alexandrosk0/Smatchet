@@ -213,7 +213,7 @@ CPP
 # Drivers held by another session's plan-lock when the ratchet landed, so they
 # could not be migrated in the same change. The list only shrinks: a listed
 # driver that now complies (or no longer exists) fails the suite until removed.
-RATCHET_PENDING=(test-ui-tracker-first-run-setup.sh)
+RATCHET_PENDING=()
 
 # _noncomment <file> — the file minus whole-line comments.
 _noncomment() { grep -vE '^[[:space:]]*#' "$1" || true; }
