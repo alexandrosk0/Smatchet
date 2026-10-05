@@ -19,10 +19,18 @@
 #     `vcs.protected_branches`) and the path is NOT the current worktree nor the
 #     main integration tree.
 #
+# --branches MODE prunes LOCAL BRANCHES instead of worktrees — the mid-session
+# light prune for merged-branch residue that parallel agents leave behind
+# (tooling 2026-05-30). Same dry-run/--apply contract. A branch is deleted ONLY
+# when its PR is MERGED, no worktree holds it, it is not protected, and its tip
+# is still the merged PR head (commits added after the merge are never thrown
+# away). OPEN, CLOSED and no-PR branches are never touched.
+#
 # Usage:
 #   bash scripts/dev/worktree-prune.sh                     # dry-run (default)
 #   bash scripts/dev/worktree-prune.sh --apply             # actually reap
 #   bash scripts/dev/worktree-prune.sh --idle-hours 6      # idle threshold (0 = off)
+#   bash scripts/dev/worktree-prune.sh --branches [--apply]  # local-branch prune
 #   bash scripts/dev/worktree-prune.sh --selftest
 #
 # Exit: 0 — ran (dry-run, or apply with all reaps OK) · 1 — an --apply reap
@@ -44,11 +52,26 @@ prune_decision() {
     echo "REAP"
 }
 
+# Pure --branches decision: (pr_state, held, protected, at_pr_head) -> action.
+# held = a worktree has the branch checked out; at_pr_head = the local tip is
+# the merged PR's head commit. All flags are "1"/"0".
+branch_decision() {
+    local pr_state="$1" held="$2" protected="$3" at_head="$4"
+    [ "$protected" = "1" ] && { echo "SKIP-protected"; return 0; }
+    [ "$held" = "1" ] && { echo "SKIP-held"; return 0; }
+    [ "$pr_state" != "MERGED" ] && { echo "KEEP-$pr_state"; return 0; }
+    [ "$at_head" = "1" ] || { echo "SKIP-moved"; return 0; }
+    echo "DELETE"
+}
+
 if [ "${1:-}" = "--selftest" ]; then
     fail=0
     _ck() { local got; got="$(prune_decision "$2" "$3" "$4" "$5")"
         if [ "$got" = "$1" ]; then echo "  ok   [$1] state='$2' dirty=$3 prot=$4 active=$5"
         else echo "  FAIL [want $1 got $got] state='$2' dirty=$3 prot=$4 active=$5"; fail=1; fi; }
+    _bk() { local got; got="$(branch_decision "$2" "$3" "$4" "$5")"
+        if [ "$got" = "$1" ]; then echo "  ok   [$1] state='$2' held=$3 prot=$4 at-head=$5"
+        else echo "  FAIL [want $1 got $got] state='$2' held=$3 prot=$4 at-head=$5"; fail=1; fi; }
     echo "worktree-prune --selftest:"
     _ck REAP           MERGED 0 0 0
     _ck SKIP-dirty     MERGED 1 0 0
@@ -57,6 +80,23 @@ if [ "${1:-}" = "--selftest" ]; then
     _ck SKIP-dirty     MERGED 1 0 1
     _ck KEEP-OPEN      OPEN   0 0 0
     _ck KEEP-          ""     0 0 0
+    _bk DELETE         MERGED 0 0 1
+    _bk SKIP-held      MERGED 1 0 1
+    _bk SKIP-protected MERGED 0 1 1
+    _bk SKIP-moved     MERGED 0 0 0
+    _bk KEEP-OPEN      OPEN   0 0 1
+    _bk KEEP-CLOSED    CLOSED 0 0 1
+    _bk KEEP-          ""     0 0 0
+    # asserts-failure: --branches must never delete a branch a worktree holds,
+    # an OPEN-PR branch, a no-PR branch, or one with commits past its merged head.
+    _never_fail=0
+    _never() { [ "$(branch_decision "$@")" != "DELETE" ] || {
+        echo "  FAIL --branches would delete state='$1' held=$2 prot=$3 at-head=$4"; _never_fail=1; fail=1; }; }
+    _never MERGED 1 0 1   # held by a worktree
+    _never OPEN   0 0 1
+    _never ""     0 0 1   # no PR
+    _never MERGED 0 0 0   # commits past the merged head
+    [ "$_never_fail" -eq 0 ] && echo "  ok   held / OPEN / no-PR / moved branches are never DELETE"
     # asserts-failure: a DIRTY merged worktree must NEVER be reaped (would lose
     # uncommitted work), nor one a session touched inside the idle threshold
     # (would pull the tree out from under it). Prove both guards hold.
@@ -70,14 +110,16 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "worktree-prune --selftest: FAIL"; exit 1
 fi
 
-usage() { echo "usage: $0 [--apply] [--idle-hours N] | --selftest" >&2; exit 2; }
+usage() { echo "usage: $0 [--branches] [--apply] [--idle-hours N] | --selftest" >&2; exit 2; }
 
 APPLY=0
+BRANCHES=0
 IDLE_HOURS=24
 while [ $# -gt 0 ]; do
     case "$1" in
         --apply)      APPLY=1 ;;
         --dry-run)    APPLY=0 ;;   # the default; accepted because the audit suggests it
+        --branches)   BRANCHES=1 ;;
         --idle-hours) [ $# -ge 2 ] || usage; IDLE_HOURS="$2"; shift ;;
         *)            usage ;;
     esac
@@ -123,17 +165,55 @@ last_activity() {
 main_tree="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
 self_tree="$(git rev-parse --show-toplevel 2>/dev/null)"
 
-declare -A PR_STATE
+declare -A PR_STATE PR_HEAD
 if command -v gh >/dev/null 2>&1; then
     git fetch --prune origin develop >/dev/null 2>&1 || true
-    while IFS=$'\t' read -r ref state; do
+    while IFS=$'\t' read -r ref state oid; do
         [ -n "$ref" ] || continue
-        if [ -z "${PR_STATE[$ref]:-}" ] || [ "$state" = "OPEN" ]; then PR_STATE["$ref"]="$state"; fi
-    done < <(gh pr list --state all --limit 1000 --json headRefName,state \
-                --jq '.[] | [.headRefName, .state] | @tsv' 2>/dev/null || true)
+        if [ -z "${PR_STATE[$ref]:-}" ] || [ "$state" = "OPEN" ]; then
+            PR_STATE["$ref"]="$state"; PR_HEAD["$ref"]="${oid:-}"
+        fi
+    done < <(gh pr list --state all --limit 1000 --json headRefName,state,headRefOid \
+                --jq '.[] | [.headRefName, .state, .headRefOid] | @tsv' 2>/dev/null || true)
 else
     echo "worktree-prune: gh not on PATH — cannot determine MERGED state; nothing to reap." >&2
     exit 0
+fi
+
+# ── --branches: local branches no worktree holds ─────────────────────────────
+if [ "$BRANCHES" -eq 1 ]; then
+    declare -A HELD
+    while IFS= read -r line; do
+        case "$line" in "branch refs/heads/"*) HELD["${line#branch refs/heads/}"]=1 ;; esac
+    done < <(git worktree list --porcelain 2>/dev/null)
+    [ "$APPLY" -eq 1 ] && echo "worktree-prune --branches: --apply (deleting MERGED local branches no worktree holds)" \
+                        || echo "worktree-prune --branches: DRY-RUN (pass --apply to delete). Candidates:"
+    deleted=0 moved=0 rc=0
+    while IFS=$'\t' read -r ref tip; do
+        # Full refname, not :short — short names gain a `heads/` prefix when a
+        # tag of the same name exists, and would then miss every map lookup.
+        branch="${ref#refs/heads/}"
+        [ -n "$branch" ] || continue
+        protected=0; is_protected_branch "$branch" && protected=1
+        state="${PR_STATE[$branch]:-}"
+        at_head=0; [ -n "${PR_HEAD[$branch]:-}" ] && [ "${PR_HEAD[$branch]}" = "$tip" ] && at_head=1
+        case "$(branch_decision "$state" "${HELD[$branch]:-0}" "$protected" "$at_head")" in
+            DELETE)
+                if [ "$APPLY" -eq 1 ]; then
+                    if git branch -D "$branch" >/dev/null 2>&1; then
+                        echo "  deleted       $branch (PR MERGED)"; deleted=$((deleted+1))
+                    else
+                        echo "  FAILED        $branch — branch -D error" >&2; rc=1
+                    fi
+                else
+                    echo "  would-delete  $branch (PR MERGED, no worktree)"; deleted=$((deleted+1))
+                fi ;;
+            SKIP-moved) echo "  skip(moved)   $branch — tip is not the merged PR head; commits since the merge?"; moved=$((moved+1)) ;;
+            *) : ;;  # KEEP-* / SKIP-held / SKIP-protected — silent
+        esac
+    done < <(git for-each-ref --format='%(refname)%09%(objectname)' refs/heads/ 2>/dev/null)
+    echo "worktree-prune --branches: $([ "$APPLY" -eq 1 ] && echo deleted || echo would-delete)=$deleted  skip-moved=$moved"
+    exit $rc
 fi
 
 [ "$APPLY" -eq 1 ] && echo "worktree-prune: --apply (reaping MERGED + clean + idle worktrees)" \

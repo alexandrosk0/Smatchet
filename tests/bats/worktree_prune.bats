@@ -125,6 +125,50 @@ age_worktree() {  # <worktree> <hours>
     [ -d "$MAIN/.git" ]
 }
 
+# --- --branches: mid-session local-branch prune (tooling 2026-05-30) ----------
+# One branch of each kind next to the worktree-held feat/x: merged + free
+# (the only deletable one), OPEN, no PR, protected by config, and merged but
+# carrying a commit made after the merge.
+branches_fixture() {
+    local seed later b
+    seed="$(git -C "$MAIN" rev-parse develop)"
+    for b in feat/done feat/open feat/nopr asset-store; do git -C "$MAIN" branch "$b"; done
+    later="$(git -C "$MAIN" commit-tree "develop^{tree}" -p develop -m after-merge)"
+    git -C "$MAIN" branch feat/moved "$later"
+    {
+        printf '#!/usr/bin/env bash\ncat <<"PRS"\n'
+        printf '%s\tMERGED\t%s\n' feat/x "$seed" feat/done "$seed" feat/moved "$seed" asset-store "$seed"
+        printf 'feat/open\tOPEN\t%s\n' "$seed"
+        printf 'PRS\n'
+    } > "$STUB/gh"
+}
+has_branch() { [ -n "$(git -C "$MAIN" branch --list "$1")" ]; }
+
+@test "--branches dry-run names only the merged branch no worktree holds" {
+    branches_fixture
+    run prune --branches
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would-delete  feat/done"* ]]
+    [[ "$output" == *"skip(moved)   feat/moved"* ]]
+    [[ "$output" != *"feat/x"* ]]
+    [[ "$output" != *"feat/open"* ]]
+    [[ "$output" != *"feat/nopr"* ]]
+    [[ "$output" != *"asset-store"* ]]
+    [[ "$output" == *"would-delete=1  skip-moved=1"* ]]
+    for b in feat/done feat/moved feat/x feat/open feat/nopr asset-store; do has_branch "$b"; done
+}
+
+@test "--branches --apply deletes it and leaves held / OPEN / no-PR / protected / moved alone" {
+    branches_fixture
+    run prune --branches --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deleted       feat/done"* ]]
+    run has_branch feat/done
+    [ "$status" -ne 0 ]
+    for b in feat/moved feat/x feat/open feat/nopr asset-store develop; do has_branch "$b"; done
+    [ -d "$WT" ]   # branch mode never touches a worktree
+}
+
 # --- cmd_resync self-filter (finding #1958) ---------------------------------
 # resync used to rewrite EVERY registry entry unconditionally, so running it in
 # the shared integration tree silently re-baselined other LIVE sessions and blinded
