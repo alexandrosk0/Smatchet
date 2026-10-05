@@ -373,7 +373,14 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
         return 0;
     }
 
-    std::string txt(text, size);
+    // ADF text is plain: an entity reference becomes the character it names (md4c reports none inside
+    // code, which stays verbatim).
+    std::string txt;
+    if (type == MD_TEXT_ENTITY) {
+        AppendDecodedMdEntity(txt, text, size);
+    } else {
+        txt.assign(text, size);
+    }
 
     if (b.codeBlockDepth > 0) {
         // ADF codeBlock children are plain text — coalesce into a single text node so

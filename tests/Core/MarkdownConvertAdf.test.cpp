@@ -441,3 +441,100 @@ TEST_CASE("AdfToMarkdown: listItem text node without a string 'text' does not th
     list2["content"] = json::array({li2});
     CHECK_NOTHROW(Adf2Md(AdfDoc(json::array({list2}))));
 }
+
+// #2297: ADF text is plain, so Markdown -> ADF decodes entity references, and ADF -> Markdown escapes an
+// '&' that would read as one, so text survives the editor round trip.
+namespace {
+
+std::string FirstAdfText(const json& adf) {
+    const json* text = FindFirst(adf, "text");
+    return text != nullptr ? text->value("text", std::string()) : std::string("<no text node>");
+}
+
+std::string MdToAdfText(const std::string& md) { return FirstAdfText(MarkdownConvert::MarkdownToAdf(md)); }
+
+json AdfMarkedText(const std::string& text, const json& mark) {
+    json n = AdfText(text);
+    n["marks"] = json::array({mark});
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("MarkdownToAdf: an entity reference becomes the character it names (#2297)") {
+    CHECK(MdToAdfText("a &amp; b") == "a & b");
+    CHECK(MdToAdfText("&copy; 2026") == "\xC2\xA9 2026");
+    CHECK(MdToAdfText("&#65;&#x42;&#X43;") == "ABC");
+    CHECK(MdToAdfText("x &#x1F600; y") == "x \xF0\x9F\x98\x80 y");
+    // Two code points: U+2242 U+0338.
+    CHECK(MdToAdfText("&NotEqualTilde;") == "\xE2\x89\x82\xCC\xB8");
+    // No valid character: NUL, a UTF-16 surrogate, past U+10FFFF.
+    CHECK(MdToAdfText("a&#0;b") == "a\xEF\xBF\xBD"
+                                   "b");
+    CHECK(MdToAdfText("&#xD800;") == "\xEF\xBF\xBD");
+    CHECK(MdToAdfText("&#1114112;") == "\xEF\xBF\xBD");
+    // md4c reports any well-formed name; one HTML does not define is literal text.
+    CHECK(MdToAdfText("&nosuchentity; &a;") == "&nosuchentity; &a;");
+    // Code is verbatim.
+    CHECK(MdToAdfText("`&amp;`") == "&amp;");
+    CHECK(MdToAdfText("```\n&amp;\n```\n") == "&amp;\n");
+    // Image alt text, both ADF shapes.
+    CHECK(MdToAdfText("![a &amp; b](u.png)") == "a & b");
+    const json adf = MarkdownConvert::MarkdownToAdf("![a &amp; b](attachment:1)");
+    const json* media = FindFirst(adf, "mediaInline");
+    REQUIRE(media != nullptr);
+    CHECK((*media)["attrs"].value("alt", std::string()) == "a & b");
+}
+
+TEST_CASE("AdfToMarkdown: an '&' that Markdown would read as an entity reference is escaped (#2297)") {
+    const auto para = [](const json& inlineNode) { return AdfDoc(json::array({AdfPara(json::array({inlineNode}))})); };
+    CHECK(Adf2Md(para(AdfText("a &lt; b &#65; &#x41;"))) == "a \\&lt; b \\&#65; \\&#x41;");
+    // Not references in md4c's grammar, so nothing to escape.
+    CHECK(Adf2Md(para(AdfText("AT&T x & y &a; &#; &#x; &1;"))) == "AT&T x & y &a; &#; &#x; &1;");
+    // md4c's length limits: 6 hex / 7 decimal digits and 48-character names are references, one more is not.
+    const std::string name48 = "&" + std::string(48, 'a') + ";";
+    const std::string name49 = "&" + std::string(49, 'a') + ";";
+    CHECK(Adf2Md(para(AdfText("&#x10FFFF; &#1114111; " + name48))) == "\\&#x10FFFF; \\&#1114111; \\" + name48);
+    CHECK(Adf2Md(para(AdfText("&#x1234567; &#12345678; " + name49))) == "&#x1234567; &#12345678; " + name49);
+    CHECK(MdToAdfText("&#x1234567; &#12345678;") == "&#x1234567; &#12345678;");
+    // A literal backslash before an escaped '&' is doubled so it cannot pair with the escape.
+    CHECK(Adf2Md(para(AdfText("\\&amp; \\\\&lt;"))) == "\\\\\\&amp; \\\\\\\\\\&lt;");
+    // Code is verbatim in Markdown too.
+    json code;
+    code["type"] = "code";
+    CHECK(Adf2Md(para(AdfMarkedText("&amp;", code))) == "`&amp;`");
+    // A link whose text would need an escape is not written as a bare autolink.
+    json link;
+    link["type"] = "link";
+    link["attrs"]["href"] = "http://x/?q=&amp;";
+    CHECK(Adf2Md(para(AdfMarkedText("http://x/?q=&amp;", link))) == "[http://x/?q=\\&amp;](http://x/?q=&amp;)");
+    json media;
+    media["type"] = "mediaInline";
+    media["attrs"]["id"] = "1";
+    media["attrs"]["alt"] = "a &amp; b";
+    CHECK(Adf2Md(para(media)) == "![a \\&amp; b](attachment:1)");
+}
+
+TEST_CASE("ADF text survives AdfToMarkdown then MarkdownToAdf unchanged (#2297)") {
+    const char* texts[] = {"a &lt; b",
+                           "&amp;",
+                           "&#65; &#x41;",
+                           "AT&T and x & y;",
+                           "\\&amp;",
+                           "\\\\&lt;",
+                           "&copy; &unknownname; &#0;",
+                           "\xC2\xA9 2026 & more"};
+    for (const char* text : texts) {
+        CAPTURE(text);
+        const json doc = AdfDoc(json::array({AdfPara(json::array({AdfText(text)}))}));
+        CHECK(FirstAdfText(MarkdownConvert::MarkdownToAdf(Adf2Md(doc))) == text);
+    }
+    json media;
+    media["type"] = "mediaInline";
+    media["attrs"]["id"] = "1";
+    media["attrs"]["alt"] = "x &lt; y";
+    const json back = MarkdownConvert::MarkdownToAdf(Adf2Md(AdfDoc(json::array({AdfPara(json::array({media}))}))));
+    const json* backMedia = FindFirst(back, "mediaInline");
+    REQUIRE(backMedia != nullptr);
+    CHECK((*backMedia)["attrs"].value("alt", std::string()) == "x &lt; y");
+}

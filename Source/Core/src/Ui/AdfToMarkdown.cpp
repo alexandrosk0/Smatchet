@@ -81,7 +81,7 @@ void EmitInlineTextNode(const json& node, std::ostringstream& out) {
     bool isCode = false;
     CollectInlineMarks(node, openWrap, closeWrap, href, isCode);
     if (isCode) {
-        // Inline code wins: drop other emphasis on this run.
+        // Inline code wins: drop other emphasis on this run. md4c decodes no entity inside code.
         out << "`" << text << "`";
         return;
     }
@@ -90,10 +90,10 @@ void EmitInlineTextNode(const json& node, std::ostringstream& out) {
     // Autolink shortcut: when the visible text equals the link target, emit a bare URL
     // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
     // on save, so round-trip semantics are preserved with a cleaner editor surface.
-    const bool autolink = !href.empty() && text == href;
+    const bool autolink = !href.empty() && text == href && !HasMdEntityReference(text);
     if (!href.empty() && !autolink)
         out << "[";
-    out << text;
+    WriteMdTextEscapingEntities(out, text);
     if (!href.empty() && !autolink) {
         out << "](" << href << ")";
     }
@@ -127,7 +127,7 @@ void EmitInlineMention(const json& node, std::ostringstream& out) {
         std::string mtxt = node["attrs"].value("text", std::string());
         if (mtxt.empty())
             mtxt = std::string("@") + node["attrs"].value("id", std::string());
-        out << mtxt;
+        WriteMdTextEscapingEntities(out, mtxt);
     }
 }
 
@@ -142,8 +142,10 @@ void EmitInlineMedia(const json& node, std::ostringstream& out) {
     std::string alt = attrs.value("alt", std::string());
     std::string escAlt;
     escAlt.reserve(alt.size() + 4);
-    for (char ch : alt) {
-        if (ch == ']' || ch == '\\')
+    // Every backslash is doubled here, so a `\&` escape for an entity-like '&' cannot pair with one.
+    for (std::size_t i = 0; i < alt.size(); ++i) {
+        const char ch = alt[i];
+        if (ch == ']' || ch == '\\' || (ch == '&' && MdEntityReferenceLength(alt, i) != 0))
             escAlt += '\\';
         escAlt += ch;
     }
@@ -177,7 +179,7 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     if (attrs != node.end() && attrs->is_object()) {
         const auto text = attrs->find("text");
         if (text != attrs->end() && text->is_string())
-            out << text->get_ref<const std::string&>();
+            WriteMdTextEscapingEntities(out, text->get_ref<const std::string&>());
     }
 }
 

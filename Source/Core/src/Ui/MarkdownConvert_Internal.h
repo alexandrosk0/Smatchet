@@ -11,6 +11,7 @@
 // so the linker names stay segregated from anything the project may grow elsewhere.
 
 extern "C" {
+#include "entity.h"
 #include "md4c.h"
 }
 
@@ -18,6 +19,7 @@ extern "C" {
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -32,6 +34,160 @@ inline std::string MdAttrToString(const MD_ATTRIBUTE& attr) {
     if (attr.text == nullptr || attr.size == 0)
         return std::string();
     return std::string(attr.text, attr.size);
+}
+
+/// Append the UTF-8 encoding of `codepoint`. Zero, a UTF-16 surrogate and anything past U+10FFFF become
+/// U+FFFD, as CommonMark specifies for a numeric reference that names no valid character.
+inline void AppendUtf8CodePoint(std::string& out, unsigned long codepoint) {
+    if (codepoint == 0 || (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) {
+        codepoint = 0xFFFD;
+    }
+    const auto byte = [&out](unsigned long b) { out += static_cast<char>(static_cast<unsigned char>(b)); };
+    if (codepoint <= 0x7F) {
+        byte(codepoint);
+    } else if (codepoint <= 0x7FF) {
+        byte(0xC0 | (codepoint >> 6));
+        byte(0x80 | (codepoint & 0x3F));
+    } else if (codepoint <= 0xFFFF) {
+        byte(0xE0 | (codepoint >> 12));
+        byte(0x80 | ((codepoint >> 6) & 0x3F));
+        byte(0x80 | (codepoint & 0x3F));
+    } else {
+        byte(0xF0 | (codepoint >> 18));
+        byte(0x80 | ((codepoint >> 12) & 0x3F));
+        byte(0x80 | ((codepoint >> 6) & 0x3F));
+        byte(0x80 | (codepoint & 0x3F));
+    }
+}
+
+/// Value of one digit of a numeric character reference, or -1 when `c` is not one in that base.
+inline int MdEntityDigit(char c, bool hex) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (hex && c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (hex && c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+/// Append what an md4c MD_TEXT_ENTITY reference stands for. A numeric reference (`&#N;`, `&#xH;`)
+/// becomes its code point; a name in md4c's HTML5 table becomes its one or two code points. md4c reports
+/// any `&name;` of the right shape, so an unknown name is not a reference and stays literal text.
+inline void AppendDecodedMdEntity(std::string& out, const MD_CHAR* text, MD_SIZE size) {
+    if (size >= 4 && text[0] == '&' && text[1] == '#' && text[size - 1] == ';') {
+        const bool hex = text[2] == 'x' || text[2] == 'X';
+        unsigned long codepoint = 0;
+        for (MD_SIZE i = hex ? 3 : 2; i + 1 < size; ++i) {
+            const int digit = MdEntityDigit(text[i], hex);
+            if (digit < 0) {
+                out.append(text, size);
+                return;
+            }
+            // md4c caps the digits (7 decimal, 6 hex); saturate anyway so the value can never wrap.
+            codepoint = codepoint > 0x10FFFF ? codepoint : codepoint * (hex ? 16 : 10) + static_cast<unsigned>(digit);
+        }
+        AppendUtf8CodePoint(out, codepoint);
+        return;
+    }
+    const ENTITY* entity = entity_lookup(text, size);
+    if (entity == nullptr) {
+        out.append(text, size);
+        return;
+    }
+    AppendUtf8CodePoint(out, entity->codepoints[0]);
+    if (entity->codepoints[1] != 0) {
+        AppendUtf8CodePoint(out, entity->codepoints[1]);
+    }
+}
+
+inline bool IsAsciiAlpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+/// Where the run of an entity reference starting at `text[pos]` (an '&') begins, and its kind: `base` 0
+/// for a name, 10 or 16 for a numeric reference. False when md4c starts no reference there.
+inline bool MdEntityRunStart(const std::string& text, std::size_t pos, int& base, std::size_t& runStart) {
+    const std::size_t n = text.size();
+    if (pos >= n || text[pos] != '&') {
+        return false;
+    }
+    const std::size_t i = pos + 1;
+    if (i + 1 < n && text[i] == '#' && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
+        base = 16;
+        runStart = i + 2;
+        return true;
+    }
+    if (i < n && text[i] == '#') {
+        base = 10;
+        runStart = i + 1;
+        return true;
+    }
+    base = 0;
+    runStart = i;
+    return i < n && IsAsciiAlpha(text[i]);
+}
+
+/// True when `c` may continue the run of a reference of kind `base` (see MdEntityRunStart).
+inline bool IsMdEntityRunChar(char c, int base) {
+    return base == 0 ? (IsAsciiAlpha(c) || MdEntityDigit(c, false) >= 0) : MdEntityDigit(c, base == 16) >= 0;
+}
+
+/// Length of the entity reference md4c reads at `text[pos]`, or 0 when it reads a literal '&' there.
+/// Mirrors md4c's md_is_entity_str: `&#` + 1-7 digits, `&#x` + 1-6 hex digits, or `&` + a letter and
+/// 1-47 more letters or digits, each closed by `;`.
+inline std::size_t MdEntityReferenceLength(const std::string& text, std::size_t pos) {
+    int base = 0;
+    std::size_t runStart = 0;
+    if (!MdEntityRunStart(text, pos, base, runStart)) {
+        return 0;
+    }
+    const std::size_t minRun = base == 0 ? 2 : 1;
+    const std::size_t maxRun = base == 0 ? 48 : (base == 16 ? 6 : 7);
+    std::size_t i = runStart;
+    while (i < text.size() && i - runStart < maxRun && IsMdEntityRunChar(text[i], base)) {
+        ++i;
+    }
+    return (i - runStart >= minRun && i < text.size() && text[i] == ';') ? i + 1 - pos : 0;
+}
+
+/// True when some '&' in `text` would start an entity reference.
+inline bool HasMdEntityReference(const std::string& text) {
+    for (std::size_t pos = text.find('&'); pos != std::string::npos; pos = text.find('&', pos + 1)) {
+        if (MdEntityReferenceLength(text, pos) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Write ADF text as Markdown that converts back to the same text. ADF text is plain, and Markdown -> ADF
+/// decodes entity references, so an '&' that md4c would read as one is escaped (`\&`), along with every
+/// backslash directly before it, which would otherwise pair with that escape.
+inline void WriteMdTextEscapingEntities(std::ostringstream& out, const std::string& text) {
+    if (text.find('&') == std::string::npos) {
+        out << text;
+        return;
+    }
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == '\\') {
+            std::size_t runEnd = i;
+            while (runEnd < text.size() && text[runEnd] == '\\') {
+                ++runEnd;
+            }
+            const std::size_t run = runEnd - i;
+            out << std::string(MdEntityReferenceLength(text, runEnd) != 0 ? 2 * run : run, '\\');
+            i = runEnd;
+            continue;
+        }
+        if (text[i] == '&' && MdEntityReferenceLength(text, i) != 0) {
+            out << '\\';
+        }
+        out << text[i];
+        ++i;
+    }
 }
 
 /// The href of an MD_SPAN_A, from the `detail` md4c passes to an enter-span callback.
@@ -56,9 +212,9 @@ inline const char* HtmlAttrEscape(char c) {
     }
 }
 
-/// How an engine stores image alt text. Plain keeps md4c's text as it arrives (ADF, which keeps entity
-/// references raw everywhere). HtmlAttribute stores it ready for an attribute value: literal text is
-/// escaped, and an entity reference is kept verbatim, as the HTML text path does.
+/// How an engine stores image alt text. Plain is the text itself, with entity references decoded (ADF,
+/// as in all its text). HtmlAttribute stores it ready for an attribute value: literal text is escaped,
+/// and an entity reference is kept verbatim, as the HTML text path does.
 enum class MdAltEncoding : unsigned char { Plain, HtmlAttribute };
 
 /// md4c reports an image's description as ordinary span and text events between the image span's enter
@@ -130,9 +286,11 @@ inline bool AbsorbImageAltText(MdImageSpan& img, int codeBlockDepth, MD_TEXTTYPE
     }
     if (type == MD_TEXT_NORMAL || type == MD_TEXT_CODE) {
         AppendImageAltText(img, text, size);
+    } else if (type == MD_TEXT_ENTITY && img.encoding == MdAltEncoding::Plain) {
+        AppendDecodedMdEntity(img.alt, text, size);
     } else if (type == MD_TEXT_ENTITY) {
         // md4c reports only well-formed references (&name;, &#N;, &#xH;): letters, digits, '#', '&' and ';',
-        // so one is safe verbatim inside an HTML attribute. ADF keeps entity references raw in all its text.
+        // so one is safe verbatim inside an HTML attribute.
         img.alt.append(text, size);
     } else if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
         img.alt += ' ';
