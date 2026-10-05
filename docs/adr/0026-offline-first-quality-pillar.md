@@ -40,4 +40,4 @@ Evidence:
   - Or a maintainer decision.
   - `offline-write-bypasses-queue` graduated to absolute-0 in S9, once comments, worklogs and watches all went through the pending-action queue: any hit anywhere fails, with no grandfathered hits. Headers are scanned too, and a call wrapped across two code lines still counts. The queue seams stay out of scope (`Tracker/` and `Sync/` under `src/` and `include/`, and `FieldEditPipelineService`), and a single-line deviation still escapes a reviewed exception.
 - **Owners**: `offline-sync` is the implementer; `code-review` is the reviewer-of-record for blocking gates + WARN heuristic disposition.
-- Full design + slices + root causes: `docs/plans/active/offline-first.md`.
+- Full design + slices + root causes: `docs/plans/offline-first.md`.

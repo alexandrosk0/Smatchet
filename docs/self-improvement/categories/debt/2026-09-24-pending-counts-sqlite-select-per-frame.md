@@ -7,7 +7,7 @@
   every pending create through `LoadPendingCreates()` and returns `.size()`. Both reads are synchronous
   SQLite I/O on the render path (Quality Pillar 2). They are cheap while the queue is empty, but they
   grow with the queue, which is exactly the offline case the queue exists for. Found by the
-  offline-first sweep (docs/plans/active/offline-first.md).
+  offline-first sweep (docs/plans/offline-first.md).
 
   Concrete next action: keep both counts in `OfflineQueueService` as atomics. Update them on the worker
   after every enqueue, replay, archive and restore (the same places that already touch the tables).
