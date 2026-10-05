@@ -15,6 +15,9 @@
 #     is skipped and surfaced, never force-removed),
 #   * the worktree is IDLE: its HEAD, index and HEAD reflog are all older than
 #     --idle-hours (default 24), so a sweep never races a session still using it,
+#   * the worktree's HEAD is still the merged PR's head commit — a follow-up
+#     commit made after the merge (committed, so the tree reads clean, but never
+#     pushed) would otherwise die with the `git branch -D` (SKIP-moved),
 #   * the branch is NOT protected (develop / main / project.config.json
 #     `vcs.protected_branches`) and the path is NOT the current worktree nor the
 #     main integration tree.
@@ -40,15 +43,17 @@
 
 set -uo pipefail
 
-# Pure decision: (pr_state, dirty, protected, active) -> action. Keeps the guard
-# logic unit-testable. dirty/protected/active are "1"/"0"; active means the
-# worktree saw HEAD/index activity inside the idle threshold.
+# Pure decision: (pr_state, dirty, protected, active, at_pr_head) -> action.
+# Keeps the guard logic unit-testable. All flags are "1"/"0"; active means the
+# worktree saw HEAD/index activity inside the idle threshold; at_pr_head means
+# the worktree's HEAD is the merged PR's head commit (absent = "0", fail-safe).
 prune_decision() {
-    local pr_state="$1" dirty="$2" protected="$3" active="${4:-0}"
+    local pr_state="$1" dirty="$2" protected="$3" active="${4:-0}" at_head="${5:-0}"
     [ "$protected" = "1" ] && { echo "SKIP-protected"; return 0; }
     [ "$pr_state" != "MERGED" ] && { echo "KEEP-$pr_state"; return 0; }
     [ "$dirty" = "1" ] && { echo "SKIP-dirty"; return 0; }
     [ "$active" = "1" ] && { echo "SKIP-active"; return 0; }
+    [ "$at_head" = "1" ] || { echo "SKIP-moved"; return 0; }
     echo "REAP"
 }
 
@@ -66,20 +71,22 @@ branch_decision() {
 
 if [ "${1:-}" = "--selftest" ]; then
     fail=0
-    _ck() { local got; got="$(prune_decision "$2" "$3" "$4" "$5")"
-        if [ "$got" = "$1" ]; then echo "  ok   [$1] state='$2' dirty=$3 prot=$4 active=$5"
-        else echo "  FAIL [want $1 got $got] state='$2' dirty=$3 prot=$4 active=$5"; fail=1; fi; }
+    _ck() { local got; got="$(prune_decision "$2" "$3" "$4" "$5" "$6")"
+        if [ "$got" = "$1" ]; then echo "  ok   [$1] state='$2' dirty=$3 prot=$4 active=$5 at-head=$6"
+        else echo "  FAIL [want $1 got $got] state='$2' dirty=$3 prot=$4 active=$5 at-head=$6"; fail=1; fi; }
     _bk() { local got; got="$(branch_decision "$2" "$3" "$4" "$5")"
         if [ "$got" = "$1" ]; then echo "  ok   [$1] state='$2' held=$3 prot=$4 at-head=$5"
         else echo "  FAIL [want $1 got $got] state='$2' held=$3 prot=$4 at-head=$5"; fail=1; fi; }
     echo "worktree-prune --selftest:"
-    _ck REAP           MERGED 0 0 0
-    _ck SKIP-dirty     MERGED 1 0 0
-    _ck SKIP-protected MERGED 0 1 0
-    _ck SKIP-active    MERGED 0 0 1
-    _ck SKIP-dirty     MERGED 1 0 1
-    _ck KEEP-OPEN      OPEN   0 0 0
-    _ck KEEP-          ""     0 0 0
+    _ck REAP           MERGED 0 0 0 1
+    _ck SKIP-dirty     MERGED 1 0 0 1
+    _ck SKIP-protected MERGED 0 1 0 1
+    _ck SKIP-active    MERGED 0 0 1 1
+    _ck SKIP-dirty     MERGED 1 0 1 1
+    _ck SKIP-moved     MERGED 0 0 0 0
+    _ck SKIP-moved     MERGED 0 0 0 ""
+    _ck KEEP-OPEN      OPEN   0 0 0 1
+    _ck KEEP-          ""     0 0 0 1
     _bk DELETE         MERGED 0 0 1
     _bk SKIP-held      MERGED 1 0 1
     _bk SKIP-protected MERGED 0 1 1
@@ -100,12 +107,17 @@ if [ "${1:-}" = "--selftest" ]; then
     # asserts-failure: a DIRTY merged worktree must NEVER be reaped (would lose
     # uncommitted work), nor one a session touched inside the idle threshold
     # (would pull the tree out from under it). Prove both guards hold.
-    if [ "$(prune_decision MERGED 1 0 0)" = "REAP" ]; then
+    if [ "$(prune_decision MERGED 1 0 0 1)" = "REAP" ]; then
         echo "  FAIL dirty merged worktree was marked REAP"; fail=1
     else echo "  ok   dirty merged worktree is never REAP"; fi
-    if [ "$(prune_decision MERGED 0 0 1)" = "REAP" ]; then
+    if [ "$(prune_decision MERGED 0 0 1 1)" = "REAP" ]; then
         echo "  FAIL recently-active merged worktree was marked REAP"; fail=1
     else echo "  ok   recently-active merged worktree is never REAP"; fi
+    # ...nor one whose HEAD moved past the merged PR head: `git branch -D` would
+    # destroy the committed-but-unpushed follow-up commits.
+    if [ "$(prune_decision MERGED 0 0 0 0)" = "REAP" ]; then
+        echo "  FAIL merged worktree with commits past the PR head was marked REAP"; fail=1
+    else echo "  ok   merged worktree with commits past the PR head is never REAP"; fi
     [ "$fail" -eq 0 ] && { echo "worktree-prune --selftest: PASS"; exit 0; }
     echo "worktree-prune --selftest: FAIL"; exit 1
 fi
@@ -223,10 +235,10 @@ fi
 now="$(date +%s)"
 idle_secs=$((IDLE_HOURS * 3600))
 reaped=0 skipped=0 rc=0
-wt_path=""; wt_branch=""
+wt_path=""; wt_branch=""; wt_head=""
 consider() {
     [ -n "$wt_path" ] || return 0
-    local path="$wt_path" branch="$wt_branch"
+    local path="$wt_path" branch="$wt_branch" head="$wt_head"
     # Protected: a protected branch, detached, the main integration tree, or
     # the worktree this script runs in.
     local protected=0
@@ -250,7 +262,11 @@ consider() {
     local dirty=0 st
     if ! st="$(git -C "$path" --no-optional-locks status --porcelain 2>/dev/null)" || [ -n "$st" ]; then dirty=1; fi
     local state="${PR_STATE[$branch]:-}"
-    local action; action="$(prune_decision "$state" "$dirty" "$protected" "$active")"
+    # Same tip guard as --branches: only a HEAD that IS the merged PR head is
+    # reapable — `git branch -D` would drop any commit made after the merge.
+    local at_head=0
+    [ -n "${PR_HEAD[$branch]:-}" ] && [ "${PR_HEAD[$branch]}" = "$head" ] && at_head=1
+    local action; action="$(prune_decision "$state" "$dirty" "$protected" "$active" "$at_head")"
     case "$action" in
         REAP)
             if [ "$APPLY" -eq 1 ]; then
@@ -264,12 +280,14 @@ consider() {
             fi ;;
         SKIP-dirty) echo "  skip(dirty) $(basename "$path") [$branch] — uncommitted or untracked changes"; skipped=$((skipped+1)) ;;
         SKIP-active) echo "  skip(active) $(basename "$path") [$branch] — HEAD/index touched ${age:+$((age / 3600))h }ago, inside --idle-hours $IDLE_HOURS"; skipped=$((skipped+1)) ;;
+        SKIP-moved) echo "  skip(moved) $(basename "$path") [$branch] — HEAD is not the merged PR head; commits since the merge?"; skipped=$((skipped+1)) ;;
         *) : ;;  # KEEP-* / SKIP-protected — silent
     esac
 }
 while IFS= read -r line; do
     case "$line" in
-        "worktree "*) consider; wt_path="${line#worktree }"; wt_branch="" ;;
+        "worktree "*) consider; wt_path="${line#worktree }"; wt_branch=""; wt_head="" ;;
+        "HEAD "*) wt_head="${line#HEAD }" ;;
         "branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
         "detached") wt_branch="" ;;
     esac

@@ -26,7 +26,10 @@ setup() {
     # it so the reap paths below exercise the default threshold.
     age_worktree "$WT" 48
     STUB="$(mktemp -d)"
-    printf '#!/usr/bin/env bash\nprintf "feat/x\\tMERGED\\n"\n' > "$STUB/gh"
+    # The stub PR is MERGED at the worktree's current tip (headRefOid), the shape
+    # a reap requires; the moved-tip case below commits past it.
+    PR_HEAD_OID="$(git -C "$WT" rev-parse HEAD)"
+    printf '#!/usr/bin/env bash\nprintf "feat/x\\tMERGED\\t%s\\n"\n' "$PR_HEAD_OID" > "$STUB/gh"
     chmod +x "$STUB/gh"
     # Pin the protected-branch config to a fixture (rung 0 of project-config.sh)
     # so the real project.config.json never leaks into these assertions.
@@ -100,6 +103,34 @@ age_worktree() {  # <worktree> <hours>
     [ "$status" -eq 0 ]
     [[ "$output" == *"reaped"*"feat/x"* ]]
     [ ! -d "$WT" ]
+}
+
+# selftest: asserts-failure — the data-loss case: a clean, idle, MERGED worktree
+# whose branch carries a committed-but-unpushed follow-up commit. Reaping ran
+# `git branch -D` and destroyed that commit; the tip guard must skip it.
+@test "--apply SKIPS a merged worktree whose HEAD moved past the merged PR head" {
+    ( cd "$WT" && echo follow-up > f && git add f && git commit -qm "follow-up after merge" )
+    local follow; follow="$(git -C "$WT" rev-parse HEAD)"
+    [ "$follow" != "$PR_HEAD_OID" ]
+    age_worktree "$WT" 48
+    run prune --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skip(moved)"*"feat/x"* ]]
+    [[ "$output" == *"reaped=0  skipped=1"* ]]
+    [ -d "$WT" ]
+    [ "$(git -C "$MAIN" rev-parse feat/x)" = "$follow" ]
+    # Dry-run reports the same skip, never a would-reap.
+    run prune
+    [[ "$output" == *"skip(moved)"*"feat/x"* ]]
+    [[ "$output" == *"would-reap=0  skipped=1"* ]]
+}
+
+@test "a merged worktree is skipped as moved when the PR head is unknown" {
+    printf '#!/usr/bin/env bash\nprintf "feat/x\\tMERGED\\n"\n' > "$STUB/gh"
+    run prune --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skip(moved)"*"feat/x"* ]]
+    [ -d "$WT" ]
 }
 
 @test "--idle-hours 0 turns the idle guard off" {
