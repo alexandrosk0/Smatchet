@@ -46,8 +46,13 @@ if [ -s "$SPAWN_ERR" ]; then
 fi
 
 OK="false"
+# resolve-py.sh is agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_tcc_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_tcc_layer/agent-layer/scripts/dev/project-config.sh" ] && _tcc_layer="$_tcc_layer/agent-layer"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+. "$_tcc_layer/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py || true)"
 if [ -n "$PY" ]; then
     OK=$(printf '%s' "$RESULT" | "$PY" -c '

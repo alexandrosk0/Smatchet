@@ -53,8 +53,23 @@ set -euo pipefail
 # Existence (-f), not executability (-x): the checker is run through `bash`, and
 # it is tracked 100644 — an `-x` guard skipped it on every Linux/macOS push.
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-if [ -n "$repo_root" ] && [ -f "$repo_root/agents/scripts/project/p4-reconcile-check.sh" ]; then
-    if ! bash "$repo_root/agents/scripts/project/p4-reconcile-check.sh"; then
+# The checkers below are agent-layer content, run against this tree:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+# layer_rel is the same prefix as the remedies below spell it.
+layer_root="$repo_root"
+layer_rel=""
+if [ -n "$repo_root" ] && [ -f "$repo_root/agent-layer/scripts/dev/project-config.sh" ]; then
+    layer_root="$repo_root/agent-layer"
+    layer_rel="agent-layer/"
+elif [ -n "$repo_root" ] \
+        && [ "$(git -C "$repo_root" ls-files -s -- agent-layer 2>/dev/null | cut -c1-6)" = 160000 ]; then
+    # A registered mount that is not checked out: every layer gate below is
+    # absent, so it would skip silently. CI still runs them; say so here.
+    echo "pre-push: NOTE — agent-layer/ is not checked out, so the local layer gates are skipped (git submodule update --init --recursive agent-layer)." >&2
+fi
+if [ -n "$repo_root" ] && [ -f "$layer_root/agents/scripts/project/p4-reconcile-check.sh" ]; then
+    if ! bash "$layer_root/agents/scripts/project/p4-reconcile-check.sh"; then
         # Exit code 2 from p4-reconcile-check = drift detected + block mode.
         # The script already printed its own diagnostic; just propagate.
         exit 2
@@ -131,12 +146,12 @@ _pl_slug=""; _pl_file=""
 if [ "${SMATCHET_ALLOW_UNLOCKED_PUSH:-0}" != "1" ]; then
     _planlock_probe() {
         [ -n "$repo_root" ] || return 0
-        [ -f "$repo_root/agents/scripts/core/lock-table-cache.sh" ] || return 0
+        [ -f "$layer_root/agents/scripts/core/lock-table-cache.sh" ] || return 0
         local cur mb now cutoff f slug
         cur="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null)"
         case "$cur" in ""|develop|main) return 0 ;; esac   # detached/protected -> skip
         # shellcheck source=agents/scripts/core/lock-table-cache.sh
-        . "$repo_root/agents/scripts/core/lock-table-cache.sh" 2>/dev/null
+        . "$layer_root/agents/scripts/core/lock-table-cache.sh" 2>/dev/null
         command -v ltc_covering_slug >/dev/null 2>&1 || return 0
         export LTC_PROJ="$repo_root"
         mb="$(git -C "$repo_root" merge-base origin/develop HEAD 2>/dev/null)"
@@ -167,7 +182,7 @@ pre-push: REFUSING push — plan-lock collision.
   Your change to '$_pl_file' overlaps the write set of plan-lock '$_pl_slug',
   held by a DIFFERENT branch. Two branches editing the same files race. Either
   coordinate, or if you legitimately own this file, extend that lock's set:
-    bash agents/scripts/core/lock-claim-update.sh <slug> <full-write-set-file>
+    bash ${layer_rel}agents/scripts/core/lock-claim-update.sh <slug> <full-write-set-file>
 
   Override (sanctioned, logged): SMATCHET_ALLOW_UNLOCKED_PUSH=1 git push ...
 EOF
@@ -215,10 +230,10 @@ elif [ -n "$repo_root" ]; then
         #    pre-ship.sh + CI). exit 1 = real violation (block); 124 = timed out
         #    (fail-open + note); else infra (fail-open).
         if grep -qE '\.(c|cc|cpp|cxx|h|hpp|hxx)$' <<<"$ci_changed" \
-           && [ -f "$repo_root/agents/scripts/project/test-lint-rules.sh" ]; then
+           && [ -f "$layer_root/agents/scripts/project/test-lint-rules.sh" ]; then
             ci_rc=0
             if command -v timeout >/dev/null 2>&1; then
-                ( cd "$repo_root" && timeout 90 bash agents/scripts/project/test-lint-rules.sh --diff origin/develop ) \
+                ( cd "$repo_root" && timeout 90 bash "$layer_root/agents/scripts/project/test-lint-rules.sh" --diff origin/develop ) \
                     >/dev/null 2>&1 || ci_rc=$?
             else
                 # No `timeout` (e.g. a stripped macOS / minimal shell): SKIP rather
@@ -229,7 +244,7 @@ elif [ -n "$repo_root" ]; then
             fi
             if [ "$ci_rc" -eq 1 ]; then
                 ci_fail="$ci_fail
-  - Comment-noise + high-integrity gate  (agents/scripts/project/test-lint-rules.sh)"
+  - Comment-noise + high-integrity gate  (${layer_rel}agents/scripts/project/test-lint-rules.sh)"
             elif [ "$ci_rc" -eq 124 ]; then
                 echo "pre-push: NOTE — local lint gate skipped (no 'timeout' cmd, or it timed out); run 'bash scripts/dev/pre-ship.sh' for the full check." >&2
             fi
@@ -243,10 +258,10 @@ elif [ -n "$repo_root" ]; then
         #    push. A false-blocking gate trains override-by-reflex.
         if grep -qE '\.md$|^agents/|^docs/|^project\.config\.json$' <<<"$ci_changed"; then
             for ci_doc in test-doc-anchors test-markdown-links test-portable-purity; do
-                [ -f "$repo_root/agents/scripts/core/$ci_doc.sh" ] || continue
-                if ! ( cd "$repo_root" && bash "agents/scripts/core/$ci_doc.sh" ) >/dev/null 2>&1; then
+                [ -f "$layer_root/agents/scripts/core/$ci_doc.sh" ] || continue
+                if ! ( cd "$repo_root" && bash "$layer_root/agents/scripts/core/$ci_doc.sh" ) >/dev/null 2>&1; then
                     ci_fail="$ci_fail
-  - $ci_doc  (agents/scripts/core/$ci_doc.sh)"
+  - $ci_doc  (${layer_rel}agents/scripts/core/$ci_doc.sh)"
                 fi
             done
         fi
@@ -288,13 +303,13 @@ elif [ -n "$repo_root" ]; then
             fi
         fi
         # 4. Shell lint (`Shell lint (shellcheck)`) — only when a .sh changed AND
-        #    shellcheck is installed (else fail-open).
+        #    the shellcheck binary is installed (else fail-open).
         if grep -qE '\.sh$' <<<"$ci_changed" \
            && command -v shellcheck >/dev/null 2>&1 \
-           && [ -f "$repo_root/agents/scripts/core/test-lint-bash.sh" ]; then
-            if ! ( cd "$repo_root" && bash agents/scripts/core/test-lint-bash.sh ) >/dev/null 2>&1; then
+           && [ -f "$layer_root/agents/scripts/core/test-lint-bash.sh" ]; then
+            if ! ( cd "$repo_root" && bash "$layer_root/agents/scripts/core/test-lint-bash.sh" ) >/dev/null 2>&1; then
                 ci_fail="$ci_fail
-  - Shell lint (shellcheck)  (agents/scripts/core/test-lint-bash.sh)"
+  - Shell lint (shellcheck)  (${layer_rel}agents/scripts/core/test-lint-bash.sh)"
             fi
         fi
         if [ -n "$ci_fail" ]; then
@@ -354,8 +369,8 @@ pre-push: REFUSING push — no review-verdict marker for ${rv_missing_ref#refs/h
   reviewing the diff, commit it, then stamp the verdict (it binds HEAD, so
   check out the branch being pushed first):
 
-    bash agents/scripts/core/record-review-verdict.sh "N findings, <disposition>"
-    bash agents/scripts/core/record-review-verdict.sh "n/a — <reason>"
+    bash ${layer_rel}agents/scripts/core/record-review-verdict.sh "N findings, <disposition>"
+    bash ${layer_rel}agents/scripts/core/record-review-verdict.sh "n/a — <reason>"
 
   It validates the tail, writes the marker for HEAD, and prints the head-bound
   line for the PR body (CI checks the same binding against the PR head).
