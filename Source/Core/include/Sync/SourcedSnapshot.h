@@ -46,10 +46,18 @@ template <typename T, typename Source> class SourcedSnapshot {
     bool Loaded() const { return snapshot_.Loaded(); }
     void Invalidate() { snapshot_.Invalidate(); }
 
-    /// Worker: read `source` into a new view and publish it. A failed read keeps the previous view.
+    /// Worker: read `source` into a new view and publish it. A failed read keeps the previous view. Never
+    /// throws (the replay passes call it from their exit guards): every failure is logged instead.
     void Publish(Source& source) {
-        const std::string error = snapshot_.Rebuild([this, &source](T& next) { fill_(source, next); },
-                                                    [this, &source]() { return current_().get() == &source; });
+        std::string error;
+        try {
+            error = snapshot_.Rebuild([this, &source](T& next) { fill_(source, next); },
+                                      [this, &source]() { return current_().get() == &source; });
+        } catch (const std::exception& ex) {
+            error = ex.what();
+        } catch (...) {
+            error = "unknown exception";
+        }
         if (!error.empty()) {
             LOG_WARN("%s: reading the queue failed; keeping the previous view: %s", owner_, error.c_str());
         }

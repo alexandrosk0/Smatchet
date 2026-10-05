@@ -40,7 +40,7 @@ template <typename T> class PublishedSnapshot {
 
     /// Worker: fill a fresh T with `read(T&)` and publish it unless `isCurrent()` is false by then.
     /// Returns the read's error message, or "" (published, or dropped as no longer current); on an error
-    /// the previous view stays.
+    /// the previous view stays. Any exception from `read` is reported, not thrown.
     template <typename ReadFn, typename IsCurrentFn> std::string Rebuild(ReadFn&& read, IsCurrentFn&& isCurrent) {
         std::lock_guard<std::mutex> lock(rebuildMutex_);
         std::shared_ptr<T> next;
@@ -49,6 +49,8 @@ template <typename T> class PublishedSnapshot {
             read(*next);
         } catch (const std::exception& ex) {
             return std::string(ex.what());
+        } catch (...) {
+            return std::string("unknown exception");
         }
         if (!isCurrent()) {
             return std::string();

@@ -213,7 +213,13 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
         return;
     }
     if (ctx.ticketSaveSeq_.load() != saveSeq) {
-        return; // a newer save for this pane is queued; its refresh shows both
+        // A newer save for this pane is queued and its re-read shows both rows. That re-read admits only its own
+        // id, so record this row as the pane's now, as the skipped re-read would have (a no-op on a pane with no
+        // recorded set yet, which shows the whole namespace anyway).
+        if (ctx.backendGeneration_.load() == capturedGeneration) {
+            AddPaneOwnedTicketId(capturedKey, ctx.PaneId, ticket.id);
+        }
+        return;
     }
     // Re-read checked against the SAME latched ctx (MEDIUM-1). `ticket.id` is admitted explicitly: the
     // pane-scoping filter works off the last SYNCED id set, which may not contain this row yet.

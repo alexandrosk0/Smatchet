@@ -39,6 +39,9 @@ TEST_CASE("PublishedSnapshot publishes a rebuilt view and keeps the old one when
     const std::string err = snap.Rebuild([](View&) { throw std::runtime_error("disk gone"); }, kAlwaysCurrent);
     CHECK(err == "disk gone");
     CHECK(snap.Get()->Value == 7);
+    // A read that throws something other than std::exception is reported the same way, never thrown.
+    CHECK(snap.Rebuild([](View&) { throw 42; }, kAlwaysCurrent) == "unknown exception");
+    CHECK(snap.Get()->Value == 7);
 
     // A read whose source was replaced meanwhile is dropped, not published.
     CHECK(snap.Rebuild([](View& v) { v.Value = 9; }, []() { return false; }).empty());
@@ -165,7 +168,13 @@ struct Table {
 struct FakeDeps {
     std::shared_ptr<Table> Current = std::make_shared<Table>();
     std::vector<std::function<void()>> Launched;
-    std::shared_ptr<Table> CacheShared() const { return Current; }
+    bool ThrowOnCurrent = false;
+    std::shared_ptr<Table> CacheShared() const {
+        if (ThrowOnCurrent) {
+            throw std::runtime_error("cache handle unavailable");
+        }
+        return Current;
+    }
     void LaunchBackgroundTask(std::function<void()> task) { Launched.push_back(std::move(task)); }
 };
 
@@ -217,4 +226,23 @@ TEST_CASE("SourcedSnapshot drops a read of a replaced source and keeps the view 
     REQUIRE(deps.Launched.size() == 1);
     deps.Launched[0]();
     CHECK(snap.Get()->Value == 2);
+}
+
+TEST_CASE("SourcedSnapshot::Publish never throws, so the replay exit guards can call it") {
+    FakeDeps deps;
+    SourcedSnapshot<View, Table> snap("test", deps, FillFromTable);
+    deps.Current->Rows = 4;
+    snap.Publish(*deps.Current);
+    REQUIRE(snap.Get()->Value == 4);
+
+    // A fill that throws a non-standard exception keeps the view.
+    SourcedSnapshot<View, Table> odd("test", deps, [](Table&, View&) { throw 42; });
+    CHECK_NOTHROW(odd.Publish(*deps.Current));
+    CHECK_FALSE(odd.Loaded());
+
+    // So does a failure outside the read: here the current-source check throws.
+    deps.Current->Rows = 8;
+    deps.ThrowOnCurrent = true;
+    CHECK_NOTHROW(snap.Publish(*deps.Current));
+    CHECK(snap.Get()->Value == 4);
 }

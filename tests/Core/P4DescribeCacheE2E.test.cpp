@@ -152,3 +152,24 @@ TEST_CASE("P4ChangelistDescribeCache: two threads asking for the same CL converg
     // value must remain stable.
     CHECK(runner.CallCount() >= 1);
 }
+
+TEST_CASE("P4ChangelistDescribeCache: a failure never replaces a success another lookup stored meanwhile") {
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    // This lookup's p4 run fails, but while it runs a concurrent lookup of the same CL stores a success.
+    AnnotateAnalysisConfig cfg;
+    cfg.P4RunOverride = [&cache](const std::vector<std::string>&, int& outExit, std::string& outStdout,
+                                 std::string& outStderr) -> bool {
+        P4ChangelistDetails success;
+        success.Loaded = true;
+        success.Author = "alice";
+        cache.Store("7", success);
+        outExit = 1;
+        outStdout.clear();
+        outStderr = "Perforce client error:\n\tConnect to server failed; check $P4PORT.";
+        return true;
+    };
+    CHECK_FALSE(cache.GetOrFetch(cfg, "7").Error.empty()); // this caller still sees its own failure
+    const P4ChangelistDetails kept = cache.Get("7");
+    CHECK(kept.Error.empty());
+    CHECK(kept.Author == "alice");
+}
