@@ -109,8 +109,10 @@ jobs:
           # was skipped every time and the dead lane filed nothing). Budget vs cap is now
           # arithmetic: the projected total is echoed, and the run asserts it reached
           # every driver it discovered.
-          # Short on PRs (keep the advisory lane fast); longer on the nightly cron.
-          if [ "${{ github.event_name }}" = "schedule" ]; then TOTAL=1800; else TOTAL=720; fi
+          # Short on PRs (keep the advisory lane fast); longer on the nightly cron. The PR
+          # TOTAL is sized to keep every driver at the 10s floor without engaging it:
+          # 18 drivers x (10s + 35s backstop overhead) = 810s.
+          if [ "${{ github.event_name }}" = "schedule" ]; then TOTAL=1800; else TOTAL=810; fi
           mkdir -p crashes
           # Auto-discover every fuzz_* driver — new drivers scale in with no edit.
           mapfile -t targets < <(find tests/fuzz -maxdepth 1 -type f -name 'fuzz_*' -perm -u+x | sort)

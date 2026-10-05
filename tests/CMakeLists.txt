@@ -432,6 +432,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
         # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
         Core/AiWirePure.test.cpp
+        # Loose JSON int coercion behind the Jira catalog / board / sprint parsers, incl. the
+        # out-of-range-float regression fuzz_jira_field_catalog found. Header-only.
+        Core/JsonParseUtil.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
