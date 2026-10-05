@@ -9191,7 +9191,7 @@ stays ASCII-only / no BOM / LF, which SETUP.md also states and also does not enf
   `T("<key>"` call sites and flag if none of their literal fallback strings match the new `<english>` value.
   Enumerator: the `kEntries` array in `Source/Core/src/SmatchetLocalization.cpp`; rule id sketch
   `localization-english-fallback-drift`.
-  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — docs/agent-rules/cpp-rules.md § Localization states the fallback-wins rule; agents/scripts/project/test-localization-drift.sh (WARN-first; --diff/--all/--strict/--selftest; C-escape aware) compares call-site fallbacks with the table's English column. Whole-tree: 380 call sites, 3 drifts, all real (toast.reverted_layout, cmdpalette.destructive_hint, whisper.preferences.testConnection.failure) — product text, so filed as a GitHub Issue rather than changed here (visual-validation rule).
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — docs/agent-rules/cpp-rules.md § Localization states the fallback-wins rule; agents/scripts/project/test-localization-drift.sh (WARN-first; --diff/--all/--strict/--selftest; C-escape aware) compares call-site fallbacks with the table's English column. Whole-tree: 380 call sites, 3 drifts, all real (toast.reverted_layout, cmdpalette.destructive_hint, whisper.preferences.testConnection.failure) — product text, so filed as GitHub Issue #2305 rather than changed here (visual-validation rule).
   Status: applied (2026-10-04; was: open)
   Last-reviewed: 2026-10-04
 
