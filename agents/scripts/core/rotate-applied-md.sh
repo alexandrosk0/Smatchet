@@ -11,11 +11,20 @@
 # (`categories/`), so a deeper partition dir would break every link in a
 # rotated entry. Same-depth siblings keep them valid with zero rewriting.
 #
+# Entries come in two shapes — legacy `- YYYY-MM-DD · …` list blocks and
+# per-entry-file blocks (`# <title>` + a `**Date**:`-style metadata paragraph)
+# — split by the shared applied_md_lib.py. Every block rotates by its OWN date;
+# the legacy-only splitter glued a per-entry block onto the dated block above it
+# and filed it under that block's month. A partition block whose own date names
+# another month is re-homed (to its own partition, or back to the head when that
+# month is still current) on the next run.
+#
 # Partition files are created with a standard header (including the
 # deleted-runtime banner, which is self-scoping: it annotates only entries
 # that reference the removed agentic-flow C++ runtime) and are sorted latest
 # first, like the head. Rotation appends to an existing partition and re-sorts
-# it. Idempotent: a second run is a no-op.
+# it, dropping only exact copies of blocks the partition already holds.
+# Idempotent: a second run is a no-op.
 #
 # Invoked automatically by archive-backlog-entry.sh after each append, so the
 # head stays bounded by construction. test-backlog-counts.sh runs `--check`
@@ -27,6 +36,8 @@
 #   bash agents/scripts/core/rotate-applied-md.sh            # rotate in place
 #   bash agents/scripts/core/rotate-applied-md.sh --check    # exit 1 if rotation is due
 #
+# Env: ROTATE_APPLIED_TODAY=YYYY-MM-DD  pin "today" (fixtures; default: the date).
+#
 # Exit codes:
 #   0 — rotated (or nothing to rotate; or --check with nothing due)
 #   1 — --check mode and rotation is due; OR Python error via `set -e`
@@ -34,8 +45,9 @@
 
 set -euo pipefail
 
+ROTATE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+. "$ROTATE_LIB_DIR/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # applied.md is HOST content — self-improvement entries never move into the agent
@@ -57,12 +69,16 @@ if [ ! -f "$APPLIED" ]; then
     exit 2
 fi
 
-"$PY" - "$APPLIED" "$CHECK_ONLY" <<'PY'
+"$PY" - "$APPLIED" "$CHECK_ONLY" "$ROTATE_LIB_DIR" <<'PY'
 import datetime
+import glob
 import os
-import re
 import sys
 import tempfile
+
+applied, check_only, lib_dir = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
+sys.path.insert(0, lib_dir)
+import applied_md_lib as aml  # noqa: E402  (sibling module; path set above)
 
 
 def write_atomic(path, text):
@@ -81,42 +97,63 @@ def write_atomic(path, text):
             pass
         raise
 
-applied, check_only = sys.argv[1], sys.argv[2] == "1"
+
+def render(header, blocks):
+    out = ["".join(header).rstrip("\n") + "\n"]
+    for block in blocks:
+        out.append("\n" + "".join(block).rstrip("\n") + "\n")
+    return "".join(out)
+
+
 catdir = os.path.dirname(applied)
 
 with open(applied, encoding="utf-8") as f:
-    lines = f.readlines()
+    header, entries = aml.split_entries(f.readlines())
 
-entry_re = re.compile(r"^- (\d{4})-(\d{2})-\d{2} ")
-
-# Split header (everything before the first entry) from entry blocks.
-header, entries, cur, cur_month = [], [], None, None
-for line in lines:
-    m = entry_re.match(line)
-    if m:
-        if cur is not None:
-            entries.append((cur_month, cur))
-        cur, cur_month = [line], (int(m.group(1)), int(m.group(2)))
-    elif cur is None:
-        header.append(line)
-    else:
-        cur.append(line)
-if cur is not None:
-    entries.append((cur_month, cur))
-
-today = datetime.date.today()
-keep = {(today.year, today.month)}
+today_env = os.environ.get("ROTATE_APPLIED_TODAY", "")
+today = (datetime.datetime.strptime(today_env, "%Y-%m-%d").date()
+         if today_env else datetime.date.today())
 prev_last = today.replace(day=1) - datetime.timedelta(days=1)
-keep.add((prev_last.year, prev_last.month))
+keep = {f"{today.year:04d}-{today.month:02d}",
+        f"{prev_last.year:04d}-{prev_last.month:02d}"}
 
-stale = [(month, block) for month, block in entries if month not in keep]
-if not stale:
-    print("rotate-applied-md: head is bounded (nothing older than the previous month).")
+
+def home_of(date):
+    """Where a block belongs: "head", or the YYYY-MM of its partition.
+
+    An undated block has no month to be filed under, so it is never moved:
+    it stays in the head, and one already in a partition stays there.
+    """
+    if date is None or date[:7] in keep:
+        return "head"
+    return date[:7]
+
+
+# Every existing partition, parsed with the same splitter as the head.
+partitions = {}
+for path in sorted(glob.glob(os.path.join(catdir, "applied-[0-9][0-9][0-9][0-9]-[0-9][0-9].md"))):
+    month = os.path.basename(path)[len("applied-"):-len(".md")]
+    with open(path, encoding="utf-8") as f:
+        partitions[month] = aml.split_entries(f.readlines())
+
+stale = [(date, block) for date, block in entries if home_of(date) != "head"]
+misfiled = [(month, date, block)
+            for month, (_, blocks) in sorted(partitions.items())
+            for date, block in blocks
+            if date is not None and home_of(date) != month]
+
+if not stale and not misfiled:
+    print("rotate-applied-md: head is bounded (nothing older than the previous month); "
+          "every partition entry sits under its own month.")
     sys.exit(0)
 if check_only:
-    months = sorted({f"{y:04d}-{m:02d}" for (y, m), _ in stale})
-    print(f"rotate-applied-md: rotation due — {len(stale)} entr(ies) from {', '.join(months)} "
-          f"still in {applied}; run `bash agents/scripts/core/rotate-applied-md.sh`.")
+    msg = "rotate-applied-md: rotation due —"
+    if stale:
+        months = sorted({d[:7] for d, _ in stale})
+        msg += f" {len(stale)} entr(ies) from {', '.join(months)} still in {applied};"
+    if misfiled:
+        msg += f" {len(misfiled)} partition entr(ies) filed under another month;"
+    print(msg + " run `bash agents/scripts/core/rotate-applied-md.sh`.")
     sys.exit(1)
 
 PARTITION_HEADER = """# Agent self-improvement — applied (archive partition {month})
@@ -139,58 +176,60 @@ PARTITION_HEADER = """# Agent self-improvement — applied (archive partition {m
 <!-- Latest first. Appended by rotate-applied-md.sh only. -->
 """
 
+# Blocks bound for each partition (the head's stale entries, then misfiled
+# blocks from other partitions) and blocks bound back for the head.
+incoming, to_head, leaving = {}, [], {}
+for date, block in stale:
+    incoming.setdefault(home_of(date), []).append((date, block))
+for month, date, block in misfiled:
+    leaving.setdefault(month, []).append(block)
+    home = home_of(date)
+    (to_head if home == "head" else incoming.setdefault(home, [])).append((date, block))
 
-def entry_date(block):
-    m = re.match(r"^- (\d{4}-\d{2}-\d{2})", block[0])
-    return m.group(1) if m else "0000-00-00"
-
-
-by_month = {}
-for (y, m), block in stale:
-    by_month.setdefault(f"{y:04d}-{m:02d}", []).append(block)
-
-for month, blocks in sorted(by_month.items()):
+for month in sorted(set(incoming) | set(leaving)):
     part = os.path.join(catdir, f"applied-{month}.md")
-    existing = []
-    if os.path.exists(part):
-        with open(part, encoding="utf-8") as f:
-            plines = f.readlines()
-        phead, pcur = [], None
-        for line in plines:
-            if entry_re.match(line):
-                if pcur is not None:
-                    existing.append(pcur)
-                pcur = [line]
-            elif pcur is None:
-                phead.append(line)
-            else:
-                pcur.append(line)
-        if pcur is not None:
-            existing.append(pcur)
-        part_header = "".join(phead)
+    if month in partitions:
+        part_header, existing = partitions[month]
     else:
-        part_header = PARTITION_HEADER.format(month=month)
+        part_header, existing = [PARTITION_HEADER.format(month=month)], []
+    gone = leaving.get(month, [])
+    existing = [(d, b) for d, b in existing if not any(b is g for g in gone)]
 
-    # Drop blocks already present in the partition: a run interrupted between
-    # writing the partition and rewriting applied.md leaves the same entries in
-    # both files, and the retry would otherwise duplicate them here.
-    seen = {"".join(b).rstrip("\n") for b in existing}
-    fresh = [b for b in blocks if "".join(b).rstrip("\n") not in seen]
+    # Drop exact copies only — of a block the partition already holds, or of
+    # one this run already routed here. A run interrupted between writing the
+    # partition and rewriting applied.md leaves the same entries in both files,
+    # and an earlier rotation that never trimmed the head left whole months
+    # duplicated there. Anything that is not a byte-identical copy is written
+    # here, so an entry whose only copy is in the head is never dropped.
+    seen = {aml.block_key(b) for _, b in existing}
+    fresh = []
+    for date, block in incoming.get(month, []):
+        key = aml.block_key(block)
+        if key not in seen:
+            seen.add(key)
+            fresh.append((date, block))
 
-    merged = existing + fresh
-    merged.sort(key=entry_date, reverse=True)
-    out = [part_header.rstrip("\n") + "\n"]
-    for block in merged:
-        out.append("\n" + "".join(block).rstrip("\n") + "\n")
-    write_atomic(part, "".join(out))
+    merged = aml.sort_latest_first(existing + fresh)
+    write_atomic(part, render(part_header, [b for _, b in merged]))
+    skipped = len(incoming.get(month, [])) - len(fresh)
     print(f"rotate-applied-md: {len(fresh)} entr(ies) -> {part}"
-          + (f" ({len(blocks) - len(fresh)} already present, skipped)" if len(fresh) != len(blocks) else ""))
+          + (f" ({skipped} already present, skipped)" if skipped else "")
+          + (f" ({len(gone)} misfiled entr(ies) moved out)" if gone else ""))
 
-kept = [block for month, block in entries if month in keep]
-out = ["".join(header).rstrip("\n") + "\n"]
-for block in kept:
-    out.append("\n" + "".join(block).rstrip("\n") + "\n")
-write_atomic(applied, "".join(out))
-print(f"rotate-applied-md: head keeps {len(kept)} entr(ies) "
-      f"({', '.join(sorted(f'{y:04d}-{m:02d}' for y, m in keep))}).")
+kept = [(d, b) for d, b in entries if home_of(d) == "head"]
+seen = {aml.block_key(b) for _, b in kept}
+rehomed = 0
+for date, block in to_head:
+    key = aml.block_key(block)
+    if key in seen:
+        continue
+    seen.add(key)
+    # Insert ahead of the first older dated entry, so the head stays latest
+    # first without re-sorting entries this run did not move.
+    at = next((i for i, (d, _) in enumerate(kept) if d is not None and d < date), len(kept))
+    kept.insert(at, (date, block))
+    rehomed += 1
+write_atomic(applied, render(header, [b for _, b in kept]))
+print(f"rotate-applied-md: head keeps {len(kept)} entr(ies) ({', '.join(sorted(keep))})"
+      + (f", {rehomed} of them re-homed from a partition." if rehomed else "."))
 PY

@@ -5,15 +5,21 @@
 # Companion to the `merge=union` driver in `.gitattributes` (per
 # docs/agent-rules/process-rules.md § Backlog-archive union merge). The driver
 # concatenates parallel prepends verbatim — date order may interleave on the
-# merge commit. This script re-sorts entries by their YYYY-MM-DD prefix
-# descending while preserving:
+# merge commit. This script re-sorts entries by their own date, descending,
+# while preserving:
 #   - the file header (lines before the first entry)
 #   - each entry's multi-line block (Resolution lines after the title)
 #   - blank-line separators between entries
+# Both entry shapes count (split by the shared applied_md_lib.py): a legacy
+# `- YYYY-MM-DD · …` block sorts by that date, and a per-entry-file block
+# (`# <title>` + `**Date**:`-style metadata) by the date in its own metadata,
+# not the date of whichever legacy block it follows.
 #
 # Usage:
 #   bash agents/scripts/core/sort-applied-md.sh
 #   bash agents/scripts/core/sort-applied-md.sh --check    # exit 1 if reorder needed
+#
+# Env: SMATCHET_APPLIED_MD=<path>  sort that file instead of applied.md.
 #
 # Exit codes:
 #   0 — applied.md sorted (or already sorted in --check)
@@ -23,8 +29,9 @@
 
 set -euo pipefail
 
+SORT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+. "$SORT_LIB_DIR/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
@@ -63,15 +70,17 @@ fi
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
-# Read the file. Lines before the first "- YYYY-MM-DD" entry are the header
-# (kept verbatim at the top). Each entry begins with "- 2026-XX-XX ..." and
-# continues until the next entry or EOF (Resolution / Status / Last-reviewed
-# continuation lines are indented or blank-separated).
-"$PY" - "$APPLIED" "$TMP" <<'PY'
-import re
+# Read the file. Lines before the first entry are the header (kept verbatim at
+# the top). Each entry runs until the next entry or EOF (Resolution / Status /
+# Last-reviewed continuation lines, and a per-entry block's `## ` sections, stay
+# with it).
+"$PY" - "$APPLIED" "$TMP" "$SORT_LIB_DIR" <<'PY'
 import sys
 
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, lib_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, lib_dir)
+import applied_md_lib as aml  # noqa: E402  (sibling module; path set above)
+
 # newline="" on both ends: text mode would otherwise translate every newline
 # to the platform separator on write, so on Windows the rewritten copy differs
 # from the source in line endings alone and the `cmp -s` below never matches:
@@ -80,41 +89,9 @@ src, dst = sys.argv[1], sys.argv[2]
 with open(src, encoding="utf-8", newline="") as f:
     lines = f.readlines()
 
-# Split: header (everything up to first entry) + list of entries.
-# An entry starts with "- YYYY-MM-DD ".
-entry_re = re.compile(r"^- (\d{4}-\d{2}-\d{2}) ")
-header_end = 0
-for i, line in enumerate(lines):
-    if entry_re.match(line):
-        header_end = i
-        break
-else:
-    # No entries — nothing to sort.
-    with open(dst, "w", encoding="utf-8", newline="") as f:
-        f.writelines(lines)
-    sys.exit(0)
-
-header = lines[:header_end]
-
-# Collect entries. Each entry is the entry-line + all following lines until
-# (a) the next entry-line, or (b) EOF.
-entries = []
-current = []
-current_date = None
-for line in lines[header_end:]:
-    m = entry_re.match(line)
-    if m:
-        if current:
-            entries.append((current_date, current))
-        current = [line]
-        current_date = m.group(1)
-    else:
-        current.append(line)
-if current:
-    entries.append((current_date, current))
-
-# Sort descending by date prefix. Stable sort preserves intra-date order.
-entries.sort(key=lambda e: e[0], reverse=True)
+header, entries = aml.split_entries(lines)
+# Descending by each entry's own date; stable, so equal dates keep file order.
+entries = aml.sort_latest_first(entries)
 
 with open(dst, "w", encoding="utf-8", newline="") as f:
     f.writelines(header)
