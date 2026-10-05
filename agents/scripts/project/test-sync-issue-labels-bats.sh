@@ -12,7 +12,7 @@
 
 set -uo pipefail
 
-cd "$(dirname "$0")/../../.." || exit 2
+CDPATH='' cd "$(dirname "$0")/../../.." || exit 2
 
 if ! command -v bats >/dev/null 2>&1; then
     echo "test-sync-issue-labels-bats: bats not on PATH (npm i -g bats). See BUILD.md." >&2

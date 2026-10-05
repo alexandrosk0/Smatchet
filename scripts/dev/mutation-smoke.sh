@@ -34,6 +34,15 @@
 #             · 3 corpus/tree integrity error (dirty tree, ambiguous search)
 set -euo pipefail
 
+# Anchored to THIS SCRIPT's location, not $REPO_ROOT: the bats suite runs
+# mutation-smoke.sh with cwd inside throwaway fixture repos, where
+# `git rev-parse --show-toplevel` resolves to the fixture (no lib there). Resolved
+# before the cd below, so a relative path to this script still resolves. The lib
+# is agent-layer content: the agent-layer/ mount once it holds the layer's
+# project-config.sh (plan agent-surface-extraction-repo, row 12), else this tree.
+_ms_layer="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_ms_layer/agent-layer/scripts/dev/project-config.sh" ] && _ms_layer="$_ms_layer/agent-layer"
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
@@ -72,13 +81,6 @@ if [ "${SMATCHET_SKIP_MUTATION_SMOKE:-}" = "1" ]; then
 fi
 
 [ -f "$CORPUS" ] || { echo "mutation-smoke: corpus not found: $CORPUS" >&2; exit 3; }
-# Anchored to THIS SCRIPT's location, not $REPO_ROOT: the bats suite runs
-# mutation-smoke.sh with cwd inside throwaway fixture repos, where
-# `git rev-parse --show-toplevel` resolves to the fixture (no lib there). The lib
-# is agent-layer content: the agent-layer/ mount once it holds the layer's
-# project-config.sh (plan agent-surface-extraction-repo, row 12), else this tree.
-_ms_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ -f "$_ms_layer/agent-layer/scripts/dev/project-config.sh" ] && _ms_layer="$_ms_layer/agent-layer"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
 . "$_ms_layer/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "mutation-smoke: python3 required (no working interpreter on PATH)" >&2; exit 2; }

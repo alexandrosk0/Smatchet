@@ -20,7 +20,7 @@ set -uo pipefail
 # require non-empty AND success, else exit 2. The suite lives in this script's
 # own tree (the agent layer), not the caller's git top level, which is the host
 # once the layer is a submodule.
-_GIT_ROOT="$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)" || exit 2
+_GIT_ROOT="$(CDPATH='' cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)" || exit 2
 [ -n "$_GIT_ROOT" ] || exit 2
 cd "$_GIT_ROOT" || exit 2
 
