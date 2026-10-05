@@ -88,6 +88,8 @@ The dev toolchain under `scripts/` is **bash-only** — every former `.ps1` help
 
 Rules if you touch one: keep it **ASCII-only, no BOM, LF endings** (Windows PowerShell 5.1 decodes a no-BOM file as ANSI and mis-parses non-ASCII — an em-dash in a string literal silently kills the script), and keep the header marker comment. Adding a **new** `.ps1` anywhere else is a regression — port it to bash instead. Cross-platform primitives with no shell equivalent go to Python: `flock(1)` is util-linux (absent on Git Bash), so drain serialisation uses `scripts/dev/lockfile.py`.
 
+**Gated as rule `no-new-ps1`** by `scripts/dev/test-no-new-ps1.sh` (run by `scripts/dev/test-all.sh`): the tracked `.ps1` basenames must equal the first column of the table above, so a new shim needs a row here with its reason. Each listed file must carry the `# Last remaining PowerShell file` marker, and every tracked `.ps1` must be ASCII-only, BOM-less and LF. A file that must stay PowerShell but cannot be listed escapes the set check with a `SMATCHET_DEVIATION(rule=no-new-ps1; reason=…; owner=…; revisit=…)` line; it is still encoding-checked.
+
 ## VCS mode (git vs Perforce) — per machine
 
 Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".
