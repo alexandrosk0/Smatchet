@@ -15,6 +15,15 @@
 #   default / --check   fail only on leakage NOT in the committed baseline
 #   --refresh           regenerate the baseline from the current tree
 # Baseline: docs/high-integrity/portable-purity-baseline.txt (sorted file:literal).
+#
+# Rename-following (process.md 2026-06-03 doc-file-RENAME entry): the baseline is
+# keyed by filename, so a `git mv` of a portable doc used to re-report every
+# grandfathered literal it carried as a NEW leak. Check mode reads
+# `git diff -M --name-status --diff-filter=R <merge-base>` and remaps baseline
+# keys old -> new before comparing, so a pure rename stays green while a NEW
+# literal added to the renamed file still fails. Base ref: $PORTABLE_PURITY_BASE,
+# else origin/develop, else develop; no resolvable merge-base (shallow clone,
+# detached CI checkout) = no remap, i.e. the plain filename-keyed comparison.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -78,6 +87,25 @@ fi
 # LF scan output.
 base="$( [ -f "$BASELINE" ] && tr -d '\r' < "$BASELINE" || true )"
 current="$(printf '%s' "$current" | tr -d '\r')"
+
+# Follow renames since the fork point: rewrite each baseline key `old<TAB>lit` to
+# `new<TAB>lit` for every `R<score><TAB>old<TAB>new` the branch carries.
+merge_base=""
+for _ref in ${PORTABLE_PURITY_BASE:-} origin/develop develop; do
+  if git rev-parse --verify --quiet "$_ref^{commit}" >/dev/null 2>&1; then
+    merge_base="$(git merge-base "$_ref" HEAD 2>/dev/null || true)"
+    break
+  fi
+done
+if [ -n "$merge_base" ]; then
+  renames="$(git diff -M --name-status --diff-filter=R "$merge_base" -- "${PORTABLE_DIRS[@]}" 2>/dev/null | tr -d '\r' || true)"
+  if [ -n "$renames" ]; then
+    base="$(awk -F'\t' -v OFS='\t' 'FNR == NR { if ($1 ~ /^R/) map[$2] = $3; next }
+                                    ($1 in map) { $1 = map[$1] } { print }' \
+              <(printf '%s\n' "$renames") <(printf '%s\n' "$base"))"
+    echo "test-portable-purity: followed $(printf '%s\n' "$renames" | grep -c .) rename(s) since $merge_base when comparing to the baseline."
+  fi
+fi
 # NEW leakage = current entries not in the baseline.
 new="$(comm -13 <(printf '%s\n' "$base" | sort -u) <(printf '%s\n' "$current" | sort -u) | grep -c . || true)"
 if [ "${new:-0}" -eq 0 ]; then
