@@ -86,7 +86,7 @@ audit_remote() { ( cd "$MAIN" && PATH="$GHSTUB:$PATH" PC_CONFIG_FILE="$GHSTUB/pr
 @test "--remote is report-only and --age-days moves the cut-off" {
     remote_fixture
     refs_before="$(git -C "$ORIGIN" for-each-ref)"
-    run audit_remote --remote --age-days 45
+    run audit_remote --remote --age-days=45
     [ "$status" -eq 0 ]
     [[ "$output" == *"0 stale remote branch(es)"* ]]
     [ "$(git -C "$ORIGIN" for-each-ref)" = "$refs_before" ]

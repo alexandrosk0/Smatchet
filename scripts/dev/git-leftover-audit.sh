@@ -111,6 +111,7 @@ while [ $# -gt 0 ]; do
         --no-fetch) FETCH=0 ;;
         --remote)   REMOTE=1 ;;
         --age-days) [ $# -ge 2 ] || usage; AGE_DAYS="$2"; shift ;;
+        --age-days=*) AGE_DAYS="${1#*=}" ;;
         *)          usage ;;
     esac
     shift

@@ -101,6 +101,9 @@ age_worktree() {  # <worktree> <hours>
     run prune --idle-hours 0
     [ "$status" -eq 0 ]
     [[ "$output" == *"would-reap"*"feat/x"* ]]
+    run prune --idle-hours=0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would-reap"*"feat/x"* ]]
 }
 
 @test "--idle-hours rejects a non-number" {

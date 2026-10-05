@@ -121,6 +121,7 @@ while [ $# -gt 0 ]; do
         --dry-run)    APPLY=0 ;;   # the default; accepted because the audit suggests it
         --branches)   BRANCHES=1 ;;
         --idle-hours) [ $# -ge 2 ] || usage; IDLE_HOURS="$2"; shift ;;
+        --idle-hours=*) IDLE_HOURS="${1#*=}" ;;
         *)            usage ;;
     esac
     shift
