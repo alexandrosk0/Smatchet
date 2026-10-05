@@ -173,3 +173,24 @@ TEST_CASE("P4ChangelistDescribeCache: a failure never replaces a success another
     CHECK(kept.Error.empty());
     CHECK(kept.Author == "alice");
 }
+
+TEST_CASE("P4ChangelistDescribeCache: an unknown-changelist answer never replaces a success stored meanwhile") {
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    // The failing run's answer is final ("no such changelist"), but a concurrent lookup stored a success.
+    AnnotateAnalysisConfig cfg;
+    cfg.P4RunOverride = [&cache](const std::vector<std::string>&, int& outExit, std::string& outStdout,
+                                 std::string& outStderr) -> bool {
+        P4ChangelistDetails success;
+        success.Loaded = true;
+        success.Author = "alice";
+        cache.Store("7", success);
+        outExit = 1;
+        outStdout.clear();
+        outStderr = "Change 7 unknown.";
+        return true;
+    };
+    CHECK_FALSE(cache.GetOrFetch(cfg, "7").Error.empty());
+    const P4ChangelistDetails kept = cache.Get("7");
+    CHECK(kept.Error.empty());
+    CHECK(kept.Author == "alice");
+}

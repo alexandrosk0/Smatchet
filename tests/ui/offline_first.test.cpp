@@ -997,25 +997,34 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
         const std::int64_t actionId = queued.QueueId;
         const std::int64_t createId = cache->EnqueuePendingCreate(otherSite, R"({"fields":{"summary":"other site"}})");
+        // A comment written straight to the cache as well: the retry's reread must publish it too.
+        const std::int64_t directActionId =
+            cache->EnqueuePendingAction(otherSite, PendingActionKindWire(PendingActionKind::CommentAdd), "OFF-1",
+                                        R"({"body":"written outside the queue service","created":1})", "pending");
         IM_CHECK_NO_RET(actionId > 0);
         IM_CHECK_NO_RET(createId > 0);
+        IM_CHECK_NO_RET(directActionId > 0);
         smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
 
         // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent. The
-        // create was written straight to the cache, so it reaches the published queue view through the
-        // retry's reread, as a row another writer left in the database would.
+        // create and the direct comment were written straight to the cache, so they reach the published queue
+        // views through the retry's reread, as rows another writer left in the database would.
         IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
         app->RetryOfflineQueuesNow();
-        const auto actionListed = [app, actionId]() {
+        const auto pendingListed = [app](std::int64_t id) {
             const auto snap = app->GetPendingActionsSnapshot();
             return std::any_of(snap->Pending.begin(), snap->Pending.end(),
-                               [actionId](const PendingActionRecord& r) { return r.Id == actionId; });
+                               [id](const PendingActionRecord& r) { return r.Id == id; });
         };
+        const auto actionListed = [&pendingListed, actionId]() { return pendingListed(actionId); };
+        const auto directActionListed = [&pendingListed, directActionId]() { return pendingListed(directActionId); };
         IM_CHECK_NO_RET(YieldUntil(ctx, 600, actionListed));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, directActionListed));
         ctx->Yield(60);
         app->RetryOfflineQueuesNow();
         ctx->Yield(60);
         IM_CHECK_NO_RET(actionListed());
+        IM_CHECK_NO_RET(directActionListed());
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
         const std::vector<PendingCreate> creates = app->GetPendingCreates();
         IM_CHECK_NO_RET(std::any_of(creates.begin(), creates.end(),
@@ -1023,24 +1032,31 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
         IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
 
-        // The Offline Queue panel draws both rows as held in a single draw (see the GuiFunc).
+        // The Offline Queue panel draws all three rows as held in a single draw (see the GuiFunc).
         HeldQueueProbe& probe = HeldQueueProbeState();
         probe.Draw = true;
         bool drawnHeld = false;
         for (int frame = 0; frame < 120 && !drawnHeld; ++frame) {
             ctx->Yield();
-            drawnHeld = probe.HeldRowsLastDraw >= 2;
+            drawnHeld = probe.HeldRowsLastDraw >= 3;
         }
         probe.Draw = false;
         if (!drawnHeld) {
-            ctx->LogError("held rows in the last panel draw: %d (want >= 2)", probe.HeldRowsLastDraw);
+            ctx->LogError("held rows in the last panel draw: %d (want >= 3)", probe.HeldRowsLastDraw);
         }
         IM_CHECK_NO_RET(drawnHeld);
 
         // Never leak the rows into a later test.
-        if (actionId > 0) {
-            app->DiscardPendingActions({actionId});
-            IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+        std::vector<std::int64_t> actionIds;
+        for (const std::int64_t id : {actionId, directActionId}) {
+            if (id > 0) {
+                actionIds.push_back(id);
+            }
+        }
+        if (!actionIds.empty()) {
+            app->DiscardPendingActions(actionIds);
+            IM_CHECK_NO_RET(YieldUntil(
+                ctx, 600, [&actionListed, &directActionListed]() { return !actionListed() && !directActionListed(); }));
         }
         if (createId > 0) {
             app->DeletePendingCreates({createId});

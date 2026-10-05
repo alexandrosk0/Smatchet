@@ -389,8 +389,10 @@ void P4ChangelistDescribeCache::Store(const std::string& changelist, P4Changelis
 void P4ChangelistDescribeCache::StoreEntry(const std::string& changelist, Entry entry) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto existing = map_.find(changelist);
-    if (!entry.Final && existing != map_.end() && existing->second.Final && existing->second.Details.Error.empty()) {
-        // Two threads described the same CL and this one failed: keep the success the other stored.
+    if (!entry.Details.Error.empty() && existing != map_.end() && existing->second.Final &&
+        existing->second.Details.Error.empty()) {
+        // Two threads described the same CL and this one failed (retryable or final): keep the success
+        // the other stored.
         Touch(changelist);
         return;
     }
