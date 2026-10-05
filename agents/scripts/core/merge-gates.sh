@@ -1345,7 +1345,7 @@ poll_merge_gates() {
                     cr_state_print="NONE+status-SUCCESS-waiting-for-inline (poll $((p+1))/$CR_GRACE_POLLS)"
                     # First-poll tip: if this SUCCESS is the OSS manual-trigger
                     # skip (repos <10 stars), the operator needs a human ask —
-                    # bot nudges are ignored. Wording is conditional so a slow
+                    # bot nudges have not been seen to start one. Wording is conditional so a slow
                     # auto-review on a starred repo is not mis-diagnosed.
                     if [ "$p" -eq 0 ]; then
                         echo "INFO: CodeRabbit status=SUCCESS with no inline review yet. If CR said 'manual review required' / 'Review available on request' (repos <10 stars), run: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber} — or waive with cr-out-of-band + cr-disposition:cr-auto-review-disabled. See merge-gates.md § CodeRabbit OSS manual-trigger." >&2

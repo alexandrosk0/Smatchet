@@ -108,7 +108,10 @@ def disposition($labels; $body; $prefix):
                    else ["StatusContext", (.context // "")] end),
               _r: (.checkSuite.createdAt // "")})
    | group_by(._k) | map(sort_by([._r, (.startedAt // "")]) | .[-1])
-   | map(del(._k, ._r))) as $ctx
+   | map(del(._k, ._r))) as $ctxAll
+# The All-checks-green aggregate re-derives THIS verdict for native auto-merge;
+# counting it would only add a stale red (it never re-runs itself), so skip it.
+| ([$ctxAll[] | select(.__typename != "CheckRun" or .name != "All checks green (block-on-any-red)")]) as $ctx
 # $dupMasked — check NAMES where the dedup above discarded a BLOCKING context
 # from a DIFFERENT check suite than the one it kept. With the suite-aware key the
 # kept context matches what GitHub evaluates, so this is not a gate failure; it is
@@ -155,7 +158,7 @@ def disposition($labels; $body; $prefix):
           | (test("__BLOCK_ALLOWLIST_RE__"; "i")
              and (ascii_downcase | contains("advisory") | not))))]) as $blocking
 | (__REQUIRED_CONTEXTS__) as $reqNames
-| ([$ctx[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
+| ([$ctxAll[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
 | ([$reqNames[] | select(. as $n | ($ctxNames | any(. == $n)) | not)]) as $reqAbsent
 | ([$ctx[] | select(
       ((.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or

@@ -21,7 +21,9 @@ name: All checks green
 # project.config.json § branch_protection.required_contexts AND re-applied to the
 # live ruleset (setup-branch-protection.sh) — an admin step, landed on a green
 # develop tip (a new required context while any lane is red blocks every PR).
-# Until then it is one more blocking check the poller waits on.
+# The merge-gates poller skips this check by name (merge-gates.d/10-gate-filter.sh):
+# it computes the same verdict directly, and a red aggregate left behind after the
+# real red is re-run green would otherwise wedge every poll.
 #
 # Always-report rule (docs/agent-rules/ci-required-check-pattern.md): NO `paths:`
 # filter and NO job-level `if:` — a skipped run would publish a `skipped` check

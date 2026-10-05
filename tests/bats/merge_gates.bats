@@ -1609,6 +1609,32 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "the All-checks-green aggregate never blocks the poller (red or pending)" {
+    # The aggregate re-derives block-on-any-red for GitHub's native auto-merge and
+    # never re-runs itself: a red aggregate left behind after the real red was
+    # re-run green would wedge every poll, and a pending one makes the poller wait
+    # on a job that is itself waiting on the poller's own inputs. The poller
+    # computes the verdict directly, so it skips the aggregate by name.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"All checks green (block-on-any-red)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"All checks green (block-on-any-red)","status":"IN_PROGRESS","conclusion":null,"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
 plan_lock_red_fixture() {
     # Usage: plan_lock_red_fixture <labels.nodes JSON> [<PR body>]
     # Pass fixture whose sole failure is a red non-required "Plan-lock gate".
