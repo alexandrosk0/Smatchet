@@ -426,6 +426,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
+        # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
+        # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
+        Core/AiWirePure.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -1013,6 +1016,8 @@ add_executable(SmatchetTests
     Core/AiNdjsonParser.test.cpp
     Core/AiContextBuilder.test.cpp
     Core/AiErrorRedact.test.cpp
+    # Header-only shared AI-client wire plumbing (Source/Core/include/AiWirePure.h).
+    Core/AiWirePure.test.cpp
     # PR-12 — per-client cancel + error-body redaction regressions driving the
     # REAL OpenAiClient / AnthropicClient / OllamaClient (CORE sources below) over
     # a real cpr HTTP round-trip at an in-process httplib loopback server

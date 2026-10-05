@@ -41,10 +41,10 @@ struct AiMessage {
     std::string Content;
     /// Wall-clock unix-epoch milliseconds the message was created locally.
     /// Stamped at dispatch on the UI thread (user) or at assistant-finalisation
-    /// on the MainThreadDispatcher (assistant). Wire serializers in
-    /// OpenAiClient / AnthropicClient / OllamaClient build the provider JSON
-    /// per-field (`role` + `content` only) so these new members never leak
-    /// to the upstream LLM API.
+    /// on the MainThreadDispatcher (assistant). The wire serializer shared by
+    /// OpenAiClient / AnthropicClient / OllamaClient (AiWirePure.h) builds the
+    /// provider JSON per-field (`role` + `content` only) so these new members
+    /// never leak to the upstream LLM API.
     std::int64_t CreatedAtUnixMs = 0; // sentinel 0 = unset/unstamped timestamp.
     /// True when the user has pinned this message via the hover action row.
     /// Survives across runs via the SQLite chat-history persistence layer.
