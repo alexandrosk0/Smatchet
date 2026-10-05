@@ -412,6 +412,11 @@ PendingActionSubmitResult AppController::SubmitOrQueueWatch(const PendingActionT
                                smatchet::pendingaction::kWatchActionPayload);
 }
 
+std::shared_ptr<const OfflineQueueSnapshot> AppController::GetOfflineQueueSnapshot() const {
+    static const std::shared_ptr<const OfflineQueueSnapshot> kEmpty = std::make_shared<OfflineQueueSnapshot>();
+    return offlineQueue_ ? offlineQueue_->Snapshot() : kEmpty;
+}
+
 std::shared_ptr<const PendingActionsSnapshot> AppController::GetPendingActionsSnapshot() const {
     static const std::shared_ptr<const PendingActionsSnapshot> kEmpty = std::make_shared<PendingActionsSnapshot>();
     return pendingActions_ ? pendingActions_->Snapshot() : kEmpty;

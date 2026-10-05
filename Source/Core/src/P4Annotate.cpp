@@ -352,7 +352,8 @@ std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string&
     return login;
 }
 
-P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries) : maxEntries_(maxEntries > 0 ? maxEntries : 16) {}
+P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries, std::chrono::seconds failureRetryAfter)
+    : maxEntries_(maxEntries > 0 ? maxEntries : 16), failureRetryAfter_(failureRetryAfter) {}
 
 P4ChangelistDetails P4ChangelistDescribeCache::Get(const std::string& changelist) const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -360,7 +361,7 @@ P4ChangelistDetails P4ChangelistDescribeCache::Get(const std::string& changelist
     if (it == map_.end()) {
         return P4ChangelistDetails();
     }
-    return it->second;
+    return it->second.Details;
 }
 
 void P4ChangelistDescribeCache::Touch(const std::string& cl) {
@@ -380,8 +381,14 @@ void P4ChangelistDescribeCache::EvictIfNeeded() {
 }
 
 void P4ChangelistDescribeCache::Store(const std::string& changelist, P4ChangelistDetails d) {
+    Entry entry;
+    entry.Details = std::move(d);
+    StoreEntry(changelist, std::move(entry));
+}
+
+void P4ChangelistDescribeCache::StoreEntry(const std::string& changelist, Entry entry) {
     std::lock_guard<std::mutex> lock(mutex_);
-    map_[changelist] = std::move(d);
+    map_[changelist] = std::move(entry);
     Touch(changelist);
     EvictIfNeeded();
 }
@@ -394,10 +401,11 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysis
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = map_.find(changelist);
-        if (it != map_.end() && it->second.Loaded) {
+        if (it != map_.end() && it->second.Details.Loaded &&
+            (it->second.Final || Clock::now() < it->second.RetryAfter)) {
             Touch(changelist);
             LOG_DEBUG("P4ChangelistDescribeCache: hit cl=%s", changelist.c_str());
-            return it->second;
+            return it->second.Details;
         }
     }
 
@@ -408,11 +416,18 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysis
     std::string err;
     P4ChangelistDetails d;
     d.Loaded = true;
-    if (!P4RunCommand(cfg, args, code, out, err) || code != 0) {
+    const bool ran = P4RunCommand(cfg, args, code, out, err);
+    if (!ran || code != 0) {
         d.Error = FormatP4CommandError("p4 describe failed", code, err);
         LOG_WARN("P4ChangelistDescribeCache: describe failed cl=%s err=%s", changelist.c_str(),
                  TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
-        Store(changelist, d);
+        // "No such changelist" is a final answer. Any other failure (server unreachable, timeout, login
+        // expired) is remembered only for the backoff, then retried (Pillar 6: never cached as final).
+        Entry failed;
+        failed.Details = d;
+        failed.Final = ran && P4AnnotateParse::IsChangelistUnknownAnswer(err, out);
+        failed.RetryAfter = Clock::now() + failureRetryAfter_;
+        StoreEntry(changelist, std::move(failed));
         return d;
     }
 

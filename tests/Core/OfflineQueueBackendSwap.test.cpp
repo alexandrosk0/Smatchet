@@ -69,6 +69,10 @@ TEST_CASE("offline create replay survives a backend swap mid-replay: completes a
 
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeDraft("swap victim")) > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();
     REQUIRE(captured); // worker latched + deferred — the swap window is open
@@ -107,6 +111,10 @@ TEST_CASE("offline field-edit replay survives a swap-to-null (context-retirement
     OfflineQueueService svc(deps);
     std::string err;
     REQUIRE(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
     REQUIRE(captured);

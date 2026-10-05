@@ -270,3 +270,22 @@ TEST_CASE("StripP4UserDomain: leading @ → empty") {
     StripP4UserDomain(user);
     CHECK(user == "");
 }
+
+TEST_CASE("IsChangelistUnknownAnswer: p4's 'does not exist' answers are recognised in either stream") {
+    using P4AnnotateParse::IsChangelistUnknownAnswer;
+    CHECK(IsChangelistUnknownAnswer("Change 99999 unknown.", ""));
+    CHECK(IsChangelistUnknownAnswer("change 12 UNKNOWN", ""));
+    CHECK(IsChangelistUnknownAnswer("", "Change 5 unknown.\n"));
+    CHECK(IsChangelistUnknownAnswer("No such changelist.", ""));
+    CHECK(IsChangelistUnknownAnswer("Invalid changelist number 'abc'.", ""));
+    CHECK(IsChangelistUnknownAnswer("first line\nChange 7 unknown.", ""));
+}
+
+TEST_CASE("IsChangelistUnknownAnswer: failures that may succeed later are not final") {
+    using P4AnnotateParse::IsChangelistUnknownAnswer;
+    CHECK_FALSE(IsChangelistUnknownAnswer("Perforce client error:\n\tConnect to server failed; check $P4PORT.", ""));
+    CHECK_FALSE(IsChangelistUnknownAnswer("Your session has expired, please login again.", ""));
+    CHECK_FALSE(IsChangelistUnknownAnswer("Change unknown", ""));             // no changelist number
+    CHECK_FALSE(IsChangelistUnknownAnswer("Change 12 by alice unknown", "")); // not the "unknown" answer
+    CHECK_FALSE(IsChangelistUnknownAnswer("", ""));
+}

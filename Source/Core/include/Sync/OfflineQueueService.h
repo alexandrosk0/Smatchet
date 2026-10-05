@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -30,6 +31,9 @@
 // Relocated out of AppController.h so this service no longer drags in the orchestrator
 // (core-include-dag Phase 3 — severs the Sync -> AppController include back-edge).
 #include "Sync/OfflineQueueTypes.h"
+
+#include "CachedTicketTypes.h" // OfflineQueueSnapshot
+#include "Sync/SourcedSnapshot.h"
 
 namespace OfflineFieldEditMergeDetail {
 /// True when `rich` (after leading whitespace) begins with '{' — i.e. an ADF JSON document
@@ -69,6 +73,14 @@ struct DeadPendingFieldEdit;
 class OfflineQueueService {
   public:
     explicit OfflineQueueService(IOfflineQueueDeps& deps);
+
+    /// The create and field-edit queues as last read by a worker; never null. Any thread. The UI reads this
+    /// instead of SQLite (Quality Pillar 2). Every queue change made through this service, and every replay
+    /// pass, republishes it; the replay ticks decide from it whether there is anything to replay.
+    std::shared_ptr<const OfflineQueueSnapshot> Snapshot() const;
+
+    /// Reread the queues (e.g. after the local cache file was replaced).
+    void RequestSnapshotRefresh();
 
     // --- Phase 1A: trivial read-only accessors -------------------------------------------
     std::size_t GetPendingCreateCount() const;
@@ -301,7 +313,15 @@ class OfflineQueueService {
     void SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
                                      LegacyProjectSweepTally& tally);
 
+    /// Reread both queues from `cache` and publish them (worker).
+    void PublishSnapshot(ISyncCache& cache);
+    /// Republish from the current cache on a worker. `force` skips the backoff that paces a failing first load.
+    void RefreshSnapshotAsync(bool force);
+    /// Start the first load when no view has been published yet. True once a view is available.
+    bool EnsureSnapshotLoaded();
+
     IOfflineQueueDeps& deps_;
+    smatchet::SourcedSnapshot<OfflineQueueSnapshot, ISyncCache> snapshot_;
 
     // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
     // All accesses go through `offlineReplayScheduleMutex_`. UI thread sets the schedule

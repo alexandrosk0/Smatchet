@@ -99,6 +99,10 @@ TEST_CASE("issue #1081: offline field-edit replay drops RefreshLocalData when th
     OfflineQueueService svc(deps);
     std::string err;
     REQUIRE(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
     REQUIRE(captured); // generation captured at tick; apply deferred — the swap window is open
@@ -124,6 +128,10 @@ TEST_CASE("issue #1081 control: offline field-edit replay still refreshes when t
     OfflineQueueService svc(deps);
     std::string err;
     REQUIRE(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
     REQUIRE(captured);
@@ -155,6 +163,10 @@ TEST_CASE("issue #1081: post-replay refresh is dropped when the generation moves
     OfflineQueueService svc(deps);
     std::string err;
     REQUIRE(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
     REQUIRE(captured);
@@ -179,6 +191,10 @@ TEST_CASE("issue #1081: offline create replay writes under the CAPTURED key afte
 
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeDraft("key latch victim")) > 0); // queued under "Jira"
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(captured);
+    captured();
+    captured = nullptr;
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();
     REQUIRE(captured); // key + generation captured at tick; the swap window is open

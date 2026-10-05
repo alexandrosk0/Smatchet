@@ -14,8 +14,10 @@
 #include "ConfigManager.h"
 #include "LocalCacheManager.h" // direct: AppController.h fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 #include "Logger.h"
+#include "OfflineFirstPure.h" // kLookupRetryAfterSeconds — the failed-prefetch backoff
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -81,6 +83,7 @@ void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBacke
     }
     std::vector<std::string> toFetch;
     std::vector<std::string> inFlightKeys;
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
         for (const auto& k : issueKeys) {
@@ -88,6 +91,13 @@ void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBacke
                 continue;
             }
             std::string inFlightKey = PrefetchInFlightKey(cacheBackendKey, k);
+            const auto backoff = bulkImportPrefetchRetryAfter_.find(inFlightKey);
+            if (backoff != bulkImportPrefetchRetryAfter_.end()) {
+                if (now < backoff->second) {
+                    continue; // failed recently: wait out the backoff instead of resending every frame
+                }
+                bulkImportPrefetchRetryAfter_.erase(backoff);
+            }
             if (bulkImportPrefetchKeysInFlight_.insert(inFlightKey).second) {
                 toFetch.push_back(k);
                 inFlightKeys.push_back(std::move(inFlightKey));
@@ -143,7 +153,19 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
         err = fetchResult.error();
     }
 
-    ErasePrefetchInFlight(bulkImportPrefetchKeysMutex_, bulkImportPrefetchKeysInFlight_, inFlightKeys);
+    if (ok) {
+        ErasePrefetchInFlight(bulkImportPrefetchKeysMutex_, bulkImportPrefetchKeysInFlight_, inFlightKeys);
+    } else {
+        // Pillar 6: release the keys and start their backoff under one lock, so an ask in between cannot
+        // resend at once. A connectivity recovery clears the backoff early.
+        const std::chrono::steady_clock::time_point retryAt =
+            std::chrono::steady_clock::now() + std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds);
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        for (const auto& k : inFlightKeys) {
+            bulkImportPrefetchRetryAfter_[k] = retryAt;
+            bulkImportPrefetchKeysInFlight_.erase(k);
+        }
+    }
     inFlightClearGuard.armed = false;
 
     if (!ok) {

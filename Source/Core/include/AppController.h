@@ -46,6 +46,7 @@ struct McpToolDefinition;
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
 #include "CancelToken.h"
+#include "SerialTaskQueue.h" // ticketSaves_: UpdateTicket's ordered off-UI-thread cache writes
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
@@ -620,7 +621,8 @@ class AppController : public IAppThreading,
      * Bumps `luaWindowDataGen_`. Cached Lua windows whose `cachedDataGen` lags the bump
      * re-record on their next paint. Stub is empty (no Lua → no windows to dirty).
      *
-     * Single hook site: `RefreshLocalData()` in `AppController_CatalogAndFieldEdit.cpp`.
+     * Hook sites: `RefreshLocalData()` and UpdateTicket's in-memory row patch, both in
+     * `AppController_CatalogAndFieldEdit.cpp`.
      * `TicketSyncService` coalesces a fetch session's many `ApplyIssueFetchPack` calls into
      * one bump at session end. See plan §Invalidation strategy.
      */
@@ -689,10 +691,12 @@ class AppController : public IAppThreading,
     void RefreshLocalData() override;
     // Generation-checked refreshes (issue #1081) go through RefreshLocalDataCheckedImpl_,
     // private on purpose: every checked caller must pass the GridLiveContext it latched the
-    // generation from (UpdateTicket inline; replay workers via the friend
+    // generation from (UpdateTicket's queued save; replay workers via the friend
     // GridContextDepsAdapter). A ctx-less public overload re-resolved focusedContext() at
     // apply time — per-context generation counters can be equal-by-coincidence across panes,
     // passing the gate while focus moved.
+    /// Replace `ticket`'s row in the focused pane at once; its local-cache write and the grid re-read
+    /// run on a worker, in call order (Pillar 2). UI thread.
     void UpdateTicket(const CachedTicket& ticket);
 
     std::vector<CachedTicket> GetActiveTickets() const;
@@ -888,6 +892,9 @@ class AppController : public IAppThreading,
     std::vector<PendingCreate> GetPendingCreates() const override;
     size_t GetDeadPendingCreateCount() const;
     std::vector<DeadPendingCreate> GetDeadPendingCreates() const override;
+    /** The create and field-edit queues as last read by a worker; never null. Per-frame UI reads use this,
+     *  never the SQLite getters above (Quality Pillar 2). */
+    std::shared_ptr<const OfflineQueueSnapshot> GetOfflineQueueSnapshot() const;
 
     using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter rows back to the active offline queue (attempts reset to 0). */
@@ -1325,8 +1332,16 @@ class AppController : public IAppThreading,
     /// CreateIssueAsync / CreateOrQueueIssueAsync body; `queueOnNetworkFailure` selects the latter.
     std::future<IssueCreateResult> LaunchIssueCreate_(const IssueDraft& draft, smatchet::ui::CancelToken cancel,
                                                       bool queueOnNetworkFailure);
-    /// UpdateTicket's body for `ctx`, gated on `capturedGeneration` (the #1081 capture-then-check).
+    /// UpdateTicket's body for `ctx`, gated on `capturedGeneration` (the #1081 capture-then-check). Patches
+    /// the row in memory at once and queues the SQLite save (plus the grid re-read) on `ticketSaves_`.
     void UpdateTicketInContext_(GridLiveContext& ctx, std::uint64_t capturedGeneration, const CachedTicket& ticket);
+    /// Replace the row with `ticket.id` in ctx's grid, unless the pane switched tracker or the row is gone.
+    void PatchActiveTicketInPlace_(GridLiveContext& ctx, std::uint64_t capturedGeneration, const CachedTicket& ticket);
+    /// Worker (`ticketSaves_`): write `ticket` under `capturedKey` into the cache it was queued against, then
+    /// re-read ctx's grid when no newer save for ctx was queued meanwhile (`saveSeq`).
+    void SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t capturedGeneration, const std::string& capturedKey,
+                                const CachedTicket& ticket, const std::weak_ptr<LocalCacheManager>& queuedCache,
+                                std::uint64_t saveSeq);
     /// The live context `target` was latched from, or null when that pane was retired or switched tracker
     /// since (its backend generation moved). Any thread: the map is read under gridContextsMutex_, and a
     /// context is never freed while the app runs (retired ones become husks).
@@ -1624,7 +1639,8 @@ class AppController : public IAppThreading,
     std::string LuaScriptsRootDirectory() const;
 
     /// Prefetch `issueKeys` from one latched backend into its cache namespace (not the focused pane's):
-    /// e.g. a re-read after a write sent to a PendingActionTarget. Skips keys already in flight.
+    /// e.g. a re-read after a write sent to a PendingActionTarget. Skips keys already in flight, and keys
+    /// whose last prefetch failed less than `kLookupRetryAfterSeconds` ago.
     void PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend, const std::string& cacheBackendKey,
                                   const std::vector<std::string>& issueKeys);
     /// Background-task body of PrefetchIssueTicketsFrom: fetch the keys off the UI thread, clear
@@ -1720,6 +1736,10 @@ class AppController : public IAppThreading,
     };
     std::vector<BackgroundWorker> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
+    /// UpdateTicket's cache writes, in call order, off the UI thread (Pillar 2). Drains run as background
+    /// tasks, so JoinBackgroundTasks (shutdown, cache recreate) waits for every queued save.
+    smatchet::SerialTaskQueue ticketSaves_{
+        [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
 
     // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to
     // OfflineQueueService (item 12 extraction phases 1A / 1C). Accessed via offlineQueue_.
@@ -1727,6 +1747,10 @@ class AppController : public IAppThreading,
     mutable std::mutex bulkImportPrefetchKeysMutex_;
     /// Prefetches in flight, keyed "<cache backend key>\x1f<issue key>" (the same key on two trackers is two tickets).
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
+    /// Same keys: when a failed prefetch may be retried (Pillar 6 backoff). The bulk panel asks every frame,
+    /// so without it a reachable-but-failing tracker got the same request each frame. Cleared on
+    /// connectivity recovery; guarded by bulkImportPrefetchKeysMutex_.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> bulkImportPrefetchRetryAfter_;
 
     PluginHost* runtimePluginHost_ = nullptr;
 
