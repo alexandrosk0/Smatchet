@@ -67,6 +67,9 @@ Harnesses:
   pi            Generate .pi/agents/*.md (pi-native, from agents/{core,project}/)
                 + install the subagent extension into .pi/extensions/ with
                 project-local agents enabled (trusted-repo defaults).
+  git-hooks     Only wire core.hooksPath to scripts/git-hooks (claude-code and
+                codex do this too); rewrites an absolute path to this repo's
+                own hooks dir to the relative, per-worktree form.
 
 Idempotent — re-running is safe. Edits to .claude/settings.json (or other
 templates) survive: the script skips copies if the local file differs from
@@ -390,7 +393,17 @@ PY
 # install_git_hooks: point core.hooksPath at scripts/git-hooks/ so the
 # tracked pre-commit / pre-push guards fire locally. Only acts when the
 # current core.hooksPath is unset or already equal to scripts/git-hooks
-# (don't trample a user-set custom hooks path).
+# (don't trample a user-set custom hooks path), or when it is an ABSOLUTE
+# spelling of this repo's own scripts/git-hooks, which it rewrites to the
+# relative form — in the shared local config and in every config.worktree.
+#
+# Why the relative form: git runs a hook from the worktree root, so
+# `scripts/git-hooks` resolves inside EACH worktree. An absolute path into the
+# main checkout makes every worktree run whatever revision of the hooks main
+# happens to have checked out, so a merged hook fix is not live anywhere until
+# main's branch carries it (tooling backlog 2026-08-19, core.hooksPath absolute).
+# Such a value was never set by this installer, and the old skip-on-differing
+# branch kept it sticky forever.
 #
 # Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 install_git_hooks() {
@@ -411,10 +424,59 @@ install_git_hooks() {
     echo "  git-hooks  core.hooksPath set to $target"
   elif [[ "$current" == "$target" ]]; then
     echo "  git-hooks  core.hooksPath already $target"
+  elif _is_own_hooks_dir "$current" "$target"; then
+    git_cmd config --local core.hooksPath "$target"
+    echo "  git-hooks  core.hooksPath was the absolute '$current' — rewritten to $target"
+    echo "             (an absolute path serves the main checkout's hooks to every worktree)"
   else
     echo "  git-hooks  WARNING: core.hooksPath is '$current' (not '$target'). Skipping."
     echo "             To opt in, run: git config --local core.hooksPath $target"
   fi
+
+  # A config.worktree value overrides the shared one for its worktree, so the
+  # same repair applies to each of them; an unset one inherits the fix above.
+  local common f wt_value
+  common="$(git_cmd rev-parse --git-common-dir 2>/dev/null)" || return 0
+  common="$(cd "$common" 2>/dev/null && pwd)" || return 0
+  for f in "$common/config.worktree" "$common"/worktrees/*/config.worktree; do
+    [[ -f "$f" ]] || continue
+    wt_value="$(git_cmd config --file "$f" --get core.hooksPath 2>/dev/null || echo '')"
+    if [[ -z "$wt_value" || "$wt_value" == "$target" ]]; then
+      continue
+    elif _is_own_hooks_dir "$wt_value" "$target"; then
+      git_cmd config --file "$f" core.hooksPath "$target"
+      echo "  git-hooks  $f: absolute core.hooksPath '$wt_value' — rewritten to $target"
+    else
+      echo "  git-hooks  WARNING: $f sets core.hooksPath '$wt_value' (not '$target'). Skipping."
+    fi
+  done
+}
+
+# _is_own_hooks_dir <value> <target>: true when <value> is an ABSOLUTE path whose
+# physical location is <target> under the main worktree or under this worktree —
+# i.e. this repo's own hooks dir spelled in the form that breaks worktrees. A
+# relative value, a foreign directory, or one that does not exist is not.
+_is_own_hooks_dir() {
+  local value="${1//\\//}" target="$2" got root want
+  case "$value" in
+    "~"/*) value="$HOME/${value#\~/}" ;;
+    /*|[A-Za-z]:/*) ;;   # `/*` also covers a //server UNC path
+    *) return 1 ;;
+  esac
+  got="$(cd "$value" 2>/dev/null && pwd -P)" || return 1
+  # The first porcelain record is always the main worktree.
+  for root in "$(git_cmd worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" \
+              "$(git_cmd rev-parse --show-toplevel 2>/dev/null)"; do
+    [[ -n "$root" ]] || continue
+    want="$(cd "${root//\\//}/$target" 2>/dev/null && pwd -P)" || continue
+    if [[ "$IS_WINDOWS" == "1" ]]; then
+      # Case-insensitive filesystem: C:/Dev and c:/dev are the same directory.
+      [[ "${got,,}" == "${want,,}" ]] && return 0
+    else
+      [[ "$got" == "$want" ]] && return 0
+    fi
+  done
+  return 1
 }
 
 # enable_long_paths: opt this clone into Windows long-path support. Once the
@@ -653,8 +715,9 @@ case "$HARNESS" in
   codex)       setup_codex ;;
   cursor)      setup_cursor ;;
   pi)          setup_pi ;;
+  git-hooks)   install_git_hooks ;;
   *)
-    echo "error: unknown harness '$HARNESS'. Supported: claude-code | codex | cursor | pi" >&2
+    echo "error: unknown harness '$HARNESS'. Supported: claude-code | codex | cursor | pi | git-hooks" >&2
     echo "Run: bash agents/scripts/core/setup-harness.sh --help" >&2
     exit 1
     ;;
