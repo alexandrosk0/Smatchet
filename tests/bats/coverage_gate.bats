@@ -215,3 +215,87 @@ make_fixture_repo() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"FAIL"* ]]
 }
+
+# ==========================================================================
+# coverage-delta-gate.sh: full-context exemptions (off-target platform arm +
+# header->cpp body relocation). Separate block: real `git diff --unified=100000`
+# fixtures, both directions, through the gate's normal (non-selftest) path.
+# ==========================================================================
+
+# _wph_repo — a base commit carrying a platform-guarded TU and a header with an
+# inline definition, on branch main; leaves the work tree on branch `head`.
+_wph_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src" "$FIXREPO/Source/Core/include"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    printf '%s\n' '#include "p.h"' '#ifdef _WIN32' 'int Read() { return 1; }' \
+        '#elif defined(__ANDROID__)' 'int Read() { return 2; }' '#else' \
+        'int Read() { return 3; }' '#endif' > "$FIXREPO/Source/Core/src/p.cpp"
+    printf '%s\n' '#pragma once' 'namespace ui {' 'inline int Hook(int x) {' \
+        '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+# _wph_insert_after <file> <line-no> <text> — insert one line after line N.
+_wph_insert_after() {
+    awk -v n="$2" -v t="$3" '{ print } NR == n { print t }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# _wph_gate — commit the head edits, run the gate, drop the fixture repo.
+_wph_gate() {
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=main bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+}
+
+@test "coverage-delta-gate.sh: statement in an __ANDROID__ elif arm is exempt (no test delta)" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 5 'static int g_android = Read();'
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: statement in the non-WIN32 else arm still FAILs (Linux CI builds it)" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 7 'static int g_posix = Read();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: statement on the _WIN32 if side still FAILs" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 3 'static int g_win = Read();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: inline header body relocated byte-identical to a new .cpp is exempt" {
+    _wph_repo
+    printf '%s\n' '#pragma once' 'namespace ui {' '// Defined out-of-line in hook.cpp.' \
+        'int Hook(int x);' '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
+    printf '%s\n' '#include "h.h"' '' 'namespace ui {' '' 'int Hook(int x) {' \
+        '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' '' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/src/hook.cpp"
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: relocated body with one edited line still FAILs" {
+    _wph_repo
+    printf '%s\n' '#pragma once' 'namespace ui {' 'int Hook(int x);' '}  // namespace ui' \
+        > "$FIXREPO/Source/Core/include/h.h"
+    printf '%s\n' '#include "h.h"' 'namespace ui {' 'int Hook(int x) {' \
+        '    if (x >= 0) {' '        return x * 2;' '    }' '    return 0;' '}' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/src/hook.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}

@@ -35,6 +35,19 @@
 #                            and the brace/closing tokens) whose body is only the
 #                            above (the swallow→log pattern: no rethrow, no logic)
 #   * build-only           — no .cpp/.h/.hpp product change at all (CMake/yml/sh/…)
+#   * off-target platform arm — an added line whose enclosing #if/#elif/#else arm
+#                            can only be compiled for an off-target platform
+#                            (__ANDROID__ / __APPLE__ / TARGET_OS_*): never built
+#                            by the desktop/Linux test targets, validated instead
+#                            by the cross-compile jobs (#1021). The non-_WIN32
+#                            #else arm IS built + run on Linux CI — NOT exempt.
+#   * header→cpp body relocation — an in-header (inline) function definition
+#                            removed and re-added byte-identical (whitespace-
+#                            trimmed, `inline` dropped) as an out-of-line
+#                            definition in a .cpp, plus its header declaration
+#                            and the new TU's namespace opener (#1317).
+#   The last two need nesting/pairing context, so the diff is generated with full
+#   file context and _prefilter_diff drops exempt lines before _classify_diff.
 # A new function, a new branch, a changed condition, a new statement — NOT exempt.
 # Motivation: a GitHub merge queue runs this required check on the merge_group
 # ref where PR labels don't apply, so tests-out-of-band can't dismiss it there;
@@ -401,14 +414,259 @@ _classify_diff() {
 }
 
 # ---------------------------------------------------------------------------
+# Full-context prefilter (platform-arm + header→cpp body relocation exemptions)
+# ---------------------------------------------------------------------------
+# _prefilter_diff <diff-file> — read a FULL-CONTEXT unified diff (git diff
+# --unified=<huge>, so every hunk carries the whole post-image and the #if
+# nesting of each added line is knowable) and print a reduced diff for
+# _classify_diff: the file/hunk headers plus the '+' lines that are NOT exempted
+# here. Context and '-' lines are dropped (the classifier never reads them), which
+# also keeps the bash read loop cheap on big diffs. Two exemptions, both
+# conservative (anything unrecognised is printed, i.e. falls through):
+#
+#   1. Off-target platform arm. Walking the post-image (' ' + '+' lines) of each
+#      first-party product C/C++ file, keep an #if/#ifdef/#ifndef/#elif/#else/
+#      #endif stack. An arm is OFF-TARGET when its effective condition requires an
+#      off-target platform macro: its own condition is an ||/&& combination of
+#      ONLY __ANDROID__ / __APPLE__ / TARGET_OS_* atoms (`defined(X)`,
+#      `defined X`, bare `X`), or an earlier arm of the same group was the pure
+#      negation of such a combination (`#ifndef __ANDROID__ … #else`). A '+' line
+#      inside any off-target arm is dropped. So `#ifdef _WIN32 … #else` stays
+#      gated (the #else arm is the Linux/POSIX path CI builds and runs), as does
+#      `#elif defined(__APPLE__) || defined(__linux__)`. A directive line with a
+#      backslash continuation or a multi-line comment is classified OTHER (gated).
+#      The stack resets at every hunk header, so a partial-context diff can only
+#      under-exempt.
+#
+#   2. Header→cpp body relocation. Pass 1 collects every complete, brace-balanced
+#      function definition inside a run of REMOVED lines of a product header
+#      (.h/.hpp), and every run of ADDED lines of a product .cpp/.cc/.cxx. A
+#      definition re-added as a contiguous, byte-identical (per-line trimmed;
+#      `inline` dropped from the signature line) block in a .cpp is a relocation:
+#      those added lines are dropped, as are the header's added declaration of
+#      the same signature (`<sig>;`) and a bare namespace opener in a .cpp that
+#      received a relocated body. The body moved unchanged, so no new runtime
+#      surface — the existing callers' tests still exercise it.
+_PREFILTER_AWK="$(cat <<'AWK'
+function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+function is_prod(p) { return p ~ /^(Source\/(Core|Plugins|Standalone)|tests)\/.*\.(cpp|h|hpp|cc|cxx)$/ }
+function is_hdr(p) { return p ~ /\.(h|hpp)$/ }
+function is_cpp(p) { return p ~ /\.(cpp|cc|cxx)$/ }
+function path_of(raw,   p) { p = substr(raw, 5); sub(/^b\//, "", p); return p }
+function drop_inline(s) { s = " " s " "; gsub(/[ \t]inline[ \t]/, " ", s); return trim(s) }
+# Net { minus } outside string/char literals and a trailing // comment.
+function brace_delta(s,   t, o, c) {
+    t = s
+    gsub(/\\./, "", t)
+    gsub(/"[^"]*"/, "", t)
+    gsub(SQ "[^" SQ "]*" SQ, "", t)
+    sub(/\/\/.*$/, "", t)
+    o = gsub(/\{/, "", t)
+    c = gsub(/\}/, "", t)
+    return o - c
+}
+# A function-definition signature line (already trimmed + inline-dropped):
+# `<type tokens> name(...) {` or a one-line `... { ... }`.
+function is_def_opener(s,   head) {
+    if (s !~ /\(/) return 0
+    if (s !~ /\{$/ && s !~ /\}$/) return 0
+    head = s
+    sub(/\(.*/, "", head)
+    head = trim(head)
+    if (head !~ /^[A-Za-z_~][A-Za-z0-9_:<>,*&~ \t]*$/) return 0
+    if (head ~ /^(if|for|while|switch|catch|return|else|do|try|case|sizeof|new|delete|throw)([ \t]|$)/) return 0
+    return head ~ /[ \t*&]/
+}
+# Platform condition classifier: OFF (requires an off-target macro), NEGOFF (pure
+# negation of an OFF expression), or OTHER.
+function off_only(s,   t) {
+    t = s
+    gsub(/[()]/, "", t)
+    return t ~ /^@((\|\||&&)@)*$/
+}
+function wrapped(s,   i, d, ch) {
+    if (substr(s, 1, 1) != "(" || substr(s, length(s), 1) != ")") return 0
+    d = 0
+    for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (ch == "(") d++
+        else if (ch == ")") { d--; if (d == 0 && i < length(s)) return 0 }
+    }
+    return d == 0
+}
+function classify_cond(e,   s, inner, p, q) {
+    s = e
+    if (s ~ /\\$/) return "OTHER"
+    while ((p = index(s, "/*")) > 0) {
+        q = index(substr(s, p + 2), "*/")
+        if (q == 0) return "OTHER"
+        s = substr(s, 1, p - 1) " " substr(s, p + q + 3)
+    }
+    sub(/\/\/.*$/, "", s)
+    gsub(/defined[ \t]*\([ \t]*(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)[ \t]*\)/, "@", s)
+    gsub(/defined[ \t]+(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)/, "@", s)
+    gsub(/(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)/, "@", s)
+    gsub(/[ \t\r]/, "", s)
+    if (s == "") return "OTHER"
+    if (off_only(s)) return "OFF"
+    if (substr(s, 1, 1) == "!") {
+        inner = substr(s, 2)
+        if (inner == "@") return "NEGOFF"
+        if (wrapped(inner) && off_only(substr(inner, 2, length(inner) - 2))) return "NEGOFF"
+    }
+    return "OTHER"
+}
+function is_off_macro(m) { return m ~ /^(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)$/ }
+# Update the #if stack for one post-image line; returns 1 when it is a
+# conditional directive (#define/#include/#pragma return 0 and are classified as
+# ordinary lines, so one inside an off-target arm is still dropped).
+function track_directive(body,   s, kw, rest, c) {
+    s = trim(body)
+    if (substr(s, 1, 1) != "#") return 0
+    s = trim(substr(s, 2))
+    kw = s
+    sub(/[^A-Za-z].*$/, "", kw)
+    if (kw !~ /^(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)$/) return 0
+    rest = trim(substr(s, length(kw) + 1))
+    if (kw == "if" || kw == "ifdef" || kw == "ifndef") {
+        if (kw == "ifdef") c = is_off_macro(first_tok(rest)) ? "OFF" : "OTHER"
+        else if (kw == "ifndef") c = is_off_macro(first_tok(rest)) ? "NEGOFF" : "OTHER"
+        else c = classify_cond(rest)
+        depth++
+        arm[depth] = (c == "OFF")
+        neg[depth] = (c == "NEGOFF")
+    } else if (kw == "elif" || kw == "elifdef" || kw == "elifndef") {
+        if (depth > 0) {
+            if (kw == "elifdef") c = is_off_macro(first_tok(rest)) ? "OFF" : "OTHER"
+            else if (kw == "elifndef") c = is_off_macro(first_tok(rest)) ? "NEGOFF" : "OTHER"
+            else c = classify_cond(rest)
+            arm[depth] = (neg[depth] || c == "OFF")
+            if (c == "NEGOFF") neg[depth] = 1
+        }
+    } else if (kw == "else") {
+        if (depth > 0) arm[depth] = neg[depth]
+    } else if (kw == "endif") {
+        if (depth > 0) depth--
+    }
+    return 1
+}
+function first_tok(s) { sub(/[ \t\/].*$/, "", s); return s }
+function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; return 0 }
+# Pass-1 helpers: close the current removed-header / added-cpp run.
+function end_runs() { in_rrun = 0; in_arun = 0 }
+BEGIN { SQ = sprintf("%c", 39); nr = 0; na = 0 }
+NR == FNR {
+    if ($0 ~ /^diff --git / || $0 ~ /^@@/) { end_runs(); next }
+    if ($0 ~ /^--- /) { end_runs(); next }
+    if ($0 ~ /^\+\+\+ /) { end_runs(); f1 = path_of($0); next }
+    if (substr($0, 1, 1) == "-" && is_prod(f1) && is_hdr(f1)) {
+        if (!in_rrun) { nr++; rn[nr] = 0; in_rrun = 1 }
+        rl[nr, ++rn[nr]] = trim(substr($0, 2))
+        in_arun = 0
+        next
+    }
+    if (substr($0, 1, 1) == "+" && is_prod(f1) && is_cpp(f1)) {
+        if (!in_arun) { na++; an[na] = 0; af[na] = f1; in_arun = 1 }
+        an[na]++
+        al[na, an[na]] = trim(substr($0, 2))
+        ak[na, an[na]] = FNR
+        in_rrun = 0
+        next
+    }
+    end_runs()
+    next
+}
+FNR == 1 && !paired {
+    paired = 1
+    # Extract complete definitions from each removed header run, then pair each
+    # with a contiguous byte-identical added run segment in a .cpp.
+    for (r = 1; r <= nr; r++) {
+        i = 1
+        while (i <= rn[r]) {
+            sig = drop_inline(rl[r, i])
+            if (!is_def_opener(sig)) { i++; continue }
+            d = brace_delta(rl[r, i])
+            j = i + 1
+            while (d > 0 && j <= rn[r]) { d += brace_delta(rl[r, j]); j++ }
+            if (d != 0) { i++; continue }
+            k = j - i
+            matched = 0
+            for (a = 1; a <= na && !matched; a++) {
+                for (st = 1; st + k - 1 <= an[a] && !matched; st++) {
+                    if (used[a, st] || drop_inline(al[a, st]) != sig) continue
+                    ok = 1
+                    for (q = 1; q < k && ok; q++)
+                        if (used[a, st + q] || al[a, st + q] != rl[r, i + q]) ok = 0
+                    if (!ok) continue
+                    for (q = 0; q < k; q++) { used[a, st + q] = 1; reloc[ak[a, st + q]] = 1 }
+                    relfile[af[a]] = 1
+                    s2 = sig
+                    sub(/[ \t]*\{.*$/, "", s2)
+                    relsig[s2] = 1
+                    matched = 1
+                }
+            }
+            i = j
+        }
+    }
+}
+{
+    if ($0 ~ /^diff --git / || $0 ~ /^--- /) { print; next }
+    if ($0 ~ /^\+\+\+ /) { f2 = path_of($0); prod = is_prod(f2); depth = 0; print; next }
+    if ($0 ~ /^@@/) { depth = 0; print; next }
+    c1 = substr($0, 1, 1)
+    if (c1 == " ") { if (prod) track_directive(substr($0, 2)); next }
+    if (c1 != "+") next
+    if (!prod) { print; next }
+    body = substr($0, 2)
+    if (track_directive(body)) { print; next }
+    if (FNR in reloc) next
+    if (in_off_arm()) next
+    t = trim(body)
+    if (relfile[f2] && t ~ /^namespace([ \t]+[A-Za-z_][A-Za-z0-9_:]*)?[ \t]*\{$/) next
+    if (is_hdr(f2) && t ~ /;$/) {
+        s2 = t
+        sub(/[ \t]*;$/, "", s2)
+        if (s2 in relsig) next
+    }
+    print
+}
+AWK
+)"
+
+_prefilter_diff() {
+    awk "$_PREFILTER_AWK" "$1" "$1"
+}
+
+# _classify_diff_file <diff-file> — prefilter a full-context diff, then classify the
+# reduced diff. Both stages read/write temp FILES, never a pipe: _classify_diff
+# breaks out of its read loop early, and an early-closing pipe reader would SIGPIPE
+# the producer (see the GIT_DIFF_TMPFILE note in the normal run below). Echoes
+# EXEMPT / FALLTHROUGH; returns non-zero (echoing nothing) if the prefilter fails.
+_classify_diff_file() {
+    local reduced rc=0
+    reduced="$(mktemp)"
+    _prefilter_diff "$1" >"$reduced" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        _classify_diff <"$reduced"
+    fi
+    rm -f "$reduced"
+    return "$rc"
+}
+
+# ---------------------------------------------------------------------------
 # --selftest — both-direction fixtures (mirrors the real target PRs)
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "--selftest" ]; then
     fail=0
-    # _expect <EXEMPT|FALLTHROUGH> <label> <<diff
+    _st_diff="$(mktemp)"
+    trap 'rm -f "$_st_diff"' EXIT
+    # _expect <EXEMPT|FALLTHROUGH> <label> <<diff — the fixture runs through the
+    # same prefilter + classifier pipeline as the real gate.
     _expect() {
         local want="$1" label="$2" got
-        got="$(_classify_diff)"
+        cat >"$_st_diff"
+        got="$(_classify_diff_file "$_st_diff")"
         if [ "$got" = "$want" ]; then
             echo "  ok   [$want] $label"
         else
@@ -601,8 +859,172 @@ diff --git a/Source/Core/include/AppController.h b/Source/Core/include/AppContro
 +template <typename T> class Pool;
 EOF
 
+    # #1021-equivalent — a real statement confined to a Bionic-only #elif arm (full
+    # file context, as the gate generates it). Never compiled by the desktop/Linux
+    # test targets, so it carries no testable surface there.
+    _expect EXEMPT "statement inside an #elif defined(__ANDROID__) arm (#1021)" <<'EOF'
+diff --git a/Source/Core/src/SubprocessCapture.cpp b/Source/Core/src/SubprocessCapture.cpp
+--- a/Source/Core/src/SubprocessCapture.cpp
++++ b/Source/Core/src/SubprocessCapture.cpp
+@@ -1,9 +1,10 @@
+ #include "SubprocessCapture.h"
+ #ifdef _WIN32
+     std::string out = ReadPipeWin();
+ #elif defined(__ANDROID__)
+-    std::string out(ptr);
++    std::string out(ptr, length);
++    out.resize(trimmed);
+ #else
+     std::string out = ReadPipePosix();
+ #endif
+EOF
+
+    # Nested + negated forms: an __APPLE__ && TARGET_OS_IOS arm inside an unrelated
+    # guard, and the #else of `#ifndef __ANDROID__` (i.e. the Android-only arm).
+    _expect EXEMPT "TARGET_OS_* arm nested in a guard + #else of #ifndef __ANDROID__" <<'EOF'
+diff --git a/Source/Core/src/Config/Paths.cpp b/Source/Core/src/Config/Paths.cpp
+--- a/Source/Core/src/Config/Paths.cpp
++++ b/Source/Core/src/Config/Paths.cpp
+@@ -1,12 +1,14 @@
+ #if SMATCHET_WITH_FOO
+ #  if defined(__APPLE__) && TARGET_OS_IOS  // iOS sandbox
++    root = SandboxRoot();
+ #  endif
+ #endif
+ #ifndef __ANDROID__
+     root = HomeDir();
+ #else
++    root = AppFilesDir(env);
++#define ANDROID_ROOT_SET 1
+ #endif
+EOF
+
+    # #1317-equivalent — an inline header body demoted to a declaration and moved
+    # byte-identical (indentation aside) into a new TU inside a namespace.
+    _expect EXEMPT "header inline body relocated byte-identical to a .cpp (#1317)" <<'EOF'
+diff --git a/Source/Core/include/LocalizedImGui.h b/Source/Core/include/LocalizedImGui.h
+--- a/Source/Core/include/LocalizedImGui.h
++++ b/Source/Core/include/LocalizedImGui.h
+@@ -1,12 +1,8 @@
+ #pragma once
+ namespace LocalizedImGui {
+-inline void HookOnLastItem(char* buf, std::size_t size) {
+-    const bool active = ::ImGui::IsItemActive();
+-    if (active) {
+-        g_router.Register(buf, size);
+-    }
+-}
++// Defined out-of-line in DictationHook.cpp.
++void HookOnLastItem(char* buf, std::size_t size);
+ inline bool InputText(const char* label, char* buf, size_t size) {
+     return ::ImGui::InputText(label, buf, size);
+ }
+ }  // namespace LocalizedImGui
+diff --git a/Source/Core/src/DictationHook.cpp b/Source/Core/src/DictationHook.cpp
+--- /dev/null
++++ b/Source/Core/src/DictationHook.cpp
+@@ -0,0 +1,12 @@
++#include "LocalizedImGui.h"
++
++namespace LocalizedImGui {
++
++void HookOnLastItem(char* buf, std::size_t size) {
++        const bool active = ::ImGui::IsItemActive();
++        if (active) {
++            g_router.Register(buf, size);
++        }
++}
++
++}  // namespace LocalizedImGui
+EOF
+
     # ---- FALLTHROUGH cases (must NOT exempt — real runtime surface) ----
     # selftest: asserts-failure — real runtime-surface diffs must NOT be exempted (the gate's block path).
+
+    # The SAME #1021 shape on the desktop (#ifdef _WIN32) side must still gate.
+    _expect FALLTHROUGH "statement on the #ifdef _WIN32 (desktop) side" <<'EOF'
+diff --git a/Source/Core/src/SubprocessCapture.cpp b/Source/Core/src/SubprocessCapture.cpp
+--- a/Source/Core/src/SubprocessCapture.cpp
++++ b/Source/Core/src/SubprocessCapture.cpp
+@@ -1,8 +1,9 @@
+ #include "SubprocessCapture.h"
+ #ifdef _WIN32
+     std::string out = ReadPipeWin();
++    out.resize(trimmed);
+ #elif defined(__ANDROID__)
+     std::string out(ptr, length);
+ #else
+     std::string out = ReadPipePosix();
+ #endif
+EOF
+
+    # The non-_WIN32 #else arm is compiled AND run on Linux CI — must still gate.
+    _expect FALLTHROUGH "statement in the non-_WIN32 #else arm (built on Linux CI)" <<'EOF'
+diff --git a/Source/Core/src/SubprocessCapture.cpp b/Source/Core/src/SubprocessCapture.cpp
+--- a/Source/Core/src/SubprocessCapture.cpp
++++ b/Source/Core/src/SubprocessCapture.cpp
+@@ -1,8 +1,9 @@
+ #include "SubprocessCapture.h"
+ #ifdef _WIN32
+     std::string out = ReadPipeWin();
+ #elif defined(__ANDROID__)
+     std::string out(ptr, length);
+ #else
+     std::string out = ReadPipePosix();
++    out.resize(trimmed);
+ #endif
+EOF
+
+    # A mixed condition (Linux is a test target) and the #else of a POSITIVE
+    # Android guard are both desktop-reachable — must gate.
+    _expect FALLTHROUGH "__APPLE__ || __linux__ arm, and the #else of #if defined(__ANDROID__)" <<'EOF'
+diff --git a/Source/Core/src/HostIntegration.cpp b/Source/Core/src/HostIntegration.cpp
+--- a/Source/Core/src/HostIntegration.cpp
++++ b/Source/Core/src/HostIntegration.cpp
+@@ -1,6 +1,7 @@
+ #if defined(__APPLE__) || defined(__linux__)
++    OpenWithXdg(path);
+ #endif
+ #if defined(__ANDROID__)
+ #else
+ #endif
+EOF
+    _expect FALLTHROUGH "#else of a positive #if defined(__ANDROID__)" <<'EOF'
+diff --git a/Source/Core/src/HostIntegration.cpp b/Source/Core/src/HostIntegration.cpp
+--- a/Source/Core/src/HostIntegration.cpp
++++ b/Source/Core/src/HostIntegration.cpp
+@@ -1,4 +1,5 @@
+ #if defined(__ANDROID__)
+ #else
++    LaunchDesktop(path);
+ #endif
+EOF
+
+    # A relocation whose .cpp copy differs by one token is NOT byte-identical —
+    # behaviour may have changed, so it must gate.
+    _expect FALLTHROUGH "header body 'relocated' with an edited line" <<'EOF'
+diff --git a/Source/Core/include/LocalizedImGui.h b/Source/Core/include/LocalizedImGui.h
+--- a/Source/Core/include/LocalizedImGui.h
++++ b/Source/Core/include/LocalizedImGui.h
+@@ -1,7 +1,3 @@
+ #pragma once
+-inline void HookOnLastItem(char* buf, std::size_t size) {
+-    if (::ImGui::IsItemActive()) {
+-        g_router.Register(buf, size);
+-    }
+-}
++void HookOnLastItem(char* buf, std::size_t size);
+diff --git a/Source/Core/src/DictationHook.cpp b/Source/Core/src/DictationHook.cpp
+--- /dev/null
++++ b/Source/Core/src/DictationHook.cpp
+@@ -0,0 +1,6 @@
++#include "LocalizedImGui.h"
++void HookOnLastItem(char* buf, std::size_t size) {
++    if (::ImGui::IsItemActive() || ::ImGui::IsItemFocused()) {
++        g_router.Register(buf, size);
++    }
++}
+EOF
 
     # New function with branches.
     _expect FALLTHROUGH "new function w/ branches" <<'EOF'
@@ -827,18 +1249,24 @@ fi
 # bug, which fixed the crash but lost git-diff-failure detection entirely (a bad
 # `MERGE_BASE` or other git error would silently classify as EXEMPT on the resulting empty
 # input instead of hard-failing the gate).
+# --unified=100000: full-file context, so _prefilter_diff can see the #if nesting
+# of every added line and pair a removed header body with its relocated copy.
 GIT_DIFF_TMPFILE="$(mktemp)"
 trap 'rm -f "$GIT_DIFF_TMPFILE"' EXIT
-if ! git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+if ! git diff --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
         Source/Core Source/Plugins Source/Standalone tests >"$GIT_DIFF_TMPFILE" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
     exit 1
 fi
-EXEMPTION="$(_classify_diff < "$GIT_DIFF_TMPFILE")"
+if ! EXEMPTION="$(_classify_diff_file "$GIT_DIFF_TMPFILE")"; then
+    echo "[coverage-delta-gate] FAIL — diff prefilter (awk) failed" >&2
+    exit 1
+fi
 if [ "$EXEMPTION" = "EXEMPT" ]; then
     echo "[coverage-delta-gate] PASS — test-light exemption: every product-code"
     echo "[coverage-delta-gate]        change is no-new-runtime-surface"
-    echo "[coverage-delta-gate]        (comment/log/static_assert/include/preprocessor-guard/catch-scaffold)."
+    echo "[coverage-delta-gate]        (comment/log/static_assert/include/preprocessor-guard/catch-scaffold/"
+    echo "[coverage-delta-gate]        off-target platform arm/header->cpp body relocation)."
     exit 0
 fi
 
@@ -856,7 +1284,9 @@ echo
 echo "Add tests under tests/Core/ (or tests/Commands/, tests/Lua/, tests/Plugins/, tests/ui/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
 echo "logging-only, static_assert-only, forward-declaration-only, include-only,"
-echo "preprocessor-guard-only, swallow->log catch) are auto-exempted; if yours"
+echo "preprocessor-guard-only, swallow->log catch, lines inside an __ANDROID__/"
+echo "__APPLE__/TARGET_OS_* arm, a byte-identical header->cpp body relocation)"
+echo "are auto-exempted; if yours"
 echo "genuinely cannot be"
 echo "unit-tested, apply the"
 echo "'tests-out-of-band' PR label to dismiss this gate."
