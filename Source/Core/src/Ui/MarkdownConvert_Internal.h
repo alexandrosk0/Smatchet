@@ -162,14 +162,17 @@ inline bool HasMdEntityReference(const std::string& text) {
     return false;
 }
 
-/// Write ADF text as Markdown that converts back to the same text. ADF text is plain, and Markdown -> ADF
-/// decodes entity references, so an '&' that md4c would read as one is escaped (`\&`), along with every
-/// backslash directly before it, which would otherwise pair with that escape.
-inline void WriteMdTextEscapingEntities(std::ostringstream& out, const std::string& text) {
+/// Append plain text as Markdown that converts back to the same text. Both Markdown -> ADF and
+/// Markdown -> HTML read an entity reference as the character it names, so an '&' that md4c would read
+/// as one is escaped (`\&`), along with every backslash directly before it, which would otherwise pair
+/// with that escape. `text` must be a whole run of plain text: a reference split across two calls with
+/// no markup between them is not seen.
+inline void AppendMdTextEscapingEntities(std::string& out, const std::string& text) {
     if (text.find('&') == std::string::npos) {
-        out << text;
+        out += text;
         return;
     }
+    out.reserve(out.size() + text.size() + 4);
     std::size_t i = 0;
     while (i < text.size()) {
         if (text[i] == '\\') {
@@ -178,16 +181,43 @@ inline void WriteMdTextEscapingEntities(std::ostringstream& out, const std::stri
                 ++runEnd;
             }
             const std::size_t run = runEnd - i;
-            out << std::string(MdEntityReferenceLength(text, runEnd) != 0 ? 2 * run : run, '\\');
+            out.append(MdEntityReferenceLength(text, runEnd) != 0 ? 2 * run : run, '\\');
             i = runEnd;
             continue;
         }
         if (text[i] == '&' && MdEntityReferenceLength(text, i) != 0) {
-            out << '\\';
+            out += '\\';
         }
-        out << text[i];
+        out += text[i];
         ++i;
     }
+}
+
+/// AppendMdTextEscapingEntities for a stream.
+inline void WriteMdTextEscapingEntities(std::ostringstream& out, const std::string& text) {
+    if (text.find('&') == std::string::npos) {
+        out << text;
+        return;
+    }
+    std::string escaped;
+    AppendMdTextEscapingEntities(escaped, text);
+    out << escaped;
+}
+
+/// Image alt text as the description of a Markdown image (`![...](...)`): ']' and every backslash are
+/// escaped, and so is an '&' that md4c would read as an entity reference. Every backslash is doubled, so
+/// a `\&` escape cannot pair with one.
+inline std::string EscapeMdImageAlt(const std::string& alt) {
+    std::string escaped;
+    escaped.reserve(alt.size() + 4);
+    for (std::size_t i = 0; i < alt.size(); ++i) {
+        const char ch = alt[i];
+        if (ch == ']' || ch == '\\' || (ch == '&' && MdEntityReferenceLength(alt, i) != 0)) {
+            escaped += '\\';
+        }
+        escaped += ch;
+    }
+    return escaped;
 }
 
 /// The href of an MD_SPAN_A, from the `detail` md4c passes to an enter-span callback.

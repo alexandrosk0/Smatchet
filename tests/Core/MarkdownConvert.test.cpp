@@ -36,6 +36,49 @@ TEST_CASE("HtmlToMarkdown: plain text and entity decoding") {
     CHECK(Md("hex&#x41;") == "hexA");
 }
 
+TEST_CASE("HtmlToMarkdown: every character reference is decoded (#2301)") {
+    CHECK(Md("caf&eacute; &#8212; &#x2014; &copy;") == "caf\xC3\xA9 \xE2\x80\x94 \xE2\x80\x94 \xC2\xA9");
+    CHECK(Md("a&#0;b") == "a\xEF\xBF\xBD"
+                          "b");
+    // A legacy reference without its ';' stays literal; md4c does not read it as a reference either.
+    CHECK(Md("AT&amp T") == "AT&amp T");
+    // An unknown name is literal text, as a browser shows it, so Markdown must keep it literal too.
+    CHECK(Md("&nosuchname;") == "\\&nosuchname;");
+    CHECK(Md("<a href=\"http://e.com/caf&eacute;\">l</a>") == "[l](http://e.com/caf\xC3\xA9)");
+}
+
+TEST_CASE("HtmlToMarkdown: text that Markdown would read as an entity reference is escaped (#2301)") {
+    CHECK(Md("a &amp;amp; b") == "a \\&amp; b");
+    CHECK(Md("x &amp;lt;y&amp;gt;") == "x \\&lt;y\\&gt;");
+    CHECK(Md("<img src=\"u.png\" alt=\"a &amp;copy; b\">") == "![a \\&copy; b](u.png)");
+    CHECK(Md("R&amp;D &amp; Q&amp;A") == "R&D & Q&A");
+    // A literal backslash before an escaped '&' is doubled so it cannot pair with the escape.
+    CHECK(Md("a\\&amp;amp;") == "a\\\\\\&amp;");
+    // Tags that emit no Markdown leave the text one run, so a reference split by them is still seen.
+    CHECK(Md("&amp;co<u>py</u>;") == "\\&copy;");
+    CHECK(Md("&amp;<span>amp;</span>") == "\\&amp;");
+    CHECK(Md("a\\<span>&amp;amp;</span>") == "a\\\\\\&amp;");
+    // Markup ends a run: nothing re-forms across it, so nothing is escaped.
+    CHECK(Md("&amp;co<b>py;</b>") == "&co**py;**");
+    // md4c reads no reference in code, so code stays verbatim.
+    CHECK(Md("<code>&amp;amp;</code>") == "`&amp;`");
+    CHECK(Md("<pre>&amp;copy;</pre>") == "\n```\n&copy;\n```\n\n");
+    CHECK(Md("<table><tr><td>&amp;amp;</td></tr></table>") == "\n\n| \\&amp; |\n| --- |\n\n");
+    // Text held for the next markup still lands in its own sink, in order.
+    CHECK(Md("<table>\n<tr>\n<td>a</td>\n</tr>\n</table>") == "\n\n| a |\n| --- |\n\n");
+    CHECK(Md("<table><tr><td>x<b>y</b>z") == "\n\n|\n|\n\nx**y**z");
+}
+
+TEST_CASE("Plane HTML survives HtmlToMarkdown then MarkdownToHtml (#2301)") {
+    CHECK(Html(Md("<p>a &amp;amp; b</p>")) == "<p>a &amp;amp; b</p>");
+    CHECK(Html(Md("<p>x &amp;lt;y&amp;gt;</p>")) == "<p>x &amp;lt;y&amp;gt;</p>");
+    CHECK(Html(Md("<p><img src=\"u.png\" alt=\"a &amp;copy; b\"/></p>")) ==
+          "<p><img src=\"u.png\" alt=\"a &amp;copy; b\"/></p>");
+    CHECK(Html(Md("<p>a\\&amp;amp; <code>&amp;amp;</code></p>")) == "<p>a\\&amp;amp; <code>&amp;amp;</code></p>");
+    // A named reference arrives as its character, which HTML needs no reference for.
+    CHECK(Html(Md("<p>caf&eacute; &amp; more</p>")) == "<p>caf\xC3\xA9 &amp; more</p>");
+}
+
 TEST_CASE("HtmlToMarkdown: <p> paragraph") {
     CHECK(Md("<p>hello</p>") == "hello\n\n");
     CHECK(Md("<p>one</p><p>two</p>") == "one\n\ntwo\n\n");

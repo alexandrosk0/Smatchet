@@ -538,3 +538,35 @@ TEST_CASE("ADF text survives AdfToMarkdown then MarkdownToAdf unchanged (#2297)"
     REQUIRE(backMedia != nullptr);
     CHECK((*backMedia)["attrs"].value("alt", std::string()) == "x &lt; y");
 }
+
+TEST_CASE("AdfToMarkdown: a reference split across adjacent text nodes is escaped as one run (#2301)") {
+    const auto run = [](const json& nodes) { return AdfDoc(json::array({AdfPara(nodes)})); };
+    json underline;
+    underline["type"] = "underline";
+    json strong;
+    strong["type"] = "strong";
+    // Underline renders as nothing in Markdown, so the two nodes' text is one run there.
+    const json split = run(json::array({AdfText("&co"), AdfMarkedText("py;", underline)}));
+    CHECK(Adf2Md(split) == "\\&copy;");
+    CHECK(FirstAdfText(MarkdownConvert::MarkdownToAdf(Adf2Md(split))) == "&copy;");
+    // A backslash ending one node would pair with an escape that starts the next.
+    const json slash = run(json::array({AdfText("a\\"), AdfText("&amp;")}));
+    CHECK(Adf2Md(slash) == "a\\\\\\&amp;");
+    CHECK(FirstAdfText(MarkdownConvert::MarkdownToAdf(Adf2Md(slash))) == "a\\&amp;");
+    // Markup between the nodes ends the run: nothing re-forms across it, so nothing is escaped.
+    CHECK(Adf2Md(run(json::array({AdfText("&co"), AdfMarkedText("py;", strong)}))) == "&co**py;**");
+    // A mention's text is plain text in the run too.
+    json mention;
+    mention["type"] = "mention";
+    mention["attrs"]["text"] = "@R&amp;D";
+    CHECK(Adf2Md(run(json::array({mention}))) == "@R\\&amp;D");
+    // A task item stored as "[ ] text": the prefix becomes the list marker and the rest is one run.
+    json item;
+    item["type"] = "listItem";
+    item["content"] =
+        json::array({AdfPara(json::array({AdfText("[ ] buy &amp;"), AdfMarkedText("lt; milk", underline)}))});
+    json list;
+    list["type"] = "bulletList";
+    list["content"] = json::array({item});
+    CHECK(Adf2Md(AdfDoc(json::array({list}))) == "- [ ] buy \\&amp;lt; milk");
+}
