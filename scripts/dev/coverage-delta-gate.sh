@@ -439,9 +439,10 @@ _classify_diff() {
 # context line stays exempt. A '+' line that starts inside a raw string literal is
 # string DATA and is replaced by a sentinel the classifier never exempts. A file
 # whose tracking cannot be trusted — a hunk that ends with the #if stack open,
-# closes an arm it never opened, ends inside a comment/raw string, continues a
-# `//` comment with a trailing backslash, or puts a conditional directive after a
-# closing */ on the same line — gets
+# closes an arm it never opened, ends inside a comment/raw string, splices a line
+# with a trailing backslash outside a directive's own continuation, puts a comment
+# between '#' and the directive name or a conditional directive after a closing
+# */, or uses a %: digraph directive — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -581,7 +582,7 @@ function first_tok(s) { sub(/[ \t\/].*$/, "", s); return s }
 function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; return 0 }
 # Lexical state across the post-image lines of one hunk: lx_blk (inside a /* */
 # comment) and lx_raw (inside a raw string literal, closed by ")" lx_rdel "\"").
-function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0 }
+function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0; lx_macro = 0 }
 # lex_line(s) — advance the lexical state across one line; sets lx_code = 1 when
 # any non-whitespace byte lies outside a comment (string-literal bytes are code).
 # Ordinary string/char literals cannot span lines, so they are skipped in place
@@ -646,8 +647,22 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
 # STARTS outside a comment / raw string — a `#if` there is text, not a directive)
 # and then the lexer. Sets pl_raw (line starts inside a raw string literal);
 # returns 1 for a conditional directive.
-function post_line(body,   r) {
+function post_line(body,   r, st, tl, splice, isdir) {
     pl_raw = lx_raw
+    # Shapes the per-line tracking cannot follow mark the file untrusted (its lines then fall
+    # through to the classifier, never dropped):
+    #   - a backslash line splice outside a preprocessor directive's continuation (the
+    #     compiler joins the lines first, so a string, char literal or comment can run on);
+    #   - a comment between '#' and the directive name (`# /* c */ else`);
+    #   - a `%:` digraph directive.
+    st = trim(body)
+    tl = body
+    sub(/[ \t\r]+$/, "", tl)
+    splice = (tl ~ /\\$/)
+    isdir = (substr(st, 1, 1) == "#" || substr(st, 1, 2) == "%:")
+    if (substr(st, 1, 2) == "%:" || st ~ /^#[ \t]*\/\*/) lx_untrusted = 1
+    if (splice && !isdir && !lx_macro) lx_untrusted = 1
+    lx_macro = splice && (isdir || lx_macro)
     # A conditional directive after a closing */ (`/* x */ #else`, or the last line of
     # a multi-line comment) is one the compiler honours but track_directive never
     # sees: the #if stack would be wrong, so the file's tracking is not trusted.
@@ -1202,6 +1217,69 @@ diff --git a/Source/Core/src/Sync/Splice.cpp b/Source/Core/src/Sync/Splice.cpp
 +    launchMissiles(x);
  }
  int h() { return 0; } // */
+EOF
+    # Four more shapes the per-line tracking cannot follow; each marks the file untrusted.
+    _expect FALLTHROUGH "line splice inside a string literal marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/StrSplice.cpp b/Source/Core/src/Sync/StrSplice.cpp
+--- a/Source/Core/src/Sync/StrSplice.cpp
++++ b/Source/Core/src/Sync/StrSplice.cpp
+@@ -1,8 +1,8 @@
+ const char* s = "abc\
+ def /* not a comment opener";
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* a real comment */
+EOF
+    _expect FALLTHROUGH "comment closed through a splice marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/BlkSplice.cpp b/Source/Core/src/Sync/BlkSplice.cpp
+--- a/Source/Core/src/Sync/BlkSplice.cpp
++++ b/Source/Core/src/Sync/BlkSplice.cpp
+@@ -1,8 +1,8 @@
+ /* comment *\
+ /
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* a real comment */
+EOF
+    _expect FALLTHROUGH "comment between # and the directive name marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/HashCmt.cpp b/Source/Core/src/Sync/HashCmt.cpp
+--- a/Source/Core/src/Sync/HashCmt.cpp
++++ b/Source/Core/src/Sync/HashCmt.cpp
+@@ -1,5 +1,5 @@
+ #ifdef __ANDROID__
+ # /* desktop below */ else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    _expect FALLTHROUGH "%: digraph directive marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/Digraph.cpp b/Source/Core/src/Sync/Digraph.cpp
+--- a/Source/Core/src/Sync/Digraph.cpp
++++ b/Source/Core/src/Sync/Digraph.cpp
+@@ -1,5 +1,5 @@
+ #ifdef __ANDROID__
+ %:else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    # A macro's own continuation lines are not a splice the tracking misreads: an
+    # off-target arm holding a multi-line #define still drops its new lines.
+    _expect EXEMPT "multi-line #define in an Android arm stays exempt" <<'EOF'
+diff --git a/Source/Core/src/Sync/Macro.cpp b/Source/Core/src/Sync/Macro.cpp
+--- a/Source/Core/src/Sync/Macro.cpp
++++ b/Source/Core/src/Sync/Macro.cpp
+@@ -1,6 +1,6 @@
+ #if defined(__ANDROID__)
+ #define LOG_ANDROID(x) \
+     do { log(x); } while (0)
+-    androidOnly(1);
++    androidOnly(2);
+ #endif
 EOF
     # A line inside a raw string literal is string DATA (an embedded script or
     # shader) even when it looks like a comment / include / brace.
