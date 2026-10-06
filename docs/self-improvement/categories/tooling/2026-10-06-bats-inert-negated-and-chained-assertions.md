@@ -22,7 +22,7 @@ Both look like assertions in review, so a test can pass while checking less than
 Add a rule to the shell-lint / bats lint lane, delta-gated on changed `.bats` files, that flags:
 
 - a line inside a `@test` body that starts with `!` (after indentation) and is not the body's last command, unless it ends in `|| false` or is written `run ! …`;
-- a `[ … ] && [ … ]` or `[[ … ]] && [[ … ]]` chain as a statement, as opposed to an `if` condition.
+- a `[ … ] && [ … ]` or `[[ … ]] && [[ … ]]` chain as a statement inside a `@test` body, as opposed to an `if` condition. Helpers and `setup` are out of scope, where `[ -f x ] && rm x` is normal.
 
 The suggested fix in the message is `run ! …` (bats ≥ 1.5, with `bats_require_minimum_version 1.5.0`), `|| false`, or one check per line.
 
