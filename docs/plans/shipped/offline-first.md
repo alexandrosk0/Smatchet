@@ -3022,11 +3022,12 @@ These close everything the sweep filed and did not fix inside a slice: the four 
   - **Bulk prefetch.** A failed bulk-import prefetch backs off per (tracker, issue key) until the backoff passes or the connection recovers.
   - **Perforce describe.** A failed `p4 describe` is retried after the lookup backoff, and "no such changelist" stays final. A failure never replaces a success that a concurrent lookup stored. The CL tooltip shows a worker exception as an error.
   - The four debt entries are archived.
-- The gate-graduation PR changes the gates and the record:
+- The gate-graduation PR, [#2315](https://github.com/alexandrosk0/Smatchet/pull/2315) (merged 2026-10-06 as `7cf82d48`), changes the gates and the record:
   - `tracker-error-kind-collapsed` moves to absolute-0.
   - `offline-failure-cached-as-loaded` and `offline-cache-cleared` block, delta-gated per changed `.cpp`.
   - The other three heuristics stay WARN until the tracker-surface scoping in the calibration doc lands.
   - It also carries the postmortems for the two plan-lock overrides: #2309's (a lock claiming the generated `docs/plans/INDEX.md`) and #2313's (a live lock whose three overlapping files merged clean), with a tooling entry each.
+  - A follow-up applies its CodeRabbit nits: one shared tracker-kind scope for the per-file scan and the whole-tree sweep, a bats case that runs the real `--diff` gate, and ADR-0026 pointers to the graduations.
 - Still open: the manual Windows end-to-end pass (§ Manual end-to-end test plan below). It needs a real tracker and network control, so a Linux container cannot run it.
 
 ## Deviations from plan

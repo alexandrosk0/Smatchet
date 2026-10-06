@@ -2,7 +2,7 @@
 
 **Status:** accepted (2026-09-24)
 
-Offline-first becomes **UX Quality Pillar 6**, enforced like Pillar 5 (DRY) via two **blocking exact rules** and five **WARN-first heuristics**, plus a fake-network test harness and the `OfflineFirst` bucket-E lane.
+Offline-first becomes **UX Quality Pillar 6**, enforced like Pillar 5 (DRY) via two **blocking exact rules** and five **WARN-first heuristics** (as accepted; the 2026-10-05 graduations under Consequences supersede this split), plus a fake-network test harness and the `OfflineFirst` bucket-E lane.
 
 Evidence:
 - **PR #2234 status combo blocked on a live fetch** for 1–90 s offline ("Loading transitions…" with no option to pick anything, even invalid moves).
@@ -18,7 +18,7 @@ Evidence:
    - A `TrackerError` keeps its `Transport` kind wherever it is flattened; `TrackerErrorUnknown(<string>)` is never how a failure is reported.
 2. **One shared pattern** instead of per-feature state machines: `OfflineFirstPure.h`, `KeyedLookupCache.h` + `RunKeyedFetch`, and `DataFreshnessCue`.
 3. **Additive SQLite tables** for offline reads and writes: `lookup_cache` (S5) and `pending_actions` (S8).
-4. **Split strictness**: the two exact rules **block** now; the five heuristics are **WARN-first** and graduate one by one.
+4. **Split strictness**: the two exact rules **block** now; the five heuristics are **WARN-first** and graduate one by one (as accepted; the 2026-10-05 graduations under Consequences supersede this split).
 5. **A test seam**: the fake-network harness (`tests/support/FakeNetworkSwitch.h`) and the `OfflineFirst` bucket-E lane.
 
 ## Considered options
@@ -29,7 +29,7 @@ Evidence:
 
 ## Consequences
 
-- **New gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` **block** — the first absolute-0 over the whole tree since every tracker write goes through a queue (S9), the second delta-gated per changed file (existing hits grandfathered); `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated` **WARN-first** → graduate independently per the trigger below.
+- **New gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` **block** — the first absolute-0 over the whole tree since every tracker write goes through a queue (S9), the second delta-gated per changed file (existing hits grandfathered); `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated` **WARN-first** → graduate independently per the trigger below (as accepted; the 2026-10-05 graduations under Consequences supersede this split).
 - **Gate infra**: `lint-rules.d/72-offline-exact.sh` (blocking rules) and `74-offline-heuristic.sh` (WARN heuristics), loader + `--scan-offline` in `test-lint-rules.sh`, bats coverage, enforcement-contract row in `AGENTS.md`, and `docs/agent-rules/cpp-rules.md` section.
 - **Shared primitives**: `Source/Core/include/OfflineFirstPure.h` (pure connectivity, freshness and write-route decisions), `KeyedLookupCache.h` (offline-gated keyed fetch with backoff, reset on reconnect), `DataFreshnessCue.h` (the one localized cue).
 - **Additive schema**: SQLite `lookup_cache` (S5) and `pending_actions` (S8) tables for offline reads and writes.

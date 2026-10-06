@@ -1232,10 +1232,19 @@ _resolve_py() {
     run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/74-offline-heuristic.sh' && offline_delta_hits scan_offline_heuristic_file develop \"\${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}\""
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+    # The production --diff gate passes the grandfathered (moved) hit.
+    run bash -c "cd '$tmp' && bash '$LINT' --root '$tmp' --diff develop"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PASS — no new Pillar 6 offline-first blocking-rule hit"* ]]
     printf 'void L() {\n    if (!ok) {\n        LOG_WARN("lookup failed: %%s", e);\n        s.loaded = true;\n    }\n}\n' > "$tmp/Source/Core/src/Ui/New.cpp"
     ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
     run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/74-offline-heuristic.sh' && offline_delta_hits scan_offline_heuristic_file develop \"\${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}\""
     [[ "$output" == *"offline-failure-cached-as-loaded"*"New.cpp:4"* ]]
+    # ...and the production --diff gate rejects the NEW hit (the block is wired in and sets rc).
+    run bash -c "cd '$tmp' && bash '$LINT' --root '$tmp' --diff develop"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Quality Pillar 6 (offline-first)"* ]]
+    [[ "$output" == *"offline-failure-cached-as-loaded"*"Source/Core/src/Ui/New.cpp:4"* ]]
 }
 
 # ---------- lint-rules.d module loading (monolith split) ----------
