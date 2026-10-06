@@ -313,6 +313,18 @@ _wph_gate() {
     [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
 }
 
+@test "coverage-delta-gate.sh: statement in an __APPLE__ arm still FAILs (no Apple CI job)" {
+    _wph_repo
+    printf '%s\n' '#include "p.h"' '#ifdef __APPLE__' 'int Bundle() { return 4; }' '#endif' \
+        >> "$FIXREPO/Source/Core/src/p.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm 'apple arm (base)'
+    git -C "$FIXREPO" branch -f main HEAD
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 11 'static int g_apple = Bundle();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
 @test "coverage-delta-gate.sh: statement on the _WIN32 if side still FAILs" {
     _wph_repo
     _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 3 'static int g_win = Read();'

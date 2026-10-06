@@ -36,11 +36,14 @@
 #                            above (the swallow→log pattern: no rethrow, no logic)
 #   * build-only           — no .cpp/.h/.hpp product change at all (CMake/yml/sh/…)
 #   * off-target platform arm — an added line whose enclosing #if/#elif/#else arm
-#                            can only be compiled for an off-target platform
-#                            (__ANDROID__ / __APPLE__ / TARGET_OS_*): never built
-#                            by the desktop/Linux test targets, validated instead
-#                            by the cross-compile jobs (#1021). The non-_WIN32
-#                            #else arm IS built + run on Linux CI — NOT exempt.
+#                            can only be compiled for Android (__ANDROID__): never
+#                            built by the desktop/Linux test targets, validated
+#                            instead by the Android NDK/APK cross-compile jobs
+#                            (#1021). __APPLE__ / TARGET_OS_* arms are NOT exempt
+#                            — no CI job builds macOS/iOS, so nothing would
+#                            validate them; widen the macro set only alongside an
+#                            Apple CI job. The non-_WIN32 #else arm IS built + run
+#                            on Linux CI — NOT exempt.
 #   * header→cpp body relocation — an in-header (inline) function definition
 #                            removed and re-added byte-identical (whitespace-
 #                            trimmed, `inline` dropped) as an out-of-line
@@ -428,12 +431,14 @@ _classify_diff() {
 #      first-party product C/C++ file, keep an #if/#ifdef/#ifndef/#elif/#else/
 #      #endif stack. An arm is OFF-TARGET when its effective condition requires an
 #      off-target platform macro: its own condition is an ||/&& combination of
-#      ONLY __ANDROID__ / __APPLE__ / TARGET_OS_* atoms (`defined(X)`,
-#      `defined X`, bare `X`), or an earlier arm of the same group was the pure
-#      negation of such a combination (`#ifndef __ANDROID__ … #else`). A '+' line
-#      inside any off-target arm is dropped. So `#ifdef _WIN32 … #else` stays
-#      gated (the #else arm is the Linux/POSIX path CI builds and runs), as does
-#      `#elif defined(__APPLE__) || defined(__linux__)`. A directive line with a
+#      ONLY __ANDROID__ atoms (`defined(X)`, `defined X`, bare `X`), or an
+#      earlier arm of the same group was the pure negation of such a combination
+#      (`#ifndef __ANDROID__ … #else`). Android is the only off-target platform
+#      with a CI build (mobile-android-ndk / APK jobs); __APPLE__ / TARGET_OS_*
+#      arms stay gated until a macOS/iOS job exists. A '+' line inside any
+#      off-target arm is dropped. So `#ifdef _WIN32 … #else` stays gated (the
+#      #else arm is the Linux/POSIX path CI builds and runs), as does
+#      `#elif defined(__ANDROID__) || defined(__linux__)`. A directive line with a
 #      backslash continuation or a multi-line comment is classified OTHER (gated).
 #      The stack resets at every hunk header, so a partial-context diff can only
 #      under-exempt.
@@ -503,9 +508,9 @@ function classify_cond(e,   s, inner, p, q) {
         s = substr(s, 1, p - 1) " " substr(s, p + q + 3)
     }
     sub(/\/\/.*$/, "", s)
-    gsub(/defined[ \t]*\([ \t]*(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)[ \t]*\)/, "@", s)
-    gsub(/defined[ \t]+(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)/, "@", s)
-    gsub(/(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)/, "@", s)
+    gsub(/defined[ \t]*\([ \t]*__ANDROID__[ \t]*\)/, "@", s)
+    gsub(/defined[ \t]+__ANDROID__/, "@", s)
+    gsub(/__ANDROID__/, "@", s)
     gsub(/[ \t\r]/, "", s)
     if (s == "") return "OTHER"
     if (off_only(s)) return "OFF"
@@ -516,7 +521,7 @@ function classify_cond(e,   s, inner, p, q) {
     }
     return "OTHER"
 }
-function is_off_macro(m) { return m ~ /^(__ANDROID__|__APPLE__|TARGET_OS_[A-Za-z0-9_]+)$/ }
+function is_off_macro(m) { return m == "__ANDROID__" }
 # Update the #if stack for one post-image line; returns 1 when it is a
 # conditional directive (#define/#include/#pragma return 0 and are classified as
 # ordinary lines, so one inside an off-target arm is still dropped).
@@ -879,15 +884,15 @@ diff --git a/Source/Core/src/SubprocessCapture.cpp b/Source/Core/src/SubprocessC
  #endif
 EOF
 
-    # Nested + negated forms: an __APPLE__ && TARGET_OS_IOS arm inside an unrelated
+    # Nested + negated forms: a `defined __ANDROID__` arm inside an unrelated
     # guard, and the #else of `#ifndef __ANDROID__` (i.e. the Android-only arm).
-    _expect EXEMPT "TARGET_OS_* arm nested in a guard + #else of #ifndef __ANDROID__" <<'EOF'
+    _expect EXEMPT "__ANDROID__ arm nested in a guard + #else of #ifndef __ANDROID__" <<'EOF'
 diff --git a/Source/Core/src/Config/Paths.cpp b/Source/Core/src/Config/Paths.cpp
 --- a/Source/Core/src/Config/Paths.cpp
 +++ b/Source/Core/src/Config/Paths.cpp
 @@ -1,12 +1,14 @@
  #if SMATCHET_WITH_FOO
- #  if defined(__APPLE__) && TARGET_OS_IOS  // iOS sandbox
+ #  if defined __ANDROID__  // Bionic sandbox
 +    root = SandboxRoot();
  #  endif
  #endif
@@ -975,14 +980,37 @@ diff --git a/Source/Core/src/SubprocessCapture.cpp b/Source/Core/src/SubprocessC
  #endif
 EOF
 
+    # No CI job builds macOS/iOS, so an __APPLE__ / TARGET_OS_* arm is validated by
+    # nothing — it must gate like desktop code (only __ANDROID__ has a CI build).
+    _expect FALLTHROUGH "__APPLE__ && TARGET_OS_IOS arm (no Apple CI job validates it)" <<'EOF'
+diff --git a/Source/Core/src/Config/Paths.cpp b/Source/Core/src/Config/Paths.cpp
+--- a/Source/Core/src/Config/Paths.cpp
++++ b/Source/Core/src/Config/Paths.cpp
+@@ -1,5 +1,6 @@
+ #if SMATCHET_WITH_FOO
+ #  if defined(__APPLE__) && TARGET_OS_IOS  // iOS sandbox
++    root = SandboxRoot();
+ #  endif
+ #endif
+EOF
+    _expect FALLTHROUGH "#ifdef __APPLE__ arm (no Apple CI job validates it)" <<'EOF'
+diff --git a/Source/Core/src/Config/Paths.cpp b/Source/Core/src/Config/Paths.cpp
+--- a/Source/Core/src/Config/Paths.cpp
++++ b/Source/Core/src/Config/Paths.cpp
+@@ -1,3 +1,4 @@
+ #ifdef __APPLE__
++    root = BundleRoot();
+ #endif
+EOF
+
     # A mixed condition (Linux is a test target) and the #else of a POSITIVE
     # Android guard are both desktop-reachable — must gate.
-    _expect FALLTHROUGH "__APPLE__ || __linux__ arm, and the #else of #if defined(__ANDROID__)" <<'EOF'
+    _expect FALLTHROUGH "__ANDROID__ || __linux__ arm, and the #else of #if defined(__ANDROID__)" <<'EOF'
 diff --git a/Source/Core/src/HostIntegration.cpp b/Source/Core/src/HostIntegration.cpp
 --- a/Source/Core/src/HostIntegration.cpp
 +++ b/Source/Core/src/HostIntegration.cpp
 @@ -1,6 +1,7 @@
- #if defined(__APPLE__) || defined(__linux__)
+ #if defined(__ANDROID__) || defined(__linux__)
 +    OpenWithXdg(path);
  #endif
  #if defined(__ANDROID__)
@@ -1284,8 +1312,8 @@ echo
 echo "Add tests under tests/Core/ (or tests/Commands/, tests/Lua/, tests/Plugins/, tests/ui/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
 echo "logging-only, static_assert-only, forward-declaration-only, include-only,"
-echo "preprocessor-guard-only, swallow->log catch, lines inside an __ANDROID__/"
-echo "__APPLE__/TARGET_OS_* arm, a byte-identical header->cpp body relocation)"
+echo "preprocessor-guard-only, swallow->log catch, lines inside an __ANDROID__"
+echo "arm, a byte-identical header->cpp body relocation)"
 echo "are auto-exempted; if yours"
 echo "genuinely cannot be"
 echo "unit-tested, apply the"
