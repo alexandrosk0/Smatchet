@@ -437,14 +437,19 @@ _classify_diff() {
 # literals (R"delim( ... )delim"). A '+' line that is only whitespace/comment is
 # dropped (no surface; not a gap) — so an edit to a comment whose opener is a
 # context line stays exempt. A '+' line that starts inside a raw string literal is
-# string DATA and is replaced by a sentinel the classifier never exempts. A file
+# string DATA and is replaced by a sentinel the classifier never exempts, as is a
+# '+' line with a carriage return inside it. A C/C++ file git prints as binary
+# ("Binary files ... differ", e.g. one NUL byte) is never exempt. A file
 # whose tracking cannot be trusted — a hunk that ends with the #if stack open,
 # closes an arm it never opened, ends inside a comment/raw string, splices a line
 # with a trailing backslash outside a directive's own continuation, splices a
 # directive where the join could change what the lexer sees (a split directive
 # name, or a quote, comment token, '/' or '*' at the splice on a spliced directive
 # line), puts a comment between '#' and the directive name or a directive after a
-# closing */, or uses a %: digraph directive — gets
+# closing */, uses a %: digraph directive, holds a control byte the compilers read
+# differently (a carriage return inside a line, a form feed, a vertical tab, a
+# backslash followed by whitespace), or puts '$' or a non-ASCII byte before a raw
+# string's R prefix — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -625,10 +630,15 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
         lx_code = 1
         if (c == "/") { i++; continue }
         pre = substr(s, 1, i - 1)
+        # GCC, Clang and MSVC take '$' and non-ASCII bytes as identifier characters, so before an R
+        # prefix they make it part of an identifier; this lexer cannot follow that.
+        if (c == "\"" && pre ~ /([$]|[^\t -~])(u8|u|U|L)?R$/) lx_untrusted = 1
         if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])(u8|u|U|L)?R$/) {
             m = substr(s, i + 1)
             d = index(m, "(")
-            if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\\)"]/) {
+            # A delimiter is up to 16 characters, any but space, the parentheses, backslash and the
+            # tab, vertical-tab and form-feed controls ('"' is allowed: R""( ... )"").
+            if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\v\f\\)]/) {
                 lx_rdel = substr(m, 1, d - 1)
                 lx_raw = 1
                 i += d + 1
@@ -670,6 +680,10 @@ function post_line(body,   r, st, tl, splice, cont, isdir) {
     cont = lx_macro
     isdir = !cont && !lx_blk && !lx_raw && (substr(st, 1, 1) == "#" || substr(st, 1, 2) == "%:")
     if (substr(st, 1, 2) == "%:" || st ~ /^#[ \t]*\/\*/) lx_untrusted = 1
+    # Control characters the compilers read differently from this lexer: a carriage return inside a
+    # line ends it, a form feed or vertical tab is whitespace (`\f#else` is a directive), and a
+    # backslash followed by whitespace splices for GCC and Clang but not for MSVC before C++23.
+    if (body ~ /\r[^\r]/ || body ~ /[\f\v]/ || body ~ /\\[ \t]+\r?$/) lx_untrusted = 1
     if (splice && !isdir && !cont) lx_untrusted = 1
     if (isdir && splice && st ~ /^#[ \t]*[A-Za-z0-9_]*\\$/) lx_untrusted = 1
     if ((splice && isdir) || cont) {
@@ -788,7 +802,9 @@ FNR == 1 && !paired {
         sub(/[ \t]*;$/, "", s2)
         if (s2 in relsig) { gap = 1; next }
     }
-    emit(pl_raw ? RAWLINE : body)
+    # A carriage return inside the line ends it for the compilers: whatever follows is code the
+    # classifier would read as part of the line before (a comment), so it is never exempt.
+    emit((pl_raw || body ~ /\r[^\r]/) ? RAWLINE : body)
 }
 AWK
 )"
@@ -804,6 +820,13 @@ _prefilter_diff() {
 # EXEMPT / FALLTHROUGH; returns non-zero (echoing nothing) if the prefilter fails.
 _classify_diff_file() {
     local reduced rc=0
+    # git prints a file it takes for binary (one NUL byte, even inside a comment the compilers
+    # ignore) as a single "Binary files ... differ" line: a C/C++ file in that form hides its whole
+    # change from the classifier, so it is never exempt.
+    if grep -qE '^Binary files .*\.(cpp|h|hpp|cc|cxx) differ$' "$1"; then
+        echo FALLTHROUGH
+        return 0
+    fi
     reduced="$(mktemp)"
     _prefilter_diff "$1" >"$reduced" || rc=$?
     if [ "$rc" -eq 0 ]; then
@@ -1400,6 +1423,133 @@ diff --git a/Source/Core/src/Sync/IdPath.cpp b/Source/Core/src/Sync/IdPath.cpp
 -androidOnly(1);
 +androidOnly(2);
  #endif
+EOF
+    # '/' + splice + '*' opens a comment the per-line lexer never sees; here it hides a #else, so
+    # the new line is in the desktop arm.
+    _expect FALLTHROUGH "comment opened through a #define splice marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/SlashSplice.cpp b/Source/Core/src/Sync/SlashSplice.cpp
+--- a/Source/Core/src/Sync/SlashSplice.cpp
++++ b/Source/Core/src/Sync/SlashSplice.cpp
+@@ -1,7 +1,8 @@
+ #ifndef __ANDROID__
+ #define X 1 /\
+ * c
+ #else
+ */
++    launchMissiles(x);
+ #endif
+EOF
+    # Spliced directive lines holding a quote or a comment token are not trusted, whether or not
+    # the token closes before the splice.
+    _expect FALLTHROUGH "char literal on a spliced #define marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/SqSplice.cpp b/Source/Core/src/Sync/SqSplice.cpp
+--- a/Source/Core/src/Sync/SqSplice.cpp
++++ b/Source/Core/src/Sync/SqSplice.cpp
+@@ -1,6 +1,6 @@
+ #define C 'a' \
+     + 1
+ #ifdef __ANDROID__
+-androidOnly(1);
++androidOnly(2);
+ #endif
+EOF
+    _expect FALLTHROUGH "line comment on a #define continuation marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/LcSplice.cpp b/Source/Core/src/Sync/LcSplice.cpp
+--- a/Source/Core/src/Sync/LcSplice.cpp
++++ b/Source/Core/src/Sync/LcSplice.cpp
+@@ -1,6 +1,6 @@
+ #define X \
+     1 // one
+ #ifdef __ANDROID__
+-androidOnly(1);
++androidOnly(2);
+ #endif
+EOF
+    _expect FALLTHROUGH "comment closer on a #define continuation marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/CcSplice.cpp b/Source/Core/src/Sync/CcSplice.cpp
+--- a/Source/Core/src/Sync/CcSplice.cpp
++++ b/Source/Core/src/Sync/CcSplice.cpp
+@@ -1,6 +1,6 @@
+ #define X \
+     y */ z
+ #ifdef __ANDROID__
+-androidOnly(1);
++androidOnly(2);
+ #endif
+EOF
+    # A '#else' inside a comment or a raw string is text: the desktop arm is still open below it.
+    _expect FALLTHROUGH "#else inside a block comment is not a directive" <<'EOF'
+diff --git a/Source/Core/src/Sync/CmtElse.cpp b/Source/Core/src/Sync/CmtElse.cpp
+--- a/Source/Core/src/Sync/CmtElse.cpp
++++ b/Source/Core/src/Sync/CmtElse.cpp
+@@ -1,7 +1,7 @@
+ #ifndef __ANDROID__
+ /* notes
+ #else
+ */
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    _expect FALLTHROUGH "#else inside a raw string literal is not a directive" <<'EOF'
+diff --git a/Source/Core/src/Sync/RawElse.cpp b/Source/Core/src/Sync/RawElse.cpp
+--- a/Source/Core/src/Sync/RawElse.cpp
++++ b/Source/Core/src/Sync/RawElse.cpp
+@@ -1,7 +1,7 @@
+ #ifndef __ANDROID__
+ const char* s = R"(
+ #else
+ )";
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    # '"' is a legal raw-string delimiter character: R""( ... )"" holds the comment opener.
+    _expect FALLTHROUGH "raw string delimited by a quote keeps its contents as data" <<'EOF'
+diff --git a/Source/Core/src/Sync/RawQ.cpp b/Source/Core/src/Sync/RawQ.cpp
+--- a/Source/Core/src/Sync/RawQ.cpp
++++ b/Source/Core/src/Sync/RawQ.cpp
+@@ -1,8 +1,9 @@
+ int g(int x) {
+     const char* s = R""(
+ /* not a comment
+ )"";
++    launchMissiles(x);
+ /* real */
+     return x;
+ }
+EOF
+    # x$R is one identifier to the compilers, so "(" after it is an ordinary string.
+    _expect FALLTHROUGH "'\$' before an R prefix marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/Dollar.cpp b/Source/Core/src/Sync/Dollar.cpp
+--- a/Source/Core/src/Sync/Dollar.cpp
++++ b/Source/Core/src/Sync/Dollar.cpp
+@@ -1,5 +1,6 @@
+ #ifdef __ANDROID__
+ const char* k = x$R"(";
+ #else
+ const char* j = ")";
++int launch = launchMissiles(5);
+ #endif
+EOF
+    # Control bytes are written with printf so no editor strips them.
+    _expect FALLTHROUGH "carriage return inside a line marks the file untrusted" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Sync/Cr.cpp b/Source/Core/src/Sync/Cr.cpp' \
+        '--- a/Source/Core/src/Sync/Cr.cpp' '+++ b/Source/Core/src/Sync/Cr.cpp' '@@ -1,3 +1,4 @@' \
+        ' void g(int x) {' "+    // note$(printf '\r')    launchMissiles(x);" '     (void)x;' ' }')
+    _expect FALLTHROUGH "form feed before #else marks the file untrusted" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Sync/Ff.cpp b/Source/Core/src/Sync/Ff.cpp' \
+        '--- a/Source/Core/src/Sync/Ff.cpp' '+++ b/Source/Core/src/Sync/Ff.cpp' '@@ -1,4 +1,5 @@' \
+        ' #ifdef __ANDROID__' ' androidOnly();' " $(printf '\f')#else" '+launchMissiles(x);' ' #endif')
+    _expect FALLTHROUGH "backslash then whitespace on a #define marks the file untrusted" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Sync/Ws.cpp b/Source/Core/src/Sync/Ws.cpp' \
+        '--- a/Source/Core/src/Sync/Ws.cpp' '+++ b/Source/Core/src/Sync/Ws.cpp' '@@ -1,4 +1,5 @@' \
+        ' #ifdef __ANDROID__' ' #define X \ ' ' #else' '+launchMissiles(x);' ' #endif')
+    # A NUL byte makes git print the whole file as one "Binary files ... differ" line.
+    _expect FALLTHROUGH "a C++ file git shows as binary is never exempt" <<'EOF'
+diff --git a/Source/Core/src/Sync/Nul.cpp b/Source/Core/src/Sync/Nul.cpp
+index 1111111..2222222 100644
+Binary files a/Source/Core/src/Sync/Nul.cpp and b/Source/Core/src/Sync/Nul.cpp differ
 EOF
     # A macro's own continuation lines are not a splice the tracking misreads: an
     # off-target arm holding a multi-line #define still drops its new lines.
