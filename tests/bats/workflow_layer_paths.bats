@@ -18,7 +18,7 @@ extract_layer_paths() {
         printf '%s\n' "$text" |
             grep -oE '(\$\{\{[[:space:]]*env\.AGENT_LAYER_ROOT[[:space:]]*\}\}|\$\{?AGENT_LAYER_ROOT\}?"?)/[A-Za-z0-9_./-]+' |
             sed -E 's#^[^/]*/##'
-        printf '%s\n' "$text" | grep -oE '(^|[^A-Za-z0-9_-])agent-layer/[A-Za-z0-9_./-]+' | sed -E 's#^.?agent-layer/##'
+        printf '%s\n' "$text" | grep -oE '(^|[^A-Za-z0-9_.-])agent-layer/[A-Za-z0-9_./-]+' | sed -E 's#^.?agent-layer/##'
     } | sed -E 's#[./]+$##' | sort -u
 }
 
@@ -61,6 +61,7 @@ run: bash "$AGENT_LAYER_ROOT"/agents/scripts/core/c.sh
 with: { path: ${{ env.AGENT_LAYER_ROOT }}/agents/scripts/core/d.sh }
 run: test -f agent-layer/agents/scripts/core/e.sh && bash ./agent-layer/agents/scripts/core/f.sh
 uses: ./.github/workflows/agent-layer-integration.yml
+run: bash other-agent-layer/x.sh my_agent-layer/y.sh .agent-layer/z.sh
 EOF
     [ "$status" -eq 0 ]
     [ "$output" = "$(printf 'agents/scripts/core/%s.sh\n' a b c d e f)" ]

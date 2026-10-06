@@ -257,8 +257,13 @@ fallback_desc_wf() {
 }
 
 @test "selftest: a workflow with no fallback poster is detected" {
+    # The poster is really there (so removing it changes the file), and the check the poster test runs
+    # then fails on the copy without it.
+    grep -q "state=pending" "$WF"
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"
+    run cmp -s "$WF" "$tmp"
+    [ "$status" -eq 1 ]
     run grep -q "state=pending" "$tmp"
     [ "$status" -eq 1 ]
 }

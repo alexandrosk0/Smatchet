@@ -191,8 +191,8 @@ _line_is_no_runtime_surface() {
 # FALLTHROUGH ⇒ at least one added C/C++ product line is real surface; the
 #           caller runs the unchanged coverage-delta logic.
 #
-# Scope: only .cpp/.h/.hpp/.cc/.cxx under Source/Core, Source/Plugins,
-# Source/Standalone, tests/. Lines in other files (build/docs/scripts/non-product
+# Scope: only .cpp/.h/.hpp/.cc/.cxx (and the included .c/.inl/.inc/.ipp) under
+# Source/Core, Source/Plugins, Source/Standalone, tests/. Lines in other files (build/docs/scripts/non-product
 # C++) are ignored for the purposes of this classifier — they carry no runtime
 # surface the gate enforces, so they neither block nor force a fallthrough.
 # Net paren balance of a string: count of '(' minus count of ')'. Used to know when a
@@ -305,7 +305,11 @@ _classify_diff() {
                     Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|\
                     Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|\
                     Source/Standalone/*.cpp|Source/Standalone/*.h|Source/Standalone/*.hpp|Source/Standalone/*.cc|Source/Standalone/*.cxx|\
-                    tests/*.cpp|tests/*.h|tests/*.hpp|tests/*.cc|tests/*.cxx)
+                    tests/*.cpp|tests/*.h|tests/*.hpp|tests/*.cc|tests/*.cxx|\
+                    Source/Core/*.c|Source/Core/*.inl|Source/Core/*.inc|Source/Core/*.ipp|\
+                    Source/Plugins/*.c|Source/Plugins/*.inl|Source/Plugins/*.inc|Source/Plugins/*.ipp|\
+                    Source/Standalone/*.c|Source/Standalone/*.inl|Source/Standalone/*.inc|Source/Standalone/*.ipp|\
+                    tests/*.c|tests/*.inl|tests/*.inc|tests/*.ipp)
                         in_product_cpp=1 ;;
                 esac
                 continue ;;
@@ -448,8 +452,8 @@ _classify_diff() {
 # line), puts a comment between '#' and the directive name or a directive after a
 # closing */, uses a %: digraph directive, holds a control byte the compilers read
 # differently (a carriage return inside a line, a form feed, a vertical tab, a
-# backslash followed by whitespace), or puts '$' or a non-ASCII byte before a raw
-# string's R prefix — gets
+# backslash followed by whitespace), or puts '$', a non-ASCII byte or a pp-number
+# (1.R, 1'R, 1e+R) before a raw string's R prefix — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -482,7 +486,7 @@ _classify_diff() {
 #      surface — the existing callers' tests still exercise it.
 _PREFILTER_AWK="$(cat <<'AWK'
 function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
-function is_prod(p) { return p ~ /^(Source\/(Core|Plugins|Standalone)|tests)\/.*\.(cpp|h|hpp|cc|cxx)$/ }
+function is_prod(p) { return p ~ /^(Source\/(Core|Plugins|Standalone)|tests)\/.*\.(cpp|h|hpp|cc|cxx|c|inl|inc|ipp)$/ }
 function is_hdr(p) { return p ~ /\.(h|hpp)$/ }
 function is_cpp(p) { return p ~ /\.(cpp|cc|cxx)$/ }
 function path_of(raw,   p) { p = substr(raw, 5); sub(/^b\//, "", p); return p }
@@ -633,6 +637,9 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
         # GCC, Clang and MSVC take '$' and non-ASCII bytes as identifier characters, so before an R
         # prefix they make it part of an identifier; this lexer cannot follow that.
         if (c == "\"" && pre ~ /([$]|[^\t -~])(u8|u|U|L)?R$/) lx_untrusted = 1
+        # Nor can it follow an R that continues a pp-number (1.R, 1'R, 1e+R): the quote after it opens an
+        # ordinary string for the compilers.
+        if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])[.]?[0-9]([A-Za-z0-9_.']|[eEpP][+-])*R$/) lx_untrusted = 1
         if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])(u8|u|U|L)?R$/) {
             m = substr(s, i + 1)
             d = index(m, "(")
@@ -645,7 +652,12 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
                 continue
             }
         }
-        if (c == SQ && pre ~ /(^|[^A-Za-z0-9_])[0-9][A-Za-z0-9_.']*$/) { i++; continue }
+        # A digit separator continues a pp-number, so it is followed by a digit or a letter; any other
+        # quote after a digit opens a character literal.
+        if (c == SQ && pre ~ /(^|[^A-Za-z0-9_])[0-9][A-Za-z0-9_.']*$/ && substr(s, i + 1, 1) ~ /[A-Za-z0-9_]/) {
+            i++
+            continue
+        }
         i++
         while (i <= n) {
             k = substr(s, i, 1)
@@ -713,6 +725,9 @@ function end_hunk1() {
 # or dropped line separates it from the previous printed '+' line, so classifier
 # state (block comment / wrapped LOG_) never spans lines it cannot see.
 function emit(b) {
+    # A carriage return inside the line ends it for the compilers: whatever follows is code the
+    # classifier would read as part of the line before (a comment, a directive), so it is never exempt.
+    if (b ~ /\r[^\r]/) b = RAWLINE
     if (gap) { print "@@ prefilter: post-image gap @@"; gap = 0 }
     print "+" b
 }
@@ -802,9 +817,7 @@ FNR == 1 && !paired {
         sub(/[ \t]*;$/, "", s2)
         if (s2 in relsig) { gap = 1; next }
     }
-    # A carriage return inside the line ends it for the compilers: whatever follows is code the
-    # classifier would read as part of the line before (a comment), so it is never exempt.
-    emit((pl_raw || body ~ /\r[^\r]/) ? RAWLINE : body)
+    emit(pl_raw ? RAWLINE : body)
 }
 AWK
 )"
@@ -823,7 +836,7 @@ _classify_diff_file() {
     # git prints a file it takes for binary (one NUL byte, even inside a comment the compilers
     # ignore) as a single "Binary files ... differ" line: a C/C++ file in that form hides its whole
     # change from the classifier, so it is never exempt.
-    if grep -qE '^Binary files .*\.(cpp|h|hpp|cc|cxx) differ$' "$1"; then
+    if grep -qE '^Binary files .*\.(cpp|h|hpp|cc|cxx|c|inl|inc|ipp)"? differ$' "$1"; then
         echo FALLTHROUGH
         return 0
     fi
@@ -1551,6 +1564,46 @@ diff --git a/Source/Core/src/Sync/Nul.cpp b/Source/Core/src/Sync/Nul.cpp
 index 1111111..2222222 100644
 Binary files a/Source/Core/src/Sync/Nul.cpp and b/Source/Core/src/Sync/Nul.cpp differ
 EOF
+    # 1.R is one pp-number to the compilers, so "(" after it is an ordinary string.
+    _expect FALLTHROUGH "R continuing a pp-number marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/PpNum.cpp b/Source/Core/src/Sync/PpNum.cpp
+--- a/Source/Core/src/Sync/PpNum.cpp
++++ b/Source/Core/src/Sync/PpNum.cpp
+@@ -1,5 +1,6 @@
+ #ifdef __ANDROID__
+ const char* k = 1.R"(";
+ #else
+ const char* j = ")";
++int launch = launchMissiles(5);
+ #endif
+EOF
+    # A quote after a digit that no digit or letter follows opens a character literal, not a
+    # digit separator: here the string after it holds the comment opener.
+    _expect FALLTHROUGH "a quote after a digit is a char literal unless a digit or letter follows" <<'EOF'
+diff --git a/Source/Core/src/Sync/DigitSep.cpp b/Source/Core/src/Sync/DigitSep.cpp
+--- a/Source/Core/src/Sync/DigitSep.cpp
++++ b/Source/Core/src/Sync/DigitSep.cpp
+@@ -1,6 +1,6 @@
+ #define M(a) a(1'"', "/*")
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* real */
+EOF
+    _expect FALLTHROUGH "carriage return inside a directive line is never exempt" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Sync/CrDir.cpp b/Source/Core/src/Sync/CrDir.cpp' \
+        '--- a/Source/Core/src/Sync/CrDir.cpp' '+++ b/Source/Core/src/Sync/CrDir.cpp' '@@ -1,2 +1,3 @@' \
+        ' #ifdef __ANDROID__' ' androidOnly();' "+#endif$(printf '\r')    launchMissiles(x);")
+    # An included implementation file is product code too: its lines are classified.
+    _expect FALLTHROUGH "real code in an .inl file is not exempt" <<'EOF'
+diff --git a/Source/Core/src/Sync/Impl.inl b/Source/Core/src/Sync/Impl.inl
+--- a/Source/Core/src/Sync/Impl.inl
++++ b/Source/Core/src/Sync/Impl.inl
+@@ -1,1 +1,2 @@
+ // implementation, included by Sync.cpp
++launchMissiles(x);
+EOF
     # A macro's own continuation lines are not a splice the tracking misreads: an
     # off-target arm holding a multi-line #define still drops its new lines.
     _expect EXEMPT "multi-line #define in an Android arm stays exempt" <<'EOF'
@@ -1847,7 +1900,10 @@ MERGE_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || echo "$BASE_REF")
 # Compute the diff once. --name-only --diff-filter=ACMR keeps adds, copies,
 # modifies, renames (the cases that actually change content). Deletes intentionally
 # excluded — removing a production file shouldn't require a new test.
-mapfile -t CHANGED < <(git diff --name-only --diff-filter=ACMR "$MERGE_BASE"...HEAD 2>/dev/null || true)
+# --no-renames: a rename's carried-over lines are content the gate must see, never a silent move.
+# core.quotePath=false: a non-ASCII path stays a plain path the patterns below can match.
+mapfile -t CHANGED < <(git -c core.quotePath=false diff --no-renames --name-only --diff-filter=ACMR \
+    "$MERGE_BASE"...HEAD 2>/dev/null || true)
 
 if [ "${#CHANGED[@]}" -eq 0 ]; then
     echo "[coverage-delta-gate] no changed files vs $BASE_REF; gate passes"
@@ -1913,7 +1969,7 @@ fi
 # of every added line and pair a removed header body with its relocated copy.
 GIT_DIFF_TMPFILE="$(mktemp)"
 trap 'rm -f "$GIT_DIFF_TMPFILE"' EXIT
-if ! git diff --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+if ! git -c core.quotePath=false diff --no-renames --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
         Source/Core Source/Plugins Source/Standalone tests >"$GIT_DIFF_TMPFILE" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
     exit 1
