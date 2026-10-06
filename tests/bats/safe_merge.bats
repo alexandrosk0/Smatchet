@@ -37,17 +37,23 @@ setup() {
     export MERGE_SNAPSHOT_LEDGER="$SNAP_DIR/merge-snapshots.jsonl"
     export SAFE_MERGE_SNAPSHOT_WAIT_SECONDS=0
 
+    # SAFE_MERGE_STUB_GATE is honoured only in dry-run or explicit test mode;
+    # every test here drives a stub gate against the stub gh below.
+    export SAFE_MERGE_TEST_MODE=1
+
     # Stub gh — records `gh pr merge ...` to $MERGE_SENTINEL so a test can assert
     # the merge was (or was NOT) armed; `gh pr merge` exits $STUB_MERGE_RC (default
-    # 0). `gh api repos/.../pulls/<n>` (the post-arm REST poll) prints
-    # $STUB_PR_JSON when that file exists, else an OPEN unmerged PR. Any other gh
-    # call is a no-op success. The gate is stubbed via SAFE_MERGE_STUB_GATE, so
-    # `gh api graphql` is never hit.
+    # 0). `gh api repos/.../pulls/<n>` (the head reads + the post-arm REST poll)
+    # prints $STUB_PR_JSON_AFTER_ARM once the merge was armed (when that file
+    # exists), else $STUB_PR_JSON when it exists, else an OPEN unmerged PR at
+    # head headsha0. Any other gh call is a no-op success. The gate is stubbed
+    # via SAFE_MERGE_STUB_GATE, so `gh api graphql` is never hit.
     STUB_BIN_DIR="$(mktemp -d)"
     export STUB_BIN_DIR
     MERGE_SENTINEL="$STUB_BIN_DIR/merge-fired"
     export MERGE_SENTINEL
     export STUB_PR_JSON="$STUB_BIN_DIR/pr.json"
+    export STUB_PR_JSON_AFTER_ARM="$STUB_BIN_DIR/pr-after-arm.json"
     cat > "$STUB_BIN_DIR/gh" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
@@ -57,7 +63,8 @@ fi
 if [ "$1" = "api" ]; then
     case "$2" in
         repos/*/pulls/*)
-            if [ -f "${STUB_PR_JSON:-}" ]; then cat "$STUB_PR_JSON"
+            if [ -f "${MERGE_SENTINEL:-}" ] && [ -f "${STUB_PR_JSON_AFTER_ARM:-}" ]; then cat "$STUB_PR_JSON_AFTER_ARM"
+            elif [ -f "${STUB_PR_JSON:-}" ]; then cat "$STUB_PR_JSON"
             else echo '{"state":"open","merged":false,"merge_commit_sha":"testmerge0","merged_at":null,"head":{"sha":"headsha0"}}'
             fi
             exit 0 ;;
@@ -75,10 +82,66 @@ teardown() {
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (16/16) and dogfoods arm/refuse/obligation/snapshot" {
+@test "--selftest passes (18/18) and dogfoods arm/refuse/obligation/snapshot" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-merge --selftest (16/16)"* ]]
+    [[ "$output" == *"PASS — safe-merge --selftest (18/18)"* ]]
+}
+
+@test "a leaked SAFE_MERGE_STUB_GATE=PASS outside test mode / dry-run REFUSES (exit 2, nothing armed)" {
+    # The stub used to stop implying dry-run; leaked into a real shell it would
+    # arm `gh pr merge --squash --auto` with no gate evaluated at all.
+    unset SAFE_MERGE_TEST_MODE SAFE_MERGE_DRY_RUN
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_LABELS=""
+    run bash "$SCRIPT" 1420
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"TEST-ONLY seam"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "a stubbed PASS under DRY-RUN (no test mode) still only prints, never arms" {
+    unset SAFE_MERGE_TEST_MODE
+    export SAFE_MERGE_DRY_RUN=true SAFE_MERGE_STUB_GATE=PASS SAFE_MERGE_LABELS=""
+    run bash "$SCRIPT" 1421
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DRY-RUN: would run: gh pr merge 1421 --squash --auto --match-head-commit headsha0"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+# ---------- head binding (the arm and the ledger row follow the gated head) ----------
+
+@test "the arm is bound to the gated head with --match-head-commit" {
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_STUB_GATE_OUT=$'GATE_HEAD headsha0\nGATE_SNAPSHOT cr_override=0 downgraded=\nGATES_PASSED'
+    export SAFE_MERGE_LABELS=""
+    run bash "$SCRIPT" 1430
+    [ "$status" -eq 0 ]
+    grep -q 'pr merge 1430 --squash --auto --match-head-commit headsha0' "$MERGE_SENTINEL"
+}
+
+@test "a head that moved after the gate poll REFUSES (exit 1, nothing armed)" {
+    # The poll gated gatedsha1; the PR head is now headsha0 — those commits
+    # were never gated.
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_STUB_GATE_OUT=$'GATE_HEAD gatedsha1\nGATE_SNAPSHOT cr_override=0 downgraded=\nGATES_PASSED'
+    export SAFE_MERGE_LABELS=""
+    run bash "$SCRIPT" 1431
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"head moved after the gate poll (gated gatedsha1, now headsha0)"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "ledger: a merge that landed at a head the gates never saw writes NO GATES_PASSED row" {
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_STUB_GATE_OUT=$'GATE_HEAD headsha0\nGATE_SNAPSHOT cr_override=0 downgraded=\nGATES_PASSED'
+    export SAFE_MERGE_LABELS=""
+    echo '{"state":"closed","merged":true,"merge_commit_sha":"m9","merged_at":"2026-10-06T10:00:00Z","head":{"sha":"latecommit9"}}' > "$STUB_PR_JSON_AFTER_ARM"
+    run bash "$SCRIPT" 1432
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merged at head latecommit9, but the gates passed on headsha0"* ]]
+    [ ! -s "$MERGE_SNAPSHOT_LEDGER" ]
 }
 
 @test "DRY-RUN: a PASS prints the arm command and arms nothing (exit 0)" {

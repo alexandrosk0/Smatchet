@@ -1946,6 +1946,10 @@ poll_merge_gates() {
             # prefix like GATE_CARRY; the watcher parses it on the merged path only.
             local cr_override_flag=0
             [ "$cr_overridden" = true ] && cr_override_flag=1
+            # GATE_HEAD — the head SHA this passing poll evaluated, so a merge
+            # actor can bind its merge to it (safe-merge.sh arms with
+            # --match-head-commit and refuses a head that moved since).
+            printf 'GATE_HEAD %s\n' "$head_sha"
             printf 'GATE_SNAPSHOT cr_override=%s downgraded=%s\n' \
                 "$cr_override_flag" "${dg_names:-}"
             echo "GATES_PASSED"

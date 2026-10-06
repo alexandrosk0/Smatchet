@@ -89,11 +89,15 @@
 #                                 temp file).
 #   SAFE_MERGE_STUB_GATE        — TEST-ONLY: "PASS" / "BLOCK" / "ERROR" — skip the
 #                                 real poll_merge_gates call and use this verdict.
-#                                 Does NOT imply DRY-RUN: a stubbed PASS goes on
-#                                 to arm through whatever `gh` is on PATH, so bats
-#                                 can exercise the post-arm ledger write against a
-#                                 stub `gh`. Pair it with SAFE_MERGE_DRY_RUN=true
-#                                 anywhere a real `gh` could be reached.
+#                                 Honoured ONLY together with SAFE_MERGE_DRY_RUN=true
+#                                 (nothing can be armed) or SAFE_MERGE_TEST_MODE=1;
+#                                 set alone (e.g. leaked from a test shell) the
+#                                 wrapper REFUSES with exit 2 — a stubbed PASS
+#                                 would otherwise arm a real merge with no gate
+#                                 evaluated.
+#   SAFE_MERGE_TEST_MODE        — TEST-ONLY: "1" lets a stubbed gate arm through
+#                                 whatever `gh` is on PATH (bats sets it beside a
+#                                 stub `gh` to exercise the post-arm ledger write).
 #   SAFE_MERGE_STUB_GATE_OUT    — TEST-ONLY: stdout the stubbed poll emits (so the
 #                                 GATE_SNAPSHOT-bearing PASS path is exercisable).
 #   SAFE_MERGE_DIFF_PATHS       — TEST-ONLY (or override): newline/space-separated
@@ -109,9 +113,12 @@
 #   0 — gates passed; auto-merge armed (or dry-run printed). The ledger row was
 #       written if the merge landed inside the wait budget, else the paste-ready
 #       append line was printed — neither outcome changes the exit code
-#   1 — REFUSED: merge gates did not pass (no merge armed)
-#   2 — usage / dependency error (gh or jq missing, bad args)
-#   3 — gate-poll precondition error (PR closed/merged, gh API down, etc.)
+#   1 — REFUSED: merge gates did not pass, or the PR head moved after the
+#       gate poll (no merge armed)
+#   2 — usage / dependency error (gh or jq missing, bad args, a test-only
+#       stub gate set outside test mode)
+#   3 — gate-poll precondition error (PR closed/merged, gh API down, the
+#       gated head SHA could not be determined, etc.)
 #   4 — REFUSED: required-missing-cancelled (gate rc=8) — the required
 #       context's pending run was cancelled (concurrency pending-queue
 #       collapse, no check-run created); run the printed `gh run rerun <id>`
@@ -424,7 +431,7 @@ _paste_quote() {
 }
 
 # ----------------------------------------------------------------------------
-# await_merge_and_snapshot <pr> <gate_out> <labels> — after the arm, poll the PR
+# await_merge_and_snapshot <pr> <gate_out> <labels> <gated_sha> — after the arm, poll the PR
 # over REST (`gh api repos/<owner>/<repo>/pulls/<pr>`) on the bounded budget
 # SAFE_MERGE_SNAPSHOT_WAIT_SECONDS. On merged=true, append the ledger row (actor
 # orchestrator-automerge, SNAPSHOT_MERGED_AT from the API). On timeout, or any
@@ -432,9 +439,11 @@ _paste_quote() {
 # fails the caller — the arm already succeeded, and a missed row degrades to
 # git-janitor's 6 h backfill / merge-snapshot-holes.sh / the postmortem-owed
 # live fallback, never blindness.
+# A merge whose head is NOT <gated_sha> (commits landed after the poll) is not
+# recorded as GATES_PASSED: the gates never saw that head.
 # ----------------------------------------------------------------------------
 await_merge_and_snapshot() {
-    local pr="$1" gate_out="$2" labels="$3"
+    local pr="$1" gate_out="$2" labels="$3" gated_sha="${4:-}"
     local budget="${SAFE_MERGE_SNAPSHOT_WAIT_SECONDS:-120}"
     local interval="${SAFE_MERGE_SNAPSHOT_POLL_SECONDS:-5}"
     case "$budget" in ''|*[!0-9]*) budget=120 ;; esac
@@ -452,11 +461,7 @@ await_merge_and_snapshot() {
     fi
 
     local api_path
-    if [ -n "${SAFE_MERGE_OWNER:-}" ] && [ -n "${SAFE_MERGE_REPO:-}" ]; then
-        api_path="repos/$SAFE_MERGE_OWNER/$SAFE_MERGE_REPO/pulls/$pr"
-    else
-        api_path="repos/{owner}/{repo}/pulls/$pr"
-    fi
+    api_path="$(pr_api_path "$pr")"
 
     local waited=0 view merged="" state="" mc="" merged_at="" head_sha=""
     while :; do
@@ -481,8 +486,12 @@ await_merge_and_snapshot() {
     done
 
     if [ "$merged" != "true" ]; then
-        echo "SNAPSHOT PENDING — PR #$pr: auto-merge is armed but had not merged after ${budget}s; no ledger row written. Once it merges, append it (fill <mergeCommit>/<mergedAt> from 'gh pr view $pr --json mergeCommit,mergedAt'):"
-        print_snapshot_paste "$pr" "" "$head_sha" "$red_csv" "$override_csv" "" "$cr_state"
+        echo "SNAPSHOT PENDING — PR #$pr: auto-merge is armed but had not merged after ${budget}s; no ledger row written. Once it merges at the gated head ${gated_sha:-<headSha>}, append it (fill <mergeCommit>/<mergedAt> from 'gh pr view $pr --json mergeCommit,mergedAt'):"
+        print_snapshot_paste "$pr" "" "${gated_sha:-$head_sha}" "$red_csv" "$override_csv" "" "$cr_state"
+        return 0
+    fi
+    if [ -n "$gated_sha" ] && [ -n "$head_sha" ] && [ "$head_sha" != "$gated_sha" ]; then
+        echo "safe-merge: WARN — PR #$pr merged at head ${head_sha}, but the gates passed on ${gated_sha}: commits landed after the poll and were merged unvetted. NO GATES_PASSED ledger row written — treat this merge as a gate escape (postmortem-owed)." >&2
         return 0
     fi
     if [ -z "$mc" ] || [ -z "$head_sha" ] || [ -z "$merged_at" ] || [ "$override_ok" -ne 1 ]; then
@@ -501,6 +510,51 @@ await_merge_and_snapshot() {
 }
 
 # ----------------------------------------------------------------------------
+# stub_gate_permitted — rc 0 when a SAFE_MERGE_STUB_GATE verdict may be used:
+# under SAFE_MERGE_DRY_RUN=true (nothing can be armed) or the explicit
+# SAFE_MERGE_TEST_MODE=1 switch bats sets. Anywhere else a stub is a leak.
+# ----------------------------------------------------------------------------
+stub_gate_permitted() {
+    [ "${SAFE_MERGE_DRY_RUN:-}" = "true" ] || [ "${SAFE_MERGE_TEST_MODE:-}" = "1" ]
+}
+
+# ----------------------------------------------------------------------------
+# pr_api_path <pr> — the REST path for PR <pr> (SAFE_MERGE_OWNER/_REPO, else
+# gh's {owner}/{repo} placeholders for the current checkout).
+# ----------------------------------------------------------------------------
+pr_api_path() {
+    if [ -n "${SAFE_MERGE_OWNER:-}" ] && [ -n "${SAFE_MERGE_REPO:-}" ]; then
+        printf 'repos/%s/%s/pulls/%s' "$SAFE_MERGE_OWNER" "$SAFE_MERGE_REPO" "$1"
+    else
+        printf 'repos/{owner}/{repo}/pulls/%s' "$1"
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# pr_head_sha <pr> — the PR's current head SHA over REST; empty when it cannot
+# be read (no gh/jq, API error). Callers decide what an empty answer means.
+# ----------------------------------------------------------------------------
+pr_head_sha() {
+    local view
+    if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then return 0; fi
+    # stdout only — a gh notice on stderr must not corrupt the JSON.
+    view=$(gh api "$(pr_api_path "$1")" 2>/dev/null) || return 0
+    jq -r '.head.sha // ""' <<<"$view" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
+# gated_head_sha <gate_out> — the head SHA the PASSING poll evaluated: the
+# `GATE_HEAD <sha>` line poll_merge_gates prints beside GATE_SNAPSHOT. Empty
+# when absent (a stubbed gate or an older poller).
+# ----------------------------------------------------------------------------
+gated_head_sha() {
+    local line
+    line=$(printf '%s\n' "$1" | grep '^GATE_HEAD ' | tail -1)
+    line="${line#GATE_HEAD }"
+    printf '%s' "${line%% *}"
+}
+
+# ----------------------------------------------------------------------------
 # run_gate <pr> — run poll_merge_gates (or the stub). Writes the poll's stdout to
 # the global GATE_OUT and its return code to the global GATE_RC. Globals (not a
 # `$(...)` capture) so the rc propagates to the caller — a subshell capture would
@@ -510,6 +564,12 @@ await_merge_and_snapshot() {
 run_gate() {
     local pr="$1"
     if [ -n "${SAFE_MERGE_STUB_GATE:-}" ]; then
+        if ! stub_gate_permitted; then
+            echo "safe-merge: SAFE_MERGE_STUB_GATE is set outside test mode — refusing to use a stubbed verdict." >&2
+            GATE_OUT=""
+            GATE_RC=3
+            return 0
+        fi
         case "$SAFE_MERGE_STUB_GATE" in
             PASS)  GATE_OUT="${SAFE_MERGE_STUB_GATE_OUT:-GATES_PASSED}"; GATE_RC=0 ;;
             BLOCK) GATE_OUT="${SAFE_MERGE_STUB_GATE_OUT:-Poll 1/1 — blocked}"; GATE_RC=1 ;;
@@ -646,7 +706,7 @@ run_selftest() {
 
     # CASE 10 — run_gate honours SAFE_MERGE_STUB_GATE=BLOCK (refuse path drives exit 1).
     GATE_OUT=""; GATE_RC=99
-    SAFE_MERGE_STUB_GATE=BLOCK run_gate 1234
+    SAFE_MERGE_TEST_MODE=1 SAFE_MERGE_STUB_GATE=BLOCK run_gate 1234
     if [ "$GATE_RC" -eq 1 ]; then
         echo "selftest CASE10 PASS — stub BLOCK verdict yields gate rc=1 (refuse)"
     else
@@ -656,7 +716,7 @@ run_selftest() {
 
     # CASE 11 — run_gate honours SAFE_MERGE_STUB_GATE=PASS.
     GATE_OUT=""; GATE_RC=99
-    SAFE_MERGE_STUB_GATE=PASS run_gate 1234
+    SAFE_MERGE_TEST_MODE=1 SAFE_MERGE_STUB_GATE=PASS run_gate 1234
     if [ "$GATE_RC" -eq 0 ] && [[ "$GATE_OUT" == *"GATES_PASSED"* ]]; then
         echo "selftest CASE11 PASS — stub PASS verdict yields gate rc=0"
     else
@@ -717,8 +777,30 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 17 — a stubbed gate outside dry-run / test mode is refused, never a
+    # PASS (a leaked SAFE_MERGE_STUB_GATE=PASS must not arm a real merge).
+    if (unset SAFE_MERGE_TEST_MODE SAFE_MERGE_DRY_RUN
+        GATE_OUT=""; GATE_RC=99
+        SAFE_MERGE_STUB_GATE=PASS run_gate 1234 2>/dev/null
+        [ "$GATE_RC" -ne 0 ]); then
+        echo "selftest CASE17 PASS — a stubbed gate outside test mode is refused"
+    else
+        echo "selftest CASE17 FAIL — a leaked stub PASS must not be honoured" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 18 — gated_head_sha reads the poll's GATE_HEAD line (empty if absent).
+    local gh_line
+    gh_line="$(gated_head_sha $'Poll 1/1\nGATE_HEAD 0123abc\nGATE_SNAPSHOT cr_override=0 downgraded=\nGATES_PASSED')|$(gated_head_sha 'GATES_PASSED')"
+    if [ "$gh_line" = "0123abc|" ]; then
+        echo "selftest CASE18 PASS — gated head read from GATE_HEAD"
+    else
+        echo "selftest CASE18 FAIL — wrong gated head (got: '$gh_line')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-merge --selftest (16/16)"
+        echo "PASS — safe-merge --selftest (18/18)"
         return 0
     fi
     echo "FAIL — safe-merge --selftest ($fails failing case(s))" >&2
@@ -740,6 +822,13 @@ main() {
         exit 2
     fi
 
+    # A stubbed gate is a TEST-ONLY seam. Leaked into a real shell it would arm
+    # `gh pr merge --squash --auto` with no gate evaluated at all, so outside
+    # dry-run / explicit test mode it is a hard refusal, never a silent pass.
+    if [ -n "${SAFE_MERGE_STUB_GATE:-}" ] && ! stub_gate_permitted; then
+        echo "safe-merge: REFUSED — SAFE_MERGE_STUB_GATE=${SAFE_MERGE_STUB_GATE} is a TEST-ONLY seam, set here without SAFE_MERGE_DRY_RUN=true or SAFE_MERGE_TEST_MODE=1. A stubbed verdict never arms a real merge; unset SAFE_MERGE_STUB_GATE." >&2
+        exit 2
+    fi
     if [ -z "${SAFE_MERGE_STUB_GATE:-}" ]; then
         command -v gh >/dev/null 2>&1 || { echo "safe-merge: gh required" >&2; exit 2; }
     fi
@@ -751,6 +840,10 @@ main() {
     # 1. Run the FULL merge-gates poll. This is the gate that a bare
     #    `gh pr merge --auto` skips (CR + user-comment + Bugbot are not
     #    GitHub-required contexts) and the block-allowlist refusal.
+    # The head as the poll starts — the fallback binding when the poll output
+    # names no gated head (a stubbed gate, an older poller).
+    local head_before
+    head_before=$(pr_head_sha "$pr")
     GATE_OUT=""
     GATE_RC=0
     run_gate "$pr"
@@ -781,12 +874,29 @@ main() {
         echo "Commit the stub(s) so the owed coverage stays tracked (PR-1 § out-of-band-on-trust-boundary-owes-tracked-test)." >&2
     fi
 
-    # 3. Arm the merge. --squash --auto is the queue-safe non-admin path: merges
+    # 3. Bind the arm to the head the gates passed on. The poll names it
+    #    (GATE_HEAD); a head that moved since (a commit pushed mid-poll or after
+    #    it) was never gated, so refuse instead of arming. --match-head-commit
+    #    makes GitHub enforce the same binding at merge time.
+    local gated_sha head_now
+    gated_sha=$(gated_head_sha "$gate_out")
+    [ -n "$gated_sha" ] || gated_sha="$head_before"
+    if [ -z "$gated_sha" ]; then
+        echo "REFUSED — PR #$pr: could not determine the head SHA the gates passed on (no GATE_HEAD line and the PR head read failed); NOT arming an unbound auto-merge." >&2
+        exit 3
+    fi
+    head_now=$(pr_head_sha "$pr")
+    if [ -n "$head_now" ] && [ "$head_now" != "$gated_sha" ]; then
+        echo "REFUSED — PR #$pr: the head moved after the gate poll (gated ${gated_sha}, now ${head_now}); the new commits were never gated. Re-run safe-merge. NOT arming auto-merge." >&2
+        exit 1
+    fi
+
+    # 4. Arm the merge. --squash --auto is the queue-safe non-admin path: merges
     #    now if no queue is set, enqueues if one is. NOT --admin (no branch-
     #    protection bypass).
-    echo "GATES_PASSED — PR #$pr: arming squash auto-merge (non-admin)."
+    echo "GATES_PASSED — PR #$pr: arming squash auto-merge (non-admin) at head ${gated_sha}."
     if [ "${SAFE_MERGE_DRY_RUN:-}" = "true" ]; then
-        echo "DRY-RUN: would run: gh pr merge $pr --squash --auto"
+        echo "DRY-RUN: would run: gh pr merge $pr --squash --auto --match-head-commit $gated_sha"
         exit 0
     fi
     command -v gh >/dev/null 2>&1 || { echo "safe-merge: gh required to arm the merge" >&2; exit 2; }
@@ -802,18 +912,18 @@ main() {
     gh_pr_ready_idempotent "$pr" || \
         echo "WARN: gh_pr_ready_idempotent returned non-zero; arming may fail if PR #$pr is still draft." >&2
     # Not `exec`: the script must outlive the arm to record the merge-time
-    # snapshot (step 4). A failed arm keeps the former exec contract — gh's own
+    # snapshot (step 5). A failed arm keeps the former exec contract — gh's own
     # exit status is the script's.
     local arm_rc=0
-    gh pr merge "$pr" --squash --auto || arm_rc=$?
+    gh pr merge "$pr" --squash --auto --match-head-commit "$gated_sha" || arm_rc=$?
     if [ "$arm_rc" -ne 0 ]; then
         echo "safe-merge: 'gh pr merge $pr --squash --auto' failed (rc=$arm_rc) — auto-merge NOT armed." >&2
         exit "$arm_rc"
     fi
 
-    # 4. Merge-time snapshot — append the ledger row once the merge lands
+    # 5. Merge-time snapshot — append the ledger row once the merge lands
     #    (bounded wait), else print the paste-ready append line. Never fails.
-    await_merge_and_snapshot "$pr" "$gate_out" "$labels"
+    await_merge_and_snapshot "$pr" "$gate_out" "$labels" "$gated_sha"
     exit 0
 }
 

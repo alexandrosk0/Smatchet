@@ -271,6 +271,15 @@ set_fixture() {
     [[ "$output" != *"GATE_SNAPSHOT cr_override=1"* ]]
 }
 
+@test "PASS path names the head it gated (GATE_HEAD <headRefOid>) for merge binding" {
+    # safe-merge.sh arms --match-head-commit with this SHA and refuses a head
+    # that moved after the poll.
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    grep -qx 'GATE_HEAD abc123' <<<"$output"
+}
+
 @test "CI conclusion FAILURE -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_fail.json"
     run poll_merge_gates org repo 1
