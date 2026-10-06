@@ -82,6 +82,13 @@ reports on — otherwise phase 4b's own secret scan would flag the audit table.
 The 11 remaining gitleaks findings are all host-side (`Source/`, `tests/Core/`, `tests/fuzz/`) and are
 not seeded.
 
+**How phase 4b accepts them.** Phase 4b runs gitleaks over the *rewritten* history as a hard gate, and
+there these fixtures surface as 25 findings (22 distinct fingerprints, two commits). The scaffold ships a
+`.gitleaksignore` at the layer root that lists exactly those fingerprints, so phase 4b passes on the
+triaged set and still fails on any finding not listed. A rehearsal checked both: the rewritten history
+scans clean with the file, and a planted token fails with it. Every listed value matched a shape in the
+table above. A new fixture means a new fingerprint and a new line here, never a broader rule.
+
 ### Hosts, tickets, P4 — none internal
 
 27 distinct URL hosts, all public (`github.com`, `claude.ai`, `agents.md`, `gradle.org`,
