@@ -4,12 +4,12 @@
   `GH_API_DOWN` (rc 3) on a PR whose checks were all green; the poll log read
   `gh: Argument list too long` three times. Not an outage — Windows caps a
   `CreateProcess` command line at 32,767 characters, and
-  [`poll_merge_gates`](../../../../agents/scripts/core/merge-gates.sh) was
+  [`poll_merge_gates`](../../../../agent-layer/agents/scripts/core/merge-gates.sh) was
   passing **two** independently-growing payloads on argv: the spliced `--jq`
   filter (24,865 chars after substitution) and the GraphQL document
   (7,795 chars), 32,660 before the `gh` path, the flags and the other fields.
   `d63a7009` (PR #2120) had grown
-  [`merge-gates.d/10-gate-filter.sh`](../../../../agents/scripts/core/merge-gates.d/10-gate-filter.sh)
+  [`merge-gates.d/10-gate-filter.sh`](../../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh)
   by 2,166 bytes, which was the straw; the sum had been ~2.2 KB under the cap
   before it. Full RCA: [`postmortems.md`](../../postmortems.md) § 2026-08-18.
 

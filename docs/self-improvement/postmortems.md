@@ -4,8 +4,8 @@
 > that a gate should have caught. Per the "gate, don't trust" philosophy, the
 > response to an escape is a **new gate**, not a one-off fix.
 >
-> Filed via the [`gate-escape-postmortem`](../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
-> skill; surfaced by [`postmortem-owed.sh`](../../agents/scripts/core/postmortem-owed.sh)
+> Filed via the [`gate-escape-postmortem`](../../agent-layer/agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+> skill; surfaced by [`postmortem-owed.sh`](../../agent-layer/agents/scripts/core/postmortem-owed.sh)
 > (SessionStart nudge). Blameless by construction — entries name the gate hole,
 > never an agent/person.
 >
@@ -188,7 +188,7 @@ The merge was direct: there is no `auto_squash_enabled` event, `merged_by` is th
 ### Root cause
 Two gate holes. Neither one is the override decision itself, which was sound for B.
 
-**(1) The lock was orphaned because release-on-close keys only on a body line.** `.github/workflows/lock-cleanup.yml` deletes `refs/locks/<slug>` only when the closed PR's body has a `lock-slug: <slug>` line. #2286's body had none, and its close-time run logged `No 'lock-slug: <slug>' line found in PR body; no release.` (01:59:52Z). The line is required only in prose ([`ship-loops.md`](../agent-rules/ship-loops.md) § Release wiring), which predicts this exact outcome: "the merged PR orphans its lock and Layers B/C false-block later overlapping PRs". No gate checks for the line. The staleness sweep has a 14-day cutoff and only opens an Issue, so the orphan blocked the very PR fixing #2286's red test, and the only way through was the hatch. Each claim's `claim.json` already records its `branch`, so a branch-matched release would have freed the lock 6 s after #2286 merged.
+**(1) The lock was orphaned because release-on-close keys only on a body line.** `.github/workflows/lock-cleanup.yml` deletes `refs/locks/<slug>` only when the closed PR's body has a `lock-slug: <slug>` line. #2286's body had none, and its close-time run logged `No 'lock-slug: <slug>' line found in PR body; no release.` (01:59:52Z). The line is required only in prose ([`ship-loops.md`](../../agent-layer/docs/agent-rules/ship-loops.md) § Release wiring), which predicts this exact outcome: "the merged PR orphans its lock and Layers B/C false-block later overlapping PRs". No gate checks for the line. The staleness sweep has a 14-day cutoff and only opens an Issue, so the orphan blocked the very PR fixing #2286's red test, and the only way through was the hatch. Each claim's `claim.json` already records its `branch`, so a branch-matched release would have freed the lock 6 s after #2286 merged.
 
 **(2) The hatch is still a bare, whole-gate boolean.** This is the #2160 class recurring: `merge-gates.d/10-gate-filter.sh:36`, unchanged since that entry was filed. One label waives every overlap on the run. The author volunteered a disposition the gate does not ask for, but the gate cannot tell a disposition covering one of two slugs from one covering both, so overlap A was cleared without anyone looking at it. It happened to be harmless: #2288 does not edit `tests/CMakeLists.txt`, because its lock claims more than its diff, and it is still mergeable. That was luck.
 
@@ -452,7 +452,7 @@ correctly. Same disposition as the #1948 and #1962 entries.
 
 ### What escaped
 `feat(merge-gates): warn on a discarded blocking twin, document the 405 recovery`
-(#2120, `d63a7009`) grew [`merge-gates.d/10-gate-filter.sh`](../../agents/scripts/core/merge-gates.d/10-gate-filter.sh)
+(#2120, `d63a7009`) grew [`merge-gates.d/10-gate-filter.sh`](../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh)
 from 23,019 to 25,185 bytes. `poll_merge_gates` splices that template into `--jq`
 and, until this PR, also passed the 7,795-char GraphQL document as an argv field
 (`-f query="$query_body"`). The exec'd command line therefore reached ~32.7 KB —
@@ -573,7 +573,7 @@ attestation — but it means a CODE diff reached `develop` with no bot review, a
 nothing downstream distinguishes that from a reviewed one.
 
 **2. The detector false-dedups on prose.** `has_entry()`
-([`postmortem-owed.sh:240-251`](../../agents/scripts/core/postmortem-owed.sh))
+([`postmortem-owed.sh:240-251`](../../agent-layer/agents/scripts/core/postmortem-owed.sh))
 runs two probes. Probe 2 is deliberately scoped to a heading line, its comment
 stating the intent — *"scoped to `^#+ …` so a #N mention in prose body can't
 false-suppress a real owe"*. Probe 1 is unscoped and scans the whole file:
@@ -839,7 +839,7 @@ This entry (the intended standalone backlog file `categories/infra/2026-06-27-pe
 Blameless — a **PR-creation path with no intent-capture step**, compounded by native auto-merge bypassing the custom poller. The ship-loop's intent capture (`capture-intent.sh` → `.session-intent/<branch>.log` → templated `## Intent`) runs only for PRs opened through the local ship-loop. A PR opened **out-of-band via the GitHub API** — the only path on a web session with no local git push to the live branch — has no mechanism to inject `## Intent`, so the body ships without it and `Intent section` reds. Native GitHub auto-merge then merged past the red because `Intent section` is intentionally non-required (ADR-0022, to avoid a merge_group deadlock); the custom `merge-gates.sh` block-allowlist that *would* treat it as blocking is not consulted by GitHub-native auto-merge. Distinct from #1428 below — there a stale daemon ran an out-of-date allow-list; here the body was simply never populated.
 
 ### Preventing gate
-Make the out-of-band PR-creation contract require a hand-authored `## Intent`: a rule in [`ship-loops.md`](../agent-rules/ship-loops.md) § Intent capture that any agent calling the GitHub API/MCP `create_pull_request` (i.e. with no local ship-loop) MUST include a filled `## Intent` section in the PR `body`. This catches the *class* (API-created PRs lacking intent) at authoring time — the only point an agent controls when there is no local hook. Promoting `Intent section` to a branch-protection required context is explicitly NOT the fix — ADR-0022 keeps it off to avoid a merge_group deadlock.
+Make the out-of-band PR-creation contract require a hand-authored `## Intent`: a rule in [`ship-loops.md`](../../agent-layer/docs/agent-rules/ship-loops.md) § Intent capture that any agent calling the GitHub API/MCP `create_pull_request` (i.e. with no local ship-loop) MUST include a filled `## Intent` section in the PR `body`. This catches the *class* (API-created PRs lacking intent) at authoring time — the only point an agent controls when there is no local hook. Promoting `Intent section` to a branch-protection required context is explicitly NOT the fix — ADR-0022 keeps it off to avoid a merge_group deadlock.
 
 ### Filed as
 [`process/2026-06-20-intent-section-api-created-pr` (archived → applied.md)](categories/applied.md)
@@ -859,7 +859,7 @@ the merge. The daemon's own audit row self-reported clean:
 
 ### Root cause
 Blameless — a **long-running daemon enforcing out-of-date gate logic**, not a poller bypass and not a defect
-in the gate's *current* source. The watcher ([`merge-watcher.py`](../../agents/scripts/core/merge-watcher.py),
+in the gate's *current* source. The watcher ([`merge-watcher.py`](../../agent-layer/agents/scripts/core/merge-watcher.py),
 Scheduled Task `SmatchetMergeWatcher`) runs `merge-gates.sh` from **its own host checkout** — the integration
 tree `C:/Dev/Smatchet`, parked on `feat/tsan-subset-sync-layer`, a branch predating #1391. `Intent section`
 was added to `MERGE_GATES_BLOCK_ALLOWLIST_RE` on **2026-06-18** (#1391, [ADR-0022](../adr/0022-intent-gate-promotion.md));
@@ -873,7 +873,7 @@ consulted; remedy = a poll-gated merge wrapper) — here the poller **was** cons
 audit trail cannot detect its own staleness.
 
 ### Preventing gate
-A **gate-logic self-freshness guard** in [`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh) (this
+A **gate-logic self-freshness guard** in [`merge-gates.sh`](../../agent-layer/agents/scripts/core/merge-gates.sh) (this
 PR): before emitting `GATES_PASSED` it compares the git blob of its own running file against
 `origin/develop`'s blob for the same path and, on divergence (or when unverifiable), **refuses
 `GATES_PASSED`, fail-closed**. Gated by `MERGE_GATES_FRESHNESS` ∈ `{off (default) | warn | block}`;
@@ -909,7 +909,7 @@ doc-validation check was non-green, **none** carrying the `intent-out-of-band` o
   same non-green-block-allowlist-check-via-`--auto` path and `postmortem-owed.sh` nags it under the same
   `red-check: Intent section` trigger — a ledger reference discharges it.
 
-`Intent section` is on the [`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)
+`Intent section` is on the [`merge-gates.sh`](../../agent-layer/agents/scripts/core/merge-gates.sh)
 `MERGE_GATES_BLOCK_ALLOWLIST_RE` *meant-to-block* allow-list (added 2026-06-18, ADR-0022) yet is
 deliberately **not** a `develop` branch-protection required context — so only the merge-gates poller /
 watcher enforces it. The `intent-out-of-band` label is its override hatch; none was applied to any of the
@@ -919,7 +919,7 @@ runs are single `fail` conclusions on a genuinely block-allowlisted check, not a
 ### Root cause
 Blameless — a **merge-path hole**, not a defect in the gate or the PRs. The block-allowlist is enforced
 **only** by `merge-gates.sh`: the sanctioned watcher polls it and arms `--auto` *only on PASS*
-([`merge-gates.md`](../../docs/agent-rules/merge-gates.md):84). Any merge path that does **not** consult
+([`merge-gates.md`](../../agent-layer/docs/agent-rules/merge-gates.md):84). Any merge path that does **not** consult
 the poller honors only the branch-protection required contexts (`Test-delta gate`, `Windows + MSVC` ×2,
 `Shell lint`, `Doc anchors`, `Perf PR-fast`, `Coverage`, `Sanitizer` ×2 — `Intent section` is **not**
 among them), so it merges the instant those green, ignoring a red `Intent section`:
@@ -935,7 +935,7 @@ insufficient and the discipline must be **enforced**, not recommended.
 
 ### Preventing gate
 A **non-admin poll-gated merge wrapper** made the *only* sanctioned agent merge entry-point — a sibling of
-the existing [`safe-admin-merge.sh`](../../agents/scripts/core/safe-admin-merge.sh) on the non-admin path:
+the existing [`safe-admin-merge.sh`](../../agent-layer/agents/scripts/core/safe-admin-merge.sh) on the non-admin path:
 it runs `merge-gates.sh` (which blocks on the full block-allowlist **incl. `Intent section`**) and arms
 `gh pr merge --auto` **only after** a PASS; bare `gh pr merge --auto` and direct REST merge are forbidden
 in the ship-loop. Backed by a bats test asserting the wrapper **refuses** when a block-allowlist gate is
@@ -962,7 +962,7 @@ Two PRs merged to `develop` with a `tests-out-of-band` label waving a `Test-delt
   `std::atomic` audit), `.github/workflows/build-and-test.yml` (the new native leg), and docs.
 
 Both carried **zero** `tests/Core/*.test.cpp` delta. The deterministic load-bearing test in
-[`postmortem-owed.sh`](../../agents/scripts/core/postmortem-owed.sh) `override_is_moot` —
+[`postmortem-owed.sh`](../../agent-layer/agents/scripts/core/postmortem-owed.sh) `override_is_moot` —
 `tests-out-of-band` is moot iff `Test-delta gate == SUCCESS` **AND** the diff touched a `.test.cpp` — is
 FALSE for both (gate green, no test file), so the override dismissed a real coverage requirement, not a
 no-op. (Distinct from #1317 / #1308 below, which also touched no test but were behaviour-**preserving**

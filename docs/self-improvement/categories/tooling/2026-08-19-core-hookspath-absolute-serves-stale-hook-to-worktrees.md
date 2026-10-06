@@ -45,7 +45,7 @@ $ grep -c branch_content_push scripts/git-hooks/pre-push                   # wor
 ```
 
 The path was **not** set by the installer.
-[`setup-harness.sh` `install_git_hooks()`](../../../../agents/scripts/core/setup-harness.sh)
+[`setup-harness.sh` `install_git_hooks()`](../../../../agent-layer/agents/scripts/core/setup-harness.sh)
 sets the **relative** `target="scripts/git-hooks"`, and its third branch explicitly refuses
 to trample a differing value (`WARNING: core.hooksPath is '…' … Skipping.`). The absolute
 value was introduced out-of-band and is now sticky precisely because the installer will not

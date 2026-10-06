@@ -1,12 +1,12 @@
 # Agent self-improvement — applied (archive)
 
 > Format / categories / workflow / priority / triage: see
-> [`../AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) (index + spec).
+> [`../AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md) (index + spec).
 > Sibling categories: bug · process · tooling · infra · test · security · external-blockers · applied.
 > Closed entries. Archive moves immediately on Status → applied. Sorted by original surface date, latest first.
 > **Bounded head**: this file holds the current + previous month only; older months are
 > rotated into flat `applied-YYYY-MM.md` siblings by
-> [`rotate-applied-md.sh`](../../../agents/scripts/core/rotate-applied-md.sh)
+> [`rotate-applied-md.sh`](../../../agent-layer/agents/scripts/core/rotate-applied-md.sh)
 > (run automatically by `archive-backlog-entry.sh`).
 >
 > **Deleted-runtime banner (2026-05-21)** — applied entries below that reference the agentic-flow C++ runtime (`AgenticHandoffController`, `AgenticTriageController`, `AgentProposalStore`, `ClaudeCodeLocalRunner`, `PrCommentWatcher`, `PrCheckRunWatcher`, `HarnessRunState`, `CoderabbitCommentClassifier`, `CiFailureClassifier`, `dispatch_source` enum, sentinel-file protocol, `agent/<proposalId>` worktrees, `coderabbit-react-loop` design, `agents/handoff-implementer.md`, `agents/pr-iterator.md`) refer to code that **no longer exists** in the tree. The runtime was removed by v1 PR1 of [`../../plans/shipped/github-tracker-backend.md`](../../plans/shipped/github-tracker-backend.md) (merge sha `b1d241bc`, 2026-05-21). The future [`../../plans/shipped/smatchet-merge-watcher.md`](../../plans/shipped/smatchet-merge-watcher.md) revives a subset of the underlying needs in a different (host-daemon) shape; concepts there are NOT identity-mapped to the deleted runtime. Entries here are preserved as historical record of what was tried.

@@ -185,7 +185,7 @@ if [ "${#missing[@]}" -gt 0 ]; then
     echo "  Regenerate via the bucket-C golden bootstrap job (workflow_dispatch on"
     echo "  build-and-test.yml with bootstrap_goldens=true), review the uploaded PNGs,"
     echo "  then commit them WITH the PROVENANCE.tsv the job emits."
-    echo "  The human approval step is not optional — docs/agent-rules/golden-image-approval.md."
+    echo "  The human approval step is not optional — agent-layer/docs/agent-rules/golden-image-approval.md."
     if [ "$STRICT" -eq 1 ]; then
         exit 1
     fi

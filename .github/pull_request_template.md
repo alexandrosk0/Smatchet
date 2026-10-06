@@ -19,7 +19,7 @@
 <!-- REQUIRED (Intent-section CI check): uncomment ONE of the two lines below and
      fill it in AFTER actually running the pre-first-push self-review — recording a
      verdict you did not earn defeats the gate (ship-loops.md § [pre-first-push gate] item 5).
-     `bash agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
+     `bash agent-layer/agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
      the head= binding filled; the CI check rejects a head= that is not the PR head,
      so every push needs the verdict re-recorded for the new commit. Add
      `--sync-pr <PR number>` and the script writes the line into this body itself
@@ -45,7 +45,7 @@ Apply the label in the PR sidebar (Labels → `tests-out-of-band`) or via `gh pr
 
 ## Plan-lock release (if this PR holds a `refs/locks/<slug>`)
 
-If this PR claimed a plan-lock via `bash agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body as a **bare line**: delete the `<!--` and `-->` around it, then replace the slug. Still inside `<!-- -->`, the line is **unarmed** — it renders as nothing and never matches. When the PR closes (merged or not), [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the bare line and deletes the corresponding `refs/locks/<slug>` ref. It also releases every lock whose claim names this PR's head branch, and it warns about a commented-out marker. A lock no PR close will release (its branch never opened a PR) goes through the [`lock-release-dispatch.yml`](workflows/lock-release-dispatch.yml) workflow.
+If this PR claimed a plan-lock via `bash agent-layer/agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body as a **bare line**: delete the `<!--` and `-->` around it, then replace the slug. Still inside `<!-- -->`, the line is **unarmed** — it renders as nothing and never matches. When the PR closes (merged or not), [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the bare line and deletes the corresponding `refs/locks/<slug>` ref. It also releases every lock whose claim names this PR's head branch, and it warns about a commented-out marker. A lock no PR close will release (its branch never opened a PR) goes through the [`lock-release-dispatch.yml`](workflows/lock-release-dispatch.yml) workflow.
 
 For **stacked PR sets sharing one lock**: use `lock-slug:` only on the final cutover PR. Intermediate PRs that hold the same lock carry a bare `holds-lock:` line instead. It is not matched by the cleanup workflow regex, and it switches off the head-branch release. Otherwise the first intermediate PR to close would release the ref before the slice has fully landed.
 

@@ -446,6 +446,64 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV2 = true;
 }
 
+// One-shot migration: bring default-family zoom rows up to the current Defaults()
+// alias set by appending any missing combos.
+//
+// Why V2 is not enough (#2276): it widens ONLY an exact match of the pre-wheel
+// default snapshot (zoom-in: three keyboard aliases; zoom-out: two). A common
+// on-disk shape is just the legacy primary for each action, which is not an
+// exact match, so V2 skips. It still marks migrated_multi_hotkey_zoom_v2 done,
+// so those rows never retry and never get the mouse-wheel aliases. Fresh
+// configs are fine (Defaults() already has wheel); existing partial-default
+// configs are not.
+//
+// V3 retries once for rows whose every existing combo is still a member of
+// Defaults() (non-empty subset of the shipped set). Custom keys outside Defaults,
+// empty/cleared rows, and missing rows stay untouched.
+void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedMultiHotkeyZoomV3 = j.value("migrated_multi_hotkey_zoom_v3", false);
+    if (cfg.MigratedMultiHotkeyZoomV3) {
+        return;
+    }
+    static const char* const kZoomCmds[] = {"ui.zoom.in", "ui.zoom.out", "ui.zoom.reset"};
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int appended = 0;
+    for (const char* commandId : kZoomCmds) {
+        const int idx = cfg.Keybindings.FindBindingIndex(commandId, "{}");
+        const int di = defaults.FindBindingIndex(commandId, "{}");
+        if (idx < 0 || di < 0) {
+            continue;
+        }
+        Keybinding& row = cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)];
+        const Keybinding& def = defaults.Bindings[static_cast<std::size_t>(di)];
+        // Cleared on purpose — do not resurrect the full default set into an empty row.
+        if (row.Hotkeys.empty()) {
+            continue;
+        }
+        bool defaultFamily = true;
+        for (const std::string& hk : row.Hotkeys) {
+            if (!def.HasHotkey(hk)) {
+                defaultFamily = false;
+                break;
+            }
+        }
+        if (!defaultFamily) {
+            continue; // customised — leave the user's choice alone
+        }
+        for (const std::string& hk : def.Hotkeys) {
+            if (row.AddHotkey(hk)) {
+                ++appended;
+            }
+        }
+    }
+    if (appended > 0) {
+        LOG_INFO("ConfigManager: appended %d missing default zoom alias(es) "
+                 "(migrated_multi_hotkey_zoom_v3)",
+                 appended);
+    }
+    cfg.MigratedMultiHotkeyZoomV3 = true;
+}
+
 // First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
 // LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
 void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -572,10 +630,12 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV2(j, cfg);
     MigrateQuickCreateKeybindingV1(j, cfg);
     // Last: the seeding migrations above pull straight from Defaults(), which already
-    // carries the alias sets, so a freshly-seeded row arrives complete and this one's
-    // exact-legacy-match guard correctly skips it.
+    // carries the alias sets, so a freshly-seeded row arrives complete and V1/V2's
+    // exact-legacy-match guards correctly skip it. V3 then appends any missing
+    // Defaults() aliases onto default-family rows left incomplete by earlier flags.
     MigrateZoomHotkeyAliasesV1(j, cfg);
     MigrateZoomHotkeyAliasesV2(j, cfg);
+    MigrateZoomHotkeyAliasesV3(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

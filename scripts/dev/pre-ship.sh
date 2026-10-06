@@ -56,7 +56,7 @@ pre-ship.sh — format changed C++ then run the CI delta lint gate locally.
 Runs, over first-party C++ changed vs <base-ref>:
   1. clang-format -i + comment-noise auto-strip   (the diff-MUTATING steps; `--format-only`
      stops here so a code review can run CONCURRENTLY with steps 2-3 against a stable diff)
-  2. agents/scripts/project/test-lint-rules.sh --diff <base-ref>
+  2. agent-layer/agents/scripts/project/test-lint-rules.sh --diff <base-ref>
   3. markdown lint + test-list consistency + doc-validation suite
   4. code-review gate — a SUBSTANTIVE C++ diff (strict-zone touch or
      >= REVIEW_LINE_THRESHOLD changed lines, default 60) must have a current review
@@ -73,6 +73,29 @@ Runs, over first-party C++ changed vs <base-ref>:
      (never a self-score). Backend down = WARN + presence-only ack, never a block.
      Tunables: VERIFIER_MODE (logprobs|scalar), VERIFIER_REPEATS, VERIFIER_DIFF_MAX_BYTES.
 USAGE
+}
+
+# The layer half of the staleness caveat at the end of a run. Defined up here so
+# --selftest can exercise it; see the call site for why it compares against the pin.
+preship_layer_files=(
+    "agents/scripts/project/test-lint-rules.sh"
+    "agents/scripts/core/lib/review-ack.sh"
+    "agents/scripts/core/lib/script-freshness.sh"
+    "agents/scripts/project/lint-rules.d/"
+)
+preship_pin_behind_develop() {
+    local dev_pin here
+    dev_pin="$(git rev-parse -q --verify "origin/develop:agent-layer" 2>/dev/null)" || return 1
+    here="$(git -C "$preship_layer_root" rev-parse -q --verify HEAD 2>/dev/null)" || return 1
+    [ "$dev_pin" != "$here" ] || return 1
+    if ! git -C "$preship_layer_root" cat-file -e "${dev_pin}^{commit}" 2>/dev/null; then
+        if [ "${SCRIPT_FRESHNESS_VERBOSE:-0}" = "1" ]; then
+            echo "WARN: pre-ship's layer gate logic freshness unverifiable: develop pins agent-layer at ${dev_pin:0:12}, which this mount has not fetched." >&2
+        fi
+        return 1
+    fi
+    git -C "$preship_layer_root" merge-base --is-ancestor "$dev_pin" "$here" && return 1
+    ! git -C "$preship_layer_root" diff --quiet "$dev_pin" "$here" -- "${preship_layer_files[@]}"
 }
 
 # --selftest: prove the review gate BLOCKS (asserts at least one failure case), acks,
@@ -167,7 +190,53 @@ run_selftest() {
         echo "pre-ship --selftest: FAIL — #1116 fail-open: strict detection skipped and the diff N/A-passed with no working python" >&2
         return 1
     fi
-    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python."
+    # 6. The layer-pin staleness check: a mount BEHIND develop's agent-layer pin with
+    #    a gate file changed MUST warn; equal, ahead, and behind-by-a-non-gate-file
+    #    must stay quiet. A detector that goes silent is the failure it exists for.
+    local tmp3 pin_out
+    tmp3="$(mktemp -d)"
+    # errexit is off inside an `if` condition, so every fixture step is chained
+    # with && and a failure exits the substitution explicitly.
+    if ! pin_out="$(
+        g() { git -c user.name=selftest -c user.email=selftest@local "$@"; }
+        cd "$tmp3" &&
+            git init -q -b develop layer &&
+            mkdir -p layer/agents/scripts/project &&
+            echo a > layer/agents/scripts/project/test-lint-rules.sh &&
+            g -C layer add -A && g -C layer commit -qm A &&
+            echo b > layer/agents/scripts/project/test-lint-rules.sh &&
+            g -C layer commit -qam B &&
+            pin_b="$(git -C layer rev-parse HEAD)" &&
+            echo doc > layer/README.md &&
+            g -C layer add -A && g -C layer commit -qm C &&
+            git init -q -b develop host &&
+            g -C host update-index --add --cacheinfo "160000,${pin_b},agent-layer" &&
+            g -C host commit -qm pin &&
+            git -C host update-ref refs/remotes/origin/develop HEAD &&
+            git clone -q layer host/agent-layer &&
+            cd host || exit 1
+        preship_layer_root=agent-layer
+        for at in "${pin_b}~1" "$pin_b" develop; do
+            git -C agent-layer checkout -q "$at" || exit 1
+            if preship_pin_behind_develop; then printf 'warn '; else printf 'quiet '; fi
+        done
+        # Behind develop's pin only by a README change: pin C, mount at B.
+        g update-index --cacheinfo "160000,$(git -C agent-layer rev-parse develop),agent-layer" &&
+            g commit -qm pinC &&
+            git update-ref refs/remotes/origin/develop HEAD &&
+            git -C agent-layer checkout -q "$pin_b" || exit 1
+        if preship_pin_behind_develop; then printf 'warn'; else printf 'quiet'; fi
+    )"; then
+        rm -rf "$tmp3"
+        echo "pre-ship --selftest: FAIL — could not build the layer-pin fixture" >&2
+        return 1
+    fi
+    rm -rf "$tmp3"
+    if [ "$pin_out" != "warn quiet quiet quiet" ]; then
+        echo "pre-ship --selftest: FAIL — layer-pin check gave '$pin_out' for behind/equal/ahead/behind-by-a-doc (want 'warn quiet quiet quiet')" >&2
+        return 1
+    fi
+    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python, the layer-pin check warns only when the mount is behind on a gate file."
     return 0
 }
 
@@ -271,7 +340,7 @@ if [ ! -r "$preship_review_lib" ]; then
     echo "pre-ship: cannot read $preship_review_lib (incomplete checkout?)" >&2
     exit 2
 fi
-# shellcheck source=agents/scripts/core/lib/review-ack.sh
+# shellcheck source=agent-layer/agents/scripts/core/lib/review-ack.sh
 . "$preship_review_lib"
 
 # Self-staleness detector (gate-tooling-run-from-stale-session-branch, process P1).
@@ -285,7 +354,7 @@ fi
 # the review-ack guard above; this must not become a second hard dependency).
 preship_freshness_lib="$preship_layer_root/agents/scripts/core/lib/script-freshness.sh"
 if [ -r "$preship_freshness_lib" ]; then
-    # shellcheck source=agents/scripts/core/lib/script-freshness.sh
+    # shellcheck source=agent-layer/agents/scripts/core/lib/script-freshness.sh
     . "$preship_freshness_lib"
 fi
 
@@ -738,19 +807,27 @@ fi
 # repo root. Unquoted, the shell expands it against the invoking CWD, and from
 # any subdirectory it matches nothing, passes the literal pattern through, and
 # silently degrades the whole check to `unverifiable` — which prints nothing.
-# The four agents/ entries below are LAYER paths compared against origin/develop.
-# Post-flip that comparison must select the LAYER repo's origin/develop — the
-# host's does not contain them, and fingerprinting against a branch that lacks
-# the files blanks the detector fail-closed. Same repo-selection requirement as
-# merge-gates.sh's staleness set (row 5g); implemented in Phase C, where both
-# repos exist. Nothing to do pre-flip: one repo, one origin/develop.
+# When the layer is the agent-layer/ mount, its four entries are not in the
+# host's history, so they are checked against the pin instead: CI runs the layer
+# at the gitlink a branch carries, so the layer half of this gate is out of date
+# exactly when this checkout's mount is behind the gitlink on origin/develop (the
+# file-level fetch above has already refreshed it). A mount ahead of that pin is
+# a bump in progress, not staleness. In a standalone layer, or before the flip,
+# the layer is this tree and the original single check applies.
 if command -v warn_if_script_stale >/dev/null 2>&1; then
-    warn_if_script_stale "pre-ship gate logic" \
-        "scripts/dev/pre-ship.sh" \
-        "agents/scripts/project/test-lint-rules.sh" \
-        "agents/scripts/core/lib/review-ack.sh" \
-        "agents/scripts/core/lib/script-freshness.sh" \
-        "agents/scripts/project/lint-rules.d/*.sh"
+    if [ "$(cd "$preship_layer_root" 2>/dev/null && pwd -P)" = "$(pwd -P)" ]; then
+        warn_if_script_stale "pre-ship gate logic" \
+            "scripts/dev/pre-ship.sh" \
+            "agents/scripts/project/test-lint-rules.sh" \
+            "agents/scripts/core/lib/review-ack.sh" \
+            "agents/scripts/core/lib/script-freshness.sh" \
+            "agents/scripts/project/lint-rules.d/*.sh"
+    else
+        warn_if_script_stale "pre-ship gate logic" "scripts/dev/pre-ship.sh"
+        if preship_pin_behind_develop; then
+            echo "WARN: pre-ship's layer gate logic (agent-layer/ at $(git -C "$preship_layer_root" rev-parse --short HEAD)) is behind (or diverged from) the pin on origin/develop, so a PASS here may not reflect what CI enforces after a merge. Merge origin/develop, then run git submodule update --init --recursive agent-layer." >&2
+        fi
+    fi
 fi
 
 echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."

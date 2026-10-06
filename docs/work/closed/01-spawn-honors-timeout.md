@@ -2,7 +2,7 @@
 
 > Status: Closed (2026-08-07)
 
-**Item:** trivial bug fix ([work-items.md → The loop](../../agent-rules/work-items.md#the-loop) —
+**Item:** trivial bug fix ([work-items.md → The loop](../../../agent-layer/docs/agent-rules/work-items.md#the-loop) —
 skipped spec/design/plan and the pre-implementation gate). **Source:** GitHub issue #1943.
 **Shipped in:** PR #1982 (commits `bc3b1cde` fix, `a134db72` review resolution). Pilot item of the
 Whip-Process absorption (`docs/plans/absorb-whip-process.md` Phase 5) — first item through the

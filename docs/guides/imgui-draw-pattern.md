@@ -142,7 +142,7 @@ that was already over cap (it lives in both the HEAD and base sets), so a *parti
 decomposition that is still over cap passes `--diff` silently:
 
 ```sh
-python agents/scripts/core/function_size_audit.py --scan-file <touched-file.cpp>
+python agent-layer/agents/scripts/core/function_size_audit.py --scan-file <touched-file.cpp>
 # every helper must be under the cap (no `function-too-long` / `function-too-branchy` row);
 # the soft-tier `[func-size] WARN` lines (>100 lines / >20 branches) are advisory — aim 40-80.
 ```
@@ -151,7 +151,7 @@ For the absolute end-state (a campaign step asserting the whole subtree is drain
 delta gate's grandfathering would hide a still-over-cap survivor), use the repo-wide assertion:
 
 ```sh
-python agents/scripts/core/function_size_audit.py --assert-clean --in Source/Core/src/Ui/
+python agent-layer/agents/scripts/core/function_size_audit.py --assert-clean --in Source/Core/src/Ui/
 # exit 0 iff NOTHING under that subtree is over any hard cap (grandfather-blind, zero-tolerance).
 ```
 

@@ -104,9 +104,9 @@ Sprint 1 (the first PR or two — split along seams if the diff exceeds the per-
 6. [`Source/Core/include/AppController.h:40`](../../../Source/Core/include/AppController.h) — delete the dead `JiraClient.h` include (#3).
 7. [`project.config.json:91`](../../../project.config.json) — fix the visual-validation glob (#4).
 8. [`tests/CMakeLists.txt:12`](../../../tests/CMakeLists.txt) — glob-vs-list configure assert (#5).
-9. [`agents/scripts/project/test-lint-rules.sh`](../../../agents/scripts/project/test-lint-rules.sh) — `no-glfw-in-core-headers` rule (#24); `--scan-file` absolute-list assert (#15).
+9. [`agents/scripts/project/test-lint-rules.sh`](../../../agent-layer/agents/scripts/project/test-lint-rules.sh) — `no-glfw-in-core-headers` rule (#24); `--scan-file` absolute-list assert (#15).
 10. `scripts/dev/is-exe-fresh.sh` (new) + the relaunch path — exe-staleness preflight (#6).
-11. [`docs/agent-rules/build.md`](../../agent-rules/build.md) — C2859 / stale-PCH recovery note (#33).
+11. [`docs/agent-rules/build.md`](../../../agent-layer/docs/agent-rules/build.md) — C2859 / stale-PCH recovery note (#33).
 
 Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers + `CMakeLists.txt`, `.github/workflows/*`, `cmake/Sanitizers.cmake`, `tests/ui/`, `docs/perf/baselines/`) is scoped per-slice at execution time — each slice is its own PR.
 

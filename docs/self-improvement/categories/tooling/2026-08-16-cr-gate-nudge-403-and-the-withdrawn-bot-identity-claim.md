@@ -49,7 +49,7 @@
     identity from quota, and it costs nothing but the discipline to wait and
     write down the outcome. (2) Until it resolves, do NOT write a
     "never trigger CR from a bot identity" rule into
-    [`merge-gates.md`](../../../agent-rules/merge-gates.md) — a false rule in a
+    [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) — a false rule in a
     rule-doc costs more than an open question in the backlog, and the sibling
     entry's action item (1) is on hold for exactly this reason. (3) Independent
     of the outcome, make the gate's PENDING check description name the required

@@ -2,7 +2,7 @@
   Details: **(a) The mechanism.** Under block-on-any-red
     (`MERGE_GATES_BLOCK_ALLOWLIST_RE="."`) `$blocking` is *required contexts PLUS
     every non-required non-`advisory` check*
-    ([`10-gate-filter.sh:93-97`](../../../../agents/scripts/core/merge-gates.d/10-gate-filter.sh)).
+    ([`10-gate-filter.sh:93-97`](../../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh)).
     The pending count at `:280-282` then counts any `$blocking` StatusContext in
     `PENDING`/`EXPECTED`. `CR findings (0 actionable)` is **not** one of the 22
     required contexts on `develop`, but it is a non-required non-advisory
@@ -60,7 +60,7 @@
     reusing `$blocking` for both counts. Either add a generic per-context waiver
     (`gate-pending-out-of-band:<context>`) or bound the wait, so the class cannot
     recur under a different context name. (3) Record the operator workaround in
-    [`merge-gates.md`](../../../agent-rules/merge-gates.md) § CodeRabbit
+    [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) § CodeRabbit
     rate-limit playbook until (1) lands: when the only non-green is a
     permanently-pending CR aggregator and CR has been dispositioned by hand,
     that is a *gate defect*, not a real block — record the disposition and merge

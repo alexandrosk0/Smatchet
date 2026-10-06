@@ -22,7 +22,7 @@ plan-lock-gate: 'tests/ui/tracker_first_run_setup.test.cpp' overlaps the write s
 
 The only way through was the whole-gate `plan-lock-out-of-band` label (applied 03:29:33Z). That label also waived a second, unrelated overlap on the same run. `tests/CMakeLists.txt` was in the write set of the live lock `sanitizer-nightly-run-tests`, and no disposition mentioned it. See the follow-up on [`2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md`](../process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md).
 
-The `lock-slug:` line is required by prose only. [`ship-loops.md`](../../../agent-rules/ship-loops.md) § Release wiring says the `open PR` step "MUST write a `lock-slug: <slug>` line". It also says that without it "the merged PR orphans its lock and Layers B/C false-block later overlapping PRs". This is that failure, and no gate stops a PR from opening, or merging, without the line. The only backstop is `lock-staleness-sweep.sh`, which has a 14-day cutoff and opens an Issue. It does not delete anything.
+The `lock-slug:` line is required by prose only. [`ship-loops.md`](../../../../agent-layer/docs/agent-rules/ship-loops.md) § Release wiring says the `open PR` step "MUST write a `lock-slug: <slug>` line". It also says that without it "the merged PR orphans its lock and Layers B/C false-block later overlapping PRs". This is that failure, and no gate stops a PR from opening, or merging, without the line. The only backstop is `lock-staleness-sweep.sh`, which has a 14-day cutoff and opens an Issue. It does not delete anything.
 
 ## Why it matters
 

@@ -64,7 +64,7 @@ Preconditions for (1):
 
 The bats companion is a `tests/bats/` case that feeds the aggregate's filter a fixture of that list. It asserts `failure` with Bucket-E red, `pending` with CodeQL in progress, and `success` with only the advisory texture-guard lane non-green.
 
-Related: [`postmortems.md`](../../postmortems.md) (2026-06-19 #1406/#1414/#1415, 2026-06-20 #1438, 2026-06-27 #1566 entries: the same class, each closed on the arming side), [`docs/agent-rules/merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned non-admin merge path.
+Related: [`postmortems.md`](../../postmortems.md) (2026-06-19 #1406/#1414/#1415, 2026-06-20 #1438, 2026-06-27 #1566 entries: the same class, each closed on the arming side), [`docs/agent-rules/merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) § Sanctioned non-admin merge path.
 
 Triggered-follow-up: when=pr-count:base=develop;since=2026-10-04;n=20; action=check whether a required aggregate context landed, and whether any PR has merged with a non-advisory check red or pending since; baseline=1 escape (#2286, red Bucket-E UI tests + pending CodeQL analyze at merge) armed through a harness auto-merge tool, 2026-10-04; fired=never
 

@@ -121,7 +121,7 @@
   the test kept, the row reads `pass` and the assertion fails.
 
   The rule generalises in
-  [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
+  [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) § Sanctioned step-level
   masks: *a mask may suppress blocking, never reporting* — the property the other
   two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's Mesa per-test
   run) still lack, and the natural next application of this shape.
@@ -130,7 +130,7 @@
 
   Prerequisite for both: the stale goldens need regenerating, which is
   approval-gated by
-  [`golden-image-approval.md`](../../../agent-rules/golden-image-approval.md) —
+  [`golden-image-approval.md`](../../../../agent-layer/docs/agent-rules/golden-image-approval.md) —
   an unmasked gate over a stale golden is a red check, not a signal. PR #1962
   cleared four of the seven with explicit approval (the `user-info-*` set), so
   part 2's ratchet is unblocked for that subset. The remaining three

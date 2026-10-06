@@ -9,7 +9,7 @@
 # another. The main clone (C:/Dev/Smatchet) is the stable INTEGRATION tree —
 # pinned to develop, used for pull/merge/review, never for feature work.
 #
-# See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
+# See agent-layer/docs/agent-rules/process-rules.md § Concurrent interactive sessions.
 #
 # Subcommands:
 #   new <slug>     Create a worktree at <trees-root>/<slug> on feat/<slug> off
@@ -35,6 +35,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # this is that worktree (its .git points at the shared object store, so
 # `worktree add` still registers globally).
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# layer_of <tree> — the tree holding agents/ for <tree>: its agent-layer/ mount
+# once that holds the layer's project-config.sh (plan agent-surface-extraction-repo,
+# row 12), or once agent-layer is registered as a submodule even before it is
+# checked out (so a remedy names where the script will be), else the tree itself.
+# setup-harness.sh and the session-registry lib are agent-layer content.
+layer_of() {
+    if [ -f "$1/agent-layer/scripts/dev/project-config.sh" ] \
+            || [ "$(git -C "$1" ls-files -s -- agent-layer 2>/dev/null | cut -c1-6)" = 160000 ]; then
+        printf '%s/agent-layer\n' "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
 TREES_ROOT="${SMATCHET_TREES_ROOT:-C:/Dev/trees}"
 
 die() { echo "worktree: $*" >&2; exit 1; }
@@ -120,7 +134,7 @@ registry_dir() { printf '%s/.claude/.active-sessions' "$1"; }
 # HEAD-drift guards see. That matters on Windows: the registry stores Win32 pids,
 # which `kill -0` in git-bash can never probe (the fallback loop below would call
 # a long-idle-but-open session dead while the guards still count it live).
-SESSION_REGISTRY_LIB="$REPO_ROOT/agents/scripts/core/session-registry-lib.sh"
+SESSION_REGISTRY_LIB="$(layer_of "$REPO_ROOT")/agents/scripts/core/session-registry-lib.sh"
 if [ -f "$SESSION_REGISTRY_LIB" ]; then
     # shellcheck source=/dev/null
     . "$SESSION_REGISTRY_LIB"
@@ -175,11 +189,20 @@ cmd_new() {
     # its guard is INACTIVE — so a concurrent session in the main clone is
     # unprotected until someone remembers to run setup-harness. Provision it now,
     # before spinning the worktree. Idempotent; non-fatal.
-    # See docs/harness/SETUP.md § Concurrent-session HEAD-drift guard.
+    # A clone made without --recurse-submodules has the agent-layer gitlink but
+    # an empty mount, so setup-harness.sh is not there yet: initialize the
+    # submodule first. Only an unpopulated mount: a checked-out one may sit at a
+    # WIP pin that an update would move.
+    # See agent-layer/docs/harness/SETUP.md § Concurrent-session HEAD-drift guard.
     if [ ! -f "$REPO_ROOT/.claude/hooks/guard-head-drift.sh" ]; then
         echo "First run: provisioning .claude/ in the integration tree ($REPO_ROOT) so its HEAD-drift guard is active ..."
-        bash "$REPO_ROOT/agents/scripts/core/setup-harness.sh" claude-code \
-            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'bash agents/scripts/core/setup-harness.sh claude-code' there manually." >&2
+        if [ ! -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] \
+            && git -C "$REPO_ROOT" ls-files --error-unmatch -- agent-layer >/dev/null 2>&1; then
+            git -C "$REPO_ROOT" submodule update --init --recursive -- agent-layer \
+                || echo "  WARNING: submodule update failed in $REPO_ROOT — the agent layer may be missing there." >&2
+        fi
+        bash "$(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh" claude-code \
+            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'git -C \"$REPO_ROOT\" submodule update --init --recursive && bash \"$(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh\" claude-code' there manually." >&2
     fi
 
     echo "Fetching origin/$BASE ..."
@@ -200,8 +223,7 @@ cmd_new() {
     # a submodule, that script only exists after this line has run, and getting
     # the order wrong leaves the worktree with no hooks behind a warning that is
     # easy to miss. git gives each worktree its own non-object-sharing submodule
-    # checkout, so this is a genuine clone rather than a link. A tree with no
-    # submodules — every tree today — makes this a silent no-op.
+    # checkout, so this is a genuine clone rather than a link.
     git -C "$path" submodule update --init --recursive         || echo "  WARNING: submodule update failed in $path — agent definitions may be missing there." >&2
 
     # Wire the worktree's OWN .claude/ adapter (hooks incl. the drift guard) by
@@ -209,7 +231,7 @@ cmd_new() {
     # its own location, so this provisions $path, not the main clone.
     echo "Wiring .claude/ adapter in the new worktree ..."
     local wired=1
-    bash "$path/agents/scripts/core/setup-harness.sh" claude-code || wired=0
+    bash "$(layer_of "$path")/agents/scripts/core/setup-harness.sh" claude-code || wired=0
 
     echo ""
     if [ "$wired" -eq 1 ] && [ -f "$path/.claude/settings.json" ]; then
@@ -219,7 +241,7 @@ cmd_new() {
     else
         echo "WARNING: worktree created at $path (branch $branch_name) but .claude/ is NOT wired —" >&2
         echo "         the HEAD-drift guard is INACTIVE there. Finish setup before relying on isolation:" >&2
-        echo "         bash \"$path/agents/scripts/core/setup-harness.sh\" claude-code" >&2
+        echo "         git -C \"$path\" submodule update --init --recursive && bash \"$(layer_of "$path")/agents/scripts/core/setup-harness.sh\" claude-code" >&2
     fi
 }
 
@@ -331,7 +353,7 @@ cmd_sync() {
     git -C "$path" submodule update --init --recursive         || die "submodule update failed in $path"
 
     echo "Re-wiring .claude/ adapter in $path ..."
-    bash "$path/agents/scripts/core/setup-harness.sh" claude-code         || die "setup-harness failed in $path — the adapter may still hold stale agent definitions."
+    bash "$(layer_of "$path")/agents/scripts/core/setup-harness.sh" claude-code         || die "setup-harness failed in $path — the adapter may still hold stale agent definitions."
 
     echo "Synced: $path"
 }

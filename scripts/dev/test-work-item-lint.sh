@@ -1,7 +1,7 @@
 #!/bin/bash
 # test-work-item-lint.sh — wrapper for scripts/dev/test_work_item_lint.py, the
-# regression suite for agents/scripts/core/work_item_lint.py (work-item close +
-# ledger-citation linter; docs/agent-rules/work-items.md).
+# regression suite for agent-layer/agents/scripts/core/work_item_lint.py (work-item close +
+# ledger-citation linter; agent-layer/docs/agent-rules/work-items.md).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob; also run by

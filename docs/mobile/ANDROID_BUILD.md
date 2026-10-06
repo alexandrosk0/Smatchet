@@ -10,7 +10,7 @@ Smatchet is built from one shared, engine-agnostic `Source/Core` against **three
 
 | Target | Kind | Notes |
 |---|---|---|
-| `SmatchetStandalone` | Desktop executable | GLFW + desktop GL. Build instructions: [`docs/agent-rules/build.md`](../agent-rules/build.md). |
+| `SmatchetStandalone` | Desktop executable | GLFW + desktop GL. Build instructions: [`docs/agent-rules/build.md`](../../agent-layer/docs/agent-rules/build.md). |
 | `SmatchetCore_DX12` | Unreal static lib | DX12 dual-target. |
 | **`SmatchetMobile`** | **Android shared library** | `libSmatchetMobile.so`, packaged into an APK — **this document**. |
 

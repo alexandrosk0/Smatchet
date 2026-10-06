@@ -1,6 +1,6 @@
 # Dangling markdown links — grandfathered baseline
 
-_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-markdown-links.sh --baseline` and commit._
+_Auto-generated. Do not hand-edit; run `bash agent-layer/agents/scripts/core/test-markdown-links.sh --baseline` and commit._
 _Scope: `--all` (repo-wide). The DEFAULT diff-scope mode does not consult this file — it already grandfathers by scope, only ever checking markdown a change actually touches._
 _Keyed by `source::href`, not by line number, so an edit above a grandfathered link does not un-grandfather it. Burn these down and re-run `--baseline`; `--all` reports any entry that is already fixed as stale._
 

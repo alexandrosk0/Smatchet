@@ -93,7 +93,7 @@ Bot/app \`@coderabbitai review\` comments have not been seen to start a review. 
       or enable a CodeRabbit plan that auto-reviews.
 
 Helper: bash scripts/dev/trigger-coderabbit-review.sh ${pr}
-Playbook: docs/agent-rules/merge-gates.md § CodeRabbit OSS manual-trigger
+Playbook: agent-layer/docs/agent-rules/merge-gates.md § CodeRabbit OSS manual-trigger
 EOF
 }
 

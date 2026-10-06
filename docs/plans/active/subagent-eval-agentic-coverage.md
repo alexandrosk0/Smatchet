@@ -51,7 +51,7 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 4. [`docs/agent-eval/scoring-policy.json`](../../agent-eval/scoring-policy.json) — add `block` (default `false`) + a `calibration` provenance block (`kappa`, `n`, `date`) per graduated dimension; flip the objective `code-review` dimensions to `block:true` once Phase-0 agreement clears the documented κ bar.
 5. [`scripts/dev/agent-eval-score.py`](../../../scripts/dev/agent-eval-score.py) — honour `block`: a regression on a calibrated `block:true` dimension fails hard (the CI wrapper treats exit 1 as BLOCK for those); uncalibrated dimensions keep WARN. No change to the 0/1/2 contract — only which dimensions are *enforced*.
 6. `tests/bats/agent_eval_calibrate.bats` (**new**) — fixture labelled set → assert κ value, threshold proposal, exit codes; deterministic, no LLM.
-7. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) — document the calibration loop + the now-live WARN→BLOCK graduation criteria (κ bar, min-n).
+7. [`docs/agent-rules/subagent-eval.md`](../../../agent-layer/docs/agent-rules/subagent-eval.md) — document the calibration loop + the now-live WARN→BLOCK graduation criteria (κ bar, min-n).
 
 **Phase 1 — Gap-3 output complexity:**
 8. [`docs/agent-eval/case-schema.json`](../../agent-eval/case-schema.json) — extend the `check` enum with `uncertainty_flagged`, `escalation_present`; add `referenceOutcome.expectsEscalation` / `.expectsUncertainty` / `.artifacts[]`; add an optional `rubric` (weighted sub-criteria) to a `judge` dimension.
@@ -66,7 +66,7 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 15. `docs/agent-eval/harvest-policy.json` (**new**) — which agents to harvest, redaction patterns (token / email / key / Jira / p4 scrub), per-run candidate cap.
 16. `tests/agent-eval/.harvest-ledger.json` (**new**) — dedup ledger of already-harvested trace IDs.
 17. `tests/bats/agent_eval_harvest.bats` (**new**) — planted-fake-secret redaction test + dedup re-run test.
-18. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) — document the harvest → curate → promote flywheel + the curation gate.
+18. [`docs/agent-rules/subagent-eval.md`](../../../agent-layer/docs/agent-rules/subagent-eval.md) — document the harvest → curate → promote flywheel + the curation gate.
 
 **Phase 3 — Gap-2 autonomy horizon:**
 19. [`docs/agent-eval/case-schema.json`](../../agent-eval/case-schema.json) — add `evalKind` (`single-shot` default | `trajectory`); trajectory cases declare `expectedSteps` bounds, `requiredRecovery[]`, `forbiddenLoops[]`. **Schema wrinkle (grill-verified):** `referenceOutcome.expectedFindingCount` is currently `required` — a trajectory case scores steps, not findings, so it has none. Make the requirement conditional via an `if evalKind=trajectory then {required: [<trajectory ref fields>]} else {required: [expectedFindingCount]}` branch (the validator already resolves `if`/`then`), so a single-shot case still mandates `expectedFindingCount` while a trajectory case mandates its own reference shape (e.g. `expectedTerminalState`).
@@ -85,7 +85,7 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 
 **Cross-cutting (done in THIS plan-doc PR — the absorb; the rest land per-phase above):**
 30. `docs/plans/subagent-eval-flywheel.md` — set `Status` to `deferred — superseded by subagent-eval-agentic-coverage`; add a one-line redirect banner. (Folded, not cancelled — its content lives in Phase 2 here.) **Done in this PR.**
-31. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) line 5 — repoint the forward-roadmap pointer from the standalone flywheel plan to this unified plan (tier-less). **Done in this PR.** (AGENTS.md needs no edit: it references subagent-eval only via the `cpp-rules.md` keyword row — the nav chain is `AGENTS.md` → `cpp-rules.md` → `subagent-eval.md`, and the load-bearing pointer is the one in `subagent-eval.md`.) The deeper Phase-0 doc edit — documenting the calibration loop + WARN→BLOCK criteria — is item #7 above and lands with Phase 0.
+31. [`docs/agent-rules/subagent-eval.md`](../../../agent-layer/docs/agent-rules/subagent-eval.md) line 5 — repoint the forward-roadmap pointer from the standalone flywheel plan to this unified plan (tier-less). **Done in this PR.** (AGENTS.md needs no edit: it references subagent-eval only via the `cpp-rules.md` keyword row — the nav chain is `AGENTS.md` → `cpp-rules.md` → `subagent-eval.md`, and the load-bearing pointer is the one in `subagent-eval.md`.) The deeper Phase-0 doc edit — documenting the calibration loop + WARN→BLOCK criteria — is item #7 above and lands with Phase 0.
 32. `docs/self-improvement/categories/tooling.md` (2026-05-31 P2 residue) — repoint its item-(3) flywheel reference to this unified plan; entry stays **open** until Phase 0 actually ships (then partly retire it). **Done in this PR.**
 
 ## Existing utilities reused

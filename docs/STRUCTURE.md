@@ -8,10 +8,9 @@ Reuse guide: [`PORTABILITY.md`](PORTABILITY.md). Plan: [`plans/shipped/agentic-l
 
 ## The boundary
 
-**PORTABLE** (copy into another project as-is; project values come from `project.config.json`):
-`agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`, the self-improvement **framework**, the generic `scripts/dev/test-*.sh` + `merge-gates.*` + `project-config.sh`, and `AGENTS.md`'s structure.
+**PORTABLE** lives in its own repository, [`the-unwilling-agentic-bunch`](https://github.com/alexandrosk0/the-unwilling-agentic-bunch), mounted here as the git submodule `agent-layer/` (project values still come from this repo's `project.config.json`): `agent-layer/agents/{core,_shared}/`, `agent-layer/agents/scripts/{core,project}/` (the gate scripts, including `test-lint-rules.sh`), `agent-layer/docs/{agent-rules,harness}/`, the self-improvement **framework** (`AGENT_SELF_IMPROVEMENT.md`), the layer's bats suites and fixtures, and the rulebook `agent-layer/AGENTS.md`. Edit them there and bump the gitlink here; a host edit under `agent-layer/` is an edit to the submodule. Three scripts are kept here too as byte-identical mirrors (`scripts/dev/{project-config,test-all,test-docs}.sh`, listed in [`mirrored-paths.txt`](mirrored-paths.txt) and drift-gated) because the host runs them before the mount is checked out.
 
-**PROJECT-SPECIFIC** (re-authored per project): `project.config.json`, `agents/project/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `CONTEXT-MAP.md`, the per-subsystem leaf docs `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md`, `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/`, project-only scripts (`test-lint-rules.sh`, `test-subsystem-docs.sh`, `perf-*`, `p4-*`).
+**PROJECT-SPECIFIC** (stays in this repo): `project.config.json`, the root `AGENTS.md` stub (it imports `agent-layer/AGENTS.md`), `agents/project/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `CONTEXT-MAP.md`, the per-subsystem leaf docs `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md`, `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/` (minus the two layer baselines), `docs/reference/`, the git hooks, and the project-only scripts under `scripts/dev/` (`test-subsystem-docs.sh`, `perf-*`, `p4-*`).
 
 The single seam for project values is **`project.config.json`** (schema-validated). `scripts/dev/project-config.sh` exports it as `PC_*` shell vars.
 
@@ -19,16 +18,17 @@ The single seam for project values is **`project.config.json`** (schema-validate
 
 | Path | Tier | Holds | Enforced by |
 |---|---|---|---|
-| `/AGENTS.md` | portable | rulebook (prose pointers to `project.config.json`) | `test-doc-anchors` |
+| `/AGENTS.md` | project | stub: the harness entry point, importing `agent-layer/AGENTS.md` | `test-doc-anchors` |
+| `agent-layer/` | portable | the layer submodule ([`the-unwilling-agentic-bunch`](https://github.com/alexandrosk0/the-unwilling-agentic-bunch)); its own CI runs its gates | `agent-layer-integration.yml`, `check-harness-provisioned` |
 | `/CONTEXT-MAP.md` | project | registry of per-subsystem leaf docs + harness-discovery index | `test-subsystem-docs` |
 | `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md` | project | per-subsystem leaf rules / glossary / orientation | `test-subsystem-docs` |
 | `/project.config.json` (+ `.schema.json`) | project | the one value table | schema validation (`doc-validation.yml`) |
-| `agents/core/` | portable | generic engineering-role agents | `test-portable-purity`, `test-agent-contract` |
+| `agent-layer/agents/core/` | portable | generic engineering-role agents | `test-portable-purity`, `test-agent-contract` |
 | `agents/project/` | project | subsystem-bound agents | `test-agent-contract` |
-| `agents/_shared/` | portable | skills, token-tracking, templates | `test-portable-purity` |
-| `docs/agent-rules/` | portable | delegation / merge-gates / ship-loops / process rules | `test-portable-purity`, `test-doc-anchors` |
-| `docs/harness/` | portable | IDE adapters | `test-portable-purity` |
-| `docs/self-improvement/` | framework portable / entries project | `AGENT_SELF_IMPROVEMENT.md` + `categories/` | `test-backlog-counts` |
+| `agent-layer/agents/_shared/` | portable | skills, token-tracking, templates | `test-portable-purity` |
+| `agent-layer/docs/agent-rules/` | portable | delegation / merge-gates / ship-loops / process rules | `test-portable-purity`, `test-doc-anchors` |
+| `agent-layer/docs/harness/` | portable | IDE adapters | `test-portable-purity` |
+| `docs/self-improvement/` | project (entries) | `categories/`; the framework spec `AGENT_SELF_IMPROVEMENT.md` lives in `agent-layer/docs/self-improvement/` | `test-backlog-counts` |
 | `docs/plans/active/` | project | working plans (+ `_plan-template.md`, `_plan-locks*`) | `test-plan-naming` |
 | `docs/plans/shipped/` | project | shipped plans (**never renamed** — see below) | `test-plan-index`, `test-plan-ref-integrity` |
 | `docs/plans/deferred/` | project | parked-indefinitely plans (captured design, build only on a named recurrence; `STATUS: DEFERRED` banner) | `test-plan-naming`, `test-plan-ref-integrity` |

@@ -24,33 +24,15 @@ on:
       - '**/*.md'
       - 'AGENTS.md'
       - 'agents/**'
-      - 'docs/agent-rules/**'
+      # The layer is the agent-layer/ submodule: a change to it reaches this repo
+      # as the gitlink (a pointer bump) or as .gitmodules.
+      - 'agent-layer'
+      - '.gitmodules'
       - 'docs/self-improvement/**'
       - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
-      - 'agents/scripts/core/test-doc-anchors.sh'
-      - 'agents/scripts/core/test_doc_anchors.py'
-      - 'agents/scripts/core/test-agent-contract.sh'
-      - 'agents/scripts/core/test-agent-build-facts.sh'
-      - 'agents/scripts/core/test-plan-index.sh'
-      - 'agents/scripts/core/test-plan-ref-integrity.sh'
-      - 'agents/scripts/core/test-plan-claim-anchors.sh'
       - 'docs/high-integrity/plan-claim-anchor-baseline.md'
-      - 'agents/scripts/core/test-portable-purity.sh'
-      - 'agents/scripts/core/test-config-globs.sh'
-      - 'agents/scripts/core/test-required-context-parity.sh'
-      - 'agents/scripts/core/lib/ci-check-resolve.sh'
-      - 'agents/scripts/core/test-plan-naming.sh'
-      - 'agents/scripts/core/test-markdown-links.sh'
-      - 'agents/scripts/core/test-agent-discovery-fixture.sh'
-      - 'agents/scripts/project/test-subsystem-docs.sh'
-      - 'agents/scripts/core/agent_size_audit.py'
-      # test-gate-selftests scans these dirs for --selftest-exposing scripts, so
-      # any added/changed gate must re-trigger the convention-check.
-      - 'agents/scripts/core/test-gate-selftests.sh'
-      - 'agents/scripts/core/**'
-      - 'agents/scripts/project/**'
       - 'scripts/dev/**'
       - 'tests/bats/**'
       - 'CONTEXT-MAP.md'
@@ -58,7 +40,6 @@ on:
       - 'Source/Core/src/**/CONTEXT.md'
       - 'Source/Core/src/**/README.md'
       - 'scripts/dev/project-config.sh'
-      - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
   # NO paths: filter here — DELIBERATE. `Doc anchors + agent contract` is a
   # REQUIRED branch-protection context (project.config.json § branch_protection).
@@ -105,9 +86,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
-  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
-  AGENT_LAYER_ROOT: .
+  # Agent-layer indirection: the layer is the agent-layer/ submodule (every checkout
+  # here uses `submodules: recursive`); the project is the checkout root.
+  AGENT_LAYER_ROOT: agent-layer
   PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
@@ -298,7 +279,7 @@ jobs:
           echo "----- INDEX + plan-date drift (run the remedy to apply) -----"
           git --no-pager diff -- docs/plans/INDEX.md docs/plans/shipped/
           echo "-------------------------------------------------------------"
-          echo "Remedy: bash agents/scripts/core/test-plan-index.sh --fix"
+          echo "Remedy: bash agent-layer/agents/scripts/core/test-plan-index.sh --fix"
           echo "        git add docs/plans/INDEX.md docs/plans/shipped/ && git commit && git push"
           echo "(Auto-fix can be enabled by adding the PLAN_INDEX_PAT repo secret"
           echo " — fine-grained PAT, Contents: Read and write. See job header.)"
@@ -346,7 +327,7 @@ jobs:
           # wrapper-only edit/deletion there must set docs=true so the orphan check
           # runs — else a suite can be un-wired by a scripts/dev-only PR while the
           # required doc job stays green. Mirrors the gate's `--include=test-*.sh`.
-          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^scripts/dev/test_.*\.py$|^\.github/workflows/doc-validation\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^agent-layer$|^\.gitmodules$|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^scripts/dev/test_.*\.py$|^\.github/workflows/doc-validation\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "doc-relevant changes detected — running full doc validation."
           else
@@ -574,7 +555,7 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
           body = os.environ.get("PR_BODY", "") or ""
-          guide = "see docs/agent-rules/ship-loops.md § Intent capture"
+          guide = "see agent-layer/docs/agent-rules/ship-loops.md § Intent capture"
           m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
           if not m:
               print("::error title=Intent section missing::PR body has no `## Intent` "
@@ -608,7 +589,7 @@ jobs:
                     "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "
                     "(e.g. `adversarial-code-review: 4 findings, all fixed`) or, for a genuinely "
                     "trivial diff, `adversarial-code-review: n/a — <reason>`. See "
-                    "docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
+                    "agent-layer/docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
               sys.exit(1)
           # Head binding — a verdict that names no commit is "reviewed something
           # once"; binding it to the head means every push invalidates the prior
@@ -625,7 +606,7 @@ jobs:
           if not hm:
               print("::error title=Review verdict not head-bound::The review verdict names no "
                     "commit. Append `(head=<sha>)` naming the reviewed head — "
-                    "`bash agents/scripts/core/record-review-verdict.sh` stamps and prints the "
+                    "`bash agent-layer/agents/scripts/core/record-review-verdict.sh` stamps and prints the "
                     "line. Every push invalidates the prior verdict.")
               sys.exit(1)
           expected = os.environ.get("PR_HEAD_SHA", "")

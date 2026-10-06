@@ -20,9 +20,9 @@ permissions:
 # (mozilla-actions/sccache-action) + caches $SCCACHE_DIR. Disable with
 # SMATCHET_NO_CCACHE=1.
 env:
-  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
-  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
-  AGENT_LAYER_ROOT: .
+  # Agent-layer indirection: the layer is the agent-layer/ submodule (every checkout
+  # here uses `submodules: recursive`); the project is the checkout root.
+  AGENT_LAYER_ROOT: agent-layer
   PROJECT_ROOT: .
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
@@ -49,7 +49,7 @@ on:
   # below detects whether any non-docs path changed and the build jobs skip
   # when it is docs-only — a skipped required job is treated as success by
   # branch protection, while a path-skipped workflow never reports at all.
-  # See docs/agent-rules/ci-required-check-pattern.md (Pattern C).
+  # See agent-layer/docs/agent-rules/ci-required-check-pattern.md (Pattern C).
   push:
     branches: [develop]
   pull_request:
@@ -161,14 +161,16 @@ jobs:
               [ -z "$f" ] && continue
               case "$f" in
                 # Build-invoked exception: test-lint-rules.sh is the strict-zone
-                # delta gate run INSIDE the windows-msvc job (steps below at the
-                # "--diff origin/develop" + develop "--catalog --refresh" lines).
-                # It lives in the agentic tree but a change to it MUST trigger the
-                # build so the gate is re-validated — otherwise a PR touching only
-                # the gate skips the build and the gate never runs. Keep before the
-                # agents/* docs-class arm (case matches first pattern). lint-rules.d/
-                # holds the gate's sourced per-rule modules — same rule.
-                agents/scripts/project/test-lint-rules.sh|agents/scripts/project/lint-rules.d/*) code=true; break ;;
+                # delta gate run by comment-noise-gate's code-gated
+                # "--diff origin/develop" step, plus the develop-push
+                # "--catalog --refresh" job.
+                # It lives in the agent layer, so it reaches this repo only through
+                # the agent-layer gitlink, and a change to it MUST trigger the build
+                # so the gate is re-validated — otherwise a bump that moves only the
+                # gate skips the build and the gate never runs. So a pointer bump is
+                # code. Keep before the agents/* docs-class arm (case matches first
+                # pattern).
+                agent-layer|.gitmodules) code=true; break ;;
                 # Docs-class scripts: test-docs.sh is the local mirror of
                 # .github/workflows/doc-validation.yml (anchors / agent-contract /
                 # plan-index / ...). It runs no compiler and touches no product
@@ -233,7 +235,7 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
-                agents/scripts/project/test-lint-rules.sh|agents/scripts/project/lint-rules.d/*) android_only=false; break ;;
+                agent-layer|.gitmodules) android_only=false; break ;;
                 Source/Mobile/*|cmake/toolchains/*) ;;
                 scripts/dev/test-docs.sh) ;;
                 *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
@@ -1195,7 +1197,7 @@ jobs:
             done < "$REPORT"
             echo ""
             echo "A \`fail\` row is EITHER a real pixel regression OR a stale golden — regenerate"
-            echo "per docs/agent-rules/golden-image-approval.md, or fix the regression."
+            echo "per agent-layer/docs/agent-rules/golden-image-approval.md, or fix the regression."
             echo ""
             echo "A \`fail-dimension\` row (L_inf \`-1\`) is NEITHER: the capture never reached the"
             echo "golden's geometry, so no pixels were compared. Regenerating goldens would only"
@@ -1408,7 +1410,7 @@ jobs:
             echo "together with \`tests/golden/PROVENANCE.tsv\`."
             echo ""
             echo "Do not skip the review. A golden captured while a bug is live certifies"
-            echo "that bug as correct behaviour — see docs/agent-rules/golden-image-approval.md."
+            echo "that bug as correct behaviour — see agent-layer/docs/agent-rules/golden-image-approval.md."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 
       - name: Upload CI-native goldens for review
@@ -2440,7 +2442,7 @@ jobs:
         run: |
           bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-lint-rules.sh" --catalog --refresh
           if ! git diff --exit-code docs/high-integrity/baseline.md; then
-            echo "::error::baseline stale — run 'bash agents/scripts/project/test-lint-rules.sh --catalog --refresh' locally and commit"
+            echo "::error::baseline stale — run 'bash agent-layer/agents/scripts/project/test-lint-rules.sh --catalog --refresh' locally and commit"
             exit 1
           fi
           echo "high-integrity baseline in sync"
@@ -2975,7 +2977,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          script="docs/harness/claude-code/hooks/lint-catch-all.py"
+          script="$AGENT_LAYER_ROOT/docs/harness/claude-code/hooks/lint-catch-all.py"
           test -f "$script" || { echo "::error::lint-catch-all.py not found at $script"; exit 1; }
           out=""
           while IFS= read -r f; do

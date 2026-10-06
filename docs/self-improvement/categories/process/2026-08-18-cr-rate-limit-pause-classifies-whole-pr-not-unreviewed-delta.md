@@ -18,9 +18,9 @@ exhaustion prevented CR from re-reviewing, and it is what the whole waiver cerem
 
 ## Cause
 
-[`merge-gates.sh:1356-1369`](../../../../agents/scripts/core/merge-gates.sh) picks between
+[`merge-gates.sh:1356-1369`](../../../../agent-layer/agents/scripts/core/merge-gates.sh) picks between
 two rate-limit outcomes on `pure_docs` (field 28), which is
-[`is-pure-docs-diff.sh`](../../../../agents/scripts/core/is-pure-docs-diff.sh) run over the
+[`is-pure-docs-diff.sh`](../../../../agent-layer/agents/scripts/core/is-pure-docs-diff.sh) run over the
 **entire PR diff** vs the merge base:
 
 ```

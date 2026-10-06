@@ -8,7 +8,7 @@
 //
 // PROJECT-SCOPED, not portable: the prompt embeds Smatchet literals (Source/Core,
 // AGENTS.md, the survivor extractor path) so this lives under
-// agents/project/workflows/ — NOT agents/_shared/workflows/, which
+// agents/project/workflows/ — NOT agent-layer/agents/_shared/workflows/, which
 // test-portable-purity forbids project literals in. setup-harness.sh links BOTH
 // dirs into the gitignored .claude/workflows/, so it still resolves by name:
 //     Workflow({ name: 'historical-review-sweep', args: [<PR numbers>] })
@@ -98,7 +98,7 @@ function promptFor(pr) {
     `You are doing a HISTORICAL CODE REVIEW of merged PR #${pr} in the Smatchet repo (C:\\\\Dev\\\\Smatchet, working dir already set).`,
     ``,
     `STEP 1 — extract survivors (run exactly this, read-only):`,
-    `    bash agents/scripts/core/historical-review-survivors.sh --pr ${pr} --context 3`,
+    `    bash agent-layer/agents/scripts/core/historical-review-survivors.sh --pr ${pr} --context 3`,
     `This resolves the PR's squash commit and emits a DIGEST of ONLY the lines this PR introduced that are STILL ALIVE and UNTOUCHED at origin/develop (lines a newer PR rewrote are excluded by construction).`,
     ``,
     `Digest line marks:`,
@@ -112,7 +112,7 @@ function promptFor(pr) {
     ``,
     `STEP 3 — review ONLY the space-marked surviving lines. The digest already carries 3 context lines per hunk — PREFER it. Open a file at HEAD with Read ONLY when you genuinely need wider context, and then Read a WINDOW (offset/limit) around the cited HEAD line range — NEVER read a whole file (whole-file reads bloat the transcript and trigger compaction mid-sweep). You may open files for context, but you must NEVER flag a line outside the surviving set — it is either someone else's code or already gone. Because already-fixed lines are excluded by construction, assume NOTHING here is "already known/fixed": a surviving line is live debt.`,
     ``,
-    `Apply the Smatchet code-review checklist (see AGENTS.md + docs/agent-rules/cpp-rules.md):`,
+    `Apply the Smatchet code-review checklist (see AGENTS.md + agent-layer/docs/agent-rules/cpp-rules.md):`,
     `  • C++14 hard (no string_view/optional/variant/structured-bindings/if-constexpr); must compile MSVC + Clang.`,
     `  • Logging: LOG_{DEBUG,INFO,WARN,ERROR,TRACE} only — never printf/std::cerr (except the named pre-logger-init / CLI-stdout exceptions).`,
     `  • RAII: no raw new/delete; unique_ptr+make_unique; const& non-trivial params; move on last use; unique_ptr<T> member in a header needs full T.`,

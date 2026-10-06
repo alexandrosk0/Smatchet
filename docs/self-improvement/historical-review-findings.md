@@ -35,7 +35,7 @@ Full problem + fix. Everything below this block is one-line; the complete struct
 All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
 
 - `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM — #2177:684 — **closed by this batch** (resume pointer corrected + late-merge rule above)
-- `docs/plans/active/agent-surface-extraction-repo.md` — 1 MEDIUM — #2160:69
+- `docs/plans/agent-surface-extraction-repo.md` — 1 MEDIUM — #2160:69
 - `docs/adr/0025-agent-surface-extraction-submodule.md` — 1 LOW — #2160:13
 - `docs/guides/testing-surface.md` — 2 LOW — #2161:151, #2161:192
 - `docs/self-improvement/categories/infra.md` — 1 LOW — #2161:15
@@ -73,7 +73,7 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 
 Coverage: **76 reviewed — 25 with findings, 49 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 16 MEDIUM, 24 LOW** (40 findings, 7 `userVisible`). **The frontier is now #1–#2159 contiguous; the next sweep resumes from #2160.** Reviewer agents inherited the session model this batch (the per-agent model pin was dropped rather than pinned to the opus/high grade Batches 1–22 used); 76/76 returned, ~2.0M tokens. The run was paused mid-sweep on a usage limit and resumed from the workflow cache — completed units replayed, the remainder ran live; no unit was double-reviewed or lost.
 
-Work-list computed, not asserted, via [`historical-review-worklist.sh`](../../agents/scripts/core/historical-review-worklist.sh) `--range 2042 2159` (with `--merged-list`, since this container has no `gh`): *authoritative merged PRs 76 / develop-log scrape 76 / scrape MISSED none / coverage 76/76 → 76 review units*. #2042–#2066 are Issues (the Batch 20-REDO/21 ADR-0014 elevations), not PRs, which is why the first reviewed PR is #2067; no merge-commit PRs in the range, so no constituent expansion.
+Work-list computed, not asserted, via [`historical-review-worklist.sh`](../../agent-layer/agents/scripts/core/historical-review-worklist.sh) `--range 2042 2159` (with `--merged-list`, since this container has no `gh`): *authoritative merged PRs 76 / develop-log scrape 76 / scrape MISSED none / coverage 76/76 → 76 review units*. #2042–#2066 are Issues (the Batch 20-REDO/21 ADR-0014 elevations), not PRs, which is why the first reviewed PR is #2067; no merge-commit PRs in the range, so no constituent expansion.
 
 > **Young-slice caveat, third consecutive batch:** the range spans merges 0–13 days old, so only 2 of 76 PRs were fully superseded and most digests show every introduced line still alive. The findings are real, but the "survived N later PRs" evidence an aged slice carries is thin here — same effect Batches 21 and 22 recorded.
 
@@ -134,7 +134,7 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 
 Coverage: **7 reviewed — 5 with findings, 2 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 1 HIGH, 7 MEDIUM, 5 LOW** (13 findings, 2 `userVisible`). **The frontier is now #1–#2041 contiguous; the next sweep resumes from #2042.** Reviewer model `code-review` (opus/high), 7/7 returned; ~0.49M tokens, ~9 min.
 
-**First batch whose work-list was COMPUTED, not asserted.** Built with the new [`historical-review-worklist.sh`](../../agents/scripts/core/historical-review-worklist.sh) gate (shipped in this same PR, closing parts 1–2 of the merge-commit work-list entry): `--range 2033 2041` reported *authoritative merged PRs 7 / develop-log scrape 7 / scrape MISSED none / coverage 7/7 → 7 review units*. The coverage line above is that computed triple, not a hand count. No merge-commit PRs in this range, so no constituent expansion was needed — but the enumerators were cross-validated rather than assumed, which is the whole point.
+**First batch whose work-list was COMPUTED, not asserted.** Built with the new [`historical-review-worklist.sh`](../../agent-layer/agents/scripts/core/historical-review-worklist.sh) gate (shipped in this same PR, closing parts 1–2 of the merge-commit work-list entry): `--range 2033 2041` reported *authoritative merged PRs 7 / develop-log scrape 7 / scrape MISSED none / coverage 7/7 → 7 review units*. The coverage line above is that computed triple, not a hand count. No merge-commit PRs in this range, so no constituent expansion was needed — but the enumerators were cross-validated rather than assumed, which is the whole point.
 
 > **Read the near-zero supersede rate as an artefact of timing, not as a clean range.** 0 of 7 PRs were fully superseded and 4 of the 7 show *every* introduced line still alive (`~235/235`, `~645/645`, `~717/717`). This slice was **hours old** when swept — running it this soon was an explicit maintainer decision — so the blame-survivor filter had nothing to subtract and the pass degraded into an ordinary re-review. That is the same effect Batch 21 recorded over an 8-day slice, more extreme here. The 13 findings are real; what this batch does **not** carry is the "survived N later PRs" evidence an older slice gives. **Age, not count** — recorded again because two consecutive batches have now paid this cost.
 

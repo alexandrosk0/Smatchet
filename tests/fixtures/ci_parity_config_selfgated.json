@@ -1,9 +1,0 @@
-{
-  "branch_protection": {
-    "branch": "develop",
-    "required_contexts": [
-      "SelfGated Context"
-    ],
-    "strict": false
-  }
-}

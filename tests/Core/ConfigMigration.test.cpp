@@ -646,6 +646,9 @@ TEST_CASE("ConfigMigration zoom aliases: a rebound or cleared zoom row is left a
 
 TEST_CASE("ConfigMigration zoom aliases: flag set on disk skips the widen") {
     smatchet_tests::TestEnvGuard env;
+    // V1 flagged done with only the legacy single combo left on disk. V1 itself must
+    // not re-widen; V3 (default-family append) recovers the full Defaults() set —
+    // including Ctrl+MouseWheelUp — so an upgrading smatchet_config.json is not stuck.
     const std::string pre =
         R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
         "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,"keybindings":{"bindings":[
@@ -656,9 +659,13 @@ TEST_CASE("ConfigMigration zoom aliases: flag set on disk skips the widen") {
     const TrackerConfig cfg = ConfigManager::Load();
 
     CHECK(cfg.MigratedMultiHotkeyZoomV1 == true);
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
     const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 1);
+    const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 4);
+    CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
+    CHECK(zoomIn.Hotkeys[3] == "Ctrl+MouseWheelUp");
 }
 
 TEST_CASE("ConfigMigration zoom aliases: survive a Save -> Load round-trip without growing") {
@@ -740,4 +747,107 @@ TEST_CASE("ConfigMigration zoom wheel aliases: a rebound zoom row is left alone"
     const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
     REQUIRE(zo >= 0);
     CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 3);
+}
+
+// --- default-family zoom catch-up (MigrateZoomHotkeyAliasesV3) -------------------
+// #2276's V2 only widens an exact pre-wheel default snapshot, then sets its flag
+// even when it skipped. The common on-disk shape — zoom in = only Ctrl+=, zoom out
+// = only Ctrl+- — is not an exact match, so V2 skips forever. V3 appends missing
+// Defaults() aliases for those partial default-family rows.
+
+TEST_CASE("ConfigMigration zoom default-family: upgrades sole legacy primary after V2 skipped") {
+    smatchet_tests::TestEnvGuard env;
+    // Exact shape reported for an existing smatchet_config.json after #2276: V1+V2
+    // already flagged, rows still hold only the original single-combo defaults.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkey":"Ctrl+-","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 4);
+    CHECK(zoomIn.HasHotkey("Ctrl+MouseWheelUp"));
+    CHECK(zoomIn.HasHotkey("Ctrl+NumAdd"));
+    CHECK(zoomIn.HasHotkey("Ctrl+Shift+="));
+
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    const Keybinding& zoomOut = cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)];
+    REQUIRE(zoomOut.Hotkeys.size() == 3);
+    CHECK(zoomOut.HasHotkey("Ctrl+-"));
+    CHECK(zoomOut.HasHotkey("Ctrl+NumSubtract"));
+    CHECK(zoomOut.HasHotkey("Ctrl+MouseWheelDown"));
+
+    const int zr = cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}");
+    REQUIRE(zr >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zr)].Hotkeys.size() == 2);
+}
+
+TEST_CASE("ConfigMigration zoom default-family: cleared empty row stays cleared") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.out","hotkey":"","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.empty());
+}
+
+TEST_CASE("ConfigMigration zoom default-family: custom keys outside Defaults stay untouched") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkeys":["Ctrl+=","Ctrl+Up"],"args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 2);
+    CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
+    CHECK(zoomIn.Hotkeys[1] == "Ctrl+Up");
+    CHECK_FALSE(zoomIn.HasHotkey("Ctrl+MouseWheelUp"));
+}
+
+TEST_CASE("ConfigMigration zoom default-family: flag set on disk skips the append") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"migrated_multi_hotkey_zoom_v3":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 1);
 }

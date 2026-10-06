@@ -1,7 +1,7 @@
 # Agent self-improvement — external-blockers
 
 > Format / categories / workflow / priority / triage: see
-> [`../AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) (index + spec).
+> [`../AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md) (index + spec).
 > Sibling categories: bug · process · tooling · infra · test · security · external-blockers · applied.
 > Entries here cannot be resolved in this repo. Each names the upstream owner / workaround. Status: `blocked-external`.
 

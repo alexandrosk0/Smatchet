@@ -1,0 +1,71 @@
+name: Agent-layer integration
+
+# The binding check for a PR that moves the agent-layer/ pointer (plan
+# agent-surface-extraction-repo, row 12b). A pointer bump changes only the
+# gitlink, so without this lane it would merge on whatever the gitlink path
+# happens to trigger. It proves the pinned layer resolves from a clean checkout,
+# provisions the harness through it, and runs the host's delta gates through it.
+# The whole host suite already runs through the submodule on every PR
+# (agentic-selftests.yml), so it is not repeated here.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'agent-layer'
+      - '.gitmodules'
+      - '.github/workflows/agent-layer-integration.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: agent-layer-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGENT_LAYER_ROOT: agent-layer
+  PROJECT_ROOT: .
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Agent-layer integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, and so a full nested clone: the layer's merge-base-delta
+          # gates diff against origin/develop, which a shallow checkout lacks.
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: The pinned layer resolves
+        run: |
+          set -euo pipefail
+          status="$(git submodule status agent-layer)"
+          echo "$status"
+          case "$status" in
+            -*) echo "::error::agent-layer is not checked out (the pin did not resolve from .gitmodules' URL)"; exit 1 ;;
+            +*) echo "::error::agent-layer is checked out at a commit other than the pinned gitlink"; exit 1 ;;
+            U*) echo "::error::agent-layer has merge conflicts"; exit 1 ;;
+          esac
+          test -f agent-layer/scripts/dev/project-config.sh \
+            || { echo "::error::agent-layer/ holds no scripts/dev/project-config.sh, the marker every host caller resolves the layer by"; exit 1; }
+
+      - name: Provision the harness through the submodule
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/setup-harness.sh" claude-code
+
+      - name: Provisioning check (guard hook, agent links, settings hook paths)
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/check-harness-provisioned.sh"
+
+      - name: Host delta lint gate through the submodule
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-lint-rules.sh" --diff origin/develop
+
+      - name: Host doc checks through the submodule
+        run: bash scripts/dev/test-docs.sh
