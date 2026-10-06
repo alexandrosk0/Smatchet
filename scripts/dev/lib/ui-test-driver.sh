@@ -36,7 +36,9 @@
 #       --seed writes UI_TEST_SEED_CONFIG as the profile's config: a configured
 #       profile (not read-only, no auto-opened Preferences, no
 #       ##WhisperSetupBanner floating over window headers). Leave it off for a
-#       driver whose tests assert fresh-profile (first-run) defaults.
+#       driver whose tests assert fresh-profile (first-run) defaults. In a
+#       pinned dir (below) it seeds only when no config exists yet — the pinned
+#       profile is kept, so an existing config is left untouched (and logged).
 #       --shadow-platform-dirs also points LOCALAPPDATA / APPDATA /
 #       XDG_CONFIG_HOME at the dir, for state ConfigManager resolves from the
 #       platform-shared dir rather than the user-data dir.
@@ -150,7 +152,11 @@ ui_test_isolate_home() {
         trap _ui_test_cleanup_home EXIT
     fi
     if [ "$seed" -eq 1 ]; then
-        printf '%s\n' "$UI_TEST_SEED_CONFIG" > "$UI_TEST_HOME/smatchet_config.json"
+        if [ -n "${SMATCHET_UI_TEST_HOME:-}" ] && [ -e "$UI_TEST_HOME/smatchet_config.json" ]; then
+            echo "[$tag] --seed: kept the existing $UI_TEST_HOME/smatchet_config.json (pinned dir; delete it to re-seed)"
+        else
+            printf '%s\n' "$UI_TEST_SEED_CONFIG" > "$UI_TEST_HOME/smatchet_config.json"
+        fi
     fi
     export UI_TEST_HOME
     export SMATCHET_USER_DATA="$UI_TEST_HOME" SMATCHET_UPDATE_CHECK=0

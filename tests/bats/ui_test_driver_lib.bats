@@ -9,7 +9,8 @@
 # that outlives the CLI), or one that simply hangs.
 #
 # Covers: ui_test_isolate_home (throwaway SMATCHET_USER_DATA + update check off,
-# seed, platform-dir shadowing, SMATCHET_UI_TEST_HOME pin, trap cleanup);
+# seed — kept, not overwritten, in a pinned dir — platform-dir shadowing,
+# SMATCHET_UI_TEST_HOME pin, trap cleanup that never changes the exit status);
 # ui_test_require_fresh_exe (fresh / STALE exit 2 naming the newest offender
 # across the exe-linked trees only — not Source/Mobile or Source/UnrealPlugins —
 # with a drift pin on the exe-linked tests/support files /
@@ -177,6 +178,21 @@ EOF
     grep -q "pinned to $pin (kept on exit)" <<<"$output"
     [ -f "$pin/smatchet_config.json" ]
     grep -qx "SMATCHET_USER_DATA=$pin" "$FIX"/env.*
+}
+
+@test "pinned --seed keeps an existing config instead of overwriting it" {
+    local pin="$FIX/pinned"
+    mkdir -p "$pin"
+    printf '%s\n' '{"read_only_mode": true, "kept": "yes"}' > "$pin/smatchet_config.json"
+    cat > "$FIX/drv.sh" <<'EOF'
+. "$LIB"
+ui_test_isolate_home --seed
+EOF
+    SMATCHET_UI_TEST_HOME="$pin" run bash "$FIX/drv.sh"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$pin/smatchet_config.json")" = '{"read_only_mode": true, "kept": "yes"}' ]
+    grep -q "kept the existing $pin/smatchet_config.json" <<<"$output"
 }
 
 # _mk_failing_rm — an `rm` shim that always fails, standing in for Windows
