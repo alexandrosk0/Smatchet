@@ -1,0 +1,29 @@
+# Triaged gitleaks findings: exact fingerprints, never a path or rule blanket.
+# Each one is a synthetic fixture in the redaction test machinery
+# (agents/scripts/core/redact-intent.py, redaction-escape-oracle.py,
+# tests/bats/capture_intent.bats), checked by hand in docs/seed-audit.md
+# § Secrets. The seed's phase 4b scans the rewritten history with this file in
+# place, so any finding NOT listed here still fails the publication gate.
+# A fingerprint is <commit>:<file>:<rule>:<line> in this repo's history.
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:aws-access-token:251
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:generic-api-key:299
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:github-pat:245
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:github-pat:293
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:github-pat:353
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:slack-access-token:252
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:agents/scripts/core/redact-intent.py:stripe-access-token:258
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:aws-access-token:98
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:aws-access-token:99
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:gcp-api-key:111
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:github-pat:255
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:github-pat:283
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:github-pat:294
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:github-pat:79
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:private-key:134
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:slack-access-token:104
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:slack-access-token:105
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:stripe-access-token:160
+b2e59e0e5ddde04b0076a4fd6d215ffd5ca909c2:tests/bats/capture_intent.bats:stripe-access-token:161
+d6d87cbad54fbc53edea8ba69b67a5fca234c060:agents/scripts/core/redaction-escape-oracle.py:private-key:143
+d6d87cbad54fbc53edea8ba69b67a5fca234c060:agents/scripts/core/redaction-escape-oracle.py:slack-access-token:116
+d6d87cbad54fbc53edea8ba69b67a5fca234c060:agents/scripts/core/redaction-escape-oracle.py:stripe-access-token:122

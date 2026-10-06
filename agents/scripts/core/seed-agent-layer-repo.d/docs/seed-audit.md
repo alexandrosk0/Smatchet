@@ -82,6 +82,16 @@ reports on — otherwise phase 4b's own secret scan would flag the audit table.
 The 11 remaining gitleaks findings are all host-side (`Source/`, `tests/Core/`, `tests/fuzz/`) and are
 not seeded.
 
+**How phase 4b accepts them.** On the gitleaks path, phase 4b scans the *rewritten* history as a hard
+gate, and there these fixtures surface as 25 findings (22 distinct fingerprints, two commits). The
+scaffold ships a `.gitleaksignore` at the layer root that lists exactly those fingerprints, so the
+gitleaks path passes on the triaged set and still fails on any gitleaks finding not listed. A rehearsal
+checked both: the rewritten history scans clean with the file, and a planted token fails with it. Every
+listed value matched a shape in the table above. For gitleaks, a new fixture means a new fingerprint and
+a new line here, never a broader rule. The TruffleHog fallback (used only when gitleaks is not on `PATH`)
+runs with `--results=verified`, so it fails only on credentials it can verify live; an unverified
+finding does not fail that path. Run the seed with gitleaks installed to get the stricter gate.
+
 ### Hosts, tickets, P4 — none internal
 
 27 distinct URL hosts, all public (`github.com`, `claude.ai`, `agents.md`, `gradle.org`,
