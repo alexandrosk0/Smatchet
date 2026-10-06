@@ -56,7 +56,8 @@
 # Exit: 0 = tail validated + marker written + line printed; 1 = tail rejected
 # by the verdict grammar (unfilled placeholders included) OR a substantive diff
 # has no matching review-ack/artifact pair; 2 = usage / not a git repo / no
-# HEAD / the review-ack library is unreadable (infra, not a real gate result);
+# HEAD / the review-ack library is unreadable / the marker could not be written
+# (infra, not a real gate result);
 # 3 = marker written + line printed, but --sync-pr could not update the PR body.
 #
 # Bypass (logged, discouraged, mirrors pre-ship.sh): SMATCHET_SKIP_REVIEW_GATE=1
@@ -154,7 +155,13 @@ _record() {
         echo "  with the placeholders FILLED (ship-loops.md § [pre-first-push gate] item 5)." >&2
         return 1
     fi
-    printf '%s\n' "$line" > "$gitdir/review-verdict-$head"
+    # Checked explicitly: main calls `_record … || exit $?`, which switches
+    # `set -e` off inside this function, so an unchecked failed write would
+    # fall through, print the line and exit 0 with no marker behind it.
+    if ! printf '%s\n' "$line" > "$gitdir/review-verdict-$head"; then
+        echo "record-review-verdict: could not write the verdict marker $gitdir/review-verdict-$head — nothing recorded" >&2
+        return 2
+    fi
     printf '%s\n' "$line"
 }
 
@@ -180,11 +187,26 @@ _sync_pr() {
     fi
     old="$(mktemp)" || return 3
     new="$(mktemp)" || { rm -f "$old"; return 3; }
-    if ! pbe_fetch "$repo" "$pr" "$old" \
-        || ! pbe_upsert_line "$VERDICT_LINE_RE" "$line" "$old" "$new" \
-        || ! pbe_write "$repo" "$pr" "$old" "$new"; then
+    # Two attempts: pbe_write refuses (rc 3) when the body changed between the
+    # fetch and the PATCH — another edit landed. Re-derive from the new body
+    # once; a second collision gives up rather than racing an active editor.
+    local attempt write_rc
+    for attempt in 1 2; do
+        write_rc=0
+        if ! pbe_fetch "$repo" "$pr" "$old" \
+            || ! pbe_upsert_line "$VERDICT_LINE_RE" "$line" "$old" "$new"; then
+            rc=3
+            break
+        fi
+        pbe_write "$repo" "$pr" "$old" "$new" || write_rc=$?
+        if [ "$write_rc" -eq 0 ]; then
+            rc=0
+            break
+        fi
         rc=3
-    fi
+        if [ "$write_rc" -ne 3 ] || [ "$attempt" -ne 1 ]; then break; fi
+        echo "record-review-verdict: --sync-pr: ${repo}#${pr} body changed mid-sync — re-reading it once." >&2
+    done
     rm -f "$old" "$new"
     if [ "$rc" -ne 0 ]; then
         echo "record-review-verdict: --sync-pr: ${repo}#${pr} body NOT updated (verdict still recorded locally)." >&2

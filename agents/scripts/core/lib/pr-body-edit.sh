@@ -12,7 +12,8 @@
 #
 # CONTRACT (functions return, never exit — the caller owns its exit codes)
 #   pbe_fetch <repo> <pr> <out-file>
-#       GET PR <pr>'s current body into <out-file>.
+#       GET PR <pr>'s current body into <out-file>, byte-exact (the newline
+#       `gh --jq` appends is stripped, so a fetch→PATCH round trip is stable).
 #       rc 0 ok · 2 gh missing / API failure.
 #   pbe_upsert_line <prefix-regex> <line> <in-file> <out-file>
 #       Replace the first line OUTSIDE an HTML comment whose start matches the
@@ -28,15 +29,18 @@
 #       not one. A bare marker must stay bare (commenting it out disarms it);
 #       a commented one may be uncommented.
 #   pbe_write <repo> <pr> <old-file> <new-file>
-#       pbe_dropped_markers guard, then PATCH the body.
+#       pbe_dropped_markers guard, a re-read of the live body (it must still
+#       equal <old-file>), then PATCH the body.
 #       rc 0 written · 1 refused (a marker was lost; nothing sent) · 2 gh
-#       missing / API failure.
+#       missing / API failure · 3 the body changed since <old-file> was read
+#       (a concurrent edit; nothing sent — re-fetch, re-derive, retry).
 #
 # Run directly — the marker-guarded replacement for `gh pr edit --body-file`
 # (Intent-gate remediation, any whole-body rewrite):
 #   bash agents/scripts/core/lib/pr-body-edit.sh <pr> <new-body-file>
 #   REPO=<owner/name> overrides the repo gh resolves from the checkout.
-#   Exit: 0 written · 1 refused · 2 usage / gh / API failure.
+#   Exit: 0 written · 1 refused · 2 usage / gh / API failure · 3 the body
+#   was edited concurrently (nothing sent; re-run against the new body).
 #
 # gh is the only GitHub client (stubbable on PATH in bats); python does the
 # text work and the JSON encoding. Sourcing defines functions only.
@@ -55,12 +59,19 @@ _pbe_gh() {
 }
 
 pbe_fetch() {
-    local repo="$1" pr="$2" out="$3"
+    local repo="$1" pr="$2" out="$3" body
     _pbe_gh || return 2
     if ! gh api "repos/${repo}/pulls/${pr}" --jq '.body // ""' > "$out"; then
         echo "pr-body-edit: could not read the body of ${repo}#${pr}" >&2
         return 2
     fi
+    # `--jq` prints a string result followed by ONE newline that is not part of
+    # the body. Keep it and every sync would PATCH the body back one newline
+    # longer. Strip exactly that one (the `x` sentinel keeps $(...) from
+    # eating the body's own trailing newlines).
+    body="$(cat "$out"; printf x)" || return 2
+    body="${body%x}"
+    printf '%s' "${body%$'\n'}" > "$out" || return 2
 }
 
 pbe_upsert_line() {
@@ -133,6 +144,22 @@ pbe_write() {
     [ "$rc" -eq 0 ] || return 2
     _pbe_gh || return 2
     py="$(_pbe_py)" || return 2
+    # Concurrency guard: the PATCH replaces the whole body, so an edit made
+    # since <old-file> was read would be silently overwritten. Re-read right
+    # before writing and refuse when the body moved on. (GitHub takes no
+    # If-Match on this endpoint; the window left is the re-read-to-PATCH gap.)
+    local now
+    now="$(mktemp)" || return 2
+    if ! pbe_fetch "$repo" "$pr" "$now"; then
+        rm -f "$now"
+        return 2
+    fi
+    if ! cmp -s "$old" "$now"; then
+        rm -f "$now"
+        echo "pr-body-edit: ${repo}#${pr} body changed since it was read (a concurrent edit) — NOT overwriting it; re-read and retry." >&2
+        return 3
+    fi
+    rm -f "$now"
     payload="$(mktemp)" || return 2
     if ! "$py" -c 'import json, sys; json.dump({"body": open(sys.argv[1], encoding="utf-8", newline="").read()}, sys.stdout)' \
         "$new" > "$payload"; then
