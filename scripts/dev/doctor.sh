@@ -403,7 +403,7 @@ if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
         esac
     done
     if [ -n "$hooks_abs" ]; then
-        write_warn 'hooksPath' "absolute core.hooksPath ($hooks_abs) runs the main checkout's hooks in every worktree; fix: bash agents/scripts/core/setup-harness.sh git-hooks (rewrites it to scripts/git-hooks)"
+        write_warn 'hooksPath' "absolute core.hooksPath ($hooks_abs) runs the main checkout's hooks in every worktree; fix: bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh git-hooks (rewrites it to scripts/git-hooks)"
     elif [ -n "$hooks_rel" ]; then
         write_pass 'hooksPath' "relative ($hooks_rel) -- each worktree runs its own hooks"
     fi

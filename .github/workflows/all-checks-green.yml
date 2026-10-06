@@ -14,8 +14,8 @@ name: All checks green
 # is terminal, fails fast on the first blocking red, and passes only when all of
 # them are terminal and green. The rules (latest run per name, `advisory`-name
 # exemption, self-exclusion, required-but-unreported = pending, the poller's
-# *-out-of-band downgrades) live in agents/scripts/core/all-checks-green.sh
-# (tests/bats/all_checks_green.bats replays the #2286 check list).
+# *-out-of-band downgrades) live in the layer's agents/scripts/core/all-checks-green.sh
+# (the layer's tests/bats/all_checks_green.bats replays the #2286 check list).
 #
 # It binds native auto-merge only once `All checks green (block-on-any-red)` is in
 # project.config.json § branch_protection.required_contexts AND re-applied to the
@@ -66,8 +66,10 @@ permissions:
   pull-requests: read  # GET pulls/{n}: head SHA, state, live labels + body
 
 env:
-  # Agent-layer indirection (mirrors the other workflows): the checkout root.
-  AGENT_LAYER_ROOT: .
+  # Agent-layer indirection: the layer is the agent-layer/ submodule (the checkout
+  # below uses `submodules: recursive`); the project is the checkout root.
+  AGENT_LAYER_ROOT: agent-layer
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -77,13 +79,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 185
     steps:
-      - name: Checkout (gate script + project.config.json only)
+      - name: Checkout (agent layer + project.config.json only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Cone mode: agents/scripts/core/ plus every root-level file
-          # (project.config.json supplies the required-context set).
-          sparse-checkout: agents/scripts/core
+          # The gate script is layer content. Cone mode keeps every root-level
+          # file (project.config.json supplies the required-context set) and the
+          # agent-layer gitlink; `submodules: recursive` then fills the mount.
+          submodules: recursive
+          sparse-checkout: agent-layer
 
       - name: Wait for every other check; fail fast on the first blocking red
         env:
@@ -93,4 +97,7 @@ jobs:
           ACG_SHA: ${{ github.event.pull_request.head.sha }}
           # Must equal the job `name:` above — the script excludes itself by name.
           ACG_SELF: All checks green (block-on-any-red)
+          # The HOST's config: the mount carries the layer's own
+          # project.config.json, whose required contexts are not this repo's.
+          PC_CONFIG_FILE: ${{ github.workspace }}/project.config.json
         run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/all-checks-green.sh"

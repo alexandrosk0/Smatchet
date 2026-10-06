@@ -86,8 +86,15 @@ run_parse() {
 
 # ---------- branch-keyed release (lock-release-on-close.sh) ----------
 # The body marker is mutable and easy to omit; the claim.json `branch` field is
-# not. The script's behaviour is covered by lock_release_on_close.bats — these
-# pin only that the workflow calls it, with the inputs its guards need.
+# not. The script is agent-layer content; its behaviour is covered by the layer's
+# lock_release_on_close.bats — these pin only that the workflow calls it, with the
+# inputs its guards need.
+
+@test "the release script is reached through the agent-layer submodule" {
+    grep -qE '^[[:space:]]*AGENT_LAYER_ROOT:[[:space:]]*agent-layer[[:space:]]*$' "$WF"
+    grep -qE '^[[:space:]]*submodules:[[:space:]]*recursive[[:space:]]*$' "$WF"
+    grep -qE 'bash "\$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close\.sh"' "$WF"
+}
 
 @test "the workflow releases by claim.json branch via lock-release-on-close.sh --branch" {
     grep -qE 'lock-release-on-close\.sh" --branch "\$HEAD_REF"' "$WF"
