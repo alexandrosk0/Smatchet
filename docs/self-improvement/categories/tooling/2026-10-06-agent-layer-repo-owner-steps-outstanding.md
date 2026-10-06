@@ -12,15 +12,18 @@ published `the-unwilling-agentic-bunch`. Three steps need the owner's credential
    close it.
 3. **Auto-bump.** `auto-bump.yml` stays off until the layer has the `AGENT_LAYER_BUMP_PAT` secret
    (contents and pull-requests write on Smatchet) and the `AUTO_BUMP=on` variable. Until then,
-   git-janitor's backstop proposes bumps.
+   git-janitor's backstop proposes bumps. Per `ship-loops.md` § Two-repo ship-loop (d), turn it on only
+   after `agent-layer-integration.yml` has been seen firing and passing on a gitlink-only bump PR.
 
 Concrete next action:
-- Owner: from a layer checkout, run
-  `REPO=alexandrosk0/the-unwilling-agentic-bunch bash agents/scripts/core/setup-branch-protection.sh`
-  (the command the seed prints on that failure), then run step 2 and record the result in row 81 of
+- Owner: from a standalone clone of the layer (not Smatchet's `agent-layer/` mount, where the
+  script reads Smatchet's config and would require Smatchet's contexts), run
+  `REPO=alexandrosk0/the-unwilling-agentic-bunch bash agents/scripts/core/setup-branch-protection.sh --dry-run`
+  and confirm the body lists exactly the three layer lanes. Then run it without `--dry-run` (the command
+  the seed prints on that failure), run step 2, and record the result in row 81 of
   `docs/plans/agent-surface-extraction-repo.md`.
-- Owner: add the secret and the variable. The first auto-bump PR proves the end-to-end path,
-  including `agent-layer-integration.yml` firing on a gitlink-only diff.
+- After a gitlink-only bump PR in Smatchet shows `agent-layer-integration.yml` firing and passing, the
+  owner adds the secret and the variable. The first auto-bump PR then proves the automation itself.
 
 Status: open
 Last-reviewed: 2026-10-06
