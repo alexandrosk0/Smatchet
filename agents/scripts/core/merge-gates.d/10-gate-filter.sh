@@ -13,13 +13,36 @@
 # `local GATE_FILTER` comment. No logic change — pure relocation (bats is the net).
 # ----------------------------------------------------------------------------
 
+# _MG_JQ_DISPOSITION_DEF — the ONE reader for every override disposition trail
+# (cr-disposition, plan-lock-disposition): a `<prefix>:<reason>` label, or a
+# `<prefix>:<reason>` marker LINE in the PR body. Prepended to the gate filter
+# below and to safe-admin-merge.sh's jq programs, so the poller and the admin
+# path accept exactly the same attestations. A marker counts only when:
+#   * it starts its line (leading whitespace and a `-`/`*`/`+` list bullet are
+#     tolerated) — prose or a quoted error text that merely mentions the prefix
+#     does not attest anything;
+#   * it sits outside an HTML comment (a template placeholder never counts);
+#   * its reason is non-empty and not a `<...>` placeholder: pasting the gate's
+#     own error text (`plan-lock-disposition:<reason>`) is not a reason.
+# Labels follow the same reason rule. (NB: no apostrophes in these
+# single-quoted jq strings.)
 # shellcheck disable=SC2016  # single-quoted jq literal — $-refs are jq vars, not bash
-_MG_GATE_FILTER_TEMPLATE='
-# disposition — the ONE reader for every override disposition trail: a
-# `<prefix>:` label, or a `<prefix>:<reason>` PR-body marker.
+_MG_JQ_DISPOSITION_DEF='
 def disposition($labels; $body; $prefix):
-  ($labels | any(startswith($prefix + ":")))
-  or (($body // "") | test($prefix + ":[[:space:]]*[^[:space:]]"; "i"));
+  def _reason_filled:
+    gsub("^[[:space:]]+|[[:space:]]+$"; "") as $r
+    | ($r | length) > 0 and ($r | test("^<[^>]*>") | not);
+  ("^[[:space:]]*([-*+][[:space:]]+)?" + $prefix + ":") as $lead
+  | ($labels | any(startswith($prefix + ":")
+                   and (.[(($prefix | length) + 1):] | _reason_filled)))
+    or (($body // "")
+        | gsub("<!--[\\s\\S]*?-->"; "") | gsub("<!--[\\s\\S]*$"; "")
+        | [splits("\r?\n")]
+        | any(test($lead; "i") and (sub($lead; ""; "i") | _reason_filled)));
+'
+
+# shellcheck disable=SC2016  # single-quoted jq literal — $-refs are jq vars, not bash
+_MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
 .data.repository.pullRequest as $pr
 | ($pr.headRefOid // "") as $sha
 | ([$pr.labels.nodes[]?.name]) as $labels
@@ -81,10 +104,9 @@ def disposition($labels; $body; $prefix):
 # generalising the PR-2 cr-rate-limit-code-pr-auto-pause requirement to EVERY
 # cr-out-of-band downgrade): it proves the operator consciously waived CR review
 # with a recorded reason rather than reflexively slapping a generic override on.
-# Body match: `cr-disposition:` followed by any non-empty reason on the line
-# (regex tolerates leading whitespace / list markers) — the shared
-# disposition() reader above. (NB: no apostrophes in this single-quoted jq
-# filter string.)
+# Body match: a `cr-disposition:<reason>` line outside an HTML comment with a
+# filled-in reason — the shared disposition() reader (_MG_JQ_DISPOSITION_DEF).
+# (NB: no apostrophes in this single-quoted jq filter string.)
 | disposition($labels; $pr.body; "cr-disposition") as $crdisposition
 # planlockdisposition — the same trail, required by plan-lock-out-of-band
 # (process 2026-09-12): the label ALONE no longer downgrades a red Plan-lock gate.

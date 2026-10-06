@@ -79,7 +79,12 @@
 # sync with merge-gates.sh $downgraded — a half-wired label was the ADR-0022
 # intent-out-of-band bug):
 #   intent-out-of-band → "Intent section" (mirrors poll_merge_gates $intent downgrade)
-#   plan-lock-out-of-band → "Plan-lock gate" (mirrors poll_merge_gates $planlock)
+#   plan-lock-out-of-band → "Plan-lock gate" (mirrors poll_merge_gates $planlock):
+#                        honoured only WITH a plan-lock-disposition:<reason>
+#                        label or PR-body line (the poller's disposition()
+#                        reader), and refused when the poller's own stale-red
+#                        re-check (_mg_planlock_recheck) finds that nothing
+#                        collides any more — re-run the gate instead.
 #   tests-out-of-band / perf-out-of-band → NOT honoured by this guard
 #                        (stale-override guard, merge-pipeline-01): their
 #                        workflows are label-reactive — they re-run on `labeled`
@@ -166,6 +171,13 @@ source "$SCRIPT_DIR/merge-gates.sh"
 
 if [ -z "${MERGE_GATES_BLOCK_ALLOWLIST_RE:-}" ]; then
     echo "safe-admin-merge: merge-gates.sh did not export MERGE_GATES_BLOCK_ALLOWLIST_RE — refusing (fail-closed)." >&2
+    exit 2
+fi
+# The disposition-trail reader (cr-disposition / plan-lock-disposition) is the
+# poller's own jq def from merge-gates.d/10-gate-filter.sh, loaded by the source
+# above — single-sourced so both merge paths accept the same attestations.
+if [ -z "${_MG_JQ_DISPOSITION_DEF:-}" ] || ! command -v _mg_planlock_recheck >/dev/null 2>&1; then
+    echo "safe-admin-merge: merge-gates.sh did not provide the disposition reader / Plan-lock re-check — refusing (fail-closed)." >&2
     exit 2
 fi
 
@@ -263,7 +275,7 @@ evaluate_rollup() {
     printf '%s' "$view_json" | jq -r \
         --argjson req "$req_json" \
         --arg allow "$MERGE_GATES_BLOCK_ALLOWLIST_RE" \
-        "$_SAM_JQ_DEFS"'
+        "$_MG_JQ_DISPOSITION_DEF$_SAM_JQ_DEFS"'
         # Label-driven downgrades — GATE-SIDE-ONLY labels (merge-gates
         # $downgraded minus its stale-override-guarded arms). tests-/perf-
         # out-of-band are deliberately NOT honoured here (stale-override guard,
@@ -277,15 +289,17 @@ evaluate_rollup() {
         # their workflows are label-blind (no labeled re-run will ever come),
         # so the gate-side downgrade IS the dismissal mechanism and a
         # freshness demand would wedge the guard.
+        # plan-lock-out-of-band, like cr-out-of-band, is honoured only WITH its
+        # disposition trail (plan-lock-disposition:<reason>, label or PR-body
+        # line) — the poller rule, read through the poller own disposition()
+        # def (merge-gates.d/10-gate-filter.sh). Body-only waivers (documented
+        # in merge-gates.md) must not leave this guard blocking forever.
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         | ($labels | any(. == "cr-out-of-band")) as $crOob
-        # Label OR PR-body marker — same predicate as merge-gates.d/10-gate-filter.sh
-        # ($crdisposition). Body-only waivers (documented in merge-gates.md) must
-        # not leave safe-admin-merge blocking CR findings* forever.
-        | (($labels | any(startswith("cr-disposition:")))
-           or ((.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crDisp
+        | disposition($labels; .body; "cr-disposition") as $crDisp
+        | disposition($labels; .body; "plan-lock-disposition") as $planlockDisp
         | (sam_latest) as $latest
         # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
         # the absent-required cross-check below can see which names are present.
@@ -303,7 +317,7 @@ evaluate_rollup() {
              | ($g + {gating:
                  ($g.gating
                   and (($intentOob and $g.name == "Intent section") | not)
-                  and (($planlockOob and $g.name == "Plan-lock gate") | not)
+                  and (($planlockOob and $planlockDisp and $g.name == "Plan-lock gate") | not)
                   and (($crOob and $crDisp and ($g.name | test("^CR finding"; "i"))) | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
@@ -313,7 +327,7 @@ evaluate_rollup() {
         | ([ $req[]
              | select(. as $rn | ($present | any(. == $rn)) | not)
              | select(($intentOob and . == "Intent section") | not)
-             | select(($planlockOob and . == "Plan-lock gate") | not)
+             | select(($planlockOob and $planlockDisp and . == "Plan-lock gate") | not)
              | select(($crOob and $crDisp and test("^CR finding"; "i")) | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
         | unique
@@ -464,15 +478,18 @@ downgraded_red_checks() {
     # merges made by OTHER actors (human/UI, watcher), where a tests/perf label
     # may genuinely have been load-bearing. sam_red (terminal red), not
     # not-green: a PENDING row at capture time is unknown, never a bypassed red.
-    printf '%s' "$view_json" | jq -r "$_SAM_JQ_DEFS"'
+    # plan-lock-out-of-band is recorded WITHOUT its disposition requirement for
+    # the same reason: a backfilled merge that went past a red Plan-lock gate on
+    # the bare label must still land in redChecks (that is the escape the
+    # ledger exists to surface); this guard itself refuses such a merge.
+    printf '%s' "$view_json" | jq -r "$_MG_JQ_DISPOSITION_DEF$_SAM_JQ_DEFS"'
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         | ($labels | any(. == "cr-out-of-band")) as $crOob
-        | (($labels | any(startswith("cr-disposition:")))
-           or ((.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crDisp
+        | disposition($labels; .body; "cr-disposition") as $crDisp
         | (sam_latest) as $latest
         | $latest[]
         | sam_name as $name
@@ -483,6 +500,22 @@ downgraded_red_checks() {
                       or ($planlockOob and $name == "Plan-lock gate")
                       or ($crOob and $crDisp and ($name | test("^CR finding"; "i")))))
         | $name
+    '
+}
+
+# ----------------------------------------------------------------------------
+# planlock_downgrade_applied <view_json> — "true" when evaluate_rollup waived a
+# non-green "Plan-lock gate" through plan-lock-out-of-band + its disposition,
+# i.e. when the stale-red re-check below has something to judge; else "false".
+# Non-zero only on a jq failure (caller fails closed).
+# ----------------------------------------------------------------------------
+planlock_downgrade_applied() {
+    printf '%s' "$1" | jq -r "$_MG_JQ_DISPOSITION_DEF$_SAM_JQ_DEFS"'
+        ([.labels[]?.name] // []) as $labels
+        | (($labels | any(. == "plan-lock-out-of-band"))
+           and disposition($labels; .body; "plan-lock-disposition")
+           and ([sam_latest[] | select(sam_name == "Plan-lock gate" and (sam_green | not))]
+                | length > 0))
     '
 }
 
@@ -658,16 +691,40 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
-    # CASE 4c — plan-lock-out-of-band downgrades a RED "Plan-lock gate" (parity
-    # with poll_merge_gates $planlock; this path was half-wired until 2026-07-08).
+    # CASE 4c — plan-lock-out-of-band + plan-lock-disposition downgrades a RED
+    # "Plan-lock gate" (parity with poll_merge_gates $planlock; this path was
+    # half-wired until 2026-07-08, and lacked the disposition rule until
+    # 2026-10-06).
     local planlock_oob_rollup
-    planlock_oob_rollup='{"state":"OPEN","labels":[{"name":"plan-lock-out-of-band"}],"statusCheckRollup":[
+    planlock_oob_rollup='{"state":"OPEN","labels":[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE"}]}'
     blockers=$(evaluate_rollup "$planlock_oob_rollup" "")
     if [ -z "$blockers" ]; then
-        echo "selftest CASE4c PASS — plan-lock-out-of-band downgrades RED Plan-lock gate"
+        echo "selftest CASE4c PASS — plan-lock-out-of-band + disposition downgrades RED Plan-lock gate"
     else
-        echo "selftest CASE4c FAIL — plan-lock-out-of-band check should not block (got: '$blockers')" >&2
+        echo "selftest CASE4c FAIL — plan-lock-out-of-band + disposition should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+    # CASE 4c2 — the label ALONE is not honoured (the poller rule).
+    local planlock_bare_rollup
+    planlock_bare_rollup='{"state":"OPEN","labels":[{"name":"plan-lock-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$planlock_bare_rollup" "")
+    if printf '%s' "$blockers" | grep -q 'Plan-lock gate'; then
+        echo "selftest CASE4c2 PASS — bare plan-lock-out-of-band does not downgrade (disposition required)"
+    else
+        echo "selftest CASE4c2 FAIL — bare plan-lock-out-of-band must still block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+    # CASE 4c3 — pasting the gate's own '<reason>' placeholder is not a disposition.
+    local planlock_placeholder_rollup
+    planlock_placeholder_rollup='{"state":"OPEN","body":"plan-lock-disposition:<reason>\n","labels":[{"name":"plan-lock-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$planlock_placeholder_rollup" "")
+    if printf '%s' "$blockers" | grep -q 'Plan-lock gate'; then
+        echo "selftest CASE4c3 PASS — a <reason> placeholder is not a plan-lock disposition"
+    else
+        echo "selftest CASE4c3 FAIL — placeholder disposition must not downgrade (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 
@@ -895,7 +952,7 @@ run_selftest() {
     fi
 
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (23/23)"
+        echo "PASS — safe-admin-merge --selftest (25/25)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
@@ -926,7 +983,7 @@ main() {
         command -v gh >/dev/null 2>&1 || { echo "safe-admin-merge: gh required" >&2; exit 2; }
         # body is load-bearing for the cr-disposition trail (label OR PR-body
         # marker — parity with merge-gates.d/10-gate-filter.sh).
-        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,body,commits,headRefOid 2>&1); then
+        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,body,commits,headRefOid,headRefName,url 2>&1); then
             echo "safe-admin-merge: gh pr view failed: $view_json" >&2
             exit 2
         fi
@@ -954,6 +1011,34 @@ main() {
         printf '  RED/PENDING: %s\n' "$blockers" >&2
         echo "A bare 'gh pr merge --admin' would have bypassed branch protection and shipped past these. Fix or use the named *-out-of-band override label." >&2
         exit 1
+    fi
+
+    # Stale-red Plan-lock guard — the poller's rule, through the poller's own
+    # helpers: a plan-lock-out-of-band downgrade is refused when re-running the
+    # gate's decision against the CURRENT lock table finds no collision (the red
+    # went stale; re-run the gate instead of overriding it). A live collision or
+    # an undeterminable lock state leaves the downgrade standing.
+    local pl_applied
+    if ! pl_applied=$(planlock_downgrade_applied "$view_json"); then
+        echo "safe-admin-merge: Plan-lock downgrade evaluation failed — refusing (fail-closed)." >&2
+        exit 2
+    fi
+    if [ "$pl_applied" = "true" ]; then
+        local pl_url pl_nwo pl_owner="" pl_repo="" pl_head_ref pl_head_sha pl_verdict
+        pl_url=$(printf '%s' "$view_json" | jq -r '.url // ""' 2>/dev/null) || pl_url=""
+        pl_head_ref=$(printf '%s' "$view_json" | jq -r '.headRefName // ""' 2>/dev/null) || pl_head_ref=""
+        pl_head_sha=$(printf '%s' "$view_json" | jq -r '.headRefOid // ""' 2>/dev/null) || pl_head_sha=""
+        # https://github.com/<owner>/<repo>/pull/<n>
+        pl_nwo="${pl_url#*://*/}"
+        pl_nwo="${pl_nwo%%/pull/*}"
+        case "$pl_nwo" in
+            */*) pl_owner="${pl_nwo%%/*}"; pl_repo="${pl_nwo#*/}" ;;
+        esac
+        pl_verdict=$(_mg_planlock_recheck "$pl_owner" "$pl_repo" "$pr" "$pl_head_ref")
+        if _mg_planlock_verdict_report "$pl_verdict" "$pl_owner" "$pl_repo" "$pl_head_sha"; then
+            echo "REFUSED — PR #$pr: the 'Plan-lock gate' red is stale; NOT admin-merging." >&2
+            exit 1
+        fi
     fi
 
     # CodeRabbit-completion gate — CI is green, but a CI-green PR can still be

@@ -1691,6 +1691,54 @@ plan_lock_red_fixture() {
     rm -f "$f"
 }
 
+# The disposition reader (_MG_JQ_DISPOSITION_DEF) accepts only a filled-in
+# marker LINE outside an HTML comment: the gate's own error text, a template
+# placeholder or a comment-hidden marker attests nothing.
+@test "plan-lock disposition: the gate's own '<reason>' error text pasted in the body does NOT count" {
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"}]' \
+        $'## Intent\nx\n\nWARN: requires a \'plan-lock-disposition:<reason>\' label or PR-body marker\nplan-lock-disposition:<reason>\n')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plan-lock-out-of-band present but NOT honoured"* ]]
+    [[ "$output" == *"0 warn-downgraded"* ]]
+    rm -f "$f"
+}
+
+@test "plan-lock disposition: a marker inside an HTML comment does NOT count" {
+    local f
+    f="$(plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"}]' \
+        $'## Intent\nx\n\n<!--\nplan-lock-disposition: crossed the docs index lock\n-->\n')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plan-lock-out-of-band present but NOT honoured"* ]]
+    rm -f "$f"
+}
+
+@test "cr disposition: a marker mid-line or in a quote block does NOT count; a bulleted line does" {
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    f2="$(fixture_override "$f1" "data.repository.pullRequest.body" \
+        '"See the gate text: add a cr-disposition: over-limit-acked marker.\n> cr-disposition: quoted-reply"')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cr-out-of-band present but NOT honoured"* ]]
+    f3="$(fixture_override "$f1" "data.repository.pullRequest.body" \
+        '"Reorg.\n  - cr-disposition: over-CR-file-limit-acked"')"
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f1" "$f2" "$f3"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 # Stale-red re-check (tooling 2026-10-04 stale-plan-lock-red-overridden-instead-
 # of-rerun, item 1): before honouring plan-lock-out-of-band + disposition, the
 # poller re-runs plan_lock_gate_decide against the CURRENT lock table. The gh

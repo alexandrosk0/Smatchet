@@ -45,6 +45,12 @@ if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     printf '%s\n' "$*" >> "${MERGE_SENTINEL:?}"
     exit 0
 fi
+# `gh pr diff <pr> --repo <o/r> --name-only` — the stale-red Plan-lock
+# re-check's changed-file list: $SAM_STUB_PR_DIFF (unset → no output).
+if [ "$1" = "pr" ] && [ "$2" = "diff" ]; then
+    [ -n "${SAM_STUB_PR_DIFF:-}" ] && printf '%s\n' "$SAM_STUB_PR_DIFF"
+    exit 0
+fi
 # `gh pr view` should never be reached when SAFE_ADMIN_MERGE_STUB_ROLLUP is set;
 # fail loudly if it is, so a test that forgets the stub can't pass silently.
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
@@ -59,6 +65,7 @@ STUB
 
 teardown() {
     rm -rf "$STUB_BIN_DIR"
+    unset SAM_STUB_PR_DIFF LTC_ROWS_OVERRIDE
 }
 
 # A green rollup: every required + allow-listed check SUCCESS.
@@ -74,10 +81,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (23/23) and dogfoods the gate" {
+@test "--selftest passes (25/25) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (23/23)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (25/25)"* ]]
 }
 
 @test "dedup-to-latest: older CANCELLED run with a newer SUCCESS run reads GREEN (exit 0, merge fires)" {
@@ -203,6 +210,75 @@ JSON
       {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
     run bash "$SCRIPT" 1180
     [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+}
+
+# plan-lock-out-of-band parity with the poller (merge-gates.sh): the label is
+# honoured only with a plan-lock-disposition, and a red the poller's own
+# re-check finds stale is refused. LTC_ROWS_OVERRIDE injects the lock table
+# (branch<TAB>epoch<TAB>slug<TAB>path); the gh stub serves the PR diff.
+planlock_rollup() {
+    # Usage: planlock_rollup <labels JSON> [<body>]
+    jq -nc --argjson labels "$1" --arg body "${2:-}" '{
+        state: "OPEN", labels: $labels, body: $body,
+        url: "https://github.com/o/r/pull/2300",
+        headRefName: "feat/planlock", headRefOid: "abc123",
+        statusCheckRollup: [
+          {__typename: "StatusContext", context: "Windows + MSVC", state: "SUCCESS"},
+          {__typename: "StatusContext", context: "Test-delta gate", state: "SUCCESS"},
+          {__typename: "CheckRun", name: "Plan-lock gate", status: "COMPLETED", conclusion: "FAILURE"}]}'
+}
+
+@test "plan-lock-out-of-band ALONE does NOT downgrade a RED Plan-lock gate (disposition required: exit 1, no merge)" {
+    SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"}]')"
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP
+    run bash "$SCRIPT" 2300
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Plan-lock gate"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "plan-lock-out-of-band + a <reason> placeholder body line is not a disposition (exit 1, no merge)" {
+    SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"}]' \
+        "plan-lock-disposition:<reason>")"
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP
+    run bash "$SCRIPT" 2300
+    [ "$status" -eq 1 ]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "plan-lock-out-of-band + disposition with a LIVE collision on re-check downgrades (exit 0, merge fires)" {
+    local rows="$BATS_TEST_TMPDIR/lock-rows"
+    printf 'claude/other-branch\t%s\tlive-lock\tdocs/plans/INDEX.md\n' "$(date -u +%s)" > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows" SAM_STUB_PR_DIFF="docs/plans/INDEX.md"
+    SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}]')"
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP
+    run bash "$SCRIPT" 2300
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"stale red"* ]]
+    [ -f "$MERGE_SENTINEL" ]
+}
+
+@test "plan-lock-out-of-band + disposition over a STALE red (lock aged out) is REFUSED (exit 1, no merge)" {
+    local rows="$BATS_TEST_TMPDIR/lock-rows"
+    printf 'claude/other-branch\t%s\taged-out\tdocs/plans/INDEX.md\n' \
+        "$(( $(date -u +%s) - 20 * 24 * 3600 ))" > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows" SAM_STUB_PR_DIFF="docs/plans/INDEX.md"
+    SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"}]' \
+        $'## Intent\nx\n\nplan-lock-disposition: crossed aged-out (orphaned lock)\n')"
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP
+    run bash "$SCRIPT" 2300
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"stale red — re-run"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "plan-lock-out-of-band + disposition with re-check inputs unavailable -> WARN, downgrade stands (exit 0)" {
+    SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}]')"
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP
+    run bash "$SCRIPT" 2300
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"could not re-evaluate the Plan-lock gate red"* ]]
     [ -f "$MERGE_SENTINEL" ]
 }
 

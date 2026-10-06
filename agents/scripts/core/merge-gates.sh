@@ -301,7 +301,7 @@ _mg_csv_drop() {
 _mg_planlock_recheck() {
     local owner="$1" repo="$2" pr="$3" head_ref="$4"
     (
-        [ -n "$head_ref" ] || { echo unknown; exit 0; }
+        if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$head_ref" ]; then echo unknown; exit 0; fi
         changed="$(gh pr diff "$pr" --repo "$owner/$repo" --name-only 2>/dev/null)" \
             || { echo unknown; exit 0; }
         [ -n "$changed" ] || { echo unknown; exit 0; }
@@ -322,6 +322,25 @@ _mg_planlock_recheck() {
             echo collides
         fi
     )
+}
+
+# _mg_planlock_verdict_report <verdict> <owner> <repo> <head sha> — print the
+# operator line for a _mg_planlock_recheck verdict on stderr and return 0 when
+# the plan-lock-out-of-band downgrade must be REFUSED (a positively clean
+# re-check: the red is stale), 1 when it stands. Shared by poll_merge_gates and
+# safe-admin-merge.sh so the two merge paths refuse the same stale reds with
+# the same words.
+_mg_planlock_verdict_report() {
+    local verdict="$1" owner="$2" repo="$3" head_sha="$4"
+    case "$verdict" in
+        clean)
+            echo "BLOCK: Plan-lock gate: stale red — re-run, do not override. Re-evaluated against the current refs/locks table, none of this PR's changed files overlaps another branch's live lock any more (the colliding lock was released or aged past the cutoff since the gate ran), so plan-lock-out-of-band is refused. Re-run the gate: gh api \"repos/${owner}/${repo}/commits/${head_sha}/check-runs?check_name=Plan-lock%20gate\" --jq '.check_runs[0].details_url' — the run id is the number after /runs/ — then gh run rerun <that-id>." >&2
+            return 0 ;;
+        unknown*)
+            echo "WARN: could not re-evaluate the Plan-lock gate red against the current lock table (PR diff or head ref unavailable); the plan-lock-out-of-band downgrade stands as recorded." >&2
+            ;;
+    esac
+    return 1
 }
 
 # ----------------------------------------------------------------------------
@@ -968,17 +987,11 @@ poll_merge_gates() {
                 planlock_recheck_head="$head_sha"
                 planlock_recheck_verdict="$(_mg_planlock_recheck "$owner" "$repo" "$prNumber" "${fields[38]}")"
             fi
-            case "$planlock_recheck_verdict" in
-                clean)
-                    ci_fail=$((ci_fail + 1))
-                    ci_warn_downgraded=$((ci_warn_downgraded - 1))
-                    dg_names="$(_mg_csv_drop "$dg_names" "Plan-lock gate")"
-                    echo "BLOCK: Plan-lock gate: stale red — re-run, do not override. Re-evaluated against the current refs/locks table, none of this PR's changed files overlaps another branch's live lock any more (the colliding lock was released or aged past the cutoff since the gate ran), so plan-lock-out-of-band is refused. Re-run the gate: gh api \"repos/${owner}/${repo}/commits/${head_sha}/check-runs?check_name=Plan-lock%20gate\" --jq '.check_runs[0].details_url' — the run id is the number after /runs/ — then gh run rerun <that-id>." >&2
-                    ;;
-                unknown)
-                    echo "WARN: could not re-evaluate the Plan-lock gate red against the current lock table (PR diff or head ref unavailable); the plan-lock-out-of-band downgrade stands as recorded." >&2
-                    ;;
-            esac
+            if _mg_planlock_verdict_report "$planlock_recheck_verdict" "$owner" "$repo" "$head_sha"; then
+                ci_fail=$((ci_fail + 1))
+                ci_warn_downgraded=$((ci_warn_downgraded - 1))
+                dg_names="$(_mg_csv_drop "$dg_names" "Plan-lock gate")"
+            fi
         fi
 
         # Surface every downgraded check on stderr so the operator sees what the
