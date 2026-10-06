@@ -14,6 +14,9 @@ name: Plan-lock cleanup
 #      backlog 2026-10-04-lock-release-on-close-keys-only-on-a-body-line).
 #      Skipped for a fork head, for develop/main/protected branches, and when
 #      the body carries a bare `holds-lock:` line.
+# Both paths are skipped while the head branch still has an OPEN PR (a second
+# PR from the branch, or this one reopened): the work is live. A reopen after
+# a release must re-claim with lock-claim.sh (the release logs the claim.json).
 # Stacked intermediates carry `holds-lock:` (NOT matched by path 1, and it
 # switches path 2 off) so only the final cutover PR's close releases.
 #
@@ -26,9 +29,14 @@ name: Plan-lock cleanup
 # workflow is short, single-purpose, and the only code it runs with that
 # token is develop's (the checkout below never takes the PR's ref).
 
+# Base-branch filter: plan locks guard work bound for develop (plan-lock-gate.yml
+# evaluates only PRs into develop). A PR into any other base — a stacked
+# intermediate merging into its feature branch — has not landed the work, so
+# its close must not release the lock; the final PR into develop does.
 on:
   pull_request:
     types: [closed]
+    branches: [develop]
 
 concurrency:
   group: plan-lock-cleanup-${{ github.event.pull_request.number }}
@@ -36,6 +44,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: read   # gh pr list — the open-PR guard
 
 env:
   # Agent-layer indirection: both roots are the checkout root pre-flip, so every
@@ -112,8 +121,35 @@ jobs:
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
           echo "::notice::Parsed lock-slug=$slug from PR #${{ github.event.pull_request.number }}."
 
+      - name: Checkout develop (the release script only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          # develop, never the PR's ref: this job holds `contents: write`, so the
+          # script it runs must be the reviewed one.
+          ref: develop
+          fetch-depth: 1
+          # Kept: the branch-match step deletes refs/locks/<slug> with `git push
+          # origin :refs/locks/<slug>` under this job's GITHUB_TOKEN (the
+          # github-actions integration the plan-locks ruleset lets delete). This
+          # job uploads no artifact, so the persisted credential never leaves the
+          # runner.
+          persist-credentials: true
+
+      - name: Keep the locks while the head branch still has an open PR
+        # A close is not the end of the work while the same head branch has
+        # another OPEN PR (or this one was reopened): releasing then strips the
+        # lock from live work. A failed query fails the job, releasing nothing.
+        id: active
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --check-open "$HEAD_REF" >> "$GITHUB_OUTPUT"
+
       - name: Delete refs/locks/<slug> if present
-        if: steps.parse.outputs.slug != ''
+        if: steps.parse.outputs.slug != '' && steps.active.outputs.active == 'false'
         env:
           SLUG: ${{ steps.parse.outputs.slug }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -134,27 +170,15 @@ jobs:
             echo "::notice::refs/${ref} already absent on origin; no-op."
           fi
 
-      - name: Checkout develop (the branch-match release script only)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
-          # develop, never the PR's ref: this job holds `contents: write`, so the
-          # script it runs must be the reviewed one.
-          ref: develop
-          fetch-depth: 1
-          # Kept: the next step deletes refs/locks/<slug> with `git push origin
-          # :refs/locks/<slug>` under this job's GITHUB_TOKEN (the github-actions
-          # integration the plan-locks ruleset lets delete). This job uploads no
-          # artifact, so the persisted credential never leaves the runner.
-          persist-credentials: true
-
       - name: Release locks claimed by the PR's head branch
         # Runs after the body-marker path, on every close: a lock that path
-        # already deleted is simply absent from the fetch.
+        # already deleted is simply absent from the fetch. The script repeats
+        # the open-PR guard itself (GH_TOKEN), so a direct run is safe too.
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LOCK_REMOTE: origin
         run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --branch "$HEAD_REF"

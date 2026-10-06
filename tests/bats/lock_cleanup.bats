@@ -119,6 +119,26 @@ run_parse() {
     grep -qE '^[[:space:]]*contents:[[:space:]]*write' "$WF"
 }
 
+# ---------- active-work guard + base-branch filter ----------
+
+@test "the workflow fires only for PRs into develop (a stacked intermediate's close keeps the lock)" {
+    grep -qE '^[[:space:]]*branches:[[:space:]]*\[develop\][[:space:]]*$' "$WF"
+}
+
+@test "an open-PR guard step runs the script's --check-open into GITHUB_OUTPUT" {
+    grep -qE 'lock-release-on-close\.sh" --check-open "\$HEAD_REF" >> "\$GITHUB_OUTPUT"' "$WF"
+    grep -qE '^[[:space:]]*id:[[:space:]]*active[[:space:]]*$' "$WF"
+    grep -qE '^[[:space:]]*pull-requests:[[:space:]]*read' "$WF"
+}
+
+@test "the body-marker delete is gated on the open-PR guard (both release paths respect live work)" {
+    grep -qE "^[[:space:]]*if:[[:space:]]*steps\.parse\.outputs\.slug != '' && steps\.active\.outputs\.active == 'false'[[:space:]]*$" "$WF"
+    local guard_line delete_line
+    guard_line="$(grep -nE 'id:[[:space:]]*active' "$WF" | cut -d: -f1)"
+    delete_line="$(grep -nE 'name: Delete refs/locks/<slug> if present' "$WF" | cut -d: -f1)"
+    [ "$guard_line" -lt "$delete_line" ]
+}
+
 # ---------- commented-out marker warning (parse step, run as written) ----------
 # A `lock-slug:` left inside the template's `<!-- -->` never matches the
 # anchored regex and renders as nothing, so the parse step names it with a

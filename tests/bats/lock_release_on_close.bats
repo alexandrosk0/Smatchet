@@ -49,6 +49,27 @@ setup() {
     export WS_FILE="$SANDBOX/write-set.txt"
     printf 'src/a.cpp\n' > "$WS_FILE"
 
+    # Stub gh for the open-PR guard (`gh pr list --head <ref> --state open
+    # --json … --jq …`): prints $STUB_OPEN_PRS verbatim — the --jq output shape,
+    # one "<head owner>/<head repo> <number>" per line (unset → no open PR);
+    # STUB_GH_FAIL=1 → the query fails. Every call is logged to $GH_LOG.
+    export GH_LOG="$SANDBOX/gh.log"
+    mkdir -p "$SANDBOX/bin"
+    cat > "$SANDBOX/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GH_LOG"
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+    [ "${STUB_GH_FAIL:-0}" = "1" ] && { echo "HTTP 502" >&2; exit 1; }
+    [ -n "${STUB_OPEN_PRS:-}" ] && printf '%s\n' "$STUB_OPEN_PRS"
+    exit 0
+fi
+echo "stub gh: unhandled: $*" >&2
+exit 99
+STUB
+    chmod +x "$SANDBOX/bin/gh"
+    export PATH="$SANDBOX/bin:$PATH"
+    unset STUB_OPEN_PRS STUB_GH_FAIL
+
     claim x-lock feat/x
     claim y-lock feat/y
 }
@@ -163,6 +184,49 @@ release() {
     held y-lock
 }
 
+# ---------- active-work guard: an OPEN PR on the same head keeps the locks ----------
+
+@test "a close while the head branch still has another open PR releases nothing" {
+    STUB_OPEN_PRS="o/r 2301" BASE_REPO="o/r" HEAD_REPO="o/r" release --branch feat/x
+    [ "$status" -eq 0 ]
+    held x-lock
+    held y-lock
+    [[ "$output" == *"still has open PR(s) #2301"* ]]
+    grep -q -- '--repo o/r --head feat/x --state open' "$GH_LOG"
+}
+
+@test "an open PR from a FORK branch of the same name does not hold the lock" {
+    STUB_OPEN_PRS="someone/r 2302" BASE_REPO="o/r" HEAD_REPO="o/r" release --branch feat/x
+    [ "$status" -eq 0 ]
+    gone x-lock
+}
+
+@test "a failed open-PR query releases nothing and exits 3" {
+    STUB_GH_FAIL=1 release --branch feat/x
+    [ "$status" -eq 3 ]
+    held x-lock
+    [[ "$output" == *"Could not list the open PRs"* ]]
+}
+
+@test "a release names the re-claim path for a later reopen" {
+    release --branch feat/x
+    [ "$status" -eq 0 ]
+    gone x-lock
+    [[ "$output" == *"If this PR is reopened"*"lock-claim.sh"* ]]
+}
+
+@test "--check-open prints active=true while an open PR remains and releases nothing" {
+    STUB_OPEN_PRS="o/r 2303" HEAD_REPO="o/r" release --check-open feat/x
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"active=true"* ]]
+    held x-lock
+    STUB_OPEN_PRS="" release --check-open feat/x
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"active=false"* ]]
+    STUB_GH_FAIL=1 release --check-open feat/x
+    [ "$status" -eq 3 ]
+}
+
 @test "a branch holding several locks releases all of them" {
     claim x-second feat/x
     release --branch feat/x
@@ -193,6 +257,17 @@ release() {
     release --slug no-such-lock
     [ "$status" -eq 0 ]
     [[ "$output" == *"nothing to release"* ]]
+}
+
+@test "--slug against an unreachable remote exits 3 (not 'nothing to release')" {
+    # A failing fetch is "absent" only when the remote answered with no such
+    # ref; ls-remote failing (network/auth/bad URL) is an error.
+    git -C "$CLONE" remote add broken "$SANDBOX/no-such-remote.git"
+    LOCK_REMOTE=broken release --slug x-lock
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"Could not reach broken"* ]]
+    [[ "$output" != *"nothing to release"* ]]
+    held x-lock
 }
 
 @test "--slug rejects a slug outside the lock grammar" {
@@ -245,6 +320,16 @@ release() {
     [ "$output" -ge 1 ]
     run bash -c 'grep -E "^[[:space:]]*(-[[:space:]]+)?uses:" "$1" | grep -vE "@[0-9a-f]{40}([[:space:]]|\$)"' _ "$DISPATCH_WF"
     [ -z "$output" ]
+}
+
+@test "dispatch workflow: concurrency is per slug and never cancels (no dropped queued releases)" {
+    # GitHub keeps ONE pending run per concurrency group; a fixed group made a
+    # batch of dispatched releases drop all but the newest queued one.
+    run grep -cE '^[[:space:]]*group:[[:space:]]*plan-lock-release-dispatch-\$\{\{[[:space:]]*inputs\.slug[[:space:]]*\}\}[[:space:]]*$' "$DISPATCH_WF"
+    [ "$output" -eq 1 ]
+    run grep -cE '^[[:space:]]*group:[[:space:]]*plan-lock-release-dispatch[[:space:]]*$' "$DISPATCH_WF"
+    [ "$output" -eq 0 ]
+    grep -qE '^[[:space:]]*cancel-in-progress:[[:space:]]*false' "$DISPATCH_WF"
 }
 
 @test "dispatch workflow: checks the release script out from develop, never an input ref" {

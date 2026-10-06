@@ -23,8 +23,14 @@ on:
         required: true
         type: string
 
+# Per-slug group: GitHub keeps at most ONE pending run per concurrency group and
+# cancels any older pending one, so a single fixed group silently dropped every
+# queued release but the newest when several slugs were dispatched together.
+# Keyed on the slug, releases of different locks run independently, and two
+# dispatches of the same slug still serialise (the second finds the ref gone
+# and no-ops). Never cancel in progress: a half-run release is just a retry.
 concurrency:
-  group: plan-lock-release-dispatch
+  group: plan-lock-release-dispatch-${{ inputs.slug }}
   cancel-in-progress: false
 
 permissions:

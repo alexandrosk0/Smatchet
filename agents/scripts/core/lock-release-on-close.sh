@@ -20,8 +20,13 @@
 #       .github/workflows/lock-release-dispatch.yml — the release path for a
 #       lock whose branch never opened a PR (tooling backlog
 #       2026-08-17-abandoned-lock-from-unpushed-branch-has-no-agent-release-path).
+#   bash agents/scripts/core/lock-release-on-close.sh --check-open <head-ref>
+#       Print `active=true` when <head-ref> still has an OPEN PR (else
+#       `active=false`) in GITHUB_OUTPUT form, and release nothing.
+#       lock-cleanup.yml gates its body-marker delete on it.
 #
-# Guards (--branch mode only; each one skips, never fails):
+# Guards (--branch mode only; each one skips, never fails — except an
+# unanswerable open-PR query, which exits 3 without releasing):
 #   - same-repo head: when BASE_REPO is set, HEAD_REPO must equal it. A fork's
 #     branch name can collide with one of ours.
 #   - a bare `holds-lock:` line in PR_BODY skips the whole release: stacked
@@ -30,6 +35,11 @@
 #     project.config.json `vcs.protected_branches`. No PR head is an
 #     integration branch, and locks claimed under one are the edit-hook claims
 #     a worktree session makes from the main checkout.
+#   - an OPEN PR on the same head branch (another PR from the branch, or this
+#     one reopened) keeps the locks: the work is still live. `gh pr list`
+#     answers it (GH_TOKEN in CI); a failed query exits 3, releasing nothing.
+#     A reopen AFTER a release does not restore the lock — re-claim it with
+#     lock-claim.sh from the claim.json the release logged.
 #
 # Both modes share one deletion path: log the claim.json, then delete the ref
 # with `--force-with-lease=<ref>:<sha-that-was-read>`. A lock released and
@@ -39,12 +49,14 @@
 #   LOCK_REMOTE                       git remote holding refs/locks/* (default: origin)
 #   SMATCHET_LOCK_BYPASS_REPO_CHECK   1 skips the remote-URL repo check (sandbox remotes)
 #   PR_BODY                           closed PR's body (--branch mode; holds-lock guard)
+#   GH_TOKEN                          gh auth for the open-PR guard (CI)
 #   HEAD_REPO / BASE_REPO             owner/name of the PR head repo and this repo
 #
 # Exit codes:
 #   0 — released, nothing to release, or skipped by a guard
 #   2 — argument / environment / repo-state error
-#   3 — refs/locks/* could not be fetched, or a delete failed after retries
+#   3 — refs/locks/* could not be fetched (or the remote could not be reached),
+#       the open-PR query failed, or a delete failed after retries
 
 set -euo pipefail
 
@@ -52,7 +64,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SLUG_RE='^[a-z0-9][a-z0-9-]{0,63}$'
 
 usage() {
-    echo "usage: bash agents/scripts/core/lock-release-on-close.sh --branch <head-ref> | --slug <slug>" >&2
+    echo "usage: bash agents/scripts/core/lock-release-on-close.sh --branch <head-ref> | --slug <slug> | --check-open <head-ref>" >&2
     exit 2
 }
 
@@ -64,7 +76,8 @@ while [ "$#" -gt 0 ]; do
         --branch=*) mode="branch"; target="${1#--branch=}"; shift ;;
         --slug) [ "$#" -ge 2 ] || usage; mode="slug"; target="$2"; shift 2 ;;
         --slug=*) mode="slug"; target="${1#--slug=}"; shift ;;
-        -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+        --check-open) [ "$#" -ge 2 ] || usage; mode="check"; target="$2"; shift 2 ;;
+        -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
         *) usage ;;
     esac
 done
@@ -73,6 +86,47 @@ if [ -z "$mode" ] || [ -z "$target" ]; then usage; fi
 if [ "$mode" = "slug" ] && ! printf '%s' "$target" | grep -qE "$SLUG_RE"; then
     echo "lock-release-on-close: invalid slug '$target' — must match [a-z0-9][a-z0-9-]{0,63}" >&2
     exit 2
+fi
+
+# _open_prs_for_branch <head-ref> — the numbers of the OPEN PRs whose head is
+# <head-ref> in this repository, space-separated (empty: none). With BASE_REPO
+# set the query targets that repo, and with HEAD_REPO set only PRs whose head
+# lives in HEAD_REPO count (a fork branch of the same name is not this work).
+# rc 2 gh missing, rc 3 the query failed — the caller must not read either as
+# "no open PR".
+_open_prs_for_branch() {
+    local head="$1" out
+    local -a repo_arg=()
+    command -v gh >/dev/null 2>&1 || return 2
+    if [ -n "${BASE_REPO:-}" ]; then repo_arg=(--repo "$BASE_REPO"); fi
+    # stdout only: a gh notice on stderr must not read as a PR row.
+    out="$(gh pr list ${repo_arg[@]+"${repo_arg[@]}"} --head "$head" --state open \
+        --json number,headRepository,headRepositoryOwner \
+        --jq '.[] | ((.headRepositoryOwner.login // "") + "/" + (.headRepository.name // "")) + " " + (.number | tostring)')" \
+        || return 3
+    printf '%s\n' "$out" | while read -r nwo num; do
+        [ -n "$num" ] || continue
+        if [ -n "${HEAD_REPO:-}" ] && [ "$nwo" != "$HEAD_REPO" ]; then continue; fi
+        printf '#%s ' "$num"
+    done
+}
+
+# --check-open: report whether the head branch still has an open PR, release
+# nothing. GITHUB_OUTPUT form so a workflow step can gate on it.
+if [ "$mode" = "check" ]; then
+    check_rc=0
+    open_prs="$(_open_prs_for_branch "$target")" || check_rc=$?
+    if [ "$check_rc" -ne 0 ]; then
+        echo "::error::Could not list the open PRs for '${target}' (gh pr list rc=${check_rc})." >&2
+        exit 3
+    fi
+    if [ -n "$open_prs" ]; then
+        echo "::notice::'${target}' still has open PR(s) ${open_prs% }; its locks stay with that work." >&2
+        echo "active=true"
+    else
+        echo "active=false"
+    fi
+    exit 0
 fi
 
 git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "lock-release-on-close: not inside a git checkout" >&2; exit 2; }
@@ -133,7 +187,15 @@ _release() {
 if [ "$mode" = "slug" ]; then
     ref="refs/locks/${target}"
     if ! git fetch --quiet "$remote" "+${ref}:${ref}" 2>/dev/null; then
-        if [ -z "$(git ls-remote "$remote" "$ref" 2>/dev/null)" ]; then
+        # A failed fetch is "absent" only when the remote ANSWERED and listed no
+        # such ref. An unreachable remote (network, auth, bad URL) is an error,
+        # never a silent "nothing to release" success.
+        if ! ls_out="$(git ls-remote "$remote" "$ref" 2>&1)"; then
+            echo "::error::Could not reach ${remote} to look up ${ref} (git ls-remote failed); nothing was released:"
+            printf '%s\n' "$ls_out"
+            exit 3
+        fi
+        if [ -z "$ls_out" ]; then
             echo "::notice::${ref} is not present on ${remote}; nothing to release."
             exit 0
         fi
@@ -168,6 +230,21 @@ for protected in develop main ${PC_VCS_PROTECTED_BRANCHES:-}; do
     fi
 done
 
+# Active-work guard: a close is not the end of the work while the same head
+# branch still has an OPEN PR — a second PR from the branch, or this very PR
+# reopened. Releasing then would strip the lock from live work. An unanswered
+# query is not "no open PR": fail without releasing (re-run the job).
+open_prs_rc=0
+open_prs="$(_open_prs_for_branch "$target")" || open_prs_rc=$?
+if [ "$open_prs_rc" -ne 0 ]; then
+    echo "::error::Could not list the open PRs for '${target}' (gh pr list rc=${open_prs_rc}); refusing to release locks the branch may still be using. Re-run this job."
+    exit 3
+fi
+if [ -n "$open_prs" ]; then
+    echo "::notice::'${target}' still has open PR(s) ${open_prs% }; its locks stay with that work. No branch-keyed release."
+    exit 0
+fi
+
 if ! git fetch --quiet --prune "$remote" '+refs/locks/*:refs/locks/*'; then
     echo "::error::Could not fetch refs/locks/* from ${remote}; branch-keyed release did not run."
     exit 3
@@ -190,5 +267,10 @@ $(git for-each-ref --format='%(objectname) %(refname)' refs/locks/)
 EOF
 
 echo "::notice::Branch-keyed release for '${target}': released=${released}, failed=${failed}."
+if [ "$released" -gt 0 ]; then
+    # Reopening the PR does not bring a released lock back. The claim.json
+    # logged above carries the write set to re-claim it with.
+    echo "::notice::If this PR is reopened (or the work resumes on '${target}'), re-claim each released lock from the branch: write the claim's write_set paths to a file, then LOCK_BRANCH='${target}' bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>."
+fi
 [ "$failed" -eq 0 ] || exit 3
 exit 0
