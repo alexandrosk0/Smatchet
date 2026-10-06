@@ -521,6 +521,39 @@ _partition() {  # <YYYY-MM> <blocks...>
     [ "$order" = "- 2026-05-02 # Per-entry misfiled-april - 2026-04-01 " ]
 }
 
+@test "rotate: a crash between file writes never loses a moving block (destination first)" {
+    # Blocks move partition -> partition (2026-02 -> new 2026-03), partition ->
+    # head (2026-01 -> head) and head -> partition (2026-03-05). The pre-fix order
+    # wrote 2026-01 without misfiled-april before the head gained it, so a crash
+    # right there lost the block. Crash after every possible write in turn.
+    _crash_fixture() {
+        rm -f "$(_cat_dir)"/applied*.md
+        _partition 2026-02 "$(_legacy 2026-02-01 feb)" "$(_per_entry 2026-03-04 misfiled-march)"
+        _partition 2026-01 "$(_legacy 2026-01-01 jan)" "$(_per_entry 2026-04-04 misfiled-april)"
+        _head "$(_legacy 2026-05-02 may)" "$(_legacy 2026-04-01 april)" "$(_legacy 2026-03-05 head-march)"
+    }
+    _copies() { cat "$(_cat_dir)"/applied*.md | grep -c -e "$1"; }
+    pats=('— feb$' '— jan$' '— may$' '— april$' '— head-march$'
+          '^# Per-entry misfiled-march' '^# Per-entry misfiled-april')
+    n=1
+    while :; do
+        _crash_fixture
+        ROTATE_APPLIED_CRASH_AFTER=$n run _run_rotate
+        [ "$status" -eq 3 ] || break
+        for p in "${pats[@]}"; do [ "$(_copies "$p")" -ge 1 ]; done
+        # The next ordinary run converges: every block exactly once.
+        run _run_rotate
+        [ "$status" -eq 0 ]
+        for p in "${pats[@]}"; do [ "$(_copies "$p")" -eq 1 ]; done
+        n=$(( n + 1 ))
+    done
+    [ "$status" -eq 0 ]
+    [ "$n" -gt 3 ]   # several writes, each one crash-tested
+    grep -q 'Per-entry misfiled-april' "$(_cat_dir)/applied.md"
+    grep -q 'Per-entry misfiled-march' "$(_cat_dir)/applied-2026-03.md"
+    grep -q 'head-march$' "$(_cat_dir)/applied-2026-03.md"
+}
+
 @test "rotate: a legacy-only ledger rotates exactly as before, and a second run is a no-op" {
     _head "$(_legacy 2026-05-02 may)" "$(_legacy 2026-04-01 april)" \
           "$(_legacy 2026-03-02 march-b)" "$(_legacy 2026-03-01 march-a)"

@@ -26,6 +26,11 @@
 # it, dropping only exact copies of blocks the partition already holds.
 # Idempotent: a second run is a no-op.
 #
+# Crash-safe ordering: every block that moves is written into its DESTINATION
+# (a partition, or the head) before any file drops it from its SOURCE, so a
+# crash between two writes can leave a block in two files but never in none —
+# and the exact-copy dedupe folds such a copy back to one on the next run.
+#
 # Invoked automatically by archive-backlog-entry.sh after each append, so the
 # head stays bounded by construction. test-backlog-counts.sh runs `--check`
 # as an ADVISORY (WARN-only) freshness signal — a month boundary can make
@@ -37,11 +42,14 @@
 #   bash agents/scripts/core/rotate-applied-md.sh --check    # exit 1 if rotation is due
 #
 # Env: ROTATE_APPLIED_TODAY=YYYY-MM-DD  pin "today" (fixtures; default: the date).
+#      ROTATE_APPLIED_CRASH_AFTER=N      test seam: exit 3 right after the Nth
+#                                        file write (a simulated crash).
 #
 # Exit codes:
 #   0 — rotated (or nothing to rotate; or --check with nothing due)
 #   1 — --check mode and rotation is due; OR Python error via `set -e`
 #   2 — applied.md not found / no python
+#   3 — the ROTATE_APPLIED_CRASH_AFTER test seam fired
 
 set -euo pipefail
 
@@ -81,10 +89,16 @@ sys.path.insert(0, lib_dir)
 import applied_md_lib as aml  # noqa: E402  (sibling module; path set above)
 
 
+_crash_env = os.environ.get("ROTATE_APPLIED_CRASH_AFTER", "")
+CRASH_AFTER = int(_crash_env) if _crash_env.isdigit() else 0
+_writes = 0
+
+
 def write_atomic(path, text):
     # Write to a temp sibling and os.replace() so a crash mid-write never
-    # truncates the target; the partition/head pair stays retry-safe together
-    # with the duplicate-drop in the partition merge below.
+    # truncates the target. Crashes BETWEEN writes are covered by the
+    # destination-first write order below plus the exact-copy dedupe.
+    global _writes
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -96,6 +110,10 @@ def write_atomic(path, text):
         except OSError:
             pass
         raise
+    _writes += 1
+    if CRASH_AFTER and _writes >= CRASH_AFTER:
+        print(f"rotate-applied-md: simulated crash after {_writes} write(s)", file=sys.stderr)
+        sys.exit(3)
 
 
 def render(header, blocks):
@@ -186,14 +204,18 @@ for month, date, block in misfiled:
     home = home_of(date)
     (to_head if home == "head" else incoming.setdefault(home, [])).append((date, block))
 
+# Plan every touched file's content before writing any of it. A file that both
+# gains and loses blocks gets an interim "union" text (its current blocks plus
+# the additions) for phase 1; its final text (the losses dropped) is phase 2.
+plans = []   # (path, union text or None, final text, gains blocks?)
 for month in sorted(set(incoming) | set(leaving)):
     part = os.path.join(catdir, f"applied-{month}.md")
     if month in partitions:
-        part_header, existing = partitions[month]
+        part_header, current = partitions[month]
     else:
-        part_header, existing = [PARTITION_HEADER.format(month=month)], []
+        part_header, current = [PARTITION_HEADER.format(month=month)], []
     gone = leaving.get(month, [])
-    existing = [(d, b) for d, b in existing if not any(b is g for g in gone)]
+    existing = [(d, b) for d, b in current if not any(b is g for g in gone)]
 
     # Drop exact copies only — of a block the partition already holds, or of
     # one this run already routed here. A run interrupted between writing the
@@ -209,27 +231,52 @@ for month in sorted(set(incoming) | set(leaving)):
             seen.add(key)
             fresh.append((date, block))
 
-    merged = aml.sort_latest_first(existing + fresh)
-    write_atomic(part, render(part_header, [b for _, b in merged]))
+    final = render(part_header, [b for _, b in aml.sort_latest_first(existing + fresh)])
+    union = (render(part_header, [b for _, b in aml.sort_latest_first(current + fresh)])
+             if fresh and gone else None)
+    plans.append((part, union, final, bool(fresh)))
     skipped = len(incoming.get(month, [])) - len(fresh)
     print(f"rotate-applied-md: {len(fresh)} entr(ies) -> {part}"
           + (f" ({skipped} already present, skipped)" if skipped else "")
           + (f" ({len(gone)} misfiled entr(ies) moved out)" if gone else ""))
 
-kept = [(d, b) for d, b in entries if home_of(d) == "head"]
-seen = {aml.block_key(b) for _, b in kept}
-rehomed = 0
-for date, block in to_head:
-    key = aml.block_key(block)
-    if key in seen:
-        continue
-    seen.add(key)
-    # Insert ahead of the first older dated entry, so the head stays latest
-    # first without re-sorting entries this run did not move.
-    at = next((i for i, (d, _) in enumerate(kept) if d is not None and d < date), len(kept))
-    kept.insert(at, (date, block))
-    rehomed += 1
-write_atomic(applied, render(header, [b for _, b in kept]))
+
+def with_rehomed(base):
+    """`base` plus every to_head block it lacks; returns (blocks, count added)."""
+    out = list(base)
+    seen = {aml.block_key(b) for _, b in out}
+    added = 0
+    for date, block in to_head:
+        key = aml.block_key(block)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Insert ahead of the first older dated entry, so the head stays latest
+        # first without re-sorting entries this run did not move.
+        at = next((i for i, (d, _) in enumerate(out) if d is not None and d < date), len(out))
+        out.insert(at, (date, block))
+        added += 1
+    return out, added
+
+
+kept, rehomed = with_rehomed([(d, b) for d, b in entries if home_of(d) == "head"])
+head_final = render(header, [b for _, b in kept])
+head_union = (render(header, [b for _, b in with_rehomed(entries)[0]])
+              if rehomed and stale else None)
+
+# Phase 1 — additions: every destination gains its blocks while every source
+# still holds them. Phase 2 — removals: the final texts. A file with only
+# additions is final after phase 1; one with only removals waits for phase 2.
+for part, union, final, gains in plans:
+    if gains:
+        write_atomic(part, union if union is not None else final)
+if rehomed:
+    write_atomic(applied, head_union if head_union is not None else head_final)
+for part, union, final, gains in plans:
+    if not gains or union is not None:
+        write_atomic(part, final)
+if not rehomed or head_union is not None:
+    write_atomic(applied, head_final)
 print(f"rotate-applied-md: head keeps {len(kept)} entr(ies) ({', '.join(sorted(keep))})"
       + (f", {rehomed} of them re-homed from a partition." if rehomed else "."))
 PY
