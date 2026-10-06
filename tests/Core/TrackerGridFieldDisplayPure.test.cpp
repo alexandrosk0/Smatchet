@@ -150,6 +150,13 @@ TEST_CASE("BuildWorklogRenderModel — totals, partial-page marker, tooltip entr
         REQUIRE(emptyPage.parsed);
         CHECK(emptyPage.tooltip.find("This page:") == std::string::npos);
     }
+    SUBCASE("page seconds near LLONG_MAX saturate instead of overflowing") {
+        // Two entries that would overflow a signed 64-bit sum: the total saturates and stays positive.
+        const auto model = BuildWorklogRenderModel(
+            R"({"total":2,"worklogs":[{"timeSpentSeconds":9223372036854775000},{"timeSpentSeconds":9223372036854775000}]})");
+        REQUIRE(model.parsed);
+        CHECK(model.tooltip.find("Time on page:") != std::string::npos);
+    }
     SUBCASE("summed page seconds + partial-page asterisk") {
         const std::string value = R"({
             "total": 3, "startAt": 0, "maxResults": 2,
@@ -292,6 +299,12 @@ TEST_CASE("BuildProgressRenderModel — fast-path scanner, DOM fallback, overflo
         const auto model = BuildProgressRenderModel(R"({"progress":99999999999999999999,"total":100000000})");
         REQUIRE(model.rendered);
         CHECK(model.fraction >= 0.0f); // no UB; clamped values still produce a finite fraction
+    }
+    SUBCASE("DOM path reads totals above INT_MAX instead of treating them as absent") {
+        // Double-encoded, so the fast-path scanner cannot see the keys and the DOM path parses it.
+        const auto model = BuildProgressRenderModel(R"("{\"progress\":1500000000,\"total\":3000000000}")");
+        REQUIRE(model.rendered);
+        CHECK(model.fraction == doctest::Approx(0.5f));
     }
     SUBCASE("zero total via DOM path is an empty bar, not a division") {
         const auto model = BuildProgressRenderModel(R"({"progress":0,"total":0})");

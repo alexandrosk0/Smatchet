@@ -6,7 +6,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -229,7 +231,9 @@ bool ParseWorklogFieldJson(const std::string& raw, WorklogFieldSummary& out) {
         e.TimeSpentText = w.value("timeSpent", std::string());
         e.TimeSpentSeconds = ParseJsonInt64FieldLoose(w, "timeSpentSeconds", 0);
         if (e.TimeSpentSeconds > 0) {
-            out.SumSecondsOnPage += e.TimeSpentSeconds;
+            // Saturate: a hostile page can carry values near LLONG_MAX, and signed overflow is undefined.
+            const long long room = (std::numeric_limits<long long>::max)() - out.SumSecondsOnPage;
+            out.SumSecondsOnPage += (std::min)(e.TimeSpentSeconds, room);
         }
         out.Entries.push_back(std::move(e));
     }
@@ -531,10 +535,11 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
         if (!j.contains("progress") || !j.contains("total")) {
             return model;
         }
-        const int p = ParseJsonIntFieldLoose(j, "progress", 0);
-        const int t = ParseJsonIntFieldLoose(j, "total", 0);
+        // Seconds aggregates can pass INT_MAX: parse as 64-bit so they are not read as absent.
+        const long long p = ParseJsonInt64FieldLoose(j, "progress", 0);
+        const long long t = ParseJsonInt64FieldLoose(j, "total", 0);
         model.rendered = true;
-        model.fraction = (t > 0) ? (static_cast<float>(p) / static_cast<float>(t)) : 0.0f;
+        model.fraction = (t > 0) ? static_cast<float>(static_cast<double>(p) / static_cast<double>(t)) : 0.0f;
         return model;
     } catch (...) { // catch-all-ok: lifted byte-identical; hostile JSON shapes must degrade to the fallback model
         return ProgressRenderModel{};
