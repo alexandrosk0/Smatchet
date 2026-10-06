@@ -9,7 +9,7 @@
 # Usage:
 #   bash scripts/dev/coverage.sh                    # capture coverage + write HTML/XML
 #   bash scripts/dev/coverage.sh --xml-only         # CI mode — just Cobertura XML
-#   bash scripts/dev/coverage.sh --threshold 70     # exit 1 if line coverage < 70%
+#   bash scripts/dev/coverage.sh --threshold 70     # exit 4 if line coverage < 70%
 #
 # Env overrides:
 #   SMATCHET_COVERAGE_BUILD_DIR   build dir to read tests from. Default: pick the
@@ -21,14 +21,17 @@
 #                                 /c/Program Files/OpenCppCoverage/OpenCppCoverage.exe).
 #                                 Also the seam tests/bats/coverage_gate.bats stubs.
 #
-# Exit codes:
+# Exit codes (each verdict has its own code, so a caller can tell them apart —
+# coverage.yml downgrades ONLY 4 under the coverage-out-of-band label):
 #   0 — coverage captured successfully (threshold passed if requested)
-#   1 — a test binary failed under capture / threshold not met (fix the code)
-#   2 — required binary (test exe or OpenCppCoverage) missing
+#   1 — a test binary failed under capture (fix the code), or an unexpected
+#       script error under `set -e`
+#   2 — required binary (test exe or OpenCppCoverage) missing / bad usage
 #   3 — coverage INFRA failure (fix nothing, re-run): OpenCppCoverage produced no
 #       coverage data, or the merge wrote no usable coverage.xml, even after one
 #       automatic retry. Marked by a `::error title=COVERAGE-INFRA-CRASH::` line so
 #       an instrumentation crash never reads as a 0% coverage regression.
+#   4 — line coverage below --threshold (the only verdict the label may waive)
 #
 # Local install hint: https://github.com/OpenCppCoverage/OpenCppCoverage/releases
 # On MSYS2 / Windows: `choco install opencppcoverage` (CI runner default).
@@ -428,7 +431,7 @@ fi
 if [ "$THRESHOLD" -gt 0 ]; then
     if [ "$PCT" -lt "$THRESHOLD" ]; then
         echo "FAIL: line coverage ${PCT}% < threshold ${THRESHOLD}%" >&2
-        exit 1
+        exit 4
     fi
     echo "[coverage] threshold ${THRESHOLD}% met (${PCT}%)"
 fi

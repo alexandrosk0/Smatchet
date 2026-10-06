@@ -55,7 +55,8 @@ setup() {
 # script against a stub OpenCppCoverage (the OPENCPPCOVERAGE_EXE seam) and dummy test exes,
 # pinning the exit contract without the Windows toolchain:
 #   3 + COVERAGE-INFRA-CRASH — no coverage data even after the one retry (capture or merge);
-#   1 — a test binary failed under capture, or a genuine threshold miss;
+#   1 — a test binary failed under capture;
+#   4 — a genuine threshold miss (the only code coverage-out-of-band may waive);
 #   0 — clean, or a transient tooling crash rescued by the retry.
 
 # cov_stub_setup — dummy build dir + stub OpenCppCoverage under $COVDIR. The stub reads
@@ -159,12 +160,56 @@ run_cov() {
     [ "$(cat "$COVDIR/merge.count")" -eq 2 ]
 }
 
-@test "coverage.sh: a genuine threshold miss stays exit 1 with no infra marker" {
+@test "coverage.sh: a genuine threshold miss is exit 4 (its own code) with no infra marker" {
     cov_stub_setup
     run_cov "ok ok" "ok" "0.50"
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 4 ]
     [[ "$output" == *"line coverage 50% < threshold 70%"* ]]
     [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+# ---------- coverage.yml: coverage-out-of-band waives ONLY a threshold miss ----------
+# Runs the workflow step's own `run:` block (extracted from the YAML, under the
+# Actions bash flags -e -o pipefail) against a stub coverage.sh exiting STUB_RC.
+
+# cov_step <stub-rc> <labels-json> — run the Capture-coverage step body.
+cov_step() {
+    local d="$BATS_TEST_TMPDIR/step"
+    mkdir -p "$d/scripts/dev" "$d/bin"
+    printf '#!/usr/bin/env bash\nexit %s\n' "$1" > "$d/scripts/dev/coverage.sh"
+    if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+        printf '#!/bin/sh\nexec python3 "$@"\n' > "$d/bin/python"
+        chmod +x "$d/bin/python"
+    fi
+    awk '/- name: Capture coverage/ { f = 1 }
+         f && /^        run: \|/ { r = 1; next }
+         r { if ($0 == "" || $0 ~ /^          /) { sub(/^          /, ""); print } else exit }' \
+        "$REPO_ROOT/.github/workflows/coverage.yml" > "$d/step.sh"
+    grep -q 'coverage.sh --xml-only --threshold 70' "$d/step.sh"
+    run env PATH="$d/bin:$PATH" PR_LABELS="$2" bash -c 'cd "$0" && exec bash -e -o pipefail step.sh' "$d"
+}
+
+@test "coverage.yml: coverage-out-of-band downgrades a threshold miss (exit 4) to a WARN" {
+    cov_step 4 '[{"name":"coverage-out-of-band"}]'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"::warning::line coverage below threshold"* ]]
+}
+
+@test "coverage.yml: coverage-out-of-band does NOT downgrade a test failure, missing binary or infra crash" {
+    for rc in 1 2 3; do
+        cov_step "$rc" '[{"name":"coverage-out-of-band"}]'
+        [ "$status" -eq "$rc" ]
+        [[ "$output" == *"::error::coverage.sh exited $rc"* ]]
+        [[ "$output" != *"::warning::"* ]]
+    done
+}
+
+@test "coverage.yml: without the label a threshold miss is red; a clean run is green either way" {
+    cov_step 4 '[]'
+    [ "$status" -eq 4 ]
+    cov_step 0 '[{"name":"coverage-out-of-band"}]'
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"::warning::"* ]]
 }
 
 # ---------- coverage-delta-gate.sh: classifier incl. wrapped LOG_* join ----------
