@@ -121,6 +121,10 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
   `af2d2e3`: workflow_layer_paths reads `agent-layer/` spellings; the last bare bats negatives demand status 1.
 
   Left as is: the precise splice rule (L3; the conservative rule only costs three headers their drops), and two test gaps (the posix catalog tests are not in the TSan rig; the failure handler's in-lock re-checks have no injection seam), filed as `categories/test/2026-10-06-field-catalog-race-tests-miss-tsan-and-handler-window.md`.
+- **Round 5 (review of the round-4 fixes: 1 high, 4 medium, 7 low)** —
+  - `2261802`: the grid's failure path names its fetch's project, so offline after a pane switch the pane restores that project's snapshot (the high finding was a regression from round 4's clear dropping the pin). A failed apply decides its restore and banner under one lock. Tests cover the clear-then-offline sequence and a site-keyed pane taking its own site.
+  - `1577753`: the coverage gate diffs with `--no-renames` and `core.quotePath=false`, treats `.c`/`.inl`/`.inc`/`.ipp` as product code, untrusts a pp-number `R` before a quote, reads a quote after a digit as a separator only before a digit or letter, and applies the inner-CR sentinel to directive lines too. The bats fallback-poster selftest is no longer tautological, and the layer-path matcher ignores `.agent-layer/`.
+  - Left open: a draft refresh the pane-site check skips is not retried until the draft's project changes (the same missing re-arm as #2328).
 - **Merges** — `4d12153` merges origin/develop (#2300–#2320); `70f488b` merges #2321 (the agent-layer move): every layer-side path left this repo, `4b905ad` / `4c6162a` reach layer scripts through `agent-layer/`, `1266a1d` repairs the applied ledgers after the union merge.
 - **Agent-layer half** — ported to alexandrosk0/the-unwilling-agentic-bunch as its own PR; this PR carries the `agent-layer` pointer bump once that PR merges (after the Historical-review Batch 26 layer PR, by agreement between the two sessions).
 
