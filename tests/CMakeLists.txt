@@ -2240,7 +2240,10 @@ set_tests_properties(android_openssl_failfast_no_base PROPERTIES
 # lane builds + runs it with -DSMATCHET_BUILD_TESTS=ON.
 # ============================================================================
 if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
-    add_executable(SmatchetCommandsTests Commands/BuiltinCommandsDispatch.test.cpp)
+    add_executable(SmatchetCommandsTests
+        Commands/BuiltinCommandsDispatch.test.cpp
+        Core/AppControllerFieldCatalog.posix.test.cpp
+    )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"

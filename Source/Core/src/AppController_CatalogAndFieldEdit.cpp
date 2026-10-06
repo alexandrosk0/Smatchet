@@ -9,6 +9,7 @@
 #include "ProjectComponentsCacheService.h" // component delegators forward to components_.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
@@ -121,9 +122,20 @@ void AddJiraCatalogFieldFixups(GridContextFieldCatalog& cat) {
     EnsureCommentsFieldIn(cat);
 }
 
+// Drops a worker's catalog write once its pane switched tracker or was retired. Checked under
+// availableFieldsMutex_ in the same critical section as the write: retirement and SetBackend move
+// the generation before they clear the catalog under that mutex, so a write either lands before
+// the clear or sees the new generation and is dropped.
+struct CatalogWriteGuard {
+    const std::atomic<std::uint64_t>* Generation = nullptr; ///< null: unguarded (UI-thread callers)
+    std::uint64_t Expected = 0;
+    bool Holds() const { return Generation == nullptr || Generation->load() == Expected; }
+};
+
 // Body of AppController::HandleFieldCatalogError, writing into `cat`.
 void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string& error, bool errorTransient,
-                                 const std::string& catalogCacheKey, const std::string& backendKey) {
+                                 const std::string& catalogCacheKey, const std::string& backendKey,
+                                 const CatalogWriteGuard& guard = CatalogWriteGuard()) {
     const bool catalogPlane = backendKey == "Plane";
     bool hasFieldsNow;
     {
@@ -143,6 +155,9 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
         if (snapshotLoaded) {
             {
                 std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+                if (!guard.Holds()) {
+                    return; // the pane moved on; its catalog is no longer this fetch's to restore
+                }
                 cat.AvailableFields = std::move(snapFields);
                 cat.AvailableComponents = std::move(snapComponents);
                 cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
@@ -219,7 +234,7 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
 bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerField> fields,
                            std::vector<TrackerComponent> components,
                            std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
-                           bool errorTransient) {
+                           bool errorTransient, const CatalogWriteGuard& guard = CatalogWriteGuard()) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
     const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
     const bool catalogPlane = backendKey == "Plane";
@@ -240,12 +255,15 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     (void)catalogPlane;
 
     if (!error.empty()) {
-        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey);
+        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, guard);
         return false;
     }
 
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        if (!guard.Holds()) {
+            return false;
+        }
         cat.AvailableFields = std::move(fields);
         cat.AvailableComponents = std::move(components);
         cat.AvailableIssueTypeMeta = std::move(issueTypeMeta);
@@ -449,10 +467,13 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     // again (a second focusedContext(), or SetFieldCatalog's fieldCatalog() at completion) would pair
     // one pane's backend with another pane's catalog, or land the result in whichever pane is focused
     // when the fetch finishes. The retired-context husk graveyard keeps the latched context valid for
-    // the life of this call; the generation check below drops a result whose pane switched tracker
-    // (or was retired) during the fetch.
+    // the life of this call; the generation check below (repeated under the catalog mutex at each write)
+    // drops a result whose pane switched tracker (or was retired) during the fetch.
     GridLiveContext& ctx = focusedContext();
     const std::uint64_t generation = ctx.backendGeneration_.load();
+    CatalogWriteGuard guard;
+    guard.Generation = &ctx.backendGeneration_;
+    guard.Expected = generation;
     // Strong handle: a live tracker switch (SetBackend on the UI thread) must not free the backend
     // mid-FetchFieldCatalog — the FieldCatalog object dereferenced below lives inside it (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
@@ -463,7 +484,7 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     }
     if (!backend) {
         // config-class: non-transient default
-        ApplyFieldCatalogInto(cat, {}, {}, {}, "Tracker backend is not initialized.", false);
+        ApplyFieldCatalogInto(cat, {}, {}, {}, "Tracker backend is not initialized.", false, guard);
         return false;
     }
 
@@ -489,15 +510,20 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
         return false;
     }
     if (!ok) {
-        ApplyFieldCatalogInto(cat, {}, {}, {}, error, errorTransient);
+        ApplyFieldCatalogInto(cat, {}, {}, {}, error, errorTransient, guard);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
         return false;
     }
 
-    if (ApplyFieldCatalogInto(cat, std::move(catalog.Fields), std::move(catalog.Components),
-                              std::move(catalog.IssueTypeMeta), std::string(), false)) {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+    if (!ApplyFieldCatalogInto(cat, std::move(catalog.Fields), std::move(catalog.Components),
+                               std::move(catalog.IssueTypeMeta), std::string(), false, guard)) {
+        // With no error passed in, false means the guard dropped the write: the pane moved on.
+        LOG_INFO("AppController::RefreshFieldCatalog: pane '%s' switched tracker before the catalog was written; "
+                 "its result was dropped",
+                 ctx.PaneId.c_str());
+        return false;
     }
+    requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
 }
 
