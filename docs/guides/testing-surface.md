@@ -10,7 +10,7 @@ the *shape* (which lanes gate, which are advisory, which voids exist) is stable.
 Refresh the numbers with the [§ Refresh recipe](#7-refresh-recipe) — don't trust a
 stale count, re-run the one-liner.
 
-Related: [`agents/core/test-author.md`](../../agent-layer/agents/core/test-author.md) (the
+Related: [`agent-layer/agents/core/test-author.md`](../../agent-layer/agents/core/test-author.md) (the
 5-bucket taxonomy authority), [`quality-pillars.md`](../../agent-layer/docs/agent-rules/quality-pillars.md)
 (the invariants tests defend), [`merge-gates.md`](../../agent-layer/docs/agent-rules/merge-gates.md)
 (how checks become merge-blocking), [`ci-required-check-pattern.md`](../../agent-layer/docs/agent-rules/ci-required-check-pattern.md)
@@ -77,7 +77,7 @@ infrastructure**, never "manual forever."
 9. `Sanitizer (UBSan via Clang)` — RelWithDebInfo Clang ASan+UBSan ctest (Core PRs; `skipped`=success otherwise)
 
 > **Config↔live drift caveat:** these names are only *enforced* once
-> `agents/scripts/core/setup-branch-protection.sh` re-runs (a manual full-replace PUT
+> `agent-layer/agents/scripts/core/setup-branch-protection.sh` re-runs (a manual full-replace PUT
 > that lives in **no** workflow). Editing `branch_protection.required_contexts` is
 > inert until then — the exact gap that let the #1227 red-Coverage merge escape (live
 > ruleset had 6 contexts, config listed 7). Slice C re-ran the apply script as Phase 2.

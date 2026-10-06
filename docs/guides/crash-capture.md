@@ -31,7 +31,7 @@ cdb -y "<build-dir>;srv*C:\Tools\symcache*https://msdl.microsoft.com/download/sy
 
 Point `-y` at the build dir for `Smatchet.pdb`.
 
-No `cdb` installed? The verified route is the SDK debuggers feature — `docs/agent-rules/debug-techniques.md` § Installing cdb (Debugging Tools for Windows), confirmed on Windows 11 26200. Note that `winget install Microsoft.WinDbg` is **not** it: that installs the `WinDbgX` Store app under an ACL-restricted `WindowsApps` path, off `PATH`, and a validation pass that followed it was left with no invocable `cdb`.
+No `cdb` installed? The verified route is the SDK debuggers feature — `agent-layer/docs/agent-rules/debug-techniques.md` § Installing cdb (Debugging Tools for Windows), confirmed on Windows 11 26200. Note that `winget install Microsoft.WinDbg` is **not** it: that installs the `WinDbgX` Store app under an ACL-restricted `WindowsApps` path, off `PATH`, and a validation pass that followed it was left with no invocable `cdb`.
 
 There is also an **unverified** no-admin route worth trying first if UAC is unavailable, since the SDK installer needs elevation: download `https://aka.ms/windbg/download` (an `.appinstaller` pointing at `windbg.msixbundle`), `Expand-Archive` the bundle → `windbg_win-x64.msix` → `Expand-Archive` again → `amd64/cdb.exe`. Extracting the bundle by hand is a different thing from installing the Store app, so it may well yield a usable binary — but nobody has run it end-to-end. If you do, record the outcome in § Installing cdb and delete this hedge.
 

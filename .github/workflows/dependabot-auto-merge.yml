@@ -5,7 +5,7 @@ name: Dependabot auto-merge
 # non-admin merge path). A bare `gh pr merge --auto` is FORBIDDEN here: it waits
 # only on branch-protection REQUIRED contexts, so it can land past a RED
 # non-required block-allowlist check (Coverage / Sanitizer / Perf) — the #923
-# gate-escape class. `agents/scripts/core/safe-merge.sh` runs the FULL merge-gates
+# gate-escape class. `agent-layer/agents/scripts/core/safe-merge.sh` runs the FULL merge-gates
 # poll first and arms `--squash --auto` ONLY on GATES_PASSED, refusing on any
 # block-allowlist RED lacking its `*-out-of-band` override.
 #

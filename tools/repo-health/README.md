@@ -69,7 +69,7 @@ Before republishing, refresh the live half from GitHub MCP:
 - **Stamp `updated`** — set the matching key in the top-level `updated` map to
   today's date for every section you refreshed. The oldest stamp drives the
   header freshness badge (green ≤7 days, amber ≤30, red beyond), and
-  `agents/scripts/core/repo-health-facts-nudge.sh` nags at SessionStart once
+  `agent-layer/agents/scripts/core/repo-health-facts-nudge.sh` nags at SessionStart once
   `facts.json` itself is older than 7 days (git-commit age).
 
 This is a natural add-on to the **smatchet-nightly-advisory-lane-triage** routine,

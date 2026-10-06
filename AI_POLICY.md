@@ -7,7 +7,7 @@
 > contract's autonomy — they do not delete any operating rule, they place it
 > under the mode spectrum defined here. The operating mechanics
 > (ship-loop stages, merge gates) live in `AGENTS.md` and
-> [`docs/agent-rules/ship-loops.md`](agent-layer/docs/agent-rules/ship-loops.md).
+> [`agent-layer/docs/agent-rules/ship-loops.md`](agent-layer/docs/agent-rules/ship-loops.md).
 
 ## Authority
 
@@ -21,7 +21,7 @@ never takes an action it cannot make auditable.
 
 Set per session/task via the `SMATCHET_LOOP_MODE` env var; surfaced at
 SessionStart by the `## === loop-mode: <on|in> ===` banner
-(`agents/scripts/core/clear-session-context.sh`). Config defaults live in
+(`agent-layer/agents/scripts/core/clear-session-context.sh`). Config defaults live in
 `project.config.json` § `governance`.
 
 - **human-on-the-loop** (`SMATCHET_LOOP_MODE=on`) — the action-biased mode
@@ -37,7 +37,7 @@ SessionStart by the `## === loop-mode: <on|in> ===` banner
   escalating rather than guessing on anything the plan did not settle.
 
 **Default = `project.config.json` § `governance.loop_mode`** (operator-owned;
-read at SessionStart by `agents/scripts/core/clear-session-context.sh`, with an
+read at SessionStart by `agent-layer/agents/scripts/core/clear-session-context.sh`, with an
 explicit `SMATCHET_LOOP_MODE` env var overriding per session, and a fail-safe to
 `in` when the config is unreadable). **Currently set to `on`** (human-on-the-loop
 / autonomous) — the operator selected action-biased autonomy. Flip the config
@@ -77,12 +77,12 @@ loop catches after the fact.
 ## Cost control
 
 Token / compute spend is a **human-governed budget** (gauged by
-`agents/_shared/token-tracking/`). The agent surfaces cost and **escalates
+`agent-layer/agents/_shared/token-tracking/`). The agent surfaces cost and **escalates
 before** an unbounded or expensive autonomous run. Runaway spend without
 validation is forbidden.
 
 The automated backstop is the **advisory session cost-ceiling check**
-(`agents/scripts/core/cost-ceiling-check.py`, run at SessionStart via
+(`agent-layer/agents/scripts/core/cost-ceiling-check.py`, run at SessionStart via
 `cost-ceiling-nudge.sh`): when delegated-subagent spend recorded by the
 token-tracking layer meets `project.config.json` §
 `governance.session_token_ceiling`, it prints an ESCALATE banner directing the
