@@ -28,6 +28,15 @@
 #   c) CodeRabbit app installed on the new repo.
 set -uo pipefail
 
+# Every temp file and image directory below comes from mktemp, and the phases cd
+# into the clone between creating a path and using it. A relative TMPDIR would
+# then name a different place, so it is made absolute once, here.
+if [ -n "${TMPDIR:-}" ]; then
+    TMPDIR="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" \
+        || { echo "seed-agent-layer-repo: TMPDIR does not name an existing directory" >&2; exit 2; }
+    export TMPDIR
+fi
+
 _SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
 # SCAFFOLD_DIR is a layout-faithful IMAGE of the seeded repo root: a file at
@@ -573,6 +582,24 @@ phase2_manifest() {
 }
 
 # --------------------------------------------------------------- phase 3 rewrite
+# stage_outside_clone <src> <stem> — copy <src> to a new temp file and print its
+# ABSOLUTE path. filter-repo refuses a clone that holds any untracked file, and
+# the caller cd's into the clone before using the path, so the file must sit
+# outside WORK_DIR and its path must not depend on the current directory. A
+# relative or clone-internal TMPDIR is resolved, then refused if it lands inside.
+stage_outside_clone() {
+    local src="$1" stem="$2" tmp dir work_abs
+    tmp="$(mktemp "${TMPDIR:-/tmp}/${stem}.XXXXXX")" || return 1
+    dir="$(cd "$(dirname "$tmp")" && pwd -P)" || { rm -f "$tmp"; return 1; }
+    tmp="$dir/$(basename "$tmp")"
+    work_abs="$(cd "$WORK_DIR" && pwd -P)" || { rm -f "$tmp"; return 1; }
+    case "$tmp/" in
+        "$work_abs"/*) rm -f "$tmp"; return 1 ;;
+    esac
+    cp "$src" "$tmp" || { rm -f "$tmp"; return 1; }
+    printf '%s\n' "$tmp"
+}
+
 phase3_rewrite() {
     head1 "phase 3 — clone + rewrite"
 
@@ -612,8 +639,8 @@ phase3_rewrite() {
     # with any untracked file ("this does not look like a fresh clone"), so a
     # copy at the clone's root stops the first rewrite before it starts.
     local paths_file
-    paths_file="$(mktemp "${TMPDIR:-/tmp}/seed-paths.XXXXXX")" || die 1 "cannot stage the manifest"
-    cp "$MANIFEST_SRC" "$paths_file" || die 1 "cannot stage the manifest"
+    paths_file="$(stage_outside_clone "$MANIFEST_SRC" seed-paths)" \
+        || die 1 "cannot stage the manifest outside the clone (is TMPDIR inside $WORK_DIR?)"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -636,8 +663,8 @@ phase3_rewrite() {
     local scrub="$SCAFFOLD_DIR/seed-scrub-paths.txt"
     if [ -f "$scrub" ] && grep -qvE '^[[:space:]]*(#|$)' "$scrub"; then
         local scrub_file
-        scrub_file="$(mktemp "${TMPDIR:-/tmp}/seed-scrub-paths.XXXXXX")" || die 1 "cannot stage the scrub list"
-        cp "$scrub" "$scrub_file" || die 1 "cannot stage the scrub list"
+        scrub_file="$(stage_outside_clone "$scrub" seed-scrub-paths)" \
+            || die 1 "cannot stage the scrub list outside the clone (is TMPDIR inside $WORK_DIR?)"
         git filter-repo --paths-from-file "$scrub_file" --invert-paths \
             --replace-refs delete-no-add --prune-empty auto \
             || die 1 "scrub pass failed"
