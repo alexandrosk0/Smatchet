@@ -7,10 +7,13 @@
 #
 #   ui_test_require_fresh_exe <exe>
 #       Call right after the driver's binary-missing check. Hard-fails (returns
-#       2, the binary-missing class) when a file under Source/ or tests/ui/ is
+#       2, the binary-missing class) when a source compiled into Smatchet.exe is
 #       newer than <exe>, naming the newest offender — a stale exe gives a
 #       product verdict on a binary that does not contain the change under test
-#       (test 2026-08-06-bucket-e-driver-no-exe-staleness-guard). Delegates to
+#       (test 2026-08-06-bucket-e-driver-no-exe-staleness-guard). Only the trees
+#       the exe links count (_UI_TEST_EXE_SOURCES): Source/Mobile and
+#       Source/UnrealPlugins are not linked, so an edit there can never be
+#       rebuilt into the exe and must not mark it stale forever. Delegates to
 #       scripts/dev/is-exe-fresh.sh. Opt-out: SMATCHET_ALLOW_STALE_EXE=1 (warns,
 #       runs anyway). Skipped when CI is set: CI runs an exe it just built or
 #       downloaded, whose mtime against a fresh checkout means nothing.
@@ -57,10 +60,23 @@
 # `# ui-test-home: opt-out — <reason>` comment instead of the isolate call;
 # tests/bats/ui_driver_filters.bats holds every driver to one or the other.
 #
-# This file is sourced; it defines functions and one constant, sets no shell
+# This file is sourced; it defines functions and constants, sets no shell
 # options, and has no side effects until a function is called.
 
 _UI_TEST_DRIVER_DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The first-party sources compiled into Smatchet.exe (repo-root relative), for
+# the staleness guard. Root CMakeLists.txt includes Source/Core, the static
+# Source/Plugins, and Source/Standalone into the exe (Source/Mobile is the
+# Android .so, Source/UnrealPlugins the DX12/Unreal libs); tests/ui/CMakeLists.txt
+# adds the bucket-E TUs plus the tests/support files below (the Jira fixture TU
+# and the headers it, StandaloneAppBootstrap.cpp and tests/ui include). The rest
+# of tests/support is doctest-only. tests/bats/ui_test_driver_lib.bats pins this
+# list against those includes.
+_UI_TEST_EXE_SOURCES=(Source/Core Source/Plugins Source/Standalone tests/ui
+    tests/support/JiraFakeTrackerFixture.cpp tests/support/JiraFakeTrackerFixture.h
+    tests/support/FakeNetworkSwitch.h tests/support/FakeTrackerClient.h
+    tests/support/ScriptedTrackerBackendFactory.h)
 
 # Seed for a configured profile (see ui_test_isolate_home --seed).
 UI_TEST_SEED_CONFIG='{"read_only_mode": false, "whisper_setup_completed": true, "backend_has_been_reachable": true}'
@@ -68,7 +84,8 @@ UI_TEST_SEED_CONFIG='{"read_only_mode": false, "whisper_setup_completed": true, 
 _ui_test_tag() { basename "$0" .sh; }
 
 ui_test_require_fresh_exe() {
-    local exe="$1" tag exe_dir exe_abs out rc preset
+    local exe="$1" tag exe_dir exe_abs out rc preset src
+    local srcs=()
     tag="$(_ui_test_tag)"
     case "${CI:-}" in
         "" | false | 0) ;;
@@ -80,8 +97,9 @@ ui_test_require_fresh_exe() {
     exe_dir="$(cd "$(dirname "$exe")" 2>/dev/null && pwd)" || return 0
     exe_abs="$exe_dir/$(basename "$exe")"
     preset="$(basename "$exe_dir")"
+    for src in "${_UI_TEST_EXE_SOURCES[@]}"; do srcs+=(--src "$src"); done
     out="$(bash "$_UI_TEST_DRIVER_DEV_DIR/is-exe-fresh.sh" --exe "$exe_abs" --preset "$preset" \
-        --src Source --src tests/ui 2>&1)" && rc=0 || rc=$?
+        "${srcs[@]}" 2>&1)" && rc=0 || rc=$?
     [ "$rc" -eq 3 ] || return 0
     printf '%s\n' "$out" >&2
     if [ "${SMATCHET_ALLOW_STALE_EXE:-0}" = "1" ]; then

@@ -11,9 +11,11 @@
 # Covers: ui_test_isolate_home (throwaway SMATCHET_USER_DATA + update check off,
 # seed, platform-dir shadowing, SMATCHET_UI_TEST_HOME pin, trap cleanup);
 # ui_test_require_fresh_exe (fresh / STALE exit 2 naming the newest offender
-# across Source/ + tests/ui/ / SMATCHET_ALLOW_STALE_EXE / CI skip / relative
-# exe path); ui_test_capture (wedge-proof against an inherited pipe, timeout ->
-# 124, TERM-ignoring child -> 137); the timeout-as-FAILED-row contract in a
+# across the exe-linked trees only — not Source/Mobile or Source/UnrealPlugins —
+# with a drift pin on the exe-linked tests/support files /
+# SMATCHET_ALLOW_STALE_EXE / CI skip / relative exe path); ui_test_capture
+# (wedge-proof against an inherited pipe, timeout -> 124, TERM-ignoring child
+# -> 137); the timeout-as-FAILED-row contract in a
 # migrated driver and scripts/dev/test-lua-error-log.sh; and an end-to-end run
 # of every driver against a passing stub.
 #
@@ -265,6 +267,72 @@ EOF
     [ "$status" -eq 0 ]
     grep -q "staleness check skipped (CI=true" <<<"$output"
     grep -q GUARD_PASSED <<<"$output"
+}
+
+@test "an edit under Source/Mobile or Source/UnrealPlugins (not linked into the exe) is not stale" {
+    _mk_fake_repo
+    mkdir -p "$R/Source/Mobile" "$R/Source/UnrealPlugins/P"
+    : > "$R/Source/Mobile/m.cpp"
+    : > "$R/Source/UnrealPlugins/P/u.h"
+    touch -t 200501010000 "$R/Source/Mobile/m.cpp" "$R/Source/UnrealPlugins/P/u.h"
+    CI="" EXE="$EXE_PATH" run bash "$FIX/stale-drv.sh"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    grep -q GUARD_PASSED <<<"$output"
+    [[ "$output" != *STALE* ]]
+}
+
+@test "a newer exe-linked tests/support file is stale; a doctest-only one is not" {
+    _mk_fake_repo
+    mkdir -p "$R/tests/support" "$R/Source/Plugins/Mcp"
+    : > "$R/tests/support/DoctestOnlyHelper.h"
+    touch -t 200501010000 "$R/tests/support/DoctestOnlyHelper.h"
+    CI="" EXE="$EXE_PATH" run bash "$FIX/stale-drv.sh"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    : > "$R/tests/support/JiraFakeTrackerFixture.cpp"
+    touch -t 200401010000 "$R/tests/support/JiraFakeTrackerFixture.cpp"
+    CI="" EXE="$EXE_PATH" run bash "$FIX/stale-drv.sh"
+    echo "$output"
+    [ "$status" -eq 2 ]
+    grep -q "Newest offending source: tests/support/JiraFakeTrackerFixture.cpp" <<<"$output"
+    : > "$R/Source/Plugins/Mcp/p.cpp"
+    touch -t 200601010000 "$R/Source/Plugins/Mcp/p.cpp"
+    CI="" EXE="$EXE_PATH" run bash "$FIX/stale-drv.sh"
+    [ "$status" -eq 2 ]
+    grep -q "Newest offending source: Source/Plugins/Mcp/p.cpp" <<<"$output"
+}
+
+# Drift pin: every tests/support file the exe compiles — a TU tests/ui/CMakeLists.txt
+# adds, or a header (transitively) included from Source/{Core,Plugins,Standalone} or
+# tests/ui — must be in the staleness guard's list, or an edit to it leaves a stale exe
+# "fresh".
+@test "the staleness guard lists every tests/support file compiled into the exe" {
+    # shellcheck source=/dev/null
+    . "$LIB"
+    local queue=() seen=" " f h i=0 missing=""
+    while read -r f; do queue+=("$f"); done < <(
+        grep -oE 'tests/support/[A-Za-z0-9_]+\.cpp' "$REPO_ROOT/tests/ui/CMakeLists.txt" | sort -u)
+    while read -r h; do
+        [ -f "$REPO_ROOT/tests/support/$h" ] && queue+=("tests/support/$h")
+    done < <(grep -rhoE '#include "[A-Za-z0-9_]+\.h"' "$REPO_ROOT/Source/Core" "$REPO_ROOT/Source/Plugins" \
+        "$REPO_ROOT/Source/Standalone" "$REPO_ROOT/tests/ui" | sed -E 's/#include "(.*)"/\1/' | sort -u)
+    [ "${#queue[@]}" -gt 0 ]
+    while [ "$i" -lt "${#queue[@]}" ]; do
+        f="${queue[$i]}"
+        i=$((i + 1))
+        [[ "$seen" == *" $f "* ]] && continue
+        seen="$seen$f "
+        while read -r h; do
+            [ -f "$REPO_ROOT/tests/support/$h" ] && queue+=("tests/support/$h")
+        done < <(grep -oE '#include "[A-Za-z0-9_]+\.h"' "$REPO_ROOT/$f" | sed -E 's/#include "(.*)"/\1/')
+    done
+    for f in $seen; do
+        [[ " ${_UI_TEST_EXE_SOURCES[*]} " == *" $f "* ]] || missing="$missing $f"
+    done
+    echo "exe-linked tests/support files:$seen"
+    echo "missing from _UI_TEST_EXE_SOURCES:$missing"
+    [ -z "$missing" ]
 }
 
 @test "a relative exe path resolves from the driver's cwd, not the repo root" {

@@ -8,8 +8,8 @@
 # Wired into scripts/dev/relaunch-smatchet.sh (post-build, pre-launch) so a
 # build that was a no-op while the running process held the exe lock is caught
 # before the stale exe is relaunched, and into the bucket-E driver helper
-# (scripts/dev/lib/ui-test-driver.sh, which checks Source/ + tests/ui/ and turns
-# STALE into a hard exit 2). Also runnable standalone before any manual /
+# (scripts/dev/lib/ui-test-driver.sh, which checks only the trees linked into
+# Smatchet.exe and turns STALE into a hard exit 2). Also runnable standalone before any manual /
 # scenario run of an exe you did not just rebuild.
 #
 # Usage:
@@ -17,8 +17,9 @@
 #   bash scripts/dev/is-exe-fresh.sh --selftest
 #
 # Default preset ninja-iter-msvc; exe build/<preset>/Smatchet.exe. --src is
-# repeatable (a relative dir resolves from the repo root); default Source/. A
-# fresh tree costs one `find -newer` walk, not a stat per source file.
+# repeatable and takes a dir or a single source file (a relative path resolves
+# from the repo root); default Source/. A fresh tree costs one `find -newer`
+# walk, not a stat per source file.
 #
 # Exit: 0 fresh (or indeterminate — missing exe/sources never hard-fails a run
 #       path); 3 STALE (a source file is newer than the exe — the newest offender
@@ -32,7 +33,7 @@ _file_mtime() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null; 
 _SRC_NAMES=(\( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.c'
             -o -name '*.cc' -o -name '*.cxx' -o -name '*.inl' \))
 
-# _freshness <exe> <source-dir>... -> echoes "stale <newest-offending-file>" /
+# _freshness <exe> <source-dir-or-file>... -> echoes "stale <newest-offending-file>" /
 # "fresh" / "indeterminate". POSIX `find -newer` (no GNU-only -printf) keeps it
 # portable to macOS/BSD (CR #915); only the offending files — usually a handful
 # — are stat'ed, to name the newest one. The while body runs in the current
@@ -41,7 +42,7 @@ _freshness() {
     local exe="$1" d f m newest=0 newest_f=""
     shift
     local dirs=()
-    for d in "$@"; do [ -d "$d" ] && dirs+=("$d"); done
+    for d in "$@"; do [ -e "$d" ] && dirs+=("$d"); done
     [ -f "$exe" ] || { echo indeterminate; return; }
     [ "${#dirs[@]}" -gt 0 ] || { echo indeterminate; return; }
     # An empty source tree is indeterminate, not fresh.
@@ -77,6 +78,9 @@ if [ "${1:-}" = "--selftest" ]; then
     r="$(_freshness "$exe" "$tmp/Source" "$tmp/tests/ui")"
     [ "$r" = "stale $tmp/tests/ui/u.test.cpp" ] || { echo "FAIL: expected multi-dir stale on u.test.cpp, got '$r'"; fail=1; }
     [ "$(_freshness "$exe" "$tmp/Source")" = fresh ] || { echo "FAIL: expected fresh against Source/ alone"; fail=1; }
+    # a single FILE is a source too: stale when it is newer, ignored when it is not a source name
+    r="$(_freshness "$exe" "$tmp/Source" "$tmp/tests/ui/u.test.cpp")"
+    [ "$r" = "stale $tmp/tests/ui/u.test.cpp" ] || { echo "FAIL: expected a file --src to count, got '$r'"; fail=1; }
     # non-source files never make an exe stale
     : > "$tmp/Source/notes.md"
     [ "$(_freshness "$exe" "$tmp/Source")" = fresh ] || { echo "FAIL: a non-source file counted"; fail=1; }
@@ -107,7 +111,10 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$EXE" ] || EXE="build/$PRESET/Smatchet.exe"
 [ "${#SRC_DIRS[@]}" -gt 0 ] || SRC_DIRS=(Source)
-SRC_LABEL="$(printf '%s/ + ' "${SRC_DIRS[@]%/}")"
+SRC_LABEL=""
+for _s in "${SRC_DIRS[@]%/}"; do
+    if [ -f "$_s" ]; then SRC_LABEL="$SRC_LABEL$_s + "; else SRC_LABEL="$SRC_LABEL$_s/ + "; fi
+done
 SRC_LABEL="${SRC_LABEL% + }"
 
 RESULT="$(_freshness "$EXE" "${SRC_DIRS[@]}")"
