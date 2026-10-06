@@ -35,7 +35,7 @@ Full problem + fix. Everything below this block is one-line; the complete struct
 All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
 
 - `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM — #2177:684 — **closed by this batch** (resume pointer corrected + late-merge rule above)
-- `docs/plans/active/agent-surface-extraction-repo.md` — 1 MEDIUM — #2160:69
+- `docs/plans/agent-surface-extraction-repo.md` — 1 MEDIUM — #2160:69
 - `docs/adr/0025-agent-surface-extraction-submodule.md` — 1 LOW — #2160:13
 - `docs/guides/testing-surface.md` — 2 LOW — #2161:151, #2161:192
 - `docs/self-improvement/categories/infra.md` — 1 LOW — #2161:15
