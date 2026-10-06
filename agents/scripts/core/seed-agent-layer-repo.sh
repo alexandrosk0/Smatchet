@@ -608,7 +608,12 @@ phase3_rewrite() {
     fi
     pass "publication audit is current for the cloned $LAYER_BRANCH (pin $pin)"
 
-    cp "$MANIFEST_SRC" "$WORK_DIR/seed-paths.txt" || die 1 "cannot stage the manifest"
+    # The path lists are staged OUTSIDE the clone: filter-repo refuses a clone
+    # with any untracked file ("this does not look like a fresh clone"), so a
+    # copy at the clone's root stops the first rewrite before it starts.
+    local paths_file
+    paths_file="$(mktemp "${TMPDIR:-/tmp}/seed-paths.XXXXXX")" || die 1 "cannot stage the manifest"
+    cp "$MANIFEST_SRC" "$paths_file" || die 1 "cannot stage the manifest"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -617,9 +622,10 @@ phase3_rewrite() {
     # (52500a9bd), and the file is the artefact reviewers read.
     # --replace-refs delete-no-add keeps refs/replace/* out of the seeded repo;
     # --prune-empty auto is the default, stated so a later edit cannot flip it.
-    git filter-repo --paths-from-file seed-paths.txt \
+    git filter-repo --paths-from-file "$paths_file" \
         --replace-refs delete-no-add --prune-empty auto \
         || die 1 "git filter-repo failed"
+    rm -f "$paths_file"
     pass "history rewritten to the allowlist"
 
     # Paired scrub pass for paths INSIDE an allowed subtree that failed the
@@ -629,17 +635,17 @@ phase3_rewrite() {
     # needs a manifest line, not a code change.
     local scrub="$SCAFFOLD_DIR/seed-scrub-paths.txt"
     if [ -f "$scrub" ] && grep -qvE '^[[:space:]]*(#|$)' "$scrub"; then
-        cp "$scrub" "$WORK_DIR/seed-scrub-paths.txt" || die 1 "cannot stage the scrub list"
-        git filter-repo --paths-from-file seed-scrub-paths.txt --invert-paths \
+        local scrub_file
+        scrub_file="$(mktemp "${TMPDIR:-/tmp}/seed-scrub-paths.XXXXXX")" || die 1 "cannot stage the scrub list"
+        cp "$scrub" "$scrub_file" || die 1 "cannot stage the scrub list"
+        git filter-repo --paths-from-file "$scrub_file" --invert-paths \
             --replace-refs delete-no-add --prune-empty auto \
             || die 1 "scrub pass failed"
-        rm -f "$WORK_DIR/seed-scrub-paths.txt"
+        rm -f "$scrub_file"
         pass "scrub pass applied (audit-failed paths removed from history)"
     else
         pass "no scrub pass needed (seed-scrub-paths.txt empty or absent)"
     fi
-
-    rm -f "$WORK_DIR/seed-paths.txt"
 
     local branch
     branch="$(git rev-parse --abbrev-ref HEAD)"
