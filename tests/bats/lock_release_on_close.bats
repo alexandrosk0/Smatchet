@@ -223,6 +223,9 @@ release() {
     STUB_OPEN_PRS="" release --check-open feat/x
     [ "$status" -eq 0 ]
     [[ "$output" == *"active=false"* ]]
+    STUB_OPEN_PRS="" release --check-open=feat/x
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"active=false"* ]]
     STUB_GH_FAIL=1 release --check-open feat/x
     [ "$status" -eq 3 ]
 }

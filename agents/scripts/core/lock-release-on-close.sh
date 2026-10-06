@@ -77,6 +77,7 @@ while [ "$#" -gt 0 ]; do
         --slug) [ "$#" -ge 2 ] || usage; mode="slug"; target="$2"; shift 2 ;;
         --slug=*) mode="slug"; target="${1#--slug=}"; shift ;;
         --check-open) [ "$#" -ge 2 ] || usage; mode="check"; target="$2"; shift 2 ;;
+        --check-open=*) mode="check"; target="${1#--check-open=}"; shift ;;
         -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
         *) usage ;;
     esac
