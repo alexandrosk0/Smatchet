@@ -107,3 +107,52 @@ TEST_CASE("AppController::RefreshFieldCatalog drops the result when the catalog 
     CHECK(raw->FetchFieldCatalogCalls() == 1u);
     CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
 }
+
+TEST_CASE("AppController::RefreshFieldCatalog skips a fetch for another tracker kind than the pane runs") {
+    // A deferred Save & Sync leaves the old backend installed while the config already names the new
+    // tracker: a fetch then would pair the two, so it must not run at all.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    adapter.SetCacheBackendKey("Plane"); // the pane still runs Plane
+
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira"; // the configuration already names Jira
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg));
+    CHECK(raw->FetchFieldCatalogCalls() == 0u);
+    CHECK(app.GetAvailableFields().empty());
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog drops a result once a newer refresh pins another project") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    raw->OnFetch = [&app]() { app.SetCurrentCatalogProject("PROJB"); };
+
+    CHECK_FALSE(app.RefreshFieldCatalog(ConfigManager::Load(), "PROJA"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
+}
+
+TEST_CASE("AppController::SetFieldCatalog clear empties the pane without publishing synthetic columns") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    adapter.SetBackend(std::move(backend));
+    REQUIRE(app.RefreshFieldCatalog(ConfigManager::Load()));
+    REQUIRE(HasField(app.GetAvailableFields(), "customfield_10001"));
+
+    const std::uint64_t revisionBefore = app.GetFieldCatalogRevision();
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    CHECK(app.GetAvailableFields().empty()); // no synthetic history/comments for a tracker not loaded yet
+    CHECK(app.GetFieldCatalogRevision() != revisionBefore);
+}

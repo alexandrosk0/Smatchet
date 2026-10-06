@@ -134,9 +134,17 @@ struct CatalogWriteGuard {
     const std::atomic<std::uint64_t>* Epoch = nullptr; ///< null: unguarded
     std::uint64_t ExpectedEpoch = 0;
     const TrackerConfig* Config = nullptr; ///< null: key the snapshot by the current configuration
+    /// The project the fetch was for: it keys the snapshot, and a newer refresh for another project
+    /// (which re-pins the catalog's project) supersedes this one. Read under the catalog mutex.
+    bool HasProject = false;
+    std::string Project;
     bool Holds() const {
         return (Generation == nullptr || Generation->load() == ExpectedGeneration) &&
                (Epoch == nullptr || Epoch->load() == ExpectedEpoch);
+    }
+    /// Holds(), plus the project check. Caller holds cat.availableFieldsMutex_.
+    bool HoldsLocked(const GridContextFieldCatalog& cat) const {
+        return Holds() && (!HasProject || ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(Project));
     }
 };
 
@@ -167,7 +175,7 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
             }
             {
                 std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-                if (!guard.Holds()) {
+                if (!guard.HoldsLocked(cat)) {
                     return; // the pane moved on; its catalog is no longer this fetch's to restore
                 }
                 cat.AvailableFields = std::move(snapFields);
@@ -237,13 +245,9 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
                            std::vector<TrackerComponent> components,
                            std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                            bool errorTransient, const CatalogWriteGuard& guard = CatalogWriteGuard()) {
+    // A guarded apply keys its snapshot by the configuration and project the fetch ran with, never by
+    // whatever is configured or pinned when it lands.
     const TrackerConfig cfgSnap = guard.Config != nullptr ? *guard.Config : ConfigManager::Load();
-    if (guard.Config != nullptr && smatchet::cache_keys::TrackerCacheBackendKey(cfgSnap) !=
-                                       smatchet::cache_keys::TrackerCacheBackendKey(ConfigManager::Load())) {
-        // The configured tracker changed while this fetch ran: its result belongs to a tracker the
-        // pane is leaving, so it is neither shown nor saved under the new tracker's snapshot key.
-        return false;
-    }
     const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
     const bool catalogPlane = backendKey == "Plane";
     // No legacy global project fields exist. Saves under the unscoped ("") cache key when
@@ -255,7 +259,9 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     // RefreshFieldCatalog write it under cat.availableFieldsMutex_ from other threads, so an unlocked
     // read of the std::string here is a data race.
     std::string projectKeyForCache;
-    {
+    if (guard.HasProject) {
+        projectKeyForCache = guard.Project;
+    } else {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         projectKeyForCache = cat.currentCatalogProjectKey_;
     }
@@ -289,7 +295,7 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     }
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        if (!guard.Holds()) {
+        if (!guard.HoldsLocked(cat)) {
             return false;
         }
         cat.AvailableFields = std::move(fields);
@@ -534,6 +540,21 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     guard.Epoch = &ctx.fieldCatalog.CatalogEpoch;
     guard.ExpectedEpoch = ctx.fieldCatalog.CatalogEpoch.load();
     guard.Config = &cfg;
+    guard.HasProject = true;
+    guard.Project = projectKey;
+    // A fetch whose config names another tracker kind than the backend installed in this pane would
+    // pair the old backend with the new tracker's config (a switch whose backend swap is still
+    // pending, e.g. a deferred Save & Sync). Its result would land in the pane and be snapshotted
+    // under the new tracker's key, so it does not run at all.
+    const std::string paneKey = ctx.CacheBackendKeyCopy();
+    const std::string fetchKind =
+        smatchet::cache_keys::CacheBackendKeyKind(smatchet::cache_keys::TrackerCacheBackendKey(cfg));
+    if (!paneKey.empty() && smatchet::cache_keys::CacheBackendKeyKind(paneKey) != fetchKind) {
+        LOG_INFO("AppController::RefreshFieldCatalog: pane '%s' still runs '%s' while the fetch is for '%s' (a "
+                 "tracker switch is pending); skipped",
+                 ctx.PaneId.c_str(), smatchet::cache_keys::CacheBackendKeyKind(paneKey).c_str(), fetchKind.c_str());
+        return false;
+    }
     // Strong handle: a live tracker switch (SetBackend on the UI thread) must not free the backend
     // mid-FetchFieldCatalog — the FieldCatalog object dereferenced below lives inside it (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
@@ -552,7 +573,9 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     std::string error;
     bool errorTransient = false;
     bool ok = false;
-    if (backend->FieldCatalog()) {
+    if (!backend->FieldCatalog()) {
+        error = "This tracker backend has no field catalog.";
+    } else {
         auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey);
         ok = static_cast<bool>(catalogResult);
         if (ok) {
@@ -561,6 +584,9 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
             error = catalogResult.error().Detail;
             // N12 item 13b: classify at the flatten seam from the structured kind.
             errorTransient = catalogResult.error().IsRetryable();
+            if (error.empty()) {
+                error = "The field catalog fetch failed.";
+            }
         }
     }
     if (!ok) {
@@ -747,9 +773,23 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
     if (fields.empty() && components.empty() && issueTypeMeta.empty() && error.empty()) {
-        // An explicit clear (the reset a tracker switch starts with) supersedes every catalog fetch
-        // already in flight for this pane, before the new backend is even installed.
+        // An explicit clear: the reset a tracker switch starts with. It supersedes every catalog fetch
+        // already in flight for this pane, before the new backend is even installed, and it empties
+        // only the in-memory catalog: the offline snapshot stays (Pillar 6), and no synthetic columns
+        // are published for a tracker whose catalog has not arrived yet.
         cat.CatalogEpoch.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+            std::vector<TrackerField>().swap(cat.AvailableFields);
+            std::vector<TrackerComponent>().swap(cat.AvailableComponents);
+            std::vector<TrackerIssueTypeCreateMeta>().swap(cat.AvailableIssueTypeMeta);
+        }
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogErrorTransient = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.fieldCatalogEverLoaded_ = false;
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
+        return;
     }
     if (ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
                               errorTransient)) {
