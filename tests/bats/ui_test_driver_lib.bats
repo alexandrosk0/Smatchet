@@ -179,6 +179,43 @@ EOF
     grep -qx "SMATCHET_USER_DATA=$pin" "$FIX"/env.*
 }
 
+# _mk_failing_rm — an `rm` shim that always fails, standing in for Windows
+# refusing the delete while the --spawn grandchild holds files open in the dir.
+_mk_failing_rm() {
+    mkdir -p "$FIX/shim" "$FIX/tmp"
+    printf '#!/usr/bin/env bash\necho "rm: cannot remove: Device or resource busy" >&2\nexit 1\n' \
+        > "$FIX/shim/rm"
+    chmod +x "$FIX/shim/rm"
+}
+
+@test "a failing cleanup rm under set -e keeps a passing driver at exit 0" {
+    _mk_failing_rm
+    cat > "$FIX/drv.sh" <<'EOF'
+set -e
+. "$LIB"
+ui_test_isolate_home
+echo "RAN_TO_END"
+exit 0
+EOF
+    TMPDIR="$FIX/tmp" PATH="$FIX/shim:$PATH" run bash "$FIX/drv.sh"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    grep -q RAN_TO_END <<<"$output"
+}
+
+@test "a failing cleanup rm under set -e keeps a failing driver's own exit status" {
+    _mk_failing_rm
+    cat > "$FIX/drv.sh" <<'EOF'
+set -e
+. "$LIB"
+ui_test_isolate_home
+exit 3
+EOF
+    TMPDIR="$FIX/tmp" PATH="$FIX/shim:$PATH" run bash "$FIX/drv.sh"
+    echo "$output"
+    [ "$status" -eq 3 ]
+}
+
 @test "the throwaway dir is removed even when the driver fails" {
     cat > "$FIX/drv.sh" <<'EOF'
 . "$LIB"

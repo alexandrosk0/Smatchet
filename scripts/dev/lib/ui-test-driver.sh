@@ -22,7 +22,8 @@
 #       Point the run at a throwaway profile so it never reads or writes the
 #       developer's real one (test 2026-08-05-bucket-e-inherits-developer-imgui-ini,
 #       tooling 2026-08-07-bucket-e-runners-need-ephemeral-home). Creates a
-#       mktemp dir removed by an EXIT trap and exports:
+#       mktemp dir removed by an EXIT trap (best-effort: a delete the OS refuses
+#       never changes the driver's exit status) and exports:
 #         SMATCHET_USER_DATA=<dir>  — config, imgui.ini, views, SQLite cache and
 #                                     instance.json all resolve under it
 #                                     (StandaloneAppBootstrap; inherited by the
@@ -110,7 +111,17 @@ ui_test_require_fresh_exe() {
     return 2
 }
 
-_ui_test_cleanup_home() { rm -rf "${UI_TEST_HOME:?}"; }
+# EXIT trap. Best-effort: on Windows the --spawn grandchild can still hold its
+# log / SQLite / instance.json open under the dir, so the delete fails — and
+# under a driver's `set -e` a failing command here would turn a passing run
+# into exit 1. Keep (and re-exit with) the status the driver was exiting with.
+_ui_test_cleanup_home() {
+    local rc=$?
+    if [ -n "${UI_TEST_HOME:-}" ]; then
+        rm -rf "$UI_TEST_HOME" 2>/dev/null || true
+    fi
+    exit "$rc"
+}
 
 # shellcheck disable=SC2120 # every option is optional; a bare call is the common case
 ui_test_isolate_home() {
