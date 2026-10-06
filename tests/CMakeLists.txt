@@ -268,6 +268,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
+        # CommandRegistry lookup vs registration race: FindLocked (UI thread) against Register
+        # (a worker); FuzzyMatch + Command join for the registry's alias/fuzzy and result helpers.
+        Core/CommandRegistryConcurrency.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/CacheBackendKeyPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
@@ -1127,6 +1133,7 @@ add_executable(SmatchetTests
     # The remaining AppController-coupled Builtin TUs (Perf/Ai) and the UI-session ones
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
+    Core/CommandRegistryConcurrency.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"

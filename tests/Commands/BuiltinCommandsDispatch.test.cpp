@@ -451,9 +451,15 @@ TEST_CASE("builtins — debug.lua_eval runs on the UI thread, never on the dispa
         fx.App.mainThreadDispatcher.Drain();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    // Fail fast rather than hang: a still-running worker at REQUIRE's unwind terminates.
-    REQUIRE(done.load());
+    const bool finishedInTime = done.load();
+    if (!finishedInTime) {
+        // Release the worker before failing: shutdown runs or discards its task, which breaks the
+        // promise it waits on, so the join below cannot hang and no joinable thread outlives the test.
+        fx.App.mainThreadDispatcher.BeginShutdown();
+        fx.App.mainThreadDispatcher.Drain();
+    }
     worker.join();
+    REQUIRE(finishedInTime);
     // The body itself ran on the UI thread: a Lua build evaluates the snippet, a Lua-less
     // build reports the feature as absent — never a dispatch-shutdown error.
     CHECK((result.Ok || result.Error.Message.find("Lua") != std::string::npos));
