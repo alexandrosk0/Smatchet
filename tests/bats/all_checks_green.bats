@@ -224,6 +224,20 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     grep -qE '^    timeout-minutes: [0-9]+$' "$WF"
 }
 
+@test "wait budget outlasts the slowest legitimate lane; the job timeout outlasts the budget" {
+    WF="$REPO_ROOT/.github/workflows/all-checks-green.yml"
+    budget="$(sed -n 's/^MAX_WAIT="\$(int_or "\${ACG_MAX_WAIT_SECONDS:-}" \([0-9]*\))"$/\1/p' "$ACG")"
+    settle="$(sed -n 's/^SETTLE="\$(int_or "\${ACG_SETTLE_SECONDS:-}" \([0-9]*\))"$/\1/p' "$ACG")"
+    job_min="$(sed -n 's/^    timeout-minutes: \([0-9]*\)$/\1/p' "$WF")"
+    [ -n "$budget" ] && [ -n "$settle" ] && [ -n "$job_min" ]
+    # 170 min: CodeQL analyze's 90-min timeout, or Windows + MSVC 45 -> Bucket-E
+    # 45 serially, each plus runner queueing.
+    [ "$budget" -ge $(( 170 * 60 )) ]
+    # The runner must not kill the job before the script's own timeout report
+    # (budget + two settle windows of grace + a margin for the last poll).
+    [ $(( job_min * 60 )) -gt $(( budget + 2 * settle + 300 )) ]
+}
+
 @test "usage errors exit 2" {
     run bash "$ACG" --fixture "$BATS_TEST_TMPDIR/absent.json"
     [ "$status" -eq 2 ]

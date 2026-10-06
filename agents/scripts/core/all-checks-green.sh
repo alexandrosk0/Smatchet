@@ -56,8 +56,14 @@
 #     notice: a red here would leave a FAILURE check on nearly every merged
 #     head (a merge through safe-merge.sh does not wait for this check), which
 #     reads as a gate escape to anything auditing merged heads;
-#   * still pending at ACG_MAX_WAIT_SECONDS (default 5100) -> exit 1 (a timeout
-#     is red, fail-closed; re-running the job or any label change clears it);
+#   * still pending at ACG_MAX_WAIT_SECONDS (default 10200 = 170 min) -> exit 1
+#     (a timeout is red, fail-closed; re-running the job or any label change
+#     clears it). The budget must outlast the slowest LEGITIMATE path, not the
+#     typical one: CodeQL analyze alone may run its 90-min timeout-minutes, and
+#     Windows + MSVC (45) feeds Bucket-E (45) serially, each after queueing for
+#     a runner — 170 min covers either with queue slack. The workflow's
+#     timeout-minutes sits above budget + the settle grace so the script, not
+#     the runner, reports the pending set (bats pins the ordering);
 #   * ACG_MAX_API_FAILURES (default 10) consecutive API failures -> exit 2.
 # The PR (head, state, labels, body) is re-read every ACG_PR_REFRESH_POLLS
 # (default 5) polls and always before a terminal verdict.
@@ -231,7 +237,7 @@ int_or() { if [[ "${1:-}" =~ ^[0-9]+$ ]]; then echo "$1"; else echo "$2"; fi; }
 POLL="$(int_or "${ACG_POLL_SECONDS:-}" 90)"
 [ "$POLL" -ge 30 ] || POLL=30
 SETTLE="$(int_or "${ACG_SETTLE_SECONDS:-}" 60)"
-MAX_WAIT="$(int_or "${ACG_MAX_WAIT_SECONDS:-}" 5100)"
+MAX_WAIT="$(int_or "${ACG_MAX_WAIT_SECONDS:-}" 10200)"
 MAX_API_FAIL="$(int_or "${ACG_MAX_API_FAILURES:-}" 10)"
 PR_REFRESH="$(int_or "${ACG_PR_REFRESH_POLLS:-}" 5)"
 [ "$PR_REFRESH" -ge 1 ] || PR_REFRESH=1

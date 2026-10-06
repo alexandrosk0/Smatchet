@@ -39,9 +39,12 @@ name: All checks green
 #
 # Cost: one ubuntu-latest runner, mostly asleep, for about as long as the slowest
 # lane. Each poll is 2-3 REST calls on GITHUB_TOKEN's shared per-repo budget,
-# which is why the poll interval is 90 s (floor 30 s). timeout-minutes is above
-# the script's own 85-min budget, so the script reports the pending set itself;
-# a timeout is red either way (fail-closed — re-run to clear).
+# which is why the poll interval is 90 s (floor 30 s). The script's budget is
+# 170 min — longer than the slowest legitimate path (CodeQL analyze's 90-min
+# timeout; Windows + MSVC 45 then Bucket-E 45, plus runner queueing).
+# timeout-minutes is above that budget plus the settle grace, so the script
+# reports the pending set itself; a timeout is red either way (fail-closed —
+# re-run to clear).
 
 on:
   pull_request:
@@ -70,7 +73,7 @@ jobs:
   all-checks-green:
     name: All checks green (block-on-any-red)
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 180
     steps:
       - name: Checkout (gate script + project.config.json only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
