@@ -213,6 +213,73 @@ GREEN_EDIT='setrun("Bucket-E UI tests (Mesa headless GL)"; "success") | setstatu
     [ "$status" -eq 0 ]
 }
 
+# The aggregate reads both disposition trails through the poller's own reader
+# (_MG_JQ_DISPOSITION_DEF), so the attestations the poller rejects fail here too.
+@test "a placeholder cr-disposition:<reason> (label or body) does not release the CR findings status" {
+    local base='setrun("Bucket-E UI tests (Mesa headless GL)"; "success")'
+    # The gate's own error text pasted back as a body marker.
+    replay final "$base | .labels = [\"cr-out-of-band\"] | .body = \"cr-disposition:<reason>\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"PENDING     CR findings (0 actionable) (pending)"* ]]
+    # The same placeholder as a label.
+    replay final "$base | .labels = [\"cr-out-of-band\", \"cr-disposition:<reason>\"]"
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    # A bare prefix label carries no reason at all.
+    replay final "$base | .labels = [\"cr-out-of-band\", \"cr-disposition:\"]"
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+}
+
+@test "a disposition marker inside an HTML comment or mid-line prose attests nothing" {
+    local base='setrun("Bucket-E UI tests (Mesa headless GL)"; "success")'
+    # A PR-template placeholder left in a comment block.
+    replay final "$base | .labels = [\"cr-out-of-band\"] | .body = \"## Summary\n<!--\ncr-disposition: rate-limited for hours\n-->\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    # An unterminated comment hides the rest of the body too.
+    replay final "$base | .labels = [\"cr-out-of-band\"] | .body = \"<!-- todo\ncr-disposition: rate-limited for hours\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    # A mention in prose is not a marker line.
+    replay final "$base | .labels = [\"cr-out-of-band\"] | .body = \"Add a cr-disposition: line later.\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 3 ]
+    # The Plan-lock trail is read by the same reader.
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"] | .body = \"<!-- plan-lock-disposition: overlap is docs-only -->\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"RED         Plan-lock gate (failure)"* ]]
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"] | .body = \"plan-lock-disposition:<reason>\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 1 ]
+    # Control: the same marker on its own line outside the comment still counts.
+    replay final "$GREEN_EDIT | setrun(\"Plan-lock gate\"; \"failure\") | .labels = [\"plan-lock-out-of-band\"] | .body = \"<!-- template -->\n* plan-lock-disposition: overlap is docs-only\""
+    run bash "$ACG" --fixture "$SNAP"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DOWNGRADED  Plan-lock gate (failure)"* ]]
+}
+
+@test "the aggregate reads dispositions through the poller's shared reader, not a copy" {
+    # One reader: all-checks-green.sh sources merge-gates.d/10-gate-filter.sh and
+    # splices _MG_JQ_DISPOSITION_DEF; it never defines its own disposition().
+    grep -qF 'merge-gates.d/10-gate-filter.sh' "$ACG"
+    grep -qF 'ACG_FILTER="$_MG_JQ_DISPOSITION_DEF"' "$ACG"
+    run grep -nE '^[[:space:]]*def disposition' "$ACG"
+    [ "$status" -eq 1 ]
+}
+
+@test "a missing shared disposition reader fails closed (exit 2), never a laxer verdict" {
+    local d="$BATS_TEST_TMPDIR/core"
+    mkdir -p "$d"
+    cp "$ACG" "$d/all-checks-green.sh"
+    replay final "$GREEN_EDIT"
+    run bash "$d/all-checks-green.sh" --fixture "$SNAP"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"shared disposition reader"* ]]
+}
+
 @test "workflow wiring: job name == ACG_SELF == script default; always reports" {
     WF="$REPO_ROOT/.github/workflows/all-checks-green.yml"
     [ "$(grep -cxF "    name: $SELF" "$WF")" -eq 1 ]

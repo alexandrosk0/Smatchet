@@ -34,9 +34,13 @@
 #   * the poller's out-of-band downgrades: tests-out-of-band (Test-delta gate),
 #     perf-out-of-band (Perf PR-fast*), intent-out-of-band (Intent section),
 #     plan-lock-out-of-band PAIRED with a plan-lock-disposition (label
-#     `plan-lock-disposition:<why>` or a PR-body marker) for the Plan-lock gate,
-#     and cr-out-of-band PAIRED with a cr-disposition (same two forms) for the
-#     CR finding check + `CR findings*` status — red OR pending. The poller's
+#     `plan-lock-disposition:<why>` or a PR-body marker line) for the Plan-lock
+#     gate, and cr-out-of-band PAIRED with a cr-disposition (same two forms) for
+#     the CR finding check + `CR findings*` status — red OR pending. Both trails
+#     are read by the poller's OWN jq def, _MG_JQ_DISPOSITION_DEF, sourced from
+#     merge-gates.d/10-gate-filter.sh (marker at line start, outside an HTML
+#     comment, no `<...>` placeholder reason; labels follow the reason rule), so
+#     the aggregate is never laxer than the poller it stands in for. The poller's
 #     stale-override freshness conjunct is NOT ported: the two label-reactive
 #     checks it guards are themselves required contexts, so GitHub still waits on
 #     their post-label re-run directly, and the settle re-poll below sees a re-run
@@ -99,16 +103,24 @@ die() { echo "all-checks-green: $*" >&2; exit 2; }
 
 command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 
+# The disposition-trail reader (cr-disposition / plan-lock-disposition) is the
+# merge-gates poller's own jq def, _MG_JQ_DISPOSITION_DEF, sourced from its
+# gate-filter module (side-effect-free: two string assignments) — ONE reader for
+# the poller, safe-admin-merge.sh and this aggregate, never a copy of its regex.
+# Fail-closed (exit 2) when it is missing: a lost reader must not degrade to
+# honouring no override, or to a looser one. The workflow's sparse checkout of
+# agents/scripts/core/ carries merge-gates.d/ with it (cone mode is recursive).
+_ACG_GATE_FILTER="$(dirname "${BASH_SOURCE[0]}")/merge-gates.d/10-gate-filter.sh"
+[ -f "$_ACG_GATE_FILTER" ] || die "missing $_ACG_GATE_FILTER (the shared disposition reader)"
+# shellcheck source=agents/scripts/core/merge-gates.d/10-gate-filter.sh
+. "$_ACG_GATE_FILTER"
+[ -n "${_MG_JQ_DISPOSITION_DEF:-}" ] || die "$_ACG_GATE_FILTER did not define _MG_JQ_DISPOSITION_DEF"
+
 # The verdict program. Input: {check_runs, statuses, labels, body}; $self: this
 # check's name; $req: required-context names. Output: {verdict, failing, pending,
 # absent, downgraded, exempt, total, fingerprint}.
 # shellcheck disable=SC2016  # single-quoted jq program — $-refs are jq variables
-ACG_FILTER='
-# disposition — the same reader as merge-gates.d/10-gate-filter.sh: a
-# `<prefix>:` label, or a `<prefix>:<reason>` PR-body marker.
-def disposition($labels; $body; $prefix):
-  ($labels | any(startswith($prefix + ":")))
-  or (($body // "") | test($prefix + ":[[:space:]]*[^[:space:]]"; "i"));
+ACG_FILTER="$_MG_JQ_DISPOSITION_DEF"'
 ([.labels[]? | if type == "object" then (.name // "") else . end]) as $labels
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
