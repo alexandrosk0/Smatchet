@@ -255,8 +255,9 @@ elif [ -n "$repo_root" ]; then
         #    full scripts/dev/test-docs.sh — that also runs the advisory auto-
         #    synced plan-INDEX check, which fails on pre-existing develop drift
         #    (CI auto-fixes it, never blocks) and would false-block an unrelated
-        #    push. A false-blocking gate trains override-by-reflex.
-        if grep -qE '\.md$|^agents/|^docs/|^project\.config\.json$' <<<"$ci_changed"; then
+        #    push. A false-blocking gate trains override-by-reflex. A bump of
+        #    the agent-layer gitlink changes the layer's docs, so it counts too.
+        if grep -qE '\.md$|^agents/|^docs/|^project\.config\.json$|^agent-layer$|^\.gitmodules$' <<<"$ci_changed"; then
             for ci_doc in test-doc-anchors test-markdown-links test-portable-purity; do
                 [ -f "$layer_root/agents/scripts/core/$ci_doc.sh" ] || continue
                 if ! ( cd "$repo_root" && bash "$layer_root/agents/scripts/core/$ci_doc.sh" ) >/dev/null 2>&1; then
