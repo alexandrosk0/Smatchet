@@ -759,6 +759,46 @@ run_nudge() {
     grep -q '@coderabbitai full review' "$POST_LOG"
 }
 
+# Clean-pass vocabulary is CR's verdict wording, not any mention of findings:
+# a chat reply that merely talks about findings must not read as a clean pass
+# (it would post a full-review request into a live rate-limit window).
+@test "nudge: chat text that merely mentions 'no findings' is NOT clean-pass evidence" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'There were no findings in the last run, but I will re-check once the limit clears.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+# Never post while the newest busy notice's quoted window is still open, even
+# when a newer clean reply exists: CR answers chat commands while limited, so a
+# newer reply does not end the window, and a trigger inside it RESETS it.
+@test "nudge: stale-clean stays silent while the newest notice's quoted window is open" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-5 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '## Review limit reached — Next review available in: 38 minutes'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'No actionable comments were generated in the recent review.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: stale-clean posts once the quoted window has passed (not the 1 h fallback)" {
+    setup_nudge
+    # 50 minutes ago + a quoted 38-minute wait = closed 12 minutes ago, while
+    # the unparsed 1-hour fallback would still read it as open.
+    row coderabbitai[bot] "$(date -u -d '-50 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '## Review limit reached — Next review available in: 38 minutes'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'No actionable comments were generated in the recent review.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: a 'wait N minutes and S seconds' notice is read as its full window" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-10 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '> ## Rate limit exceeded — Please wait **13 minutes and 37 seconds** before requesting another review. Review limit reached.'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'Checked the targeted change. No findings.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
 @test "the nudge is also wired into the not-settled arm (shape 2, no status at all)" {
     # A comment-only clean pass can complete with NO CodeRabbit StatusContext
     # on the head (cr_ctx ABSENT) — the wedge parks in the `*)` arm, one door
