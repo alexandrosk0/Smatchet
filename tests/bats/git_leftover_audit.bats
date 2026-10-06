@@ -103,3 +103,58 @@ audit_remote() { ( cd "$MAIN" && PATH="$GHSTUB:$PATH" PC_CONFIG_FILE="$GHSTUB/pr
     [ "$status" -eq 0 ]
     [[ "$output" != *"STALE REMOTE BRANCHES"* ]]
 }
+
+# --- PR map availability: a failing / truncated gh is UNKNOWN, never "no PR" ---
+# gh installed but failing (unauthenticated, offline) used to leave an empty PR
+# map with no caveat, so every branch read "no PR": local rows landed in the
+# STALE-no-pr / WIP reap buckets and --remote listed PR-backed branches as stale.
+
+failing_gh() {  # replace the stub gh with one that fails like an unauthenticated gh
+    printf '#!/usr/bin/env bash\necho "HTTP 401: Bad credentials" >&2\nexit 1\n' > "$GHSTUB/gh"
+    chmod +x "$GHSTUB/gh"
+}
+
+@test "a failing gh leaves local PR state UNKNOWN with a caveat, never a no-PR bucket" {
+    remote_fixture
+    failing_gh
+    WT="$(mktemp -d)/wt-feat"
+    git -C "$MAIN" worktree add -q -b feat/x "$WT" >/dev/null 2>&1
+    run audit_remote --no-fetch
+    rm -rf "$WT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR state unknown: 'gh pr list' failed (HTTP 401: Bad credentials)"* ]]
+    row="$(grep -F '[feat/x]' <<<"$output")"
+    [[ "$row" == *"unknown"*"UNKNOWN-pr-state"*"PR state unknown"* ]]
+    [[ "$row" != *"STALE-no-pr"* ]]
+    [[ "$row" != *"WIP-or-orphan"* ]]
+}
+
+@test "--remote with a failing gh marks candidates [PR?] instead of calling them PR-less" {
+    remote_fixture
+    failing_gh
+    run audit_remote --remote --age-days 7
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR state unknown"* ]]
+    # with-pr really has a PR: it must not be reported as a no-PR stale branch.
+    [[ "$output" == *"origin/with-pr [PR?]"* ]]
+    [[ "$output" == *"origin/abandoned [PR?]"* ]]
+    [[ "$output" == *"0 stale remote branch(es), 2 more with PR state unknown"* ]]
+}
+
+@test "the PR map covers the whole repo; a list that fills the limit counts as truncated" {
+    remote_fixture
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/gh.args"\nprintf "with-pr\\tOPEN\\n"\n' "$GHSTUB" > "$GHSTUB/gh"
+    chmod +x "$GHSTUB/gh"
+    run audit_remote --remote --age-days 7
+    [ "$status" -eq 0 ]
+    # The repo has 2,300+ PRs: the default limit must reach well past the old 1000.
+    grep -q -- '--limit 10000' "$GHSTUB/gh.args"
+    [[ "$output" == *"1 stale remote branch(es)"* ]]
+    [[ "$output" != *"PR state unknown"* ]]
+    # One row returned against a limit of 1: possibly truncated -> unknown.
+    GIT_LEFTOVER_PR_LIMIT=1 run audit_remote --remote --age-days 7
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"may be truncated"* ]]
+    [[ "$output" == *"origin/abandoned [PR?]"* ]]
+    [[ "$output" != *"origin/with-pr"* ]]   # known to have a PR: still excluded
+}
