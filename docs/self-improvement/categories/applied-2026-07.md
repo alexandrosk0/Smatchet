@@ -587,14 +587,6 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 ## What happened
 
 PR #1698 added `tests/bats/mutation_smoke.bats` with no `test-*.sh` wrapper. Its **required** `Doc anchors + agent contract` check ran ~60 s *after* the merge (merged 08:48:56Z, check started 08:49:56Z), so the `test-orphan-bats` failure landed on `develop` un-caught. Under **block-on-any-red**, that red develop tip was then inherited onto every open PR's own head — it silently blocked the whole repo until the #1666 fix (#1704) tripped over it and I root-caused it. Fixed the instance in #1705 (the missing wrapper).
-The bash gate matches `DEV_RE='SMATCHET_DEVIATION\(([^)]*)\)'`, which requires the closing paren on
-the **same line**. 47 live first-party markers open on one line and close on a later one, so
-`DEV_RE` never matches them: the line is treated as ordinary prose, and **both the suppression and
-the expiry are lost**. The Python auditors (`dup_audit`, `function_size_audit`,
-`appcontroller_fan_in_audit`, `include_cycle_audit`) are per-line too — their "nearest non-blank
-line above the target" is the marker's trailing prose, which carries no token, so a wrapped marker
-survives only via `dup_audit._suppressed`'s "anywhere within the clone span" fallback, which
-[`cpp-rules.md`](../../../agent-layer/docs/agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
 
 ## The gap
 

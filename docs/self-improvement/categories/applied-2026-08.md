@@ -308,7 +308,7 @@ becomes testable. The 13 `--selftest` cases are unaffected — they exercise hel
 never enter the arm block at all.
 
 Related: [`docs/adr/0017-merge-time-snapshot-ledger.md`](../../adr/0017-merge-time-snapshot-ledger.md)
-(the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../agent-rules/ship-loops.md)
+(the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../../agent-layer/docs/agent-rules/ship-loops.md)
 § step 3 (the prose fourth-writer rule this entry proposes to turn into code).
 
 ## Follow-up measurement — 2026-09-12 (PR #2184)
@@ -372,7 +372,7 @@ retry, then wait for the "outage" to clear — never succeeds, because there is 
 
 ## Cause
 
-[`merge-gates.sh:646`](../../../agents/scripts/core/merge-gates.sh) invokes:
+[`merge-gates.sh:646`](../../../agent-layer/agents/scripts/core/merge-gates.sh) invokes:
 
 ```bash
 gh api graphql -f owner=… -f repo=… -F pr=… -f query="$query_body" --jq "$GATE_FILTER"
@@ -381,10 +381,10 @@ gh api graphql -f owner=… -f repo=… -F pr=… -f query="$query_body" --jq "$
 Both large payloads travel **as command-line arguments**:
 
 - `$GATE_FILTER` — the gate-decision jq program from
-  [`merge-gates.d/10-gate-filter.sh`](../../../agents/scripts/core/merge-gates.d/10-gate-filter.sh),
+  [`merge-gates.d/10-gate-filter.sh`](../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh),
   **25,185 bytes** today and growing with every gate refinement;
 - `$query_body` — the GraphQL document from
-  [`merge-gates.graphql`](../../../agents/scripts/core/merge-gates.graphql).
+  [`merge-gates.graphql`](../../../agent-layer/agents/scripts/core/merge-gates.graphql).
 
 Windows caps a `CreateProcess` command line at 32,767 characters. The two together clear
 it, so the process never launches. On Linux/macOS the equivalent limit (`ARG_MAX`, ~2 MB)
@@ -466,7 +466,7 @@ Two mechanisms that both key on `cr-out-of-band` are not wired to each other:
 
 1. **`merge-gates.sh`** downgrades the *CodeRabbit gate* (gate 2) to WARN. It deliberately
    does **not** touch the CI counters — the comment at
-   [`merge-gates.sh:1414`](../../../agents/scripts/core/merge-gates.sh) says so outright:
+   [`merge-gates.sh:1414`](../../../agent-layer/agents/scripts/core/merge-gates.sh) says so outright:
    *"(ci_fail / ci_pend) … are NOT touched"*. But `GATES_PASSED` requires `ci_pend -eq 0`
    (lines 1502 and 1557), and `CR findings (0 actionable)` is an ordinary StatusContext that
    lands in `ci_pend` (`fields[7]`, line 736) like any other check.
@@ -610,7 +610,7 @@ capture at all.
 
 Not yet diagnosed — this entry records the gap, not the fix. What is already known:
 
-[`ship-loops.md:44`](../../agent-rules/ship-loops.md) names four writers, and
+[`ship-loops.md:44`](../../../agent-layer/docs/agent-rules/ship-loops.md) names four writers, and
 `ship-loops.md:57` adds two that are code rather than rule (merge-pipeline-02):
 `safe-admin-merge.sh` appends its own row, and `git-janitor.sh --post-merge` Step 5.5
 backfills a row for a merge **no** actor recorded (verdict `BACKFILLED`, actor
@@ -1521,7 +1521,7 @@ something other than the behaviour it names).
 
 - 2026-08-16 · orchestrator · [tooling] · P2 — `test-gate-selftests.sh --selftest` fails all 11 negative fixtures on Windows/msys because its untracked-file mode fallback is `[ -x "$f" ]`, which msys answers TRUE for every temp file — so `scripts/dev/pre-ship.sh` cannot go green on a Windows dev box and its red becomes background noise
   Details: the raw-self-exec rule in
-    [`test-gate-selftests.sh`](../../../agents/scripts/core/test-gate-selftests.sh)
+    [`test-gate-selftests.sh`](../../../agent-layer/agents/scripts/core/test-gate-selftests.sh)
     only applies to mode-100644 scripts (the "126 Permission denied" premise does
     not hold on a `+x` file). It reads the mode from the git index and falls back
     to the filesystem bit for untracked files — and the synthetic selftest
@@ -1594,7 +1594,7 @@ something other than the behaviour it names).
   precedent for the right handling; it too is recorded only as prose.
   Concrete next action: make coverage a computed property of the sweep instead of a
   claim in its header. (1) Add a `--worklist <lo> <hi>` mode to
-  [`historical-review-survivors.sh`](../../../agents/scripts/core/historical-review-survivors.sh)
+  [`historical-review-survivors.sh`](../../../agent-layer/agents/scripts/core/historical-review-survivors.sh)
   (or a sibling `historical-review-worklist.sh`) that emits `{pr, sha}` units for a PR
   range and **fails loudly** when the two enumerators disagree. The gate's enumerator
   is the GitHub merged set — `gh pr list --state merged --base develop --json number,mergeCommit`,
@@ -1616,7 +1616,7 @@ something other than the behaviour it names).
   degraded silently rather than failing loudly.
   Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — all three parts shipped (historical-review-worklist.sh with --json coverage; Batch 20 marked SUPERSEDED with the REDO section in historical-review-findings.md); archival had only waited on a lock that is gone from origin.
   Status: applied (2026-10-04; was: partially applied (2026-08-16 — shipped: parts (1) + (2). New gate)
-    [`historical-review-worklist.sh`](../../../agents/scripts/core/historical-review-worklist.sh)
+    [`historical-review-worklist.sh`](../../../agent-layer/agents/scripts/core/historical-review-worklist.sh)
     builds the work-list from the GitHub merged set cross-validated against the
     develop-log scrape, **refuses to emit a scrape-only list** when no authority is
     available (`gh` absent and no `--merged-list`), reports any PR the scrape missed,
@@ -1642,7 +1642,7 @@ something other than the behaviour it names).
 
 - 2026-08-16 · orchestrator · [process] · P2 — a new WARN-first gate shipped without measuring its false-positive ratio on the whole tree first; the rule as written was 8/12 false, which would have trained readers to ignore it
   Details: PR #2028 added a code-span repo-path check to
-    [`test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh).
+    [`test-markdown-links.sh`](../../../agent-layer/agents/scripts/core/test-markdown-links.sh).
     It was authored, unit-tested, bats-tested and negative-tested against the
     delta scope — all green — and only a discretionary whole-tree `--all` run
     revealed the real signal quality: **12 warnings, of which 8 were false**. A
@@ -1671,7 +1671,7 @@ something other than the behaviour it names).
     ship-loop asks for the measurement, so the next WARN gate is one distracted
     author away from landing at 8/12.
   Concrete next action: add a line to
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Cadence and
+    [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) § Cadence and
     verification — *a new or widened WARN-first rule must be run whole-tree
     (`--all` / equivalent) before push, and the PR body must state the warning
     count and the true/false split; a rule whose warnings are majority-false gets
@@ -1719,7 +1719,7 @@ something other than the behaviour it names).
     and CR's own posted verdict has to be read instead.
   Concrete next action: two cheap, independent pieces.
     (1) Note it where it is read: a line in
-    [`merge-gates.md`](../../agent-rules/merge-gates.md) § CodeRabbit —
+    [`merge-gates.md`](../../../agent-layer/docs/agent-rules/merge-gates.md) § CodeRabbit —
     *a change to a gate's own action/workflow is NOT proven by its check on
     its own PR; comment- and review-triggered runs execute the default
     branch's code, so verify against the `pull_request` run's log (or a
@@ -1762,11 +1762,11 @@ something other than the behaviour it names).
     not exist. It also seeded a false sentence into a sibling entry's action
     item, which was queued for a rule-doc. Fabricated mechanisms propagate the
     same way fabricated quotes do, and the existing class-sweep rule in
-    [`process-rules.md`](../../agent-rules/process-rules.md) already covers
+    [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) already covers
     the sweep once one is found — what is missing is the guard that stops it
     being written in the first place.
   Concrete next action: add one line to
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Self-improvement
+    [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) § Self-improvement
     entries — *an entry may state what was observed at any time; it may state
     WHY a third-party system behaved that way only from a positive observation.
     An inference drawn from a non-response is labelled `Hypothesis:` in the
@@ -1818,7 +1818,7 @@ something other than the behaviour it names).
     brittleness: it looks for `next review available`, while the follow-up said
     "Reviews are available now".
   Concrete next action: (1) add the already-settled rule to the CR rate-limit
-    playbook in [`merge-gates.md`](../../agent-rules/merge-gates.md) §
+    playbook in [`merge-gates.md`](../../../agent-layer/docs/agent-rules/merge-gates.md) §
     CodeRabbit rate-limit playbook — *after any rate-limited pass on the
     current head, escalate to `full review` rather than repeating `review`,
     since a plain re-trigger is a no-op on an already-seen commit*. The
@@ -1884,7 +1884,7 @@ something other than the behaviour it names).
     delimiters in place is therefore the *default* state of every PR body, and
     the one keystroke that arms the release is the one nothing checks. The rule
     itself is unambiguous —
-    [`ship-loops.md:162`](../../agent-rules/ship-loops.md) requires the `open
+    [`ship-loops.md:162`](../../../agent-layer/docs/agent-rules/ship-loops.md) requires the `open
     PR` step to write "*the exact line `lock-cleanup.yml` matches*", i.e. the
     bare form — so this is an operator error, not a doc conflict;
     it is worth a guard precisely because the correct and incorrect forms are
@@ -1899,7 +1899,7 @@ something other than the behaviour it names).
     is reachable only via
     `gh api repos/<owner>/<repo>/check-runs/<jobid>/annotations`. The existing
     downstream catch,
-    [`lock-staleness-sweep.sh:177`](../../../agents/scripts/core/lock-staleness-sweep.sh),
+    [`lock-staleness-sweep.sh:177`](../../../agent-layer/agents/scripts/core/lock-staleness-sweep.sh),
     already names this exact failure in its remediation text ("the PR was missing
     a `lock-slug: ${slug}` line in its body") — so the class is known and the
     sweep is the only thing catching it, days late.
@@ -2065,7 +2065,7 @@ the expiry are lost**. The Python auditors (`dup_audit`, `function_size_audit`,
 `appcontroller_fan_in_audit`, `include_cycle_audit`) are per-line too — their "nearest non-blank
 line above the target" is the marker's trailing prose, which carries no token, so a wrapped marker
 survives only via `dup_audit._suppressed`'s "anywhere within the clone span" fallback, which
-[`cpp-rules.md`](../../agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
+[`cpp-rules.md`](../../../agent-layer/docs/agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
 
 Where they are: `Source/Core/include/Tracker/{GitHub,Jira,Linear,Plane}Client.h` (21),
 `Source/Core/src/Tracker/*` (8), the three AI provider clients (5), `Source/Standalone/Cli*` (4),
@@ -3768,7 +3768,7 @@ needs its risky work step-scoped.
   frame semantics for **every** scenario (warm-up counts double overnight) and
   invalidates every bucket-C golden, so it needs its own slice with golden
   regeneration — which is approval-gated by
-  [`golden-image-approval.md`](../../agent-rules/golden-image-approval.md).
+  [`golden-image-approval.md`](../../../agent-layer/docs/agent-rules/golden-image-approval.md).
 
   Suggested shape: keep the in-`Draw` tick (it matches production ordering and
   runs inside the `NewFrame`/`Render` bracket), delete the bootstrap one, then
