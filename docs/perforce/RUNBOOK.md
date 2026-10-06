@@ -2,7 +2,7 @@
 
 > **Plan**: [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md).
 > **Sibling docs**: [`SETUP.md`](SETUP.md) — first-time bring-up. [`AGENT_FLOWS.md`](AGENT_FLOWS.md) — which verb to use when.
-> **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md)) handles routine maintenance.
+> **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md)) handles routine maintenance.
 
 The Smatchet `p4d` server is **non-canonical** (git + GitHub remain the ship-line per [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). Losing the depot is annoyance, not data loss — every shipped change lives on GitHub. The runbook below is therefore optimised for "keep agentic-WIP primitives healthy", not "prevent catastrophic data loss".
 
@@ -46,7 +46,7 @@ p4 verify -q //smatchet/...
 
 Output is empty on success. Any `BAD!` line = archive corruption — restore from the most recent good checkpoint (see § Recovery).
 
-`p4-janitor` runs this on its own schedule per [`agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) § Verification.
+`p4-janitor` runs this on its own schedule per [`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) § Verification.
 
 ## Stream + shelve GC
 
@@ -101,7 +101,7 @@ If the offsite robocopy mirror has a more recent checkpoint than the local one, 
 | `Submit failed: Out of disk space on server` | Server-root drive full | Free space OR roll log files; never delete `db.*` files manually. |
 | Client `p4 reconcile` lists files the user didn't touch | `.p4ignore` missing or out of sync with `.gitignore` | Re-read [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology § Drift handling. Confirm `P4IGNORE=.p4ignore` is set; re-run `bash agent-layer/agents/scripts/project/p4-reconcile-check.sh` for the diff against git. |
 | A file is `*exclusive*` and the owning client is dead | Stale `+l` lock | `p4 lock -r //path/to/file` from the server host as `super` user (irreversible — confirms abandonment). |
-| `p4 counter --from --to` rejects valid CAS | Counter doesn't exist (first claim) | Bootstrap path in [`agents/scripts/core/lock-claim-p4.sh`](../../agent-layer/agents/scripts/core/lock-claim-p4.sh) handles this. Manual: `p4 counter <name> 0` then retry CAS. |
+| `p4 counter --from --to` rejects valid CAS | Counter doesn't exist (first claim) | Bootstrap path in [`agent-layer/agents/scripts/core/lock-claim-p4.sh`](../../agent-layer/agents/scripts/core/lock-claim-p4.sh) handles this. Manual: `p4 counter <name> 0` then retry CAS. |
 
 ## Permissions + super user
 
@@ -125,6 +125,6 @@ Super stays restricted to the host operator.
 
 ## See also
 
-- [`agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) — automated maintenance agent.
-- [`agents/core/git-janitor.md`](../../agent-layer/agents/core/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
+- [`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) — automated maintenance agent.
+- [`agent-layer/agents/core/git-janitor.md`](../../agent-layer/agents/core/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
 - [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) — the plan this runbook closes a gap on.

@@ -9,7 +9,7 @@ Heavy `Source/Core/src/<ctx>/` subsystems carry up to **three** co-located agent
 | `CONTEXT.md` | domain glossary (one-sentence term defs, relationships, zero impl detail) | [`grill-with-docs/CONTEXT-FORMAT.md`](agent-layer/agents/_shared/skills/grill-with-docs/CONTEXT-FORMAT.md) | read on demand |
 | `README.md` | orientation (request flow, role-of-each-file; durable-by-construction — no `file:line`, no counts) | this registry's orientation shape | read on demand |
 
-This file is the **registry** (what exists where) and the **harness-discovery index** (for any harness that doesn't honour nearest-wins). The gate `agents/scripts/project/test-subsystem-docs.sh` keys off the table below: a listed leaf missing on disk **FAILs**; an on-disk `Source/Core/src/<ctx>/AGENTS.md` absent from this table **FAILs**; a rule string duplicated central↔leaf **FAILs**; a context whose code changed without a `README.md` touch **WARNs**.
+This file is the **registry** (what exists where) and the **harness-discovery index** (for any harness that doesn't honour nearest-wins). The gate `agent-layer/agents/scripts/project/test-subsystem-docs.sh` keys off the table below: a listed leaf missing on disk **FAILs**; an on-disk `Source/Core/src/<ctx>/AGENTS.md` absent from this table **FAILs**; a rule string duplicated central↔leaf **FAILs**; a context whose code changed without a `README.md` touch **WARNs**.
 
 ## Registry
 
@@ -27,7 +27,7 @@ A `—` cell means **intentionally absent** (no scoped rule / no grill yet), not
 
 ## Harness discovery
 
-Leaf `AGENTS.md` loading is **per-harness** (see [`docs/harness/SETUP.md`](agent-layer/docs/harness/SETUP.md) § Per-subsystem leaf discovery):
+Leaf `AGENTS.md` loading is **per-harness** (see [`agent-layer/docs/harness/SETUP.md`](agent-layer/docs/harness/SETUP.md) § Per-subsystem leaf discovery):
 
 - **Claude Code** reads nested `CLAUDE.md`, not nested `AGENTS.md`. `setup-harness.sh claude-code` generates a gitignored one-line `CLAUDE.md` (`@AGENTS.md`) beside each leaf so Claude Code lazy-loads the leaf when a file in that dir is touched. The committed tree stays `AGENTS.md`-only.
 - **Codex / agents.md harnesses** read the nearest `AGENTS.md` natively — no shim needed.

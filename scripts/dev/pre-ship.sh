@@ -346,7 +346,7 @@ fi
 # Self-staleness detector (gate-tooling-run-from-stale-session-branch, process P1).
 # This gate runs from whatever checkout the author happens to be on, and
 # `claude/<id>/*` session branches live for days with nothing pulling
-# `agents/scripts/**` forward. A stale pre-ship is worse than a stale merge poller:
+# `agent-layer/agents/scripts/**` forward. A stale pre-ship is worse than a stale merge poller:
 # the poller fails LOUD (a phantom BLOCK someone investigates), while this one fails
 # SILENT — it prints "Safe to push" using lint rules `develop` has since tightened,
 # and nobody re-examines a green. Advisory only; a freshness note must never be the

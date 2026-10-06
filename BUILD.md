@@ -35,7 +35,7 @@ winget install LLVM.LLVM
 
 ### Dev-script CLI tools
 
-The orchestrator + agent scripts (`scripts/dev/*.sh`, `agents/scripts/core/merge-watcher.py`, etc.) require a small set of CLI tools beyond the build toolchain:
+The orchestrator + agent scripts (`scripts/dev/*.sh`, `agent-layer/agents/scripts/core/merge-watcher.py`, etc.) require a small set of CLI tools beyond the build toolchain:
 
 | Tool | Used by | Install (Windows) |
 |---|---|---|
@@ -44,7 +44,7 @@ The orchestrator + agent scripts (`scripts/dev/*.sh`, `agents/scripts/core/merge
 | `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
 | `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | Install via LLVM or Visual Studio individual components |
 | `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` |
-| `shellcheck` | `agents/scripts/core/test-shell-lint.sh` (pre-push gate) | `npm install -g shellcheck` |
+| `shellcheck` | `agent-layer/agents/scripts/core/test-shell-lint.sh` (pre-push gate) | `npm install -g shellcheck` |
 
 Verify the full set in one shot:
 
@@ -60,7 +60,7 @@ Install whatever it reports missing:
 bash scripts/dev/setup-env.sh
 ```
 
-Resolves each missing tool to a package on the host's native manager (winget / MSYS2 `pacman` / `apt` / `brew`, `npm` for `bats` + `shellcheck`), installs it, then re-runs the probe as its verdict. `--dry-run` prints the plan only, `--yes` skips the prompt, `--list` dumps the tool → package map. Idempotent. It covers the dev-script CLI tools in the table above — **not** the MSVC / Clang build toolchain, which stays a manual install per the section above. Full flag reference: [`docs/harness/SETUP.md`](agent-layer/docs/harness/SETUP.md) § Installing the missing ones.
+Resolves each missing tool to a package on the host's native manager (winget / MSYS2 `pacman` / `apt` / `brew`, `npm` for `bats` + `shellcheck`), installs it, then re-runs the probe as its verdict. `--dry-run` prints the plan only, `--yes` skips the prompt, `--list` dumps the tool → package map. Idempotent. It covers the dev-script CLI tools in the table above — **not** the MSVC / Clang build toolchain, which stays a manual install per the section above. Full flag reference: [`agent-layer/docs/harness/SETUP.md`](agent-layer/docs/harness/SETUP.md) § Installing the missing ones.
 
 **Scheduled-Task / service environments** (notably `SmatchetMergeWatcher`) get a more minimal PATH than an interactive shell and may not resolve `gh` / `jq` / `bash` via bare-name lookup. The `merge-watcher-install-autostart.ps1` installer probes standard install locations + winget's Links dir + Git's `bin` dir explicitly so daemons keep working. See [`docs/plans/shipped/smatchet-merge-watcher.md`](docs/plans/shipped/smatchet-merge-watcher.md) § Daemon environment prerequisites for the gotchas.
 

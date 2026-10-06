@@ -2,7 +2,7 @@
 
 Project-specific guardrails for Cursor Bugbot. Bugbot loads this root
 `.cursor/BUGBOT.md` on every PR. See `AGENTS.md` § Merge gates and
-`docs/agent-rules/merge-gates.md` § Self-improvement doc PR auto-exemption.
+`agent-layer/docs/agent-rules/merge-gates.md` § Self-improvement doc PR auto-exemption.
 
 ## Skip the self-improvement ledger
 
@@ -14,6 +14,6 @@ Project-specific guardrails for Cursor Bugbot. Bugbot loads this root
   receive **no** Bugbot review at all.
 
 The merge gate already treats such PRs as Bugbot-exempt
-(`agents/scripts/core/merge-gates.sh`, `$selfImpOnly` — the hard guarantee that
+(`agent-layer/agents/scripts/core/merge-gates.sh`, `$selfImpOnly` — the hard guarantee that
 they are never *blocked*). This file additionally asks Bugbot not to *spend* a
 review on them, since Bugbot has no in-repo path-filter config of its own.

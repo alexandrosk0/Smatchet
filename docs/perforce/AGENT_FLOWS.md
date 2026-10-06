@@ -17,7 +17,7 @@ Concern-oriented summary of which side owns which agentic-WIP primitive — abso
 | Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash agent-layer/agents/scripts/project/p4-task-stream.sh <agent-id>` |
 | Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
 | Submit subagent work as PR | (manual) | `bash agent-layer/agents/scripts/project/p4-task-stream-to-pr.sh <id> <title>` |
-| Stale-stream GC | (cron via `agents/core/git-janitor.md`) | `agents/core/p4-janitor.md` + `agents/scripts/project/p4-task-stream-gc.sh` |
+| Stale-stream GC | (cron via `agent-layer/agents/core/git-janitor.md`) | `agent-layer/agents/core/p4-janitor.md` + `agent-layer/agents/scripts/project/p4-task-stream-gc.sh` |
 | Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
 | Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
 | GitHub → p4d backup mirror | (canonical — GitHub) | `//repo/smatchet` graph depot via Git Connector (one-way, non-authoritative — [`MIRROR.md`](MIRROR.md)) |
@@ -121,7 +121,7 @@ Effects:
 
 **Use sparingly.** `+l` defeats merging — by design. Reserve for files where concurrent edits cause demonstrable conflicts (e.g. large generated files, single-writer config). For most C++ source, git-style merge-on-conflict is the right model.
 
-**Hook**: `docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` is a `PreToolUse:Edit|Write|MultiEdit` hook for Claude Code that warns when the Edit tool is about to modify a file currently locked by another client. The hook is a **warning, not a hard block** — agents can ignore for emergency fixes. It is **always deployed** by `setup-harness.sh` and registered in `settings.json.tmpl`, but **self-gates on `SMATCHET_AGENT_VCS=p4`**: it exits 0 immediately in the default git mode, so it only does work when the session opts into p4. Upgrade warning → block with `SMATCHET_P4_LOCK_HOOK_BLOCK=1`.
+**Hook**: `agent-layer/docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` is a `PreToolUse:Edit|Write|MultiEdit` hook for Claude Code that warns when the Edit tool is about to modify a file currently locked by another client. The hook is a **warning, not a hard block** — agents can ignore for emergency fixes. It is **always deployed** by `setup-harness.sh` and registered in `settings.json.tmpl`, but **self-gates on `SMATCHET_AGENT_VCS=p4`**: it exits 0 immediately in the default git mode, so it only does work when the session opts into p4. Upgrade warning → block with `SMATCHET_P4_LOCK_HOOK_BLOCK=1`.
 
 ## Shelf vs stash
 
@@ -298,7 +298,7 @@ Why not the override (`SMATCHET_ALLOW_SHARED_SWITCH=1`): it unblocks the guard b
 
 Why the guard needs no p4-mode exemption: the recipe uses no op the guard watches for (`checkout`/`switch`/`pull`/`reset`/`merge`/`rebase`/`stash pop`), so the correct promote path passes the guard untouched. The guard's "Do feature work in a worktree" message only ever surfaces if a session ignores this recipe and runs a raw `git checkout -b` — treat that message, in p4-mode, as "use the plumbing recipe," not "add a worktree."
 
-**Residual** — `agents/scripts/project/p4-task-stream-to-pr.sh` still does a raw `git checkout -b` in its git-publish step (the multi-slice `--promote-reviewed-cl` path); it must be ported to this plumbing recipe to be shared-tree-safe. Tracked in `docs/self-improvement/categories/process.md` (PR #1125 / shelf CL 374 entry).
+**Residual** — `agent-layer/agents/scripts/project/p4-task-stream-to-pr.sh` still does a raw `git checkout -b` in its git-publish step (the multi-slice `--promote-reviewed-cl` path); it must be ported to this plumbing recipe to be shared-tree-safe. Tracked in `docs/self-improvement/categories/process.md` (PR #1125 / shelf CL 374 entry).
 
 ## Destructive p4 ops pre-flight
 
