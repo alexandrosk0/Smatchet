@@ -300,6 +300,11 @@ TEST_CASE("BuildProgressRenderModel — fast-path scanner, DOM fallback, overflo
         REQUIRE(model.rendered);
         CHECK(model.fraction >= 0.0f); // no UB; clamped values still produce a finite fraction
     }
+    SUBCASE("fast path keeps values of 10 or more digits whole") {
+        const auto model = BuildProgressRenderModel(R"({"progress":999999999,"total":3000000000})");
+        REQUIRE(model.rendered);
+        CHECK(model.fraction == doctest::Approx(0.333333f));
+    }
     SUBCASE("DOM path reads totals above INT_MAX instead of treating them as absent") {
         // Double-encoded, so the fast-path scanner cannot see the keys and the DOM path parses it.
         const auto model = BuildProgressRenderModel(R"("{\"progress\":1500000000,\"total\":3000000000}")");

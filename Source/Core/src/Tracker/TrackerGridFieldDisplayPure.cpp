@@ -502,26 +502,32 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
         const size_t col1 = trimmed.find(':', progPos);
         const size_t col2 = trimmed.find(':', totPos);
         if (col1 != std::string::npos && col2 != std::string::npos) {
-            auto parse_num = [&](size_t colonIdx) -> int {
+            // Parses the digit run after the colon as 64-bit. A run too long for that is reported as
+            // truncated, and the payload falls through to the DOM path instead of rendering a wrong
+            // ratio from a cut-off number.
+            auto parse_num = [&](size_t colonIdx, bool& truncated) -> long long {
                 size_t i = colonIdx + 1;
                 while (i < trimmed.size() &&
                        (std::isspace(static_cast<unsigned char>(trimmed[i])) || trimmed[i] == '"')) {
                     i++;
                 }
-                int val = 0;
+                long long val = 0;
                 while (i < trimmed.size() && std::isdigit(static_cast<unsigned char>(trimmed[i]))) {
-                    if (val >= 100000000) // clamp before *10 — avoid signed int overflow (UB) on oversized input
+                    if (val >= 100000000000000000LL) { // 18 digits: the next *10 could overflow (UB)
+                        truncated = true;
                         break;
+                    }
                     val = val * 10 + (trimmed[i] - '0');
                     i++;
                 }
                 return val;
             };
-            const int p = parse_num(col1);
-            const int t = parse_num(col2);
-            if (t > 0) {
+            bool truncated = false;
+            const long long p = parse_num(col1, truncated);
+            const long long t = parse_num(col2, truncated);
+            if (t > 0 && !truncated) {
                 model.rendered = true;
-                model.fraction = static_cast<float>(p) / static_cast<float>(t);
+                model.fraction = static_cast<float>(static_cast<double>(p) / static_cast<double>(t));
                 return model;
             }
         }
