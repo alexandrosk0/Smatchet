@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -317,7 +318,7 @@ class OfflineQueueService {
     /// Count both active queues in the current cache and publish the counts. Worker only.
     void RecountPendingRows();
     /// Requests a recount when the cache object changed (first use, or the local cache was
-    /// recreated). UI thread, every frame: a pointer compare unless it changed.
+    /// recreated). Every frame: a pointer compare plus a weak-handle expiry check unless it changed.
     void RecountIfCacheReplaced();
     /// A replay tick just loaded `loadedRows` rows: requests a recount when `mirror` disagrees
     /// (rows written to the cache outside this service).
@@ -327,8 +328,13 @@ class OfflineQueueService {
 
     std::atomic<std::size_t> pendingCreateCount_{0};
     std::atomic<std::size_t> pendingFieldEditCount_{0};
-    std::atomic<const ISyncCache*> countedCache_{nullptr}; ///< the cache the last requested recount reads
-    std::mutex recountMutex_; ///< workers only: one recount at a time, so an older read never wins
+    // The cache the last requested recount reads. A recreated cache can land at the freed one's
+    // address, so the weak handle (expired once the old cache is gone) tells the two apart.
+    std::mutex countedCacheMutex_;
+    const ISyncCache* countedCache_ = nullptr;     ///< guarded by countedCacheMutex_
+    std::weak_ptr<ISyncCache> countedCacheHandle_; ///< guarded by countedCacheMutex_
+    bool countedCacheOwned_ = false;               ///< guarded by countedCacheMutex_; false: no handle to watch
+    std::mutex recountMutex_;                      ///< workers only: one recount at a time, so an older read never wins
     std::mutex countRefreshMutex_;
     bool countRefreshInFlight_ = false;  ///< guarded by countRefreshMutex_
     bool countRefreshRequested_ = false; ///< guarded by countRefreshMutex_

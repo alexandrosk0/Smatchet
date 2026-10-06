@@ -1213,3 +1213,49 @@ TEST_CASE("OfflineQueueServiceRuntime: a replaced local cache is recounted on th
     svc.TickOfflineCreates();
     CHECK(svc.GetPendingCreateCount() == 0u);
 }
+
+namespace {
+/// Hands the service an owning cache handle, as AppController does. Recreate() models
+/// RecreateLocalCacheDatabase when the allocator places the new cache where the freed one
+/// lived: same address, new owner, empty queue.
+class SameAddressCacheDeps : public FakeOfflineQueueDeps {
+  public:
+    std::shared_ptr<ISyncCache> CacheShared() override { return handle_; }
+    void Recreate() {
+        for (const PendingCreate& pc : CacheImpl->LoadPendingCreates()) {
+            CacheImpl->DeletePendingCreate(pc.Id);
+        }
+        handle_ = std::shared_ptr<ISyncCache>(std::make_shared<int>(0), CacheImpl.get());
+    }
+
+  private:
+    std::shared_ptr<ISyncCache> handle_{std::make_shared<int>(0), CacheImpl.get()};
+};
+} // namespace
+
+TEST_CASE("OfflineQueueServiceRuntime: a recreated cache at the freed cache's address is still recounted") {
+    OfflineQueueTestEnvGuard guard;
+    SameAddressCacheDeps deps;
+    OfflineQueueService svc(deps);
+    svc.PushReplayTimersForward(std::chrono::steady_clock::now() + std::chrono::hours(1));
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
+    svc.TickOfflineCreates();
+    CHECK(svc.GetPendingCreateCount() == 1u);
+
+    deps.Recreate();
+    REQUIRE(deps.Cache() == deps.CacheShared().get()); // the address alone cannot tell the caches apart
+    svc.TickOfflineCreates();
+    CHECK(svc.GetPendingCreateCount() == 0u);
+
+    // Once the new cache is the counted one, a tick does not start another recount.
+    int launches = 0;
+    deps.BackgroundTaskRunner = [&launches](std::function<void()> t) {
+        ++launches;
+        if (t) {
+            t();
+        }
+    };
+    svc.TickOfflineCreates();
+    svc.TickOfflineCreates();
+    CHECK(launches == 0);
+}

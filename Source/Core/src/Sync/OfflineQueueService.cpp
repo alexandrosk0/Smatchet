@@ -243,11 +243,17 @@ void OfflineQueueService::RecountPendingRows() {
 }
 
 void OfflineQueueService::RecountIfCacheReplaced() {
-    const ISyncCache* cache = deps_.Cache();
-    if (cache == countedCache_.load()) {
-        return;
+    {
+        std::lock_guard<std::mutex> lock(countedCacheMutex_);
+        if (deps_.Cache() == countedCache_ && !(countedCacheOwned_ && countedCacheHandle_.expired())) {
+            return;
+        }
+        const std::shared_ptr<ISyncCache> current = deps_.CacheShared();
+        countedCache_ = current.get();
+        countedCacheHandle_ = current;
+        // A non-owning handle (no control block) is always expired: fall back to the pointer compare.
+        countedCacheOwned_ = current.use_count() > 0;
     }
-    countedCache_.store(cache);
     RequestPendingCountRefresh();
 }
 
