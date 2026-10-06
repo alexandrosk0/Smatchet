@@ -9,6 +9,7 @@
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "AppController.h"
+#include "Config/CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "GridContextDepsAdapter.h"
 #include "Tracker/FieldCatalogCache.h"
@@ -203,6 +204,54 @@ TEST_CASE("AppController::RefreshFieldCatalog skips a fetch for another site of 
     CHECK_FALSE(app.RefreshFieldCatalog(cfg));
     CHECK(raw->FetchFieldCatalogCalls() == 0u);
     CHECK(app.GetAvailableFields().empty());
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog runs for a pane keyed by the configured site") {
+    // The production norm: a configured tracker stamps its pane with a site key, and a refresh for that
+    // same site runs.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://acme.atlassian.net";
+    cfg.Email = "dev@example.com";
+    const std::string siteKey = smatchet::cache_keys::TrackerCacheBackendKey(cfg);
+    REQUIRE(siteKey != "Jira"); // the configuration names a site
+    adapter.SetCacheBackendKey(siteKey);
+    CHECK(app.RefreshFieldCatalog(cfg));
+    CHECK(raw->FetchFieldCatalogCalls() == 1u);
+    CHECK(HasField(app.GetAvailableFields(), "customfield_10001"));
+}
+
+TEST_CASE("AppController::SetFieldCatalog restores a project's snapshot for a failure after a clear") {
+    // A pane switch clears the catalog and its project. The grid's next fetch fails offline: naming
+    // the fetch's project for that failure restores the project's saved catalog, not the unscoped one.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    app.SetCurrentCatalogProject("FOO");
+    std::vector<TrackerField> foo(1);
+    foo[0].Id = "customfield_foo";
+    foo[0].Name = "Foo field";
+    app.SetFieldCatalog(std::move(foo), std::vector<TrackerComponent>(), std::string(), false);
+    REQUIRE(SnapshotHasField(cfg, "FOO", "customfield_foo"));
+
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    CHECK(app.GetAvailableFields().empty());
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO")); // an empty catalog is no project's
+
+    app.SetCurrentCatalogProject("FOO");
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
+    CHECK(app.IsFieldCatalogScopedToProject("FOO"));
+    CHECK(app.GetFieldCatalogError().empty()); // a restored catalog shows a warning, not an error
 }
 
 TEST_CASE("AppController::SetFieldCatalog files the grid's catalog under the grid's project when a refresh lands "

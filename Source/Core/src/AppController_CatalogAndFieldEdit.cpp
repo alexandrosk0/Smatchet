@@ -241,47 +241,40 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
     }
     // Pillar 6 (offline-first): a failed refresh never clears a catalog the user already has. When
     // memory is empty, restore the local snapshot whatever the error kind; only the banner differs.
+    // The snapshot loads unlocked; the restore and the banner are then decided together under the
+    // lock, on the catalog as it is by then (another apply may have filled it meanwhile).
     bool snapshotLoaded = false;
     std::string snapErr;
+    std::vector<TrackerField> snapFields;
+    std::vector<TrackerComponent> snapComponents;
+    std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
     if (!hasFieldsNow) {
-        std::vector<TrackerField> snapFields;
-        std::vector<TrackerComponent> snapComponents;
-        std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
         snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
                                                                         snapIssueTypeMeta, snapErr);
-        if (snapshotLoaded) {
-            if (!catalogPlane) {
-                MarkNonEditableTimetrackingReadOnly(snapFields);
-                AddJiraCatalogFieldFixups(snapFields);
-            }
-            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-            if (!guard.Holds()) {
-                return; // the pane moved on; its catalog is no longer this fetch's to restore
-            }
-            if (cat.AvailableFields.empty()) {
-                cat.AvailableFields = std::move(snapFields);
-                cat.AvailableComponents = std::move(snapComponents);
-                cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-                guard.PinProjectLocked(cat);
-                cat.fieldCatalogEverLoaded_ = true;
-            } else {
-                snapshotLoaded = false; // a catalog landed while the snapshot loaded: it is newer, keep it
-            }
+        if (snapshotLoaded && !catalogPlane) {
+            MarkNonEditableTimetrackingReadOnly(snapFields);
+            AddJiraCatalogFieldFixups(snapFields);
         }
     }
     // The banner names the configured backend (Jira / Plane / GitHub / Linear), never a hard-coded one.
-    // It is written under the catalog mutex, after the same supersede check as the catalog itself, and
-    // logged once the mutex is released.
+    // It is logged once the mutex is released.
     smatchet::catalogoffline::CatalogFailureBanner banner{};
     bool bumpRevision = true;
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         if (!guard.Holds()) {
-            return;
+            return; // the pane moved on; its catalog and banner are no longer this fetch's to set
         }
-        // The catalog as it is now: another apply may have filled it since it was first sampled.
-        const bool hasLiveFields = !snapshotLoaded && !cat.AvailableFields.empty();
-        banner = smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasLiveFields, snapshotLoaded,
+        const bool restored = snapshotLoaded && cat.AvailableFields.empty();
+        if (restored) {
+            cat.AvailableFields = std::move(snapFields);
+            cat.AvailableComponents = std::move(snapComponents);
+            cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+            guard.PinProjectLocked(cat);
+            cat.fieldCatalogEverLoaded_ = true;
+        }
+        const bool hasLiveFields = !restored && !cat.AvailableFields.empty();
+        banner = smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasLiveFields, restored,
                                                                       cat.fieldCatalogEverLoaded_);
         bumpRevision = WriteCatalogFailureBannerLocked(cat, banner, backendKey, error, errorTransient);
     }

@@ -1537,6 +1537,8 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 d.fieldCatalogFetchStarted = false;
                 d.triggerCatalogRefetch = true;
             } else {
+                // The failure is the fetch's project's too: its offline snapshot is the one to restore.
+                app.SetCurrentCatalogProject(result.ProjectKey);
                 app.SetFieldCatalog({}, {},
                                     result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
                                     result.ErrorTransient);
