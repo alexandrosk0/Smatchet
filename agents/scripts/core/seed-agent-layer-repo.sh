@@ -248,7 +248,7 @@ parse_args() {
         esac
     done
     if [ -z "$TARGET" ]; then
-        [ "$SIMULATE" -eq 1 ] && { [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"; return 0; }
+        [ "$SIMULATE" -eq 1 ] && { [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"; absolutize_work_dir; return 0; }
         usage >&2; die 2 "--target <owner/repo> is required"
     fi
     case "$TARGET" in
@@ -257,6 +257,23 @@ parse_args() {
         *)           die 2 "--target must be owner/repo, got: $TARGET" ;;
     esac
     [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"
+    absolutize_work_dir
+}
+
+# Make WORK_DIR absolute before anything uses it. The phases cd into the clone
+# and then name it again (cd "$WORK_DIR", stage_outside_clone), so a relative
+# --work-dir would stop resolving there. The clone does not exist yet, so the
+# parent is resolved and the leaf kept.
+absolutize_work_dir() {
+    local leaf parent
+    while [ "${#WORK_DIR}" -gt 1 ] && [ "${WORK_DIR%/}" != "$WORK_DIR" ]; do WORK_DIR="${WORK_DIR%/}"; done
+    leaf="$(basename "$WORK_DIR")"
+    case "$leaf" in
+        .|..|/) die 2 "--work-dir must name a new directory, got: $WORK_DIR" ;;
+    esac
+    parent="$(cd "$(dirname "$WORK_DIR")" 2>/dev/null && pwd -P)" \
+        || die 2 "--work-dir's parent directory does not exist: $(dirname "$WORK_DIR")"
+    WORK_DIR="$parent/$leaf"
 }
 
 # ------------------------------------------------------------- phase 1 preflight
