@@ -9,14 +9,22 @@ setup() {
     LAYER="$REPO_ROOT/agent-layer"
 }
 
-# The layer-relative paths host workflows and actions reach through $AGENT_LAYER_ROOT.
+# The layer-relative paths in the text on stdin, reached through $AGENT_LAYER_ROOT, ${AGENT_LAYER_ROOT},
+# "$AGENT_LAYER_ROOT"/ or ${{ env.AGENT_LAYER_ROOT }}.
+extract_layer_paths() {
+    grep -oE '(\$\{\{[[:space:]]*env\.AGENT_LAYER_ROOT[[:space:]]*\}\}|\$\{?AGENT_LAYER_ROOT\}?"?)/[A-Za-z0-9_./-]+' |
+        sed -E -e 's#^[^/]*/##' -e 's#[./]+$##' | sort -u
+}
+
+# The layer-relative paths host workflows and actions reach.
 layer_paths() {
-    git -C "$REPO_ROOT" grep -hoE '\$\{?AGENT_LAYER_ROOT\}?/[A-Za-z0-9_./-]+' -- .github/workflows .github/actions |
-        sed -E -e 's#^\$\{?AGENT_LAYER_ROOT\}?/##' -e 's#[./]+$##' | sort -u
+    git -C "$REPO_ROOT" grep -h 'AGENT_LAYER_ROOT' -- .github/workflows .github/actions | extract_layer_paths
 }
 
 @test "every AGENT_LAYER_ROOT path in host workflows exists in the pinned agent-layer mount" {
-    if [ ! -f "$LAYER/scripts/dev/project-config.sh" ]; then
+    if [ ! -e "$LAYER/.git" ]; then
+        # CI checks the submodule out, so a missing mount there is a broken checkout, never a skip.
+        [ -z "${CI:-}" ] || { echo "agent-layer/ is not checked out on CI"; return 1; }
         skip "agent-layer/ is not checked out (git submodule update --init agent-layer)"
     fi
     local missing=() p
@@ -36,4 +44,15 @@ layer_paths() {
     run layer_paths
     [ "$status" -eq 0 ]
     [[ "$output" == *"agents/scripts/core/"* ]]
+}
+
+@test "the path extraction reads every spelling of the layer root" {
+    run extract_layer_paths <<'EOF'
+run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/a.sh"
+run: bash "${AGENT_LAYER_ROOT}/agents/scripts/core/b.sh".
+run: bash "$AGENT_LAYER_ROOT"/agents/scripts/core/c.sh
+with: { path: ${{ env.AGENT_LAYER_ROOT }}/agents/scripts/core/d.sh }
+EOF
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'agents/scripts/core/a.sh\nagents/scripts/core/b.sh\nagents/scripts/core/c.sh\nagents/scripts/core/d.sh')" ]
 }

@@ -90,7 +90,7 @@ step_timeout() {
     [ -n "$output" ]
     # The old defect form: a fixed attempt count with no deadline.
     run grep -qE '^\s*ATTEMPTS=' "$ACTION"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     # A deadline computed from bash's SECONDS is what makes the exit time an
     # invariant of the step rather than a consequence of API latency.
     grep -q 'deadline=$(( SECONDS + POLL_BUDGET_SECONDS ))' "$ACTION"
@@ -140,9 +140,9 @@ step_timeout() {
     # spellings of the same key; comment lines start with '#' and cannot
     # match a key pattern.
     run grep -E "^[[:space:]]*[\"']?concurrency[\"']?[[:space:]]*:" "$WF"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     run grep -E "^[[:space:]]*[\"']?cancel-in-progress[\"']?[[:space:]]*:" "$WF"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
 }
 
 @test "workflow re-runs on labeled/unlabeled so cr-out-of-band is not inert" {
@@ -200,7 +200,7 @@ provenance_step() {
     run awk '/^        run: \|$/{f=1; next} f' <<< "$output"
     [ -n "$output" ]
     run grep -F '${{' <<< "$output"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
 }
 
 @test "selftest: a provenance step that interpolates inside run: is detected" {
@@ -233,7 +233,7 @@ fallback_desc_wf() {
     # run + status, not a bare `!`: a negated pipeline that is not the last
     # statement never fails a bats test (errexit exempts it).
     run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     printf '%s' "$d" | grep -qF "'@coderabbitai review'"
     printf '%s' "$d" | grep -qF 'scripts/dev/trigger-coderabbit-review.sh'
     # The helper it names must exist, or the hint is a dead end.
@@ -245,7 +245,7 @@ fallback_desc_wf() {
     [ -n "$d" ]
     [ "${#d}" -le 140 ]
     run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     printf '%s' "$d" | grep -qF 're-run'
     printf '%s' "$d" | grep -qF "'@coderabbitai review'"
 }
@@ -845,7 +845,7 @@ run_nudge() {
     # And it must NOT be mistaken for the rate-limit marker — they are distinct
     # states needing distinct recoveries (full review vs a first review).
     run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     # Exercise the CLASSIFICATION, not just the fields: inspecting state/desc
     # cannot tell whether the verdict actually holds the terminal OSS arm.
     [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
@@ -859,9 +859,9 @@ run_nudge() {
     f="$(payload '[]' SUCCESS 'Review skipped due to path filters')"
     desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
     run grep -qiE "$MANUAL_REVIEW_RE" <<<"$desc"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     # The terminal path-filter skip must still PASS through the model — this is
     # the fail-shut half, and it is what an over-broad match would break.
     [ "$(verdict "$f")" = "not-reviewed" ]
