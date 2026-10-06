@@ -317,7 +317,7 @@ elif [ -n "$repo_root" ]; then
             printf '\npre-push: REFUSING push — local CI delta-gate found failures CI would red on:\n%s\n\n' "$ci_fail" >&2
             printf '  These are locally-knowable failures the fast build-only verify path skips.\n' >&2
             printf '  Fix (most auto-fix):  bash scripts/dev/pre-ship.sh   then re-push.\n' >&2
-            printf '  Parity matrix: docs/agent-rules/ci-local-parity.md\n' >&2
+            printf '  Parity matrix: agent-layer/docs/agent-rules/ci-local-parity.md\n' >&2
             printf '  Override (sanctioned, logged): SMATCHET_SKIP_PRESHIP_GATE=1 git push ...\n\n' >&2
             exit 1
         fi

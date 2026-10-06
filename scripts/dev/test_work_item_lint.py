@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_work_item_lint.py - regression suite for agents/scripts/core/work_item_lint.py.
+"""test_work_item_lint.py - regression suite for agent-layer/agents/scripts/core/work_item_lint.py.
 
 Scenario set ported from Whip-Process Tools/test-check-docs.ps1 (Part 2 fixtures
 + Part 3 citations), re-seeded at this repo's layout (docs/work/...) and driven

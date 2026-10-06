@@ -18,10 +18,12 @@ bash agent-layer/agents/scripts/core/setup-harness.sh claude-code
 
 Re-run both after every pull that moves the `agent-layer` pointer: `.claude/agents/` holds hardlinks that keep the old content until `setup-harness.sh` re-links them.
 
-A fork that wants its own layer overrides the URL locally, in this order (`git submodule sync` overwrites the URL from `.gitmodules`, so it must come first):
+A fork that wants its own layer overrides the URL locally, in this order (`git submodule sync` overwrites the URL from `.gitmodules`, so it must come first; an already-initialized mount keeps fetching from its own `origin`, so repoint that too, and only inside a real mount, where `git -C` cannot fall through to this repo):
 
 ```bash
-git submodule sync agent-layer && git config submodule.agent-layer.url https://github.com/<you>/the-unwilling-agentic-bunch.git && git submodule update --init --recursive
+git submodule sync agent-layer && git config submodule.agent-layer.url https://github.com/<you>/the-unwilling-agentic-bunch.git
+[ -e agent-layer/.git ] && git -C agent-layer remote set-url origin https://github.com/<you>/the-unwilling-agentic-bunch.git
+git submodule update --init --recursive
 ```
 
 ## Host-only pointers

@@ -9,7 +9,7 @@
 # another. The main clone (C:/Dev/Smatchet) is the stable INTEGRATION tree —
 # pinned to develop, used for pull/merge/review, never for feature work.
 #
-# See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
+# See agent-layer/docs/agent-rules/process-rules.md § Concurrent interactive sessions.
 #
 # Subcommands:
 #   new <slug>     Create a worktree at <trees-root>/<slug> on feat/<slug> off
@@ -189,11 +189,20 @@ cmd_new() {
     # its guard is INACTIVE — so a concurrent session in the main clone is
     # unprotected until someone remembers to run setup-harness. Provision it now,
     # before spinning the worktree. Idempotent; non-fatal.
-    # See docs/harness/SETUP.md § Concurrent-session HEAD-drift guard.
+    # A clone made without --recurse-submodules has the agent-layer gitlink but
+    # an empty mount, so setup-harness.sh is not there yet: initialize the
+    # submodule first. Only an unpopulated mount: a checked-out one may sit at a
+    # WIP pin that an update would move.
+    # See agent-layer/docs/harness/SETUP.md § Concurrent-session HEAD-drift guard.
     if [ ! -f "$REPO_ROOT/.claude/hooks/guard-head-drift.sh" ]; then
         echo "First run: provisioning .claude/ in the integration tree ($REPO_ROOT) so its HEAD-drift guard is active ..."
+        if [ ! -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] \
+            && git -C "$REPO_ROOT" ls-files --error-unmatch -- agent-layer >/dev/null 2>&1; then
+            git -C "$REPO_ROOT" submodule update --init --recursive -- agent-layer \
+                || echo "  WARNING: submodule update failed in $REPO_ROOT — the agent layer may be missing there." >&2
+        fi
         bash "$(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh" claude-code \
-            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'bash $(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh claude-code' there manually." >&2
+            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'git -C \"$REPO_ROOT\" submodule update --init --recursive && bash \"$(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh\" claude-code' there manually." >&2
     fi
 
     echo "Fetching origin/$BASE ..."
@@ -214,8 +223,7 @@ cmd_new() {
     # a submodule, that script only exists after this line has run, and getting
     # the order wrong leaves the worktree with no hooks behind a warning that is
     # easy to miss. git gives each worktree its own non-object-sharing submodule
-    # checkout, so this is a genuine clone rather than a link. A tree with no
-    # submodules — every tree today — makes this a silent no-op.
+    # checkout, so this is a genuine clone rather than a link.
     git -C "$path" submodule update --init --recursive         || echo "  WARNING: submodule update failed in $path — agent definitions may be missing there." >&2
 
     # Wire the worktree's OWN .claude/ adapter (hooks incl. the drift guard) by

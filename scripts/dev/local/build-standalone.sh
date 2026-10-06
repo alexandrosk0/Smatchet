@@ -71,7 +71,7 @@ command -v cmake >/dev/null 2>&1 || die "cmake is not on PATH. Install CMake 3.2
 #    wins over a generic "ninja missing" message.
 case "$PRESET" in
     *-msys2)
-        die "preset '$PRESET' is retired. Use ninja-iter-msvc for MSVC or ninja-iter-clang for clang-cl (see docs/agent-rules/build.md)."
+        die "preset '$PRESET' is retired. Use ninja-iter-msvc for MSVC or ninja-iter-clang for clang-cl (see agent-layer/docs/agent-rules/build.md)."
         ;;
 esac
 

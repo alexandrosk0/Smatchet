@@ -256,7 +256,7 @@ jobs:
           echo "----- INDEX + plan-date drift (run the remedy to apply) -----"
           git --no-pager diff -- docs/plans/INDEX.md docs/plans/shipped/
           echo "-------------------------------------------------------------"
-          echo "Remedy: bash agents/scripts/core/test-plan-index.sh --fix"
+          echo "Remedy: bash agent-layer/agents/scripts/core/test-plan-index.sh --fix"
           echo "        git add docs/plans/INDEX.md docs/plans/shipped/ && git commit && git push"
           echo "(Auto-fix can be enabled by adding the PLAN_INDEX_PAT repo secret"
           echo " — fine-grained PAT, Contents: Read and write. See job header.)"
@@ -532,7 +532,7 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
           body = os.environ.get("PR_BODY", "") or ""
-          guide = "see docs/agent-rules/ship-loops.md § Intent capture"
+          guide = "see agent-layer/docs/agent-rules/ship-loops.md § Intent capture"
           m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
           if not m:
               print("::error title=Intent section missing::PR body has no `## Intent` "
@@ -566,7 +566,7 @@ jobs:
                     "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "
                     "(e.g. `adversarial-code-review: 4 findings, all fixed`) or, for a genuinely "
                     "trivial diff, `adversarial-code-review: n/a — <reason>`. See "
-                    "docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
+                    "agent-layer/docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
               sys.exit(1)
           # Head binding — a verdict that names no commit is "reviewed something
           # once"; binding it to the head means every push invalidates the prior
@@ -583,7 +583,7 @@ jobs:
           if not hm:
               print("::error title=Review verdict not head-bound::The review verdict names no "
                     "commit. Append `(head=<sha>)` naming the reviewed head — "
-                    "`bash agents/scripts/core/record-review-verdict.sh` stamps and prints the "
+                    "`bash agent-layer/agents/scripts/core/record-review-verdict.sh` stamps and prints the "
                     "line. Every push invalidates the prior verdict.")
               sys.exit(1)
           expected = os.environ.get("PR_HEAD_SHA", "")
