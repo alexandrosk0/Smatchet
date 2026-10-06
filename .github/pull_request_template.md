@@ -19,7 +19,7 @@
 <!-- REQUIRED (Intent-section CI check): uncomment ONE of the two lines below and
      fill it in AFTER actually running the pre-first-push self-review — recording a
      verdict you did not earn defeats the gate (ship-loops.md § [pre-first-push gate] item 5).
-     `bash agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
+     `bash agent-layer/agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
      the head= binding filled; the CI check rejects a head= that is not the PR head,
      so every push needs the verdict re-recorded for the new commit.
 adversarial-code-review: N findings, <disposition> (head=<sha>)
@@ -43,7 +43,7 @@ Apply the label in the PR sidebar (Labels → `tests-out-of-band`) or via `gh pr
 
 ## Plan-lock release (if this PR holds a `refs/locks/<slug>`)
 
-If this PR claimed a plan-lock via `bash agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body (uncomment + edit). On merge to develop, [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the line and deletes the corresponding `refs/locks/<slug>` ref. Without the line the ref stays in place and the Phase 4 staleness sweep flags it after 14 days.
+If this PR claimed a plan-lock via `bash agent-layer/agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body (uncomment + edit). On merge to develop, [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the line and deletes the corresponding `refs/locks/<slug>` ref. Without the line the ref stays in place and the Phase 4 staleness sweep flags it after 14 days.
 
 For **stacked PR sets sharing one lock**: use `lock-slug:` only on the final cutover PR. Intermediate PRs that hold the same lock should use `holds-lock:` instead (informational; not matched by the cleanup workflow regex). Otherwise the first intermediate PR to merge would release the ref before the slice has fully landed.
 

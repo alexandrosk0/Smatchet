@@ -10,12 +10,12 @@ Layout (portable / project split — see [`docs/PORTABILITY.md`](../docs/PORTABI
 - `agents/_shared/workflows/` — **portable** saved Claude-Code `Workflow` scripts (deterministic multi-agent fan-out), auto-linked into the gitignored `.claude/workflows/` by `setup-harness.sh`'s workflows glob; resolved by name via `Workflow({name})`. See [`docs/agent-rules/workflow-orchestration.md`](../agent-layer/docs/agent-rules/workflow-orchestration.md) for when a Workflow is sanctioned + the fan-out-safe roster.
 - `agents/project/workflows/` — **project-specific** saved `Workflow` scripts that embed Smatchet literals (paths, subsystem names) and so can't live in the purity-gated `_shared/workflows/`; linked into the same `.claude/workflows/` by the same `setup-harness.sh` loop, resolved identically by name. Current: `historical-review-sweep`.
 
-Harnesses discover agents flatly at `.claude/agents/*.md`; `agents/scripts/core/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash agents/scripts/core/setup-harness.sh claude-code` to regenerate the flat links.**
+Harnesses discover agents flatly at `.claude/agents/*.md`; `agents/scripts/core/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash agent-layer/agents/scripts/core/setup-harness.sh claude-code` to regenerate the flat links.**
 - `agents/_shared/token-tracking/` — `SubagentStop`-style hook + statusline renderer + slash-skill definition that any harness can wire to log per-agent token usage. See [`_shared/token-tracking/README.md`](../agent-layer/agents/_shared/token-tracking/README.md) for the wiring contract.
 
 ## Edit here, never in `.claude/`
 
-Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored**. They're regenerated locally from this canonical tree by `bash agents/scripts/core/setup-harness.sh <name>`.
+Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored**. They're regenerated locally from this canonical tree by `bash agent-layer/agents/scripts/core/setup-harness.sh <name>`.
 
 Adapters are **links** (junctions / symlinks / hardlinks) into this `agents/` tree wherever the harness allows — so an edit to `agents/core/architect.md` is visible to Claude Code immediately, no sync step required.
 

@@ -9,7 +9,7 @@ This is the calibration record for the offline-first lint rules. [ADR-0026](../a
 `code-review` keeps this file current. Append a row to [PR tally](#pr-tally) for every PR whose `--diff` run prints an offline WARN, and re-run the whole-tree sweep when a rule's classification changes:
 
 ```bash
-bash agents/scripts/project/test-lint-rules.sh --scan-offline
+bash agent-layer/agents/scripts/project/test-lint-rules.sh --scan-offline
 ```
 
 **Verdicts:**

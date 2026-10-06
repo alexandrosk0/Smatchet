@@ -1,6 +1,6 @@
 # Small-helper clones — grandfathered baseline
 
-_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-small-helper-audit.sh --baseline` and commit._
+_Auto-generated. Do not hand-edit; run `bash agent-layer/agents/scripts/core/test-small-helper-audit.sh --baseline` and commit._
 _The gate (`small_helper_audit.py --check`) is ADVISORY: it WARNs on groups absent from this file and never blocks. Graduation to blocking is a separate decision (mirrors ADR-0015)._
 
 _Band: 25 <= body tokens < 70 (dup_audit.py's MIN_CLONE_TOKENS, imported). A group is a body shared by >= 3 distinct TUs._

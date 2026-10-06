@@ -29,7 +29,7 @@ Add a P4-gated ship-loop variant documented at [`AGENTS.md`](../../AGENTS.md) §
 Fires when `SMATCHET_AGENT_VCS=p4` at session start. Two sub-variants — the orchestrator asks the user once via `AskUserQuestion` which applies:
 
 1. **Small-change loop**: work directly on `//smatchet/main` via canonical client. Iterate in a pending CL. Smoke build → `p4 shelve -c <CL>` → user reviews in P4V → full tests → `p4 submit` → git branch + push + PR.
-2. **Multi-slice task-stream loop**: allocate `bash agents/scripts/project/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs full test battery, then `p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. Approval → `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
+2. **Multi-slice task-stream loop**: allocate `bash agent-layer/agents/scripts/project/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs full test battery, then `p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. Approval → `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
 
 Two new modes on `agents/scripts/project/p4-task-stream-to-pr.sh` (`--prepare-review-cl`, `--promote-reviewed-cl <CL>`) preserve the existing one-shot mode for callers that don't need a review gate. Promote-mode validates the CL (exists, pending, current client, `task-stream-id: <agent-id>` tag) and refuses with exit 5 + manual cleanup recipe on mismatch; never auto-cleans stranded state.
 
