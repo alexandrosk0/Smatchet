@@ -73,17 +73,28 @@ RA_CPP_GLOBS=(
     'tests/*.cpp' 'tests/*.h'
 )
 
-# The repo's own review-enforcement surface: gate scripts, dev scripts, git hooks.
+# The repo's own review-enforcement surface: gate scripts, dev scripts, git hooks,
+# CI workflows / actions, harness hooks and the gate config.
 # A diff touching ONLY these is never substantive under the C++-only test above,
 # so the scripts that enforce review could rewrite themselves with a hand-written
 # `n/a` verdict (process 2026-09-14 review-gate-substantive-check-is-cpp-only).
 # Deliberately a SEPARATE set, not part of RA_CPP_GLOBS: that set drives
 # ra_fingerprint and the staged pre-commit gate, which stay unchanged while this
 # trigger runs WARN-first (pre-ship advisory only) through its calibration window.
+#
+# Git pathspecs: `*` also matches `/`, so each entry covers its whole subtree.
+# CI runs the PR's OWN copy of these files, so a PR editing them can certify
+# itself — e.g. the `All checks green (block-on-any-red)` aggregate runs the
+# PR's all-checks-green.sh, all-checks-green.yml and project.config.json
+# (required contexts); the merge-gates poller lives under agents/scripts/core/.
 RA_ENFORCEMENT_GLOBS=(
-    'agents/scripts/core/*'
+    'agents/scripts/core/*'      # gate scripts, merge-gates.sh + merge-gates.d/, all-checks-green.sh
+    'agents/scripts/project/*'   # test-lint-rules.sh + lint-rules.d/
     'scripts/dev/*'
     'scripts/git-hooks/*'
+    '.github/*'                  # workflows (all-checks-green.yml …) + actions (cr-finding-gate)
+    'docs/harness/*/hooks/*'     # harness guards, e.g. guard-auto-merge-arm.sh
+    'project.config.json'        # required contexts, lint zones, gate thresholds
 )
 
 # Set by ra_is_substantive so a caller can render WHY without recomputing. Exported

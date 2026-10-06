@@ -253,6 +253,30 @@ commit_in_fixture() {
     [[ "$output" == *"N/A"* ]]
 }
 
+# CI runs the PR's own copy of the aggregate, the merge-gates poller, the project
+# lint gates, the workflows / actions, the harness guards and the gate config, so
+# an edit to any of them is a self-certifying edit and must be flagged.
+@test "ra_touches_enforcement_surface flags every self-certifying gate path" {
+    local p
+    for p in agents/scripts/core/all-checks-green.sh \
+             agents/scripts/core/merge-gates.sh \
+             agents/scripts/core/merge-gates.d/10-gate-filter.sh \
+             agents/scripts/project/test-lint-rules.sh \
+             agents/scripts/project/lint-rules.d/10-rule.sh \
+             .github/workflows/all-checks-green.yml \
+             .github/actions/cr-finding-gate/action.yml \
+             docs/harness/claude-code/hooks/guard-auto-merge-arm.sh \
+             project.config.json; do
+        git -C "$REPO_TMP" reset --quiet --hard
+        mkdir -p "$REPO_TMP/$(dirname "$p")"
+        echo "# edit" >> "$REPO_TMP/$p"
+        git -C "$REPO_TMP" add -- "$p"
+        run bash -c "cd '$REPO_TMP' && . agents/scripts/core/lib/review-ack.sh && ra_touches_enforcement_surface staged"
+        [ "$status" -eq 0 ]
+        [ "$output" = "$p" ]
+    done
+}
+
 @test "ra_touches_enforcement_surface is quiet for a docs-only diff" {
     echo note > "$REPO_TMP/docs/n.md"
     git -C "$REPO_TMP" add docs/n.md
