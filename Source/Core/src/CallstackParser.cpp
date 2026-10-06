@@ -7,7 +7,7 @@
 
 namespace {
 
-// Parse a matched `(\d+)` digit string into an `int` line number, range-checking
+// Parse a matched `([0-9]+)` digit string into an `int` line number, range-checking
 // against INT_MAX explicitly rather than relying on std::stoi's overflow behaviour.
 // The MSVC Debug CRT was observed to SATURATE std::stoi("2147483648") to INT_MAX
 // instead of throwing std::out_of_range, so a line one past INT_MAX would leak
@@ -69,18 +69,49 @@ void TryExtractUnrealOrModuleFunctionPrefix(const std::string& line, const std::
     }
 }
 
+// True when `line` holds `lead` immediately followed by an ASCII digit. Every format below
+// captures its line number as `[0-9]+` right after one fixed character — `(` for MSVC, `:` for
+// the other two — so a line without that pair cannot match the format and its regex is not run
+// at all. That keeps plain prose, and frames written in another format, out of the super-linear
+// scans. The digit test is the same ASCII range the patterns use, so the two agree in any locale.
+bool HasCharThenDigit(const std::string& line, char lead) {
+    for (size_t i = 0; i + 1 < line.size(); ++i) {
+        const char next = line[i + 1];
+        if (line[i] == lead && next >= '0' && next <= '9') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// std::regex_search that reports a std::regex_error as "no match" instead of letting it escape.
+// The matcher gives up on input it judges too expensive: the MSVC STL from toolset 14.51 on allows
+// one search 300000 + 256 * length state transitions and throws error_complexity past that, and the
+// format patterns below are super-linear on a line that does not match — an unbroken token of a
+// few hundred characters is enough. Older STLs throw error_stack / error_complexity on their own
+// limits.
+bool RegexSearchNoThrow(const std::string& line, std::smatch& m, const std::regex& re) {
+    try {
+        return std::regex_search(line, m, re);
+    } catch (const std::regex_error&) {
+        // Config/parse tier: untrusted text the matcher refused is a line this format does not
+        // match. The caller moves on to the next format; no frame is the default.
+        return false;
+    }
+}
+
 bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& outLine, std::string& outFunction) {
     outPath.clear();
     outLine = 0;
     outFunction.clear();
 
     // MSVC / Unreal: ...\File.cpp(123) or File.cpp(123)
-    {
+    if (HasCharThenDigit(line, '(')) {
         static const std::regex re(
-            R"(([A-Za-z]:[^()\r\n]*|\S(?:[^\s:()]*[/\\])?[^\s:()]*\.(?:cpp|c|cc|cxx|h|hpp|inl|cs|java|mm|m))\((\d+)\))",
+            R"(([A-Za-z]:[^()\r\n]*|\S(?:[^\s:()]*[/\\])?[^\s:()]*\.(?:cpp|c|cc|cxx|h|hpp|inl|cs|java|mm|m))\(([0-9]+)\))",
             std::regex::icase);
         std::smatch m;
-        if (std::regex_search(line, m, re)) {
+        if (RegexSearchNoThrow(line, m, re)) {
             outPath = Trim(m[1].str());
             if (!ParseLineNumberInRange(m[2].str(), outLine)) {
                 return false;
@@ -99,13 +130,18 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
         }
     }
 
+    // Both remaining formats end in `:<line>`.
+    if (!HasCharThenDigit(line, ':')) {
+        return false;
+    }
+
     // path:line[:column] (Clang, GDB "at /path/foo.cpp:42", Rust backtraces)
     {
         static const std::regex re(
-            R"(([A-Za-z]:[^:\r\n]+|(?:/|\.\.?/|\S[/\\])[^\s:]+\.(?:cpp|c|cc|cxx|h|hpp|inl|cs|java|mm|m)):(\d+)(?::\d+)?)",
+            R"(([A-Za-z]:[^:\r\n]+|(?:/|\.\.?/|\S[/\\])[^\s:]+\.(?:cpp|c|cc|cxx|h|hpp|inl|cs|java|mm|m)):([0-9]+)(?::[0-9]+)?)",
             std::regex::icase);
         std::smatch m;
-        if (std::regex_search(line, m, re)) {
+        if (RegexSearchNoThrow(line, m, re)) {
             outPath = Trim(m[1].str());
             if (!ParseLineNumberInRange(m[2].str(), outLine)) {
                 return false;
@@ -113,7 +149,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
             // Optional "at Function " prefix
             static const std::regex atFn(R"(at\s+([^\s]+)\s+)", std::regex::icase);
             std::smatch mf;
-            if (std::regex_search(line, mf, atFn)) {
+            if (RegexSearchNoThrow(line, mf, atFn)) {
                 outFunction = Trim(mf[1].str());
             }
             TryExtractUnrealOrModuleFunctionPrefix(line, outPath, outFunction);
@@ -123,10 +159,10 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
 
     // Unreal-style: [File:Line] or File:Line in brackets
     {
-        static const std::regex re(R"(\[?\s*([A-Za-z]:[^\]\r\n]+|(?:/|\S[/\\])[^\]\r\n]+):(\d+)\s*\]?)",
+        static const std::regex re(R"(\[?\s*([A-Za-z]:[^\]\r\n]+|(?:/|\S[/\\])[^\]\r\n]+):([0-9]+)\s*\]?)",
                                    std::regex::icase);
         std::smatch m;
-        if (std::regex_search(line, m, re)) {
+        if (RegexSearchNoThrow(line, m, re)) {
             std::string p = Trim(m[1].str());
             if (!p.empty() && (p.find('.') != std::string::npos || p.find('/') != std::string::npos ||
                                p.find('\\') != std::string::npos)) {
