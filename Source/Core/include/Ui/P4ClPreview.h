@@ -16,10 +16,10 @@
 namespace P4ClPreview {
 
 /**
- * Draw the CL tooltip for the hovered cell. A new `cl` kicks an async `p4 describe`
- * (never blocks the UI thread); "Loading CL info..." shows until it lands, then the
- * details or the error. Re-hovering a failed CL asks the cache again (it re-runs p4
- * once its retry window has passed). Opens/closes its own BeginTooltip/EndTooltip.
+ * Draw the CL tooltip for the hovered cell. First call for a new `cl` kicks an
+ * async `p4 describe` fetch (never blocks the UI thread); subsequent frames show
+ * "Loading CL info..." until ready. Call between the hovered item and EndTooltip
+ * scope rules — this opens/closes its own BeginTooltip/EndTooltip.
  */
 void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg, const AnnotateUiThemeColors& theme);
 

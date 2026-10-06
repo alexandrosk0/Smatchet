@@ -105,6 +105,10 @@ struct GridLiveContext {
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
+    /// Sequence of the last ticket save AppController::UpdateTicket queued for this pane. Only the save
+    /// that is still the latest when it lands re-reads the grid, so a burst of edits never flashes an
+    /// intermediate row (Pillar 2: the saves run on a worker).
+    std::atomic<std::uint64_t> ticketSaveSeq_{0};
     /// Guards ActiveTickets + activeTicketsPublished_ (same contract as the old
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;

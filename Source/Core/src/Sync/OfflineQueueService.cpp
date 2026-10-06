@@ -37,6 +37,18 @@ namespace {
 // offlineReplayInFlight_ through it so the latch clears on exception unwind too (CPP_CODE_AUDIT.md #6).
 using smatchet::ScopeExit;
 
+// How soon a failed first read of the queues (no view published yet) is retried.
+constexpr std::chrono::seconds kSnapshotLoadRetryAfter{5};
+
+// True when `rows` holds a row queued under `backendKey` that `replayable` accepts. Pure, decided from
+// the published view, so a tick costs no SQLite while nothing is queued for this pane.
+template <typename RowT, typename Pred>
+bool HasReplayableRow(const std::vector<RowT>& rows, const std::string& backendKey, Pred replayable) {
+    return !backendKey.empty() && std::any_of(rows.begin(), rows.end(), [&](const RowT& row) {
+        return row.BackendKey == backendKey && replayable(row);
+    });
+}
+
 // Anonymous-namespace helpers (formerly in AppController_IssueCreateOffline.cpp). Used by the
 // Tick* replay loops below to format dead-letter audit lines.
 std::string SanitizeOfflineQueueDetail(std::string s) {
@@ -173,93 +185,41 @@ std::string MineValueToMarkdown(const nlohmann::json& myVal) {
 }
 } // namespace OfflineFieldEditMergeDetail
 
-OfflineQueueService::OfflineQueueService(IOfflineQueueDeps& deps) : deps_(deps) {}
+OfflineQueueService::OfflineQueueService(IOfflineQueueDeps& deps)
+    : deps_(deps), snapshot_("OfflineQueueService", deps, [](ISyncCache& cache, OfflineQueueSnapshot& next) {
+          next.PendingCreates = cache.LoadPendingCreates();
+          next.DeadCreates = cache.LoadDeadPendingCreates();
+          next.PendingEdits = cache.LoadPendingFieldEdits();
+          next.DeadEdits = cache.LoadDeadPendingFieldEdits();
+      }) {}
 
-// Pillar 2: the status bar reads these every frame, so they are atomics a worker keeps current.
-std::size_t OfflineQueueService::GetPendingCreateCount() const { return pendingCreateCount_.load(); }
+std::shared_ptr<const OfflineQueueSnapshot> OfflineQueueService::Snapshot() const { return snapshot_.Get(); }
 
-std::size_t OfflineQueueService::GetPendingFieldEditCount() const { return pendingFieldEditCount_.load(); }
+void OfflineQueueService::RequestSnapshotRefresh() { snapshot_.Invalidate(); }
 
-void OfflineQueueService::RequestPendingCountRefresh() {
-    {
-        std::lock_guard<std::mutex> lock(countRefreshMutex_);
-        countRefreshRequested_ = true;
-        if (countRefreshInFlight_) {
-            return; // the running refresh sees the request and counts once more
-        }
-        countRefreshInFlight_ = true;
+void OfflineQueueService::PublishSnapshot(ISyncCache& cache) { snapshot_.Publish(cache); }
+
+void OfflineQueueService::RefreshSnapshotAsync(bool force) { snapshot_.RequestAsync(force, kSnapshotLoadRetryAfter); }
+
+bool OfflineQueueService::EnsureSnapshotLoaded() {
+    if (!snapshot_.Loaded() && deps_.CacheShared()) {
+        RefreshSnapshotAsync(false);
     }
-    try {
-        deps_.LaunchBackgroundTask([this]() { RunPendingCountRefresh(); });
-    } catch (const std::exception& ex) {
-        LOG_WARN("OfflineQueueService: could not start counting the offline queue: %s", ex.what());
-        std::lock_guard<std::mutex> lock(countRefreshMutex_);
-        countRefreshInFlight_ = false;
-    }
+    return snapshot_.Loaded();
 }
 
-void OfflineQueueService::RunPendingCountRefresh() {
-    bool released = false;
-    // A throw must not leave the refresh marked in flight, or no later change would be counted.
-    ScopeExit release([this, &released]() {
-        if (!released) {
-            std::lock_guard<std::mutex> lock(countRefreshMutex_);
-            countRefreshInFlight_ = false;
-        }
-    });
-    for (;;) {
-        {
-            std::lock_guard<std::mutex> lock(countRefreshMutex_);
-            if (!countRefreshRequested_) {
-                countRefreshInFlight_ = false;
-                released = true;
-                return;
-            }
-            countRefreshRequested_ = false;
-        }
-        RecountPendingRows();
-    }
-}
-
-void OfflineQueueService::RecountPendingRows() {
-    std::lock_guard<std::mutex> lock(recountMutex_);
-    const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
-    if (!cache) {
-        pendingCreateCount_.store(0);
-        pendingFieldEditCount_.store(0);
-        return;
+std::size_t OfflineQueueService::GetPendingCreateCount() const {
+    if (!deps_.Cache()) {
+        return 0;
     }
     try {
-        const std::size_t creates = cache->LoadPendingCreates().size();
-        const std::size_t edits = cache->LoadPendingFieldEdits().size();
-        pendingCreateCount_.store(creates);
-        pendingFieldEditCount_.store(edits);
+        return deps_.Cache()->LoadPendingCreates().size();
     } catch (const std::exception& ex) {
-        LOG_WARN("OfflineQueueService: counting the offline queue failed; keeping the previous counts: %s", ex.what());
+        LOG_ERROR("OfflineQueueService::GetPendingCreateCount failed: %s", ex.what());
+        return 0;
     } catch (...) {
-        LOG_WARN("OfflineQueueService: counting the offline queue failed (unknown exception); keeping the previous "
-                 "counts");
-    }
-}
-
-void OfflineQueueService::RecountIfCacheReplaced() {
-    {
-        std::lock_guard<std::mutex> lock(countedCacheMutex_);
-        if (deps_.Cache() == countedCache_ && !(countedCacheOwned_ && countedCacheHandle_.expired())) {
-            return;
-        }
-        const std::shared_ptr<ISyncCache> current = deps_.CacheShared();
-        countedCache_ = current.get();
-        countedCacheHandle_ = current;
-        // A non-owning handle (no control block) is always expired: fall back to the pointer compare.
-        countedCacheOwned_ = current.use_count() > 0;
-    }
-    RequestPendingCountRefresh();
-}
-
-void OfflineQueueService::RecountIfDrifted(std::size_t loadedRows, const std::atomic<std::size_t>& mirror) {
-    if (loadedRows != mirror.load()) {
-        RequestPendingCountRefresh();
+        LOG_ERROR("OfflineQueueService::GetPendingCreateCount failed: unknown exception");
+        return 0;
     }
 }
 
@@ -342,6 +302,9 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
     for (const PendingCreate& pc : rows) {
         SweepOneLegacyPendingCreate(pc, legacyForBackend, tally);
     }
+    if (tally.Recovered > 0 || tally.DeadLettered > 0) {
+        RefreshSnapshotAsync(true);
+    }
 
     try {
         deps_.Cache()->SetCacheMetaFlag(kSweepFlag);
@@ -351,9 +314,6 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
 
     LOG_INFO("Legacy-project sweep: recovered=%d, dead-lettered=%d, untouched=%d", tally.Recovered, tally.DeadLettered,
              tally.Untouched);
-    if (tally.DeadLettered > 0) {
-        RequestPendingCountRefresh();
-    }
 }
 
 void OfflineQueueService::SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
@@ -456,15 +416,17 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     // real field values. The audit copy is a SEPARATE, structurally-redacted view of the same
     // draft (security #10): `auditDraft` is the only form that touches the audit trail.
     const nlohmann::json auditDraft = MakeAuditDraft(payload);
-    std::int64_t id = 0;
     try {
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
         // strictly matches this key, so a create queued under Jira never replays against Plane.
-        id = cache->EnqueuePendingCreate(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, payload);
+        const std::int64_t id =
+            cache->EnqueuePendingCreate(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(), std::to_string(id), true,
                                         std::string(),
                                         nlohmann::json{{"pending_create_id", id}, {"draft", auditDraft}});
+        RefreshSnapshotAsync(true);
+        return id;
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::QueueCreateOffline failed: %s", ex.what());
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(),
@@ -472,8 +434,6 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
                                         nlohmann::json{{"draft", auditDraft}});
         return 0;
     }
-    RequestPendingCountRefresh();
-    return id;
 }
 
 AppController::DeadLetterRestoreSummary
@@ -514,9 +474,7 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
                                             nlohmann::json{{"original_pending_create_id", id}});
         }
     }
-    if (summary.Restored > 0) {
-        RequestPendingCountRefresh();
-    }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -555,9 +513,7 @@ OfflineQueueService::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t
                                             nlohmann::json{{"original_pending_field_edit_id", id}});
         }
     }
-    if (summary.Restored > 0) {
-        RequestPendingCountRefresh();
-    }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -587,6 +543,7 @@ OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& d
                                             false, "Unknown exception.", nlohmann::json{{"dead_id", id}});
         }
     }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -616,9 +573,7 @@ OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendi
                                             "Unknown exception.", nlohmann::json{{"pending_create_id", id}});
         }
     }
-    if (summary.Deleted > 0) {
-        RequestPendingCountRefresh();
-    }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -648,11 +603,10 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                    "reachable.";
         return 0;
     }
-    std::int64_t id = 0;
     try {
         // Stamp the backend namespace of the pane the edit was made in (multi-grid Slice 1c) — see
         // QueueCreateOffline.
-        id =
+        const std::int64_t id =
             cache->EnqueuePendingFieldEdit(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, issueKey, fieldId,
                                            fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
@@ -660,6 +614,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
                                         std::string(),
                                         nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
+        RefreshSnapshotAsync(true);
+        return id;
     } catch (const std::exception& ex) {
         outError = "Saving this edit to the offline queue failed (local database error). Retry the edit once "
                    "Tracker is reachable.";
@@ -669,8 +625,6 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                                         nlohmann::json{{"field_id", fieldId}});
         return 0;
     }
-    RequestPendingCountRefresh();
-    return id;
 }
 
 std::vector<PendingFieldEditRecord> OfflineQueueService::GetPendingFieldEdits() const {
@@ -748,6 +702,7 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                                                    const std::string& richKind, const std::string& kind) {
     if (!deps_.Cache())
         return false;
+    ScopeExit republish([this]() { RefreshSnapshotAsync(true); });
     // ADR-0016 resolution shapes. A rich `text` resolution reconverts the resolved Markdown to
     // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution rebuilds
     // the payload through the production `BuildFieldPayload` builder so structured fields keep
@@ -851,9 +806,7 @@ OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& id
                                             false, "Unknown exception.", nlohmann::json{{"pending_field_edit_id", id}});
         }
     }
-    if (summary.Deleted > 0) {
-        RequestPendingCountRefresh();
-    }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -883,6 +836,7 @@ OfflineQueueService::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>
                                             false, "Unknown exception.", nlohmann::json{{"dead_field_edit_id", id}});
         }
     }
+    RefreshSnapshotAsync(true);
     return summary;
 }
 
@@ -901,10 +855,32 @@ void OfflineQueueService::RestartReplayTimersNow(std::chrono::steady_clock::time
 }
 
 void OfflineQueueService::TickOfflineFieldEdits() {
+    // The view is loaded whatever the gates below say: the status bar and the queue panel read it too.
+    if (!EnsureSnapshotLoaded()) {
+        return;
+    }
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.ReaderShared()) {
+    // Capture-then-check token (issue #1081), latched with the backend key at work-capture time and
+    // re-checked before the post-replay RefreshLocalData below, so a replay that completed against the
+    // OLD backend never wholesale-replaces the NEW backend's ActiveTickets after a swap.
+    const std::string backendKey = deps_.CacheBackendKey();
+    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
+    // Pillar 2: decided from the published view — no worker and no SQLite while nothing is queued here.
+    // Conflict-suspended rows wait for the user, so they start no pass.
+    if (!HasReplayableRow(Snapshot()->PendingEdits, backendKey,
+                          [](const PendingFieldEditRecord& row) { return !row.HasMergeConflict; })) {
+        return;
+    }
+    const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+    // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
+    // background task below, so a live backend swap (or pane-context retirement, multi-grid
+    // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
+    // against the latched backend. The cache is latched the same way (RecreateLocalCacheDatabase).
+    std::shared_ptr<ITrackerIssueReader> reader = deps_.ReaderShared();
+    std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
+    if (!cache || !reader || !mutations) {
         return;
     }
     {
@@ -919,102 +895,76 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         offlineFieldEditReplayInFlight_ = true;
     }
 
-    std::vector<PendingFieldEditRecord> pending;
-    try {
-        pending = deps_.Cache()->LoadPendingFieldEdits();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits load failed: %s", ex.what());
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineFieldEditReplayInFlight_ = false;
-        return;
-    } catch (...) {
-        LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits load failed: unknown exception");
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineFieldEditReplayInFlight_ = false;
-        return;
-    }
-    RecountIfDrifted(pending.size(), pendingFieldEditCount_);
-    // Capture-then-check token (issue #1081): latched at work-capture time, re-checked
-    // before the post-replay RefreshLocalData below so a replay that completed against the
-    // OLD backend never wholesale-replaces the NEW backend's ActiveTickets after a swap.
-    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
-    // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
-    // backend are replayed; other backends' rows stay queued for their own context.
-    FilterRowsToReplayBackendKey(pending, deps_.CacheBackendKey(), "TickOfflineFieldEdits");
-    if (pending.empty()) {
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineFieldEditReplayInFlight_ = false;
-        return;
-    }
-
-    ISyncCache* cache = deps_.Cache();
-    // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
-    // background task below, so a live backend swap (or pane-context retirement, multi-grid
-    // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
-    // against the latched backend.
-    std::shared_ptr<ITrackerIssueReader> reader = deps_.ReaderShared();
-    std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
-    if (!reader || !mutations) {
-        // Mirror the three early-returns above: release the in-flight latch before bailing.
-        // Otherwise offlineFieldEditReplayInFlight_ stays true forever, every later tick
-        // short-circuits at the in-flight guard above, and offline field edits silently never
-        // replay (the user's offline edits are lost). See build-quality-velocity-hardening #16.
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineFieldEditReplayInFlight_ = false;
-        return;
-    }
-
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations, capturedGeneration]() {
-        // Guarantees offlineFieldEditReplayInFlight_ resets on every exit path from this lambda —
-        // normal return OR an exception unwinding out of ReplayOneFieldEdit (RefreshLocalData
-        // rethrows SQLite errors; the clean-merge MarkdownToAdf path can also throw), mirroring
-        // the creates path. Without it a throw leaves the in-flight flag latched, every later tick
-        // short-circuits at the in-flight guard, and queued edits never replay until restart (DR5).
-        // Defaults to a conservative 30s retry delay; the normal-completion path overwrites it.
-        std::chrono::seconds nextDelay{30};
-        ScopeExit resetInFlight([this, &nextDelay]() {
-            const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
-            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-            nextOfflineFieldEditReplayAt_ = nextAt;
-            offlineFieldEditReplayInFlight_ = false;
+    try {
+        deps_.LaunchBackgroundTask([this, &depsRef, backendKey, cache, reader, mutations, capturedGeneration]() {
+            // Guarantees offlineFieldEditReplayInFlight_ resets on every exit path from this lambda —
+            // normal return OR an exception unwinding out of ReplayOneFieldEdit (RefreshLocalData
+            // rethrows SQLite errors; the clean-merge MarkdownToAdf path can also throw), mirroring
+            // the creates path. Without it a throw leaves the in-flight flag latched, every later tick
+            // short-circuits at the in-flight guard, and queued edits never replay until restart (DR5).
+            // Defaults to a conservative 30s retry delay; the normal-completion path overwrites it.
+            // The view is republished first, so the next tick decides from what this pass left.
+            std::chrono::seconds nextDelay{30};
+            ScopeExit resetInFlight([this, &nextDelay, cache]() {
+                PublishSnapshot(*cache);
+                const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
+                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+                nextOfflineFieldEditReplayAt_ = nextAt;
+                offlineFieldEditReplayInFlight_ = false;
+            });
+
+            std::vector<PendingFieldEditRecord> pending;
+            try {
+                pending = cache->LoadPendingFieldEdits();
+            } catch (const std::exception& ex) {
+                LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits load failed: %s", ex.what());
+                return;
+            }
+            // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
+            // backend are replayed; other backends' rows stay queued for their own context.
+            FilterRowsToReplayBackendKey(pending, backendKey, "TickOfflineFieldEdits");
+
+            FieldEditReplayTally tally;
+            for (const auto& row : pending) {
+                if (row.HasMergeConflict) {
+                    continue;
+                }
+                ReplayOneFieldEdit(row, cache.get(), reader.get(), mutations.get(), depsRef, tally);
+            }
+
+            if (tally.Successes > 0) {
+                if (depsRef.BackendGeneration() == capturedGeneration) {
+                    // Pre-check above is only a cheap skip of the full-table cache read; the
+                    // checked overload re-checks the generation under activeTicketsMutex_
+                    // immediately before the swap-in (TOCTOU close).
+                    depsRef.RefreshLocalData(capturedGeneration);
+                } else {
+                    LOG_INFO("OfflineQueueService::TickOfflineFieldEdits skipped RefreshLocalData — backend "
+                             "generation moved mid-replay (issue #1081); replayed rows stay cached under their "
+                             "own backend key.");
+                }
+            }
+            if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
+                LOG_INFO("OfflineQueueService: offline field edit replay finished successes=%d failures=%d "
+                         "archived=%d cache_op_failures=%d",
+                         tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
+            }
+
+            std::chrono::seconds delay{5};
+            if (!tally.RanUpdate && !pending.empty()) {
+                delay = std::chrono::seconds(300);
+            } else if (tally.Failures > 0 && tally.Successes == 0) {
+                delay = std::chrono::seconds(30);
+            }
+            nextDelay = delay;
         });
-
-        FieldEditReplayTally tally;
-        for (const auto& row : pending) {
-            if (row.HasMergeConflict) {
-                continue;
-            }
-            ReplayOneFieldEdit(row, cache, reader.get(), mutations.get(), depsRef, tally);
-        }
-
-        if (tally.Successes > 0) {
-            if (depsRef.BackendGeneration() == capturedGeneration) {
-                // Pre-check above is only a cheap skip of the full-table cache read; the
-                // checked overload re-checks the generation under activeTicketsMutex_
-                // immediately before the swap-in (TOCTOU close).
-                depsRef.RefreshLocalData(capturedGeneration);
-            } else {
-                LOG_INFO("OfflineQueueService::TickOfflineFieldEdits skipped RefreshLocalData — backend "
-                         "generation moved mid-replay (issue #1081); replayed rows stay cached under their "
-                         "own backend key.");
-            }
-        }
-        if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
-            LOG_INFO("OfflineQueueService: offline field edit replay finished successes=%d failures=%d archived=%d "
-                     "cache_op_failures=%d",
-                     tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
-        }
-
-        RecountPendingRows(); // on this worker: the pass deleted or archived rows
-        std::chrono::seconds delay{5};
-        if (!tally.RanUpdate && !pending.empty()) {
-            delay = std::chrono::seconds(300);
-        } else if (tally.Failures > 0 && tally.Successes == 0) {
-            delay = std::chrono::seconds(30);
-        }
-        nextDelay = delay;
-    });
+    } catch (const std::exception& ex) {
+        LOG_WARN("OfflineQueueService: could not start a field-edit replay pass: %s", ex.what());
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineFieldEditReplayInFlight_ = false;
+        nextOfflineFieldEditReplayAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    }
 }
 
 bool OfflineQueueService::RunFieldEditCacheMutation(const char* action, std::int64_t id,
@@ -1481,11 +1431,30 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
 }
 
 void OfflineQueueService::TickOfflineCreates() {
-    RecountIfCacheReplaced(); // ahead of every early return: the counts matter in read-only mode too
+    // The view is loaded whatever the gates below say: the status bar and the queue panel read it too.
+    if (!EnsureSnapshotLoaded()) {
+        return;
+    }
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.ReaderShared()) {
+    // Capture key + generation TOGETHER at work-capture time (issue #1081): the captured key
+    // is passed through ReplayOneCreate into IssueCreatePipeline::Run so a successful create
+    // seeds the cache under the backend the rows were QUEUED against — a write-time
+    // CacheBackendKey() re-read after a mid-replay swap landed Jira rows in the GitHub
+    // namespace (proven TOCTOU). The generation gates the post-replay RefreshLocalData.
+    const std::string capturedBackendKey = deps_.CacheBackendKey();
+    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
+    // Pillar 2: decided from the published view — no worker and no SQLite while nothing is queued here.
+    if (!HasReplayableRow(Snapshot()->PendingCreates, capturedBackendKey, [](const PendingCreate&) { return true; })) {
+        return;
+    }
+    const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+    // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
+    // a live backend swap / pane-context retirement mid-replay cannot dangle it. A backend with
+    // no mutations support has nothing to replay against.
+    std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
+    if (!cache || !deps_.ReaderShared() || !mutations2) {
         return;
     }
     {
@@ -1499,72 +1468,42 @@ void OfflineQueueService::TickOfflineCreates() {
         }
         offlineReplayInFlight_ = true;
     }
-
-    std::vector<PendingCreate> pending;
-    try {
-        pending = deps_.Cache()->LoadPendingCreates();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("OfflineQueueService::TickOfflineCreates load failed: %s", ex.what());
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineReplayInFlight_ = false;
-        return;
-    } catch (...) {
-        LOG_ERROR("OfflineQueueService::TickOfflineCreates load failed: unknown exception");
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineReplayInFlight_ = false;
-        return;
-    }
-    // Capture key + generation TOGETHER at work-capture time (issue #1081): the captured key
-    // is passed through ReplayOneCreate into IssueCreatePipeline::Run so a successful create
-    // seeds the cache under the backend the rows were QUEUED against — a write-time
-    // CacheBackendKey() re-read after a mid-replay swap landed Jira rows in the GitHub
-    // namespace (proven TOCTOU). The generation gates the post-replay RefreshLocalData.
-    const std::string capturedBackendKey = deps_.CacheBackendKey();
-    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
-    RecountIfDrifted(pending.size(), pendingCreateCount_);
-    // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
-    // backend are replayed; other backends' rows stay queued for their own context.
-    FilterRowsToReplayBackendKey(pending, capturedBackendKey, "TickOfflineCreates");
-    if (pending.empty()) {
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineReplayInFlight_ = false;
-        return;
-    }
-
     auto catalogCopy = std::make_shared<std::vector<TrackerField>>(deps_.AvailableFields());
-    // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
-    // a live backend swap / pane-context retirement mid-replay cannot dangle it.
-    std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
-    if (!mutations2) {
-        // Mirror the null guard in TickOfflineFieldEdits: a latched backend with no mutations
-        // support must release the in-flight latch before bailing, otherwise ReplayOneCreate
-        // dereferences a null mutation handle and every later tick short-circuits (DR5).
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        offlineReplayInFlight_ = false;
-        return;
-    }
-    ISyncCache* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask(
-        [this, &depsRef, pending, mutations2, cache, catalogCopy, capturedBackendKey, capturedGeneration]() {
+    try {
+        deps_.LaunchBackgroundTask([this, &depsRef, mutations2, cache, catalogCopy, capturedBackendKey,
+                                    capturedGeneration]() {
             // Guarantees offlineReplayInFlight_ resets on every exit path from this lambda —
             // normal return, an early return, OR an exception unwinding out of
             // ReplayOneCreate (LaunchBackgroundTask's own top-level catch prevents a crash but
             // does NOT run this lambda's tail) — see the ScopeExit doc comment / #6. Defaults
             // to a conservative 30s retry delay; the normal-completion path below overwrites
-            // it with the tally-computed delay before the guard fires.
+            // it with the tally-computed delay before the guard fires. The view is republished
+            // first, so the next tick decides from what this pass left.
             std::chrono::seconds nextDelay{30};
-            ScopeExit resetInFlight([this, &nextDelay]() {
+            ScopeExit resetInFlight([this, &nextDelay, cache]() {
+                PublishSnapshot(*cache);
                 const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
                 std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
                 nextOfflineReplayAt_ = nextAt;
                 offlineReplayInFlight_ = false;
             });
 
+            std::vector<PendingCreate> pending;
+            try {
+                pending = cache->LoadPendingCreates();
+            } catch (const std::exception& ex) {
+                LOG_ERROR("OfflineQueueService::TickOfflineCreates load failed: %s", ex.what());
+                return;
+            }
+            // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
+            // backend are replayed; other backends' rows stay queued for their own context.
+            FilterRowsToReplayBackendKey(pending, capturedBackendKey, "TickOfflineCreates");
+
             CreateReplayTally tally;
             for (const auto& pc : pending) {
-                ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, capturedBackendKey, depsRef, tally);
+                ReplayOneCreate(pc, cache.get(), mutations2.get(), *catalogCopy, capturedBackendKey, depsRef, tally);
             }
             if (tally.Successes > 0) {
                 if (depsRef.BackendGeneration() == capturedGeneration) {
@@ -1584,7 +1523,6 @@ void OfflineQueueService::TickOfflineCreates() {
                          "cache_op_failures=%d",
                          tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
             }
-            RecountPendingRows(); // on this worker: the pass deleted or archived rows
             std::chrono::seconds delay{5};
             if (!tally.RanCreate && !pending.empty()) {
                 delay = std::chrono::seconds(300);
@@ -1593,4 +1531,10 @@ void OfflineQueueService::TickOfflineCreates() {
             }
             nextDelay = delay;
         });
+    } catch (const std::exception& ex) {
+        LOG_WARN("OfflineQueueService: could not start a create replay pass: %s", ex.what());
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
+        nextOfflineReplayAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    }
 }

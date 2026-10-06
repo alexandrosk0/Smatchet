@@ -40,7 +40,7 @@ class IAppPendingActions {
     /// A `needs_review` action the user confirmed did not land: queue it to send again.
     virtual void SendPendingActionAgain(std::int64_t id) = 0;
 
-    /// Restart every offline queue's replay timer and replay now (the queue panel's retry button).
+    /// Reread every offline queue, restart its replay timer and replay (the queue panel's retry button).
     virtual void RetryOfflineQueuesNow() = 0;
 
     /// Distinct cache keys (tracker site and account) of the live pane contexts. A queued row whose key is

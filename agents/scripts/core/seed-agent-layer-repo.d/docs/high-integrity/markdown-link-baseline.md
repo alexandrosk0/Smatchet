@@ -4,7 +4,7 @@ _Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-markdown-l
 _Scope: `--all` (repo-wide). The DEFAULT diff-scope mode does not consult this file — it already grandfathers by scope, only ever checking markdown a change actually touches._
 _Keyed by `source::href`, not by line number, so an edit above a grandfathered link does not un-grandfather it. Burn these down and re-run `--baseline`; `--all` reports any entry that is already fixed as stale._
 
-## dangling links (100)
+## dangling links (101)
 - `AGENTS.md` — `AI_POLICY.md` (resolves to `AI_POLICY.md`)
 - `AGENTS.md` — `CONTEXT-MAP.md` (resolves to `CONTEXT-MAP.md`)
 - `AGENTS.md` — `docs/STRUCTURE.md` (resolves to `docs/STRUCTURE.md`)
@@ -39,6 +39,7 @@ _Keyed by `source::href`, not by line number, so an edit above a grandfathered l
 - `docs/agent-rules/cpp-rules.md` — `../high-integrity/baseline.md` (resolves to `docs/high-integrity/baseline.md`)
 - `docs/agent-rules/cpp-rules.md` — `../high-integrity/dup-baseline.md` (resolves to `docs/high-integrity/dup-baseline.md`)
 - `docs/agent-rules/cpp-rules.md` — `../high-integrity/function-size-baseline.md` (resolves to `docs/high-integrity/function-size-baseline.md`)
+- `docs/agent-rules/cpp-rules.md` — `../high-integrity/offline-calibration.md` (resolves to `docs/high-integrity/offline-calibration.md`)
 - `docs/agent-rules/cpp-rules.md` — `../plans/shipped/dry-pillar-dup-gate.md` (resolves to `docs/plans/shipped/dry-pillar-dup-gate.md`)
 - `docs/agent-rules/cpp-rules.md` — `../plans/shipped/high-integrity-cpp-enforcement.md` (resolves to `docs/plans/shipped/high-integrity-cpp-enforcement.md`)
 - `docs/agent-rules/debug-techniques.md` — `../adr/0024-self-minidump-over-in-process-stack-walk.md` (resolves to `docs/adr/0024-self-minidump-over-in-process-stack-walk.md`)
@@ -107,5 +108,5 @@ _Keyed by `source::href`, not by line number, so an edit above a grandfathered l
 - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` — `postmortems.md` (resolves to `docs/self-improvement/postmortems.md`)
 
 ## Totals
-- dangling links grandfathered: 100
+- dangling links grandfathered: 101
 

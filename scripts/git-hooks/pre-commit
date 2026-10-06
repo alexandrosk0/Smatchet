@@ -78,7 +78,22 @@ if [[ -n "$git_dir" ]]; then
     fi
 fi
 
+# The gate is agent-layer content, run against this tree (the hook cd's to the
+# top level above): the agent-layer/ mount once it holds the layer's
+# project-config.sh (plan agent-surface-extraction-repo, row 12), else this tree.
+# A registered mount that is not checked out (a plain `git worktree add`, or a
+# clone without --recurse-submodules) has no gate to run, and skipping it would
+# let an unreviewed commit through, so that state refuses with the remedy.
 review_ack="agents/scripts/core/review-ack.sh"
+if [[ -f agent-layer/scripts/dev/project-config.sh ]]; then
+    review_ack="agent-layer/$review_ack"
+elif [[ "$(git ls-files -s -- agent-layer 2>/dev/null | cut -c1-6)" == 160000 \
+        && "${SMATCHET_SKIP_REVIEW_GATE:-0}" != "1" ]]; then
+    echo "pre-commit: REFUSING — agent-layer/ is not checked out in this tree, so the code-review gate cannot run." >&2
+    echo "  Fix: git submodule update --init --recursive agent-layer" >&2
+    echo "  Override (trivial/emergency only): SMATCHET_SKIP_REVIEW_GATE=1 git commit ..." >&2
+    exit 1
+fi
 if [[ ! -f "$review_ack" ]]; then
     echo "pre-commit: WARN $review_ack missing; skipping the code-review gate." >&2
     exit 0
@@ -113,7 +128,7 @@ pre-commit: REFUSING a commit with no code review.
   1) run the code-review agent / adversarial-code-review skill on the STAGED
      diff (git diff --cached),
   2) fix or waive every Critical/High finding,
-  3) record the ack:  bash agents/scripts/core/review-ack.sh --record --staged
+  3) record the ack:  bash $review_ack --record --staged
   4) commit again.
 
   Any later edit to a staged file re-arms this gate — that is the point.
@@ -141,7 +156,7 @@ pre-commit: REFUSING — the code review recorded a HARD VETO.
   1) fix the vetoed issue,
   2) re-run the review on the corrected staged diff,
   3) record the new ack + verdict:
-       bash agents/scripts/core/review-ack.sh --record --staged --verdict <aggregate.json>
+       bash $review_ack --record --staged --verdict <aggregate.json>
   4) commit again.
 
   If the veto is wrong, say so in the review and record a verdict without it —

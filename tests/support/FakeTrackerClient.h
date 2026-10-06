@@ -34,6 +34,7 @@
 #include <deque>
 #include <functional>
 #include <iterator>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -208,6 +209,12 @@ class FakeTrackerClient : public ITrackerBackend,
         }
         ++fetchIssuesForKeysCalls_;
         fetchIssuesForKeysLastKeys_ = issueKeys;
+        {
+            std::lock_guard<std::mutex> lock(fetchIssuesForKeysByKeyMutex_);
+            for (const std::string& key : issueKeys) {
+                ++fetchIssuesForKeysByKey_[key];
+            }
+        }
         if (!fetchIssuesForKeysOk_) {
             // A scripted structured error wins; the legacy string setter keeps its historical
             // InvalidRequest shape so untouched suites see identical behaviour.
@@ -770,6 +777,16 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssuesForKeysStructuredError_ = std::move(error);
     }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
+    /// How many FetchIssuesForKeys calls asked for `issueKey`. Safe while workers fetch: other app paths
+    /// (sync hydration) call FetchIssuesForKeys concurrently, so a per-key count is what a test can pin.
+    int FetchIssuesForKeysCallsFor(const std::string& issueKey) const {
+        std::lock_guard<std::mutex> lock(fetchIssuesForKeysByKeyMutex_);
+        const auto it = fetchIssuesForKeysByKey_.find(issueKey);
+        return it == fetchIssuesForKeysByKey_.end() ? 0 : it->second;
+    }
+    /// The scripted success shape, so a test that scripts a failure can put the fixture's script back.
+    bool FetchIssuesForKeysScriptedOk() const { return fetchIssuesForKeysOk_; }
+    const std::vector<CachedTicket>& FetchIssuesForKeysScriptedTickets() const { return fetchIssuesForKeysTickets_; }
 
     void SetFetchChildrenOfKeysResult(bool ok, std::vector<CachedTicket> tickets,
                                       const std::string& error = std::string()) {
@@ -882,6 +899,10 @@ class FakeTrackerClient : public ITrackerBackend,
         probeReachabilityCalls_ = 0;
         fetchIssuesCalls_ = 0;
         fetchIssuesForKeysCalls_ = 0;
+        {
+            std::lock_guard<std::mutex> lock(fetchIssuesForKeysByKeyMutex_);
+            fetchIssuesForKeysByKey_.clear();
+        }
         fetchChildrenOfKeysCalls_ = 0;
         buildCreatePayloadCalls_ = 0;
         buildUpdatePayloadCalls_ = 0;
@@ -937,6 +958,8 @@ class FakeTrackerClient : public ITrackerBackend,
 
     // FetchIssuesForKeys
     bool fetchIssuesForKeysOk_ = true;
+    mutable std::mutex fetchIssuesForKeysByKeyMutex_;
+    std::unordered_map<std::string, int> fetchIssuesForKeysByKey_; // guarded by fetchIssuesForKeysByKeyMutex_
     std::vector<CachedTicket> fetchIssuesForKeysTickets_;
     std::string fetchIssuesForKeysError_;
     TrackerError fetchIssuesForKeysStructuredError_;

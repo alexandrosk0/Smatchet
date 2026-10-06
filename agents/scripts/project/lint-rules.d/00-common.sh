@@ -266,16 +266,19 @@ CATCHALL_RULES=(catch-all-swallow)
 JSONWALKER_RULES=(unbounded-recursive-json-walker)
 SLURP_RULES=(unbounded-file-slurp)
 
-# Quality Pillar 6 offline-first (ADR-0026) — exact rules BLOCK (delta-gated per changed file); the
-# heuristics are WARN-first. KEEP IN SYNC with AGENTS.md § Enforcement contract-card.
+# Quality Pillar 6 offline-first (ADR-0026). BLOCKING: the exact rules (absolute-0 over the whole tree) and
+# the graduated heuristics (delta-gated per changed file). The other heuristics are WARN-first and graduate
+# one by one (docs/high-integrity/offline-calibration.md). KEEP IN SYNC with AGENTS.md § Enforcement
+# contract-card.
 OFFLINE_EXACT_RULES=(offline-write-bypasses-queue tracker-error-kind-collapsed)
-OFFLINE_WARN_RULES=(offline-loading-only-render offline-inflight-latch-unguarded offline-failure-cached-as-loaded offline-cache-cleared offline-network-read-ungated)
+OFFLINE_HEURISTIC_BLOCKING_RULES=(offline-failure-cached-as-loaded offline-cache-cleared)
+OFFLINE_WARN_RULES=(offline-loading-only-render offline-inflight-latch-unguarded offline-network-read-ungated)
 
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
     local base="$1" aud py
-    aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    aud="${LAYER_ROOT:-$REPO_ROOT}/agents/scripts/core/comment_audit.py"   # layer content; REPO_ROOT is the scanned host
     py="$(resolve_python || true)"
     [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
     [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true

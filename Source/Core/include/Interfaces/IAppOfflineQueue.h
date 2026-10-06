@@ -33,8 +33,7 @@ class IAppOfflineQueue {
     virtual void TickOfflineCreates() = 0;
     virtual void TickOfflineFieldEdits() = 0;
 
-    /// Queued (not-yet-dead) offline work — inspection. GetPendingCreateCount is an in-memory count a
-    /// worker keeps current (it can trail a change by one recount); GetPendingCreates().size() is exact.
+    /// Queued (not-yet-dead) offline work — inspection.
     virtual std::size_t GetPendingCreateCount() const = 0;
     virtual std::vector<PendingCreate> GetPendingCreates() const = 0;
     virtual std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const = 0;

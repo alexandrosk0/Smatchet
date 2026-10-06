@@ -206,8 +206,13 @@ elif [[ ! -f "$T7_SYNC" || ! -f "$T7_TMPL" ]]; then
 else
     T7_DIR="$(mktemp -d)"
     T7_DEP="$T7_DIR/settings.json"
+    mkdir -p "$T7_DIR/hooks"
+    : > "$T7_DIR/hooks/layer-run.sh"   # the dispatcher a reroute needs, deployed beside the settings
     # Deployed: permissions sentinel + a user-added custom SessionStart hook +
     # only the bootstrap hook + only lint-cpp-drain under Stop (the proven gap).
+    # The bootstrap hook is in its pre-dispatcher form, naming the layer script
+    # from the project dir; a user hook in that same form names a script the
+    # template does not, so the sync must reroute the first and leave the second.
     cat > "$T7_DEP" <<'JSON'
 {
   "permissions": { "defaultMode": "plan", "allow": ["Bash(ls:*)"] },
@@ -215,7 +220,8 @@ else
     "SessionStart": [
       { "matcher": "", "hooks": [
         { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\"", "timeout": 3000 },
-        { "type": "command", "command": "echo t7-user-hook", "timeout": 1000 }
+        { "type": "command", "command": "echo t7-user-hook", "timeout": 1000 },
+        { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/t7-user-tool.sh\"", "timeout": 1000 }
       ]}
     ],
     "Stop": [
@@ -244,10 +250,15 @@ missing = cmds(tmpl) - cmds(dep)
 assert not missing, f"template hooks not healed: {missing}"
 ss = [h["command"] for g in dep["hooks"]["SessionStart"] for h in g["hooks"]]
 assert "echo t7-user-hook" in ss, "user hook lost"
+user_tool = 'bash "$CLAUDE_PROJECT_DIR/agents/scripts/core/t7-user-tool.sh"'
+assert user_tool in ss, "a user hook the template does not name was rewritten"
+legacy = [c for c in ss if c.startswith('bash "$CLAUDE_PROJECT_DIR/agents/') and c != user_tool]
+assert not legacy, f"legacy layer hook not rerouted through layer-run.sh: {legacy}"
+assert len(ss) == len(set(ss)), "a SessionStart hook runs twice"
 assert len([g for g in dep["hooks"]["Stop"] if g.get("matcher", "") == ""]) == 1, "duplicate Stop matcher group"
 PY
     then
-        ok "sync heals missing hooks (permissions preserved, user hook kept, no Stop dup)"
+        ok "sync heals missing hooks (permissions preserved, user hooks kept, legacy layer hook rerouted once, no Stop dup)"
     else
         nope "sync-settings-hooks.sh merge incorrect"
     fi
@@ -269,6 +280,27 @@ PY
         ok "sync --check is read-only (deployed file unchanged)"
     else
         nope "sync --check mutated the deployed file"
+    fi
+    # The old form appended beside the new one (an older branch's sync ran in this
+    # tree) collapses to one entry rather than running every hook twice.
+    jq --slurpfile d "$T7_DEP" '.hooks.SessionStart[0].hooks += [{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\""}]' \
+        "$T7_TMPL" > "$T7_DIR/dup.json"
+    mv "$T7_DIR/dup.json" "$T7_DEP"
+    bash "$T7_SYNC" "$T7_TMPL" "$T7_DEP" >/dev/null 2>&1 || true
+    if [[ -z "$(jq -r '.hooks.SessionStart[].hooks[].command' "$T7_DEP" | sort | uniq -d)" ]]; then
+        ok "a legacy hook beside its rerouted form collapses to one entry"
+    else
+        nope "sync left a SessionStart hook in the group twice"
+    fi
+    # No dispatcher deployed: the legacy command still works before the flip, so it
+    # is left alone rather than rerouted to a script that is not there.
+    rm -f "$T7_DIR/hooks/layer-run.sh"
+    printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\""}]}]}}' > "$T7_DEP"
+    bash "$T7_SYNC" "$T7_TMPL" "$T7_DEP" >/dev/null 2>&1 || true
+    if jq -r '.hooks.SessionStart[].hooks[].command' "$T7_DEP" | grep -qxF 'bash "$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh"'; then
+        ok "without a deployed layer-run.sh the legacy hook is not rerouted"
+    else
+        nope "sync rerouted a legacy hook to a dispatcher that is not deployed"
     fi
     rm -rf "$T7_DIR"
 fi

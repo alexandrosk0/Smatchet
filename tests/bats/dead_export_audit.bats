@@ -255,3 +255,54 @@ _list() {
     [ "$status" -eq 2 ]
     [[ "$output" == *"fail closed"* ]]
 }
+
+# ---------- layer_paths.py: the regeneration command a baseline header names ----------
+# The audits print their regeneration command into the baseline header spelled from
+# the project root: `agent-layer/agents/...` only when the layer is the project's
+# agent-layer/ mount (plan agent-surface-extraction-repo, row 12), `agents/...`
+# otherwise. Each case runs a copy of layer_paths.py placed where the case needs it.
+
+_layer_copy() { # $1 = the layer root the copy sits in
+    mkdir -p "$1/agents/scripts/core"
+    cp "$REPO_ROOT/agents/scripts/core/layer_paths.py" "$1/agents/scripts/core/"
+}
+_from_project() { # $1 = layer root holding the copy, $2 = project root
+    "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import layer_paths; print(layer_paths.from_project("agents/scripts/core/x.sh", sys.argv[2]))' \
+        "$1/agents/scripts/core" "$2"
+}
+
+@test "layer_paths: a layer that is the project keeps the path as is" {
+    _layer_copy "$TMP/one"
+    run _from_project "$TMP/one" "$TMP/one"
+    [ "$status" -eq 0 ]
+    [ "$output" = "agents/scripts/core/x.sh" ]
+}
+
+@test "layer_paths: the project's agent-layer/ mount is prefixed" {
+    _layer_copy "$TMP/host/agent-layer"
+    run _from_project "$TMP/host/agent-layer" "$TMP/host"
+    [ "$status" -eq 0 ]
+    [ "$output" = "agent-layer/agents/scripts/core/x.sh" ]
+}
+
+@test "layer_paths: a layer nested elsewhere below the project (a worktree) is not prefixed" {
+    _layer_copy "$TMP/host/.claude/worktrees/x"
+    run _from_project "$TMP/host/.claude/worktrees/x" "$TMP/host"
+    [ "$output" = "agents/scripts/core/x.sh" ]
+}
+
+@test "layer_paths: an unrelated project, or a working directory inside the layer, is not prefixed" {
+    _layer_copy "$TMP/host/agent-layer"
+    mkdir -p "$TMP/elsewhere"
+    run _from_project "$TMP/host/agent-layer" "$TMP/elsewhere"
+    [ "$output" = "agents/scripts/core/x.sh" ]
+    run _from_project "$TMP/host/agent-layer" "$TMP/host/agent-layer/agents"
+    [ "$output" = "agents/scripts/core/x.sh" ]
+}
+
+@test "layer_paths: a symlinked project path still finds the mount" {
+    _layer_copy "$TMP/host/agent-layer"
+    ln -s "$TMP/host" "$TMP/link"
+    run _from_project "$TMP/host/agent-layer" "$TMP/link"
+    [ "$output" = "agent-layer/agents/scripts/core/x.sh" ]
+}

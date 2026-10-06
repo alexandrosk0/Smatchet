@@ -36,8 +36,14 @@ if command -v cygpath >/dev/null 2>&1; then
     NORM_PROJ="$(cygpath -m "$NORM_PROJ" 2>/dev/null || printf '%s' "$NORM_PROJ")"
     NORM_FILE="$(cygpath -m "$NORM_FILE" 2>/dev/null || printf '%s' "$NORM_FILE")"
 fi
-REL="${NORM_FILE#"$NORM_PROJ"/}"
-# Path outside the project root → nothing to check (fail-open).
+# The portable dirs are layer content: the agent-layer/ mount once the layer is a
+# submodule (layer-root.sh, copied beside this hook), so the edit is classified by
+# its path inside the layer.
+HOOK_LAYER="$NORM_PROJ"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$NORM_PROJ"
+REL="${NORM_FILE#"$HOOK_LAYER"/}"
+# Path outside the layer → nothing to check (fail-open).
 [[ "$REL" == "$NORM_FILE" ]] && exit 0
 
 # --- Only portable dirs trigger the gate -----------------------------------
@@ -49,7 +55,7 @@ esac
 # --- Locate the gate (moved build-vs-agentic; tolerate either home) ---------
 GATE=""
 for cand in \
-    "$PROJ_DIR/agents/scripts/core/test-portable-purity.sh" \
+    "$HOOK_LAYER/agents/scripts/core/test-portable-purity.sh" \
     "$PROJ_DIR/scripts/dev/test-portable-purity.sh"; do
     [[ -f "$cand" ]] && { GATE="$cand"; break; }
 done

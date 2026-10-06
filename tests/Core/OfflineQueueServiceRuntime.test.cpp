@@ -24,16 +24,12 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <functional>
-#include <memory>
 #include <string>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -134,20 +130,6 @@ class StructuredFieldDeps : public FakeOfflineQueueDeps {
   public:
     std::shared_ptr<StructuredFieldBackend> Structured{std::make_shared<StructuredFieldBackend>()};
     std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return Structured; }
-};
-
-// Counts queue-table loads, so a test can prove the pending-count getters never read the cache.
-class LoadCountingSyncCache : public smatchet_tests::FakeSyncCache {
-  public:
-    std::atomic<int> Loads{0};
-    std::vector<PendingCreate> LoadPendingCreates() override {
-        ++Loads;
-        return FakeSyncCache::LoadPendingCreates();
-    }
-    std::vector<PendingFieldEditRecord> LoadPendingFieldEdits() override {
-        ++Loads;
-        return FakeSyncCache::LoadPendingFieldEdits();
-    }
 };
 
 } // namespace
@@ -1125,137 +1107,4 @@ TEST_CASE("OfflineQueueServiceRuntime: a create the tracker provably did not app
     REQUIRE(svc.GetPendingCreateCount() == 1u);
     CHECK(svc.GetPendingCreates().front().Attempts == 1);
     CHECK(svc.GetDeadPendingCreateCount() == 0u);
-}
-
-// ---------------------------------------------------------------------------
-// Pending-count mirror — the status bar reads GetPendingCreateCount every frame, so the counts are
-// atomics a worker recounts after each queue change instead of a SQLite read per call.
-// ---------------------------------------------------------------------------
-TEST_CASE("OfflineQueueServiceRuntime: pending counts follow enqueue, replay and delete without a cache read per "
-          "call") {
-    OfflineQueueTestEnvGuard guard;
-    FakeOfflineQueueDeps deps;
-    auto counting = std::make_unique<LoadCountingSyncCache>();
-    LoadCountingSyncCache& cache = *counting;
-    deps.CacheImpl = std::move(counting);
-    PrimeCreatePipelineHappy(deps);
-    deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-42");
-
-    OfflineQueueService svc(deps);
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
-    std::string err;
-    const std::int64_t editId =
-        svc.QueueFieldEditOffline("PROJ-1", "summary", nlohmann::json{{"summary", "v"}}.dump(), err, std::string());
-    REQUIRE(editId > 0);
-    CHECK(svc.GetPendingCreateCount() == 1u);
-    CHECK(svc.GetPendingFieldEditCount() == 1u);
-
-    const int loadsBefore = cache.Loads.load();
-    for (int frame = 0; frame < 100; ++frame) {
-        CHECK(svc.GetPendingCreateCount() == 1u);
-        CHECK(svc.GetPendingFieldEditCount() == 1u);
-    }
-    CHECK(cache.Loads.load() == loadsBefore);
-
-    // Replay: the created row leaves the queue and the count follows.
-    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
-    svc.TickOfflineCreates();
-    CHECK(deps.BackendImpl->CreateIssueCallCount() == 1u);
-    CHECK(svc.GetPendingCreateCount() == 0u);
-    CHECK(svc.GetPendingFieldEditCount() == 1u);
-
-    // Delete: the field edit leaves the queue and the count follows.
-    CHECK(svc.DeletePendingFieldEdits({editId}).Deleted == 1);
-    CHECK(svc.GetPendingFieldEditCount() == 0u);
-    CHECK(svc.GetPendingCreates().empty());
-    CHECK(svc.GetPendingFieldEdits().empty());
-}
-
-TEST_CASE("OfflineQueueServiceRuntime: pending-count recounts run on a worker and coalesce") {
-    OfflineQueueTestEnvGuard guard;
-    FakeOfflineQueueDeps deps;
-    std::vector<std::function<void()>> launched;
-    deps.BackgroundTaskRunner = [&launched](std::function<void()> t) { launched.push_back(std::move(t)); };
-    auto runLaunched = [&launched](std::size_t index) {
-        std::function<void()> task = std::move(launched[index]);
-        task();
-    };
-
-    OfflineQueueService svc(deps);
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft("First")) > 0);
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft("Second")) > 0);
-    // Nothing is counted on the calling thread, and the second change joins the recount already queued.
-    CHECK(svc.GetPendingCreateCount() == 0u);
-    REQUIRE(launched.size() == 1u);
-    runLaunched(0);
-    CHECK(svc.GetPendingCreateCount() == 2u);
-
-    // A change after that recount finished starts a new one.
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft("Third")) > 0);
-    REQUIRE(launched.size() == 2u);
-    runLaunched(1);
-    CHECK(svc.GetPendingCreateCount() == 3u);
-}
-
-TEST_CASE("OfflineQueueServiceRuntime: a replaced local cache is recounted on the next tick") {
-    OfflineQueueTestEnvGuard guard;
-    FakeOfflineQueueDeps deps;
-    OfflineQueueService svc(deps);
-    // No replay during this test: the tick only checks which cache it is counting.
-    svc.PushReplayTimersForward(std::chrono::steady_clock::now() + std::chrono::hours(1));
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
-    svc.TickOfflineCreates();
-    CHECK(svc.GetPendingCreateCount() == 1u);
-
-    // RecreateLocalCacheDatabase swaps in a fresh, empty cache file.
-    deps.CacheImpl = std::make_unique<smatchet_tests::FakeSyncCache>();
-    CHECK(svc.GetPendingCreateCount() == 1u); // not re-read until the tick notices the new cache
-    svc.TickOfflineCreates();
-    CHECK(svc.GetPendingCreateCount() == 0u);
-}
-
-namespace {
-/// Hands the service an owning cache handle, as AppController does. Recreate() models
-/// RecreateLocalCacheDatabase when the allocator places the new cache where the freed one
-/// lived: same address, new owner, empty queue.
-class SameAddressCacheDeps : public FakeOfflineQueueDeps {
-  public:
-    std::shared_ptr<ISyncCache> CacheShared() override { return handle_; }
-    void Recreate() {
-        for (const PendingCreate& pc : CacheImpl->LoadPendingCreates()) {
-            CacheImpl->DeletePendingCreate(pc.Id);
-        }
-        handle_ = std::shared_ptr<ISyncCache>(std::make_shared<int>(0), CacheImpl.get());
-    }
-
-  private:
-    std::shared_ptr<ISyncCache> handle_{std::make_shared<int>(0), CacheImpl.get()};
-};
-} // namespace
-
-TEST_CASE("OfflineQueueServiceRuntime: a recreated cache at the freed cache's address is still recounted") {
-    OfflineQueueTestEnvGuard guard;
-    SameAddressCacheDeps deps;
-    OfflineQueueService svc(deps);
-    svc.PushReplayTimersForward(std::chrono::steady_clock::now() + std::chrono::hours(1));
-    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
-    svc.TickOfflineCreates();
-    CHECK(svc.GetPendingCreateCount() == 1u);
-
-    deps.Recreate();
-    REQUIRE(deps.Cache() == deps.CacheShared().get()); // the address alone cannot tell the caches apart
-    svc.TickOfflineCreates();
-    CHECK(svc.GetPendingCreateCount() == 0u);
-
-    // Once the new cache is the counted one, a tick does not start another recount.
-    int launches = 0;
-    deps.BackgroundTaskRunner = [&launches](std::function<void()> t) {
-        ++launches;
-        if (t) {
-            t();
-        }
-    };
-    svc.TickOfflineCreates();
-    svc.TickOfflineCreates();
-    CHECK(launches == 0);
 }

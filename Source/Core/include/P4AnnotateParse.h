@@ -86,11 +86,11 @@ struct P4ClScanMatch {
 P4ClScanMatch FindFirstChangelistInText(const std::string& text);
 
 /**
- * True when `p4` output says the changelist does not exist (`Change <N> unknown.` or
- * `no such changelist`, ASCII case-insensitive): a final answer, unlike every other
- * describe failure (p4 not started, timeout, server unreachable). Pure; no I/O.
+ * True when p4 answered that the changelist does not exist ("Change 99999 unknown.", "no such
+ * changelist", "Invalid changelist number"), in either stream, ignoring ASCII case. That answer is
+ * final; any other failure (server unreachable, timeout, login expired) may succeed later. Pure.
  */
-bool IsChangelistUnknownMessage(const std::string& p4Output);
+bool IsChangelistUnknownAnswer(const std::string& p4Stderr, const std::string& p4Stdout);
 
 } // namespace P4AnnotateParse
 

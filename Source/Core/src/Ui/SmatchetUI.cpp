@@ -566,7 +566,6 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
     app.TickPendingActions();
-    d.cachedPendingFieldEditCount = static_cast<int>(app.GetPendingFieldEdits().size());
     app.TickAllContexts(); // all live pane contexts under one shared deadline (multi-grid Slice 3)
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath, const std::string& mimeType,

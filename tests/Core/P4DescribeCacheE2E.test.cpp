@@ -1,7 +1,7 @@
 // P4DescribeCacheE2E — end-to-end exercise of `P4ChangelistDescribeCache` driven
 // by the FakeP4Runner runner-seam fake. Slice 3 of autonomous-debugging-no-creds.
 //
-// Verifies the cache's hit/miss/eviction/retry/thread-safety contract against the real
+// Verifies the cache's hit/miss/eviction/thread-safety contract against the real
 // `p4 describe -s`-fed `GetOrFetch` path — without spawning the binary.
 
 #include <doctest/doctest.h>
@@ -25,33 +25,6 @@ AnnotateAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, 
     runner.LoadFromFile(FixturePath(leaf));
     AnnotateAnalysisConfig cfg;
     cfg.P4RunOverride = runner.AsCallback();
-    return cfg;
-}
-
-// A server that is unreachable until `serverUp` flips: p4 runs and exits 1 with a connect error
-// (a transient failure), then answers `p4 describe -s 7` normally.
-struct FlakyDescribeServer {
-    std::atomic<int> calls{0};
-    std::atomic<bool> serverUp{false};
-};
-
-AnnotateAnalysisConfig MakeFlakyCfg(FlakyDescribeServer& server) {
-    AnnotateAnalysisConfig cfg;
-    cfg.P4RunOverride = [&server](const std::vector<std::string>&, int& outExit, std::string& outStdout,
-                                  std::string& outStderr) {
-        server.calls.fetch_add(1);
-        if (!server.serverUp.load()) {
-            outExit = 1;
-            outStdout.clear();
-            outStderr = "Perforce client error:\n\tConnect to server failed; check $P4PORT.\n"
-                        "\tTCP connect to perforce:1666 failed.";
-            return true;
-        }
-        outExit = 0;
-        outStdout = "Change 7 by alice@workstation on 2026/01/15 14:33:00\n\n\tFix\n";
-        outStderr.clear();
-        return true;
-    };
     return cfg;
 }
 
@@ -93,14 +66,63 @@ TEST_CASE("P4ChangelistDescribeCache: eviction past maxEntries drops the oldest 
     CHECK(runner.CallCount() == 4);
 }
 
-TEST_CASE("P4ChangelistDescribeCache: p4 describe failure caches an error entry") {
+TEST_CASE("P4ChangelistDescribeCache: a changelist p4 says is unknown is remembered for good") {
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
 
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16);
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
     P4ChangelistDetails d = cache.GetOrFetch(cfg, "99999");
     CHECK(d.Loaded);
     CHECK_FALSE(d.Error.empty());
+    CHECK(runner.CallCount() == 1);
+    // Final even with no backoff at all: hovering a changelist that does not exist costs no more p4 calls.
+    CHECK_FALSE(cache.GetOrFetch(cfg, "99999").Error.empty());
+    CHECK(runner.CallCount() == 1);
+}
+
+TEST_CASE("P4ChangelistDescribeCache: an unreachable server is asked again once the backoff passes") {
+    smatchet_tests::FakeP4Runner down;
+    smatchet_tests::FakeP4Response unreachable;
+    unreachable.ArgvPrefix = "describe -s 1";
+    unreachable.ExitCode = 1;
+    unreachable.Stderr = "Perforce client error:\n\tConnect to server failed; check $P4PORT.";
+    down.AddResponse(unreachable);
+    AnnotateAnalysisConfig cfgDown;
+    cfgDown.P4RunOverride = down.AsCallback();
+    smatchet_tests::FakeP4Runner up;
+    AnnotateAnalysisConfig cfgUp = MakeCfgFromFixture(up, "describe_cache.json");
+
+    // Inside the backoff the failure is answered from the cache: no p4 call per hover.
+    P4ChangelistDescribeCache held(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(600));
+    CHECK_FALSE(held.GetOrFetch(cfgDown, "1").Error.empty());
+    CHECK_FALSE(held.GetOrFetch(cfgUp, "1").Error.empty());
+    CHECK(down.CallCount() == 1);
+    CHECK(up.CallCount() == 0);
+
+    // Once it has passed, the next lookup runs p4 again; the success is then final.
+    P4ChangelistDescribeCache retried(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    CHECK_FALSE(retried.GetOrFetch(cfgDown, "1").Error.empty());
+    const P4ChangelistDetails d = retried.GetOrFetch(cfgUp, "1");
+    CHECK(d.Error.empty());
+    CHECK(d.Author == "alice");
+    CHECK(up.CallCount() == 1);
+    CHECK(retried.GetOrFetch(cfgUp, "1").Author == "alice");
+    CHECK(up.CallCount() == 1);
+}
+
+TEST_CASE("P4ChangelistDescribeCache: a describe that could not run at all is retried too") {
+    smatchet_tests::FakeP4Runner runner;
+    smatchet_tests::FakeP4Response spawnFail;
+    spawnFail.ArgvPrefix = "describe -s 2";
+    spawnFail.SimulateSpawnFail = true;
+    runner.AddResponse(spawnFail);
+    AnnotateAnalysisConfig cfg;
+    cfg.P4RunOverride = runner.AsCallback();
+
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    CHECK_FALSE(cache.GetOrFetch(cfg, "2").Error.empty());
+    CHECK_FALSE(cache.GetOrFetch(cfg, "2").Error.empty());
+    CHECK(runner.CallCount() == 2);
 }
 
 TEST_CASE("P4ChangelistDescribeCache: two threads asking for the same CL converge") {
@@ -131,95 +153,44 @@ TEST_CASE("P4ChangelistDescribeCache: two threads asking for the same CL converg
     CHECK(runner.CallCount() >= 1);
 }
 
-TEST_CASE("P4ChangelistDescribeCache: a transient failure is re-fetched once the retry window passes") {
-    FlakyDescribeServer server;
-    AnnotateAnalysisConfig cfg = MakeFlakyCfg(server);
-
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16, std::chrono::seconds(0), P4ChangelistDescribeCache::NowFn());
-    P4ChangelistDetails failed = cache.GetOrFetch(cfg, "7");
-    CHECK(failed.Loaded);
-    CHECK_FALSE(failed.Error.empty());
-    CHECK(server.calls.load() == 1);
-
-    server.serverUp = true;
-    P4ChangelistDetails recovered = cache.GetOrFetch(cfg, "7");
-    CHECK(recovered.Error.empty());
-    CHECK(recovered.Author == "alice");
-    CHECK(server.calls.load() == 2);
-
-    // The successful describe is final: no further p4 call.
-    CHECK(cache.GetOrFetch(cfg, "7").Author == "alice");
-    CHECK(server.calls.load() == 2);
-}
-
-TEST_CASE("P4ChangelistDescribeCache: a transient failure is served from the cache inside the retry window") {
-    FlakyDescribeServer server;
-    AnnotateAnalysisConfig cfg = MakeFlakyCfg(server);
-    P4ChangelistDescribeCache::Clock::time_point now =
-        P4ChangelistDescribeCache::Clock::time_point() + std::chrono::hours(1);
-
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16, std::chrono::seconds(30), [&now]() { return now; });
-    CHECK_FALSE(cache.GetOrFetch(cfg, "7").Error.empty());
-    CHECK(server.calls.load() == 1);
-
-    server.serverUp = true;
-    now += std::chrono::seconds(29);
-    P4ChangelistDetails held = cache.GetOrFetch(cfg, "7");
-    CHECK(held.Loaded);
-    CHECK_FALSE(held.Error.empty());
-    CHECK(server.calls.load() == 1);
-
-    now += std::chrono::seconds(1);
-    P4ChangelistDetails recovered = cache.GetOrFetch(cfg, "7");
-    CHECK(recovered.Error.empty());
-    CHECK(recovered.Author == "alice");
-    CHECK(server.calls.load() == 2);
-}
-
-TEST_CASE("P4ChangelistDescribeCache: 'Change N unknown' stays final even with a zero retry window") {
-    smatchet_tests::FakeP4Runner runner;
-    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
-
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16, std::chrono::seconds(0), P4ChangelistDescribeCache::NowFn());
-    P4ChangelistDetails first = cache.GetOrFetch(cfg, "99999");
-    CHECK(first.Loaded);
-    CHECK(first.Error.find("unknown") != std::string::npos);
-    P4ChangelistDetails second = cache.GetOrFetch(cfg, "99999");
-    CHECK(second.Error == first.Error);
-    CHECK(runner.CallCount() == 1);
-}
-
-TEST_CASE("P4ChangelistDescribeCache: a spawn failure is transient") {
-    smatchet_tests::FakeP4Runner runner;
-    smatchet_tests::FakeP4Response spawnFail;
-    spawnFail.ArgvPrefix = "describe -s 8";
-    spawnFail.SimulateSpawnFail = true;
-    runner.AddResponse(spawnFail);
+TEST_CASE("P4ChangelistDescribeCache: a failure never replaces a success another lookup stored meanwhile") {
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    // This lookup's p4 run fails, but while it runs a concurrent lookup of the same CL stores a success.
     AnnotateAnalysisConfig cfg;
-    cfg.P4RunOverride = runner.AsCallback();
-
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16, std::chrono::seconds(0), P4ChangelistDescribeCache::NowFn());
-    CHECK_FALSE(cache.GetOrFetch(cfg, "8").Error.empty());
-    CHECK_FALSE(cache.GetOrFetch(cfg, "8").Error.empty());
-    CHECK(runner.CallCount() == 2);
-}
-
-TEST_CASE("P4ChangelistDescribeCache: a failure never replaces a final answer stored meanwhile") {
-    P4ChangelistDescribeCache cache(/*maxEntries=*/16, std::chrono::seconds(0), P4ChangelistDescribeCache::NowFn());
-    AnnotateAnalysisConfig cfg;
-    // While this describe is failing, a concurrent fetch for the same CL lands a final answer.
-    cfg.P4RunOverride = [&cache](const std::vector<std::string>&, int& outExit, std::string&, std::string& outStderr) {
-        P4ChangelistDetails ok;
-        ok.Loaded = true;
-        ok.Author = "bob";
-        cache.Store("9", ok);
+    cfg.P4RunOverride = [&cache](const std::vector<std::string>&, int& outExit, std::string& outStdout,
+                                 std::string& outStderr) -> bool {
+        P4ChangelistDetails success;
+        success.Loaded = true;
+        success.Author = "alice";
+        cache.Store("7", success);
         outExit = 1;
-        outStderr = "TCP connect to perforce:1666 failed.";
+        outStdout.clear();
+        outStderr = "Perforce client error:\n\tConnect to server failed; check $P4PORT.";
         return true;
     };
+    CHECK_FALSE(cache.GetOrFetch(cfg, "7").Error.empty()); // this caller still sees its own failure
+    const P4ChangelistDetails kept = cache.Get("7");
+    CHECK(kept.Error.empty());
+    CHECK(kept.Author == "alice");
+}
 
-    P4ChangelistDetails d = cache.GetOrFetch(cfg, "9");
-    CHECK(d.Error.empty());
-    CHECK(d.Author == "bob");
-    CHECK(cache.Get("9").Author == "bob");
+TEST_CASE("P4ChangelistDescribeCache: an unknown-changelist answer never replaces a success stored meanwhile") {
+    P4ChangelistDescribeCache cache(/*maxEntries=*/16, /*failureRetryAfter=*/std::chrono::seconds(0));
+    // The failing run's answer is final ("no such changelist"), but a concurrent lookup stored a success.
+    AnnotateAnalysisConfig cfg;
+    cfg.P4RunOverride = [&cache](const std::vector<std::string>&, int& outExit, std::string& outStdout,
+                                 std::string& outStderr) -> bool {
+        P4ChangelistDetails success;
+        success.Loaded = true;
+        success.Author = "alice";
+        cache.Store("7", success);
+        outExit = 1;
+        outStdout.clear();
+        outStderr = "Change 7 unknown.";
+        return true;
+    };
+    CHECK_FALSE(cache.GetOrFetch(cfg, "7").Error.empty());
+    const P4ChangelistDetails kept = cache.Get("7");
+    CHECK(kept.Error.empty());
+    CHECK(kept.Author == "alice");
 }

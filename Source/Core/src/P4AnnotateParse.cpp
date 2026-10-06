@@ -173,30 +173,35 @@ P4ClScanMatch FindFirstChangelistInText(const std::string& text) {
     return match;
 }
 
-bool IsChangelistUnknownMessage(const std::string& p4Output) {
-    const std::string lower = ToLowerAsciiCopy(p4Output);
-    if (lower.find("no such changelist") != std::string::npos) {
-        return true;
-    }
+namespace {
+
+// "change <digits> unknown" anywhere in already-lowercased text.
+bool HasChangeUnknown(const std::string& lower) {
     static const std::string kChange = "change ";
-    static const std::string kUnknown = "unknown";
+    static const std::string kUnknown = " unknown";
     for (std::size_t pos = lower.find(kChange); pos != std::string::npos; pos = lower.find(kChange, pos + 1)) {
-        std::size_t i = pos + kChange.size();
-        const std::size_t digitsStart = i;
-        while (i < lower.size() && lower[i] >= '0' && lower[i] <= '9') {
-            ++i;
+        std::size_t end = pos + kChange.size();
+        const std::size_t digitsStart = end;
+        while (end < lower.size() && lower[end] >= '0' && lower[end] <= '9') {
+            ++end;
         }
-        if (i == digitsStart) {
-            continue;
-        }
-        while (i < lower.size() && (lower[i] == ' ' || lower[i] == '\t')) {
-            ++i;
-        }
-        if (lower.compare(i, kUnknown.size(), kUnknown) == 0) {
+        if (end > digitsStart && lower.compare(end, kUnknown.size(), kUnknown) == 0) {
             return true;
         }
     }
     return false;
+}
+
+bool SaysChangelistUnknown(const std::string& text) {
+    const std::string lower = ToLowerAsciiCopy(text);
+    return HasChangeUnknown(lower) || lower.find("no such changelist") != std::string::npos ||
+           lower.find("invalid changelist number") != std::string::npos;
+}
+
+} // namespace
+
+bool IsChangelistUnknownAnswer(const std::string& p4Stderr, const std::string& p4Stdout) {
+    return SaysChangelistUnknown(p4Stderr) || SaysChangelistUnknown(p4Stdout);
 }
 
 } // namespace P4AnnotateParse

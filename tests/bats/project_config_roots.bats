@@ -16,7 +16,24 @@
 # ----------------------------------------------------------------------------
 
 setup() {
+    TMP="$(mktemp -d)"
+    export TMP
     REPO_ROOT="$(git rev-parse --show-toplevel)"
+    # When this checkout is itself a submodule (the layer mounted in a host, which
+    # is how the host's test-all.sh reaches this suite after the flip), rung 2 owns
+    # its tree, so the tests that read this tree's own resolution (rung 3, and the
+    # roots it accepts as its own) would read the host's. They run against a
+    # standalone copy instead: the same script and config, outside any superproject.
+    if [ -n "$(git -C "$REPO_ROOT" rev-parse --show-superproject-working-tree 2>/dev/null)" ]; then
+        mkdir -p "$TMP/solo/scripts/dev"
+        cp "$REPO_ROOT/scripts/dev/project-config.sh" "$TMP/solo/scripts/dev/"
+        cp "$REPO_ROOT/project.config.json" "$TMP/solo/"
+        if [ -f "$REPO_ROOT/project.config.schema.json" ]; then
+            cp "$REPO_ROOT/project.config.schema.json" "$TMP/solo/"
+        fi
+        git -C "$TMP/solo" init -q
+        REPO_ROOT="$(cd "$TMP/solo" && pwd)"
+    fi
     export REPO_ROOT
     export CONFIG_SH="$REPO_ROOT/scripts/dev/project-config.sh"
 
@@ -25,14 +42,12 @@ setup() {
     # under test.
     unset PC_CONFIG_FILE PC_SCHEMA_FILE SMATCHET_PROJECT_CONFIG
     unset PROJECT_ROOT AGENT_LAYER_ROOT PC_PROJECT_ROOT PC_AGENT_LAYER_ROOT
+    unset SMATCHET_PROJECT_ROOT_OVERRIDE   # the host's test-all.sh sets it for layer suites
     # ...and every other PC_* a parent's full load exported (test-all.sh sources
     # this script, so PC_PROJECT_NAME and the rest arrive set): a test asserting
     # what a load did NOT set would otherwise read the parent's value.
     local v
     while IFS= read -r v; do unset "$v"; done < <(compgen -e | grep '^PC_' || true)
-
-    TMP="$(mktemp -d)"
-    export TMP
 }
 
 teardown() {

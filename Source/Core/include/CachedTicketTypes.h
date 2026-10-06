@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // POD types shared between the SQLite-backed cache (`LocalCacheManager`) and callers
 // that only consume the cached payload — IssueDraft, IssueCreatePipeline, the offline
@@ -145,4 +146,13 @@ struct DeadPendingCreate {
     std::int64_t CreatedAtEpochSec = 0;
     std::int64_t ArchivedAtEpochSec = 0;
     std::string TerminalReason;
+};
+
+/// The offline create and field-edit queues as last read by a worker (OfflineQueueService::Snapshot). The UI
+/// thread reads this instead of SQLite (Quality Pillar 2).
+struct OfflineQueueSnapshot {
+    std::vector<PendingCreate> PendingCreates;
+    std::vector<DeadPendingCreate> DeadCreates;
+    std::vector<PendingFieldEditRecord> PendingEdits;
+    std::vector<DeadPendingFieldEdit> DeadEdits;
 };

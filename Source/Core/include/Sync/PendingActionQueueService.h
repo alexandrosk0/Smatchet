@@ -14,6 +14,7 @@
 // service and joins its background tasks before destroying it (OfflineQueueService's contract).
 
 #include "PendingActionTypes.h"
+#include "Sync/SourcedSnapshot.h"
 #include "Types/ConnectivityTypes.h"
 
 #include <atomic>
@@ -97,17 +98,13 @@ class PendingActionQueueService {
     /// Reload the snapshot from `cache` and publish it (worker).
     void PublishSnapshot(ISyncCache& cache);
     /// First load (and reload after RequestSnapshotRefresh) on a worker, with a backoff after failure.
-    void LoadSnapshotAsync(const std::shared_ptr<ISyncCache>& cache);
+    void LoadSnapshotAsync();
 
     IOfflineQueueDeps& deps_;
 
-    std::shared_ptr<const PendingActionsSnapshot> snapshot_; ///< atomic_load / atomic_store only
-    std::mutex publishMutex_; ///< one reload-and-publish at a time, so an older read never wins
-    std::atomic<bool> snapshotLoaded_{false};
-    std::atomic<bool> snapshotLoadInFlight_{false};
+    smatchet::SourcedSnapshot<PendingActionsSnapshot, ISyncCache> snapshot_;
 
     mutable std::mutex scheduleMutex_;
     std::chrono::steady_clock::time_point nextReplayAt_ = std::chrono::steady_clock::now();
     bool replayInFlight_ = false;
-    std::chrono::steady_clock::time_point nextSnapshotLoadAt_{};
 };

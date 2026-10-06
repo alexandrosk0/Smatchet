@@ -63,6 +63,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import layer_paths  # noqa: E402
+
 # --- budgets (fallback + --selftest drift anchor; authoritative values in project.config.json) -
 PROMPT_HARD = 250        # agents/core, agents/project — hard cap (BLOCKS)
 PROMPT_SOFT = 150        # agent-prompt soft warn
@@ -351,7 +354,7 @@ def _render_baseline_md():
         "# Agent-prompt / AGENTS.md size — grandfathered baseline",
         "",
         "_Auto-generated. Do not hand-edit; run "
-        "`bash agents/scripts/project/test-lint-rules.sh --agentsize-baseline` and commit._",
+        "`bash %s --agentsize-baseline` and commit._" % layer_paths.from_project("agents/scripts/project/test-lint-rules.sh"),
         "_The gate is a live merge-base delta vs `origin/develop` (agent_size_audit.py --diff); "
         "this file is an informational snapshot, not the gate input._",
         "",

@@ -66,8 +66,13 @@ fi
 # parser when available, fall back to a grep that matches the literal
 # `"passed": true` line emitted by nlohmann::json::dump(2).
 PASSED="false"
+# resolve-py.sh is agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_twr_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_twr_layer/agent-layer/scripts/dev/project-config.sh" ] && _twr_layer="$_twr_layer/agent-layer"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+. "$_twr_layer/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py || true)"
 if [ -n "$PY" ]; then
     # Pipe the captured envelope through python's JSON parser. The spawn

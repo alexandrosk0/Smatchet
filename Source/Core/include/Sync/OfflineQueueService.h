@@ -15,7 +15,6 @@
 // concrete `GridContextDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
 // so they can exercise the service without constructing an AppController.
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -32,6 +31,9 @@
 // Relocated out of AppController.h so this service no longer drags in the orchestrator
 // (core-include-dag Phase 3 — severs the Sync -> AppController include back-edge).
 #include "Sync/OfflineQueueTypes.h"
+
+#include "CachedTicketTypes.h" // OfflineQueueSnapshot
+#include "Sync/SourcedSnapshot.h"
 
 namespace OfflineFieldEditMergeDetail {
 /// True when `rich` (after leading whitespace) begins with '{' — i.e. an ADF JSON document
@@ -72,14 +74,16 @@ class OfflineQueueService {
   public:
     explicit OfflineQueueService(IOfflineQueueDeps& deps);
 
+    /// The create and field-edit queues as last read by a worker; never null. Any thread. The UI reads this
+    /// instead of SQLite (Quality Pillar 2). Every queue change made through this service, and every replay
+    /// pass, republishes it; the replay ticks decide from it whether there is anything to replay.
+    std::shared_ptr<const OfflineQueueSnapshot> Snapshot() const;
+
+    /// Reread the queues (e.g. after the local cache file was replaced).
+    void RequestSnapshotRefresh();
+
     // --- Phase 1A: trivial read-only accessors -------------------------------------------
-    /// Rows in the active create queue (every backend) as last counted on a worker: one atomic load,
-    /// never SQLite, so the UI may read it every frame. A queue change made through this service, a
-    /// replay pass and a replaced local cache each recount on a worker, so a read can trail a change
-    /// by one recount. The exact count is GetPendingCreates().size().
     std::size_t GetPendingCreateCount() const;
-    /// Field-edit twin of GetPendingCreateCount; the exact count is GetPendingFieldEdits().size().
-    std::size_t GetPendingFieldEditCount() const;
     std::size_t GetDeadPendingCreateCount() const;
     std::vector<PendingCreate> GetPendingCreates() const;
     std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
@@ -309,35 +313,15 @@ class OfflineQueueService {
     void SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
                                      LegacyProjectSweepTally& tally);
 
-    // --- Pending-count mirror (GetPendingCreateCount / GetPendingFieldEditCount) -------------
-    /// Recount both active queues on a worker. Coalesces with a recount already queued or running,
-    /// which then counts once more, so no change is missed. Any thread.
-    void RequestPendingCountRefresh();
-    /// Worker body of RequestPendingCountRefresh: recounts until no request is left.
-    void RunPendingCountRefresh();
-    /// Count both active queues in the current cache and publish the counts. Worker only.
-    void RecountPendingRows();
-    /// Requests a recount when the cache object changed (first use, or the local cache was
-    /// recreated). Every frame: a pointer compare plus a weak-handle expiry check unless it changed.
-    void RecountIfCacheReplaced();
-    /// A replay tick just loaded `loadedRows` rows: requests a recount when `mirror` disagrees
-    /// (rows written to the cache outside this service).
-    void RecountIfDrifted(std::size_t loadedRows, const std::atomic<std::size_t>& mirror);
+    /// Reread both queues from `cache` and publish them (worker).
+    void PublishSnapshot(ISyncCache& cache);
+    /// Republish from the current cache on a worker. `force` skips the backoff that paces a failing first load.
+    void RefreshSnapshotAsync(bool force);
+    /// Start the first load when no view has been published yet. True once a view is available.
+    bool EnsureSnapshotLoaded();
 
     IOfflineQueueDeps& deps_;
-
-    std::atomic<std::size_t> pendingCreateCount_{0};
-    std::atomic<std::size_t> pendingFieldEditCount_{0};
-    // The cache the last requested recount reads. A recreated cache can land at the freed one's
-    // address, so the weak handle (expired once the old cache is gone) tells the two apart.
-    std::mutex countedCacheMutex_;
-    const ISyncCache* countedCache_ = nullptr;     ///< guarded by countedCacheMutex_
-    std::weak_ptr<ISyncCache> countedCacheHandle_; ///< guarded by countedCacheMutex_
-    bool countedCacheOwned_ = false;               ///< guarded by countedCacheMutex_; false: no handle to watch
-    std::mutex recountMutex_;                      ///< workers only: one recount at a time, so an older read never wins
-    std::mutex countRefreshMutex_;
-    bool countRefreshInFlight_ = false;  ///< guarded by countRefreshMutex_
-    bool countRefreshRequested_ = false; ///< guarded by countRefreshMutex_
+    smatchet::SourcedSnapshot<OfflineQueueSnapshot, ISyncCache> snapshot_;
 
     // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
     // All accesses go through `offlineReplayScheduleMutex_`. UI thread sets the schedule

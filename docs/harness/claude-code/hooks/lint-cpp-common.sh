@@ -10,6 +10,12 @@ LINT_NORM_PROJ="${LINT_PROJ_DIR//\\//}"
 if command -v cygpath >/dev/null 2>&1; then
     LINT_NORM_PROJ="$(cygpath -m "$LINT_NORM_PROJ" 2>/dev/null || printf '%s' "$LINT_NORM_PROJ")"
 fi
+# The python resolver below is layer content: the agent-layer/ mount once the layer
+# is a submodule (layer-root.sh, copied beside these hooks).
+HOOK_LAYER="$LINT_NORM_PROJ"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$LINT_NORM_PROJ"
+LINT_LAYER="$HOOK_LAYER"
 
 # Lint toolchain (clang-format / cppcheck / clang-tidy / gcc) is installed from
 # MSYS2 UCRT64 on this machine at C:\msys64\ucrt64\bin. Hook invocations
@@ -198,7 +204,7 @@ lint_run_clang_tidy() {
 lint_run_catch_all() {
     local abs="$1" py
     # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-    . "$LINT_NORM_PROJ/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
+    . "$LINT_LAYER/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
     py="$(resolve_py)" || return 0
     "$py" "$LINT_NORM_PROJ/.claude/hooks/lint-catch-all.py" "$abs" 2>&1 || true
 }
@@ -210,7 +216,7 @@ lint_run_dual_target() {
     [[ "$rel" == *.cpp && "$rel" != tests/* ]] || return 0
     local py
     # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-    . "$LINT_NORM_PROJ/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
+    . "$LINT_LAYER/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
     py="$(resolve_py)" || return 0
     "$py" "$LINT_NORM_PROJ/.claude/hooks/lint-syntax-both.py" "$abs" 2>&1 || true
 }

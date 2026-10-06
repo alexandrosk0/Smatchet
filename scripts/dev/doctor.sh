@@ -352,7 +352,18 @@ fi
 # gitignored .claude/ and are wired only by setup-harness.sh, so a fresh clone
 # runs with every guard silently inert (the #913 bootstrap hole). Surface that
 # state in the standard preflight instead of relying on a hand-run probe.
-harness_probe="$REPO_ROOT/agents/scripts/core/check-harness-provisioned.sh"
+# The probe and setup-harness.sh are agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+# A registered mount that is not checked out holds no probe at all, so it is
+# reported here rather than skipped with the rest of the check.
+harness_layer_rel=""
+if [ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ]; then
+    harness_layer_rel="agent-layer/"
+elif [ "$(git -C "$REPO_ROOT" ls-files -s -- agent-layer 2>/dev/null | cut -c1-6)" = 160000 ]; then
+    write_warn 'harness' 'agent layer not checked out (agent-layer/ is empty) -- session guards inert; fix: git submodule update --init --recursive && bash agent-layer/agents/scripts/core/setup-harness.sh claude-code'
+fi
+harness_probe="$REPO_ROOT/${harness_layer_rel}agents/scripts/core/check-harness-provisioned.sh"
 if [ -f "$harness_probe" ]; then
     harness_rc=0
     bash "$harness_probe" --quiet "$REPO_ROOT" >/dev/null 2>&1 || harness_rc="$?"
@@ -363,8 +374,8 @@ if [ -f "$harness_probe" ]; then
         # setup-harness.sh alone fixes neither (post-flip it does not even exist
         # until the submodule is checked out). Collapsing it into the exit-1
         # message below would print a remedy that cannot work.
-        3) write_warn 'harness' 'agent layer missing/empty or agent links STALE; fix: git submodule update --init --recursive && bash agents/scripts/core/setup-harness.sh claude-code' ;;
-        *) write_warn 'harness' 'NOT provisioned -- session guards inert; fix: bash agents/scripts/core/setup-harness.sh claude-code' ;;
+        3) write_warn 'harness' "agent layer missing/empty or agent links STALE; fix: git submodule update --init --recursive && bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh claude-code" ;;
+        *) write_warn 'harness' "NOT provisioned -- session guards inert; fix: bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh claude-code" ;;
     esac
 fi
 

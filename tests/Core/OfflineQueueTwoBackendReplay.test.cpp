@@ -290,6 +290,10 @@ TEST_CASE("two-backend swap-mid-replay: a deferred Jira replay completes ONLY ag
     const std::int64_t gc = svcGitHub.QueueCreateOffline(MakeDraft("github bystander"));
     REQUIRE(jc > 0);
     REQUIRE(gc > 0);
+    // Enqueueing republishes the queue view on a worker; run it, so the tick below decides from it.
+    REQUIRE(capturedJira);
+    capturedJira();
+    capturedJira = nullptr;
 
     svcJira.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svcJira.TickOfflineCreates();

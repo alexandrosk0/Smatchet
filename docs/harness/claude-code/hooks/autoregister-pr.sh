@@ -43,10 +43,15 @@ pr="$(printf '%s' "$input" | grep -oE 'pull/[0-9]+' | grep -oE '[0-9]+' | head -
 proj="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 [ -n "$proj" ] && cd "$proj" 2>/dev/null || exit 0
 
-cli="agents/scripts/core/merge-watcher-cli.py"
+# The watcher CLI is layer content: the agent-layer/ mount once the layer is a
+# submodule. cwd stays the project, which is the repo the PR belongs to.
+HOOK_LAYER="$proj"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$proj"
+cli="$HOOK_LAYER/agents/scripts/core/merge-watcher-cli.py"
 [ -f "$cli" ] || exit 0
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || exit 0
+. "$HOOK_LAYER/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || exit 0
 py="$(resolve_py)" || exit 0
 
 out="$("$py" "$cli" register "$pr" 2>&1 || true)"

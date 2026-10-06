@@ -20,15 +20,15 @@ bash agents/scripts/project/test-lint-rules.sh --scan-offline
 
 ## Whole-tree sweep
 
-| Rule | Tier | S13 start | After S13 |
-|---|---|---|---|
-| `offline-write-bypasses-queue` | blocking, absolute-0 (S9) | 0 | 0 |
-| `tracker-error-kind-collapsed` | blocking, delta per file | 3 | **0** |
-| `offline-loading-only-render` | WARN | 14 | 12 |
-| `offline-inflight-latch-unguarded` | WARN | 11 | 10 |
-| `offline-network-read-ungated` | WARN | 5 | 4 |
-| `offline-failure-cached-as-loaded` | WARN | 1 | 1 |
-| `offline-cache-cleared` | WARN | 1 | **0** |
+| Rule | Tier now | S13 start | After S13 | After the follow-ups (2026-10-05) |
+|---|---|---|---|---|
+| `offline-write-bypasses-queue` | blocking, absolute-0 (S9) | 0 | 0 | 0 |
+| `tracker-error-kind-collapsed` | blocking, absolute-0 (2026-10-05) | 3 | **0** | 0 |
+| `offline-loading-only-render` | WARN | 14 | 12 | 9 |
+| `offline-inflight-latch-unguarded` | WARN | 11 | 10 | 10 |
+| `offline-network-read-ungated` | WARN | 5 | 4 | 4 |
+| `offline-failure-cached-as-loaded` | blocking, delta per file (2026-10-05) | 1 | 1 | **0** |
+| `offline-cache-cleared` | blocking, delta per file (2026-10-05) | 1 | **0** | 0 |
 
 The per-hit classification below starts at S13 (35 hits at its first sweep, 27 at its last):
 
@@ -55,7 +55,7 @@ The per-hit classification below starts at S13 (35 hits at its first sweep, 27 a
 | `TicketFieldEditor_Modal.cpp` "Loading description..." | FP | A local Markdown conversion on a worker. No network. |
 | `Ui/AnnotateAnalysisUi_Window.cpp` "Loading annotated file..." | FP | A Perforce annotate, not the tracker. |
 | `Ui/P4ClPreview.cpp` "Loading CL info..." (pending future, two hits) | FP | A Perforce describe in progress. |
-| `Ui/P4ClPreview.cpp` "Loading CL info..." (catch arms, two hits) | TP-out | A worker exception reads as "Loading" forever. Filed as [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270). |
+| `Ui/P4ClPreview.cpp` "Loading CL info..." (catch arms, two hits) | TP-out | A worker exception read as "Loading" forever ([#2270](https://github.com/alexandrosk0/Smatchet/issues/2270)). Fixed by the follow-ups (#2313): the exception shows as an error, and the two pending-future lines are now one. |
 | `Ui/SmatchetAttachmentPreviewUi.cpp` "Loading preview..." | FP | Shown only while an image's dimensions are parsed from the downloaded file. The download itself resolves offline from the S13 disk cache or fails at once with the offline message. |
 | `Ui/SmatchetBulkTicketsUi.cpp` "Loading..." | FP | A local file read. |
 | `Ui/SmatchetPlanDocViewerUi.cpp` "Loading..." | FP | A local file read. |
@@ -81,7 +81,7 @@ The per-hit classification below starts at S13 (35 hits at its first sweep, 27 a
 
 | Site | Verdict | Why |
 |---|---|---|
-| `AppController_TicketPrefetch.cpp` (gone) | TP | Fixed in S13. The best-effort prefetch is skipped while the tracker is offline, instead of spending a worker's retry window per frame on it. The online no-backoff retry is filed as debt ([entry](../self-improvement/categories/debt/2026-09-29-bulk-hydration-prefetch-retries-every-frame.md)). |
+| `AppController_TicketPrefetch.cpp` (gone) | TP | Fixed in S13. The best-effort prefetch is skipped while the tracker is offline, instead of spending a worker's retry window per frame on it. The online no-backoff retry is filed as debt ([entry](../self-improvement/categories/applied.md)). |
 | `AppController.cpp` `FetchIssuesForActiveView` | FP | The sync itself. `TicketSyncService` marks the tracker `TransportDown` on a transport failure and pushes the replay timers, and the grid keeps its cached tickets. |
 | `AppController_CatalogAndFieldEdit.cpp` `RefreshFieldCatalog` | FP | A failed refresh keeps the catalog and shows a Warning (S1). |
 | `AppController_PaneContexts.cpp` pane catalog fetch | FP | Runs after a successful sync. A failure loads the saved catalog snapshot (S12). |
@@ -91,7 +91,7 @@ The per-hit classification below starts at S13 (35 hits at its first sweep, 27 a
 
 | Site | Verdict | Why |
 |---|---|---|
-| `P4Annotate.cpp` `P4ChangelistDescribeCache::GetOrFetch` | TP-out | A failed `p4 describe` is cached for the session. Filed as [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270). |
+| `P4Annotate.cpp` `P4ChangelistDescribeCache::GetOrFetch` | TP-out | A failed `p4 describe` was cached for the session ([#2270](https://github.com/alexandrosk0/Smatchet/issues/2270)). Fixed by the follow-ups (#2313): a failure is retried after the lookup backoff, and only "no such changelist" stays final. |
 
 ### `offline-cache-cleared`: 1 hit, 1 FP, deviation-marked
 
@@ -126,3 +126,11 @@ Append a row for every PR whose `--diff` run prints an offline WARN.
 | Date | PR | Rule | Site | Verdict | Note |
 |---|---|---|---|---|---|
 | 2026-09-29 | S13 (offline-first) | all | whole-tree sweep | see above | Baseline classification: 35 hits → 27; 6 TP fixed, 3 TP-out hits (#2270), 26 FP. |
+
+## Graduations (2026-10-05)
+
+The offline-first follow-ups (#2313) fixed #2270 and left the whole tree at 0 for `offline-failure-cached-as-loaded`. On the maintainer's instruction to complete the offline plan, the gate change landed in its own PR:
+
+- **`tracker-error-kind-collapsed` is absolute-0** over the whole tree (`compute_offline_kind_violations`), like `offline-write-bypasses-queue` since S9. Nothing is grandfathered.
+- **`offline-cache-cleared` and `offline-failure-cached-as-loaded` block**, delta-gated per changed `.cpp` (`OFFLINE_HEURISTIC_BLOCKING_RULES`). They stay heuristics, so a delta gate keeps a false positive in an untouched file from wedging unrelated PRs. A deviation within the 3 lines above still escapes a reviewed exception.
+- **`offline-loading-only-render`, `offline-inflight-latch-unguarded` and `offline-network-read-ungated` stay WARN.** Their 23 remaining hits are all FP (above). They need the tracker-surface scoping proposed under [Graduation proposals (S13)](#graduation-proposals-s13) before any graduation.

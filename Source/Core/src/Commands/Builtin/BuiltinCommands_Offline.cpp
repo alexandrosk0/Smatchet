@@ -68,9 +68,7 @@ void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app) {
             "offline.replay_now", "Immediately attempt to replay all queued offline creates and field edits.",
             [&app](const nlohmann::json&, const CommandContext& ctx) {
                 if (ctx.DryRun) {
-                    // Exact counts from the cache: GetPendingCreateCount() is the UI's in-memory mirror and
-                    // can trail a change by one worker recount.
-                    const size_t createCount = app.GetPendingCreates().size();
+                    const size_t createCount = app.GetPendingCreateCount();
                     const size_t editCount = app.GetPendingFieldEdits().size();
                     return CommandResult::Success({{"wouldDo",
                                                     {{"pendingCreates", static_cast<int>(createCount)},

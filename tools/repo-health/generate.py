@@ -49,6 +49,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent  # tools/repo-health -> repo root
+# Agent-layer scripts: the agent-layer/ mount once it holds the layer's
+# project-config.sh (plan agent-surface-extraction-repo, row 12), else the repo.
+LAYER = REPO / "agent-layer" if (REPO / "agent-layer/scripts/dev/project-config.sh").is_file() else REPO
 
 
 # --------------------------------------------------------------------------- #
@@ -143,7 +146,7 @@ def collect_backlog() -> dict:
     counts: dict[str, int] = {}
     try:
         out = subprocess.run(
-            ["bash", str(REPO / "agents/scripts/core/test-backlog-counts.sh"), "--list"],
+            ["bash", str(LAYER / "agents/scripts/core/test-backlog-counts.sh"), "--list"],
             capture_output=True, text=True, timeout=30, cwd=str(REPO),
         )
         for line in out.stdout.splitlines():

@@ -91,6 +91,14 @@
   Status: applied (2026-06-20 trap-sweep — server-side REST/`gh pr merge --auto` (no local checkout/pull/branch-d) + daemon self-resync resolves root from its own location + _resync_safety refuses on dirty/not-on-develop; the "never checkout the shared tree" alternative shipped)
   Last-reviewed: 2026-06-20
 
+- 2026-05-30 · orchestrator · [tooling] · P3 — No sweep for stale `origin/*` branches with no PR (pushed-then-abandoned)
+  Details: This session's sweep found 5 `origin/*` branches pushed but with no PR and behind develop — `fix/cr-gate-empty-body-review`, `fix/setup-harness-agent-junction`, `gate-enforcement-cr-gate`, `plan/agentic-layer-project-independence`, and `bug-report-assets` (an epoch-stamped asset branch). Durable (on origin) so not "lost", but orphaned — invisible unless you `git branch -r`, easy to forget, and they re-trigger GitHub's "Compare & pull request" banner. `git-janitor` only deletes *merged* branches; nothing flags pushed-no-PR remotes.
+  Concrete next action: extend `git-leftover-audit.sh` (or `git-janitor`) to flag `origin/*` with no associated PR + behind `origin/develop` + last-commit age > N days. Report only — never auto-delete (could be a sibling's in-flight WIP). ~30 min on top of the audit script.
+  Partially addressed: 2026-06-02 — PR #743 (`git-janitor` v5 § Stale-branch sweep) enumerates remote (`git branch -r`) branches and classifies `NO-PR` ones as **keep-or-ask** (never auto-delete), which covers this entry's core "flag pushed-no-PR remotes, never auto-delete" intent. It also added the protected-branch guard so an infra branch like `bug-report-assets` (this entry's own example) is no longer mis-flagged. Residual: the explicit **`last-commit age > N days`** staleness heuristic + the report-only summary line are not yet encoded (the sweep asks the user per NO-PR branch instead of age-ranking them). Largely covered; downgrade.
+  Resolution: applied 2026-10-05 (backlog-sweep-2026-10, PR #2296) — scripts/dev/git-leftover-audit.sh --remote [--age-days N] (default 14, report-only): origin branches with no PR, not protected, nothing ahead of origin/develop, older than N days; bare-remote bats fixture.
+  Status: applied (2026-10-04; was: partially applied (2026-06-20 trap-sweep — shipped: NO-PR keep-or-ask + protected guard (PR #743, git-leftover-audit.sh:40); remaining: the last-commit-age>N-days heuristic))
+  Last-reviewed: 2026-10-04
+
 - 2026-05-28 · deep-audit · [process] · P3 — Widespread PR-numbered temporal comments violate the comment-hygiene rule
   Details: `docs/agent-rules/delegation.md:23` (comment discipline): "code comments explain durable intent, never task/PR/temporary plans (no comments like `PR 4:` or `remove in PR 7`)." Yet ~24-27 first-party files carry such comments (110+ comment-lines reference `PR<n>`), several describing now-stale future work: `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:178` "PR 7 will replace this…"; `Source/Core/include/ITrackerConnectivity.h:35` "real impls land in PR 4 of the remove-global-project-key rollout"; `Source/Core/src/Config/ConfigManager.cpp:188` "still on TrackerConfig until PR 6 deletes them". Flagged by no tool today. Verified (deep-audit, adversarially confirmed; examples verbatim).
   Concrete next action: sweep first-party `.cpp/.h` for `// PR <n>` / `PRn` comments — delete or rewrite to durable intent (describe what the code does, not which PR touched it); cross-reference design docs by stable slug. Add a cheap grep guard alongside `test-shell-lint`'s C++ checks to stop re-accumulation. ~1-2 h.
@@ -362,6 +370,14 @@
   Resolution: Slice 1 of `docs/plans/shipped/pillar-1-2-perf-review-system.md` ships the substrate (baseline registry at `docs/perf/baselines/<scenario>.<host>.json`, regression policy at `docs/perf/regression-policy.json`, driver scripts `scripts/dev/perf-{run,baseline,compare}.{sh,py}`). `docs/guides/perf-workflow.md` § Step 7 documents the gate-check loop. `AGENTS.md` § UX Pillars § Pillar 1 cross-links the new substrate. The `## Perf section mandate` itself (the original entry's deliverable) is left for Slice 3 (PR-fast CI gate) of the same plan — that's where the gate becomes merge-blocking and the AGENTS.md § Project rules mandate lands. The substrate must exist first; mandating a `## Perf` section that has no tools to satisfy it would have been an empty rule. Closing this entry as the upstream design (the plan) is now on develop + the foundation is shipping in the same window.
 
   Resolution (status: observational -> applied): The underlying race itself is upstream — no single-mechanism in-repo fix. But the canonical recovery pattern is now documented in AGENTS.md § Project rules § Stale-read recovery on Edit (per grill Q5=A — top-level Project-rules visibility, auto-loaded for every agent every session). Documents the 3 causes (concurrent orchestrator in sibling worktree, PostToolUse hook reformat, user-side edit) + the 3-step recovery (re-Read at same offset/limit → diff intended change against new content → re-Edit with refreshed old_string). Names 3 hot files where the race rate is highest (`_plan-locks.generated.md`, AGENTS.md, `docs/self-improvement/categories/*.md`). Explicit "do NOT use replace_all: true as a force-write" callout because that widens the rewrite surface and amplifies collision risk. Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 6.
+
+- 2026-05-20 · orchestrator · [process] · P2 — AI chat panel bucket-E coverage gap (post-feature-completion)
+  Details: `docs/plans/shipped/ai-chat-claude-desktop-parity.md` § Verification listed 5 mandatory bucket-E ImGui-Test-Engine scenarios (`ai_chat_pin_bookmark`, `ai_chat_copy_clipboard`, `ai_chat_history_persist`, `ai_chat_clear_confirm`, `ai_chat_keyboard_nav`). None authored — feature shipped on visual sign-off + the new `ai-chat-history-render` perf scenario as evidence. AGENTS.md § Verification automation — zero manual steps says "manual residue without a backlog entry is a fail"; this entry closes that loop. Also: bucket-C screenshot golden bootstrap rig still doesn't exist; AI chat user-bubble + pin-strip + theme-token visuals inherit that existing gap.
+  Concrete next action: `test-author` to spec the 5 ImGui-Test-Engine scenarios using the existing `tests/ui/views_columns_reorder.test.cpp` shape + `ninja-ui-test-msvc` preset as the reference. Each scenario is ~30-50 lines of ImGui-Test-Engine driver code (open panel → seed messages via `g_ui` mutation or direct dispatch → click via test engine → assert state). Estimated 3-4 hours total. Per-scenario cost amortised because the seed + open-panel scaffolding is shared.
+  Update 2026-07-12 (bucket-E authored locally, 2 of 5): `tests/ui/ai_chat_panel.test.cpp` (renamed from `ai_chat_clear_confirm.test.cpp`) now hosts two scenarios, both driving the LIVE "Smatchet Assistant" panel (opened via `g_ui.assistantPanelOpen`, same recipe as ai_assistant_panel_dock_swap). (1) **clear-confirm**: seeds a 2-turn `g_ui.assistantHistory` + asserts the `##ConfirmClearChat` flow — Cancel is a no-op (history stays 2), Clear wipes both `assistantHistory` + `assistantHistoryRowIds`. (2) **copy-clipboard**: seeds a single **Pinned** turn (so its per-turn action row is submitted + on-screen without a hover — `showRow = Pinned || wasActive`, and a lone turn is never off-screen-culled), clicks the `Copy##AiCopy0` button, asserts `GetClipboardText() == kFirstTurnContent`. (3) **pin-bookmark**: seeds a single Pinned turn, clicks the per-turn action-row Pin/Unpin button (`##AiPin0`) to **unpin then re-pin**, asserting `AiMessage::Pinned` flips both ways. (4) **keyboard-nav** (`KeyboardEnter_SubmitsThroughConsentGate`): types a prompt into the live `##AiAssistantInput` + presses bare **Enter**, asserting the send path runs — intercepted offline by the first-send **outbound-consent gate** (`assistantConsentRows` / `##AiOutboundConsent`), a no-network observable. (5) **history-persist** (`HistoryPersist_AppendRoundTripsThroughSqlite`): drives `chat_persist::EnqueueAppendAndTrim` → polls `LoadAiChatMessages` until the probe row round-trips from SQLite with a real row-id (capability-skips if no cache DB). Shared scaffolding: `SeedHistory(turnCount,pinFirst)` + `OpenAssistantPanel` + `OpenAssistantPanelWithInput` (undock + `WindowResize` so the docked-sidebar-clipped input row is reachable — the seam that unblocked scenarios 4/5). Verified locally: `ui_test.run --name=AiChat --spawn` → **5/5**. **ALL 5 SCENARIOS DONE.**
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — tests/ui/ai_chat_panel.test.cpp registers all 5 scenarios (entry's own status said DONE).
+  Status: applied (2026-10-04; was: DONE (5 of 5 scenarios shipped — clear-confirm + copy-clipboard + pin-bookmark + keyboard-nav + history-persist))
+  Last-reviewed: 2026-10-04
 
 - 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
   Resolution: MOOT — AgentProposalStore removed from the tree (agentic runtime deleted); no store, no SQLite-lane need. (B8 phase-0).
@@ -723,6 +739,41 @@
   Status: applied (2026-06-21 P3 sweep — shipped #1527)
   Last-reviewed: 2026-06-21
 
+- 2026-05-17 · test-author · [tooling] · P3 — Preferences "Test connection" async button deferred from PR #174
+  Details: PR #174 (`ai-debug-cli-and-prefs-validation`) planned a "Test connection" button in `SmatchetPreferencesUi.cpp` Assistant tab that would call `IAiClient::ProbeReachability` on a worker thread + post the result back via `MainThreadDispatcher`. Agent deferred at implementation time because the existing Preferences tab uses **per-field autosave** (no single Save button), so the async-result-display pattern would have fought the existing flow. Workaround for user: run `bash scripts/dev/manual-ai-anthropic-probe.sh` or `Smatchet.exe cmd ai.probe --provider anthropic` directly. Cost-to-add: ~30 min if folded into the broader Preferences UI refactor that gives the Assistant tab its own Save button (would also unblock other staged-validation UX). Independent worth alone: lower; CLI command + bash script already provide a clean equivalent.
+  Concrete next action: either (a) add a self-contained Assistant-tab Save button + the async test button, or (b) leave the CLI path as the canonical reachability test and remove the button from any future plan docs. Decide at the next AI-feature-touching PR.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — the button exists (SmatchetPreferencesUi_Assistant.cpp: ImGui::Button("Test connection")) and runs an async worker probe (AiPrefsTestConnection::RunProbe).
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04
+
+- 2026-05-17 · code-review · [tooling] · P3 — `MainThreadDispatcher::PostUiTask` sugar for typed worker→UI hand-off
+  Details: `MainThreadDispatcher::PostToMainThread(Task)` takes `std::function<void()>` per `Source/Core/include/MainThreadDispatcher.h:33`. Phase B (PR #163) had to use the pattern "outer lambda captures AppController*, inner lambda references `g_ui` via TU-local `extern`" to reach UI state from a worker callback (`AiAssistantController.cpp` delta + error paths). The shape works but the discoverability is poor — Phase B agent's packet sketched the wrong signature (`function<void(AppController&)>`) on a guess. A typed sugar layer like `PostUiTask([](UiDrawSession& d){ ... })` (or two-arg `(AppController& app, UiDrawSession& d)`) would (a) make worker→UI hand-off self-documenting + (b) centralise the `g_ui` extern shim that AI/MCP/sync currently each replicate.
+  Concrete next action: add `MainThreadDispatcher::PostUiTask(std::function<void(UiDrawSession&)>)` as a thin wrapper that resolves `g_ui` once at the dispatch boundary; deprecate raw `PostToMainThread` for worker callbacks. ~1 h including in-tree replacements of the 3 known worker→UI sites (sync, audit, AI).
+  Resolution: superseded 2026-10-04 (backlog-sweep-2026-10) — the motivating AI site now posts through an injected IAiAssistantUiState adapter instead of an outer-lambda + g_ui shim, and nothing under Source/Core/src/Sync/ references g_ui; a UiDrawSession& sugar in a Core header would cut against that design.
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04
+
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/src/AiClientFactory.cpp:34,47` fallthrough returns after switch without `default:` will warn `-Wswitch` if `AiProvider` enum grows
+  Details: Future-proof against an enum extension going unhandled.
+  Concrete next action: add `default:` arm returning a null-client or assertion. Surfaced by retrospective code-review sweep on PR #140.
+  Resolution: won't-fix 2026-10-04 (backlog-sweep-2026-10) — both switches cover every AiProvider enumerator and have post-switch fallbacks (LOG_ERROR + nullptr; "openai"); adding default: would silence the -Wswitch error that flags a new enumerator at compile time, which is the safer behaviour.
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04
+
+- 2026-05-17 · code-review · [tooling] · P3 — `CMakePresets.json:154` `RelWithDebInfo` + `--coverage` may strip `gcov` notes via `-fdata-sections`
+  Details: Coverage instrumentation can interact with dead-section stripping.
+  Concrete next action: verify `*.gcno` existence with an acceptance test in `scripts/dev/test-coverage-gcno.sh`. Surfaced by retrospective code-review sweep on PR #148.
+  Resolution: obsolete 2026-10-04 (backlog-sweep-2026-10) — no --coverage / gcov / data-sections / gc-sections flag remains in CMakePresets.json, CMakeLists.txt or cmake/; coverage runs on OpenCppCoverage (Windows) in coverage.yml.
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04
+
+- 2026-05-17 · security-review · [tooling] · P3 — Install gitleaks + semgrep + flawfinder in MSYS2 dev image (security-review fallback is grep)
+  Details: Current `security-review` agent attempts gitleaks / semgrep / flawfinder when present, falls back to grep heuristics + cppcheck security warnings otherwise. On the MSYS2 UCRT64 runner none of the three are installed, so cross-language secret scans + AST-aware vuln patterns silently degrade to text-search.
+  Concrete next action: add a `scripts/dev/install-security-tools.sh` (mirror of `doctor.sh` shape) that pacman-installs `gitleaks` (or `go install` if not packaged), `pipx install semgrep`, `pacman -S mingw-w64-ucrt-x86_64-flawfinder`. Document in `docs/harness/SETUP.md`. ~1 h.
+  Resolution: obsolete 2026-10-04 (backlog-sweep-2026-10) — the MSYS2 dev image it targets is retired (build.md: MSYS2-retired), so the install script it proposes has no home. Re-file against the current Windows toolchain only if the security-review grep fallback is shown to miss something.
+  Status: applied (2026-10-04; was: parked)
+  Last-reviewed: 2026-10-04
+
 - 2026-05-16 · test-author · [tooling] · P2 — Phase 7 pink-clear dock-gap scan (deferred from Phase 7 scenario set)
   Details: AGENTS.md § Debug techniques documents the magenta-clear trick (`glClearColor(1, 0, 1, 1)`) for detecting dock-gap leaks. The Phase 7 `DockGapSentinelScenario` originally planned to flip the clear color during its warm-up frames so any visible pink in the captured PPM = real dock gap. Implementation required a new `UiDrawSession::requestClearColor` flag + a `Source/Standalone/main.cpp` consumer — non-trivial surface for marginal coverage given the L∞ diff against a clean golden already catches dock-shift regressions. `smatchet::test::CountPixels(img, 255, 0, 255, tol)` shipped in `tests/support/GoldenImage.h` to enable the scan once the clear-color toggle lands.
   Concrete next action: add `requestClearColor{R,G,B,A}` fields to `UiDrawSession` + restore-on-clear-after-frame consumer in main.cpp; extend `DockGapSentinelScenario` to set pink-clear during warm-up + bash script to run `CountPixels(img, 255, 0, 255, 8) == 0` as a hard assertion. Estimated cost ~1.5 h.
@@ -870,6 +921,15 @@
   Status: applied (2026-06-20 trap-sweep — all 4 pure splits + 4 doctests exist: TrackerLabelsPure/TrackerDateTimePure/TrackerFieldPayloadPure/TrackerFieldCatalogPure (.h+.cpp + .test.cpp))
   Last-reviewed: 2026-06-20
 
+- 2026-05-16 · orchestrator · [tooling] · P3 — `gh pr merge --delete-branch` fails when local worktree owns the branch
+  Details: After auto-merge of Wave A2 PRs, `gh pr merge 119 --squash --delete-branch` and siblings emitted `failed to delete local branch <branch>: failed to run git: error: cannot delete branch '<branch>' used by worktree at 'C:/Dev/Smatchet/.claude/worktrees/agent-<id>'`. The merge **does** succeed remotely; only the local-branch deletion silently fails. Subsequent `gh pr merge` calls on later PRs sometimes also fail because the local clone still thinks the branch is alive.
+  Concrete next action: document the right order in AGENTS.md § Project rules (alongside the existing § Destructive git ops in shared worktrees sub-section) + `agents/core/git-janitor.md`: worktree-remove first, then merge, then branch-delete. Estimated cost 15 min doc edit.
+  Partially addressed: 2026-06-02 — PR #743 documented the **worktree-remove-before-`branch -D`** ordering in `agents/core/git-janitor.md` § Stale-branch sweep (the stale-cleanup context). Residual: the specific **`gh pr merge --delete-branch` collision** (merge succeeds remotely but local-branch delete fails when a worktree owns the branch) is not explicitly called out in the merge flow, and the AGENTS.md § Project rules cross-note isn't added. Ordering principle is now in the agent; the merge-time-specific note remains.
+  Resolution: verified-in-tree 2026-10-04 (backlog-sweep-2026-10) — the sanctioned merge paths never pass --delete-branch (safe-merge.sh uses --squash --auto, safe-admin-merge.sh --squash --admin) and the worktree-remove-before-branch-delete order is documented in the git-cleanup-procedures skill.
+  Status: applied (2026-10-04; was: parked)
+  Trap-sweep note (2026-06-20): adjacent PR #743 added stale-branch-sweep ordering to git-janitor.md; this entry's own deliverable (the gh-pr-merge --delete-branch collision call-out + AGENTS.md cross-note) remains absent.
+  Last-reviewed: 2026-10-04
+
 - 2026-05-15 · git-janitor · [tooling] — `git pull --rebase --empty=drop` unsupported on shipped git version
   Resolution: `agents/core/git-janitor.md` § Bringing `develop` to latest now uses `git pull --ff-only`. The agent's contract bans direct pushes to `develop`, so local develop is always upstream-tracking post-merge — FF is the correct op and the rebase path was dead code.
 
@@ -1014,90 +1074,5 @@
 - 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
   Resolution: 45c14c9 — agents/project/command-system.md § Workflow step 3 + agents/project/tracker-backend.md § Workflow step 1.
 
-# Develop tip can go RED on a required check and silently block every PR until an author trips over it
-
-- **Category:** infra
-- **Priority:** P2
-- **Date:** 2026-07-10
-- **Status:** applied (2026-07-11 — `agents/scripts/core/develop-tip-required-green.sh` SessionStart nudge; flags a required check that ran on the develop tip and is terminal-non-success. Deliberately does NOT flag absent required checks — most are PR-only and never run on a develop push, which would false-fire every session; that self-disabled-gate case stays with postmortem-owed.sh's absence-present allow-list. Injectable data layer + `--selftest`; wired into `settings.json.tmpl`.)
-- **Postmortem:** [`postmortems.md`](../postmortems.md) § 2026-07-10 · PR #1698
-
-## What happened
-
-PR #1698 added `tests/bats/mutation_smoke.bats` with no `test-*.sh` wrapper. Its **required** `Doc anchors + agent contract` check ran ~60 s *after* the merge (merged 08:48:56Z, check started 08:49:56Z), so the `test-orphan-bats` failure landed on `develop` un-caught. Under **block-on-any-red**, that red develop tip was then inherited onto every open PR's own head — it silently blocked the whole repo until the #1666 fix (#1704) tripped over it and I root-caused it. Fixed the instance in #1705 (the missing wrapper).
-
-## The gap
-
-There's no cheap, standing signal that the **develop tip itself** has a RED required check. The failure is discovered only when the *next* author opens a PR and inherits the red — attributing the block to the wrong PR and costing a root-cause dig each time. Both detecting gates (`test-orphan-bats` in local pre-ship `test-docs.sh` AND the required CI check) exist and work; the miss was purely merge-*timing*, and nothing surfaces the resulting red-develop state proactively.
-
-## Proposed fix
-
-A lightweight **develop-tip required-green assertion**: query the develop tip's *required* status-check conclusions (`gh api repos/…/commits/<develop-tip>/check-runs`, filter to `required_status_checks.contexts`) and raise a loud, attributable nudge the moment any is RED — naming the check + the commit/PR that turned it red. Two viable homes:
-- extend `agents/scripts/core/postmortem-owed.sh`'s SessionStart sweep (it already inspects merged state), or
-- a new `agents/scripts/core/develop-tip-required-green.sh` run at SessionStart.
-
-Converts "silent red develop blocks every PR" into an immediate signal tied to the introducing PR. Durable complement to #1705 (which fixed the specific orphan): the wrapper stops *this* orphan; the tip-health assert stops the *class* — a required check going red on develop and nobody noticing until it blocks the next author (the #1237-family merge-before-terminal race is one upstream cause).
-
-## Self-improvement
-
-Empty.
-
-# Deviation comments must fit ColumnLimit or pre-ship loops forever
-
-- **Date**: 2026-07-05 · **Priority**: P2 · **Category**: process
-- **Session**: user-facing-text session (PRs #1614/#1615)
-- **Status**: applied (2026-07-11 — took the entry's *alternative*: `comment_audit.py` now recognizes wrapped `// SMATCHET_DEVIATION( … )` blocks via `_deviation_continuation_lines` (paren-balanced span) and exempts the continuation lines from every comment-noise rule, so a clang-format-wrapped long `reason=` no longer loops the gate. A hard "must fit ColumnLimit" gate was rejected — long reasons genuinely exceed 120 cols on one line, e.g. AppController.h:910 at 608 chars. `--selftest` +3 cases; CI-enforced via `lint_rules.bats`.)
-
-## Friction
-
-`scripts/dev/pre-ship.sh` whole-file-formats every changed C++ file before the
-delta lint gate. Several pre-existing single-line
-`SMATCHET_DEVIATION(rule=duplication; …)` comments in
-`JiraIssueMutation.cpp` / `JiraIssueSearch.cpp` were ~240 chars — over the
-120-col `ColumnLimit` — so clang-format re-wrapped them into multi-line
-comments whose continuation lines trip `comment-commented-out-code`. Any PR
-touching those files hit a fix → format → re-fail loop (three iterations this
-session) until the comments were compacted to ≤ 120 cols including indent.
-
-## Proposal
-
-Add a check (or extend `agent_size_audit.py`/the deviation-grammar validator)
-that a `SMATCHET_DEVIATION` comment line fits ColumnLimit at its indent, so the
-unstable form can't be committed. Alternatively teach the comment-noise rule to
-ignore continuation lines that belong to a wrapped `SMATCHET_DEVIATION` block.
-This session fixed the five instances in the two Jira TUs (compact
-`reason=pre-existing clone`), but other over-long deviation lines likely
-remain elsewhere and will bite the next PR that touches their file.
-
-# Committing via the Bash tool needs a heredoc, not the PowerShell here-string template
-
-- **Date**: 2026-07-10 · **Priority**: P3 · **Category**: process
-- **Session**: issue-fixing thread (#1713, PR #1726)
-- **Status**: applied (2026-07-11 — took the entry's cheap proposal: added a `docs/agent-rules/process-rules.md` note (after the worktree `git -C <literal>` commit rule) that the `@'…'@` here-string is PowerShell-only and the Bash ship-loop path commits via `-F -` heredoc / `-F <tempfile>`)
-
-## Friction
-
-The environment's commit-message guidance is written for the PowerShell tool
-(`git commit -m @'…'@` single-quoted here-string, with the mandatory
-`Co-Authored-By:` / `Claude-Session:` footer). On this repo the ship-loop
-commits through the **Bash** tool instead — `git -C <literal-abs-path> commit`
-is the standard form for worktrees, because the integration tree rejects
-`$VAR`/`$(pwd)` in the commit path. In git-bash, `@'…'@` is not a here-string:
-`@'` parses as a literal `@` followed by a single-quoted block, so the message
-became `@\n<real subject>\n…` and the commit subject was a bare `@`. Caught it
-on the `git log -1 --format=%s` readback and had to `--amend -F <file>`, costing
-an extra amend round-trip.
-
-## Proposal
-
-When committing from the **Bash** tool, never paste the PowerShell `@'…'@`
-template verbatim. Use one of:
-- `git commit -F <file>` after writing the message to a temp file (most robust
-  for multi-line bodies + the footer), or
-- a bash heredoc: `git commit -F - <<'EOF' … EOF`.
-
-Reserve `-m @'…'@` for the PowerShell tool only. Consider adding a one-line note
-to the ship-loop commit step in `docs/agent-rules/process-rules.md` (or the
-worktree commit recipe) that the `@'…'@` form is PowerShell-only and the Bash
-path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
-`%s` readback catches.
+- 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
+  Resolution: 45c14c9 — agents/project/command-system.md § Workflow step 3 + agents/project/tracker-backend.md § Workflow step 1.

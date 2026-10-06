@@ -29,11 +29,24 @@
 
 set -euo pipefail
 
-# Resolve repo root so the script runs from anywhere.
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$ROOT" || { echo "test-docs: cannot cd to repo root" >&2; exit 2; }
+# Resolve the repo root from this script's own location, as test-all.sh does, so
+# it runs from anywhere and the host's copy of this mirrored file finds the host
+# (the caller's git top level would name whichever tree the caller stood in).
+cd "$(dirname "$0")/../.." || { echo "test-docs: cannot cd to repo root" >&2; exit 2; }
+ROOT="$(pwd)"
 
-CORE="agents/scripts/core"
+# The gates are layer content, addressed through AGENT_LAYER_ROOT: this tree before
+# the flip and in the standalone layer, the host's agent-layer/ mount after it. As
+# in test-all.sh the prefix is relative to cwd, so the step commands print as
+# before the flip.
+# shellcheck source=scripts/dev/project-config.sh
+PC_ROOTS_ONLY=1 . "$ROOT/scripts/dev/project-config.sh" || true
+AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$ROOT}"
+_td_layer_prefix=""
+if [ "$AGENT_LAYER_ROOT" != "$ROOT" ]; then
+  _td_layer_prefix="${AGENT_LAYER_ROOT#"$ROOT"/}/"
+fi
+CORE="${_td_layer_prefix}agents/scripts/core"
 
 # md_lint is pure in-tree Python; the mirror needs the same interpreter CI has.
 # Resolve AND run each candidate: on Windows `python3` is the Microsoft Store App

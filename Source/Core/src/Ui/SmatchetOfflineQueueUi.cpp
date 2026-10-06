@@ -583,25 +583,6 @@ struct OfflineDrawCtx {
     std::vector<std::string> liveCacheKeys;
 };
 
-struct OfflineQueueData {
-    std::vector<PendingCreate> pendingCreates;
-    std::vector<DeadPendingCreate> deadCreates;
-    std::vector<PendingFieldEditRecord> pendingEdits;
-    std::vector<DeadPendingFieldEdit> deadEdits;
-    size_t total = 0;
-};
-
-static OfflineQueueData FetchOfflineQueueData(AppController& app) {
-    OfflineQueueData data;
-    data.pendingCreates = app.GetPendingCreates();
-    data.deadCreates = app.GetDeadPendingCreates();
-    data.pendingEdits = app.GetPendingFieldEdits();
-    data.deadEdits = app.GetDeadPendingFieldEdits();
-    data.total =
-        data.pendingCreates.size() + data.deadCreates.size() + data.pendingEdits.size() + data.deadEdits.size();
-    return data;
-}
-
 static void PruneOfflineSelectionToLiveRows(const std::vector<UnifiedOfflineRow>& rows) {
     std::unordered_set<std::string> liveKeys;
     liveKeys.reserve(rows.size());
@@ -1490,13 +1471,16 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
 }
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
-    const OfflineQueueData data = FetchOfflineQueueData(app);
-    if (data.total == 0 && !SmatchetOfflineQueueActionsUi::HasRows(app)) {
+    // The queues as last published by a worker: the panel never reads SQLite in a frame (Pillar 2).
+    const std::shared_ptr<const OfflineQueueSnapshot> queues = app.GetOfflineQueueSnapshot();
+    const bool queuesEmpty = queues->PendingCreates.empty() && queues->DeadCreates.empty() &&
+                             queues->PendingEdits.empty() && queues->DeadEdits.empty();
+    if (queuesEmpty && !SmatchetOfflineQueueActionsUi::HasRows(app)) {
         return false;
     }
 
     std::vector<UnifiedOfflineRow> rows =
-        BuildUnifiedOfflineRows(data.pendingCreates, data.deadCreates, data.pendingEdits, data.deadEdits);
+        BuildUnifiedOfflineRows(queues->PendingCreates, queues->DeadCreates, queues->PendingEdits, queues->DeadEdits);
     PruneOfflineSelectionToLiveRows(rows);
     ExpireOfflinePanelStatus(d);
 

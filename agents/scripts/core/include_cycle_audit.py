@@ -57,6 +57,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import layer_paths  # noqa: E402
+
 # --- scope ------------------------------------------------------------------------------------
 # First-party Source/Core only; quote-form includes resolved against the SmatchetCore include
 # roots below. (Source/Plugins / Source/Standalone are intentionally NOT in scope — the plan
@@ -454,7 +457,7 @@ def run_baseline_md():
     print("# Include-cycle — grandfathered baseline")
     print()
     print("_Auto-generated. Do not hand-edit; run "
-          "`bash agents/scripts/project/test-lint-rules.sh --include-cycle-baseline` and commit._")
+          "`bash %s --include-cycle-baseline` and commit._" % layer_paths.from_project("agents/scripts/project/test-lint-rules.sh"))
     print("_The gate is a live merge-base delta vs `origin/develop` "
           "(include_cycle_audit.py --diff); this file is the informational ratchet snapshot — each "
           "later phase of `core-include-dag` deletes the line for the edge it kills._")

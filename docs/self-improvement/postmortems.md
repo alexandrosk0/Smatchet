@@ -34,6 +34,89 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-10-06 · PR #2313 · override: `plan-lock-out-of-band` over a live lock whose three overlapping files merged clean in disjoint hunks
+
+### What escaped
+`fix(offline): finish the offline-first follow-ups` (#2313, branch `claude/gallant-cannon-3xe881`) merged 2026-10-06T00:02:38Z as `a6f29cca`. It crossed one red, `Plan-lock gate`, with three overlaps against one lock:
+
+```text
+plan-lock-gate: 'Source/Core/include/AppController.h' overlaps the write set of plan-lock 'shutdown-cancel-all-pane-syncs', held by a different branch.
+plan-lock-gate: 'Source/Core/src/AppController_LocalCacheDb.cpp' overlaps the write set of plan-lock 'shutdown-cancel-all-pane-syncs', held by a different branch.
+plan-lock-gate: 'tests/support/FakeTrackerClient.h' overlaps the write set of plan-lock 'shutdown-cancel-all-pane-syncs', held by a different branch.
+```
+
+The lock was about a day and a half old (`started` 2026-10-04T14:16:34Z) and held by `claude/pensive-stonebraker-d3db80`. That branch's PR, alexandrosk0/Smatchet#2291, was open with red CI and had been idle since 2026-10-04T16:22Z.
+
+The PR body carries `plan-lock-disposition: shutdown-cancel-all-pane-syncs — …`. It records that the three files were edited in disjoint hunks and that `git merge-tree --write-tree` of the two heads was clean in either order, re-checked on the final head `3c56f9cd` against #2291's head `a089b1f4`. The orchestrator applied the label under the maintainer's standing instruction to finish the offline-first follow-ups without pausing. It went on at 2026-10-05T23:44:46Z, once every other check on the head was green (`Cursor Bugbot` was neutral because of its usage cap), and came off at 2026-10-06T00:02:43Z, right after the merge.
+
+### Root cause
+The red was correct by the gate's own rule and still protected nothing.
+
+- A plan lock claims whole files. `shutdown-cancel-all-pane-syncs` claims `AppController.h`, the most-included header in the tree (fan-in baseline 70), and `FakeTrackerClient.h`, the fake most backend tests share.
+- `plan-lock-gate.sh` compares paths only. A one-member addition to either file therefore reads as contention with every live lock that lists it, however far apart the edits are.
+- The lock holder's work was pushed and its PR was open, so the evidence that settles the question was on origin all along: both heads, and a clean three-way merge of them. The gate does not look at it, so a person (or the orchestrator) has to run `git merge-tree` by hand and spend an override.
+
+This is the fourth `plan-lock-out-of-band` in this ledger, and the third since 2026-10-04. #2309 hit a generated path, #2280 an orphaned lock and #2213 a stale red. Each was a path-only overlap that nothing at the content level supported.
+
+The lock's write set also lists every path a second time under `.claude/worktrees/pensive-stonebraker-d3db80/`. Those entries never match a repo path, so they are noise, not a cause.
+
+### Preventing gate
+**`plan-lock-gate.sh` settles a pushed lock's overlap by content, not by path.** An overlap with a lock whose `branch` is on origin is a WARN, not a red, when `git merge-tree --write-tree <PR head> <lock branch head>` is clean. The WARN names the slug, the files and both heads. The gate stays red in three cases:
+
+- the merge conflicts;
+- the lock's branch is not on origin, so its edits are unseen and the claim alone has to stand in for them;
+- the lock is not attributable.
+
+Bats cases:
+
+- a disjoint edit to a claimed file merges clean and passes with a WARN;
+- the same file with an overlapping hunk stays red;
+- a claim whose branch is absent from origin stays red.
+
+Replayed on #2313, the gate reports three WARNs and no red, and no override is needed. Replayed on #2309, the overlap was `docs/plans/INDEX.md`, whose lock branch was not on GitHub, so it stays red there; the generated-paths gate in that entry covers it.
+
+### Eval case
+none — not agent-reviewable. The gap is in the lock gate's path-only comparison. #2313's diff is a set of offline-first debt fixes with no defect a review agent would score for this.
+
+### Filed as
+[`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (P2)
+
+## 2026-10-05 · PR #2309 · override: `plan-lock-out-of-band` over a live lock whose only overlap was the generated `docs/plans/INDEX.md`
+
+### What escaped
+`docs(plans): archive offline-first; record the closeout audit and the manual test plan` (#2309, branch `claude/gallant-cannon-3xe881`) merged 2026-10-05T18:56:37Z as `9cec7839`. It crossed one red, `Plan-lock gate`:
+
+```text
+plan-lock-gate: 'docs/plans/INDEX.md' overlaps the write set of plan-lock 'hook-tree-resolution', held by a different branch.
+```
+
+The disposition is on the PR. A comment (2026-10-05T13:48:49Z) named the lock, its holder `fix/hook-tree-resolution` (live, about one day old, not on GitHub, no PR), and why the overlap was unavoidable and low-risk. It offered three options, and the maintainer chose the override. `plan-lock-out-of-band` was applied at 18:52:31Z and removed at 18:56:40Z, right after the merge. Every other check on the head was green, apart from `Cursor Bugbot`, which was neutral because of its usage cap.
+
+### Root cause
+The red was correct by the gate's own rule and still protected nothing.
+
+- `docs/plans/INDEX.md` is generated. `test-plan-index.sh --fix` rewrites it from the plan tiers, and the required `test-plan-index` check makes every plan archive or move change it. #2309 could not archive its plan without touching it.
+- Plan locks list `INDEX.md` in their write sets, because their own plan will be archived at the end. `hook-tree-resolution` does.
+- `plan-lock-gate.sh` compares paths only. It has no notion of a generated file, where a concurrent change loses nothing because the second PR to merge reruns the generator.
+
+So while any plan lock that lists `INDEX.md` is open, every other plan archive reads red. This is the second time: #2213 crossed the same overlap with lock `gate-selftest-msys-execbit` (entry below), where the red had also gone stale.
+
+### Preventing gate
+**Generated paths are never lockable.**
+
+- `lock-claim.sh` and `lock-claim-update.sh` drop them from a write set.
+- `plan-lock-gate.sh` drops them from both the PR's changed files and every lock's write set before it compares.
+- The list lives in `project.config.json` (`docs/plans/INDEX.md`, `docs/plans/_plan-locks.generated.md`).
+- Bats: a PR that only regenerates `INDEX.md` stays green against a lock that claims it, and a real overlap in the same PR still fails.
+
+Replayed on #2309, the gate is green and the override is unnecessary.
+
+### Eval case
+none — not agent-reviewable. The gap is in the lock tooling's path model. #2309's diff (a plan archive, doc fixes and a ledger row) contains nothing a review agent would score.
+
+### Filed as
+[`categories/tooling/2026-10-05-plan-locks-claim-the-generated-plan-index.md`](categories/tooling/2026-10-05-plan-locks-claim-the-generated-plan-index.md) (P2)
+
 ## 2026-10-04 · PR #2213 · override: bare `plan-lock-out-of-band` over a 12-day-stale `Plan-lock gate` red that a re-run would have cleared
 
 ### What escaped

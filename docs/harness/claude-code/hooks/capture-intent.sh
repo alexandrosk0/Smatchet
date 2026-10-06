@@ -17,7 +17,11 @@
 set -u
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-REDACTOR="$PROJ_DIR/agents/scripts/core/redact-intent.py"
+# The redactor is layer content: the agent-layer/ mount once the layer is a submodule.
+HOOK_LAYER="$PROJ_DIR"
+# shellcheck source=docs/harness/claude-code/hooks/layer-root.sh
+. "${BASH_SOURCE[0]%/*}/layer-root.sh" 2>/dev/null && hook_layer_root "$PROJ_DIR"
+REDACTOR="$HOOK_LAYER/agents/scripts/core/redact-intent.py"
 
 INPUT="$(cat || true)"
 [[ -z "$INPUT" ]] && exit 0

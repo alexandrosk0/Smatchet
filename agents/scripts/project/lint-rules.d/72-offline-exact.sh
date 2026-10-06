@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # 72-offline-exact.sh — Quality Pillar 6 (offline-first) EXACT rules (sourced by test-lint-rules.sh, not
-# run directly). Both BLOCKING (ADR-0026): offline-write-bypasses-queue is ABSOLUTE-0 over the whole
-# first-party tree (compute_offline_write_violations); tracker-error-kind-collapsed is delta-gated per
-# changed file (a file fails only when it has MORE hits than its merge-base copy; existing hits are
-# grandfathered).
+# run directly). Both BLOCKING and ABSOLUTE-0 over the whole first-party tree (ADR-0026):
+# compute_offline_write_violations and compute_offline_kind_violations. Any hit anywhere fails; nothing is
+# grandfathered.
 #
 # offline-write-bypasses-queue — a tracker write (comment, worklog, watcher, field update, create,
 # attach, sprint) called straight on the backend outside the queue seam. Offline, that write is lost;
@@ -118,6 +117,15 @@ offline_code_lines() {
     awk "$OFFLINE_CODE_LEXER_AWK" "$1"
 }
 
+offline_kind_in_scope() {
+    # $1 = logical repo path. True when tracker-error-kind-collapsed applies to it. The single scope test for
+    # both the per-file scanner and the whole-tree sweep, so the sweep can never skip a path the rule covers.
+    case "$1" in
+        Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) return 0 ;;
+    esac
+    return 1
+}
+
 scan_offline_exact_file() {
     # $1 = file to read; $2 = logical repo path for scope + output (defaults to $1).
     local f="$1" logical="${2:-$1}"
@@ -130,9 +138,7 @@ scan_offline_exact_file() {
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/src/Sync/*|Source/Core/include/Sync/*) write_scope=0 ;;
         */FieldEditPipelineService.cpp|*/FieldEditPipelineService.h) write_scope=0 ;;
     esac
-    case "$logical" in
-        Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
-    esac
+    if offline_kind_in_scope "$logical"; then kind_scope=1; fi
     [ "$write_scope" -eq 1 ] || [ "$kind_scope" -eq 1 ] || return 0
     local lineno=0 prev_dev_rule="" prev1="" prev2="" line lexed code comment suppress body kv kvs
     # fd 3 = the raw lines (only to skip blank ones), fd 4 = their `<code>\037<comment>` split (offline_code_lines).
@@ -191,6 +197,18 @@ compute_offline_write_violations() {
         grep -qwE "${OFFLINE_WRITE_METHODS}" "$f" 2>/dev/null || continue
         scan_offline_exact_file "$f"
     done < <(list_first_party_cpp_files) | grep -F $'offline-write-bypasses-queue\t' || true
+}
+
+compute_offline_kind_violations() {
+    # Whole-tree tracker-error-kind-collapsed hits (the absolute-0 gate). Only files in the rule's tracker
+    # scope (offline_kind_in_scope, shared with scan_offline_exact_file) that name TrackerErrorUnknown are lexed.
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        offline_kind_in_scope "$f" || continue
+        grep -qw "TrackerErrorUnknown" "$f" 2>/dev/null || continue
+        scan_offline_exact_file "$f"
+    done < <(list_first_party_cpp_files) | grep -F $'tracker-error-kind-collapsed\t' || true
 }
 
 offline_delta_hits() {

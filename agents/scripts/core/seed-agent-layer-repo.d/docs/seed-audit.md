@@ -5,7 +5,7 @@
 > verdict is `CLEAR`, or `SCRUB` that is both listed in `seed-scrub-paths.txt` and gone from the
 > rewrite. Phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
 
-**Audited through:** `3e6c0c7587478d1f10fdd05f648365f96a5d730e` — every commit reachable from this develop commit that touches a
+**Audited through:** `2639882a2df15262e3bff646dd32eedfbe0953de` — every commit reachable from this develop commit that touches a
 manifest path. Anything later is unaudited until re-swept (`seed-audit-sweep.py --since <pin>`).
 
 The seed is an **allowlist, not a subtraction**: nothing reaches the public repo that this table has not
@@ -81,6 +81,16 @@ reports on — otherwise phase 4b's own secret scan would flag the audit table.
 
 The 11 remaining gitleaks findings are all host-side (`Source/`, `tests/Core/`, `tests/fuzz/`) and are
 not seeded.
+
+**How phase 4b accepts them.** On the gitleaks path, phase 4b scans the *rewritten* history as a hard
+gate, and there these fixtures surface as 25 findings (22 distinct fingerprints, two commits). The
+scaffold ships a `.gitleaksignore` at the layer root that lists exactly those fingerprints, so the
+gitleaks path passes on the triaged set and still fails on any gitleaks finding not listed. A rehearsal
+checked both: the rewritten history scans clean with the file, and a planted token fails with it. Every
+listed value matched a shape in the table above. For gitleaks, a new fixture means a new fingerprint and
+a new line here, never a broader rule. The TruffleHog fallback (used only when gitleaks is not on `PATH`)
+runs with `--results=verified`, so it fails only on credentials it can verify live; an unverified
+finding does not fail that path. Run the seed with gitleaks installed to get the stricter gate.
 
 ### Hosts, tickets, P4 — none internal
 
@@ -295,18 +305,22 @@ decision rather than an oversight:
 
 ## Status
 
-**119 of 119 rows cleared** (0 `PENDING`), so the **verdict** gate (phase 4b) is satisfied. The
-**freshness** guard (phase 3) is **stale**: commits after the pin above have touched manifest paths —
-ordinary surface traffic, plus the 2026-10-04 row-8 correction, which edited guards inside cleared
-paths. Re-sweep `--since` the pin and move it as the last step before a real seed, not earlier: the
-surface takes several commits a day, so an early pin goes stale again before the human preconditions
-are met.
+**119 of 119 rows cleared** (0 `PENDING`), so the **verdict** gate (phase 4b) is satisfied, and as of
+the pin above the audit is **current**: the **freshness** guard (phase 3) passes until a later commit
+touches a manifest path. The pin moved from `3e6c0c75` to `5e9dd311` as the last step before the seed:
+that sweep covered 19 commits and 5,738 added lines, with no binaries and no secret, internal-host or
+ticket-URL hit. The first real seed then found defects in the seed script itself, a manifest path, so the
+fixes (#2319) left the pin stale by one move. The sweep `--since 5e9dd311` on `2639882a` covered 2 commits
+and 109 added lines, again with no binaries and no secret, internal-host or ticket-URL hit. Every value
+either sweep raised was benign and of a kind already triaged: `claude.ai` session links, commit-trailer
+`noreply` addresses, the `t@t.test` fixture identity, `ADR-`/`CR`/`PR` words read as ticket keys, and the
+owner's `C:/Dev/Smatchet` layout (in one commit message, and quoted in this file's own status text).
 
 **A pin can only name a commit that already exists on develop.** A change to manifest paths therefore
 always lands after the pin it sets. Its content can be swept before merge, but the pin cannot name its
 squash until that squash exists. The gap is closed by a follow-up change touching **only this file**, which
 the freshness guard ignores: re-sweep `--since` the current pin, then move **Audited through:** to the new
-develop tip. That is how the pin reached its current value, after the D1 change merged as #2220.
+develop tip. That is how the pin reached `3e6c0c75` after the D1 change merged as #2220, `5e9dd311` before the seed, and its current value after the seed fixes.
 
 The same applies whenever the tree moves past the pin (it will — the surface takes several commits a day):
 re-sweep only the delta, triage the new values, update the affected rows, and move **Audited through:**:

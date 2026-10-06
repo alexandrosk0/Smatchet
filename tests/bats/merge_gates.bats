@@ -2038,7 +2038,7 @@ planlock_waived_fixture() {
     # records each gh pr comment call; assert exactly one line.
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2057,7 +2057,7 @@ planlock_waived_fixture() {
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_MAX_POLLS=3
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2072,7 +2072,7 @@ planlock_waived_fixture() {
     # auto_review already reviews every push, so nudging was redundant. NONE still
     # blocks within grace, but no @coderabbitai review is posted.
     export MERGE_GATES_CR_INSTALLED=true
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2092,7 +2092,7 @@ planlock_waived_fixture() {
     # NONE_NUDGE_POLLS=1 so the default-off doesn't mask the context-present gate.
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
@@ -2117,7 +2117,7 @@ planlock_waived_fixture() {
     export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_MAX_POLLS=2
     export MERGE_GATES_STUB_COMMENT_EXIT=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2133,7 +2133,7 @@ planlock_waived_fixture() {
     # cr_installed=false (default 404 probe) → NONE passes, no nudge — even with
     # the early-nudge opted in, the cr_installed gate (not the default-off) wins.
     export MERGE_GATES_NONE_NUDGE_POLLS=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2148,7 +2148,7 @@ planlock_waived_fixture() {
     # the threshold, so auto_review still gets its window before any nudge.
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=3
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2169,7 +2169,7 @@ planlock_waived_fixture() {
     export MERGE_GATES_NONE_NUDGE_POLLS=3
     export MERGE_GATES_PRIOR_NONE_HEAD="abc123"
     export MERGE_GATES_PRIOR_NONE_STREAK=2
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2202,7 +2202,7 @@ planlock_waived_fixture() {
 @test "nudge guard survives MAX_POLLS=1 cycles via GATE_CARRY round-trip -> exactly one post" {
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
 
@@ -2230,7 +2230,7 @@ planlock_waived_fixture() {
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_PRIOR_NUDGE_HEAD="staleHEAD000"
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2249,7 +2249,7 @@ planlock_waived_fixture() {
     stale_head="$(jq -r '.data.repository.pullRequest.headRefOid' "$FIXTURES_DIR/merge_gates_cr_stale_findings.json")"
     export MERGE_GATES_PRIOR_STALE_HEAD="$stale_head"
     export MERGE_GATES_PRIOR_STALE_STREAK=2
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_findings.json"
     # Seeded streak 2 + this single poll = 3 = threshold → STALE nudge fires once.
@@ -2264,7 +2264,7 @@ planlock_waived_fixture() {
 
 @test "GATE_CARRY is emitted on block without disturbing the Poll status line" {
     export MERGE_GATES_CR_INSTALLED=true
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -2376,7 +2376,7 @@ planlock_waived_fixture() {
     # thread. Counter file must have ZERO lines (the stub appends one line per
     # gh pr comment invocation).
     export MERGE_GATES_CR_INSTALLED=true
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_cr_size_skip.json"
     run poll_merge_gates org repo 1
@@ -2395,7 +2395,7 @@ planlock_waived_fixture() {
     # NONE_NUDGE_POLLS=1 so this regression actually exercises the nudge path.
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
-    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -3453,7 +3453,7 @@ blocked_with_bot_threads() {
     # local subshell, so stderr can't leak to bats $output. The stub writes
     # to MERGE_GATES_STUB_READY_MARKER when invoked — file-existence proves
     # the call path was taken even though stderr is swallowed.
-    export MERGE_GATES_STUB_READY_MARKER="${BATS_TMPDIR:-/tmp}/ready-called-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_READY_MARKER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/ready-called-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_READY_MARKER"
     export MERGE_GATES_STUB_READY_EXIT=0
     run poll_merge_gates org repo 1
@@ -3468,7 +3468,7 @@ blocked_with_bot_threads() {
     unset MERGE_GATES_FLIP_READY
     # If gh pr ready were invoked the stub would touch this marker file.
     # Absence proves the flip path was NOT taken.
-    export MERGE_GATES_STUB_READY_MARKER="${BATS_TMPDIR:-/tmp}/ready-called-${BATS_TEST_NUMBER}"
+    export MERGE_GATES_STUB_READY_MARKER="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-/tmp}}/ready-called-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_READY_MARKER"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]

@@ -48,8 +48,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # (block-on-any-red). Side-effect-free when sourced. The fallback mirrors the
 # sourced value ("." = every name) — a stale curated-list fallback here once
 # made this diagnostic silently disagree with the poller when sourcing failed.
+# merge-gates.sh is agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_pbw_layer="$REPO_ROOT"
+[ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] && _pbw_layer="$REPO_ROOT/agent-layer"
 # shellcheck source=agents/scripts/core/merge-gates.sh
-source "$REPO_ROOT/agents/scripts/core/merge-gates.sh" 2>/dev/null || true
+source "$_pbw_layer/agents/scripts/core/merge-gates.sh" 2>/dev/null || true
 ALLOW_RE="${MERGE_GATES_BLOCK_ALLOWLIST_RE:-.}"
 
 # GOTCHA (c): `gh api <path>` REST paths must be SLASH-RELATIVE (`repos/...`,

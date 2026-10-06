@@ -42,7 +42,8 @@
 #
 # Exit codes:
 #   0 — guard hook present (provisioned) and agent links current, OR --selftest passed.
-#   1 — guard hook ABSENT (unprovisioned) — warning printed to stderr.
+#   1 — guard hook ABSENT (unprovisioned), or a .claude/settings.json hook names
+#       a script that is not on disk — warning printed to stderr.
 #   2 — usage error / --selftest failed.
 #   3 — agent LAYER missing/empty, or .claude/agents content is STALE relative to
 #       the layer — the submodule was never initialised, or was advanced without
@@ -168,6 +169,80 @@ check_tree() {
     return 1
 }
 
+# Hook-path predicate + warning. Returns 1 when a .claude/settings.json hook names
+# a layer script from the project dir that is no longer there but IS in the layer
+# — the legacy form once the layer is the agent-layer/ submodule: it exits 127 at
+# every session start with nothing else saying so (the nudges go silent, the
+# session baseline the guards read is never written), and re-provisioning
+# reroutes it through .claude/hooks/layer-run.sh. Also returns 1 when a
+# layer-run.sh target the layer's own settings template names is missing from the
+# layer: the layer checkout is incomplete, and the hook cannot run until it is
+# restored. A hook script that exists nowhere and that the template does not name
+# (an entry an older template had, kept by the additive settings sync) is warned
+# about but returns 0: running setup-harness does not remove it, so failing would
+# name a remedy that cannot work. No settings file is check_tree's unprovisioned
+# story, not this one's.
+layer_run_targets() {
+    { grep -o 'layer-run\.sh\\" [^" \\]*' "$1" || true; } | sed 's|^layer-run\.sh\\" ||' | sort -u
+}
+
+check_hook_paths() {
+    local tree="$1" quiet="$2" layer_root="$3" settings="$1/.claude/settings.json"
+    local template="$3/docs/harness/claude-code/settings.json.tmpl" p fixable="" incomplete="" stale="" shipped=""
+    [ -f "$settings" ] || return 0
+    [ -f "$template" ] && shipped="$(layer_run_targets "$template")"
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        [ -e "$tree/$p" ] && continue
+        if [ "$layer_root" != "$tree" ] && [ -e "$layer_root/$p" ]; then
+            fixable="$fixable $p"
+        else
+            stale="$stale $p"
+        fi
+    done < <(grep -o '\$CLAUDE_PROJECT_DIR/[^" \\]*' "$settings" | sed 's|^\$CLAUDE_PROJECT_DIR/||' | sort -u)
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        [ -e "$layer_root/$p" ] && continue
+        if printf '%s\n' "$shipped" | grep -Fqx -- "$p"; then
+            incomplete="$incomplete $p"
+        else
+            stale="$stale layer:$p"
+        fi
+    done < <(layer_run_targets "$settings")
+    if [ -n "$stale" ]; then
+        {
+            echo "⚠ stale hook entries: $settings names scripts that exist nowhere:"
+            for p in $stale; do echo "      $p"; done
+            echo "  Each fails at session start. They come from an older template (the settings"
+            echo "  sync only ever adds), so re-provisioning keeps them; list and remove them by hand:"
+            echo "      bash agents/scripts/core/sync-settings-hooks.sh --check docs/harness/claude-code/settings.json.tmpl .claude/settings.json"
+        } >&2
+    fi
+    if [ -n "$fixable" ]; then
+        {
+            echo "⚠ hook scripts MISSING: $settings names layer scripts from the project dir,"
+            echo "  where they no longer are (the layer is $layer_root):"
+            for p in $fixable; do echo "      $p"; done
+            echo "  Each fails at every session start, silently. Re-provisioning reroutes them"
+            echo "  through .claude/hooks/layer-run.sh:"
+            echo "      bash agent-layer/agents/scripts/core/setup-harness.sh claude-code"
+        } >&2
+    fi
+    if [ -n "$incomplete" ]; then
+        {
+            echo "⚠ hook scripts MISSING from the layer: $settings runs, through layer-run.sh,"
+            echo "  scripts the layer's own template names but $layer_root does not have:"
+            for p in $incomplete; do echo "      $p"; done
+            echo "  Each fails at every session start. The layer checkout is incomplete; restore it"
+            echo "  (after the flip: git submodule update --init agent-layer). If they are still"
+            echo "  missing, the template names a script the layer does not ship."
+        } >&2
+    fi
+    [ -z "$fixable$incomplete" ] || return 1
+    [ "$quiet" = "1" ] || [ -n "$stale" ] || echo "check-harness-provisioned: OK — every .claude/settings.json hook script exists"
+    return 0
+}
+
 selftest() {
     local tmp rc=0 lay
     tmp="$(mktemp -d)"
@@ -225,6 +300,59 @@ selftest() {
         rc=1
     fi
 
+    # --- check_hook_paths ----------------------------------------------------
+    # A host hook and a layer-run target that exist → 0; a layer script named from
+    # the project dir that is not there (the post-flip legacy form) → 1, and a
+    # layer-run target the layer's template names but the layer lacks → 1.
+    mkdir -p "$lay/agents/scripts/core"
+    : > "$lay/agents/scripts/core/nudge.sh"
+    : > "$tmp/.claude/hooks/layer-run.sh"
+    printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-head-drift.sh\""},' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/nudge.sh --nudge"}]}]}}' \
+        > "$tmp/.claude/settings.json"
+    if ! check_hook_paths "$tmp" 1 "$lay" >/dev/null 2>&1; then
+        echo "selftest FAIL: hook scripts that exist should return zero" >&2
+        rc=1
+    fi
+    printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/nudge.sh\" --nudge"}]}]}}' \
+        > "$tmp/.claude/settings.json"
+    # selftest: asserts-failure
+    if check_hook_paths "$tmp" 1 "$lay" >/dev/null 2>&1; then
+        echo "selftest FAIL: a layer script named from the project dir should return non-zero" >&2
+        rc=1
+    fi
+    # Stale entries (an older template's script, a layer-run target the layer lacks)
+    # warn but return 0: re-provisioning cannot remove them.
+    printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/scripts/dev/retired-nudge.sh\""},' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/gone.sh"}]}]}}' \
+        > "$tmp/.claude/settings.json"
+    if ! check_hook_paths "$tmp" 1 "$lay" >/dev/null 2>&1; then
+        echo "selftest FAIL: stale hook entries should warn, not fail" >&2
+        rc=1
+    fi
+    if [[ "$(check_hook_paths "$tmp" 1 "$lay" 2>&1 >/dev/null)" != *"stale hook entries"*"retired-nudge.sh"*"layer:agents/scripts/core/gone.sh"* ]]; then
+        echo "selftest FAIL: stale hook entries were not reported" >&2
+        rc=1
+    fi
+    # The same missing target, named by the layer's own template: the layer is
+    # incomplete, and that fails.
+    mkdir -p "$lay/docs/harness/claude-code"
+    printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+        '{"command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/layer-run.sh\" agents/scripts/core/gone.sh"}]}]}}' \
+        > "$lay/docs/harness/claude-code/settings.json.tmpl"
+    # selftest: asserts-failure
+    if check_hook_paths "$tmp" 1 "$lay" >/dev/null 2>&1; then
+        echo "selftest FAIL: a template-named layer-run target missing from the layer should return non-zero" >&2
+        rc=1
+    fi
+    if [[ "$(check_hook_paths "$tmp" 1 "$lay" 2>&1 >/dev/null)" != *"MISSING from the layer"*"agents/scripts/core/gone.sh"* ]]; then
+        echo "selftest FAIL: a template-named layer-run target missing from the layer was not reported" >&2
+        rc=1
+    fi
+
     rm -rf "$tmp"
     if [ "$rc" -eq 0 ]; then echo "check-harness-provisioned: selftest OK"; fi
     return "$rc"
@@ -259,6 +387,7 @@ layer_rc=0
 check_layer "$TREE" "$QUIET" "$LAYER_ROOT" || layer_rc="$?"
 tree_rc=0
 check_tree "$TREE" "$QUIET" || tree_rc="$?"
+check_hook_paths "$TREE" "$QUIET" "$LAYER_ROOT" || tree_rc=1
 
 # Layer wins the exit code: it is the more fundamental breakage and names the
 # step that must happen first.

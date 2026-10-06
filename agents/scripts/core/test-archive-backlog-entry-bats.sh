@@ -3,7 +3,7 @@
 # (per-entry-archival-breaks-relative-links, tooling P2).
 # Bucket A. Auto-enrolled by scripts/dev/test-all.sh. Emits the canonical Passed/Failed line.
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)" || exit 2
+CDPATH='' cd "$(dirname "$0")/../../.." || exit 2
 command -v bats >/dev/null 2>&1 || { echo "test-archive-backlog-entry-bats: bats not on PATH" >&2; echo "Passed: 0  Failed: 0  (skipped — bats missing)"; exit 2; }
 F="tests/bats/archive_backlog_entry.bats"
 [ -f "$F" ] || { echo "Passed: 0  Failed: 1"; exit 1; }

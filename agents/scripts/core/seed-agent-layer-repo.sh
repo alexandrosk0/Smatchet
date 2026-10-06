@@ -28,6 +28,15 @@
 #   c) CodeRabbit app installed on the new repo.
 set -uo pipefail
 
+# Every temp file and image directory below comes from mktemp, and the phases cd
+# into the clone between creating a path and using it. A relative TMPDIR would
+# then name a different place, so it is made absolute once, here.
+if [ -n "${TMPDIR:-}" ]; then
+    TMPDIR="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" \
+        || { echo "seed-agent-layer-repo: TMPDIR does not name an existing directory" >&2; exit 2; }
+    export TMPDIR
+fi
+
 _SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
 # SCAFFOLD_DIR is a layout-faithful IMAGE of the seeded repo root: a file at
@@ -239,7 +248,7 @@ parse_args() {
         esac
     done
     if [ -z "$TARGET" ]; then
-        [ "$SIMULATE" -eq 1 ] && { [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"; return 0; }
+        [ "$SIMULATE" -eq 1 ] && { [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"; absolutize_work_dir; return 0; }
         usage >&2; die 2 "--target <owner/repo> is required"
     fi
     case "$TARGET" in
@@ -248,6 +257,23 @@ parse_args() {
         *)           die 2 "--target must be owner/repo, got: $TARGET" ;;
     esac
     [ -n "$WORK_DIR" ] || WORK_DIR="${TMPDIR:-/tmp}/agent-layer-seed.$$"
+    absolutize_work_dir
+}
+
+# Make WORK_DIR absolute before anything uses it. The phases cd into the clone
+# and then name it again (cd "$WORK_DIR", stage_outside_clone), so a relative
+# --work-dir would stop resolving there. The clone does not exist yet, so the
+# parent is resolved and the leaf kept.
+absolutize_work_dir() {
+    local leaf parent
+    while [ "${#WORK_DIR}" -gt 1 ] && [ "${WORK_DIR%/}" != "$WORK_DIR" ]; do WORK_DIR="${WORK_DIR%/}"; done
+    leaf="$(basename "$WORK_DIR")"
+    case "$leaf" in
+        .|..|/) die 2 "--work-dir must name a new directory, got: $WORK_DIR" ;;
+    esac
+    parent="$(cd "$(dirname "$WORK_DIR")" 2>/dev/null && pwd -P)" \
+        || die 2 "--work-dir's parent directory does not exist: $(dirname "$WORK_DIR")"
+    WORK_DIR="$parent/$leaf"
 }
 
 # ------------------------------------------------------------- phase 1 preflight
@@ -573,6 +599,24 @@ phase2_manifest() {
 }
 
 # --------------------------------------------------------------- phase 3 rewrite
+# stage_outside_clone <src> <stem> — copy <src> to a new temp file and print its
+# ABSOLUTE path. filter-repo refuses a clone that holds any untracked file, and
+# the caller cd's into the clone before using the path, so the file must sit
+# outside WORK_DIR and its path must not depend on the current directory. A
+# relative or clone-internal TMPDIR is resolved, then refused if it lands inside.
+stage_outside_clone() {
+    local src="$1" stem="$2" tmp dir work_abs
+    tmp="$(mktemp "${TMPDIR:-/tmp}/${stem}.XXXXXX")" || return 1
+    dir="$(cd "$(dirname "$tmp")" && pwd -P)" || { rm -f "$tmp"; return 1; }
+    tmp="$dir/$(basename "$tmp")"
+    work_abs="$(cd "$WORK_DIR" && pwd -P)" || { rm -f "$tmp"; return 1; }
+    case "$tmp/" in
+        "$work_abs"/*) rm -f "$tmp"; return 1 ;;
+    esac
+    cp "$src" "$tmp" || { rm -f "$tmp"; return 1; }
+    printf '%s\n' "$tmp"
+}
+
 phase3_rewrite() {
     head1 "phase 3 — clone + rewrite"
 
@@ -608,7 +652,12 @@ phase3_rewrite() {
     fi
     pass "publication audit is current for the cloned $LAYER_BRANCH (pin $pin)"
 
-    cp "$MANIFEST_SRC" "$WORK_DIR/seed-paths.txt" || die 1 "cannot stage the manifest"
+    # The path lists are staged OUTSIDE the clone: filter-repo refuses a clone
+    # with any untracked file ("this does not look like a fresh clone"), so a
+    # copy at the clone's root stops the first rewrite before it starts.
+    local paths_file
+    paths_file="$(stage_outside_clone "$MANIFEST_SRC" seed-paths)" \
+        || die 1 "cannot stage the manifest outside the clone (is TMPDIR inside $WORK_DIR?)"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -617,9 +666,10 @@ phase3_rewrite() {
     # (52500a9bd), and the file is the artefact reviewers read.
     # --replace-refs delete-no-add keeps refs/replace/* out of the seeded repo;
     # --prune-empty auto is the default, stated so a later edit cannot flip it.
-    git filter-repo --paths-from-file seed-paths.txt \
+    git filter-repo --paths-from-file "$paths_file" \
         --replace-refs delete-no-add --prune-empty auto \
         || die 1 "git filter-repo failed"
+    rm -f "$paths_file"
     pass "history rewritten to the allowlist"
 
     # Paired scrub pass for paths INSIDE an allowed subtree that failed the
@@ -629,17 +679,17 @@ phase3_rewrite() {
     # needs a manifest line, not a code change.
     local scrub="$SCAFFOLD_DIR/seed-scrub-paths.txt"
     if [ -f "$scrub" ] && grep -qvE '^[[:space:]]*(#|$)' "$scrub"; then
-        cp "$scrub" "$WORK_DIR/seed-scrub-paths.txt" || die 1 "cannot stage the scrub list"
-        git filter-repo --paths-from-file seed-scrub-paths.txt --invert-paths \
+        local scrub_file
+        scrub_file="$(stage_outside_clone "$scrub" seed-scrub-paths)" \
+            || die 1 "cannot stage the scrub list outside the clone (is TMPDIR inside $WORK_DIR?)"
+        git filter-repo --paths-from-file "$scrub_file" --invert-paths \
             --replace-refs delete-no-add --prune-empty auto \
             || die 1 "scrub pass failed"
-        rm -f "$WORK_DIR/seed-scrub-paths.txt"
+        rm -f "$scrub_file"
         pass "scrub pass applied (audit-failed paths removed from history)"
     else
         pass "no scrub pass needed (seed-scrub-paths.txt empty or absent)"
     fi
-
-    rm -f "$WORK_DIR/seed-paths.txt"
 
     local branch
     branch="$(git rev-parse --abbrev-ref HEAD)"

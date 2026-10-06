@@ -6,6 +6,7 @@
 #include "Ui/P4ClPreview.h"
 
 #include "Logger.h"
+#include "OfflineFirstPure.h" // kLookupRetryAfterSeconds — when a shown failure is asked again
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -13,9 +14,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <chrono>
-#include <exception>
 #include <future>
-#include <string>
 #include <vector>
 
 namespace P4ClPreview {
@@ -26,13 +25,12 @@ struct ClPreviewState {
     P4ChangelistDescribeCache Cache{512};
     std::string HoverCl;
     std::shared_future<P4ChangelistDetails> HoverFut;
-    std::vector<std::shared_future<P4ChangelistDetails>> DetachedHoverFuts;
-    /// The describe answer for HoverCl, taken from HoverFut once (a worker exception becomes an
-    /// Error here, logged once). Stays on screen while a retry for the same CL runs.
+    /// HoverCl's finished describe, taken out of HoverFut once: a future holding an exception would
+    /// rethrow (and log) on every frame.
     P4ChangelistDetails HoverResult;
-    bool HoverResolved = false;
-    /// ImGui frame of the last tooltip draw: a gap means the cursor left the cell and came back.
-    int LastDrawFrame = -1;
+    bool HoverResultReady = false;
+    std::chrono::steady_clock::time_point HoverResultAt{}; ///< when HoverResult was taken (or last retried)
+    std::vector<std::shared_future<P4ChangelistDetails>> DetachedHoverFuts;
 };
 
 ClPreviewState& S() {
@@ -42,52 +40,36 @@ ClPreviewState& S() {
 
 ImVec4 ColFromRgba(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
 
-P4ChangelistDetails FailedDetails(const std::string& error) {
-    P4ChangelistDetails d;
-    d.Loaded = true;
-    d.Error = error;
-    return d;
-}
+// A shown failure is asked again after the describe cache's own failure backoff, so the retry runs p4.
+constexpr std::chrono::seconds kRetryShownFailureAfter{smatchet::offline::kLookupRetryAfterSeconds};
 
-void LaunchHoverFetch(const std::string& cl, const AnnotateAnalysisConfig& cfg) {
-    // Detach a still-pending previous fetch before overwriting: HoverFut comes from
-    // std::async, so destroying the last reference to an unready state blocks until the
-    // task finishes — a p4-describe-length stall on the UI thread (Pillar 2).
-    if (S().HoverFut.valid() && S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-        S().DetachedHoverFuts.push_back(S().HoverFut);
-    }
-    S().HoverFut = std::shared_future<P4ChangelistDetails>();
+// Describe `cl` off the UI thread into HoverFut (the describe cache answers repeats without p4).
+void StartDescribe(const AnnotateAnalysisConfig& cfg, const std::string& cl) {
     AnnotateAnalysisConfig cfgCopy = cfg;
-    try {
-        S().HoverFut =
-            std::async(std::launch::async, [cfgCopy, cl]() { return S().Cache.GetOrFetch(cfgCopy, cl); }).share();
-    } catch (const std::exception& ex) {
-        // std::async throws std::system_error when no thread can start: show it instead of "Loading".
-        LOG_WARN("P4ClPreview: could not start describe for CL %s: %s", cl.c_str(), ex.what());
-        S().HoverResult = FailedDetails(std::string("Could not start p4 describe: ") + ex.what());
-        S().HoverResolved = true;
-    }
+    S().HoverFut =
+        std::async(std::launch::async, [cfgCopy, cl]() { return S().Cache.GetOrFetch(cfgCopy, cl); }).share();
 }
 
-void TakeHoverResultIfReady() {
-    if (!S().HoverFut.valid() || S().HoverFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-        return;
-    }
-    const std::shared_future<P4ChangelistDetails> fut = S().HoverFut;
-    S().HoverFut = std::shared_future<P4ChangelistDetails>();
+// The finished describe in `fut`. A worker that threw becomes an error to show (never a load that looks as
+// if it were still running); it is not a describe answer, so it leaves Loaded false and nothing caches it.
+P4ChangelistDetails TakeFinishedDescribe(const std::shared_future<P4ChangelistDetails>& fut) {
     try {
-        S().HoverResult = fut.get();
+        return fut.get();
     } catch (const std::exception& ex) {
-        LOG_WARN("P4ClPreview: describe for CL %s failed with an exception: %s", S().HoverCl.c_str(), ex.what());
-        S().HoverResult = FailedDetails(std::string("p4 describe failed: ") + ex.what());
+        LOG_WARN("P4ClPreview: changelist describe worker failed: %s", ex.what());
+        P4ChangelistDetails failed;
+        failed.Error = std::string("Could not load CL info: ") + ex.what();
+        return failed;
     } catch (...) {
-        LOG_WARN("P4ClPreview: describe for CL %s failed with an unknown exception", S().HoverCl.c_str());
-        S().HoverResult = FailedDetails("p4 describe failed: unknown error");
+        LOG_WARN("P4ClPreview: changelist describe worker failed with a non-standard exception");
+        P4ChangelistDetails failed;
+        failed.Error = "Could not load CL info: unknown error";
+        return failed;
     }
-    S().HoverResolved = true;
 }
 
-void DrawClDetails(const std::string& cl, const P4ChangelistDetails& d, const AnnotateUiThemeColors& theme) {
+// Tooltip body for a finished describe: its error, or the CL header and details.
+void DrawDescribeDetails(const std::string& cl, const P4ChangelistDetails& d, const AnnotateUiThemeColors& theme) {
     if (!d.Error.empty()) {
         ImGui::TextUnformatted(d.Error.c_str());
         return;
@@ -117,28 +99,40 @@ void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg
     if (cl.empty()) {
         return;
     }
-    const int frame = ImGui::GetFrameCount();
-    const bool reHovered = S().LastDrawFrame < frame - 1;
-    S().LastDrawFrame = frame;
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     if (S().HoverCl != cl) {
+        // Detach a still-pending previous fetch before overwriting: HoverFut comes from
+        // std::async, so destroying the last reference to an unready state blocks until the
+        // task finishes — a p4-describe-length stall on the UI thread (Pillar 2).
+        if (S().HoverFut.valid() && S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            S().DetachedHoverFuts.push_back(S().HoverFut);
+        }
         S().HoverCl = cl;
         S().HoverResult = P4ChangelistDetails();
-        S().HoverResolved = false;
-        LaunchHoverFetch(cl, cfg);
-    } else if (reHovered && S().HoverResolved && !S().HoverResult.Error.empty() && !S().HoverFut.valid()) {
-        // Back on a CL whose describe failed: ask again. The cache answers from memory inside its
-        // retry window (and for a CL the server called unknown), so this re-runs p4 only when due.
-        LaunchHoverFetch(cl, cfg);
+        S().HoverResultReady = false;
+        StartDescribe(cfg, cl);
+    } else if (S().HoverResultReady && !S().HoverResult.Error.empty() && !S().HoverFut.valid() &&
+               now - S().HoverResultAt >= kRetryShownFailureAfter) {
+        // Still hovering a CL whose describe failed: ask again once the describe cache's backoff has
+        // passed (a server that was unreachable may be back). The error stays up until the answer lands.
+        S().HoverResultAt = now;
+        StartDescribe(cfg, cl);
     }
-    TakeHoverResultIfReady();
     ImGui::BeginTooltip();
     ImGui::TextDisabled("Left-click this changelist cell to open it in p4vc.");
     ImGui::Separator();
     const float wrapX = ImGui::GetCursorPosX() + 600.f;
     ImGui::PushTextWrapPos(wrapX);
-    if (S().HoverResolved) {
-        DrawClDetails(cl, S().HoverResult, theme);
+    if (S().HoverFut.valid() && S().HoverFut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        S().HoverResult = TakeFinishedDescribe(S().HoverFut);
+        S().HoverResultReady = true;
+        S().HoverResultAt = now;
+        S().HoverFut = std::shared_future<P4ChangelistDetails>(); // ready, so releasing it never blocks
+    }
+    if (S().HoverResultReady) {
+        DrawDescribeDetails(cl, S().HoverResult, theme);
     } else {
+        // Nothing to show yet: the describe for this CL is still running.
         ImGui::TextUnformatted("Loading CL info...");
     }
     ImGui::PopTextWrapPos();
@@ -147,6 +141,8 @@ void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg
 
 void DetachInFlight() {
     S().HoverCl.clear();
+    S().HoverResult = P4ChangelistDetails();
+    S().HoverResultReady = false;
     if (S().HoverFut.valid() && S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         S().DetachedHoverFuts.push_back(S().HoverFut);
     }

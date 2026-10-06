@@ -66,7 +66,7 @@ TEST_CASE("queue backend_key replay matching: context A's tick replays only A-ro
         deps.CacheImpl->EnqueuePendingCreate("Plane", IssueDraftHelpers::ToJson(MakeDraft("plane row")));
     const std::int64_t emptyId =
         deps.CacheImpl->EnqueuePendingCreate(std::string(), IssueDraftHelpers::ToJson(MakeDraft("corrupt row")));
-    REQUIRE(svc.GetPendingCreates().size() == 3u); // exact: two rows bypassed the service's count mirror
+    REQUIRE(svc.GetPendingCreateCount() == 3u);
 
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();

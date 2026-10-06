@@ -21,6 +21,9 @@
 set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+# The hook templates and the settings sync are layer content: this script's own
+# tree, which is the host's agent-layer/ mount once the layer is a submodule.
+LAYER_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRATCHPAD="$PROJECT_DIR/.session-context.md"
 ARCHIVE_DIR="$PROJECT_DIR/.session-context.archive"
 
@@ -88,7 +91,7 @@ rm -f "$PROJECT_DIR/.claude/.tree-dirty" 2>/dev/null || true
 # cherry-pick can update docs/harness/claude-code/hooks/* without a follow-up
 # setup-harness.sh run. Silently copy on every SessionStart to prevent stale
 # deployed hooks from masking improvements to the canonical templates.
-HOOKS_SRC="$PROJECT_DIR/docs/harness/claude-code/hooks"
+HOOKS_SRC="$LAYER_DIR/docs/harness/claude-code/hooks"
 HOOKS_DST="$PROJECT_DIR/.claude/hooks"
 if [ -d "$HOOKS_SRC" ] && [ -d "$HOOKS_DST" ]; then
     for src_file in "$HOOKS_SRC"/*.sh "$HOOKS_SRC"/*.py; do
@@ -108,10 +111,10 @@ fi
 # setup-harness.sh's copy_template refuses to overwrite a user-modified file.
 # Additively heal the missing hooks here (never touches permissions / existing
 # hooks / order). Silent when already in sync. See sync-settings-hooks.sh.
-SETTINGS_TMPL="$PROJECT_DIR/docs/harness/claude-code/settings.json.tmpl"
+SETTINGS_TMPL="$LAYER_DIR/docs/harness/claude-code/settings.json.tmpl"
 SETTINGS_DST="$PROJECT_DIR/.claude/settings.json"
 if [ -f "$SETTINGS_TMPL" ] && [ -f "$SETTINGS_DST" ]; then
-    bash "$PROJECT_DIR/agents/scripts/core/sync-settings-hooks.sh" \
+    bash "$LAYER_DIR/agents/scripts/core/sync-settings-hooks.sh" \
         "$SETTINGS_TMPL" "$SETTINGS_DST" >/dev/null || true
 fi
 

@@ -88,11 +88,12 @@ static const char* ConnectivityTooltip(AppController& app) {
     }
 }
 
-// Offline work waiting to sync: queued creates, field edits (d.cachedPendingFieldEditCount, refreshed
-// once per frame in SmatchetUI) and pending actions — comments, worklogs, watches (the in-memory snapshot). No
-// SQLite on the render thread.
-static size_t QueuedOfflineOps(AppController& app, const UiDrawSession& d) {
-    return app.GetPendingCreateCount() + static_cast<size_t>(d.cachedPendingFieldEditCount) +
+// Offline work waiting to sync: queued creates and field edits, and pending actions (comments, worklogs,
+// watches). Both counts come from the queues' in-memory snapshots, which workers publish: no SQLite on the
+// render thread.
+static size_t QueuedOfflineOps(AppController& app) {
+    const std::shared_ptr<const OfflineQueueSnapshot> queues = app.GetOfflineQueueSnapshot();
+    return queues->PendingCreates.size() + queues->PendingEdits.size() +
            app.GetPendingActionsSnapshot()->Pending.size();
 }
 
@@ -123,7 +124,7 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
 
     // Queued-ops count (pending creates, field edits, comments, worklogs and watches).
     {
-        const size_t queuedOps = QueuedOfflineOps(app, d);
+        const size_t queuedOps = QueuedOfflineOps(app);
         if (queuedOps > 0) {
             ImGui::SameLine();
             ImGui::TextUnformatted("|");
@@ -238,7 +239,7 @@ void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBar
         const ConnState connState = app.GetLastTrackerConnectivityState();
         signals.trackerProblem = (connState == ConnState::ReachableAuthOrConfigError ||
                                   connState == ConnState::TransportDown || connState == ConnState::ServiceUnavailable);
-        signals.queuedOps = QueuedOfflineOps(app, d);
+        signals.queuedOps = QueuedOfflineOps(app);
         signals.savingEdit = d.hasInFlightEdit;
         signals.unreadErrors = SmatchetToastManager::Instance().UnreadErrorCount();
     }

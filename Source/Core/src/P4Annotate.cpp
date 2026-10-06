@@ -2,7 +2,6 @@
 #include "Logger.h"
 #include "UiThreadAffinity.h"
 #include "P4AnnotateParse.h"
-#include "OfflineFirstPure.h"
 #include "P4ErrorUtil.h"
 #include "StringUtil.h"
 #include "SubprocessCapture.h"
@@ -13,7 +12,6 @@
 #include <ctime>
 #include <sstream>
 #include <regex>
-#include <utility>
 
 namespace {
 
@@ -24,7 +22,6 @@ constexpr size_t kP4CaptureBytesMax = 4u * 1024u * 1024u;
 
 } // namespace
 
-using P4AnnotateParse::IsChangelistUnknownMessage;
 using P4AnnotateParse::ParseAnnotateTextLine;
 using P4AnnotateParse::ParseLatestChangeFromChangesOutput;
 using P4AnnotateParse::SplitLines;
@@ -355,14 +352,8 @@ std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string&
     return login;
 }
 
-P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries)
-    : P4ChangelistDescribeCache(maxEntries, std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds),
-                                NowFn()) {}
-
-P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries, std::chrono::seconds retryAfter, NowFn now)
-    : maxEntries_(maxEntries > 0 ? maxEntries : 16),
-      retryAfter_(retryAfter.count() > 0 ? retryAfter : std::chrono::seconds(0)),
-      now_(now ? std::move(now) : NowFn([]() { return Clock::now(); })) {}
+P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries, std::chrono::seconds failureRetryAfter)
+    : maxEntries_(maxEntries > 0 ? maxEntries : 16), failureRetryAfter_(failureRetryAfter) {}
 
 P4ChangelistDetails P4ChangelistDescribeCache::Get(const std::string& changelist) const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -390,44 +381,24 @@ void P4ChangelistDescribeCache::EvictIfNeeded() {
 }
 
 void P4ChangelistDescribeCache::Store(const std::string& changelist, P4ChangelistDetails d) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    Slot& slot = map_[changelist];
-    slot.Details = std::move(d);
-    slot.Transient = false;
-    slot.RetryAt = Clock::time_point();
-    Touch(changelist);
-    EvictIfNeeded();
+    Entry entry;
+    entry.Details = std::move(d);
+    StoreEntry(changelist, std::move(entry));
 }
 
-P4ChangelistDetails P4ChangelistDescribeCache::RecordFailure(const std::string& changelist, bool ran, int code,
-                                                             const std::string& out, const std::string& err) {
-    P4ChangelistDetails d;
-    d.Loaded = true;
-    d.Error = FormatP4CommandError("p4 describe failed", code, err);
-    // Only the server saying the changelist does not exist is final. p4 not starting, a timeout or an
-    // unreachable server is kept for display and retried once the window has passed.
-    const bool definitive = ran && (IsChangelistUnknownMessage(err) || IsChangelistUnknownMessage(out));
-    const Clock::time_point retryAt = now_() + retryAfter_;
-    if (definitive) {
-        LOG_WARN("P4ChangelistDescribeCache: describe failed cl=%s (final) err=%s", changelist.c_str(),
-                 TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
-    } else {
-        LOG_WARN("P4ChangelistDescribeCache: describe failed cl=%s (retry after %llds) err=%s", changelist.c_str(),
-                 static_cast<long long>(retryAfter_.count()), TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
-    }
+void P4ChangelistDescribeCache::StoreEntry(const std::string& changelist, Entry entry) {
     std::lock_guard<std::mutex> lock(mutex_);
-    Slot& slot = map_[changelist];
-    if (slot.Details.Loaded && !slot.Transient) {
-        // A concurrent fetch already stored a final answer; a failure never replaces it.
+    const auto existing = map_.find(changelist);
+    if (!entry.Details.Error.empty() && existing != map_.end() && existing->second.Final &&
+        existing->second.Details.Error.empty()) {
+        // Two threads described the same CL and this one failed (retryable or final): keep the success
+        // the other stored.
         Touch(changelist);
-        return slot.Details;
+        return;
     }
-    slot.Details = d;
-    slot.Transient = !definitive;
-    slot.RetryAt = definitive ? Clock::time_point() : retryAt;
+    map_[changelist] = std::move(entry);
     Touch(changelist);
     EvictIfNeeded();
-    return d;
 }
 
 P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysisConfig& cfg,
@@ -436,10 +407,10 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysis
         return P4ChangelistDetails();
     }
     {
-        const Clock::time_point now = now_();
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = map_.find(changelist);
-        if (it != map_.end() && it->second.Details.Loaded && (!it->second.Transient || now < it->second.RetryAt)) {
+        if (it != map_.end() && it->second.Details.Loaded &&
+            (it->second.Final || Clock::now() < it->second.RetryAfter)) {
             Touch(changelist);
             LOG_DEBUG("P4ChangelistDescribeCache: hit cl=%s", changelist.c_str());
             return it->second.Details;
@@ -451,12 +422,22 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysis
     int code = 0;
     std::string out;
     std::string err;
-    const bool ran = P4RunCommand(cfg, args, code, out, err);
-    if (!ran || code != 0) {
-        return RecordFailure(changelist, ran, code, out, err);
-    }
     P4ChangelistDetails d;
     d.Loaded = true;
+    const bool ran = P4RunCommand(cfg, args, code, out, err);
+    if (!ran || code != 0) {
+        d.Error = FormatP4CommandError("p4 describe failed", code, err);
+        LOG_WARN("P4ChangelistDescribeCache: describe failed cl=%s err=%s", changelist.c_str(),
+                 TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
+        // "No such changelist" is a final answer. Any other failure (server unreachable, timeout, login
+        // expired) is remembered only for the backoff, then retried (Pillar 6: never cached as final).
+        Entry failed;
+        failed.Details = d;
+        failed.Final = ran && P4AnnotateParse::IsChangelistUnknownAnswer(err, out);
+        failed.RetryAfter = Clock::now() + failureRetryAfter_;
+        StoreEntry(changelist, std::move(failed));
+        return d;
+    }
 
     // Common: "Change N by user@client on 2026/04/09 ..."  OR  "Change N on date by user ..."
     std::smatch m;
