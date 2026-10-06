@@ -1034,7 +1034,7 @@ main() {
         case "$pl_nwo" in
             */*) pl_owner="${pl_nwo%%/*}"; pl_repo="${pl_nwo#*/}" ;;
         esac
-        pl_verdict=$(_mg_planlock_recheck "$pl_owner" "$pl_repo" "$pr" "$pl_head_ref")
+        pl_verdict=$(_mg_planlock_recheck "$pl_owner" "$pl_repo" "$pr" "$pl_head_ref" "$pl_head_sha")
         if _mg_planlock_verdict_report "$pl_verdict" "$pl_owner" "$pl_repo" "$pl_head_sha"; then
             echo "REFUSED — PR #$pr: the 'Plan-lock gate' red is stale; NOT admin-merging." >&2
             exit 1

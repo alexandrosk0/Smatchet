@@ -51,6 +51,16 @@ if [ "$1" = "pr" ] && [ "$2" = "diff" ]; then
     [ -n "${SAM_STUB_PR_DIFF:-}" ] && printf '%s\n' "$SAM_STUB_PR_DIFF"
     exit 0
 fi
+# The re-check reads why the red Plan-lock run failed: its run id, then its
+# annotation messages ($SAM_STUB_ANNOTATIONS; unset → unreadable).
+if [ "$1" = "api" ]; then
+    case "$2" in
+        */commits/*/check-runs*) echo 4242; exit 0 ;;
+        */check-runs/*/annotations)
+            [ -n "${SAM_STUB_ANNOTATIONS+x}" ] || exit 1
+            printf '%s\n' "$SAM_STUB_ANNOTATIONS"; exit 0 ;;
+    esac
+fi
 # `gh pr view` should never be reached when SAFE_ADMIN_MERGE_STUB_ROLLUP is set;
 # fail loudly if it is, so a test that forgets the stub can't pass silently.
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
@@ -65,7 +75,7 @@ STUB
 
 teardown() {
     rm -rf "$STUB_BIN_DIR"
-    unset SAM_STUB_PR_DIFF LTC_ROWS_OVERRIDE
+    unset SAM_STUB_PR_DIFF LTC_ROWS_OVERRIDE SAM_STUB_ANNOTATIONS
 }
 
 # A green rollup: every required + allow-listed check SUCCESS.
@@ -264,6 +274,9 @@ planlock_rollup() {
     printf 'claude/other-branch\t%s\taged-out\tdocs/plans/INDEX.md\n' \
         "$(( $(date -u +%s) - 20 * 24 * 3600 ))" > "$rows"
     export LTC_ROWS_OVERRIDE="$rows" SAM_STUB_PR_DIFF="docs/plans/INDEX.md"
+    # The red the gate posted was a collision (its annotation) — the only kind
+    # of red a clean re-check can call stale.
+    export SAM_STUB_ANNOTATIONS="plan-lock-gate: 'docs/plans/INDEX.md' overlaps the write set of plan-lock 'aged-out', held by a different branch."
     SAFE_ADMIN_MERGE_STUB_ROLLUP="$(planlock_rollup '[{"name":"plan-lock-out-of-band"}]' \
         $'## Intent\nx\n\nplan-lock-disposition: crossed aged-out (orphaned lock)\n')"
     export SAFE_ADMIN_MERGE_STUB_ROLLUP

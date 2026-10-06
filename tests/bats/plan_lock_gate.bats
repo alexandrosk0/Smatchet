@@ -76,6 +76,25 @@ run_decide() { # $1 = head ref, $2 = newline-separated changed paths
     [[ "$output" == *"undetermined"* ]]
 }
 
+@test "PLAN_LOCK_GATE_INFRA_RE: the collision message never matches it; the undetermined one does" {
+    # merge-gates.sh classifies a red run as a (stale-able) collision or an
+    # infra failure from these messages. A collision line that picked up an
+    # infra word would make every stale collision red un-refusable; an infra
+    # line that lost them would make a persistent infra red un-overridable.
+    local re
+    re="$(. "$GATE" >/dev/null 2>&1; printf '%s' "$PLAN_LOCK_GATE_INFRA_RE")"
+    [ -n "$re" ]
+    run run_decide my-feature "Source/Core/src/Sync/Foo.cpp"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"overlaps the write set"* ]]
+    [ "$(grep -ciE "$re" <<<"$output")" -eq 0 ]
+    run bash -c ". '$LIB' >/dev/null 2>&1; . '$GATE' >/dev/null 2>&1
+        ltc_covering_slug() { return 2; }
+        printf 'Source/Core/src/Sync/Foo.cpp\n' | plan_lock_gate_decide my-feature"
+    [ "$status" -eq 1 ]
+    grep -qiE "$re" <<<"$output"
+}
+
 # ---- fail-CLOSED base + three-dot symmetry (against a throwaway git fixture) --
 
 planlock_repo() {

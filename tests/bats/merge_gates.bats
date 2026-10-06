@@ -144,6 +144,21 @@ case "$1" in
                 fi
                 echo "gh: stub pulls error" >&2; exit 1
                 ;;
+            */commits/*/check-runs*)
+                # Stale-red Plan-lock re-check, step 1: the head's latest
+                # "Plan-lock gate" run id (the --jq output).
+                #   MERGE_GATES_STUB_PLANLOCK_RUN_ID — id to emit (default 4242)
+                echo "${MERGE_GATES_STUB_PLANLOCK_RUN_ID:-4242}"; exit 0
+                ;;
+            */check-runs/*/annotations)
+                # Step 2: that run's annotation messages, one per line.
+                #   MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS — the messages; unset
+                #   → error (the red's cause is unreadable)
+                if [ -n "${MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS+x}" ]; then
+                    printf '%s\n' "$MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS"; exit 0
+                fi
+                echo "gh: stub annotations error" >&2; exit 1
+                ;;
             */branches/*/protection)
                 # Step 2: protection read for the base from step 1. Appends the
                 # requested path to a file so a test can assert WHICH branch
@@ -235,6 +250,7 @@ teardown() {
     unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED MERGE_GATES_STUB_HEAD_RUNS
     unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
     unset MERGE_GATES_STUB_ARGV_FILE MERGE_GATES_STUB_JQ MERGE_GATES_STUB_PR_DIFF LTC_ROWS_OVERRIDE
+    unset MERGE_GATES_STUB_PLANLOCK_RUN_ID MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS
 }
 
 # ---------- helpers ----------
@@ -1807,7 +1823,11 @@ plan_lock_red_fixture() {
 # of-rerun, item 1): before honouring plan-lock-out-of-band + disposition, the
 # poller re-runs plan_lock_gate_decide against the CURRENT lock table. The gh
 # stub serves the PR diff; LTC_ROWS_OVERRIDE injects the lock table
-# (branch<TAB>epoch<TAB>slug<TAB>path) so no refs/locks fetch happens.
+# (branch<TAB>epoch<TAB>slug<TAB>path) so no refs/locks fetch happens. Only a
+# COLLISION red can be stale: the gh stub serves the red run's annotations
+# (PLANLOCK_COLLISION_ANN is the gate's collision ::error line).
+
+PLANLOCK_COLLISION_ANN="plan-lock-gate: 'docs/plans/INDEX.md' overlaps the write set of plan-lock 'gate-selftest-msys-execbit', held by a different branch."
 
 planlock_waived_fixture() {
     plan_lock_red_fixture '[{"name":"plan-lock-out-of-band"},{"name":"plan-lock-disposition:coordinated"}]'
@@ -1821,6 +1841,7 @@ planlock_waived_fixture() {
         "$(( $(date -u +%s) - 20 * 24 * 3600 ))" > "$rows"
     export LTC_ROWS_OVERRIDE="$rows"
     export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    export MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS="$PLANLOCK_COLLISION_ANN"
     f="$(planlock_waived_fixture)"
     set_fixture "$f"
     run poll_merge_gates org repo 1
@@ -1856,6 +1877,7 @@ planlock_waived_fixture() {
     printf 'feature/pass\t%s\tmy-own-lock\tdocs/plans/INDEX.md\n' "$(date -u +%s)" > "$rows"
     export LTC_ROWS_OVERRIDE="$rows"
     export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    export MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS="$PLANLOCK_COLLISION_ANN"
     f="$(planlock_waived_fixture)"
     set_fixture "$f"
     run poll_merge_gates org repo 1
@@ -1875,6 +1897,95 @@ planlock_waived_fixture() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"could not re-evaluate the Plan-lock gate red"* ]]
+    rm -f "$f"
+}
+
+@test "Plan-lock re-check: a clean table under an INFRA red keeps the override (a re-run would red again)" {
+    # The gate also reds when it cannot read the lock table or resolve the
+    # base ref, and names the override as the escape; a clean re-check says
+    # nothing about such a red, so it must not be refused as stale.
+    local f rows="$BATS_TEST_TMPDIR/lock-rows"
+    : > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    export MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS="plan-lock-gate: lock table unavailable/undetermined (rc=2) while evaluating 'docs/plans/INDEX.md'; the fail-closed gate refuses to pass on an unverifiable lock state."
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"infrastructure failure, not a collision"* ]]
+    [[ "$output" != *"stale red"* ]]
+    rm -f "$f"
+}
+
+@test "Plan-lock re-check: an unreadable red cause keeps the override (WARN, never refuse unverified)" {
+    local f rows="$BATS_TEST_TMPDIR/lock-rows"
+    : > "$rows"
+    export LTC_ROWS_OVERRIDE="$rows"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cause could not be read"* ]]
+    rm -f "$f"
+}
+
+# planlock_fork_sandbox — a host clone whose `origin` is a FORK (no locks) and
+# whose `upstream` is the base repository org/Smatchet, holding a LIVE lock on
+# docs/plans/INDEX.md claimed by another branch (the real lock-claim.sh).
+# Prints the clone path, for PC_PROJECT_ROOT.
+planlock_fork_sandbox() {
+    local t="$BATS_TEST_TMPDIR/pl"
+    mkdir -p "$t/org" "$t/someone"
+    git init -q --bare "$t/org/Smatchet.git"
+    git init -q --bare "$t/someone/Smatchet.git"
+    git init -q "$t/clone"
+    git -C "$t/clone" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
+    git -C "$t/clone" remote add origin "$t/someone/Smatchet.git"
+    git -C "$t/clone" remote add upstream "$t/org/Smatchet.git"
+    printf 'docs/plans/INDEX.md\n' > "$t/ws"
+    (cd "$t/clone" && unset SMATCHET_LOCK_BACKEND SMATCHET_AGENT_VCS \
+        && LOCK_REMOTE=upstream LOCK_BRANCH=claude/other-branch AGENT_ID=bats \
+           SMATCHET_LOCK_BYPASS_REPO_CHECK=1 bash "$SCRIPTS_DIR/lock-claim.sh" live-lock "$t/ws") >/dev/null 2>&1
+    [ -n "$(git -C "$t/org/Smatchet.git" for-each-ref refs/locks/live-lock)" ]
+    printf '%s' "$t/clone"
+}
+
+@test "Plan-lock re-check reads the BASE repo's locks, not a fork origin's (live collision -> override stands)" {
+    # From a fork clone `origin` holds no locks; reading it called every red
+    # stale and refused a legitimate override. The base repo (org/Smatchet,
+    # the poll's owner/repo) still holds a live overlapping lock.
+    local f clone
+    clone="$(planlock_fork_sandbox)"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    export MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS="$PLANLOCK_COLLISION_ANN"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    PC_PROJECT_ROOT="$clone" run poll_merge_gates org Smatchet 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"downgraded=Plan-lock gate"* ]]
+    [[ "$output" != *"stale red"* ]]
+    # It stood because the re-check SAW the live lock — not by falling back.
+    [[ "$output" != *"could not re-evaluate"* ]]
+    [[ "$output" != *"shows no collision"* ]]
+    rm -f "$f"
+}
+
+@test "Plan-lock re-check with no remote for the base repo -> WARN, override stands (lock state undetermined)" {
+    local f clone
+    clone="$(planlock_fork_sandbox)"
+    export MERGE_GATES_STUB_PR_DIFF="docs/plans/INDEX.md"
+    export MERGE_GATES_STUB_PLANLOCK_ANNOTATIONS="$PLANLOCK_COLLISION_ANN"
+    f="$(planlock_waived_fixture)"
+    set_fixture "$f"
+    PC_PROJECT_ROOT="$clone" run poll_merge_gates elsewhere Smatchet 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"no git remote of this checkout points at elsewhere/Smatchet"* ]]
     rm -f "$f"
 }
 

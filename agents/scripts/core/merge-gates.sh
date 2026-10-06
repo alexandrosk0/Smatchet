@@ -299,43 +299,106 @@ _mg_csv_drop() {
     printf '%s' "$out"
 }
 
-# _mg_planlock_recheck <owner> <repo> <pr> <head ref> — re-run the Plan-lock
-# gate's own decision (plan_lock_gate_decide, sourced from plan-lock-gate.sh)
-# against the CURRENT refs/locks table and the PR's changed files. A
-# "Plan-lock gate" verdict is frozen at push time while the lock table it
-# judged keeps moving (locks are released, or age past the 14-day cutoff), so a
-# red can go stale (tooling 2026-10-04 stale-plan-lock-red-overridden-instead-
-# of-rerun). Prints one token:
-#   clean     — no changed file overlaps another branch's live lock any more
+# _mg_lock_remote <owner> <repo> — the git remote of the checkout in the cwd
+# whose URL names <owner>/<repo> (the PR's BASE repository, where refs/locks/*
+# live), `origin` first. rc 1 when none does: in a fork clone `origin` is the
+# fork, whose lock table is empty, and reading it would call every red stale.
+_mg_lock_remote() {
+    local want r url
+    want="$(printf '%s/%s' "$1" "$2" | tr '[:upper:]' '[:lower:]')"
+    for r in origin $(git remote 2>/dev/null); do
+        url="$(git config --get "remote.${r}.url" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+        url="${url%/}"
+        url="${url%.git}"
+        case "$url" in
+            *[/:]"$want") printf '%s' "$r"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# _mg_planlock_red_cause <owner> <repo> <head sha> — why the head's latest
+# "Plan-lock gate" run went red, read from its annotations (each ::error the
+# gate prints becomes one): `collision` when it reported only write-set
+# overlaps, `infra` when any line is an infrastructure failure (lock table
+# undetermined, base ref unresolvable, gate library missing), `unknown` when
+# the run or its annotations cannot be read. Only a collision red can go
+# stale; an infra red persists across re-runs, so the override stays its escape.
+_mg_planlock_red_cause() {
+    local owner="$1" repo="$2" sha="$3" id msgs
+    if [ -z "$sha" ]; then echo unknown; return 0; fi
+    id="$(gh api "repos/${owner}/${repo}/commits/${sha}/check-runs?check_name=Plan-lock%20gate" \
+        --jq '.check_runs | sort_by(.started_at // "") | last | .id // empty' 2>/dev/null)" \
+        || { echo unknown; return 0; }
+    if [ -z "$id" ]; then echo unknown; return 0; fi
+    msgs="$(gh api "repos/${owner}/${repo}/check-runs/${id}/annotations" --jq '.[].message' 2>/dev/null)" \
+        || { echo unknown; return 0; }
+    # The vocabulary is plan-lock-gate.sh's own (PLAN_LOCK_GATE_INFRA_RE,
+    # sourced by _mg_planlock_recheck before it calls here).
+    if printf '%s\n' "$msgs" | grep -qiE "${PLAN_LOCK_GATE_INFRA_RE:-undetermined|unavailable|does not resolve|failed|missing}"; then
+        echo infra
+    elif printf '%s\n' "$msgs" | grep -q 'overlaps the write set of plan-lock'; then
+        echo collision
+    else
+        echo unknown
+    fi
+}
+
+# _mg_planlock_recheck <owner> <repo> <pr> <head ref> <head sha> — re-run the
+# Plan-lock gate's own decision (plan_lock_gate_decide, sourced from
+# plan-lock-gate.sh) against the CURRENT refs/locks table of the PR's base
+# repository and the PR's changed files. A "Plan-lock gate" verdict is frozen
+# at push time while the lock table it judged keeps moving (locks are released,
+# or age past the 14-day cutoff), so a collision red can go stale (tooling
+# 2026-10-04 stale-plan-lock-red-overridden-instead-of-rerun). Prints one token:
+#   clean     — no changed file overlaps another branch's live lock any more AND
+#               the red was a collision: it is stale (refuse the override)
 #   collides  — still overlaps, or the lock table is undetermined (the gate's
 #               own fail-closed answer)
-#   unknown   — the inputs could not be gathered (no head ref, no diff, gate
-#               script missing)
+#   infra …   — the table is clean but the red was an infrastructure failure
+#               (or its cause is unreadable): a re-run would red again, so the
+#               override stands
+#   unknown … — the inputs or the lock state could not be gathered (no head
+#               ref, no diff, no remote for the base repo, refs/locks fetch
+#               failed, gate script missing)
 # Runs in a subshell: the gate script and the lock substrate set shell options
 # and define helpers that must not leak into a sourcing caller.
 _mg_planlock_recheck() {
-    local owner="$1" repo="$2" pr="$3" head_ref="$4"
+    local owner="$1" repo="$2" pr="$3" head_ref="$4" head_sha="${5:-}"
     (
-        if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$head_ref" ]; then echo unknown; exit 0; fi
+        if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$head_ref" ]; then echo "unknown (no PR head ref)"; exit 0; fi
         changed="$(gh pr diff "$pr" --repo "$owner/$repo" --name-only 2>/dev/null)" \
-            || { echo unknown; exit 0; }
-        [ -n "$changed" ] || { echo unknown; exit 0; }
-        # The lock table is read from the HOST repo (locks-show.sh fetches
-        # refs/locks/* into the checkout it runs in), resolved the way
-        # plan-lock-gate.sh's own entry point resolves it.
+            || { echo "unknown (PR diff unavailable)"; exit 0; }
+        [ -n "$changed" ] || { echo "unknown (PR diff empty)"; exit 0; }
+        # The lock table is read through the HOST checkout (locks-show.sh
+        # fetches refs/locks/* into the checkout it runs in), resolved the way
+        # plan-lock-gate.sh's own entry point resolves it — but from the remote
+        # that IS the PR's base repository, never an assumed `origin`, and
+        # fresh (no lock-table cache), so the answer is that repo's live table.
         root="${PC_PROJECT_ROOT:-${PROJECT_ROOT:-$SCRIPT_DIR/../../..}}"
-        cd "$root" 2>/dev/null || { echo unknown; exit 0; }
+        cd "$root" 2>/dev/null || { echo "unknown (no host checkout)"; exit 0; }
         export LTC_PROJ="$PWD"
-        # shellcheck source=agents/scripts/core/lock-table-cache.sh
-        . "$SCRIPT_DIR/lock-table-cache.sh" 2>/dev/null || { echo unknown; exit 0; }
-        # shellcheck source=agents/scripts/core/plan-lock-gate.sh
-        . "$SCRIPT_DIR/plan-lock-gate.sh" 2>/dev/null || { echo unknown; exit 0; }
-        command -v plan_lock_gate_decide >/dev/null 2>&1 || { echo unknown; exit 0; }
-        if printf '%s\n' "$changed" | plan_lock_gate_decide "$head_ref" >/dev/null 2>&1; then
-            echo clean
-        else
-            echo collides
+        if [ -z "${LTC_ROWS_OVERRIDE:-}" ]; then
+            remote="$(_mg_lock_remote "$owner" "$repo")" \
+                || { echo "unknown (no git remote of this checkout points at ${owner}/${repo})"; exit 0; }
+            git fetch --quiet --prune "$remote" '+refs/locks/*:refs/locks/*' 2>/dev/null \
+                || { echo "unknown (refs/locks fetch from ${remote} failed)"; exit 0; }
+            export LOCK_REMOTE="$remote" LTC_TABLE_TTL=0
         fi
+        # shellcheck source=agents/scripts/core/lock-table-cache.sh
+        . "$SCRIPT_DIR/lock-table-cache.sh" 2>/dev/null || { echo "unknown (lock-table-cache.sh unreadable)"; exit 0; }
+        # shellcheck source=agents/scripts/core/plan-lock-gate.sh
+        . "$SCRIPT_DIR/plan-lock-gate.sh" 2>/dev/null || { echo "unknown (plan-lock-gate.sh unreadable)"; exit 0; }
+        command -v plan_lock_gate_decide >/dev/null 2>&1 || { echo "unknown (plan_lock_gate_decide missing)"; exit 0; }
+        if ! printf '%s\n' "$changed" | plan_lock_gate_decide "$head_ref" >/dev/null 2>&1; then
+            echo collides
+            exit 0
+        fi
+        case "$(_mg_planlock_red_cause "$owner" "$repo" "$head_sha")" in
+            collision) echo clean ;;
+            infra)     echo "infra (the red is an infrastructure failure, not a collision)" ;;
+            *)         echo "infra (the red's cause could not be read from the run's annotations)" ;;
+        esac
     )
 }
 
@@ -352,7 +415,10 @@ _mg_planlock_verdict_report() {
             echo "BLOCK: Plan-lock gate: stale red — re-run, do not override. Re-evaluated against the current refs/locks table, none of this PR's changed files overlaps another branch's live lock any more (the colliding lock was released or aged past the cutoff since the gate ran), so plan-lock-out-of-band is refused. Re-run the gate: gh api \"repos/${owner}/${repo}/commits/${head_sha}/check-runs?check_name=Plan-lock%20gate\" --jq '.check_runs[0].details_url' — the run id is the number after /runs/ — then gh run rerun <that-id>." >&2
             return 0 ;;
         unknown*)
-            echo "WARN: could not re-evaluate the Plan-lock gate red against the current lock table (PR diff or head ref unavailable); the plan-lock-out-of-band downgrade stands as recorded." >&2
+            echo "WARN: could not re-evaluate the Plan-lock gate red against the current lock table — ${verdict#unknown }; the plan-lock-out-of-band downgrade stands as recorded." >&2
+            ;;
+        infra*)
+            echo "WARN: the current lock table shows no collision, but ${verdict#infra } — a re-run would not clear it, so the plan-lock-out-of-band downgrade stands. Fix the gate's infrastructure (refs/locks fetch / base ref)." >&2
             ;;
     esac
     return 1
@@ -1018,7 +1084,7 @@ poll_merge_gates() {
         if [ "$ci_warn_downgraded" -gt 0 ] && _mg_csv_has "$dg_names" "Plan-lock gate"; then
             if [ "$planlock_recheck_head" != "$head_sha" ]; then
                 planlock_recheck_head="$head_sha"
-                planlock_recheck_verdict="$(_mg_planlock_recheck "$owner" "$repo" "$prNumber" "${fields[38]}")"
+                planlock_recheck_verdict="$(_mg_planlock_recheck "$owner" "$repo" "$prNumber" "${fields[38]}" "$head_sha")"
             fi
             if _mg_planlock_verdict_report "$planlock_recheck_verdict" "$owner" "$repo" "$head_sha"; then
                 ci_fail=$((ci_fail + 1))
