@@ -44,8 +44,16 @@
 #
 # LIVE MODE (default — the workflow): env ACG_REPO (owner/name), ACG_PR, ACG_SHA
 # (the PR head the run is attached to); GH_TOKEN for `gh api`. Polls every
-# ACG_POLL_SECONDS (default 90, floor 30 — each poll is 2-3 REST calls against the
-# 1,000/h per-repo GITHUB_TOKEN budget every workflow shares). Failure modes:
+# ACG_POLL_SECONDS (default 90, floor 30). REST BUDGET — each poll reads 2-3
+# lists from the 1,000/h per-repo GITHUB_TOKEN budget every workflow shares, so:
+#   * every GET is conditional (If-None-Match with the ETag of the last 200 for
+#     that page); an unchanged list answers 304, which GitHub does not count
+#     against the rate limit, and the cached body is reused;
+#   * X-RateLimit-Remaining is read off every response: below ACG_RL_LOW
+#     (default 200) the poll interval widens x4; below ACG_RL_STOP (default 50),
+#     or on a rate-limited 403/429, polling pauses until X-RateLimit-Reset (the
+#     check stays pending meanwhile; the wait budget still bounds it).
+# Failure modes:
 #   * first blocking red -> exit 1 at once (fail fast);
 #   * all terminal + green -> re-poll after ACG_SETTLE_SECONDS (default 60) and
 #     pass only if the check set is unchanged (late checks: a dependent job, the
@@ -62,8 +70,8 @@
 #     typical one: CodeQL analyze alone may run its 90-min timeout-minutes, and
 #     Windows + MSVC (45) feeds Bucket-E (45) serially, each after queueing for
 #     a runner — 170 min covers either with queue slack. The workflow's
-#     timeout-minutes sits above budget + the settle grace so the script, not
-#     the runner, reports the pending set (bats pins the ordering);
+#     timeout-minutes sits above budget + the longest post-deadline sleep, so
+#     the script, not the runner, reports the pending set (bats pins it);
 #   * ACG_MAX_API_FAILURES (default 10) consecutive API failures -> exit 2.
 # The PR (head, state, labels, body) is re-read every ACG_PR_REFRESH_POLLS
 # (default 5) polls and always before a terminal verdict.
@@ -75,7 +83,7 @@
 # Env (both modes): ACG_SELF (this check's name), ACG_REQUIRED_CONTEXTS
 # (NEWLINE-separated — check names can contain commas; overrides the fixture's /
 # project.config.json's set — set but empty disables the required-absent rule).
-# Test seam: ACG_SLEEP_BIN (default `sleep`).
+# Test seams: ACG_SLEEP_BIN (default `sleep`), ACG_PER_PAGE (default 100).
 #
 # Exit: 0 success / verdict moot (PR no longer open) · 1 failure (red, timeout,
 #       superseded) · 2 usage / API error · 3 pending (fixture mode only).
@@ -241,30 +249,124 @@ MAX_WAIT="$(int_or "${ACG_MAX_WAIT_SECONDS:-}" 10200)"
 MAX_API_FAIL="$(int_or "${ACG_MAX_API_FAILURES:-}" 10)"
 PR_REFRESH="$(int_or "${ACG_PR_REFRESH_POLLS:-}" 5)"
 [ "$PR_REFRESH" -ge 1 ] || PR_REFRESH=1
+RL_LOW="$(int_or "${ACG_RL_LOW:-}" 200)"
+RL_STOP="$(int_or "${ACG_RL_STOP:-}" 50)"
+PER_PAGE="$(int_or "${ACG_PER_PAGE:-}" 100)"
+[ "$PER_PAGE" -ge 1 ] && [ "$PER_PAGE" -le 100 ] || PER_PAGE=100
 SLEEP_BIN="${ACG_SLEEP_BIN:-sleep}"
 
 REQ="$(required_contexts_json "")" || die "cannot read required contexts"
 WORK="$(mktemp -d)" || die "mktemp failed"
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/cache" || die "mktemp failed"
 echo '{"head":"","state":"open","labels":[],"body":""}' > "$WORK/pr.json"
+RL_REMAINING=""   # X-RateLimit-Remaining of the last response ("" = not seen)
+RL_RESET=""       # X-RateLimit-Reset (epoch seconds) of the last response
+
+# header <name> — a response header's value from $WORK/hdr (case-insensitive).
+header() {
+    awk -v k="$1" 'BEGIN { k = tolower(k) }
+        { i = index($0, ":"); if (i > 0 && tolower(substr($0, 1, i - 1)) == k) {
+              v = substr($0, i + 1); sub(/^[ \t]+/, "", v); print v; exit } }' "$WORK/hdr"
+}
+
+# rest_get <key> <endpoint> — GET one REST page into $WORK/cache/<key>.body.
+# Conditional: sends If-None-Match with the ETag of the last 200 for <key>; a
+# 304 (exit non-zero from gh, headers still printed) reuses the cached body and
+# costs no rate limit. Records X-RateLimit-Remaining / -Reset.
+# Returns 0 ok · 1 error · 3 rate-limited (403/429 with no calls remaining).
+rest_get() {
+    local key="$1" endpoint="$2" code remaining reset etag=""
+    local -a cond=()
+    if [ -s "$WORK/cache/$key.etag" ] && [ -f "$WORK/cache/$key.body" ]; then
+        etag="$(cat "$WORK/cache/$key.etag")"
+        cond=(-H "If-None-Match: $etag")
+    fi
+    # Exit status deliberately ignored: gh exits non-zero on the 304 this
+    # relies on — the status line below is the verdict.
+    gh api -i ${cond[@]+"${cond[@]}"} "$endpoint" > "$WORK/raw" 2>"$WORK/raw.err" || :
+    awk -v H="$WORK/hdr" -v B="$WORK/body" '
+        BEGIN { inhdr = 1; printf "" > H; printf "" > B }
+        inhdr { sub(/\r$/, ""); if ($0 == "") { inhdr = 0; next } print > H; next }
+        { print > B }' "$WORK/raw"
+    code="$(awk 'NR == 1 { print $2; exit }' "$WORK/hdr")"
+    remaining="$(header X-RateLimit-Remaining)"
+    reset="$(header X-RateLimit-Reset)"
+    [[ "$remaining" =~ ^[0-9]+$ ]] && RL_REMAINING="$remaining"
+    [[ "$reset" =~ ^[0-9]+$ ]] && RL_RESET="$reset"
+    case "$code" in
+        2??)
+            jq -e . "$WORK/body" >/dev/null 2>&1 || return 1
+            mv "$WORK/body" "$WORK/cache/$key.body"
+            header ETag > "$WORK/cache/$key.etag"
+            return 0 ;;
+        304)
+            [ -n "$etag" ] || return 1
+            return 0 ;;
+        403|429)
+            if [ "$remaining" = "0" ]; then return 3; fi
+            return 1 ;;
+        *) return 1 ;;
+    esac
+}
+
+# fetch_list <kind> <endpoint> <array-field> <projection> — every page of a
+# list endpoint, each item through <projection>, into $WORK/<kind>.json. A page
+# shorter than PER_PAGE is the last one.
+fetch_list() {
+    local kind="$1" endpoint="$2" field="$3" proj="$4" page=1 n rc sep='?'
+    case "$endpoint" in *\?*) sep='&' ;; esac
+    : > "$WORK/$kind.items"
+    while :; do
+        rc=0
+        rest_get "$kind.$page" "$endpoint${sep}per_page=$PER_PAGE&page=$page" || rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+        jq -c --arg f "$field" ".[\$f][]? | $proj" "$WORK/cache/$kind.$page.body" >> "$WORK/$kind.items" || return 1
+        n="$(jq --arg f "$field" '.[$f] | length' "$WORK/cache/$kind.$page.body")" || return 1
+        [ "$n" -ge "$PER_PAGE" ] || break
+        page=$(( page + 1 ))
+        [ "$page" -le 50 ] || break   # 5,000 entries: far past any real head
+    done
+    jq -s '.' "$WORK/$kind.items" > "$WORK/$kind.json"
+}
 
 # fetch_checks — the head's check runs + commit statuses (every page) into $WORK.
 fetch_checks() {
-    gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100&filter=all" \
-        --jq '.check_runs[] | {id, name, status, conclusion, started_at, completed_at, check_suite: {id: .check_suite.id}}' \
-        | jq -s '.' > "$WORK/runs.json" || return 1
-    gh api --paginate "repos/$REPO/commits/$SHA/status?per_page=100" \
-        --jq '.statuses[] | {id, context, state, created_at, updated_at}' \
-        | jq -s '.' > "$WORK/stats.json" || return 1
+    fetch_list runs "repos/$REPO/commits/$SHA/check-runs?filter=all" check_runs \
+        '{id, name, status, conclusion, started_at, completed_at, check_suite: {id: .check_suite.id}}' || return
+    fetch_list stats "repos/$REPO/commits/$SHA/status" statuses \
+        '{id, context, state, created_at, updated_at}' || return
 }
 
 # fetch_pr — head SHA, state (open | closed | merged), live labels + body (the
 # disposition markers).
 fetch_pr() {
-    gh api "repos/$REPO/pulls/$PR" \
-        --jq '{head: .head.sha, state: (if .merged == true then "merged" else .state end), labels: [.labels[]?.name], body: (.body // "")}' \
-        > "$WORK/pr.json.new" || return 1
+    local rc=0
+    rest_get pr "repos/$REPO/pulls/$PR" || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    jq '{head: .head.sha, state: (if .merged == true then "merged" else .state end), labels: [.labels[]?.name], body: (.body // "")}' \
+        "$WORK/cache/pr.body" > "$WORK/pr.json.new" || return 1
     mv "$WORK/pr.json.new" "$WORK/pr.json"
+}
+
+# poll_wait — sleep before the next poll, sized by the REST budget left: the
+# base interval; x4 below RL_LOW; below RL_STOP, until the rate-limit reset
+# (never past the wait budget — the deadline check then reports the timeout).
+poll_wait() {
+    local wait="$POLL" now left
+    if [ -n "$RL_REMAINING" ] && [ "$RL_REMAINING" -lt "$RL_STOP" ]; then
+        now="$(date +%s)"
+        wait=$(( ${RL_RESET:-0} - now + 5 ))
+        [ "$wait" -ge "$POLL" ] || wait="$POLL"
+        left=$(( DEADLINE - now ))
+        [ "$left" -ge 1 ] || left=1
+        [ "$wait" -le "$left" ] || wait="$left"
+        echo "::warning title=All checks green — REST budget low::GITHUB_TOKEN has $RL_REMAINING REST calls left; pausing polls ${wait}s until the rate-limit reset (this check stays pending meanwhile)."
+    elif [ -n "$RL_REMAINING" ] && [ "$RL_REMAINING" -lt "$RL_LOW" ]; then
+        wait=$(( POLL * 4 ))
+        echo "all-checks-green: REST budget low ($RL_REMAINING calls left) — poll interval widened to ${wait}s."
+    fi
+    "$SLEEP_BIN" "$wait"
 }
 
 # pr_superseded — end the run when the PR moved on. A PR that is no longer open
@@ -305,13 +407,27 @@ while :; do
     poll=$(( poll + 1 ))
     pr_fresh=0
     if [ $(( (poll - 1) % PR_REFRESH )) -eq 0 ]; then pr_fresh=1; fi
-    if ! fetch_checks || { [ "$pr_fresh" -eq 1 ] && ! fetch_pr; }; then
+    fetch_rc=0
+    fetch_checks || fetch_rc=$?
+    if [ "$fetch_rc" -eq 0 ] && [ "$pr_fresh" -eq 1 ]; then fetch_pr || fetch_rc=$?; fi
+    if [ "$fetch_rc" -eq 3 ]; then
+        # Rate-limited: not an API failure — wait for the reset, within budget.
+        RL_REMAINING=0
+        if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "::error title=All checks green — timed out::GITHUB_TOKEN REST budget exhausted and the ${MAX_WAIT}s wait budget is spent. Re-run the job."
+            exit 1
+        fi
+        echo "all-checks-green: poll $poll — rate-limited by GitHub."
+        poll_wait
+        continue
+    fi
+    if [ "$fetch_rc" -ne 0 ]; then
         api_fail=$(( api_fail + 1 ))
         if [ "$api_fail" -ge "$MAX_API_FAIL" ]; then
             echo "::error title=All checks green — GitHub API unavailable::$api_fail consecutive API failures; failing closed. Re-run the job."
             exit 2
         fi
-        echo "all-checks-green: poll $poll — GitHub API error ($api_fail/$MAX_API_FAIL), backing off."
+        echo "all-checks-green: poll $poll — GitHub API error ($api_fail/$MAX_API_FAIL): $(head -n 1 "$WORK/raw.err" 2>/dev/null || :) — backing off."
         "$SLEEP_BIN" $(( POLL * 2 > 300 ? 300 : POLL * 2 ))
         continue
     fi
@@ -363,5 +479,5 @@ while :; do
         echo "::error title=All checks green — timed out::still pending after ${MAX_WAIT}s — a timeout is red (fail-closed). Re-run the job once the pending checks finish."
         exit 1
     fi
-    "$SLEEP_BIN" "$POLL"
+    poll_wait
 done
