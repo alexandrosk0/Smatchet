@@ -138,7 +138,7 @@ User decisions:
     - you would exceed a size cap;
     - you need a file outside the list.
 14. **After merge:** append 3–6 lines under your slice id in `## Implementation log` of
-    `docs/plans/active/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
+    `docs/plans/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
     docs-only follow-up commit on your next slice's branch, or on the same PR before merge.
 
 ## Slice index

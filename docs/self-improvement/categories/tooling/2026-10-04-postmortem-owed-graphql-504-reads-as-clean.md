@@ -10,7 +10,7 @@
 
 At SessionStart, `postmortem-owed.sh --list` printed `postmortem-owed: no gate escapes owed a postmortem (last 20 merges clean).` and the `--nudge` hook stayed silent. Both were wrong: #2286 had merged past a red check earlier the same day.
 
-Trigger 1+2 reads every merged PR's checks in a single batched call (the `gh pr list --state merged --limit "$FETCH_N" --json …statusCheckRollup` read into `ROWS` in `agents/scripts/core/postmortem-owed.sh`):
+Trigger 1+2 reads every merged PR's checks in a single batched call (the `gh pr list --state merged --limit "$FETCH_N" --json …statusCheckRollup` read into `ROWS` in `agent-layer/agents/scripts/core/postmortem-owed.sh`):
 
 ```bash
 done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
@@ -25,7 +25,7 @@ done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH
 With the fetch inside the timeout, the same script on the same tree reports both owed escapes:
 
 ```text
-$ POSTMORTEM_FETCH_N=30 bash agents/scripts/core/postmortem-owed.sh --list
+$ POSTMORTEM_FETCH_N=30 bash agent-layer/agents/scripts/core/postmortem-owed.sh --list
 postmortem owed: PR #2280 — red-check: Plan-lock gate; override: plan-lock-out-of-band
 postmortem owed: PR #2286 — red-check: Bucket-E UI tests (Mesa headless GL)
 ```

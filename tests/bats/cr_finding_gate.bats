@@ -804,16 +804,23 @@ run_nudge() {
 }
 
 @test "the action's disposition predicate rejects the playbook placeholder" {
-    # The same predicate is in the agent layer's merge-gates.d/10-gate-filter.sh and
-    # safe-admin-merge.sh; the layer's own safe_admin_merge.bats pins those copies.
-    local re='cr-disposition:[[:space:]]*[^[:space:]<]'
+    # The same predicates are in the agent layer's merge-gates.d/10-gate-filter.sh and
+    # safe-admin-merge.sh; the layer's own safe_admin_merge.bats tests those copies.
+    local re='cr-disposition:[[:space:]]*[^[:space:]<]' label_re='^cr-disposition:[^[:space:]<]'
     grep -qF "$re" "$ACTION"
+    grep -qF "grep -qE '$label_re'" "$ACTION"
     # The playbook placeholder quoted in a PR body does not attest; a real reason does.
-    ! printf '%s' 'needs cr-out-of-band + a cr-disposition:<reason> attestation' | grep -qiE "$re"
+    ! printf '%s' 'needs cr-out-of-band + a cr-disposition:<reason> attestation' | grep -qiE "$re" || false
     printf '%s' 'cr-disposition: cr-auto-review-disabled' | grep -qiE "$re"
-    # The jq side agrees (bare `cr-disposition:` label is not an attestation).
+    # As a label: the placeholder, a blank suffix and a bare prefix do not attest.
+    local label
+    for label in 'cr-disposition:<reason>' 'cr-disposition: ' 'cr-disposition:'; do
+        ! printf '%s\n' "$label" | grep -qE "$label_re" || false
+    done
+    printf '%s\n' 'cr-disposition:rate-limit-acked' | grep -qE "$label_re"
+    # The jq side agrees.
     command -v jq >/dev/null 2>&1 || skip "jq not installed"
-    [ "$(jq -n '["cr-disposition:"] | any(startswith("cr-disposition:") and length > 15)')" = false ]
-    [ "$(jq -n '["cr-disposition:x"] | any(startswith("cr-disposition:") and length > 15)')" = true ]
+    [ "$(jq -n '["cr-disposition:<reason>"] | any(test("^cr-disposition:[^[:space:]<]"))')" = false ]
+    [ "$(jq -n '["cr-disposition:x"] | any(test("^cr-disposition:[^[:space:]<]"))')" = true ]
     [ "$(jq -n --arg b 'cr-disposition:<reason>' '$b | test("cr-disposition:[[:space:]]*[^[:space:]<]"; "i")')" = false ]
 }

@@ -263,15 +263,15 @@ runs:
         # waiver lands cannot overwrite the override.
         #
         # One predicate across the layers (merge-gates.d/10-gate-filter.sh and
-        # safe-admin-merge.sh use the same regex): a label `cr-disposition:<x>`
-        # with a non-empty suffix, or a body marker whose reason does not start
+        # safe-admin-merge.sh use the same regexes): a label or a body marker
+        # `cr-disposition:<reason>` whose reason is not blank and does not start
         # with `<` — so the playbook's own `cr-disposition:<reason>` placeholder,
-        # quoted in a PR body, is not an attestation.
+        # as a label or quoted in a PR body, is not an attestation.
         waiver_present() {
           local labels pr_body
           labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
           printf '%s\n' "$labels" | grep -qx 'cr-out-of-band' || return 1
-          printf '%s\n' "$labels" | grep -qE '^cr-disposition:.+' && return 0
+          printf '%s\n' "$labels" | grep -qE '^cr-disposition:[^[:space:]<]' && return 0
           pr_body=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.body // ""' 2>/dev/null || true)
           printf '%s' "$pr_body" | grep -qiE 'cr-disposition:[[:space:]]*[^[:space:]<]' && return 0
           echo "WARN: cr-out-of-band present but no cr-disposition:<reason> label/body marker — override not honoured (PR-3)." >&2
