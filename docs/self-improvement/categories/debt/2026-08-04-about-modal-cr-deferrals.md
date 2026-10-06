@@ -30,5 +30,6 @@
   `app.version --json`, which is the right home for a config-touching check). For (1),
   no action unless the revisit trigger fires.
 
+  Re-scoped 2026-10-06 (backlog-sweep-2026-10): GatherAboutInfo takes a supplied TrackerConfig, so its doctests no longer read the on-disk config (PR #2296). Remaining: (1) the synchronous GatherAboutInfo call moves off the UI thread when it gains any new I/O (that is its trigger).
   Status: open
-  Last-reviewed: 2026-08-04
+  Last-reviewed: 2026-10-06

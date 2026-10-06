@@ -774,6 +774,20 @@
   Status: applied (2026-10-04; was: parked)
   Last-reviewed: 2026-10-04
 
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/include/IAiClient.h:14` `virtual ~IAiClient() {}` should be `= default`
+  Details: Defaulted destructor preferred for trivial-destruct interfaces; rule-of-three compliance.
+  Concrete next action: `virtual ~IAiClient() = default;` + add rule-of-three (copy/move ctor + assign defaults). Surfaced by retrospective code-review sweep on PR #140.
+  Resolution: applied 2026-10-06 (backlog-sweep-2026-10, PR #2296) — IAiClient's destructor is '= default'; copy/move semantics unchanged (the interface declares none, so rule-of-three adds nothing).
+  Status: applied (2026-10-06; was: parked)
+  Last-reviewed: 2026-10-06
+
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/src/OpenAiClient.cpp:18-22` `JoinUrl` does not handle `base` ending `//` or non-leading-slash `path`
+  Details: All call sites safe today; defensive note in case of future refactor.
+  Concrete next action: comment or `CHECK` invariants at the function head. Surfaced by retrospective code-review sweep on PR #140.
+  Resolution: applied 2026-10-06 (backlog-sweep-2026-10, PR #2296) — JoinUrl moved to AiWirePure.h and strips every trailing '/' of the base and every leading '/' of the path, so exactly one '/' joins them; pinned by tests/Core/AiWirePure.test.cpp.
+  Status: applied (2026-10-06; was: parked)
+  Last-reviewed: 2026-10-06
+
 - 2026-05-16 · test-author · [tooling] · P2 — Phase 7 pink-clear dock-gap scan (deferred from Phase 7 scenario set)
   Details: AGENTS.md § Debug techniques documents the magenta-clear trick (`glClearColor(1, 0, 1, 1)`) for detecting dock-gap leaks. The Phase 7 `DockGapSentinelScenario` originally planned to flip the clear color during its warm-up frames so any visible pink in the captured PPM = real dock gap. Implementation required a new `UiDrawSession::requestClearColor` flag + a `Source/Standalone/main.cpp` consumer — non-trivial surface for marginal coverage given the L∞ diff against a clean golden already catches dock-shift regressions. `smatchet::test::CountPixels(img, 255, 0, 255, tol)` shipped in `tests/support/GoldenImage.h` to enable the scan once the clear-color toggle lands.
   Concrete next action: add `requestClearColor{R,G,B,A}` fields to `UiDrawSession` + restore-on-clear-after-frame consumer in main.cpp; extend `DockGapSentinelScenario` to set pink-clear during warm-up + bash script to run `CountPixels(img, 255, 0, 255, 8) == 0` as a hard assertion. Estimated cost ~1.5 h.

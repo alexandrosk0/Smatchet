@@ -87,18 +87,6 @@
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/include/IAiClient.h:14` `virtual ~IAiClient() {}` should be `= default`
-  Details: Defaulted destructor preferred for trivial-destruct interfaces; rule-of-three compliance.
-  Concrete next action: `virtual ~IAiClient() = default;` + add rule-of-three (copy/move ctor + assign defaults). Surfaced by retrospective code-review sweep on PR #140.
-  Status: parked
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/src/OpenAiClient.cpp:18-22` `JoinUrl` does not handle `base` ending `//` or non-leading-slash `path`
-  Details: All call sites safe today; defensive note in case of future refactor.
-  Concrete next action: comment or `CHECK` invariants at the function head. Surfaced by retrospective code-review sweep on PR #140.
-  Status: parked
-  Last-reviewed: 2026-05-18
-
 - 2026-05-16 · test-author · [tooling] · P3 — Phase 7 mutation-sanity demo (bootstrap → mutate → revert)
   Details: Per AGENTS.md plan-revision contract + plan-locks packet, each high-risk verification should ship a mutation-sanity recipe: introduce a deliberate one-pixel offset in the production path, observe the gate fail, then revert before commit. Phase 7's two new scenarios + bash gate need the **first golden capture on the user's machine** before mutation-sanity can be meaningful — a freshly-bootstrapped golden is byte-equal to its own capture, so the mutation has to follow the bootstrap. `scripts/dev/test-screenshot-diff.sh` documents the recipe inline in its header.
   Concrete next action: dedicated demo session: (1) `bash scripts/dev/test-screenshot-diff.sh --bootstrap` to capture clean goldens, (2) nudge ImGui dock-spacing or palette padding by 1px in `SmatchetUI.cpp` / `SmatchetTheme.cpp`, (3) rerun the gate, observe diff helper reporting `L∞ > 4`, (4) revert before commit. Estimated cost ~20 min when adjacent to the next dev session that touches dock layout.
