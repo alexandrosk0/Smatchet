@@ -160,7 +160,7 @@ FieldEditCommitResult CommitOnWorker(AppController& app, const PendingFieldEdit&
 }
 
 // Worker body — runs OFF the UI thread and posts exactly one completion lambda back via
-// MainThreadDispatcher::PostCompletionToMainThread, which a full queue never evicts. CommitOnWorker
+// MainThreadDispatcher::PostCompletionToMainThread, which a droppable-task overflow never evicts. CommitOnWorker
 // contains any exception from the commit, so the post (and with it the UI-thread in-flight gate
 // release) is reached on every path.
 //

@@ -22,8 +22,9 @@ class IMainThreadPoster {
     /// thread; a no-op once shutdown has begun (see MainThreadDispatcher).
     virtual void PostToMainThread(std::function<void()> fn) = 0;
 
-    /// Post a completion (releases a caller's in-flight latch; MainThreadDispatcher never evicts
-    /// one on overflow). Defaults to PostToMainThread for posters without a completion path.
+    /// Post a completion (releases a caller's in-flight latch). MainThreadDispatcher keeps completions
+    /// through a droppable-task overflow; only its own completion cap evicts one. Defaults to
+    /// PostToMainThread, droppable, for posters without a completion path.
     virtual void PostCompletionToMainThread(std::function<void()> fn) { PostToMainThread(std::move(fn)); }
 };
 

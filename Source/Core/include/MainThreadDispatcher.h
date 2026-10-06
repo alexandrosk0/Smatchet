@@ -83,10 +83,11 @@ class MainThreadDispatcher {
             tasks.swap(queue_);
             completionsQueued_ = 0;
         }
-        const bool budgeted = !shuttingDown_.load(std::memory_order_acquire);
+        bool budgeted = !shuttingDown_.load(std::memory_order_acquire);
         const auto deadline = std::chrono::steady_clock::now() + DrainBudget();
         std::size_t ran = 0;
         std::size_t deferred = 0;
+        bool deferFailed = false;
         for (std::size_t i = 0; i < tasks.size(); ++i) {
             if (tasks[i].Fn) {
                 tasks[i].Fn();
@@ -97,28 +98,25 @@ class MainThreadDispatcher {
             // and only when work remains. During shutdown the budget is ignored so the final drain
             // empties the queue rather than orphaning the tail.
             if (budgeted && i + 1 < tasks.size() && std::chrono::steady_clock::now() >= deadline) {
-                std::vector<Entry> tail;
-                tail.reserve(tasks.size() - (i + 1));
-                for (std::size_t j = i + 1; j < tasks.size(); ++j) {
-                    tail.push_back(std::move(tasks[j]));
+                const std::size_t pending = tasks.size() - (i + 1);
+                if (DeferTail(tasks, i + 1)) {
+                    deferred = pending;
+                    break;
                 }
-                deferred = tail.size();
-                smatchet::DispatcherQueueTrim trim;
-                {
-                    std::lock_guard<std::mutex> lk(mutex_);
-                    std::vector<Entry> merged;
-                    smatchet::RequeueDeferredFront(tail, queue_, (std::numeric_limits<std::size_t>::max)(), merged);
-                    trim = smatchet::TrimDispatcherQueue(merged, kMaxQueueSize, kMaxCompletionQueueSize,
-                                                         &MainThreadDispatcher::IsCompletion);
-                    completionsQueued_ = trim.CompletionsLeft;
-                    queue_.swap(merged);
-                }
-                ReportEvicted(trim);
-                break;
+                // No memory to defer the tail: run it this frame, over budget, rather than lose it.
+                budgeted = false;
+                deferFailed = true;
             }
         }
         lastDrainTaskCount_.store(ran, std::memory_order_release);
         lastDrainDeferredCount_.store(deferred, std::memory_order_release);
+        if (deferFailed && ShouldLogLoss(lastWarnLogNs_)) {
+            try {
+                LOG_WARN("MainThreadDispatcher: could not defer the drain's tail (out of memory); ran it over budget");
+            } catch (...) {
+                // catch-all-ok: nothing was lost; the line is informational and a drain must not throw for it.
+            }
+        }
     }
 
     /// Stop accepting new posts. After this returns, all `PostToMainThread` calls become
@@ -213,6 +211,32 @@ class MainThreadDispatcher {
             }
         }
         ReportEvicted(trim);
+    }
+
+    /// Moves `tasks[first..]` to the front of the queue for the next frame, ahead of anything posted
+    /// meanwhile, then applies the caps. False, with nothing moved, when the merged queue cannot be
+    /// allocated; the caller then runs the tail itself. UI thread (Drain) only.
+    bool DeferTail(std::vector<Entry>& tasks, std::size_t first) {
+        smatchet::DispatcherQueueTrim trim;
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            std::vector<Entry> merged;
+            try {
+                merged.reserve((tasks.size() - first) + queue_.size());
+            } catch (const std::exception&) {
+                return false; // typically std::bad_alloc; tasks and queue_ are untouched
+            }
+            // The tasks already run are empty husks; dropping them moves the tail down without allocating.
+            tasks.erase(tasks.begin(), tasks.begin() + static_cast<std::ptrdiff_t>(first));
+            // `merged` already holds room for both ranges, so the requeue does not reallocate.
+            smatchet::RequeueDeferredFront(tasks, queue_, (std::numeric_limits<std::size_t>::max)(), merged);
+            trim = smatchet::TrimDispatcherQueue(merged, kMaxQueueSize, kMaxCompletionQueueSize,
+                                                 &MainThreadDispatcher::IsCompletion);
+            completionsQueued_ = trim.CompletionsLeft;
+            queue_.swap(merged);
+        }
+        ReportEvicted(trim);
+        return true;
     }
 
     void ReportEvicted(const smatchet::DispatcherQueueTrim& trim) {
