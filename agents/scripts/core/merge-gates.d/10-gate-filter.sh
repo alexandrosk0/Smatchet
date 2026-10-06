@@ -364,6 +364,13 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
             | any((test("rate.?limit"; "i") or test("try again later"; "i"))
                   and test("(^|[^0-9a-f])" + $sha[0:7]; "i"))))) as $crratelimitedhead
 | ($pureDocs and (($crall | length) == 0) and ($cropen == 0) and $crratelimitedhead) as $crratelimitdocspass
+# crManualOnly — the head "CodeRabbit" status is the OSS manual-trigger state
+# ("Review skipped: manual review required for this OSS repository" / "Review
+# available on request"): CR posted SUCCESS without reviewing and will not
+# review until a human asks. Read by the NONE arm so the status-only
+# grace-then-pass never passes such a head.
+| ($crstatusdescs
+   | any(test("manual review required"; "i") or test("available on request"; "i"))) as $crmanualonly
 # Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
 # reviews authored by cursor[bot] (its summary review, always state COMMENTED).
 # $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries
@@ -466,6 +473,8 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
     (($planlock and ($planlockdisposition | not)
       and ($failing | any(.__typename == "CheckRun" and .name == "Plan-lock gate"))) | tostring),
     # crRateLimitDocsPass — the pure-docs rate-limit auto-downgrade may fire
-    ($crratelimitdocspass | tostring)
+    ($crratelimitdocspass | tostring),
+    # crManualOnly — head CodeRabbit status is the OSS manual-trigger skip
+    ($crmanualonly | tostring)
   )
 '

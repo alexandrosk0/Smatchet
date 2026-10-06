@@ -232,7 +232,7 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 41-field
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 42-field
 #                        projection) as a template emitter; run by standalone
 #                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
@@ -270,6 +270,21 @@ _mg_csv_has() {
         rest="${rest#*, }"
     done
     return 1
+}
+
+# _mg_strip_jq_comment_lines <jq program> — the program without its full-line
+# `#` comments. They hold about half the gate filter's bytes and none of its
+# logic; dropping them keeps the jq-less `gh --jq` path (filter on argv) well
+# under the Windows 32,767-char exec cap as the filter grows. Only lines whose
+# first non-blank character is `#` go: the filter has no multi-line string
+# literal for such a line to sit inside, and trailing `# …` stays (harmless).
+_mg_strip_jq_comment_lines() {
+    local line out=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        out+="$line"$'\n'
+    done <<<"$1"
+    printf '%s' "$out"
 }
 
 # _mg_csv_drop <", "-joined list> <name> — the list without <name>.
@@ -711,7 +726,7 @@ poll_merge_gates() {
     start=$(date +%s)
 
     # One filter computes every gate field and emits them as a fixed-order,
-    # one-per-line stream (41 lines) that the poll loop reads with `mapfile`.
+    # one-per-line stream (42 lines) that the poll loop reads with `mapfile`.
     # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
     # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
     # jq sub-expressions are the same ones the per-field `jq` calls used
@@ -755,7 +770,7 @@ poll_merge_gates() {
     # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 41-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 42-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
     # crDisposition (30), the two numeric thread counts (31/32) and
@@ -778,8 +793,11 @@ poll_merge_gates() {
     # auto-downgrade may adjudicate gate 2 — pure-docs diff, CR never reviewed
     # the PR, no open CR thread, and the rate-limit signal is on the CURRENT
     # head; the same predicate discounts the pending CR findings context from
-    # ci_pend; non-empty, safe at the tail).
-    # GATE_FILTER — the 41-field jq projection (see field-order map above).
+    # ci_pend; non-empty, safe at the tail) ·
+    # 41 crManualOnly (bool: the head CodeRabbit status is the OSS manual-trigger
+    # skip — "manual review required" / "available on request" — so a SUCCESS
+    # state is NOT a review; non-empty, safe at the tail).
+    # GATE_FILTER — the 42-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -795,6 +813,9 @@ poll_merge_gates() {
     # `test("…"; "i")` string literal — the regex has no jq/double-quote-special
     # chars, so a plain substitution is safe.
     GATE_FILTER="${GATE_FILTER//__BLOCK_ALLOWLIST_RE__/$MERGE_GATES_BLOCK_ALLOWLIST_RE}"
+    # Ship the program without its documentation comments (both engines run
+    # the identical stripped program; the source keeps every comment).
+    GATE_FILTER="$(_mg_strip_jq_comment_lines "$GATE_FILTER")"
 
     # Filter engine (tooling 2026-08-19 merge-gates-gh-jq-filter-exceeds-windows-
     # arg-cap). `gh --jq` has no file form, so routing the ~25 KB filter through
@@ -899,7 +920,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the filter's field stream — 41 fixed-order lines (see GATE_FILTER
+        # Parse the filter's field stream — 42 fixed-order lines (see GATE_FILTER
         # field map above). Filter errors (either engine) already routed through
         # the gh-fail path above; this guards a truncated/partial body → fail
         # closed (retry).
@@ -909,11 +930,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 41 ]; then
-            # Exactly 41 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 42 ]; then
+            # Exactly 42 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 41); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 42); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -1152,6 +1173,10 @@ poll_merge_gates() {
         # allowed (pure-docs diff, CR never reviewed the PR, no open CR thread,
         # rate-limit signal on the CURRENT head). Empty/parse-miss → false.
         local cr_rl_docs_pass="${fields[40]:-false}"
+        # cr_manual_only — field 41: the head CodeRabbit status is the OSS
+        # manual-trigger skip, so its SUCCESS state is not a review and must
+        # never ride the status-only grace-then-pass. Empty/parse-miss → false.
+        local cr_manual_only="${fields[41]:-false}"
         # dependabot_actions_bump — Dependabot-authored PR on a
         # dependabot/github_actions/* head (field 37). CR never reviews bot PRs,
         # so this is the one shape whose silent CR keeps the grace-then-pass
@@ -1349,6 +1374,20 @@ poll_merge_gates() {
                     # StatusContext placeholder still fired SUCCESS.
                     cr_pass=true
                     cr_state_print="NONE+status-SUCCESS+inline-evidence (${cr_thread_comments_on_head} CR comment(s) on head)"
+                elif [ "$cr_status_state" = "SUCCESS" ] && [ "$p" -ge "$CR_GRACE_POLLS" ] \
+                     && [ "$cr_manual_only" = true ] && [ "$dependabot_actions_bump" != true ]; then
+                    # The SUCCESS is the OSS manual-trigger skip ("Review skipped:
+                    # manual review required for this OSS repository" / "Review
+                    # available on request"): CR states it did NOT review and
+                    # will not until a human asks. Not a status-only review
+                    # config — the grace window ran out on a head nobody
+                    # reviewed, so this is the grace-expired block, waivable the
+                    # same way (cr-out-of-band + cr-disposition). A Dependabot
+                    # github-actions bump keeps its pass (CR never reviews bots).
+                    cr_pass=false
+                    cr_grace_expired_block=true
+                    cr_state_print="NONE+manual-review-required (CR skipped head — block)"
+                    echo "BLOCK: CodeRabbit status on head ${head_sha:0:8} is the OSS manual-trigger skip ('manual review required' / 'available on request') — CR did not review this head, and a SUCCESS state is not a review. Trigger one as a human: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber}. To merge without CR review, apply BOTH 'cr-out-of-band' AND 'cr-disposition:cr-auto-review-disabled' (label or PR-body marker)." >&2
                 elif [ "$cr_status_state" = "SUCCESS" ] && [ "$p" -ge "$CR_GRACE_POLLS" ]; then
                     # Status-SUCCESS but zero inline evidence on current head. Two
                     # possible causes: (a) a status-only CR config (rare; CR's

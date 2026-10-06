@@ -1062,6 +1062,61 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
+# The OSS manual-trigger status is CR saying it did NOT review; once the grace
+# window is out it must block like a silent head (grace-expired), never take
+# the status-only "assume status-only" pass.
+manual_status_fixture() {
+    # Usage: manual_status_fixture <CodeRabbit StatusContext description> [<labels JSON>]
+    local f1 out
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        "[{\"__typename\":\"CheckRun\",\"name\":\"build\",\"conclusion\":\"SUCCESS\",\"status\":\"COMPLETED\",\"isRequired\":true},{\"__typename\":\"StatusContext\",\"context\":\"CodeRabbit\",\"state\":\"SUCCESS\",\"description\":\"$1\",\"isRequired\":false}]")"
+    out="$(fixture_override "$f1" "data.repository.pullRequest.labels.nodes" "${2:-[]}")"
+    rm -f "$f1"
+    echo "$out"
+}
+
+@test "CR status 'manual review required' + grace expired -> BLOCK (never the status-only pass)" {
+    local f
+    f="$(manual_status_fixture "Review skipped: manual review required for this OSS repository")"
+    export MERGE_GATES_CR_INSTALLED=true MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"NONE+manual-review-required"* ]]
+    [[ "$output" != *"assume status-only"* ]]
+    [[ "$output" == *"trigger-coderabbit-review.sh"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR status 'Review available on request' + grace expired -> BLOCK too" {
+    local f
+    f="$(manual_status_fixture "Review available on request")"
+    export MERGE_GATES_CR_INSTALLED=true MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+manual-review-required"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR manual-review-required block + cr-out-of-band + cr-disposition -> waived (cr_override=1)" {
+    local f
+    f="$(manual_status_fixture "Review skipped: manual review required for this OSS repository" \
+        '[{"name":"cr-out-of-band"},{"name":"cr-disposition:cr-auto-review-disabled"}]')"
+    export MERGE_GATES_CR_INSTALLED=true MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=1"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
 @test "CR status description 'Review skipped: rate limited' -> NOT a terminal pass (rate-limit machinery binds instead)" {
     # Same shape, rate-limit flavor: a "Review skipped: rate limited" STATUS
     # description is TEMPORARY — CR re-reviews when quota recovers. It must not
@@ -3647,8 +3702,8 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 41; the
-    # -ne 41 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 42; the
+    # -ne 42 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
     # + thread-count + stale-override + dup-masked fields rely on).
     local f
@@ -3658,7 +3713,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 41"* ]]
+    [[ "$output" == *"expected 42"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
@@ -4263,6 +4318,9 @@ cr_findings_pending_ratelimit_fixture() {
     filter="${filter//__ORCH_USER__/some-fairly-long-github-login}"
     filter="${filter//__REQUIRED_CONTEXTS__/$req_ctx_json}"
     filter="${filter//__BLOCK_ALLOWLIST_RE__/advisory}"
+    # ...and ship it the way poll_merge_gates does: without the full-line
+    # documentation comments (_mg_strip_jq_comment_lines).
+    filter="$(_mg_strip_jq_comment_lines "$filter")"
 
     # 30,000 leaves ~2.7 KB of headroom under the 32,767 cap for the flags, the
     # gh path, and future required contexts. Blowing this budget means the
@@ -4270,6 +4328,22 @@ cr_findings_pending_ratelimit_fixture() {
     # budget should be raised.
     echo "spliced filter length: ${#filter}"
     [ "${#filter}" -lt 30000 ]
+}
+
+@test "argv budget: the shipped gate filter carries no full-line comment, and still parses" {
+    # The documentation comments stay in the source; poll_merge_gates strips
+    # them before either engine runs the program.
+    local filter
+    # shellcheck source=/dev/null
+    . "$SCRIPTS_DIR/merge-gates.d/10-gate-filter.sh"
+    filter="$(_mg_strip_jq_comment_lines "$_MG_GATE_FILTER_TEMPLATE")"
+    filter="${filter//__ORCH_USER__/x}"
+    filter="${filter//__REQUIRED_CONTEXTS__/[]}"
+    filter="${filter//__BLOCK_ALLOWLIST_RE__/.}"
+    [ "$(grep -cE '^[[:space:]]*#' <<<"$filter")" -eq 0 ]
+    [ "${#filter}" -lt "${#_MG_GATE_FILTER_TEMPLATE}" ]
+    run jq -r "$filter" "$FIXTURES_DIR/merge_gates_pass.json"
+    [ "$status" -eq 0 ]
 }
 
 @test "argv budget: GraphQL document is passed by file reference, not on argv" {
