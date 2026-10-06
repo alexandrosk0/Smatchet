@@ -127,8 +127,11 @@ def disposition($labels; $body; $prefix):
 # uses below (required, or name-matched and not advisory-named). An advisory
 # check cannot fail the gate and cannot produce a 405, so naming one here would
 # be a warning about something that can never bite.
+# The aggregate is dropped here too, as in $ctx above: every newer event cancels
+# its older run, and the resulting re-run warning would name a check this gate
+# never reads.
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
-   | map(select(.__typename == "CheckRun"))
+   | map(select(.__typename == "CheckRun" and .name != "All checks green (block-on-any-red)"))
    | map(. + {_n: (.name // ""), _s: (.checkSuite.createdAt // "")})
    | group_by(._n)
    | map(select(length > 1))

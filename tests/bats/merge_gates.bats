@@ -4231,3 +4231,22 @@ STUB
     [[ "$output" != *"parse error"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
 }
+
+@test "dedup WARN: silent on a cancelled older run of the All-checks-green aggregate" {
+    # Every push / label / body edit cancels the aggregate's in-flight run
+    # (cancel-in-progress), so a cross-suite CANCELLED twin of it sits on almost
+    # every head. The gate skips the aggregate ($ctx), so the dedup WARN must
+    # skip it too - otherwise it advises re-running a workflow the gate never reads.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":true},
+          {"__typename":"CheckRun","name":"All checks green (block-on-any-red)","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-05-22T11:05:00Z","checkSuite":{"createdAt":"2026-05-22T10:00:00Z"},"isRequired":false},
+          {"__typename":"CheckRun","name":"All checks green (block-on-any-red)","conclusion":null,"status":"IN_PROGRESS","startedAt":"2026-05-22T12:05:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"blocking context from an older workflow run"* ]]
+    rm -f "$f"
+}
