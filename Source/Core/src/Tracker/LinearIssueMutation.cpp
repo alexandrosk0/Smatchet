@@ -162,18 +162,6 @@ TrackerError LinearClient::UpdateIssueFields(const std::string& issueId, const n
     return TrackerError::Ok();
 }
 
-TrackerError LinearClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                                       const std::vector<std::string>& values) {
-    // Set-replace single-field edit: build the IssueUpdateInput key for this field
-    // (display→UUID option resolution lives in BuildIssueUpdateInput), then route
-    // through UpdateIssueFields so the UUID-resolve + issueUpdate happen once.
-    Result<nlohmann::json, TrackerError> payload = BuildFieldPayload(field, values);
-    if (!payload) {
-        return payload.error();
-    }
-    return UpdateIssueFields(issueId, payload.value());
-}
-
 Result<nlohmann::json, TrackerError> LinearClient::BuildFieldPayload(const TrackerField& field,
                                                                      const std::vector<std::string>& values) {
     // Pure — maps the Smatchet field id + set-replace values to a single
@@ -242,8 +230,8 @@ Result<std::string, TrackerError> LinearClient::CreateIssue(const nlohmann::json
 
 TrackerError LinearClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
                                                 const std::string& plainText) {
-    // cfg-carrying mutation — resolve credentials from the live cfg (matches
-    // CreateIssue / UpdateField). Resolve the issue UUID from the identifier, then
+    // cfg-carrying mutation — resolve credentials from the live cfg (the cfg-less
+    // writes resolve from the on-disk config). Resolve the issue UUID from the identifier, then
     // commentCreate with the body. Direct-post: comments are exempt from the
     // offline-queue + audit-trail wiring (mirrors the Jira/GitHub comment post).
     const smatchet::linear::LinearRequestAuth auth = ResolveAuth(&cfg);
