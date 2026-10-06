@@ -948,6 +948,34 @@ _resolve_py() {
     [[ "$output" == *"comment-commented-out-code"*"R.cpp:10"* ]]
 }
 
+@test "comment_audit.py --diff: a banner removed from file A never excuses a new one in file B; a rename does" {
+    PY="$(_resolve_py)" || skip "no working python interpreter"
+    AUDIT="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    banner='// ======================================'
+    printf 'void a() {}\n%s\nvoid b() {}\n' "$banner" > "$tmp/Source/Core/src/A.cpp"
+    printf '%s\nvoid f1() {}\nvoid f2() {}\nvoid f3() {}\nvoid f4() {}\nvoid f5() {}\n' "$banner" \
+        > "$tmp/Source/Core/src/Old.cpp"
+    ( cd "$tmp" && git init -q && git config user.email a@b.c && git config user.name t \
+        && git add -A && git commit -qm base ) >/dev/null 2>&1
+    # Drop A's banner and add the same banner to a NEW file B; rename Old -> New, moving its
+    # banner from the top to the bottom (one removed + one re-added line inside the pair).
+    printf 'void a() {}\nvoid b() {}\n' > "$tmp/Source/Core/src/A.cpp"
+    printf 'void c() {}\n%s\n' "$banner" > "$tmp/Source/Core/src/B.cpp"
+    ( cd "$tmp" && git mv Source/Core/src/Old.cpp Source/Core/src/New.cpp ) >/dev/null 2>&1
+    printf 'void f1() {}\nvoid f2() {}\nvoid f3() {}\nvoid f4() {}\nvoid f5() {}\n%s\n' "$banner" \
+        > "$tmp/Source/Core/src/New.cpp"
+    # diff.renames=false: the audit must follow the rename itself (-M), not rely on user config.
+    ( cd "$tmp" && git add -A && git config diff.renames false ) >/dev/null 2>&1
+    run bash -c "cd '$tmp' && '$PY' '$AUDIT' --diff HEAD"
+    rm -rf "$tmp"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"comment-decorative-banner"*"B.cpp:2"* ]]
+    [[ "$output" != *"New.cpp"* ]]
+}
+
 # ---------- catalog: format + determinism ----------
 
 @test "--catalog emits the rule-id sections + Totals" {

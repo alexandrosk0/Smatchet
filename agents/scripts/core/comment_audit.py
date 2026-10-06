@@ -371,30 +371,40 @@ def _in_sweep_scope(path):
 
 
 def _removed_comment_counter(diff):
-    """Counter of the `.strip()`-normalised full-line comments REMOVED in a unified diff (in-scope
-    files only). A comment that is moved or re-indented (clang-format reflow, relocation into a
-    less-nested helper) shows up as one removed + one added line with the same stripped text."""
+    """Counter of (new-side path, `.strip()`-normalised text) for the full-line comments REMOVED
+    in a unified diff (in-scope files only). A comment that is moved or re-indented within a file
+    (clang-format reflow, relocation into a less-nested helper) shows up as one removed + one added
+    line with the same stripped text in the same file. Keying by the file's NEW-side path follows a
+    rename (`--- a/<old>` / `+++ b/<new>`, the diff is generated with -M) while a comment removed
+    from file A never excuses an identical new one in file B, and a deleted file (`+++ /dev/null`)
+    excuses nothing."""
     removed = collections.Counter()
-    cur_file = None
+    in_header = False
+    new_path = None
     for ln in diff.splitlines():
-        if ln.startswith("--- "):
-            cur_file = ln[6:] if ln.startswith("--- a/") else None
-        elif ln.startswith("-") and cur_file and _in_sweep_scope(cur_file):
+        if ln.startswith("diff --git "):
+            in_header, new_path = True, None
+        elif in_header and ln.startswith("+++ "):
+            new_path = ln[6:] if ln.startswith("+++ b/") else None
+        elif ln.startswith("@@"):
+            in_header = False
+        elif not in_header and ln.startswith("-") and new_path and _in_sweep_scope(new_path):
             body = ln[1:]
             kinds = cl.classify_line_kinds(body + "\n")
             if kinds and kinds[0] == "full_comment":
-                removed[body.strip()] += 1
+                removed[(new_path, body.strip())] += 1
     return removed
 
 
 def _drop_relocated(hits, removed):
-    """Drop each added-line hit whose stripped text matches a still-unconsumed REMOVED comment
-    from the same diff, consuming one count per match: a relocated/re-indented pre-existing comment
-    is grandfathered, while a genuinely NEW copy beyond what was removed still flags."""
+    """Drop each added-line hit whose (path, stripped text) matches a still-unconsumed REMOVED
+    comment of the same file in the same diff, consuming one count per match: a relocated /
+    re-indented pre-existing comment is grandfathered, while a genuinely NEW copy beyond what was
+    removed — or one whose original lived in another file — still flags."""
     left = collections.Counter(removed)
     kept = []
     for hit in hits:
-        key = hit[4].strip()
+        key = (hit[0], hit[4].strip())
         if left[key] > 0:
             left[key] -= 1
             continue
@@ -415,7 +425,9 @@ def _scan_added_noise(ref):
         "cut-decorative": "comment-decorative-banner",
         "flag-commented-code": "comment-commented-out-code",
     }
-    diff = _git(["diff", "--unified=0", ref, "--", *[r + "**" for r in SWEEP_ROOTS]])
+    # -M: a renamed file pairs its removed comments with their re-added copies (see
+    # _removed_comment_counter) whatever the caller's diff.renames config says.
+    diff = _git(["diff", "-M", "--unified=0", ref, "--", *[r + "**" for r in SWEEP_ROOTS]])
     cur_file = None
     cur_line = 0
     hits = []
@@ -703,7 +715,7 @@ def run_selftest():
         "-// int vendored = 1;",
     ])
     removed = _removed_comment_counter(reloc_diff)
-    if dict(removed) != {"// int legacy = compute();": 1}:
+    if dict(removed) != {("Source/Core/src/A.cpp", "// int legacy = compute();"): 1}:
         print("FAIL: _removed_comment_counter expected one in-scope removed comment, got %r" % dict(removed))
         fails += 1
     reloc_hits = [("Source/Core/src/A.cpp", 20, "flag-commented-code", "comment-commented-out-code",
@@ -714,11 +726,50 @@ def run_selftest():
     if [h[1] for h in kept] != [21]:
         print("FAIL: _drop_relocated expected only the second (new) copy to flag, kept %r" % kept)
         fails += 1
+    # selftest: asserts-failure — a banner removed from file A (or a deleted file) must NOT
+    # excuse an identical new banner in file B; a renamed file's moved banner IS excused.
+    banner = "// ======================================"
+    xfile_diff = "\n".join([
+        "diff --git a/Source/Core/src/A.cpp b/Source/Core/src/A.cpp",
+        "--- a/Source/Core/src/A.cpp",
+        "+++ b/Source/Core/src/A.cpp",
+        "@@ -5 +4,0 @@",
+        "-" + banner,
+        "diff --git a/Source/Core/src/Gone.cpp b/Source/Core/src/Gone.cpp",
+        "deleted file mode 100644",
+        "--- a/Source/Core/src/Gone.cpp",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-" + banner,
+        "diff --git a/Source/Core/src/Old.cpp b/Source/Core/src/New.cpp",
+        "similarity index 90%",
+        "rename from Source/Core/src/Old.cpp",
+        "rename to Source/Core/src/New.cpp",
+        "--- a/Source/Core/src/Old.cpp",
+        "+++ b/Source/Core/src/New.cpp",
+        "@@ -3 +2,0 @@",
+        "-" + banner,
+        "@@ -0,0 +7 @@",
+        "+    " + banner,
+    ])
+    xremoved = _removed_comment_counter(xfile_diff)
+    want = {("Source/Core/src/A.cpp", banner): 1, ("Source/Core/src/New.cpp", banner): 1}
+    if dict(xremoved) != want:
+        print("FAIL: _removed_comment_counter expected per-file keys following the rename, got %r"
+              % dict(xremoved))
+        fails += 1
+    xhits = [("Source/Core/src/B.cpp", 3, "cut-decorative", "comment-decorative-banner", banner),
+             ("Source/Core/src/New.cpp", 7, "cut-decorative", "comment-decorative-banner", "    " + banner)]
+    xkept = _drop_relocated(xhits, xremoved)
+    if [(h[0], h[1]) for h in xkept] != [("Source/Core/src/B.cpp", 3)]:
+        print("FAIL: _drop_relocated must flag the cross-file copy and excuse only the renamed one, kept %r"
+              % xkept)
+        fails += 1
 
     if fails:
         print("comment_audit --selftest: FAIL (%d)" % fails)
         return 1
-    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator + %d deviation-wrap + relocation)"
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator + %d deviation-wrap + relocation + cross-file/rename)"
           % (len(flag), len(prose), len(sep_ok), len(dev_cases)))
     return 0
 
