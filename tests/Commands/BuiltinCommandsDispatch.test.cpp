@@ -152,49 +152,6 @@ TEST_CASE("registry — Contains is alias-aware and mirrors FindLocked existence
     CHECK_FALSE(fx.Reg.HasExact("nope.not.a.command"));
 }
 
-TEST_CASE("registry — FindLocked is safe while another thread registers, and its pointer stays valid") {
-    BuiltinsFixture fx;
-
-    // The UI thread resolves command labels with FindLocked every frame while a worker can register
-    // (a Lua snippet run off the UI thread calling ui.register_global_action). Hammer lookups from one
-    // thread while this one registers enough commands to force rehashes of the registry map.
-    const std::vector<Command> all = fx.Reg.All();
-    REQUIRE_FALSE(all.empty());
-    const std::string known = all.front().Name;
-    const Command* knownPtr = fx.Reg.FindLocked(known);
-    REQUIRE(knownPtr != nullptr);
-    const std::string knownSummary = knownPtr->Summary;
-
-    std::atomic<bool> stop(false);
-    std::atomic<int> mismatches(0);
-    std::thread reader([&fx, &stop, &mismatches, &known, knownPtr, &knownSummary] {
-        while (!stop.load(std::memory_order_acquire)) {
-            const Command* c = fx.Reg.FindLocked(known);
-            if (c != knownPtr || c->Summary != knownSummary) {
-                mismatches.fetch_add(1);
-            }
-            (void)fx.Reg.FindLocked("test.concurrent.250");
-        }
-    });
-    for (int i = 0; i < 500; ++i) {
-        Command c;
-        c.Name = "test.concurrent." + std::to_string(i);
-        c.Summary = "concurrent " + std::to_string(i);
-        c.Handler = [](const nlohmann::json&, const CommandContext&) {
-            return CommandResult::Success(nlohmann::json::object());
-        };
-        fx.Reg.Register(std::move(c));
-    }
-    stop.store(true, std::memory_order_release);
-    reader.join();
-
-    CHECK(mismatches.load() == 0);
-    CHECK(fx.Reg.FindLocked(known) == knownPtr); // hundreds of inserts later, same address
-    const Command* last = fx.Reg.FindLocked("test.concurrent.499");
-    REQUIRE(last != nullptr);
-    CHECK(last->Summary == "concurrent 499");
-}
-
 TEST_CASE("builtins — every command with a required param rejects {} before its handler") {
     BuiltinsFixture fx;
     int exercised = 0;

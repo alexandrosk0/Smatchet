@@ -9,6 +9,8 @@
 // exercise that path stops streaming once cancelled. The cancel-ack latency
 // budgets are advisory (doctest WARN_*): wall-clock time is not deterministic
 // on a loaded CI runner, so an overrun is reported but never fails the case.
+// The cancel behaviour itself is pinned by a case that cancels from inside
+// onDelta, which needs no clock at all.
 //
 // Pure C++14 — std::thread + std::chrono + AiCancelToken (= shared_ptr<atomic<bool>>).
 // No HTTP, no cpr, no production AI client.
@@ -97,15 +99,51 @@ TEST_CASE("StubAiClient: cancel mid-stream stops onDelta within 100 ms") {
 #endif
     WARN_FALSE(stub.CancelBudgetExceeded);
 
-    // Behaviour (deterministic, hard): the stub fired the cancellation error path.
+    // The cancel lands mid-stream only if this thread woke from its 50 ms sleep before the ~500 ms
+    // stream ended, which a stalled runner cannot promise, so these are advisory too. The case below
+    // pins the same behaviour deterministically.
+    WARN(stub.CancelObserved);
+    WARN(errorFired);
+    WARN(finalError.WasCancelled);
+    WARN(deltas.size() < 100u);
+    WARN(std::none_of(deltas.begin(), deltas.end(), [](const AiStreamDelta& d) { return d.IsFinal; }));
+    CHECK(deltas.size() == stub.DeltasEmitted); // every delta the stub emitted reached the callback
+}
+
+TEST_CASE("StubAiClient: a cancel observed between deltas ends the stream with the cancel error") {
+    // Deterministic: the cancel is set from inside onDelta (on the streaming thread) after the 5th
+    // delta, and the stub checks the token before each delta, so exactly 5 deltas are delivered.
+    smatchet_tests::StubAiClientScript script;
+    script.ProviderName = "stub-cancel-deterministic";
+    script.DeltaSequence.assign(100, std::string("tok"));
+    script.PerDeltaSleepMs = 0;
+
+    smatchet_tests::StubAiClient stub(script);
+    AiCancelToken cancel = makeCancelToken();
+    std::vector<AiStreamDelta> deltas;
+    AiStreamError finalError;
+    bool errorFired = false;
+
+    AiClientConfig cfg;
+    AiChatRequest req;
+    stub.SendStreaming(
+        cfg, req,
+        [&](const AiStreamDelta& d) {
+            deltas.push_back(d);
+            if (deltas.size() == 5u) {
+                cancel->store(true);
+            }
+        },
+        [&](const AiStreamError& e) {
+            finalError = e;
+            errorFired = true;
+        },
+        cancel);
+
     CHECK(stub.CancelObserved);
     CHECK(errorFired);
     CHECK(finalError.WasCancelled);
-
-    // onDelta stopped at the cancel: far fewer than the full 100 deltas, every one
-    // the stub emitted reached the callback, and the terminal IsFinal delta of an
-    // uncancelled stream was never sent.
-    CHECK(deltas.size() < 100u);
+    CHECK(deltas.size() == 5u);
     CHECK(deltas.size() == stub.DeltasEmitted);
     CHECK(std::none_of(deltas.begin(), deltas.end(), [](const AiStreamDelta& d) { return d.IsFinal; }));
 }
