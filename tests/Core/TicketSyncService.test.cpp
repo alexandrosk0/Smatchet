@@ -1137,7 +1137,7 @@ TEST_CASE("TicketSyncService isolates a refused parent key and keeps the valid a
     std::vector<CachedTicket> parents;
     parents.push_back(MakeTicket("EPIC-9", "Epic"));
     fake->SetFetchIssuesForKeysResult(true, parents);
-    fake->SetFetchIssuesForKeysRefusedKey("BAD-1");
+    fake->SetFetchIssuesForKeysRefusedKeys({"BAD-1"});
 
     TicketSyncService svc(deps);
     TrackerConfig cfg;
@@ -1150,6 +1150,39 @@ TEST_CASE("TicketSyncService isolates a refused parent key and keeps the valid a
     CHECK(deps.CacheImpl->TryGetTicket("Jira", "EPIC-9", got));
     CHECK(deps.LastTrackerTicketSyncWarning.find("refused by the tracker: BAD-1") != std::string::npos);
     CHECK(fake->FetchIssuesForKeysCallsFor("EPIC-9") >= 2); // the batch, then its own half
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService isolates two refused parent keys in one wide hop") {
+    // 40 parents in one hop, two of them refused: a fixed budget of 16 extra requests ran out before the
+    // second refused key was isolated, which kept the stale purge off for the view on every sync.
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("GONE-1", "no longer in the view or its hierarchy"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    std::vector<CachedTicket> parents;
+    for (int i = 0; i < 40; ++i) {
+        const std::string parentKey = i == 5 ? "BAD-1" : i == 30 ? "BAD-2" : "P-" + std::to_string(i);
+        scripted.push_back(MakeChildTicket("CHILD-" + std::to_string(i), parentKey));
+        if (parentKey.compare(0, 2, "P-") == 0) {
+            parents.push_back(MakeTicket(parentKey, "Parent"));
+        }
+    }
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchIssuesForKeysResult(true, parents);
+    fake->SetFetchIssuesForKeysRefusedKeys({"BAD-1", "BAD-2"});
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    CachedTicket got;
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && !deps.CacheImpl->TryGetTicket("Jira", "GONE-1", got); }));
+    CHECK(deps.ActiveTicketsImpl.size() == 40 + 38); // every child and every parent that was not refused
+    CHECK(deps.LastTrackerTicketSyncWarning.find("refused by the tracker: BAD-1 BAD-2") != std::string::npos);
 
     svc.CancelAndJoinActiveStreamingSync();
 }

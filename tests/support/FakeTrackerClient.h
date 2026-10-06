@@ -215,8 +215,8 @@ class FakeTrackerClient : public ITrackerBackend,
                 ++fetchIssuesForKeysByKey_[key];
             }
         }
-        if (!fetchIssuesForKeysRefusedKey_.empty() &&
-            std::find(issueKeys.begin(), issueKeys.end(), fetchIssuesForKeysRefusedKey_) != issueKeys.end()) {
+        if (std::find_first_of(issueKeys.begin(), issueKeys.end(), fetchIssuesForKeysRefusedKeys_.begin(),
+                               fetchIssuesForKeysRefusedKeys_.end()) != issueKeys.end()) {
             // Jira's shape: one key it cannot see rejects the whole `key in (...)` batch.
             return Result<std::vector<CachedTicket>, TrackerError>::Err(
                 TrackerErrorInvalidRequest("refused key in batch", 400));
@@ -785,9 +785,11 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssuesForKeysError_ = error.Detail;
         fetchIssuesForKeysStructuredError_ = std::move(error);
     }
-    /// Every FetchIssuesForKeys batch that contains `issueKey` fails with a 400, as Jira rejects a whole
-    /// `key in (...)` query for one key it cannot browse. Empty clears it.
-    void SetFetchIssuesForKeysRefusedKey(std::string issueKey) { fetchIssuesForKeysRefusedKey_ = std::move(issueKey); }
+    /// Every FetchIssuesForKeys batch that contains one of `issueKeys` fails with a 400, as Jira rejects a
+    /// whole `key in (...)` query for one key it cannot browse. Empty clears it.
+    void SetFetchIssuesForKeysRefusedKeys(std::vector<std::string> issueKeys) {
+        fetchIssuesForKeysRefusedKeys_ = std::move(issueKeys);
+    }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
     /// How many FetchIssuesForKeys calls asked for `issueKey`. Safe while workers fetch: other app paths
     /// (sync hydration) call FetchIssuesForKeys concurrently, so a per-key count is what a test can pin.
@@ -971,7 +973,7 @@ class FakeTrackerClient : public ITrackerBackend,
 
     // FetchIssuesForKeys
     bool fetchIssuesForKeysOk_ = true;
-    std::string fetchIssuesForKeysRefusedKey_;
+    std::vector<std::string> fetchIssuesForKeysRefusedKeys_;
     mutable std::mutex fetchIssuesForKeysByKeyMutex_;
     std::unordered_map<std::string, int> fetchIssuesForKeysByKey_; // guarded by fetchIssuesForKeysByKeyMutex_
     std::vector<CachedTicket> fetchIssuesForKeysTickets_;

@@ -939,8 +939,20 @@ void MarkHierarchyWalkIncomplete(TrackerIssueFetchSummary& summary, const std::s
 
 using KeyBatchFetch = std::function<Result<std::vector<CachedTicket>, TrackerError>(const std::vector<std::string>&)>;
 
-/// Extra requests one hop may spend isolating the keys a tracker refuses (see FetchKeysIsolatingRefusals).
-constexpr int kMaxRefusalSplitRequests = 16;
+/// Refused keys one hop may isolate before it gives up and keeps the cached rows (see
+/// FetchKeysIsolatingRefusals).
+constexpr int kMaxIsolatedRefusalsPerHop = 4;
+
+/// Extra requests a hop over `keyCount` keys may spend isolating refusals. Each split costs two requests,
+/// and isolating k refused keys among n takes at most k * ceil(log2 n) splits, so this covers
+/// kMaxIsolatedRefusalsPerHop refused keys wherever they sit in the batch.
+int RefusalSplitBudget(std::size_t keyCount) {
+    int depth = 0;
+    for (std::size_t span = 1; span < keyCount; span *= 2) {
+        ++depth;
+    }
+    return 2 * depth * kMaxIsolatedRefusalsPerHop;
+}
 
 bool IsTrackerRefusal(const TrackerError& error) {
     return error.Kind == TrackerErrorKind::InvalidRequest || error.Kind == TrackerErrorKind::NotFound;
@@ -951,10 +963,13 @@ bool IsTrackerRefusal(const TrackerError& error) {
 /// are retried until the refused keys are isolated; a single refused key is a definitive answer about that
 /// ticket and goes into `refusedKeys`, and the rest load normally. Any other failure, or a refusal once
 /// `budget` extra requests are spent, is returned as an error (the caller then keeps the cached rows).
-Result<std::vector<CachedTicket>, TrackerError> FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch,
-                                                                           const std::vector<std::string>& keys,
-                                                                           int& budget,
-                                                                           std::vector<std::string>& refusedKeys) {
+/// Once `cancelled` reports true no further request is sent and a Cancelled error is returned.
+Result<std::vector<CachedTicket>, TrackerError>
+FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
+                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
+    if (cancelled()) {
+        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorCancelled());
+    }
     Result<std::vector<CachedTicket>, TrackerError> fetched = fetch(keys);
     if (fetched.has_value() || !IsTrackerRefusal(fetched.error())) {
         return fetched;
@@ -969,12 +984,12 @@ Result<std::vector<CachedTicket>, TrackerError> FetchKeysIsolatingRefusals(const
     budget -= 2;
     const auto mid = keys.begin() + static_cast<std::ptrdiff_t>(keys.size() / 2);
     Result<std::vector<CachedTicket>, TrackerError> first =
-        FetchKeysIsolatingRefusals(fetch, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
+        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
     if (!first.has_value()) {
         return first;
     }
     Result<std::vector<CachedTicket>, TrackerError> second =
-        FetchKeysIsolatingRefusals(fetch, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
+        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
     if (!second.has_value()) {
         return second;
     }
@@ -1052,12 +1067,16 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
         LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu", missing.size(),
                  hop, static_cast<unsigned long long>(reqId));
         std::vector<std::string> refused;
-        int splitBudget = kMaxRefusalSplitRequests;
+        int splitBudget = RefusalSplitBudget(missing.size());
         Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
             [&](const std::vector<std::string>& keys) {
                 return deps_.Backend()->FetchIssuesForKeys(cfgCopy, keys, viewsCopy);
             },
+            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; },
             missing, splitBudget, refused);
+        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            return; // the sync's result is discarded; nothing to warn about
+        }
         if (!fetched.has_value()) {
             MarkHierarchyWalkIncomplete(summary, std::to_string(missing.size()) +
                                                      " parent issue(s) could not be loaded: " + fetched.error().Detail);
@@ -1144,12 +1163,16 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
         LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(), hop,
                  static_cast<unsigned long long>(reqId));
         std::vector<std::string> refused;
-        int splitBudget = kMaxRefusalSplitRequests;
+        int splitBudget = RefusalSplitBudget(keys.size());
         Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
             [&](const std::vector<std::string>& parentKeys) {
                 return deps_.Backend()->FetchChildrenOfKeys(cfgCopy, parentKeys, viewsCopy);
             },
-            keys, splitBudget, refused);
+            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; }, keys,
+            splitBudget, refused);
+        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            return; // the sync's result is discarded; nothing to warn about
+        }
         if (!fetched.has_value()) {
             MarkHierarchyWalkIncomplete(summary, "children of " + std::to_string(keys.size()) +
                                                      " issue(s) could not be loaded: " + fetched.error().Detail);
