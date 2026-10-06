@@ -232,7 +232,7 @@ MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DI
 # (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
-#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 40-field
+#   10-gate-filter.sh — the one giant GATE_FILTER jq program (the 41-field
 #                        projection) as a template emitter; run by standalone
 #                        `jq -f`, or by `gh api graphql --jq` when jq is absent.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
@@ -711,7 +711,7 @@ poll_merge_gates() {
     start=$(date +%s)
 
     # One filter computes every gate field and emits them as a fixed-order,
-    # one-per-line stream (40 lines) that the poll loop reads with `mapfile`.
+    # one-per-line stream (41 lines) that the poll loop reads with `mapfile`.
     # It runs under standalone `jq -r -f <file>` when jq is on PATH, else under
     # gh's bundled engine (`gh api --jq`) — see gate_jq_engine below. The exact
     # jq sub-expressions are the same ones the per-field `jq` calls used
@@ -755,7 +755,7 @@ poll_merge_gates() {
     # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 40-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 41-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
     # crDisposition (30), the two numeric thread counts (31/32) and
@@ -773,8 +773,13 @@ poll_merge_gates() {
     # read by the stale-red Plan-lock re-check) ·
     # 39 planLockOobRefused (bool: plan-lock-out-of-band is on a red
     # "Plan-lock gate" but no plan-lock-disposition is recorded, so the
-    # downgrade was refused; non-empty, safe at the tail).
-    # GATE_FILTER — the 40-field jq projection (see field-order map above).
+    # downgrade was refused; non-empty, safe at the tail) ·
+    # 40 crRateLimitDocsPass (bool: the label-free pure-docs rate-limit
+    # auto-downgrade may adjudicate gate 2 — pure-docs diff, CR never reviewed
+    # the PR, no open CR thread, and the rate-limit signal is on the CURRENT
+    # head; the same predicate discounts the pending CR findings context from
+    # ci_pend; non-empty, safe at the tail).
+    # GATE_FILTER — the 41-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -894,7 +899,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the filter's field stream — 40 fixed-order lines (see GATE_FILTER
+        # Parse the filter's field stream — 41 fixed-order lines (see GATE_FILTER
         # field map above). Filter errors (either engine) already routed through
         # the gh-fail path above; this guards a truncated/partial body → fail
         # closed (retry).
@@ -904,11 +909,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 40 ]; then
-            # Exactly 40 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 41 ]; then
+            # Exactly 41 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 40); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 41); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -1143,6 +1148,10 @@ poll_merge_gates() {
         # ALONGSIDE cr-out-of-band to waive ANY CR block (PR-3): cr-out-of-band
         # alone is NOT honoured — the disposition records why CR review was waived.
         local cr_disposition="${fields[30]:-false}"
+        # cr_rl_docs_pass — field 40: the pure-docs rate-limit auto-downgrade is
+        # allowed (pure-docs diff, CR never reviewed the PR, no open CR thread,
+        # rate-limit signal on the CURRENT head). Empty/parse-miss → false.
+        local cr_rl_docs_pass="${fields[40]:-false}"
         # dependabot_actions_bump — Dependabot-authored PR on a
         # dependabot/github_actions/* head (field 37). CR never reviews bot PRs,
         # so this is the one shape whose silent CR keeps the grace-then-pass
@@ -1697,11 +1706,23 @@ poll_merge_gates() {
         # case so a normal cr-out-of-band on a non-rate-limited block is unaffected.
         # Runs BEFORE the Poll line so cr_state_print reflects the rate-limit verdict.
         if [ "$cr_rate_limited" = "true" ]; then
-            if [ "$pure_docs" = "true" ]; then
+            if [ "$cr_rl_docs_pass" = "true" ]; then
                 cr_pass=true
                 cr_open_blocks=false
                 cr_state_print="${cr_state_print} +rate-limit pure-docs-auto-downgrade (WARN)"
                 echo "WARN: CodeRabbit rate-limited on a pure-docs PR (diff within docs/ / backlog/ / *.md) — CR gate auto-downgraded to WARN (no label needed; markdown is never compiled). PR-2 cr-review-skipped-pure-docs-auto-downgrade." >&2
+            elif [ "$pure_docs" = "true" ]; then
+                # Pure-docs, but the auto-downgrade's other conditions fail
+                # (field 40): the rate-limit signal is NOT what decides this
+                # head, so the CR verdict computed above stands.
+                local rl_why="the rate-limit notice is not tied to head ${head_sha:0:8} (no CodeRabbit status on the head says so, and no notice names its SHA)"
+                if [ "$cr_state" != "NONE" ]; then
+                    rl_why="CodeRabbit has reviewed this PR — its ${cr_state} verdict decides, not a rate-limit notice"
+                elif [ "$cr_open" -gt 0 ]; then
+                    rl_why="${cr_open} unresolved CodeRabbit thread(s) are open"
+                fi
+                cr_state_print="${cr_state_print} +rate-limit pure-docs (no auto-downgrade)"
+                echo "INFO: CodeRabbit rate-limit signal on a pure-docs PR NOT auto-downgraded: ${rl_why}." >&2
             elif [ "$cr_state" != "NONE" ]; then
                 # CODE PR that ALSO has a real current-head CR verdict
                 # (APPROVED / COMMENTED / CHANGES_REQUESTED / STALE*): a rate-limit

@@ -3647,8 +3647,8 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 40; the
-    # -ne 40 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 41; the
+    # -ne 41 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
     # + thread-count + stale-override + dup-masked fields rely on).
     local f
@@ -3658,7 +3658,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 40"* ]]
+    [[ "$output" == *"expected 41"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
@@ -3832,10 +3832,12 @@ blocked_with_bot_threads() {
 # comment + a files list (pure-docs vs code) via chained fixture_override.
 
 @test "CR rate-limit + pure-docs PR PASS (auto-downgrade, no label)" {
+    # The notice names the head SHA (CR lists the commit range it was asked to
+    # review), which is what ties a comment-borne rate-limit to THIS head.
     local f1 f2
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.comments.nodes" \
-        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later.\n\nReviewing files that changed from the base of the PR and between 0f0f0f0 and abc123."}]')"
     f2="$(fixture_override "$f1" \
         "data.repository.pullRequest.files" \
         '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/agent-rules/merge-gates.md"},{"path":"AGENTS.md"}]}')"
@@ -3847,6 +3849,76 @@ blocked_with_bot_threads() {
     [[ "$output" == *"rate-limited on a pure-docs PR"* ]]
     [[ "$output" == *"pure-docs-auto-downgrade"* ]]
     rm -f "$f1" "$f2"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + pure-docs: a notice naming no head SHA does NOT auto-downgrade" {
+    # Comments persist across pushes, so a notice that names no commit is not
+    # provably about this head; the NONE arm decides (pending within grace).
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"AGENTS.md"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" != *"pure-docs-auto-downgrade"* ]]
+    [[ "$output" == *"not tied to head"* ]]
+    rm -f "$f1" "$f2"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + pure-docs + prior-head findings + open CR thread + pending CR findings -> BLOCK (the H1 probe)" {
+    # A docs-only PR (AGENTS.md) whose prior head drew 3 actionable CR findings,
+    # one CR thread still open, the CR findings aggregator pending, and a
+    # rate-limit notice from an earlier push. The rate-limit flag must neither
+    # waive the STALE_WITH_FINDINGS verdict nor discount the pending context.
+    local f1 f2 f3 f4 f5
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"AGENTS.md"}]}')"
+    f2="$(fixture_override "$f1" "data.repository.pullRequest.reviews" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"COMMENTED","submittedAt":"2026-10-01T10:00:00Z","commit":{"oid":"prior111"},"body":"**Actionable comments posted: 3**"}]}')"
+    f3="$(fixture_override "$f2" "data.repository.pullRequest.reviewThreads.nodes" \
+        '[{"isResolved":false,"isOutdated":false,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"commit":{"oid":"prior111"}}]}}]')"
+    f4="$(fixture_override "$f3" "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"## Review limit reached\n\nCodeRabbit is rate limited. Next review available in: 38 minutes."}]')"
+    f5="$(fixture_override "$f4" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f5"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"STALE_WITH_FINDINGS"* ]]
+    [[ "$output" == *"1 pending"* ]]
+    [[ "$output" != *"pure-docs-auto-downgrade"* ]]
+    rm -f "$f1" "$f2" "$f3" "$f4" "$f5"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + pure-docs + never reviewed + head-tied notice but an OPEN CR thread -> no auto-downgrade" {
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/x.md"}]}')"
+    f2="$(fixture_override "$f1" "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"CodeRabbit is rate limited. Reviewing changes between 0f0f0f0 and abc123."}]')"
+    f3="$(fixture_override "$f2" "data.repository.pullRequest.reviewThreads.nodes" \
+        '[{"isResolved":false,"isOutdated":false,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"commit":{"oid":"abc123"}}]}}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"unresolved CodeRabbit thread(s) are open"* ]]
+    rm -f "$f1" "$f2" "$f3"
     unset MERGE_GATES_CR_INSTALLED
 }
 
@@ -3988,7 +4060,7 @@ blocked_with_bot_threads() {
     local f1 f2
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.comments.nodes" \
-        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"CodeRabbit is currently rate-limited; review deferred."}]')"
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"CodeRabbit is currently rate-limited; review deferred (commits 0f0f0f0..abc123)."}]')"
     f2="$(fixture_override "$f1" \
         "data.repository.pullRequest.files" \
         '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"README.md"}]}')"

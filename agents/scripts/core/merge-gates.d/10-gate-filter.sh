@@ -336,11 +336,34 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
 # (CR surfaces the rate-limit on either surface). Regex tolerates "rate limit",
 # "rate-limited", "rate limited", and the common "try again later" phrasing.
 # (NB: no apostrophes in this single-quoted jq filter string.)
-| (($crcommentbodies
-    + [$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-       | select(.__typename == "StatusContext" and .context == "CodeRabbit")
-       | (.description // "")])
+| ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+    | select(.__typename == "StatusContext" and .context == "CodeRabbit")
+    | (.description // "")]) as $crstatusdescs
+| (($crcommentbodies + $crstatusdescs)
    | any(test("rate.?limit"; "i") or test("try again later"; "i"))) as $crratelimited
+# crRateLimitDocsPass — may the label-free pure-docs rate-limit auto-downgrade
+# adjudicate gate 2 (and discount the pending CR findings context from ci_pend)?
+# $crratelimited above is read from EVERY CR comment ever posted, so on its own
+# it lets a notice from a long-gone head wave through a head CR has reviewed
+# WITH findings. All four must hold:
+#   * the diff is pure-docs;
+#   * CR has never reviewed the PR ($crall empty) — a real review verdict, on
+#     any commit, is adjudicated by the review arms, never by a rate-limit note;
+#   * no unresolved CR thread is open (an open finding is not waived by quota);
+#   * the rate-limit signal is on the CURRENT head: the head commit own
+#     "CodeRabbit" StatusContext says so (head-scoped by construction), or a CR
+#     comment carrying the notice names the head SHA (CR lists the commit range
+#     it was asked to review). A notice that names no SHA is not provably about
+#     this head — comments persist across pushes — so it does not count.
+| ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
+    and any(.comments.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]"))]
+   | length) as $cropen
+| (($sha | length) >= 6
+   and (($crstatusdescs | any(test("rate.?limit"; "i") or test("try again later"; "i")))
+        or ($crcommentbodies
+            | any((test("rate.?limit"; "i") or test("try again later"; "i"))
+                  and test("(^|[^0-9a-f])" + $sha[0:7]; "i"))))) as $crratelimitedhead
+| ($pureDocs and (($crall | length) == 0) and ($cropen == 0) and $crratelimitedhead) as $crratelimitdocspass
 # Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
 # reviews authored by cursor[bot] (its summary review, always state COMMENTED).
 # $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries
@@ -386,9 +409,9 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
         )
         # Once gate 2 is adjudicated to WARN — cr-out-of-band + disposition
         # (tooling 2026-08-18) or the pure-docs rate-limit auto-downgrade
-        # (tooling 2026-08-16) — the CR findings context is the same signal; it
-        # must not hold ci_pend.
-        and (((($cr and $crdisposition) or ($pureDocs and $crratelimited)) and (
+        # (tooling 2026-08-16, gated by $crratelimitdocspass) — the CR findings
+        # context is the same signal; it must not hold ci_pend.
+        and (((($cr and $crdisposition) or $crratelimitdocspass) and (
                (.__typename == "StatusContext" and ((.context // "") | test("^CR findings"; "i")))
                or (.__typename == "CheckRun" and ((.name // "") | test("^CR finding"; "i")))
              )) | not))] | length),
@@ -396,8 +419,7 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
     ([$downgraded[] | if .__typename == "CheckRun" then (.name // "") else (.context // "") end] | join(", ")),
     $crstate,
     (($crbody | split("\n"))[0] // ""),
-    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-        and any(.comments.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]"))] | length),
+    $cropen,
     ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | if (.__typename == "StatusContext" and .context == "CodeRabbit") then .state
         elif (.__typename == "CheckRun"
@@ -442,6 +464,8 @@ _MG_GATE_FILTER_TEMPLATE="$_MG_JQ_DISPOSITION_DEF"'
     ($pr.headRefName // ""),
     # planLockOobRefused — label on a red Plan-lock gate, no disposition
     (($planlock and ($planlockdisposition | not)
-      and ($failing | any(.__typename == "CheckRun" and .name == "Plan-lock gate"))) | tostring)
+      and ($failing | any(.__typename == "CheckRun" and .name == "Plan-lock gate"))) | tostring),
+    # crRateLimitDocsPass — the pure-docs rate-limit auto-downgrade may fire
+    ($crratelimitdocspass | tostring)
   )
 '
