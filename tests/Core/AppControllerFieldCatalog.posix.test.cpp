@@ -27,24 +27,31 @@ namespace {
 class SwapDuringFetchBackend : public smatchet_tests::FakeTrackerClient {
   public:
     std::function<void()> OnFetch;
+    bool Fail = false; ///< answer with a non-retryable error (read after OnFetch, so OnFetch may set it)
 
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override {
         if (OnFetch) {
             OnFetch();
         }
+        if (Fail) {
+            return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+                TrackerErrorInvalidRequest("the catalog is unavailable"));
+        }
         return FakeTrackerClient::FetchFieldCatalog(cfg, projectKey);
     }
 };
 
-TrackerFieldCatalogResult OneFieldCatalog() {
+TrackerFieldCatalogResult CatalogWithField(const std::string& id) {
     TrackerFieldCatalogResult result;
     TrackerField field;
-    field.Id = "customfield_10001";
-    field.Name = "Old tracker field";
+    field.Id = id;
+    field.Name = "Field " + id;
     result.Fields.push_back(field);
     return result;
 }
+
+TrackerFieldCatalogResult OneFieldCatalog() { return CatalogWithField("customfield_10001"); }
 
 bool HasField(const std::vector<TrackerField>& fields, const std::string& id) {
     for (const TrackerField& f : fields) {
@@ -108,9 +115,9 @@ TEST_CASE("AppController::RefreshFieldCatalog drops the result when the catalog 
     CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
 }
 
-TEST_CASE("AppController::RefreshFieldCatalog skips a fetch for another tracker kind than the pane runs") {
+TEST_CASE("AppController::RefreshFieldCatalog skips a project fetch for another tracker kind than the pane runs") {
     // A deferred Save & Sync leaves the old backend installed while the config already names the new
-    // tracker: a fetch then would pair the two, so it must not run at all.
+    // tracker: a project of the new tracker cannot be fetched through the old backend, so it does not run.
     smatchet_tests::OfflineQueueTestEnvGuard env;
     AppController app;
     GridContextDepsAdapter adapter(app);
@@ -122,12 +129,14 @@ TEST_CASE("AppController::RefreshFieldCatalog skips a fetch for another tracker 
 
     TrackerConfig cfg = ConfigManager::Load();
     cfg.TrackerType = "Jira"; // the configuration already names Jira
-    CHECK_FALSE(app.RefreshFieldCatalog(cfg));
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg, "PROJ"));
     CHECK(raw->FetchFieldCatalogCalls() == 0u);
     CHECK(app.GetAvailableFields().empty());
 }
 
-TEST_CASE("AppController::RefreshFieldCatalog drops a result once a newer refresh pins another project") {
+TEST_CASE("AppController::RefreshFieldCatalog refreshes the tracker the pane runs when the config names another") {
+    // fields.refresh_catalog passes the saved configuration, which a backend override or a fixture backend
+    // can leave naming another tracker than the pane runs: the unscoped refresh is for the pane's tracker.
     smatchet_tests::OfflineQueueTestEnvGuard env;
     AppController app;
     GridContextDepsAdapter adapter(app);
@@ -135,10 +144,118 @@ TEST_CASE("AppController::RefreshFieldCatalog drops a result once a newer refres
     backend->SetFieldCatalogResult(OneFieldCatalog());
     SwapDuringFetchBackend* const raw = backend.get();
     adapter.SetBackend(std::move(backend));
-    raw->OnFetch = [&app]() { app.SetCurrentCatalogProject("PROJB"); };
+    adapter.SetCacheBackendKey("Plane"); // an unconfigured Plane keeps the bare kind as its key
 
-    CHECK_FALSE(app.RefreshFieldCatalog(ConfigManager::Load(), "PROJA"));
-    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    CHECK(app.RefreshFieldCatalog(cfg));
+    CHECK(raw->FetchFieldCatalogCalls() == 1u);
+    CHECK(HasField(app.GetAvailableFields(), "customfield_10001"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog skips an unscoped fetch whose site is not the pane's") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    adapter.SetCacheBackendKey("Plane@plane.other.example/ws"); // a site the configuration does not name
+
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg));
+    CHECK(raw->FetchFieldCatalogCalls() == 0u);
+    CHECK(app.GetAvailableFields().empty());
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog pins its project only with the catalog it fetched") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    bool scopedDuringFetch = true;
+    raw->OnFetch = [&]() { scopedDuringFetch = app.IsFieldCatalogScopedToProject("PROJA"); };
+
+    CHECK(app.RefreshFieldCatalog(ConfigManager::Load(), "PROJA"));
+    CHECK_FALSE(scopedDuringFetch); // the catalog in memory was not PROJA's yet
+    CHECK(app.IsFieldCatalogScopedToProject("PROJA"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog keeps a project result when the grid's catalog lands mid-fetch") {
+    // The grid's own fetch pins its project and applies its catalog on the UI thread; that is no newer
+    // refresh, so the draft's project catalog still lands, scoped to the draft's project.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    raw->OnFetch = [&app]() {
+        app.SetCurrentCatalogProject("GRID");
+        std::vector<TrackerField> grid(1);
+        grid[0].Id = "customfield_grid";
+        grid[0].Name = "Grid field";
+        app.SetFieldCatalog(std::move(grid), std::vector<TrackerComponent>(), std::string(), false);
+    };
+
+    CHECK(app.RefreshFieldCatalog(ConfigManager::Load(), "PROJA"));
+    CHECK(HasField(app.GetAvailableFields(), "customfield_10001"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_grid"));
+    CHECK(app.IsFieldCatalogScopedToProject("PROJA"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog drops an older refresh's result once a newer one started") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+    int fetches = 0;
+    raw->OnFetch = [&]() {
+        if (++fetches != 1) {
+            return;
+        }
+        // The user picked project B while A's fetch was still running; B's answer lands first.
+        raw->SetFieldCatalogResult(CatalogWithField("customfield_b"));
+        CHECK(app.RefreshFieldCatalog(cfg, "PROJB"));
+        raw->SetFieldCatalogResult(CatalogWithField("customfield_a"));
+    };
+
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg, "PROJA"));
+    CHECK(HasField(app.GetAvailableFields(), "customfield_b"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_a"));
+    CHECK(app.IsFieldCatalogScopedToProject("PROJB"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog drops a superseded failure without setting the error banner") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+    int fetches = 0;
+    raw->OnFetch = [&]() {
+        if (++fetches != 1) {
+            return;
+        }
+        raw->SetFieldCatalogResult(CatalogWithField("customfield_b"));
+        CHECK(app.RefreshFieldCatalog(cfg, "PROJB"));
+        raw->Fail = true; // the older fetch then fails
+    };
+
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg, "PROJA"));
+    CHECK(HasField(app.GetAvailableFields(), "customfield_b"));
+    CHECK(app.GetFieldCatalogError().empty());
 }
 
 TEST_CASE("AppController::SetFieldCatalog clear empties the pane without publishing synthetic columns") {

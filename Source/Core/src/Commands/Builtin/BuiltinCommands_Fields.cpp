@@ -77,11 +77,11 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
                                     if (!ok) {
                                         std::string error = app.GetFieldCatalogError();
                                         if (error.empty()) {
-                                            // A dropped refresh records no pane error: the result was
-                                            // discarded because the pane moved on during the fetch.
-                                            error = "The catalog refresh was not applied: the pane switched "
-                                                    "tracker, was closed, or had its catalog cleared while "
-                                                    "it ran.";
+                                            // A dropped or skipped refresh records no pane error.
+                                            error = "The catalog refresh was not applied: the focused pane runs "
+                                                    "a tracker site the configuration does not name, or it "
+                                                    "switched tracker, was closed, had its catalog cleared or "
+                                                    "started a newer refresh while it ran.";
                                         }
                                         out["error"] = error;
                                     }
