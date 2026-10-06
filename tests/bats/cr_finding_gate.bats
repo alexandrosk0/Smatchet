@@ -803,12 +803,11 @@ run_nudge() {
     grep -qE '^    types: \[.*\bedited\b.*\]' "$WF"
 }
 
-@test "every layer uses one disposition predicate, and the placeholder is not one" {
+@test "the action's disposition predicate rejects the playbook placeholder" {
+    # The same predicate is in the agent layer's merge-gates.d/10-gate-filter.sh and
+    # safe-admin-merge.sh; the layer's own safe_admin_merge.bats pins those copies.
     local re='cr-disposition:[[:space:]]*[^[:space:]<]'
     grep -qF "$re" "$ACTION"
-    grep -qF "$re" "$REPO_ROOT/agents/scripts/core/merge-gates.d/10-gate-filter.sh"
-    [ "$(grep -cF "$re" "$REPO_ROOT/agents/scripts/core/safe-admin-merge.sh")" -eq 2 ]
-    ! grep -qF 'cr-disposition:[[:space:]]*[^[:space:]]"' "$REPO_ROOT/agents/scripts/core/merge-gates.d/10-gate-filter.sh"
     # The playbook placeholder quoted in a PR body does not attest; a real reason does.
     ! printf '%s' 'needs cr-out-of-band + a cr-disposition:<reason> attestation' | grep -qiE "$re"
     printf '%s' 'cr-disposition: cr-auto-review-disabled' | grep -qiE "$re"

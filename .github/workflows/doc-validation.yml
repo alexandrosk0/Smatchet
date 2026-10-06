@@ -343,12 +343,12 @@ jobs:
           python - <<'PY'
           import json, os, jsonschema
           schema = json.load(open("project.config.schema.json", encoding="utf-8"))
-          # The host config, plus the agent layer's own config: the seed scaffold copy and,
-          # once the layer is mounted, its live file. No schema ships in the layer, so this
-          # is the only place the layer config is validated.
+          # The host config, plus the agent layer's own config and its seed copy as the
+          # agent-layer/ submodule mounts them (checked out above). No schema ships in the
+          # layer, so this is the only place the layer config is validated.
           for path in ("project.config.json",
-                       "agents/scripts/core/seed-agent-layer-repo.d/project.config.json",
-                       "agent-layer/project.config.json"):
+                       "agent-layer/project.config.json",
+                       "agent-layer/agents/scripts/core/seed-agent-layer-repo.d/project.config.json"):
               if path != "project.config.json" and not os.path.isfile(path):
                   continue
               jsonschema.validate(json.load(open(path, encoding="utf-8")), schema)
