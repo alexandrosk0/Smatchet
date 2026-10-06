@@ -259,7 +259,8 @@ fallback_desc_wf() {
 @test "selftest: a workflow with no fallback poster is detected" {
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"
-    ! grep -q "state=pending" "$tmp"
+    run grep -q "state=pending" "$tmp"
+    [ "$status" -eq 1 ]
 }
 
 # ============================================================================
@@ -658,7 +659,8 @@ run_nudge() {
     grep -qE '^  pull-requests: write$' "$WF"
     grep -qE '^  issues: write$'        "$WF"
     # Still least-privilege on the axes the job genuinely does not use.
-    ! grep -qE '^  contents: write$'    "$WF"
+    run grep -qE '^  contents: write$'    "$WF"
+    [ "$status" -eq 1 ]
 }
 
 @test "nudge: a forged marker from a non-bot commenter does not suppress recovery" {
@@ -867,7 +869,8 @@ run_nudge() {
     [ "$(verdict "$f")" = "not-reviewed" ]
     # Guard the implementation too: matching a bare "review skipped" would be
     # the over-broad form, and would swallow the fixture above.
-    ! grep -qE "grep -qi.*'review skipped'" "$ACTION"
+    run grep -qE "grep -qi.*'review skipped'" "$ACTION"
+    [ "$status" -eq 1 ]
 }
 
 @test "the manual-review guard is wired into decide(), not just defined" {
@@ -890,7 +893,8 @@ run_nudge() {
     grep -q 'coderabbitai review'      "$POST_LOG"
     grep -q 'cr-first-review-nudge'    "$POST_LOG"
     # A plain review, NOT a full review: nothing has consumed this head yet.
-    ! grep -q 'coderabbitai full review' "$POST_LOG"
+    run grep -q 'coderabbitai full review' "$POST_LOG"
+    [ "$status" -eq 1 ]
 }
 
 @test "nudge: never-reviewed stays silent while CR is rate limited or working" {

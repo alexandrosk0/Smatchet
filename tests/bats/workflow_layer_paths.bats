@@ -10,15 +10,22 @@ setup() {
 }
 
 # The layer-relative paths in the text on stdin, reached through $AGENT_LAYER_ROOT, ${AGENT_LAYER_ROOT},
-# "$AGENT_LAYER_ROOT"/ or ${{ env.AGENT_LAYER_ROOT }}.
+# "$AGENT_LAYER_ROOT"/, ${{ env.AGENT_LAYER_ROOT }} or the mount's own name, agent-layer/.
 extract_layer_paths() {
-    grep -oE '(\$\{\{[[:space:]]*env\.AGENT_LAYER_ROOT[[:space:]]*\}\}|\$\{?AGENT_LAYER_ROOT\}?"?)/[A-Za-z0-9_./-]+' |
-        sed -E -e 's#^[^/]*/##' -e 's#[./]+$##' | sort -u
+    local text
+    text="$(cat)"
+    {
+        printf '%s\n' "$text" |
+            grep -oE '(\$\{\{[[:space:]]*env\.AGENT_LAYER_ROOT[[:space:]]*\}\}|\$\{?AGENT_LAYER_ROOT\}?"?)/[A-Za-z0-9_./-]+' |
+            sed -E 's#^[^/]*/##'
+        printf '%s\n' "$text" | grep -oE '(^|[^A-Za-z0-9_-])agent-layer/[A-Za-z0-9_./-]+' | sed -E 's#^.?agent-layer/##'
+    } | sed -E 's#[./]+$##' | sort -u
 }
 
 # The layer-relative paths host workflows and actions reach.
 layer_paths() {
-    git -C "$REPO_ROOT" grep -h 'AGENT_LAYER_ROOT' -- .github/workflows .github/actions | extract_layer_paths
+    git -C "$REPO_ROOT" grep -h -e 'AGENT_LAYER_ROOT' -e 'agent-layer/' -- .github/workflows .github/actions |
+        extract_layer_paths
 }
 
 @test "every AGENT_LAYER_ROOT path in host workflows exists in the pinned agent-layer mount" {
@@ -52,7 +59,9 @@ run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/a.sh"
 run: bash "${AGENT_LAYER_ROOT}/agents/scripts/core/b.sh".
 run: bash "$AGENT_LAYER_ROOT"/agents/scripts/core/c.sh
 with: { path: ${{ env.AGENT_LAYER_ROOT }}/agents/scripts/core/d.sh }
+run: test -f agent-layer/agents/scripts/core/e.sh && bash ./agent-layer/agents/scripts/core/f.sh
+uses: ./.github/workflows/agent-layer-integration.yml
 EOF
     [ "$status" -eq 0 ]
-    [ "$output" = "$(printf 'agents/scripts/core/a.sh\nagents/scripts/core/b.sh\nagents/scripts/core/c.sh\nagents/scripts/core/d.sh')" ]
+    [ "$output" = "$(printf 'agents/scripts/core/%s.sh\n' a b c d e f)" ]
 }
