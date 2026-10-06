@@ -3,7 +3,7 @@
 Centralized tracker for plan-shaped work in this repo. Three buckets:
 
 1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/plans/shipped/`](../plans/shipped/). Indexed below with approximate date and one-line summary.
-2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
+2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
 3. **Agentic dependencies** — work that the agent ecosystem (prompts, harness, mirror, telemetry) needs in the codebase to unblock further automation.
 
 Format: `- <slug> · <approx-date> · <one-line>`.
@@ -224,6 +224,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`drag-drop-md-viewer`](shipped/drag-drop-md-viewer.md) | 2026-08-21 | Plan — Open any .md file in the Plan Docs viewer (drag-and-drop + Open… dialog) |
 | [`gate-selftest-msys-execbit`](shipped/gate-selftest-msys-execbit.md) | 2026-08-29 | Plan — gate-selftest MSYS exec-bit heuristic fix |
 | [`jql-username-in-input`](shipped/jql-username-in-input.md) | 2026-08-30 | jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical |
+| [`agent-surface-extraction-repo`](shipped/agent-surface-extraction-repo.md) | 2026-09-06 | Plan — Agent surface extraction into its own repository |
 | [`parent-issue-hierarchy`](shipped/parent-issue-hierarchy.md) | 2026-09-06 | Plan — Parent issue hierarchy (FS parity) |
 | [`multi-jira-backend-domains`](shipped/multi-jira-backend-domains.md) | 2026-09-11 | Multiple Jira origins with inherited credentials and a Views domain picker. |
 | [`offline-first`](shipped/offline-first.md) | 2026-09-24 | Plan — Offline-first: fix the regressions, sweep the class, gate it like DRY |
@@ -241,7 +242,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 
 ## 2. Deferred code items (C++ refactors / improvements)
 
-Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
+Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
 
 | Item | Where it bites | Bundle with |
 |---|---|---|

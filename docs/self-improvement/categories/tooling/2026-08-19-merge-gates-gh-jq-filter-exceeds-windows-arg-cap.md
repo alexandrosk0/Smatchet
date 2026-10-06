@@ -22,7 +22,7 @@ retry, then wait for the "outage" to clear — never succeeds, because there is 
 
 ## Cause
 
-[`merge-gates.sh:646`](../../../../agents/scripts/core/merge-gates.sh) invokes:
+[`merge-gates.sh:646`](../../../../agent-layer/agents/scripts/core/merge-gates.sh) invokes:
 
 ```bash
 gh api graphql -f owner=… -f repo=… -F pr=… -f query="$query_body" --jq "$GATE_FILTER"
@@ -31,10 +31,10 @@ gh api graphql -f owner=… -f repo=… -F pr=… -f query="$query_body" --jq "$
 Both large payloads travel **as command-line arguments**:
 
 - `$GATE_FILTER` — the gate-decision jq program from
-  [`merge-gates.d/10-gate-filter.sh`](../../../../agents/scripts/core/merge-gates.d/10-gate-filter.sh),
+  [`merge-gates.d/10-gate-filter.sh`](../../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh),
   **25,185 bytes** today and growing with every gate refinement;
 - `$query_body` — the GraphQL document from
-  [`merge-gates.graphql`](../../../../agents/scripts/core/merge-gates.graphql).
+  [`merge-gates.graphql`](../../../../agent-layer/agents/scripts/core/merge-gates.graphql).
 
 Windows caps a `CreateProcess` command line at 32,767 characters. The two together clear
 it, so the process never launches. On Linux/macOS the equivalent limit (`ARG_MAX`, ~2 MB)

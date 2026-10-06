@@ -34,7 +34,7 @@
     and CR's own posted verdict has to be read instead.
   Concrete next action: two cheap, independent pieces.
     (1) Note it where it is read: a line in
-    [`merge-gates.md`](../../../agent-rules/merge-gates.md) § CodeRabbit —
+    [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) § CodeRabbit —
     *a change to a gate's own action/workflow is NOT proven by its check on
     its own PR; comment- and review-triggered runs execute the default
     branch's code, so verify against the `pull_request` run's log (or a

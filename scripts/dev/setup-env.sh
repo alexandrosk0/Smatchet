@@ -13,7 +13,7 @@
 # Idempotent — already-present tools are skipped, so re-running is a no-op.
 # It does NOT install the C++ build toolchain (Visual Studio / MSVC or
 # Clang-cl) or configure/build the project; see BUILD.md § Prerequisites and
-# docs/harness/SETUP.md for those steps.
+# agent-layer/docs/harness/SETUP.md for those steps.
 #
 # Usage:
 #   bash scripts/dev/setup-env.sh                # show plan, prompt, install
@@ -164,7 +164,7 @@ manual_hint() {
         "gcc,g++") echo "MSYS2 UCRT64 toolchain — install MSYS2 (winget install MSYS2.MSYS2), then: pacman -S mingw-w64-ucrt-x86_64-gcc" ;;
         bats)      echo "npm i -g bats (install Node.js first: winget install OpenJS.NodeJS.LTS)" ;;
         OpenCppCoverage) echo "coverage gates only — choco install opencppcoverage, or the GitHub releases installer" ;;
-        *)         echo "no package-manager mapping for this platform — see docs/harness/SETUP.md § Required CLI tools" ;;
+        *)         echo "no package-manager mapping for this platform — see agent-layer/docs/harness/SETUP.md § Required CLI tools" ;;
     esac
 }
 
@@ -341,7 +341,7 @@ if (( PROBE_RC == 0 )) && [[ -z "$RESIDUAL" ]]; then
     echo
     color_green "setup-env: GREEN — required tool set complete."
     echo "Next: bash scripts/dev/doctor.sh          # build toolchain + disk pre-flight"
-    echo "      bash agents/scripts/core/setup-harness.sh claude-code   # wire agent hooks"
+    echo "      bash agent-layer/agents/scripts/core/setup-harness.sh claude-code   # wire agent hooks"
     exit 0
 fi
 
@@ -357,6 +357,6 @@ cat <<'HINT'
   If a tool WAS just installed, its PATH entry may only exist in a fresh shell:
   reopen the terminal (or `hash -r`) and re-run check-required-tools.sh before
   treating this as a real failure.
-  Install hints for anything still missing: docs/harness/SETUP.md § Required CLI tools.
+  Install hints for anything still missing: agent-layer/docs/harness/SETUP.md § Required CLI tools.
 HINT
 exit 1

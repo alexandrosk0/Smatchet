@@ -11,7 +11,7 @@ Evidence:
 - **~20 further sites:** status never queueable offline; comments modal false "Comment Queued"; worklog, watch, Annotate, command/Lua field edits and bulk import bypass the offline queue; reads with no offline copy (per-project components, users, editmeta, project picker, attachments, watchers/votes).
 
 **Decision:**
-1. **Four invariants** (the Pillar 6 text in [`docs/agent-rules/quality-pillars.md`](../agent-rules/quality-pillars.md) § 6 is canonical):
+1. **Four invariants** (the Pillar 6 text in [`docs/agent-rules/quality-pillars.md`](../../agent-layer/docs/agent-rules/quality-pillars.md) § 6 is canonical):
    - A network-backed read that has cached data renders it with a freshness cue (`DataFreshnessCue`), never a loading-only or empty state. "Loading…" alone is only for `DataFreshness::LoadingNoCache`.
    - A failed fetch never discards cached data and is never remembered as final: it backs off (`KeyedLookupCache`) and retries after reconnect, and its in-flight flag clears on every path.
    - Every tracker write goes through the offline queue when the tracker is unreachable (`RouteWrite` → queue immediately) and replays on reconnect. Toasts say what actually happened ("Queued offline" vs "Saved").

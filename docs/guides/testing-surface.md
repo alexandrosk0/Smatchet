@@ -10,10 +10,10 @@ the *shape* (which lanes gate, which are advisory, which voids exist) is stable.
 Refresh the numbers with the [§ Refresh recipe](#7-refresh-recipe) — don't trust a
 stale count, re-run the one-liner.
 
-Related: [`agents/core/test-author.md`](../../agents/core/test-author.md) (the
-5-bucket taxonomy authority), [`quality-pillars.md`](../agent-rules/quality-pillars.md)
-(the invariants tests defend), [`merge-gates.md`](../agent-rules/merge-gates.md)
-(how checks become merge-blocking), [`ci-required-check-pattern.md`](../agent-rules/ci-required-check-pattern.md)
+Related: [`agents/core/test-author.md`](../../agent-layer/agents/core/test-author.md) (the
+5-bucket taxonomy authority), [`quality-pillars.md`](../../agent-layer/docs/agent-rules/quality-pillars.md)
+(the invariants tests defend), [`merge-gates.md`](../../agent-layer/docs/agent-rules/merge-gates.md)
+(how checks become merge-blocking), [`ci-required-check-pattern.md`](../../agent-layer/docs/agent-rules/ci-required-check-pattern.md)
 (why a check is/ isn't *required*).
 
 ---
@@ -84,7 +84,7 @@ infrastructure**, never "manual forever."
 
 **Outside branch protection** — but NOT free-running: the all-gates-blocking flip
 (`MERGE_GATES_BLOCK_ALLOWLIST_RE="."`,
-[`merge-gates.d/00-common.sh`](../../agents/scripts/core/merge-gates.d/00-common.sh):42)
+[`merge-gates.d/00-common.sh`](../../agent-layer/agents/scripts/core/merge-gates.d/00-common.sh):42)
 makes the merge-poller block on EVERY check-run unless its name contains
 `advisory`. The only check exempt by name is `Mobile texture-guard smoke (…,
 advisory)`. What remains soft is *step-level*, inside otherwise-blocking checks:
@@ -105,7 +105,7 @@ until each reports green or `skipped`). The residual escape is narrower than it
 used to be: the **bucket-C/E** dynamic lanes no longer carry any job-level
 `continue-on-error` — their broken-harness teeth (zero-pass, lane-integrity)
 block, and the all-gates-blocking flip means the merge-poller
-([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) blocks on the
+([`merge-gates.sh`](../../agent-layer/agents/scripts/core/merge-gates.sh)) blocks on the
 check-runs themselves (the 2026-06-15 "`Bucket-` dropped from the allow-list"
 state was superseded when the allow-list was retired; the underlying
 "exe can't boot" premise was falsified 2026-06-18 — the exe boots in ~2 s under
@@ -252,7 +252,7 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
   debug repro-loop fixtures). **[planned]** — tooling.md:505-507 + plan
   [`subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md).
 - Widen the perf-fast subset, or add a "touched-scenario-not-in-fast-set ⇒ run it"
-  rule to the [`perf-gatekeeper`](../../agents/core/perf-gatekeeper.md) diff→scenario map.
+  rule to the [`perf-gatekeeper`](../../agent-layer/agents/core/perf-gatekeeper.md) diff→scenario map.
   **[planned, narrower]** — applied.md:265 + the "8 of 15 scenarios" retrofit follow-up.
 
 ---

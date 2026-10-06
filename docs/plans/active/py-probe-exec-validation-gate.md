@@ -17,7 +17,7 @@ PR #1936 fixed the reported instance (`tests/bats/issue_sweep.bats` and the
 sibling bats suites, where the resolve-only probe defeated the skip guard so 4
 of 6 cases failed instead of skipping). Two same-class sites were explicitly
 left out of scope in that PR — [`scripts/dev/doctor.sh`](../../../scripts/dev/doctor.sh)
-and [`agents/scripts/core/merge-watcher-stuck-nudge.sh`](../../../agents/scripts/core/merge-watcher-stuck-nudge.sh)
+and [`agents/scripts/core/merge-watcher-stuck-nudge.sh`](../../../agent-layer/agents/scripts/core/merge-watcher-stuck-nudge.sh)
 — and a sweep for the pattern found two more (`agent-eval-run.sh`,
 `test-tooltip-wrapwidth.sh`) plus one in the plan-lock substrate itself
 (`lock-table-cache.sh`).
@@ -36,14 +36,14 @@ Two halves.
 **1 — fix the remaining pickers.** Replace each resolve-only probe with a
 resolve-**and-run** probe: `command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1`.
 The canonical shape already exists in-tree at
-[`assert-code-unchanged.sh:20`](../../../agents/scripts/core/assert-code-unchanged.sh) —
+[`assert-code-unchanged.sh:20`](../../../agent-layer/agents/scripts/core/assert-code-unchanged.sh) —
 the fixes converge on it. Repeating a ~6-line resolver across shell scripts does
 not trip the `duplication` gate (AGENTS.md scopes that rule to first-party C++),
 and no shared shell library exists that all five callers already source, so a
 copied helper is the honest option here.
 
 **2 — gate the class.** New rule 9 in
-[`agents/scripts/core/test-shell-lint.sh`](../../../agents/scripts/core/test-shell-lint.sh)
+[`agents/scripts/core/test-shell-lint.sh`](../../../agent-layer/agents/scripts/core/test-shell-lint.sh)
 (`SHELL_LINT_PY_PROBE`) flagging a python-interpreter **picker** that resolves
 without exec-validating.
 

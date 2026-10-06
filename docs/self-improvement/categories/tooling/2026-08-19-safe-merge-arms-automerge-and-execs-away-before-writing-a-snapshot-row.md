@@ -102,7 +102,7 @@ becomes testable. The 13 `--selftest` cases are unaffected — they exercise hel
 never enter the arm block at all.
 
 Related: [`docs/adr/0017-merge-time-snapshot-ledger.md`](../../../adr/0017-merge-time-snapshot-ledger.md)
-(the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../../agent-rules/ship-loops.md)
+(the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../../../agent-layer/docs/agent-rules/ship-loops.md)
 § step 3 (the prose fourth-writer rule this entry proposes to turn into code).
 
 ## Follow-up measurement — 2026-09-12 (PR #2184)

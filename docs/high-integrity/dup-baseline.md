@@ -1,6 +1,6 @@
 # Duplication — grandfathered baseline
 
-_Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --dup-baseline` and commit._
+_Auto-generated. Do not hand-edit; run `bash agent-layer/agents/scripts/project/test-lint-rules.sh --dup-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (dup_audit.py --diff); this file is an informational snapshot, not the gate input._
 
 ## duplication (441 cross-file clones, min 70 tokens)

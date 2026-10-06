@@ -121,7 +121,7 @@ pre-commit: REFUSING a commit with no code review.
   $review_out
 
   Every commit's diff gets a 'code-review' agent pass BEFORE it lands
-  (docs/agent-rules/process-rules.md § Code-review before every commit,
+  (agent-layer/docs/agent-rules/process-rules.md § Code-review before every commit,
   user-mandated 2026-06-07). Critical/High findings block the commit until
   fixed or explicitly waived.
 
@@ -147,7 +147,7 @@ pre-commit: REFUSING — the code review recorded a HARD VETO.
 
   A veto is a security finding, a deterministic-gate failure, or a
   project-invariant breach — the reviewer marked it as something that must not
-  be averaged away by good scores elsewhere (docs/agent-rules/verifier-sidecar.md
+  be averaged away by good scores elsewhere (agent-layer/docs/agent-rules/verifier-sidecar.md
   § Operating rules, rule 2: veto beats average).
 
   This is NOT the advisory score. The continuous verifier score never blocks a

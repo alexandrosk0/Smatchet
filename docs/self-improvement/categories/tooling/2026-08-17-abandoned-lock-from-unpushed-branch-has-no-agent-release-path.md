@@ -33,7 +33,7 @@ Three mechanisms each exclude this case, and together they leave no agent-reacha
 
 | mechanism | why it does not apply |
 |---|---|
-| [`lock-release.sh`](../../../../agents/scripts/core/lock-release.sh) | Its header names this exact use — *"meant for abandoned branches or pre-cutover manual housekeeping"* — but the `plan-locks` ruleset ([`setup-locks-ruleset.sh`](../../../../agents/scripts/core/setup-locks-ruleset.sh)) restricts `refs/locks/*` deletion to `RepositoryRole/admin` + `Integration/github-actions`. A non-admin agent gets 403. |
+| [`lock-release.sh`](../../../../agent-layer/agents/scripts/core/lock-release.sh) | Its header names this exact use — *"meant for abandoned branches or pre-cutover manual housekeeping"* — but the `plan-locks` ruleset ([`setup-locks-ruleset.sh`](../../../../agent-layer/agents/scripts/core/setup-locks-ruleset.sh)) restricts `refs/locks/*` deletion to `RepositoryRole/admin` + `Integration/github-actions`. A non-admin agent gets 403. |
 | [`lock-cleanup.yml`](../../../../.github/workflows/lock-cleanup.yml) | Fires on `pull_request: closed` and reads `lock-slug:` from the PR body. An unpushed branch has no PR, so no close event will ever occur. |
 | [`lock-staleness.yml`](../../../../.github/workflows/lock-staleness.yml) | Opens/updates an Issue only — it **never deletes** — and not until the 14-day threshold. |
 

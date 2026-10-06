@@ -36,7 +36,7 @@
   precedent for the right handling; it too is recorded only as prose.
   Concrete next action: make coverage a computed property of the sweep instead of a
   claim in its header. (1) Add a `--worklist <lo> <hi>` mode to
-  [`historical-review-survivors.sh`](../../../../agents/scripts/core/historical-review-survivors.sh)
+  [`historical-review-survivors.sh`](../../../../agent-layer/agents/scripts/core/historical-review-survivors.sh)
   (or a sibling `historical-review-worklist.sh`) that emits `{pr, sha}` units for a PR
   range and **fails loudly** when the two enumerators disagree. The gate's enumerator
   is the GitHub merged set — `gh pr list --state merged --base develop --json number,mergeCommit`,
@@ -57,7 +57,7 @@
   contiguity claim); the #1987 review-ref bug, the other case where the extractor
   degraded silently rather than failing loudly.
   Status: partially applied (2026-08-16 — shipped: parts (1) + (2). New gate
-    [`historical-review-worklist.sh`](../../../../agents/scripts/core/historical-review-worklist.sh)
+    [`historical-review-worklist.sh`](../../../../agent-layer/agents/scripts/core/historical-review-worklist.sh)
     builds the work-list from the GitHub merged set cross-validated against the
     develop-log scrape, **refuses to emit a scrape-only list** when no authority is
     available (`gh` absent and no `--merged-list`), reports any PR the scrape missed,

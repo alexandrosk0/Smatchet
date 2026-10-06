@@ -411,7 +411,7 @@ Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
 | `debug.lua_eval` | `code` *(required)* | Destructive (`--yes`). Evaluate a Lua snippet; returns `{result}`. |
 | `debug.mcp_status` | — | `{mcpEnabled, hasClientActivity, lastActivityMsAgo, activityLog:[...]}` |
 | `debug.thread_dump` | — | `{hardwareConcurrency, note, selfDumpAvailable}`. No inline stacks — use `debug.dump_self` for those. |
-| `debug.dump_self` | — | `{wrote, available, path}`, or `{wrote:false, available:false, reason}` where no writer exists (Unreal/DX12, Android). Writes `<userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp` with every thread's stack; triage with `bash agents/scripts/core/dump-triage.sh <path>`. Supports `--dry-run`. |
+| `debug.dump_self` | — | `{wrote, available, path}`, or `{wrote:false, available:false, reason}` where no writer exists (Unreal/DX12, Android). Writes `<userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp` with every thread's stack; triage with `bash agent-layer/agents/scripts/core/dump-triage.sh <path>`. Supports `--dry-run`. |
 
 **Diagnosing a hang.** `debug.log_tail`, `debug.dump_self`, `debug.log` and `debug.mcp_status` run inline on the calling thread, so they still answer while the UI thread is wedged. `debug.dock.dump`, `debug.dock.reset`, `debug.window.resize`, `debug.window.screenshot` and `debug.grid.edit-burst` marshal to the UI thread and will block indefinitely — do not reach for them first when the app is unresponsive. `debug.lua_eval` is inline too but is **not** a safe probe here: it is destructive (`--yes`) and runs the shared Lua state on the calling thread, so during a hang it can race whatever the wedged thread was doing.
 

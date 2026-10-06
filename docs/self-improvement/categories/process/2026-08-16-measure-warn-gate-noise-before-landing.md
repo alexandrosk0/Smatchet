@@ -1,6 +1,6 @@
 - 2026-08-16 · orchestrator · [process] · P2 — a new WARN-first gate shipped without measuring its false-positive ratio on the whole tree first; the rule as written was 8/12 false, which would have trained readers to ignore it
   Details: PR #2028 added a code-span repo-path check to
-    [`test-markdown-links.sh`](../../../../agents/scripts/core/test-markdown-links.sh).
+    [`test-markdown-links.sh`](../../../../agent-layer/agents/scripts/core/test-markdown-links.sh).
     It was authored, unit-tested, bats-tested and negative-tested against the
     delta scope — all green — and only a discretionary whole-tree `--all` run
     revealed the real signal quality: **12 warnings, of which 8 were false**. A
@@ -29,7 +29,7 @@
     ship-loop asks for the measurement, so the next WARN gate is one distracted
     author away from landing at 8/12.
   Concrete next action: add a line to
-    [`process-rules.md`](../../../agent-rules/process-rules.md) § Cadence and
+    [`process-rules.md`](../../../../agent-layer/docs/agent-rules/process-rules.md) § Cadence and
     verification — *a new or widened WARN-first rule must be run whole-tree
     (`--all` / equivalent) before push, and the PR body must state the warning
     count and the true/false split; a rule whose warnings are majority-false gets

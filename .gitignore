@@ -60,8 +60,8 @@ smatchet_field_catalog_cache.json
 
 .worktrees/
 
-# Harness adapters — local-only, regenerate via `bash agents/scripts/core/setup-harness.sh <name>`.
-# See docs/harness/SETUP.md for per-harness instructions.
+# Harness adapters — local-only, regenerate via `bash agent-layer/agents/scripts/core/setup-harness.sh <name>`.
+# See agent-layer/docs/harness/SETUP.md for per-harness instructions.
 .claude/
 .codex/
 # .cursor/ stays local EXCEPT .cursor/BUGBOT.md, which is shared Cursor Bugbot
@@ -79,7 +79,7 @@ skills-lock.json
 .session-context.md
 .session-context.archive/
 
-# Per-branch redacted prompt-intent capture (see docs/agent-rules/ship-loops.md
+# Per-branch redacted prompt-intent capture (see agent-layer/docs/agent-rules/ship-loops.md
 # § Intent capture). Written by the capture-intent.sh UserPromptSubmit hook,
 # read by the orchestrator at gh pr create time to fill the PR `## Intent`.
 .session-intent/

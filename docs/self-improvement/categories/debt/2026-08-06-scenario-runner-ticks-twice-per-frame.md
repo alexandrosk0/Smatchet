@@ -28,7 +28,7 @@
   frame semantics for **every** scenario (warm-up counts double overnight) and
   invalidates every bucket-C golden, so it needs its own slice with golden
   regeneration — which is approval-gated by
-  [`golden-image-approval.md`](../../../agent-rules/golden-image-approval.md).
+  [`golden-image-approval.md`](../../../../agent-layer/docs/agent-rules/golden-image-approval.md).
 
   Suggested shape: keep the in-`Draw` tick (it matches production ordering and
   runs inside the `NewFrame`/`Render` bracket), delete the bootstrap one, then

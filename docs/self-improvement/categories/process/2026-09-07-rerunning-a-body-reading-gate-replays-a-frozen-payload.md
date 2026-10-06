@@ -53,7 +53,7 @@ population is one is also why the trap has never been written down.
 
 ## Why the existing docs point the wrong way
 
-[`merge-gates.md`](../../../agent-rules/merge-gates.md) is where an agent looks when a check is red,
+[`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) is where an agent looks when a check is red,
 and it prescribes `gh run rerun` twice without scoping:
 
 - line 97, halt-code 8 (*Cancelled-while-pending*): "Rerun the named run(s) (`gh run rerun <id>` from

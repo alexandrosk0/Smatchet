@@ -186,7 +186,7 @@ orphaned-commit case) while removing the false refusal for lock deletes and othe
 
 One trap in the test harness, worth naming because it decides the default: the existing
 bucket-A harness
-[`agents/scripts/core/test-pre-push-merged-pr-guard.sh`](../../../agents/scripts/core/test-pre-push-merged-pr-guard.sh)
+[`agents/scripts/core/test-pre-push-merged-pr-guard.sh`](../../../agent-layer/agents/scripts/core/test-pre-push-merged-pr-guard.sh)
 (9 cases) runs the hook with **empty stdin** — its own comments note (A) "is stdin-driven
 and inert on the empty stdin here". A naive stdin-keyed (B) would therefore see zero
 updates and allow, flipping the harness's MERGED/CLOSED refusal cases (6, 7) green for
@@ -267,7 +267,7 @@ means.
     FINDING, and the finding's own framing ("Line 322 says X") invites the
     narrow fix.
   Concrete next action: add a short rule to
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Cadence and
+    [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) § Cadence and
     verification — *when a review finding reports a stale/incorrect STATEMENT
     (comment, doc line, header claim), fix the class, not the instance: grep the
     offending phrase across every file in the PR diff (`git diff --name-only
@@ -753,7 +753,7 @@ adversarial review, not by the system.
   Details: carried forward from
   [`2026-08-06-gate-tooling-run-from-stale-session-branch`](applied.md) (applied
   2026-08-11), whose thesis — make staleness self-announcing instead of silent — is
-  shipped. [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
+  shipped. [`agents/scripts/core/lib/script-freshness.sh`](../../../agent-layer/agents/scripts/core/lib/script-freshness.sh)
   now provides `script_freshness_verdict` + `warn_if_script_stale`, and three callers
   use it: `merge-gates.sh` (off/warn/block, default warn), `pre-ship.sh` (advisory,
   printed immediately before its `Safe to push` line), and `postmortem-owed.sh`
@@ -784,7 +784,7 @@ adversarial review, not by the system.
   the helper, and calls `warn_if_script_stale` LAST — after both the Issue verdicts
   and the out-of-band-label strip, since a stale checkout can change either. Missing
   lib degrades to silence rather than an error. Three tests in
-  [`issue_sweep.bats`](../../../tests/bats/issue_sweep.bats) pin the wiring by
+  [`issue_sweep.bats`](../../../agent-layer/tests/bats/issue_sweep.bats) pin the wiring by
   running a copy of the script beside a stub lib, so they assert the call actually
   fires with the real declared set rather than grepping the source; removing the call
   fails two of them.
@@ -802,7 +802,7 @@ adversarial review, not by the system.
 
 - 2026-08-11 · claude-code · [tooling] · P2 — the documented archival command re-parents a per-entry file one directory UP, silently breaking every relative link in it; the docs gate catches it only after the fact, and only if someone runs it
 
-  Details: [`AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) § workflow
+  Details: [`AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md) § workflow
   step 4 prescribes archiving a per-entry file with
 
   ```
@@ -865,7 +865,7 @@ adversarial review, not by the system.
   that one line would have caught both halves, and the `--all` is load-bearing: default
   mode is diff-scoped and sees neither the re-parented body nor the orphaned referrers.
 
-  **Applied 2026-08-11.** [`archive-backlog-entry.sh`](../../../agents/scripts/core/archive-backlog-entry.sh)
+  **Applied 2026-08-11.** [`archive-backlog-entry.sh`](../../../agent-layer/agents/scripts/core/archive-backlog-entry.sh)
   replaces the raw recipe, and § workflow step 4 now calls it and says explicitly
   not to hand-roll the `cat`. Two things came out different from the plan above:
 
@@ -882,7 +882,7 @@ adversarial review, not by the system.
     for a cosmetic reason. Links are repointed at `applied.md` at each referrer's
     own depth; prose mentions are reported as WARN for a human to restate.
 
-  Nineteen tests in [`archive_backlog_entry.bats`](../../../tests/bats/archive_backlog_entry.bats)
+  Nineteen tests in [`archive_backlog_entry.bats`](../../../agent-layer/tests/bats/archive_backlog_entry.bats)
   drive a throwaway repo laid out like the real docs tree, and assert on the
   RESULTING LINK TARGETS rather than exit status — reverting the fix fails 8 of
   them. One test exists only because the first real run hit it: `git rm` refuses a
@@ -976,10 +976,10 @@ adversarial review, not by the system.
 
 - 2026-08-11 · claude-code · [process] · P2 — the `[pre-first-push gate]`'s self-review step is the only one with no backstop, so skipping it is invisible; skipped on PR #1996 and it cost ~8 CodeRabbit cycles, both bots' rate limits, and four locally-knowable defects reaching CI
 
-  Details: [`ship-loops.md`](../../agent-rules/ship-loops.md) § `[pre-first-push gate]`
+  Details: [`ship-loops.md`](../../../agent-layer/docs/agent-rules/ship-loops.md) § `[pre-first-push gate]`
   makes a local self-review mandatory before the first push, "never deferring
   locally-knowable findings to CI/CR", and the
-  [`adversarial-code-review`](../../../agents/_shared/skills/adversarial-code-review/SKILL.md)
+  [`adversarial-code-review`](../../../agent-layer/agents/_shared/skills/adversarial-code-review/SKILL.md)
   skill says to use it "proactively before opening a PR". On PR #1996 the gate's
   other steps were either run or genuinely n/a (no strict-zone C++ touched, so
   the dual-target `/WX` build, `ctest`, and the leaf-`AGENTS.md` self-review did
@@ -1035,7 +1035,7 @@ adversarial review, not by the system.
 
 - 2026-08-11 · claude-code · [tooling] · P1 — `test-gate-selftests --check` proves a `# selftest: asserts-failure` marker EXISTS, not that the negative under it can ever fail; `test-plan-index.sh`'s negative had been satisfied by a `Permission denied` for its whole life, and four more vacuous negatives were written in the two sessions that touched this area
 
-  Details: [`test-gate-selftests.sh`](../../../agents/scripts/core/test-gate-selftests.sh)
+  Details: [`test-gate-selftests.sh`](../../../agent-layer/agents/scripts/core/test-gate-selftests.sh)
   enforces that every `--selftest`-exposing gate script carries a negative
   assertion, marked `# selftest: asserts-failure`. That is the right gate to
   have — it closed a real gap. But what it can check is the presence of a marker
@@ -1043,7 +1043,7 @@ adversarial review, not by the system.
   matters: **that the negative actually fails when the behaviour it names is
   removed.**
 
-  **The live instance.** [`test-plan-index.sh`](../../../agents/scripts/core/test-plan-index.sh)
+  **The live instance.** [`test-plan-index.sh`](../../../agent-layer/agents/scripts/core/test-plan-index.sh)
   case (3) fed a non-existent archive dir and required a non-zero exit. Two
   independent reasons it could not fail:
 
@@ -1084,7 +1084,7 @@ adversarial review, not by the system.
     specific exit code — or it is satisfied by crashes, missing interpreters,
     permission errors and typos in the test itself.
   - **`set -e` inside a `&&`/`||` operand.** Already documented in
-    [`script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
+    [`script-freshness.sh`](../../../agent-layer/agents/scripts/core/lib/script-freshness.sh)
     for the callee side; the *test* side has the same trap and no note anywhere.
 
   Concrete next action, cheapest first:
@@ -1209,7 +1209,7 @@ adversarial review, not by the system.
   invocations agree, so this is a deterministic miss, not a flake.
 
   Mechanism. `has_entry()`
-  ([`postmortem-owed.sh:240-251`](../../../agents/scripts/core/postmortem-owed.sh))
+  ([`postmortem-owed.sh:240-251`](../../../agent-layer/agents/scripts/core/postmortem-owed.sh))
   runs two probes and the trigger-1 loop skips the PR when either fires:
 
   ```bash
@@ -1336,7 +1336,7 @@ adversarial review, not by the system.
   performed for that purpose. If the block was typed rather than pasted, treat it as unverified
   until resolved, however confident it looks.
 
-  Belongs in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
+  Belongs in [`docs/agent-rules/process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md)
   § Cadence and verification, alongside the existing stale-`Edit` recovery rule — same shape
   (a stale mental model of a file standing in for the file).
 
@@ -1370,7 +1370,7 @@ adversarial review, not by the system.
      `SMATCHET_TEST_WITHMSVC_EXIT=` — an env var handed to a subprocess, not a verdict written
      where a reader will look for it.) Naming the convention and writing it down is the whole
      proposal.
-  2. **Doc** — add the rule to [`process-rules.md`](../../agent-rules/process-rules.md)
+  2. **Doc** — add the rule to [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md)
      § Cadence and verification, next to the existing note that `tail -N` can truncate a
      gate's verdict off the head of its output.
 
@@ -1390,7 +1390,7 @@ adversarial review, not by the system.
   The requester's mental model of "what I'm about to commit" is wrong precisely on `MM`
   files — that is what `MM` means.
 
-  Fix, in [`agents/core/code-review.md`](../../../agents/core/code-review.md): make step 1
+  Fix, in [`agents/core/code-review.md`](../../../agent-layer/agents/core/code-review.md): make step 1
   run `git status --short` and, for **any** `MM` path in scope, state the staged/unstaged
   split up front and ask which one is under review (default: review the **working tree**,
   since that is what will be built and tested). Cheap — one command — and it converts a
@@ -1421,7 +1421,7 @@ adversarial review, not by the system.
   history. And a stale-claim sweep is a *whole-file* scan, so a hit inside a fenced code block
   or a quoted historical excerpt is a false positive to skip, not a line to edit.
 
-  Belongs as a line in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
+  Belongs as a line in [`docs/agent-rules/process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md)
   § Cadence and verification, next to the existing "use `test-markdown-links.sh` as the enumerator, not grep"
   note — same failure shape: a hand-rolled proxy standing in for a complete enumerator.
 
@@ -1520,12 +1520,12 @@ adversarial review, not by the system.
   multiple commits, run the union — `git diff --name-only <first>~1 <last> -- <path>` — rather
   than reading one commit's `--stat`.
 
-  Belongs in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
+  Belongs in [`docs/agent-rules/process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md)
   § Cadence and verification, next to the other verify-the-claim-not-the-tool rules.
 
 - 2026-08-07 · claude-code · [tooling] · P2 — `dup_audit.py` suppression is a **per-line** test, so a multi-line `SMATCHET_DEVIATION` comment whose last line is prose silently fails to suppress; neither `cpp-rules.md` nor the gate's own output says so
 
-  Mechanics, from [`dup_audit.py:353-381`](../../../agents/scripts/core/dup_audit.py):
+  Mechanics, from [`dup_audit.py:353-381`](../../../agent-layer/agents/scripts/core/dup_audit.py):
   `_has_dup_deviation(line)` requires the `SMATCHET_DEVIATION` token **on that one
   line**, with `duplication` among the comma-separated `rule=` ids. `_suppressed`
   then checks (a) the nearest **non-blank line immediately above** the clone start
@@ -1549,7 +1549,7 @@ adversarial review, not by the system.
 
   Two fixes, independent:
 
-  1. **Doc** — add to [`cpp-rules.md`](../../agent-rules/cpp-rules.md)
+  1. **Doc** — add to [`cpp-rules.md`](../../../agent-layer/docs/agent-rules/cpp-rules.md)
      § `SMATCHET_DEVIATION` grammar: *the whole `SMATCHET_DEVIATION(...)` must fit on
      a single line for the `duplication` rule; put explanatory prose on separate
      comment lines **above** it.* (`.clang-format` `ColumnLimit: 120` is the real
@@ -1566,7 +1566,7 @@ adversarial review, not by the system.
 
 - 2026-08-07 · claude-code · [tooling] · P2 — repo paths written as inline code spans in backlog entries are never checked, so a backlog entry can cite a file that does not exist
 
-  [`agents/scripts/core/test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh)
+  [`agents/scripts/core/test-markdown-links.sh`](../../../agent-layer/agents/scripts/core/test-markdown-links.sh)
   resolves markdown **links** — its `LINK_RE` matches only the bracketed-label-then-parenthesised-
   href form. A repo path written as a bare code span
   — `` `scripts/dev/test-ui-window-expand.sh` `` — is invisible to it. In this session I wrote a
@@ -1641,20 +1641,20 @@ adversarial review, not by the system.
     (2) **Same check in the shared helper, not per-script.** Put it in a `warn_if_script_stale
     <path>` helper (sourced by `merge-gates.sh`, `postmortem-owed.sh`, `pre-ship.sh`) so the other
     gate scripts inherit it — `pre-ship.sh` especially, where staleness yields false greens.
-    (3) **Rule text.** Add to [`process-rules.md`](../../agent-rules/process-rules.md)
+    (3) **Rule text.** Add to [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md)
     § Concurrent interactive sessions: *"Run gate tooling from a worktree freshly based on
     `origin/develop`, never from a long-lived session branch. A BLOCK observed from a stale checkout
     is not evidence about `develop`; reproduce from a fresh worktree before filing anything against a
     gate."* This is the rule that would have stopped the bad entry with zero code.
     (4) **Evidence rule for the ledger.** A postmortem or backlog entry whose central evidence is
     gate-tool output must record the tree + commit the tool ran from. Fold into the
-    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+    [`gate-escape-postmortem`](../../../agent-layer/agents/_shared/skills/gate-escape-postmortem/SKILL.md)
     skill's evidence checklist — the discipline generalises past this bug.
     Est ~0.5d ((1)+(2) helper + 2 bats cases; (3)+(4) doc edits).
   Cross-ref: `agents/scripts/core/merge-gates.sh` (:1201-1202 the downgrade absent from the stale
     copy); `4685997d` / PR #1468 (2026-06-20, the commit the session branch predates); PR #1953
     (phantom block) vs PR #1961 (same class, passes from a fresh worktree);
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Concurrent interactive sessions
+    [`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) § Concurrent interactive sessions
     (`nsc <slug>` one-worktree-per-session rule this extends from correctness to *freshness*).
 
   **Update 2026-08-11 — (1), (3), (4) shipped; (2) is the remaining scope.**
@@ -1674,7 +1674,7 @@ adversarial review, not by the system.
     old "freshness OFF by default" test is replaced by one pinning the `warn` default
     plus an explicit-off canary.
   - **(2) Same check in the shared helper — DONE.** Extracted to
-    [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh):
+    [`agents/scripts/core/lib/script-freshness.sh`](../../../agent-layer/agents/scripts/core/lib/script-freshness.sh):
     `script_freshness_verdict` (the bounded fetch, the multi-file combined
     fingerprint, the fail-closed blanking) plus the advisory `warn_if_script_stale`
     wrapper. `merge-gates.sh` now delegates detection to it while keeping its own
@@ -1704,7 +1704,7 @@ adversarial review, not by the system.
     lose that mask, so under the `set -euo pipefail` its callers run, a missing file
     killed the calling gate outright instead of degrading to `unverifiable`. Every
     substitution now carries an explicit `|| var=""`, and
-    [`tests/bats/script_freshness.bats`](../../../tests/bats/script_freshness.bats)
+    [`tests/bats/script_freshness.bats`](../../../agent-layer/tests/bats/script_freshness.bats)
     pins it with four `set -e`/`set -u` survival cases (16 cases total).
   - **(3) Rule text — DONE.** `process-rules.md` § Concurrent interactive sessions
     carries "Run gate tooling from a tree freshly based on `origin/develop`, never from
@@ -1712,7 +1712,7 @@ adversarial review, not by the system.
     evidence about `develop`, that the WARN is a stop-and-re-run signal, and that the
     other core gates have no such guard yet.
   - **(4) Evidence rule for the ledger — DONE.** The
-    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+    [`gate-escape-postmortem`](../../../agent-layer/agents/_shared/skills/gate-escape-postmortem/SKILL.md)
     skill's step 1 now requires recording the tree + commit any cited gate-tool output
     ran from, and to reproduce from an `origin/develop`-based worktree before the
     finding enters the ledger.
@@ -1941,7 +1941,7 @@ adversarial review, not by the system.
     `self-improvement-only diff (1 file(s) under docs/self-improvement/**) — CR review exempt`, there
     were no unresolved threads and no override label, and a sibling session merging an open green PR
     on the shared login is documented-expected
-    ([`process-rules.md`](../../agent-rules/process-rules.md) § Git/p4 discipline).
+    ([`process-rules.md`](../../../agent-layer/docs/agent-rules/process-rules.md) § Git/p4 discipline).
   Concrete next action: two changes in `agents/scripts/core/merge-gates.sh`, plus test pins.
     (1) **Narrow `$crskip`** — drop the bare `contains("skip review by coderabbit.ai")` disjunct (a
     generic skip marker, not a size marker) and keep only the size-specific test, i.e.

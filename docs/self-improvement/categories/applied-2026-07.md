@@ -1134,7 +1134,7 @@ the expiry are lost**. The Python auditors (`dup_audit`, `function_size_audit`,
 `appcontroller_fan_in_audit`, `include_cycle_audit`) are per-line too — their "nearest non-blank
 line above the target" is the marker's trailing prose, which carries no token, so a wrapped marker
 survives only via `dup_audit._suppressed`'s "anywhere within the clone span" fallback, which
-[`cpp-rules.md`](../../agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
+[`cpp-rules.md`](../../../agent-layer/docs/agent-rules/cpp-rules.md) itself warns is accidental and intermittent.
 
 Where they are: `Source/Core/include/Tracker/{GitHub,Jira,Linear,Plane}Client.h` (21),
 `Source/Core/src/Tracker/*` (8), the three AI provider clients (5), `Source/Standalone/Cli*` (4),
