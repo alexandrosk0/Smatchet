@@ -129,7 +129,7 @@ static void RegisterDebugThreadDumpCommand(CommandRegistry& reg) {
                                 nlohmann::json out;
                                 out["note"] = "Thread dump requires OS-specific APIs; counts are unavailable via this "
                                               "command. For per-thread stacks, call debug.dump_self and triage the "
-                                              "minidump with agent-layer/agents/scripts/core/dump-triage.sh.";
+                                              "minidump with agents/scripts/core/dump-triage.sh.";
                                 out["hardwareConcurrency"] = static_cast<int>(std::thread::hardware_concurrency());
                                 out["selfDumpAvailable"] = smatchet::diagnostics::HasSelfDumpProvider();
                                 return CommandResult::Success(std::move(out));
@@ -293,7 +293,7 @@ static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
         "with no writer (DX12/Unreal, Android). Writes <userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp "
         "using MiniDumpNormal|MiniDumpFilterModulePaths — the same scope the crash handler uses, chosen so "
         "heap-resident secrets are not swept into the dump and module paths (which embed the user's account "
-        "name) are stripped. Triage with `bash agent-layer/agents/scripts/core/dump-triage.sh <path>`. Example: "
+        "name) are stripped. Triage with `bash agents/scripts/core/dump-triage.sh <path>`. Example: "
         "`Smatchet.exe cmd debug.dump_self`.";
     c.Idempotent = false;
     c.DryRunSupported = true;
