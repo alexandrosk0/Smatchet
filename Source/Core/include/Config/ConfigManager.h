@@ -312,6 +312,12 @@ struct TrackerConfig {
     // the post-V1 (pre-wheel) default alias set. Same "leave customised rows alone"
     // contract as V1.
     bool MigratedMultiHotkeyZoomV2 = false;
+    // One-shot migration flag: retry after V2's exact-match miss. V2 only widens the
+    // full pre-wheel snapshot and still sets its flag when it skips, so rows that
+    // kept just the legacy primary (Ctrl+= / Ctrl+-) never got mouse-wheel. V3
+    // appends missing Defaults() aliases when every existing combo is still in the
+    // shipped set (non-empty). Custom / cleared / missing rows stay untouched.
+    bool MigratedMultiHotkeyZoomV3 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---
     // Which host-engine snapshot fields (pushed by the Unreal plugin) are folded into the
