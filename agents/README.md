@@ -15,9 +15,9 @@ Harnesses discover agents flatly at `.claude/agents/*.md`; `agent-layer/agents/s
 
 ## Edit the source, never `.claude/`
 
-Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are **gitignored**. They're regenerated locally from `agents/project/` and the layer by `bash agent-layer/agents/scripts/core/setup-harness.sh <name>`.
+Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are **gitignored**, apart from the tracked `.cursor/BUGBOT.md`. They're regenerated locally from `agents/project/` and the layer by `bash agent-layer/agents/scripts/core/setup-harness.sh <name>`.
 
-Adapters are **links** (junctions / symlinks / hardlinks) into those trees wherever the harness allows — so an edit to `agents/project/ui-host.md` is visible to Claude Code immediately, no sync step required. A generic agent (`agent-layer/agents/core/…`) is edited in the layer repo and reaches this project through a pointer bump; an edit made inside the `agent-layer/` mount is discarded by the next `git submodule update`.
+Adapters are **links** (junctions / symlinks / hardlinks) into those trees wherever the harness allows — so an edit to `agents/project/ui-host.md` is visible to Claude Code immediately, no sync step required. A generic agent (`agent-layer/agents/core/…`) is edited in the layer repo and reaches this project through a pointer bump; an edit made inside the `agent-layer/` mount is not part of this repo's history and never ships from here.
 
 See [`agent-layer/docs/harness/SETUP.md`](../agent-layer/docs/harness/SETUP.md) for per-harness setup instructions.
 
