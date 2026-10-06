@@ -114,6 +114,124 @@ allowed() {
     allowed
 }
 
+# ---------- tokenizer: bypasses of the old single-regex match ----------
+
+@test "deny: gh global flags anywhere (gh pr -R o/r merge N --auto)" {
+    for c in 'gh pr -R o/r merge 5 --auto' \
+             'gh -R o/r pr merge 5 --auto' \
+             'gh pr merge --repo o/r 5 --auto' \
+             'C:/tools/gh.exe pr merge 5 --auto'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: keyword / compound-command prefixes (for-do, if-then, !, braces, subshell)" {
+    for c in 'for p in 1 2; do gh pr merge $p --auto; done' \
+             'if gh pr merge 5 --auto; then echo ok; fi' \
+             'if true; then gh pr merge 5 --auto; fi' \
+             'while true; do gh pr merge 5 --auto && break; done' \
+             '! gh pr merge 5 --auto' \
+             '{ gh pr merge 5 --auto; }' \
+             '(cd /tmp; gh pr merge 5 --auto)' \
+             $'cd /tmp\ngh pr merge 5 --auto'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: wrapper prefixes (xargs, timeout <dur>, nice, nohup, env, sudo)" {
+    for c in 'echo 5 | xargs gh pr merge --auto' \
+             'echo 5 | xargs -I{} gh pr merge {} --auto' \
+             'timeout 30 gh pr merge 5 --auto' \
+             'timeout -s KILL 30s gh pr merge 5 --auto' \
+             'nice -n 5 nohup env A=1 gh pr merge 5 --auto &' \
+             'sudo -u me gh pr merge 5 --auto'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: a quoted --auto or one glued to a redirection" {
+    for c in 'gh pr merge 5 "--auto"' \
+             "gh pr merge 5 '--auto' --squash" \
+             'gh pr merge 5 --auto>/dev/null' \
+             'gh pr merge 5 --auto 2>&1' \
+             'gh pr merge 5 --auto=true'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: a heredoc / here-string / -c string fed to a shell, and eval" {
+    for c in $'bash <<\'EOF\'\ngh pr merge 5 --auto\nEOF' \
+             $'bash <<EOF\ngh pr merge 5 --auto\nEOF' \
+             $'sh -s <<EOF\ngh pr merge 5 --auto\nEOF' \
+             $'bash -s -- 5 <<\'EOF\'\ngh pr merge "$1" --auto\nEOF' \
+             'bash <<< "gh pr merge 5 --auto"' \
+             "bash -c 'gh pr merge 5 --auto'" \
+             "sudo -u me bash -lc 'gh pr merge 5 --auto'" \
+             'eval "gh pr merge 5 --auto"'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: command substitution runs, even inside double quotes or an unquoted heredoc" {
+    for c in 'x="$(gh pr merge 5 --auto)"' \
+             'echo "`gh pr merge 5 --auto`"' \
+             'diff <(gh pr merge 5 --auto) x' \
+             $'cat <<EOF\n$(gh pr merge 5 --auto)\nEOF'; do
+        bash_call "$c"
+        denied
+    done
+}
+
+@test "deny: a gh api GraphQL enablePullRequestAutoMerge mutation" {
+    bash_call "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'"
+    denied
+}
+
+# ---------- tokenizer: false denials of the old single-regex match ----------
+
+@test "allow: a multi-line quoted argument whose line starts with gh pr merge N --auto" {
+    bash_call $'git commit -m \'feat: x\n\ngh pr merge 5 --auto is banned here\''
+    allowed
+    bash_call $'git commit -m "feat: x\ngh pr merge 5 --auto"'
+    allowed
+}
+
+@test "allow: a quoted --body carrying backticked gh pr merge --auto --squash text" {
+    bash_call "gh pr create --title t --body 'never run \`gh pr merge --auto --squash\` by hand'"
+    allowed
+    # The repo's usual PR-body form: a quoted-delimiter heredoc inside \$(...).
+    bash_call $'gh pr create --title t --body "$(cat <<\'EOF\'\n## Summary\nnever run `gh pr merge --auto --squash` by hand\nEOF\n)"'
+    allowed
+}
+
+@test "allow: text that only looks like an arm (quoted separator, lookup, script file, --auto=false)" {
+    for c in "echo ';' gh pr merge 5 --auto" \
+             'command -v gh pr merge --auto' \
+             $'bash script.sh <<EOF\ngh pr merge 5 --auto\nEOF' \
+             'gh pr merge 12 --auto=false' \
+             '# gh pr merge 5 --auto' \
+             'bash agents/scripts/core/safe-merge.sh 2286 --auto'; do
+        bash_call "$c"
+        allowed
+    done
+}
+
+@test "no working python: the regex fallback still denies a plain arm and allows text" {
+    stub="$BATS_TEST_TMPDIR/nopy"
+    mkdir -p "$stub"
+    # A broken interpreter (the Windows Store alias shape): resolves on PATH, fails to run.
+    for p in python3 python; do printf '#!/usr/bin/env bash\nexit 9009\n' > "$stub/$p"; chmod +x "$stub/$p"; done
+    PATH="$stub:$PATH" bash_call 'gh pr merge 5 --squash --auto'
+    denied
+    PATH="$stub:$PATH" bash_call 'git commit -m "docs: never run gh pr merge --auto"'
+    allowed
+}
+
 @test "settings.json.tmpl wires the hook on a PreToolUse matcher covering Bash + the MCP tools" {
     run jq -r '.hooks.PreToolUse[] | select(any(.hooks[]; .command | contains("guard-auto-merge-arm.sh"))) | .matcher' "$TMPL"
     [ "$status" -eq 0 ]
