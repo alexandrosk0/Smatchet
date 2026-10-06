@@ -439,7 +439,9 @@ _classify_diff() {
 # context line stays exempt. A '+' line that starts inside a raw string literal is
 # string DATA and is replaced by a sentinel the classifier never exempts. A file
 # whose tracking cannot be trusted — a hunk that ends with the #if stack open,
-# closes an arm it never opened, or ends inside a comment/raw string — gets
+# closes an arm it never opened, ends inside a comment/raw string, continues a
+# `//` comment with a trailing backslash, or puts a conditional directive after a
+# closing */ on the same line — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -579,7 +581,7 @@ function first_tok(s) { sub(/[ \t\/].*$/, "", s); return s }
 function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; return 0 }
 # Lexical state across the post-image lines of one hunk: lx_blk (inside a /* */
 # comment) and lx_raw (inside a raw string literal, closed by ")" lx_rdel "\"").
-function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = "" }
+function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0 }
 # lex_line(s) — advance the lexical state across one line; sets lx_code = 1 when
 # any non-whitespace byte lies outside a comment (string-literal bytes are code).
 # Ordinary string/char literals cannot span lines, so they are skipped in place
@@ -610,7 +612,12 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
         if (!p) return
         i += p - 1
         c = substr(s, i, 1)
-        if (substr(s, i, 2) == "//") return
+        if (substr(s, i, 2) == "//") {
+            # A trailing backslash splices the next line into this comment, which the
+            # per-line lexer cannot follow: the file's tracking is not trusted.
+            if (s ~ /\\[ \t\r]*$/) lx_untrusted = 1
+            return
+        }
         if (substr(s, i, 2) == "/*") { lx_blk = 1; i += 2; continue }
         lx_code = 1
         if (c == "/") { i++; continue }
@@ -641,6 +648,10 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
 # returns 1 for a conditional directive.
 function post_line(body,   r) {
     pl_raw = lx_raw
+    # A conditional directive after a closing */ (`/* x */ #else`, or the last line of
+    # a multi-line comment) is one the compiler honours but track_directive never
+    # sees: the #if stack would be wrong, so the file's tracking is not trusted.
+    if (body ~ /\*\/[ \t]*#[ \t]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)/) lx_untrusted = 1
     r = (lx_blk || lx_raw) ? 0 : track_directive(body)
     lex_line(body)
     return r
@@ -649,7 +660,7 @@ function post_line(body,   r) {
 # closed an arm it never opened, or stops inside a comment / raw string cannot be
 # trusted — that file gets neither the off-target nor the comment-only drop.
 function end_hunk1() {
-    if (prod1 && (depth != 0 || uflow || lx_blk || lx_raw)) untrusted[f1] = 1
+    if (prod1 && (depth != 0 || uflow || lx_blk || lx_raw || lx_untrusted)) untrusted[f1] = 1
     depth = 0
     uflow = 0
     lex_reset()
@@ -1162,6 +1173,35 @@ diff --git a/Source/Core/src/Sync/Cont.cpp b/Source/Core/src/Sync/Cont.cpp
 -    (void)x;
 +    launchMissiles(x);
  }
+EOF
+    # A directive after a closing */ is honoured by the compiler but invisible to the
+    # #if tracker: here the new line is in the desktop #else arm, not the Android one.
+    _expect FALLTHROUGH "directive after a closing comment marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/Hidden.cpp b/Source/Core/src/Sync/Hidden.cpp
+--- a/Source/Core/src/Sync/Hidden.cpp
++++ b/Source/Core/src/Sync/Hidden.cpp
+@@ -1,5 +1,5 @@
+ #ifdef __ANDROID__
+ /* desktop below */ #else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    # A `//` comment spliced onto the next line hides a /* from the compiler, so the
+    # lexer's block-comment state is wrong from there on: nothing may be dropped as
+    # comment-only.
+    _expect FALLTHROUGH "comment splice before a /* marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/Splice.cpp b/Source/Core/src/Sync/Splice.cpp
+--- a/Source/Core/src/Sync/Splice.cpp
++++ b/Source/Core/src/Sync/Splice.cpp
+@@ -1,7 +1,7 @@
+ // note \
+ still the note /* not a comment opener
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ int h() { return 0; } // */
 EOF
     # A line inside a raw string literal is string DATA (an embedded script or
     # shader) even when it looks like a comment / include / brace.
