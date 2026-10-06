@@ -103,7 +103,7 @@ python scripts/dev/verifier-calibrate.py --scores scores.json --labels labels.js
 
 `trace.json` is the replayable evidence of that run; accumulate traces + labels and the calibration report is what justifies flipping any part of the verifier from advisory to blocking.
 
-The labels come from what happened to the change, not from anyone's opinion of it: `pre-ship.sh` writes a `<trace>.meta.json` (`branch`, `headSha`, `overall_score`, `hard_veto`) beside every recorded trace, and `scripts/dev/verifier-labels.py` joins those with the merge-time snapshot ledger by `headSha` — a clean merge labels 1; a red check at merge, a non-pass gate verdict or a PR named in a postmortem heading labels 0; an unmerged run is left out. Its output is the case set `verifier-calibrate.py` reads.
+The labels come from what happened to the change, not from anyone's opinion of it: `pre-ship.sh` writes a `<trace>.meta.json` (`branch`, `headSha`, `overall_score`, `hard_veto`) beside every recorded trace, and `scripts/dev/verifier-labels.py` joins those with the merge-time snapshot ledger by `headSha` — a clean merge labels 1; a red check at merge, an override label on the ledger row, a non-pass gate verdict or a PR named in a postmortem heading's PR segment labels 0; an unmerged run is left out. Its output is the case set `verifier-calibrate.py` reads.
 
 ### Smoke-testing the live path
 

@@ -9,8 +9,9 @@
 #
 # Proves:
 #   * the self-test dogfoods;
-#   * clean merges label 1; red-check / non-pass verdict / postmortem-named
-#     merges label 0; a prose-only postmortem mention does not;
+#   * clean merges label 1; red-check / override-label / non-pass verdict /
+#     postmortem-named merges label 0 (every #N in a heading's PR segment); a
+#     prose-only or title-only postmortem mention does not;
 #   * a run whose head never merged is excluded and counted, never guessed;
 #   * the output is a valid verifier-calibrate.py input;
 #   * malformed input / a missing traces dir fail with exit 2.
@@ -45,10 +46,10 @@ meta() {
         "$1" "$1" "$2" "${3:-false}" > "$WORK/traces/feat-$1-20261004T000000Z.meta.json"
 }
 
-# row <pr> <head> <gates> <redChecks-json-array>
+# row <pr> <head> <gates> <redChecks-json-array> [overrideLabels-json-array]
 row() {
-    printf '{"pr":%s,"mergeCommit":"m%s","headSha":"%s","gates":"%s","redChecks":%s,"overrideLabels":[]}\n' \
-        "$1" "$1" "$2" "$3" "$4" >> "$WORK/ledger.jsonl"
+    printf '{"pr":%s,"mergeCommit":"m%s","headSha":"%s","gates":"%s","redChecks":%s,"overrideLabels":%s}\n' \
+        "$1" "$1" "$2" "$3" "$4" "${5:-[]}" >> "$WORK/ledger.jsonl"
 }
 
 labels() {
@@ -100,6 +101,34 @@ MD
     [ "$(outcome_of 202)" = "0" ]
     [ "$(outcome_of 203)" = "0" ]
     [ "$(outcome_of 204)" = "1" ]
+}
+
+@test "a merge carrying an override label labels 0 even with clean gates and no red check" {
+    meta aaa 0.9; row 211 aaa GATES_PASSED '[]' '["tests-out-of-band"]'
+    meta bbb 0.9; row 212 bbb GATES_PASSED '[]' '[]'
+    run labels --out "$WORK/cal.json"
+    [ "$status" -eq 0 ]
+    [ "$(outcome_of 211)" = "0" ]
+    [ "$(outcome_of 212)" = "1" ]
+}
+
+@test "every PR in a heading's PR segment labels 0 (real postmortems.md shapes); title refs do not" {
+    local pr h
+    for pr in 221 222 223 224 225 226 227 228 229; do
+        h="h$pr"; meta "$h" 0.9; row "$pr" "$h" GATES_PASSED '[]'
+    done
+    cat >> "$WORK/postmortems.md" <<'MD'
+
+## 2026-08-19 · PR #220 (+ #221, #222, #223) · merged past a permanently-pending check
+## 2026-06-28 · PR #990 (introducer), #224, #225 (rode past) · red non-required check merged
+## 2026-06-14 · PR #991 (+ #226 …) · red-check merged while IN_PROGRESS (same #227 class)
+## 2026-06-07 · coverage.yml (since #228 graduation), fixed by PR #992 · prose-promise gate
+#229 touched the file — a body line, not a heading
+MD
+    run labels --out "$WORK/cal.json"
+    [ "$status" -eq 0 ]
+    for pr in 221 222 223 224 225 226; do [ "$(outcome_of "$pr")" = "0" ]; done
+    for pr in 227 228 229; do [ "$(outcome_of "$pr")" = "1" ]; done
 }
 
 @test "a run whose head never merged is excluded and counted, never labelled" {

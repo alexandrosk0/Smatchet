@@ -18,15 +18,18 @@
 #   --ledger FILE       docs/self-improvement/merge-snapshots.jsonl — the join is
 #                       meta.headSha == row.headSha (the merged PR head).
 #   --postmortems FILE  docs/self-improvement/postmortems.md — a PR named in an
-#                       entry heading (`PR #N`, `PR #A, #B`, `PR #A/#B`) is a
-#                       known gate escape. Reverts land here too: postmortem-owed
-#                       makes every revert owe an entry.
+#                       entry heading's PR segment is a known gate escape: every
+#                       `#N` from `PR #` to the end of that ` · `-separated
+#                       segment (`PR #A, #B`, `PR #A/#B`, `PR #A (+ #B, #C, …)`,
+#                       `PR #A (introducer), #B, #C (rode past)`). Reverts land
+#                       here too: postmortem-owed makes every revert owe an entry.
 #
 # Label — the cheapest honest outcome:
-#   1  merged clean — gates GATES_PASSED (or BACKFILLED), redChecks empty, and
-#      no postmortem names the PR;
+#   1  merged clean — gates GATES_PASSED (or BACKFILLED), redChecks and
+#      overrideLabels empty, and no postmortem names the PR;
 #   0  merged past a gate — any other gates verdict (GATES_INCOMPLETE, …), a
-#      non-empty redChecks (an override bypassed a red check), or a postmortem.
+#      non-empty redChecks (an override bypassed a red check), a non-empty
+#      overrideLabels (a *-out-of-band label waived a gate), or a postmortem.
 #   A run whose headSha never merged (abandoned, or the head moved on after the
 #   run) gets NO label — it is counted in "unmatched", never guessed. Several
 #   runs on one headSha keep the latest (meta filenames sort by timestamp).
@@ -69,9 +72,10 @@ if isinstance(sys.stdout, io.TextIOWrapper):
         )
 
 CLEAN_GATES = {"GATES_PASSED", "BACKFILLED"}
-# `PR #A`, optionally continued `, #B` / `/#C` — the combined-entry heading
-# shapes postmortem-owed.sh dedups on.
-PR_IN_HEADING = re.compile(r"PR #(\d+)((?:\s*[,/]\s*#\d+)*)")
+# A markdown entry heading (`## …`), not a body line that merely starts `#1234`.
+HEADING = re.compile(r"^#{1,6}\s")
+# Heading fields are ` · `-separated: `## <date> · PR #A, #B · <title>`.
+HEADING_SEP = " \u00b7 "
 
 
 class LabelError(Exception):
@@ -119,6 +123,23 @@ def load_ledger(path: str) -> Dict[str, List[Dict[str, Any]]]:
     return rows
 
 
+def heading_prs(line: str) -> Set[int]:
+    """PR numbers one entry heading names: in each ` · `-separated segment that
+    mentions `PR #`, every `#N` from that first `PR #` to the segment's end. So
+    `PR #2127 (+ #2130, #2122, …)`, `PR #1574 (introducer), #1576, #1577` and
+    `PR #1237 (+ #1232 …)` yield every listed PR, while a `#N` in the free-text
+    title segment (`… same #1130 hole …`) or before `PR #` (`coverage.yml (since
+    #834), fixed by PR #941`) does not."""
+    prs: Set[int] = set()
+    if not HEADING.match(line):
+        return prs
+    for seg in line.split(HEADING_SEP):
+        at = seg.find("PR #")
+        if at >= 0:
+            prs.update(int(x) for x in re.findall(r"#(\d+)", seg[at:]))
+    return prs
+
+
 def postmortem_prs(path: str) -> Set[int]:
     """PR numbers named in a postmortems.md entry heading. A missing file is an
     empty set (a fresh repo has none), not an error."""
@@ -126,10 +147,7 @@ def postmortem_prs(path: str) -> Set[int]:
         return set()
     prs: Set[int] = set()
     for line in _read_text(path).splitlines():
-        if not line.startswith("#"):
-            continue
-        for m in PR_IN_HEADING.finditer(line):
-            prs.update(int(x) for x in re.findall(r"\d+", m.group(0)))
+        prs |= heading_prs(line)
     return prs
 
 
@@ -141,6 +159,8 @@ def outcome_for(rows: List[Dict[str, Any]], escaped: Set[int]) -> Tuple[int, int
             return 0, pr
         if row.get("redChecks"):
             return 0, pr
+        if row.get("overrideLabels"):
+            return 0, pr  # a *-out-of-band label waived a gate: not a clean merge
         if int(row.get("pr") or 0) in escaped:
             return 0, pr
     return 1, pr
@@ -183,6 +203,9 @@ def _selftest() -> int:
         meta("c-20261001T000000Z.meta.json", "cccc", 0.7)   # postmortem-named PR
         meta("d-20261001T000000Z.meta.json", "dddd", 0.5)   # never merged
         meta("e-20261001T000000Z.meta.json", "eeee", None)  # no score: unusable
+        meta("f-20261001T000000Z.meta.json", "ffff", 0.8)   # merged with an override label
+        for head in ("g21", "g22", "h31", "h32", "i41", "j51", "j50", "j52", "k53"):
+            meta(head + "-20261001T000000Z.meta.json", head, 0.6)
         with open(os.path.join(traces, "x-trace.json"), "w", encoding="utf-8") as f:
             f.write("{not a meta}")                          # the trace itself is ignored
         ledger = os.path.join(tmp, "ledger.jsonl")
@@ -192,11 +215,21 @@ def _selftest() -> int:
                 {"pr": 2, "headSha": "bbbb", "gates": "GATES_PASSED", "redChecks": ["Coverage"]},
                 {"pr": 3, "headSha": "cccc", "gates": "GATES_PASSED", "redChecks": []},
                 {"pr": 4, "headSha": "eeee", "gates": "GATES_PASSED", "redChecks": []},
+                {"pr": 5, "headSha": "ffff", "gates": "GATES_PASSED", "redChecks": [],
+                 "overrideLabels": ["tests-out-of-band"]},
+                *({"pr": int(h[1:]), "headSha": h, "gates": "GATES_PASSED", "redChecks": [],
+                   "overrideLabels": []}
+                  for h in ("g21", "g22", "h31", "h32", "i41", "j51", "j50", "j52", "k53")),
             ):
                 f.write(json.dumps(row) + "\n")
         pm = os.path.join(tmp, "postmortems.md")
         with open(pm, "w", encoding="utf-8") as f:
-            f.write("# Postmortems\n\n## 2026-10-01 · PR #9, #3 · merged red\nBody cites PR #1 in prose.\n")
+            f.write("# Postmortems\n\n## 2026-10-01 · PR #9, #3 · merged red\nBody cites PR #1 in prose.\n"
+                    "## 2026-10-02 · PR #20 (+ #21, #22, …) · merged past a pending check\n"
+                    "## 2026-10-03 · PR #30 (introducer), #31, #32 (rode past) · red non-required\n"
+                    "## 2026-10-04 · PR #40 (+ #41 …) · red-check (same #52 class)\n"
+                    "## 2026-10-05 · tooling.yml (since #50 graduation), fixed by PR #51 · prose-promise\n"
+                    "#53 touched the file — a body line, not a heading\n")
 
         out = build(traces, ledger, pm)
         by_pr = {c["id"].rsplit("#", 1)[1].rstrip(")"): c for c in out["cases"]}
@@ -205,7 +238,12 @@ def _selftest() -> int:
         assert by_pr["3"]["outcome"] == 0, "postmortem-named PR must label 0"
         assert by_pr["1"]["outcome"] == 1, "clean merge (prose mention only) must label 1"
         assert by_pr["1"]["score"] == 0.9, "latest run on a head must win"
-        assert out["matched"] == 3 and out["unmatched"] == 1, f"join counts wrong: {out}"
+        assert by_pr["5"]["outcome"] == 0, "a merge carrying an override label must label 0"
+        for n in ("21", "22", "31", "32", "41", "51"):
+            assert by_pr[n]["outcome"] == 0, f"PR #{n} in a heading's PR segment must label 0"
+        for n in ("50", "52", "53"):
+            assert by_pr[n]["outcome"] == 1, f"#{n} outside a heading's PR segment must not label 0"
+        assert out["matched"] == 13 and out["unmatched"] == 1, f"join counts wrong: {out}"
         assert "4" not in by_pr, "a run with no score must not be labelled"
         try:
             load_ledger(pm)  # markdown is not JSONL
