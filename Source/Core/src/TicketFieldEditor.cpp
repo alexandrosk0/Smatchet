@@ -708,6 +708,12 @@ void DrawStatusComboCue(smatchet::statuscombo::StatusOptionsSource from, smatche
         text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
     } else if (from == smatchet::statuscombo::StatusOptionsSource::Learned) {
         text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
+    } else if (from == smatchet::statuscombo::StatusOptionsSource::Live) {
+        // This session's fetched moves, shown while the tracker is unreachable or its last check failed.
+        text = freshness == smatchet::offline::DataFreshness::CachedOffline
+                   ? SmatchetLocalization::T("status.cue.live_offline", "Valid moves as last fetched (offline)")
+                   : SmatchetLocalization::T("status.cue.live_stale",
+                                             "Valid moves as last fetched (the last check failed)");
     } else {
         text = SmatchetLocalization::T("status.cue.all_statuses_offline",
                                        "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
@@ -788,12 +794,15 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
                 if (current.Value.empty()) {
                     current.Value = currentId;
                 }
-                const bool live = lookup.freshness == smatchet::offline::DataFreshness::Fresh;
+                // Live = the options came from this session's fetch, not "the tracker is reachable now":
+                // a live but empty list (no valid move) must not fall back to every status once offline.
                 smatchet::statuscombo::StatusComboPick pick = smatchet::statuscombo::PickStatusComboOptions(
-                    lookup.options, live, field.AllowedValueOptions, current);
+                    lookup.options, lookup.fromLive, field.AllowedValueOptions, current);
                 statusOptions = std::move(pick.Options);
                 opts = &statusOptions;
-                if (pick.From != smatchet::statuscombo::StatusOptionsSource::Live) {
+                // A live list is still cached data once offline or stale (Pillar 6: show the cue).
+                if (pick.From != smatchet::statuscombo::StatusOptionsSource::Live ||
+                    lookup.freshness != smatchet::offline::DataFreshness::Fresh) {
                     DrawStatusComboCue(pick.From, lookup.freshness);
                 }
             }

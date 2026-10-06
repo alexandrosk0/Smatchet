@@ -27,6 +27,13 @@ constexpr std::int64_t kCommentDedupeWindowSec = 300;
 /// request went out.
 const char* StateAfterFailedSend(PendingActionKind kind, const TrackerError& error);
 
+/// The state an ambiguous comment is left in when the check for it on the tracker fails. A failed
+/// check is never the tracker refusing the comment, so it stays kAmbiguous (checked again next pass,
+/// until the attempt cap) for any failure — transport, 5xx, 429, an unreadable page. "" (final) only
+/// when the check proves the comment can never be resolved: no access (Auth), the issue is gone
+/// (NotFound), or the request itself is invalid.
+const char* StateAfterFailedDedupeCheck(const TrackerError& error);
+
 /// Comment text reduced to what survives a Markdown → tracker format → Markdown round trip: ASCII
 /// letters and digits, lower-cased, plus every non-ASCII byte. Formatting, punctuation and
 /// whitespace drop out.

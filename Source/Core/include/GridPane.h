@@ -158,6 +158,11 @@ struct GridPane {
     /// focus flip back to the shared index without tearing the cache down eagerly).
     bool cachedPaneCatalogValid = false;
 
+    /// Table column a single-column auto-fit was requested for last frame (border double-click,
+    /// "Size column to fit"), latched after layout: this frame's BeginTable applies the fit, and the
+    /// width sync must not push the view's stored width back over it. -1 when none.
+    int pendingAutoFitColumn = -1;
+
     /// Cached ImGui window name ("<title>###GridPane:<id>") rebuilt only when
     /// title/id change — avoids a per-frame std::string build per pane.
     std::string cachedWindowName;

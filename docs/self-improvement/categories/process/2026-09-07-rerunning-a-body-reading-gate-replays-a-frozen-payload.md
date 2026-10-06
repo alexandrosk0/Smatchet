@@ -28,7 +28,10 @@ The re-trigger that actually worked was a **PR body edit**, which produced run `
 3. The workflow already knows this and says so, at `doc-validation.yml:73-79`: `edited` is in the
    trigger list precisely so "a PR that adds or fixes its `## Intent` section via a body edit
    re-runs the `Intent section` job and self-heals the stale-red — no wasted empty-commit push".
-   The comment documents the cure. Nothing anywhere documents that the *reflex* is a poison.
+   The comment documents the cure. `merge-gates.md`'s 405-recovery recipe has also warned against
+   the reflex since #2120 (2026-08-18): "do not re-run a job whose result depends on the PR body
+   (`Intent section`)". The halt-code 8 row, which is where an agent reading a BLOCK lands first,
+   does not.
 4. The rerun is not merely futile — it is **actively regressive**. `merge-gates.sh:30-32`:
    > Rollup dedup: required CheckRuns with the same `.name` are deduped to the entry with the latest
    > `.startedAt` so stale FAILUREs from rerun jobs don't falsely block.
@@ -54,23 +57,23 @@ population is one is also why the trap has never been written down.
 ## Why the existing docs point the wrong way
 
 [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) is where an agent looks when a check is red,
-and it prescribes `gh run rerun` twice without scoping:
+and it prescribes `gh run rerun` in two places:
 
-- line 97, halt-code 8 (*Cancelled-while-pending*): "Rerun the named run(s) (`gh run rerun <id>` from
-  the BLOCK output), then re-poll".
-- line 245, in the recovery recipe: `gh run rerun <run-id>  # the run whose job is CANCELLED, not the
-  newer one`, followed by "No push, no force, no PR-body re-pin — none of those touch the stale
-  context."
+- the halt-code 8 row (*Cancelled-while-pending*, in the halt-prompt return-code table): "Rerun the
+  named run(s) (`gh run rerun <id>` from the BLOCK output), then re-poll". **Unscoped**: nothing there
+  says "unless the workflow's subject is the event payload".
+- the 405-recovery recipe: `gh run rerun <run-id>  # the run whose job is CANCELLED, not the newer
+  one`, followed by "No push, no force, no PR-body re-pin". This one IS scoped: a few lines below it
+  says not to re-run a body-reading job (`Intent section`) and to edit the body instead (#2120).
 
-Both are correct **for the concurrency-collapse case they were written for**, where the run never
-executed and the payload is irrelevant. Neither says "unless the workflow's subject is the event
-payload". The last quoted sentence is the exact inversion of the truth for `doc-validation` — there,
-the PR-body re-pin is the *only* thing that touches it.
+Both reruns are correct **for the concurrency-collapse case they were written for**, where the run
+never executed and the payload is irrelevant. Only the halt-code 8 row is missing the carve-out.
 
 ## Concrete next action
 
-1. **Scope the rerun remedy where it is prescribed.** Add a one-line carve-out at
-   `merge-gates.md:97` and `:245`: a rerun cannot fix a check whose input is the event payload
+1. **Scope the rerun remedy in the halt-code 8 row.** The 405-recovery recipe already carries the
+   carve-out (#2120); add the same one line to the halt-code 8 row of `merge-gates.md`'s halt-prompt
+   return-code table: a rerun cannot fix a check whose input is the event payload
    (`github.event.pull_request.*`); for those, edit the PR body to fire the `edited` trigger.
    Enumerator: the `grep -rln` above — keep the carve-out keyed on that command, not on a hardcoded
    workflow name, so it stays true when the population grows.

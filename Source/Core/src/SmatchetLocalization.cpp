@@ -814,6 +814,10 @@ const TranslationEntry kEntries[] = {
     {"freshness.badge_refreshing", "(refreshing)", u8"(actualisation)"},
     {"status.cue.checking", "Checking valid transitions\xE2\x80\xA6", u8"Vérification des transitions…"},
     {"status.cue.cached_workflow", "Saved workflow (last seen online)", u8"Flux enregistré (vu en ligne)"},
+    {"status.cue.live_offline", "Valid moves as last fetched (offline)",
+     u8"Transitions valides lors de la dernière récupération (hors ligne)"},
+    {"status.cue.live_stale", "Valid moves as last fetched (the last check failed)",
+     u8"Transitions valides lors de la dernière récupération (la dernière vérification a échoué)"},
     {"status.cue.all_statuses_offline", "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs",
      u8"Tous les statuts affichés — un changement invalide sera refusé à la synchronisation"},
     {"comments.post_placeholder", "Write a comment (Markdown supported)...",
@@ -875,6 +879,15 @@ const TranslationEntry kEntries[] = {
     {"worklog.toast.queued_title", "Worklog queued offline", u8"Travail mis en file hors ligne"},
     {"worklog.toast.queued_body", "Saved offline; it will be logged when the tracker is reachable.",
      u8"Enregistré hors ligne ; il sera journalisé quand le tracker sera joignable."},
+    {"toast.jira_extra_rejected", "Jira site not saved", u8"Site Jira non enregistré"},
+    {"toast.jira_extra_rejected.body", "Empty or duplicate extra Jira domains were dropped.",
+     u8"Les domaines Jira supplémentaires vides ou en double ont été ignorés."},
+    {"worklog.toast.review_title", "Worklog may already be logged", u8"Le travail est peut-être déjà enregistré"},
+    {"worklog.toast.review_body",
+     "The tracker did not answer, so the worklog may already be logged. Check the issue, then send or discard it "
+     "in the Offline Queue panel.",
+     u8"Le tracker n'a pas répondu : le travail est peut-être déjà enregistré. Vérifiez le ticket, puis envoyez-le "
+     u8"ou supprimez-le dans le panneau File hors ligne."},
     {"worklog.cancel_inflight_tooltip",
      "The worklog request was already sent — closing this dialog won't cancel it. The result will appear as a "
      "notification.",

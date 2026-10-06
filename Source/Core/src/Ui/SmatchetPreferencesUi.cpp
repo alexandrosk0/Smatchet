@@ -244,6 +244,7 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
         CopyStringToBuffer(row.domain, d.cfg.JiraBackends[i].Domain);
         CopyStringToBuffer(row.email, d.cfg.JiraBackends[i].Email);
         CopyStringToBuffer(row.token, d.cfg.JiraBackends[i].ApiToken);
+        row.originalDomain = d.cfg.JiraBackends[i].Domain;
         d.extraJiraRows.push_back(row);
     }
     d.extraJiraAddDomainBuf[0] = '\0';
@@ -761,15 +762,18 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.JiraBackends[0].Email = cfg.Email;
     cfg.JiraBackends[0].ApiToken = cfg.ApiToken;
     std::vector<JiraBackendInstance> extras;
+    std::vector<std::string> previousHosts;
     extras.reserve(d.extraJiraRows.size());
+    previousHosts.reserve(d.extraJiraRows.size());
     for (std::size_t i = 0; i < d.extraJiraRows.size(); ++i) {
         JiraBackendInstance inst;
         inst.Domain = d.extraJiraRows[i].domain;
         inst.Email = d.extraJiraRows[i].email;
         inst.ApiToken = d.extraJiraRows[i].token;
         extras.push_back(std::move(inst));
+        previousHosts.push_back(d.extraJiraRows[i].originalDomain);
     }
-    smatchet::jira_backends::ReplaceExtras(cfg, extras);
+    smatchet::jira_backends::ReplaceExtras(cfg, extras, &previousHosts);
     if (cfg.GitHubBaseUrl.empty()) {
         cfg.GitHubBaseUrl = "https://api.github.com";
     }
@@ -1135,6 +1139,7 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
         CopyStringToBuffer(row.domain, d.cfg.JiraBackends[i].Domain);
         CopyStringToBuffer(row.email, d.cfg.JiraBackends[i].Email);
         CopyStringToBuffer(row.token, d.cfg.JiraBackends[i].ApiToken);
+        row.originalDomain = d.cfg.JiraBackends[i].Domain;
         d.extraJiraRows.push_back(row);
     }
     if (acceptedExtras < submittedExtras) {
@@ -1199,10 +1204,11 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     ViewState.EnsureLoaded(d.cfg);
     const std::string newBackend = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     if (oldBackend != newBackend) {
-        app.SetFieldCatalog({}, {}, {}, std::string());
+        // In memory only: an empty SetFieldCatalog would also overwrite the offline snapshot. An in-flight
+        // catalog fetch is left to finish (its result fails the backend-key guard and re-triggers the
+        // fetch); restarting over it would block this frame on the old std::async future.
+        app.ClearFieldCatalogInMemory();
         d.fieldCatalogWarning.clear();
-        d.fieldCatalogFetchStarted = false;
-        d.fieldCatalogLoading = false;
         d.lastViewsBackendKey = newBackend;
         const ViewDefinition* activeView = ViewState.GetActiveView();
         if (activeView) {
@@ -1411,9 +1417,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(embedded, ImGui::GetContentRegionAvail().x,
                                                                            ImGui::GetFontSize(), d.prefsNavCombo);
     SmatchetPreferencesUiDetail::DrawPrefsNav(*this, app, d, trackerDirty, assistantDirty, bodyHeight);
-    float paneHeight = ImGui::GetContentRegionAvail().y;
+    // Rail mode: the body sits beside the rail and takes its full height. Combo mode: the combo row
+    // sits above the body, so the body takes what is left below it.
+    float paneHeight = bodyHeight;
     if (d.prefsNavCombo) {
-        // The combo consumed a row above the pane; measure remaining height.
+        paneHeight = ImGui::GetContentRegionAvail().y;
     } else {
         ImGui::SameLine();
     }

@@ -7,8 +7,7 @@
 // and that a plain click still toggles exactly once.
 //
 // The rows here are the real widget (not a replica) drawn into the test's own window, so the
-// gesture is exercised exactly as Views > Fields and the multi-select / Labels cell editors
-// call it.
+// gesture is exercised exactly as Views > Fields calls it.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 

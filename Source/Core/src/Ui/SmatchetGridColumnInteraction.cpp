@@ -87,18 +87,22 @@ void DriveGridHeaderDragReorder(ImGuiTable* table) {
     ImGui::TableQueueSetColumnDisplayOrder(table, held, targetOrder);
 }
 
+int PendingSingleColumnAutoFit(const ImGuiTable* table) {
+    return table != nullptr ? static_cast<int>(table->AutoFitSingleColumn) : -1;
+}
+
 bool GridHeaderDragInProgress(const ImGuiTable* table) {
     return table != nullptr && (table->HeldHeaderColumn != -1 || table->ReorderColumnDstOrder != -1);
 }
 
-void SyncGridTableColumnWidths(ImGuiTable* table, const std::vector<float>& widthsByIndex) {
+void SyncGridTableColumnWidths(ImGuiTable* table, const std::vector<float>& widthsByIndex, int autoFitColumn) {
     if (table == nullptr) {
         return;
     }
     const int count = ImMin(table->ColumnsCount, static_cast<int>(widthsByIndex.size()));
     for (int i = 0; i < count; ++i) {
         ImGuiTableColumn& column = table->Columns[i];
-        if (i == table->LastResizedColumn || column.AutoFitQueue != 0 ||
+        if (i == table->LastResizedColumn || i == autoFitColumn || column.AutoFitQueue != 0 ||
             (column.Flags & ImGuiTableColumnFlags_WidthFixed) == 0) {
             continue;
         }

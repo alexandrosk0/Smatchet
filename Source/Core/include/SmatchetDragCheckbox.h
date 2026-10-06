@@ -12,7 +12,10 @@
 #include "imgui_internal.h" // ImRect / ImGuiWindow / ImGuiItemFlags_Disabled for the hit + disabled tests
 
 // Drag-to-paint checkbox — a drop-in replacement for ImGui::Checkbox in any LIST of
-// checkboxes (Views > Fields, the multi-select and Labels cell editors). A plain click
+// checkboxes. Views > Fields is the one consumer today; the multi-select and Labels cell
+// editors are blocked on docs/self-improvement/categories/debt/
+// 2026-09-20-cell-editor-commit-closes-combo-mid-gesture.md (their commit closes the combo
+// mid-gesture). A plain click
 // toggles the row exactly like ImGui::Checkbox does; pressing and DRAGGING across the
 // neighbouring rows paints them all to the value the press produced — drag from a checked
 // row to clear a run, from an unchecked row to set one. Ticking twenty fields one click at
@@ -37,7 +40,7 @@
 // with ImGui::Checkbox. UI thread only.
 //
 // Lives at the include/ root (a leaf/utility header, NOT under Ui/) for the same reason as
-// TouchCellEditGesture.h: its consumers include the domain-side cell-editor TUs, and domain
+// TouchCellEditGesture.h: the cell-editor TUs it is meant for are domain-side, and domain
 // code must not include Ui/ headers (lint rule no-ui-include-in-domain — the layer DAG flows
 // Ui -> domain, never the reverse). It depends only on ImGui, the localization seam, and the
 // pure state machine beside it.
@@ -143,7 +146,10 @@ inline bool SmatchetDragCheckbox(const char* label, bool* value, int flags = Sma
     item.Scope = ImGui::GetCurrentWindow()->ID;
     item.Disabled = (g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled) != 0;
     item.Pressed = ImGui::IsItemActivated() && mousePressed;
-    item.DraggedOver = gesture.Active && gesture.Scope == item.Scope && mouseDown &&
+    // Not on the press frame: rows drawn after the origin in that frame would read pointer travel
+    // from before the button went down (a moving click) as a drag. Painting starts with the first
+    // motion after the press.
+    item.DraggedOver = gesture.Active && gesture.Scope == item.Scope && mouseDown && !mousePressed &&
                        detail::PointerCrossedRow(detail::HitBandForLastItem(flags));
 
     const pure::ItemDecision decision = pure::DecideItem(gesture, item);

@@ -383,18 +383,16 @@ void SmatchetUI::Draw(AppController& app) {
     // (toasts + update modal) and end-of-frame persistence still run.
     //
     // While the mobile ini is attached (mobileDockSeeded) the live dock tree is the mobile one,
-    // so the Mobile->Desktop edge frame still draws the shell and swaps the ini back only at
-    // end-of-frame, once every window has ended. A mid-frame swap rebuilds dock nodes the host's
+    // so the Mobile->Desktop edge frame still draws the shell and swaps the ini back only in
+    // EndFrame, which the host calls after the plugin windows (the Scripting window, Lua script
+    // windows) have been submitted too. A swap before any window rebuilds dock nodes the host's
     // DockSpaceOverViewport has already walked this frame, so they are not LastFrameAlive and
-    // BeginDocked undocks every desktop window (imgui.cpp ~21208) — the undocked layout then
-    // autosaves. Desktop windows first submit next frame, after the host marks the tree alive.
+    // BeginDocked undocks that window (imgui.cpp ~21208) — the undocked layout then autosaves.
+    // Desktop windows first submit next frame, after the host marks the tree alive.
     if (d.effectiveUiMode == EffectiveUiMode::Mobile || d.mobileDockSeeded) {
         drawMobileShell(app, d);
         drawGlobalOverlays(app, d);
         drawEndOfFramePersistence(d);
-        if (d.effectiveUiMode == EffectiveUiMode::Desktop) {
-            drawMobileRestoreDesktopIni(d);
-        }
         return;
     }
 
@@ -410,6 +408,13 @@ void SmatchetUI::Draw(AppController& app) {
     // frame opens the modal this frame, and the modal stacks above all docked windows.
     drawQuickBindPopup(app, d);
     drawEndOfFramePersistence(d);
+}
+
+void SmatchetUI::EndFrame() {
+    UiDrawSession& d = g_ui;
+    if (d.effectiveUiMode == EffectiveUiMode::Desktop && d.mobileDockSeeded) {
+        drawMobileRestoreDesktopIni(d);
+    }
 }
 
 // drawResolveUiMode + the mobile shell methods + the Auto-mode width-hysteresis consts
@@ -709,12 +714,13 @@ static void ResetOnCacheSiteChange(AppController& app, UiDrawSession& d) {
     LOG_INFO("SmatchetUI: tracker site changed to '%s' — resetting site-specific session state",
              smatchet::cache_keys::DescribeCacheBackendKey(siteKey).c_str());
     DiscardQueuedGridFieldEditsOnBackendSwitch(d);
-    app.SetFieldCatalog({}, {}, {}, std::string());
+    app.ClearFieldCatalogInMemory();
     // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site switch, not a failed fetch: the previous site's users must not show under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
     app.SetAvailableUsers({});
     d.fieldCatalogWarning.clear();
-    d.fieldCatalogFetchStarted = false;
-    d.fieldCatalogLoading = false;
+    // fieldCatalogLoading / the future are left alone: an in-flight fetch for the previous site is
+    // discarded by the result guard in drawEnsureCatalogAndInitialSync, while restarting over it would
+    // move-assign the running std::async future and block this frame until the old fetch returns.
     d.triggerCatalogRefetch = true;
 }
 
@@ -735,14 +741,14 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
             // Before the catalog reset clears any error banner (which lifts grid read-only and lets the
-            // pump run): queued edits target the previous backend and must not be sent to this one.
+            // pump run): queued edits with no pane target would bind to this backend and must not be sent.
             DiscardQueuedGridFieldEditsOnBackendSwitch(d);
-            app.SetFieldCatalog({}, {}, {}, std::string());
+            app.ClearFieldCatalogInMemory();
             // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=backend switch, not a failed fetch: the previous tracker's users must not show under this one, and the saved roster (lookup_cache kind users) restores this tracker's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
             app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
-            d.fieldCatalogFetchStarted = false;
-            d.fieldCatalogLoading = false;
+            // An in-flight catalog fetch keeps running (see ResetOnCacheSiteChange): its result fails the
+            // backend-key guard and re-triggers the fetch, without blocking this frame on the old future.
             d.appliedInitialView = false;
             d.initialTicketSyncStarted = false;
             d.initialTicketSyncLoading = false;
@@ -998,6 +1004,22 @@ void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
 // ui.command_palette pseudo-binding is handled inline so it can self-gate on
 // BackendHasBeenReachable and drive the palette open/close directly (the palette is a UI
 // widget, not a registry command). Runs on the UI thread, before any sub-window draws.
+namespace {
+// Adds this frame's wheel delta to `accum` once (for the first wheel binding that matches) and
+// reports whether a whole notch in `wheelDir`'s direction is available. A touchpad sends many small
+// deltas per gesture; firing on each one's sign would zoom many steps per gesture.
+bool WheelNotchReady(float& accum, bool& accumulatedThisFrame, float wheelDelta, int wheelDir) {
+    if (!accumulatedThisFrame) {
+        if (accum != 0.0f && (accum > 0.0f) != (wheelDelta > 0.0f)) {
+            accum = 0.0f; // the direction flipped: start a new notch
+        }
+        accum += wheelDelta;
+        accumulatedThisFrame = true;
+    }
+    return wheelDir > 0 ? accum >= 1.0f : accum <= -1.0f;
+}
+} // namespace
+
 void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     // Consume a pending rebuild request from the keybindings rebind test seam (flag, not a cached
@@ -1019,6 +1041,8 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
     }
     const int frame = ::ImGui::GetFrameCount();
     bool consumedWheel = false;
+    bool wheelAccumulated = false;
+    bool wheelFired = false;
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
@@ -1030,6 +1054,10 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         // tooltip scroll do not also run (browser-like Ctrl+wheel = zoom only).
         if (pk.hk.wheelDir != 0) {
             consumedWheel = true;
+            if (!WheelNotchReady(wheelBindingAccum_, wheelAccumulated, io.MouseWheel, pk.hk.wheelDir)) {
+                continue;
+            }
+            wheelFired = true;
         }
         // P2-M4: combos that plain typing can produce (no Ctrl/Alt/Win, non-F-key —
         // e.g. a legacy bare "K" binding) must not fire while a text field is active.
@@ -1080,6 +1108,14 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         if (!r.Ok) {
             LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
         }
+    }
+    if (!consumedWheel && io.MouseWheel != 0.0f) {
+        // A wheel event no binding claimed (the modifier was released): a later gesture starts from
+        // zero. Frames with no wheel event leave the sum alone: touchpad deltas arrive less often
+        // than frames, so resetting on every quiet frame would never let them add up to a notch.
+        wheelBindingAccum_ = 0.0f;
+    } else if (wheelFired) {
+        wheelBindingAccum_ += wheelBindingAccum_ > 0.0f ? -1.0f : 1.0f; // one notch spent
     }
     if (consumedWheel) {
         ::ImGuiIO& mutIo = ::ImGui::GetIO();
@@ -1414,6 +1450,39 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     }
 }
 
+SmatchetUI::~SmatchetUI() {
+    if (g_ui.viewLayoutSaveAt == std::chrono::steady_clock::time_point::max()) {
+        return;
+    }
+    g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
+    try {
+        saveViewsKeepingConfirmedQuery(g_ui);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("SmatchetUI: layout save at exit failed: %s", ex.what());
+    } catch (...) {
+        LOG_ERROR("SmatchetUI: layout save at exit failed (unknown exception)");
+    }
+}
+
+bool SmatchetUI::saveViewsKeepingConfirmedQuery(UiDrawSession& d) {
+    if (!d.viewsDirty) {
+        ViewState.Save();
+        return true;
+    }
+    // An unconfirmed query edit sits in the same live ViewDefinition that Save() serializes whole,
+    // so write the view with the query the strip would restore on Discard, then put the live one
+    // back. Save() copies the store before returning; nothing keeps the swapped value.
+    ViewDefinition* active = ViewState.GetActiveViewMutable();
+    if (active == nullptr || !d.viewsHasOriginalSnapshot || active->Id != d.viewsOriginalSnapshot.Id) {
+        return false;
+    }
+    std::string liveJql = active->Jql;
+    active->Jql = d.viewsOriginalSnapshot.Jql;
+    ViewState.Save();
+    active->Jql = std::move(liveJql);
+    return true;
+}
+
 // End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
 // forced layout-defaults ini flush, and the debounced prefs ConfigManager::Save.
 void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
@@ -1434,18 +1503,12 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // Save() (not after) so a fresh edit arriving inside Save()'s own I/O can re-arm rather
     // than being clobbered by this drain resetting it back to disarmed afterward.
     if (std::chrono::steady_clock::now() >= g_ui.viewLayoutSaveAt) {
-        if (g_ui.viewsDirty) {
-            // An unconfirmed query edit (the grid's unsaved-query strip) sits in the same
-            // live ViewDefinition Save() would serialize whole-view — persisting it now would
-            // silently commit a change the user hasn't confirmed via Save/Discard yet (Cursor
-            // Bugbot finding). Re-check next frame instead of dropping the layout autosave
-            // outright; Save/Discard/Save-as-new on the strip all clear viewsDirty, so this
-            // fires on the very next frame once the query is resolved.
+        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
+        SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
+        if (!saveViewsKeepingConfirmedQuery(g_ui)) {
+            // The query strip is up but its confirmed query is unknown, so a write could commit
+            // a query the user has not confirmed. Retry until the strip is resolved.
             g_ui.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
-        } else {
-            g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
-            SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
-            ViewState.Save();
         }
     }
     smatchet::ui_detail::PersistWindowOpenPreferences(g_ui);
@@ -1528,9 +1591,13 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 app.SetFieldCatalog(std::move(result.Fields), std::move(result.Components),
                                     std::move(result.IssueTypeMeta), std::string());
                 // Push the fetched user list into the AppController cache so JQL
-                // autocomplete can suggest assignees / reporters by display name.
-                app.SetAvailableUsers(std::move(result.Users));
-                app.SaveAvailableUsersForOfflineAsync(result.CacheBackendKey, std::move(result.UsersPayloadJson));
+                // autocomplete can suggest assignees / reporters by display name. A catalog fetch still
+                // succeeds when its user lookup fails (the catalog carries a Warning and no users), so an
+                // empty list keeps the roster seeded from the store and never overwrites the saved one.
+                if (!result.Users.empty()) {
+                    app.SetAvailableUsers(std::move(result.Users));
+                    app.SaveAvailableUsersForOfflineAsync(result.CacheBackendKey, std::move(result.UsersPayloadJson));
+                }
                 d.fieldCatalogWarning = result.Warning;
             } else if (result.Error.find("Tracker backend is not initialized") != std::string::npos) {
                 d.fieldCatalogLoading = false;

@@ -680,6 +680,9 @@ struct UiDrawSession {
         char domain[128]{};
         char email[128]{};
         char token[512]{};
+        /// The saved host this row was loaded from ("" for a row added in this edit), so a save
+        /// can tell a renamed row from a removed one (jira_backends::ReplaceExtras).
+        std::string originalDomain;
     };
     std::vector<JiraBackendEditRow> extraJiraRows;
     char extraJiraAddDomainBuf[128]{};

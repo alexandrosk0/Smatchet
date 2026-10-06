@@ -602,10 +602,13 @@ JiraClient::FetchIssueTransitions(const TrackerConfig& cfg, const std::string& i
 
     auto response = TrackerGetLogged("JiraClient", transitionsUrl, headers);
     if (response.status_code != 200) {
-        std::string detail = "Failed to fetch issue transitions (HTTP " + std::to_string(response.status_code) + ").";
+        // ClassifyRejectedHttpStatus, not TrackerErrorFromHttpStatus: a 2xx other than 200 is still a
+        // failure here and must keep its detail instead of mapping to an Ok-kind error.
+        const std::string detail =
+            DescribeRejectedHttpStatus("Fetch issue transitions", response.status_code, response.error.message);
         LOG_WARN("JiraClient: %s", detail.c_str());
         return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
-            TrackerErrorFromHttpStatus(response.status_code, std::move(detail)));
+            ClassifyRejectedHttpStatus(response.status_code, detail));
     }
 
     std::string parseErr;

@@ -90,6 +90,11 @@ while [ $# -gt 0 ]; do
 done
 
 command -v az >/dev/null 2>&1 || { echo "$SCRIPT_NAME: az CLI not found — https://aka.ms/azure-cli" >&2; exit 2; }
+# Every ARM id passed to az starts with /subscriptions/. Under Git Bash, az is a native
+# Windows program, and MSYS rewrites any argument that looks like an absolute POSIX path
+# ("C:/Program Files/Git/subscriptions/..."), so az would reject every id. The script runs
+# only az and coreutils, so turning the conversion off for the whole run is safe.
+export MSYS_NO_PATHCONV=1
 [ -n "${RESOURCE_GROUP//[[:space:]]/}" ] || { usage >&2; exit 2; }
 [ -n "${ACCOUNT//[[:space:]]/}" ]        || { usage >&2; exit 2; }
 [ -n "${PROFILE//[[:space:]]/}" ]        || { usage >&2; exit 2; }
@@ -118,6 +123,7 @@ if [ -n "$SUBSCRIPTION" ]; then
 fi
 SUB_ID="$(az account show --query id -o tsv 2>/dev/null)" \
     || die "not logged in — run 'az login' first"
+SUB_ID="${SUB_ID//$'\r'/}"
 [ -n "$SUB_ID" ] || die "could not resolve the current subscription id"
 
 ACCOUNT_ID="/subscriptions/${SUB_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CodeSigning/codeSigningAccounts/${ACCOUNT}"
@@ -160,7 +166,9 @@ echo "  scoped to   : $PROFILE_ID"
 
 # One call makes the app registration, the service principal, the client secret
 # and the signer role assignment. -o tsv with an explicit projection keeps the
-# parsing dependency-free (no jq/python) and the field order fixed.
+# parsing dependency-free (no jq/python) and the field order fixed. az's TSV writer
+# puts each item of a top-level list on its own line, so the three values arrive as
+# three lines, not one tab-separated row.
 CREDS_TSV="$(az ad sp create-for-rbac \
     --name "$APP_NAME" \
     --role "$SIGNER_ROLE" \
@@ -171,7 +179,13 @@ CREDS_TSV="$(az ad sp create-for-rbac \
   az role definition list --query \"[?contains(roleName,'Signer')].roleName\"
 then re-run with --signer-role '<name>'."
 
-IFS=$'\t' read -r CLIENT_ID CLIENT_SECRET TENANT_ID <<<"$CREDS_TSV"
+# Accept either shape (one value per line, or one tab-separated row) and drop the CR a
+# Windows az writes at each line end.
+CLIENT_ID=""
+CLIENT_SECRET=""
+TENANT_ID=""
+{ IFS= read -r CLIENT_ID; IFS= read -r CLIENT_SECRET; IFS= read -r TENANT_ID; } \
+    < <(printf '%s\n' "$CREDS_TSV" | tr -d '\r' | tr '\t' '\n') || true
 [ -n "${CLIENT_ID:-}" ] && [ -n "${CLIENT_SECRET:-}" ] && [ -n "${TENANT_ID:-}" ] \
     || die "could not parse the credential az returned — check the app registration in the portal before re-running"
 
@@ -197,7 +211,7 @@ echo "Granting Reader on the signing account..."
 reader_ok=0
 for attempt in 1 2 3 4 5; do
     if az role assignment create \
-        --assignee-object-id "$(az ad sp show --id "$CLIENT_ID" --query id -o tsv 2>/dev/null)" \
+        --assignee-object-id "$(az ad sp show --id "$CLIENT_ID" --query id -o tsv 2>/dev/null | tr -d '\r')" \
         --assignee-principal-type ServicePrincipal \
         --role Reader \
         --scope "$ACCOUNT_ID" -o none 2>/dev/null; then
@@ -208,13 +222,13 @@ for attempt in 1 2 3 4 5; do
 done
 if [ "$reader_ok" -ne 1 ]; then
     warn "could not assign Reader on the account. Signing will fail at profile lookup until you run:"
-    warn "  az role assignment create --assignee $CLIENT_ID --role Reader --scope '$ACCOUNT_ID'"
+    warn "  MSYS_NO_PATHCONV=1 az role assignment create --assignee $CLIENT_ID --role Reader --scope '$ACCOUNT_ID'"
 fi
 
 # The account knows its own regional endpoint; don't rebuild it from a guessed
 # region slug. An empty result means the property name moved, not that the
 # account is broken — say where to find it rather than printing a blank.
-ENDPOINT="$(az resource show --ids "$ACCOUNT_ID" --query properties.accountUri -o tsv 2>/dev/null)"
+ENDPOINT="$(az resource show --ids "$ACCOUNT_ID" --query properties.accountUri -o tsv 2>/dev/null | tr -d '\r')"
 endpoint_ok=1
 if [ -z "${ENDPOINT:-}" ]; then
     # A literal placeholder, not prose: this value is echoed into a copy-paste

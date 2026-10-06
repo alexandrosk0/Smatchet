@@ -428,6 +428,15 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     d.connectivityRecoveryTicketFetchLoading = false;
     d.connectivityRecoveryTicketResyncPending = false;
 
+    // DR8 class: the watchers / votes loads and the Watch action capture AppController& and call into it
+    // after their HTTP request returns.
+    DrainFutureJoinQuiet(d.trackerGridAsync.watchersFuture);
+    d.trackerGridAsync.watchersLoadInProgress = false;
+    DrainFutureJoinQuiet(d.trackerGridAsync.votesFuture);
+    d.trackerGridAsync.votesLoadInProgress = false;
+    DrainFutureJoinQuiet(d.trackerGridAsync.watchSelfFuture);
+    d.trackerGridAsync.watchSelfInProgress = false;
+
     d.hasInFlightEdit = false;
 
     DrainFutureJoinQuiet(d.newIssueCreateFuture);

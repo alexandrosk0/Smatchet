@@ -127,7 +127,7 @@ void WriteMiniDumpImpl(EXCEPTION_POINTERS* realExPtrs, DumpExceptionOrigin origi
     // stack for pointers and pull the referenced heap into the dump — which sweeps in-memory
     // secrets (config API tokens, GitHub PAT, MCP auth token, AI keys held in std::string on the
     // heap) into a .dmp the bug-reporter auto-attaches to an off-host crash report. Normal still
-    // carries the faulting thread's stack + the exception record (meiPtr), which is what the
+    // carries every thread's stack (the faulting one marked) + the exception record (meiPtr), which is what the
     // next-launch triage actually needs; the lost heap context is not worth the secret-spill risk.
     MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, kSmatchetDumpType, meiPtr, nullptr, nullptr);
     CloseHandle(file);

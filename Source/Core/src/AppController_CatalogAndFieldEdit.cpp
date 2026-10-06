@@ -543,6 +543,23 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     cat.TrackerFieldCatalogRevision.fetch_add(1);
 }
 
+void AppController::ClearFieldCatalogInMemory() {
+    GridContextFieldCatalog& cat = fieldCatalog(); // latch once (see SetFieldCatalog)
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only, not a failed fetch: the previous site's catalog must not show under this one, and the saved snapshot (never written here) restores this site's catalog when its fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+        cat.AvailableFields.clear();
+        cat.AvailableComponents.clear();
+        cat.AvailableIssueTypeMeta.clear();
+        cat.fieldCatalogEverLoaded_ = false;
+        cat.fieldCatalogRestored_ = false;
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogErrorTransient = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+    }
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
+}
+
 void AppController::HandleFieldCatalogError(const std::string& error, bool errorTransient,
                                             const std::string& catalogCacheKey, const std::string& backendKey) {
     const bool catalogPlane = backendKey == "Plane";
@@ -628,6 +645,7 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
         break;
     case CatalogFailureBanner::ErrorNoCatalog:
         cat.fieldCatalogEverLoaded_ = false;
+        cat.fieldCatalogRestored_ = false;
         cat.LastTrackerFieldCatalogWarning.clear();
         cat.LastTrackerFieldCatalogErrorTransient = errorTransient;
         cat.LastTrackerFieldCatalogError = errorTransient

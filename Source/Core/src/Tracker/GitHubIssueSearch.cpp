@@ -6,6 +6,7 @@
 #include "GitHubQueryFromJql.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "Tracker/SearchFetchGuards.h"
 #include "TrackerHttpUtils.h"
 
 #include <nlohmann/json.hpp>
@@ -34,10 +35,10 @@ constexpr long kGitHubFetchOverallTimeoutMs = 30000;
 // GitHub GraphQL search caps at 100 nodes/page (mirrors REST per_page=100).
 // We cap at 10 pages = 1000 items, same ceiling as the GitHub REST search
 // API hard limit. Surface a Warning when reached.
-constexpr int kGitHubPerPage = 100;
-constexpr int kGitHubMaxPages = 10;
-constexpr size_t kGitHubMaxTotalFetchBytes = 50u * 1024u * 1024u; // 50 MB cumulative limit
-constexpr size_t kGitHubMaxResultCount = 5000u;                   // hard cap on issue/PR count
+constexpr int kGitHubPerPage = smatchet::search_guards::kPageSize;
+constexpr int kGitHubMaxPages = smatchet::search_guards::kGitHubMaxPages;
+constexpr size_t kGitHubMaxTotalFetchBytes = smatchet::search_guards::kGitHubMaxTotalFetchBytes;
+constexpr size_t kGitHubMaxResultCount = smatchet::search_guards::kGitHubMaxResultCount;
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 

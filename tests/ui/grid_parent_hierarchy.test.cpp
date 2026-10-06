@@ -16,7 +16,8 @@
 //                        hide-parents drop the parent rows, which is exactly what
 //                        DeepChain_DepthsAndOrderMatchAncestry below exercises instead. Do
 //                        not point this test at parent-hierarchy-grid.json.)
-//   3. both OFF        — the depth cache is cleared (the common path stays branch-free).
+//   3. both OFF        — hide-parents off repopulates the depth cache, then story-group off
+//                        clears it (the common path stays branch-free).
 // This test pins the UI seam only (toggle -> autosave armed -> cache populated/cleared).
 //
 // GridParentHierarchyDeepChain / DeepChain_DepthsAndOrderMatchAncestry
@@ -192,13 +193,26 @@ static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(depthsCleared);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
 
-        // 3. BOTH OFF — autosave armed; depth cache drains; projection still covers every row.
+        // 3. BOTH OFF — hide-parents off first, so the depth cache repopulates (story group is still
+        //    on); then story group off, so the clear is observed from a populated cache. Autosave armed
+        //    each time; the projection still covers every row.
+        g_ui.viewsDirty = false;
+        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
+        const bool hideParentsOff = ClickSortByCheckbox(ctx, kHideParentsRef);
+        IM_CHECK_NO_RET(hideParentsOff);
+        if (!hideParentsOff) {
+            return;
+        }
+        IM_CHECK_NO_RET(g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max());
+        IM_CHECK_NO_RET(!g_ui.viewsDirty);
+        const bool depthsRepopulated =
+            YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.size() == ticketCount; });
+        IM_CHECK_NO_RET(depthsRepopulated);
+
         g_ui.viewsDirty = false;
         g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
         const bool storyGroupOff = ClickSortByCheckbox(ctx, kStoryGroupRef);
         IM_CHECK_NO_RET(storyGroupOff);
-        const bool hideParentsOff = ClickSortByCheckbox(ctx, kHideParentsRef);
-        IM_CHECK_NO_RET(hideParentsOff);
         IM_CHECK_NO_RET(g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max());
         IM_CHECK_NO_RET(!g_ui.viewsDirty);
         const bool depthsClearedAgain = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
@@ -244,6 +258,13 @@ static void RegisterDeepChainDepthsAndOrderMatchAncestry(ImGuiTestEngine* engine
         const int subtaskIdx = findIndex("PH-SUBTASK-1");
         const int leafIdx = findIndex("PH-LEAF-1");
         if (epicIdx < 0 || storyIdx < 0 || taskIdx < 0 || subtaskIdx < 0 || leafIdx < 0) {
+            // Run against the deep-chain fixture (the CI step does), a missing key is a failure, not a
+            // skip: otherwise a broken fixture or boot would pass silently.
+            const char* fixtureEnv = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+            const bool deepChainFixture =
+                fixtureEnv != nullptr &&
+                std::string(fixtureEnv).find("parent-hierarchy-grid.json") != std::string::npos;
+            IM_CHECK_NO_RET(!deepChainFixture);
             ctx->LogInfo("SKIP: parent-hierarchy-grid.json fixture tickets not found — "
                          "run with SMATCHET_TEST_JIRA_BACKEND_FIXTURE=tests/fixtures/jira_backend/"
                          "parent-hierarchy-grid.json");

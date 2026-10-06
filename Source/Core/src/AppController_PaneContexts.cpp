@@ -27,6 +27,7 @@
 #include "TicketSyncService.h"
 #include "Views.h"
 
+#include "Sync/LazyEnrichmentCarryForwardPure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/TicketChangeDiffPure.h"
 #include "SmatchetTicketChangeNotifications.h"
@@ -113,6 +114,7 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
             ctx->fieldCatalog.AvailableIssueTypeMeta = defaultCtx.fieldCatalog.AvailableIssueTypeMeta;
             ctx->fieldCatalog.AvailableUsers = defaultCtx.fieldCatalog.AvailableUsers;
             ctx->fieldCatalog.fieldCatalogEverLoaded_ = defaultCtx.fieldCatalog.fieldCatalogEverLoaded_;
+            ctx->fieldCatalog.fieldCatalogRestored_ = defaultCtx.fieldCatalog.fieldCatalogRestored_;
             ctx->fieldCatalog.currentCatalogProjectKey_ = defaultCtx.fieldCatalog.currentCatalogProjectKey_;
             ctx->fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
         }
@@ -390,8 +392,10 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         ctx.fieldCatalog.AvailableFields = std::move(fields);
         ctx.fieldCatalog.AvailableComponents = std::move(components);
         ctx.fieldCatalog.AvailableIssueTypeMeta = std::move(issueTypeMeta);
-        // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch.
+        // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch,
+        // while fieldCatalogRestored_ still routes the pane's reads to it.
         ctx.fieldCatalog.fieldCatalogEverLoaded_ = !restored;
+        ctx.fieldCatalog.fieldCatalogRestored_ = restored;
         ctx.fieldCatalog.LastTrackerFieldCatalogError.clear();
         ctx.fieldCatalog.LastTrackerFieldCatalogErrorTransient = false;
         ctx.fieldCatalog.LastTrackerFieldCatalogWarning = restoredWarning;
@@ -473,7 +477,7 @@ bool AppController::IsPaneFieldCatalogPopulated(const std::string& paneId) const
     }
     const GridContextFieldCatalog& cat = it->second->fieldCatalog;
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
-    return cat.fieldCatalogEverLoaded_;
+    return cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_;
 }
 
 std::vector<TrackerField> AppController::GetPaneAvailableFields(const std::string& paneId) const {
@@ -481,7 +485,7 @@ std::vector<TrackerField> AppController::GetPaneAvailableFields(const std::strin
     if (it != gridContexts_.end()) {
         const GridContextFieldCatalog& cat = it->second->fieldCatalog;
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
-        if (cat.fieldCatalogEverLoaded_) {
+        if (cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_) {
             return cat.AvailableFields; // copy under the lock — the fetch worker may rewrite it
         }
     }
@@ -743,7 +747,12 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
                           key.c_str());
                 continue;
             }
-            Cache->DeleteTicket(backendKey, key); // 404, nobody else holds it → drop the shared cache row
+            try {
+                Cache->DeleteTicket(backendKey, key); // 404, nobody else holds it → drop the shared cache row
+            } catch (const std::exception& ex) {
+                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s", key.c_str(),
+                          ex.what());
+            }
         }
         // This pane's recorded owned-id set must lose the purged ids too, or the next
         // RefreshLocalData would keep whitelisting rows that no longer exist and, worse, keep
@@ -771,10 +780,20 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         for (const auto& t : fetched) {
             auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
-            if (it != ctx.ActiveTickets.end() &&
-                (it->fieldValues != t.fieldValues || it->fieldRichValues != t.fieldRichValues)) {
-                *it = t;                     // Update in place with fully-populated fetched data
-                updatedTickets.push_back(t); // Track for cache persistence
+            if (it == ctx.ActiveTickets.end()) {
+                continue;
+            }
+            // A poll row carries no lazily fetched comment thread / tooltip blob; keep the resident
+            // ones (as both sync apply paths do) so the merge neither drops them nor counts their
+            // absence as a change.
+            CachedTicket incoming = t;
+            smatchet::sync::LazyCommentFields lazy;
+            if (smatchet::sync::SnapshotLazyCommentFields(*it, lazy)) {
+                smatchet::sync::CarryForwardLazyCommentFields(lazy, incoming);
+            }
+            if (it->fieldValues != incoming.fieldValues || it->fieldRichValues != incoming.fieldRichValues) {
+                *it = incoming;                // Update in place with fully-populated fetched data
+                updatedTickets.push_back(*it); // Track for cache persistence
                 anyFieldUpdated = true;
             }
         }
@@ -790,7 +809,14 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // since the fresh field values were never written to tickets_v2. Use SaveTickets (batch) instead of
     // per-ticket SaveTicket calls to avoid N synchronous SQLite writes on the UI thread.
     if (Cache && !updatedTickets.empty()) {
-        Cache->SaveTickets(backendKey, updatedTickets);
+        // A failed write must not escape this main-thread post-back (it would end the app): the merge
+        // is already published, and the stale cache rows converge on the next sync.
+        try {
+            Cache->SaveTickets(backendKey, updatedTickets);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' rows=%zu: %s",
+                      paneId.c_str(), backendKey.c_str(), updatedTickets.size(), ex.what());
+        }
     }
 
     if (!plan.residentRemovals.empty()) {

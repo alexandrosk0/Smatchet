@@ -149,7 +149,7 @@ void AppendPanelLine(std::vector<float>& v, const char* s, float topY, float pxX
 // Draw) so nothing GL happens unless Core actually fails. GL objects live on the EGLContext, so a
 // surface recreate (TERM/INIT_WINDOW) keeps them; Destroy() runs at teardown for hygiene.
 class BootPanelGl {
-public:
+  public:
     void Draw(int w, int h, const char* line1, const char* line2);
     void Destroy();
 
@@ -163,7 +163,7 @@ public:
         programFailed_ = false;
     }
 
-private:
+  private:
     bool EnsureProgram();
 
     GLuint program_ = 0;
@@ -670,6 +670,7 @@ void RenderOneFrame(android_app* app, AndroidHostState& s) {
         }
         ImGui::End();
     }
+    s.mainWindow->EndFrame();
     ImGui::Render();
 
     glViewport(0, 0, s.egl.Width(), s.egl.Height());
@@ -803,13 +804,13 @@ void OnConfigChanged(android_app* app, AndroidHostState& s) {
         // GL re-upload failed: keep s.densityScale and the theme scale on the OLD value so a later
         // CONFIG_CHANGED (or the backend's lazy per-frame device-object creation, which retries when
         // FontTexture==0) can recover, rather than asserting a scale whose font texture never landed.
-        SLOGE("CONFIG_CHANGED CreateDeviceObjects failed (density %.2f) — keeping old scale %.2f for retry",
-              newScale, s.densityScale);
+        SLOGE("CONFIG_CHANGED CreateDeviceObjects failed (density %.2f) — keeping old scale %.2f for retry", newScale,
+              s.densityScale);
         return;
     }
     // Raw DPI only — the accessibility font scale never enters HostDensityScale (Auto-mode safe). No-op
     // when the density bucket is unchanged (font-scale-only change); ShouldRescaleHostDensity gates it.
-    SmatchetTheme::ReassertHostDensityScale(newScale);   // relative re-scale — no compounding
+    SmatchetTheme::ReassertHostDensityScale(newScale); // relative re-scale — no compounding
     s.densityScale = newScale;
     s.fontScale = newFontScale;
 
@@ -944,8 +945,7 @@ void android_main(android_app* app) {
         }
         if (IsRenderable(state)) {
             RenderOneFrame(app, state);
-        } else if (state.hasSurface && !state.coreBooted && !state.bootPanelDrawn &&
-                   state.hasFocus && !state.paused) {
+        } else if (state.hasSurface && !state.coreBooted && !state.bootPanelDrawn && state.hasFocus && !state.paused) {
             // item 13: mirror IsRenderable's focus/pause gate so the boot panel never draws/swaps a
             // frame while backgrounded or unfocused (Pillar 1/2). On resume WantImmediatePoll returns
             // !bootPanelDrawn == true, spins the loop back here, and the panel paints then.

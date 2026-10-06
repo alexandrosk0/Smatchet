@@ -697,8 +697,9 @@ add_executable(SmatchetTests
     # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
     # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
     Core/StatusBarAutoHidePure.test.cpp
-    # Drag-to-paint checkbox gesture behind the checkbox LISTS (Views > Fields, the
-    # multi-select / Labels cell editors): press a row and drag across its neighbours to set
+    # Drag-to-paint checkbox gesture behind the checkbox LISTS (Views > Fields today; the
+    # multi-select / Labels cell editors are blocked on a debt item): press a row and drag
+    # across its neighbours to set
     # the whole run to one value. SmatchetDragCheckboxPure.h is header-only + ImGui-free; the
     # impure wrapper (SmatchetDragCheckbox.h) feeds live hit-testing into these decisions.
     Core/SmatchetDragCheckboxPure.test.cpp

@@ -206,11 +206,8 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
     }
-    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-    cfgJson[found->json] = val;
-    ConfigManager::WriteConfigJson(cfgJson);
-    // Invalidate the Load() cache so next call picks up the new value.
-    ConfigManager::InvalidateCache();
+    // Locked read-modify-write (also invalidates the Load() cache so the next call sees the value).
+    ConfigManager::UpdateConfigJson([&](nlohmann::json& cfgJson) { cfgJson[found->json] = val; });
     // Live apply: a running instance flips its swapchain on the next frame —
     // the file write above covers the next launch.
     if (key == "vsync") {
@@ -279,10 +276,8 @@ CommandResult RunTicketsMonitor(const nlohmann::json& args, const CommandContext
             {{"wouldDo", {{"key", "ticket_change_monitor_enabled"}, {"value", decision.EnabledValue}}}});
     }
 
-    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-    cfgJson["ticket_change_monitor_enabled"] = decision.EnabledValue;
-    ConfigManager::WriteConfigJson(cfgJson);
-    ConfigManager::InvalidateCache();
+    ConfigManager::UpdateConfigJson(
+        [&](nlohmann::json& cfgJson) { cfgJson["ticket_change_monitor_enabled"] = decision.EnabledValue; });
     LOG_DEBUG("tickets.monitor — change monitor %s", decision.EnabledValue ? "enabled" : "disabled");
 
     nlohmann::json out;

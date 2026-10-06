@@ -164,7 +164,16 @@ void ApplyWorklogSaveResult(int gen, const std::string& issueId, const PendingAc
     smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
     const bool ok = result.K != PendingActionSubmitResult::Kind::Failed;
     const std::string err = result.Error.empty() ? std::string("the worklog could not be saved.") : result.Error;
-    if (result.K == PendingActionSubmitResult::Kind::Queued) {
+    if (result.K == PendingActionSubmitResult::Kind::Queued && result.NeedsReview) {
+        // The send may have landed: replay never resends it, so say what the user has to do.
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("worklog.toast.review_title", "Worklog may already be logged"),
+            issueId + ": " +
+                SmatchetLocalization::T("worklog.toast.review_body",
+                                        "The tracker did not answer, so the worklog may already be logged. Check "
+                                        "the issue, then send or discard it in the Offline Queue panel."),
+            ToastType::Warning);
+    } else if (result.K == PendingActionSubmitResult::Kind::Queued) {
         SmatchetToastManager::Instance().Push(
             SmatchetLocalization::T("worklog.toast.queued_title", "Worklog queued offline"),
             issueId + ": " +

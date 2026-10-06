@@ -141,13 +141,15 @@ bool AddExtra(TrackerConfig& cfg, const JiraBackendInstance& inst) {
     return true;
 }
 
-bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras) {
+bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras,
+                   const std::vector<std::string>* previousHosts) {
     EnsureHydrated(cfg);
-    int activeExtra = -1;
+    // The active extra's host before the edit; empty when instance 0 (or nothing) is active.
+    std::string activeHost;
     if (!cfg.ActiveJiraDomain.empty() && !HostsMatch(cfg.ActiveJiraDomain, cfg.JiraBackends[0].Domain)) {
         for (std::size_t i = 1; i < cfg.JiraBackends.size(); ++i) {
             if (HostsMatch(cfg.JiraBackends[i].Domain, cfg.ActiveJiraDomain)) {
-                activeExtra = static_cast<int>(i - 1);
+                activeHost = cfg.JiraBackends[i].Domain;
                 break;
             }
         }
@@ -159,17 +161,24 @@ bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& e
             allAccepted = false;
         }
     }
-    if (activeExtra < 0) {
+    if (activeHost.empty()) {
         return allAccepted;
     }
-    if (static_cast<std::size_t>(activeExtra) < extras.size()) {
-        const JiraBackendInstance* inst = FindByHost(cfg, extras[static_cast<std::size_t>(activeExtra)].Domain);
-        if (inst != nullptr) {
-            cfg.ActiveJiraDomain = inst->Domain;
-            return allAccepted;
+    // Follow the active row by identity, never by position: removing or adding a row in front of it
+    // must not switch the live site to another one.
+    std::string newActiveHost;
+    if (previousHosts != nullptr) {
+        for (std::size_t i = 0; i < extras.size() && i < previousHosts->size(); ++i) {
+            if (!(*previousHosts)[i].empty() && HostsMatch((*previousHosts)[i], activeHost)) {
+                newActiveHost = extras[i].Domain;
+                break;
+            }
         }
+    } else {
+        newActiveHost = activeHost;
     }
-    cfg.ActiveJiraDomain = cfg.JiraBackends[0].Domain;
+    const JiraBackendInstance* inst = newActiveHost.empty() ? nullptr : FindByHost(cfg, newActiveHost);
+    cfg.ActiveJiraDomain = inst != nullptr ? inst->Domain : cfg.JiraBackends[0].Domain;
     return allAccepted;
 }
 

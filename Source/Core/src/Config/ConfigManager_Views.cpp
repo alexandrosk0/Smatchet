@@ -33,69 +33,108 @@ namespace {
 // the header re-parsed them; moving them to anonymous namespace here drops that parse cost
 // without changing behaviour.
 
+// Optional scalars read type-checked: `value()` throws on a wrong type (a number id, "yes" for a bool),
+// and a throw drops the whole view, which the next save then deletes from disk.
+std::string ReadViewString(const nlohmann::json& viewJson, const char* key, const std::string& fallback) {
+    const auto it = viewJson.find(key);
+    return it != viewJson.end() && it->is_string() ? it->get<std::string>() : fallback;
+}
+
+bool ReadViewBool(const nlohmann::json& viewJson, const char* key) {
+    const auto it = viewJson.find(key);
+    return it != viewJson.end() && it->is_boolean() && it->get<bool>();
+}
+
+// v3 "columns" array: each entry with a string key. A width that is not a number (null, a string)
+// is unset rather than an error: a throw here drops this backend's views and every later one from
+// the loaded file.
+std::vector<ViewColumn> ReadViewColumns(const nlohmann::json& columnsJson) {
+    std::vector<ViewColumn> columns;
+    // SMATCHET_DEVIATION(rule=duplication; reason=filter-an-array-of-objects-by-a-string-key loop idiom shared with unrelated tracker parsing (GitHubActivityFeed); a shared reader would couple Config to Tracker for five lines; owner=orchestrator; revisit=when a shared bounded JSON array reader lands)
+    for (const auto& colJson : columnsJson) {
+        if (!colJson.is_object() || !colJson.contains("key") || !colJson["key"].is_string()) {
+            continue;
+        }
+        ViewColumn col;
+        col.Key = colJson["key"].get<std::string>();
+        col.Width = colJson.contains("width") && colJson["width"].is_number()
+                        ? SanitizeViewColumnWidth(colJson["width"].get<double>())
+                        : 0.0f;
+        columns.push_back(std::move(col));
+    }
+    return columns;
+}
+
+// Legacy v2 shape (fields + column_order + column_widths), read into locals only — ViewDefinition no
+// longer carries them — and migrated by MigrateLegacyColumns, which reproduces the pre-v3
+// TicketGridColumnsBuilder::Build ordering exactly so nothing visually moves on upgrade.
+std::vector<ViewColumn> ReadLegacyViewColumns(const nlohmann::json& viewJson) {
+    std::vector<std::string> legacyFields;
+    std::vector<std::string> legacyColumnOrder;
+    std::unordered_map<std::string, float> legacyWidths;
+    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
+        for (const auto& field : viewJson["fields"]) {
+            if (field.is_string()) {
+                legacyFields.push_back(field.get<std::string>());
+            }
+        }
+    }
+    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
+        for (const auto& col : viewJson["column_order"]) {
+            if (col.is_string()) {
+                legacyColumnOrder.push_back(col.get<std::string>());
+            }
+        }
+    }
+    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
+        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
+            if (it.value().is_number()) {
+                legacyWidths[it.key()] = it.value().get<float>();
+            }
+        }
+    }
+    return MigrateLegacyColumns(legacyFields, legacyColumnOrder, legacyWidths);
+}
+
+// "sort_specs": entries with a string column and a non-zero integer direction.
+std::vector<ViewSortSpec> ReadViewSortSpecs(const nlohmann::json& specsJson) {
+    std::vector<ViewSortSpec> specs;
+    // SMATCHET_DEVIATION(rule=duplication; reason=filter-an-array-of-objects-by-a-string-key loop idiom shared with unrelated tracker parsing (GitHubActivityFeed); a shared reader would couple Config to Tracker for five lines; owner=orchestrator; revisit=when a shared bounded JSON array reader lands)
+    for (const auto& specJson : specsJson) {
+        if (!specJson.is_object() || !specJson.contains("column") || !specJson["column"].is_string()) {
+            continue;
+        }
+        ViewSortSpec spec;
+        spec.ColumnKey = specJson["column"].get<std::string>();
+        spec.Direction = specJson.contains("direction") && specJson["direction"].is_number_integer()
+                             ? specJson["direction"].get<int>()
+                             : 0;
+        if (spec.Direction != 0) {
+            specs.push_back(spec);
+        }
+    }
+    return specs;
+}
+
 ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
     ViewDefinition view;
-    view.Id = viewJson.value("id", std::string());
-    view.Name = viewJson.value("name", std::string());
-    view.Jql = viewJson.value("jql", view.Jql);
+    view.Id = ReadViewString(viewJson, "id", std::string());
+    view.Name = ReadViewString(viewJson, "name", std::string());
+    view.Jql = ReadViewString(viewJson, "jql", view.Jql);
 
-    // v3: an explicit ordered "columns" array is the source of truth when present — read it
-    // straight into view.Columns. Otherwise migrate from the legacy v2 shape (fields +
-    // column_order + column_widths, read here into locals only — ViewDefinition no longer
-    // carries them) via MigrateLegacyColumns, which reproduces the pre-v3
-    // TicketGridColumnsBuilder::Build ordering exactly so nothing visually moves on upgrade.
-    // Either way NormalizeViewDefinition (below) has the final say and regenerates Fields.
+    // v3: an explicit ordered "columns" array is the source of truth when present. Otherwise
+    // migrate from the legacy v2 shape. Either way NormalizeViewDefinition (below) has the final
+    // say and regenerates Fields.
     if (viewJson.contains("columns") && viewJson["columns"].is_array()) {
-        for (const auto& colJson : viewJson["columns"]) {
-            if (!colJson.is_object() || !colJson.contains("key") || !colJson["key"].is_string()) {
-                continue;
-            }
-            ViewColumn col;
-            col.Key = colJson["key"].get<std::string>();
-            col.Width = colJson.value("width", 0.0f);
-            view.Columns.push_back(std::move(col));
-        }
+        view.Columns = ReadViewColumns(viewJson["columns"]);
     } else {
-        std::vector<std::string> legacyFields;
-        std::vector<std::string> legacyColumnOrder;
-        std::unordered_map<std::string, float> legacyWidths;
-        if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
-            for (const auto& field : viewJson["fields"]) {
-                if (field.is_string()) {
-                    legacyFields.push_back(field.get<std::string>());
-                }
-            }
-        }
-        if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
-            for (const auto& col : viewJson["column_order"]) {
-                if (col.is_string()) {
-                    legacyColumnOrder.push_back(col.get<std::string>());
-                }
-            }
-        }
-        if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
-            for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
-                if (it.value().is_number()) {
-                    legacyWidths[it.key()] = it.value().get<float>();
-                }
-            }
-        }
-        view.Columns = MigrateLegacyColumns(legacyFields, legacyColumnOrder, legacyWidths);
+        view.Columns = ReadLegacyViewColumns(viewJson);
     }
     if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
-        for (const auto& specJson : viewJson["sort_specs"]) {
-            if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
-                ViewSortSpec spec;
-                spec.ColumnKey = specJson["column"].get<std::string>();
-                spec.Direction = specJson.value("direction", 0);
-                if (spec.Direction != 0) {
-                    view.SortSpecs.push_back(spec);
-                }
-            }
-        }
+        view.SortSpecs = ReadViewSortSpecs(viewJson["sort_specs"]);
     }
-    view.HideParents = viewJson.value("hide_parents", false);
-    view.StoryGroupSort = viewJson.value("story_group_sort", false);
+    view.HideParents = ReadViewBool(viewJson, "hide_parents");
+    view.StoryGroupSort = ReadViewBool(viewJson, "story_group_sort");
     if (view.Id.empty()) {
         view.Id = view.Name;
     }
@@ -108,13 +147,23 @@ ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
 
 ViewWorkspaceState ParseWorkspaceObject(const nlohmann::json& root) {
     ViewWorkspaceState ws;
-    ws.ActiveViewId = root.value("active_view_id", std::string());
+    ws.ActiveViewId = ReadViewString(root, "active_view_id", std::string());
     if (root.contains("views") && root["views"].is_array()) {
         for (const auto& viewJson : root["views"]) {
             if (!viewJson.is_object()) {
                 continue;
             }
-            ws.Views.push_back(ParseViewDefinition(viewJson));
+            // One malformed view (a hand edit, a value of the wrong type) is skipped, not fatal: a throw
+            // here would drop this backend and every later one from the loaded file.
+            try {
+                ws.Views.push_back(ParseViewDefinition(viewJson));
+            } catch (const std::exception& ex) {
+                LOG_WARN("ConfigManager: skipping a malformed view '%s': %s",
+                         viewJson.contains("id") && viewJson["id"].is_string()
+                             ? viewJson["id"].get<std::string>().c_str()
+                             : "?",
+                         ex.what());
+            }
         }
     }
     if (root.contains("toolbar_append") && root["toolbar_append"].is_array()) {
@@ -252,8 +301,7 @@ ViewsStore ViewWorkspaceToViewsStoreImpl(const ViewWorkspaceState& ws) {
     // something explicitly Activate()s a valid id — self-heal to the first view instead of
     // propagating a dangling reference every time this backend's workspace loads.
     if (!s.Views.empty() &&
-        std::none_of(s.Views.begin(), s.Views.end(),
-                     [&](const ViewDefinition& v) { return v.Id == s.ActiveViewId; })) {
+        std::none_of(s.Views.begin(), s.Views.end(), [&](const ViewDefinition& v) { return v.Id == s.ActiveViewId; })) {
         s.ActiveViewId = s.Views.front().Id;
     }
     return s;
@@ -356,7 +404,7 @@ PersistentViewsFile ConfigManager::LoadPersistentViewsFromDisk() {
             return disk;
         }
         if (j.contains("backends") && j["backends"].is_object()) {
-            disk.Version = j.value("version", 2);
+            disk.Version = j.contains("version") && j["version"].is_number_integer() ? j["version"].get<int>() : 2;
             for (auto it = j["backends"].begin(); it != j["backends"].end(); ++it) {
                 if (!it.value().is_object()) {
                     continue;

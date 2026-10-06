@@ -160,10 +160,11 @@ reviews:
         Available FetchContent libs: nlohmann/json, cpr, SQLiteCpp,
         cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2,
         ghc::filesystem — do NOT propose adding new dependencies.
-        TestEnvGuard persist TUs (`JiraBackendInstancesPersist`,
-        `ConfigSaveConcurrency`, `ConfigManager.test`) belong in
-        `SmatchetTests` and the Linux `SmatchetTsanTests` subset; bucket-E
-        is UI-only — do NOT remove them from those lists.
+        TestEnvGuard persist TUs: `JiraBackendInstancesPersist` and
+        `ConfigSaveConcurrency` belong in `SmatchetTests` and the Linux
+        `SmatchetTsanTests` subset; `ConfigManager.test` belongs in
+        `SmatchetTests` only. Bucket-E is UI-only — do NOT remove them
+        from those lists.
     - path: 'agents/**/*.md'
       instructions: |
         Agent definitions (`agents/project/*.md` here; the portable

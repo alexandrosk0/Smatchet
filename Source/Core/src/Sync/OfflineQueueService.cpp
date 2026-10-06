@@ -995,7 +995,11 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
     // captured base is still conflict-checked instead of mistaken for a legacy no-base row.
     const bool hasRichBase = !row.OriginalRichValue.empty();
     const bool hasScalarBase = row.HasOriginalValue;
-    if ((!hasRichBase && !hasScalarBase) || !fieldsPayload.is_object()) {
+    // An estimate edit also carries the OTHER estimate, copied when it was queued; it is re-read from the
+    // tracker below so the replay never writes that stale copy over a change made meanwhile.
+    const bool estimatePayload = TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) != nullptr &&
+                                 fieldsPayload.is_object() && fieldsPayload.contains("timetracking");
+    if ((!hasRichBase && !hasScalarBase && !estimatePayload) || !fieldsPayload.is_object()) {
         return FieldEditConflictOutcome::Proceed;
     }
 
@@ -1033,6 +1037,14 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
                  row.FieldId.c_str());
     }
 
+    if ((!fetchOk || freshTickets.empty()) && !hasRichBase && !hasScalarBase) {
+        // Only the untouched estimate needed the re-fetch: a transient failure retries, anything else
+        // keeps this row's last-write-wins (it captured no base to conflict-check).
+        if (!fetchOk && fetchErrTransient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
+            return FieldEditConflictOutcome::RetryTransient;
+        }
+        return FieldEditConflictOutcome::Proceed;
+    }
     if (!fetchOk || freshTickets.empty()) {
         const bool transient = fetchOk ? true : fetchErrTransient;
         if (transient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
@@ -1048,8 +1060,16 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
     }
 
     const CachedTicket& fresh = freshTickets.front();
+    if (estimatePayload) {
+        TrackerFieldPayloadPure::RefreshUntouchedEstimate(
+            row.FieldId, fresh.GetFieldValue(TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId)),
+            fieldsPayload);
+    }
     if (hasRichBase) {
         return ResolveFieldEditThreeWayMerge(row, fieldsPayload, fresh, cache, tally);
+    }
+    if (!hasScalarBase) {
+        return FieldEditConflictOutcome::Proceed;
     }
     return ResolveFieldEditScalarConflict(row, fieldsPayload, fresh, cache, tally);
 }

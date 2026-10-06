@@ -157,6 +157,11 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
         drawMobileGridDockWindows(app, d, gridDockId);
     }
 
+    // Every frame, whatever page is shown: the embedded grid only enqueues cell edits, and the desktop
+    // pump lives in drawGridPaneWindows, which the mobile shell never runs — without this an edit made
+    // here would sit in memory, never sent or saved to the offline queue.
+    pumpGridFieldEditsOncePerFrame(app, d, app.GetTrackerConnectivityBannerForUi(nullptr));
+
     // Drawer is an overlay drawn after (above) the shell window.
     drawMobileDrawer(app, d);
 
@@ -500,9 +505,10 @@ void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
 // Mobile->Desktop ini edge. Flushes mobile geometry one last time, drops the mobile layout,
 // re-attaches the captured desktop imgui.ini pointer, and reloads it so desktop windows come
 // back exactly as saved (nothing in the mobile session ever writes imgui.ini). Resets the seed
-// latches. MUST run at end-of-frame (SmatchetUI::Draw's mobile fork), after every window has
-// ended: the reload rebuilds the dock tree immediately, and a desktop window submitted later in
-// the same frame would find its node not LastFrameAlive and undock (imgui.cpp ~21208).
+// latches. MUST run at end-of-frame (SmatchetUI::EndFrame, called by the host after the plugin
+// windows and right before ImGui::Render), after every window has ended: the reload rebuilds the
+// dock tree immediately, and a window submitted later in the same frame would find its node not
+// LastFrameAlive and undock (imgui.cpp ~21208).
 void SmatchetUI::drawMobileRestoreDesktopIni(UiDrawSession& d) {
     if (!d.mobileDockSeeded) {
         return;

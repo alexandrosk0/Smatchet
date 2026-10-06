@@ -362,30 +362,9 @@ fi
 # forces the #1116 fail-closed path in an environment that DOES have python).
 PRESHIP_PY="$(ra_resolve_python || true)"
 
-# preship_ita_untracked [quiet] — register untracked files with `git add --intent-to-add`.
-#
-# Untracked files are INVISIBLE to every git-diff- and git-grep-based gate below
-# (`git diff <base>` skips them; `git grep` scans tracked only). Running pre-ship
-# before the first `git add` therefore false-passed comment-noise and
-# plan-ref-integrity on brand-new files (PR #953 — two CI-only failures). Intent-
-# to-add registers them in the index (content stays unstaged) so the gates see
-# exactly what CI will see — and so `ra_fingerprint` covers a brand-new .cpp
-# instead of stamping a diff that silently omits it.
-# `quiet` suppresses the stdout note so --review-fingerprint stays machine-readable.
-preship_ita_untracked() {
-    local quiet="${1:-}"
-    local untracked=()
-    mapfile -t untracked < <(git ls-files --others --exclude-standard)
-    [ "${#untracked[@]}" -gt 0 ] || return 0
-    [ "$quiet" = "quiet" ] ||
-        echo "pre-ship: git add --intent-to-add ${#untracked[@]} untracked file(s) so gates can see them"
-    git add --intent-to-add -- "${untracked[@]}"
-    # Undo the ita registrations on EVERY exit (pass or fail) — leaving them
-    # would make scratch files commit-eligible via a later `git commit -a` and
-    # flip their `git status` bucket from untracked to modified (CR-964 review).
-    # shellcheck disable=SC2064  # expand ${untracked[@]} NOW, not at trap time
-    trap "git restore --staged -- $(printf '%q ' "${untracked[@]}") 2>/dev/null || true" EXIT
-}
+# Untracked files are registered with `git add --intent-to-add` (ra_ita_untracked, in the
+# shared review-ack lib) before the git-diff gates and the fingerprint read them; the lib
+# carries the why.
 
 # --review-fingerprint: print the fingerprint of the current diff and stop. This is the
 # reviewer's stamp — the code-review agent embeds it in .review-findings.json so the ack
@@ -393,7 +372,7 @@ preship_ita_untracked() {
 # from inside a review that is running concurrently with the gate, and a second mutating
 # pass there would move the very diff it is fingerprinting.
 if [ "$print_fingerprint" -eq 1 ]; then
-    preship_ita_untracked quiet
+    ra_ita_untracked quiet
     ra_fingerprint branch "$base_ref"
     exit 0
 fi
@@ -482,7 +461,7 @@ if [ "$gate_only" != "1" ]; then
         exit 2
     fi
 
-preship_ita_untracked
+ra_ita_untracked
 
 # First-party C++ changed vs the merge-base with <base-ref> (staged, unstaged, and
 # committed-on-branch). Restrict to the trees the gate scans; skip deletions.

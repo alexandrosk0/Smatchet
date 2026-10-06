@@ -1027,6 +1027,160 @@ TEST_CASE("TicketSyncService surfaces a soft warning when the children fetch fai
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+// Pillar 6: a descendant / ancestor walk that failed did not see every row the view holds through the
+// hierarchy, so the sync must not purge rows an earlier, complete walk cached. The control case proves
+// the purge does run here when the walk completes.
+TEST_CASE("TicketSyncService keeps cached descendants when the children fetch fails") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeChildTicket("STORY-1", "EPIC-1")); // cached by an earlier sync
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchChildrenOfKeysError(TrackerErrorTransport("timeout"));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    SpinUntil(svc, []() { return false; }, 50); // let any stale purge run to completion
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "EPIC-1", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService purges a cached row the completed descendant walk no longer reaches") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeChildTicket("STORY-1", "EPIC-1"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchChildrenOfKeysResult(true, std::vector<CachedTicket>()); // the walk finds no children now
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    CachedTicket got;
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && !deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got); }));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService keeps cached ancestors when the parent fetch fails") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("EPIC-9", "cached by an earlier sync"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchIssuesForKeysError(TrackerErrorTransport("timeout"));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    SpinUntil(svc, []() { return false; }, 50);
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "EPIC-9", got));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "CHILD-1", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+// A key the tracker refuses on its own is a definitive answer that repeats on every sync; leaving the
+// purge off for it would never purge rows deleted on the server. The refused key is named.
+TEST_CASE("TicketSyncService still purges when the tracker refuses a single key's children outright") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeChildTicket("STORY-1", "EPIC-1"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchChildrenOfKeysError(TrackerErrorInvalidRequest("bad key batch", 400));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    CachedTicket got;
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && !deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got); }));
+    CHECK(deps.LastTrackerTicketSyncWarning.find("refused by the tracker: EPIC-1") != std::string::npos);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+// One key the tracker cannot browse rejects the whole batch (Jira's `key in (...)` 400). The walk
+// isolates it, still loads and keeps every valid ancestor, and stays authoritative for the purge.
+TEST_CASE("TicketSyncService isolates a refused parent key and keeps the valid ancestors") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("EPIC-9", "cached by an earlier sync"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("GONE-1", "no longer in the view or its hierarchy"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9"));
+    scripted.push_back(MakeChildTicket("CHILD-2", "BAD-1"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> parents;
+    parents.push_back(MakeTicket("EPIC-9", "Epic"));
+    fake->SetFetchIssuesForKeysResult(true, parents);
+    fake->SetFetchIssuesForKeysRefusedKey("BAD-1");
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    CachedTicket got;
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && !deps.CacheImpl->TryGetTicket("Jira", "GONE-1", got); }));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "EPIC-9", got));
+    CHECK(deps.LastTrackerTicketSyncWarning.find("refused by the tracker: BAD-1") != std::string::npos);
+    CHECK(fake->FetchIssuesForKeysCallsFor("EPIC-9") >= 2); // the batch, then its own half
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService does not re-query children it already asked about in this sync") {
+    // The view already streams the whole tree: one hop asks about every streamed id, and the children
+    // it returns were all queried in that hop, so there is no second hop.
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> tree;
+    tree.push_back(MakeTicket("EPIC-1", "Root epic"));
+    tree.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    tree.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    fake->SetFetchIssuesResult(tree, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> descendants;
+    descendants.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    descendants.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    fake->SetFetchChildrenOfKeysResult(true, descendants);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 3; }));
+    CHECK(fake->FetchChildrenOfKeysCallCount() == 1);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService fetches children even when the active view hides parents") {
     // Deliberately the OPPOSITE gating from the ancestor fetch (see
     // "TicketSyncService skips the parent fetch when the active view hides parents" below):

@@ -4,7 +4,9 @@
 #include "JiraIssueMappingPure.h"
 #include "Sync/JqlChangedSincePure.h"
 #include "Tracker/JqlEscape.h"
+#include "Tracker/SearchFetchGuards.h"
 #include "TrackerFieldValueParser.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpPure.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
@@ -21,12 +23,20 @@
 
 namespace {
 
+// `outError` (optional) receives the failure's kind: a page the tracker refused or never answered keeps
+// its HTTP classification (status 0 = Transport), so a caller can tell a retryable blip from a rejection.
 bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& headers, const std::string& issueKey,
-                                 nlohmann::json& outComments) {
+                                 nlohmann::json& outComments, TrackerError* outError = nullptr) {
     outComments = nlohmann::json::array();
     int startAt = 0;
     const int maxResults = 100;
     const int maxPages = 20;
+    const auto fail = [&](TrackerError err) {
+        if (outError != nullptr) {
+            *outError = std::move(err);
+        }
+        return false;
+    };
 
     for (int page = 0; page < maxPages; ++page) {
         const std::string commentsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) +
@@ -38,7 +48,8 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
                      commentsResp.status_code);
             // Signal failure on a mid-stream page error rather than returning the pages gathered
             // so far — a partial-Ok would silently truncate the thread shown in the modal.
-            return false;
+            return fail(ClassifyRejectedTrackerResponse(
+                commentsResp, DescribeRejectedResponse("Comment fetch for " + issueKey, commentsResp)));
         }
 
         try {
@@ -46,11 +57,11 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             auto commentsJson = smatchet::json_safe::ParseBounded(commentsResp.text, parseErr);
             if (!parseErr.empty()) {
                 LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), parseErr.c_str());
-                return false;
+                return fail(TrackerErrorParse("Comment page for " + issueKey + " did not parse: " + parseErr));
             }
             if (!commentsJson.contains("comments") || !commentsJson["comments"].is_array()) {
                 LOG_WARN("JiraClient: comments endpoint for %s missing comments array.", issueKey.c_str());
-                return false;
+                return fail(TrackerErrorParse("Comment page for " + issueKey + " has no comments array"));
             }
 
             const auto& pageComments = commentsJson["comments"];
@@ -66,7 +77,7 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             }
         } catch (const std::exception& ex) {
             LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), ex.what());
-            return false;
+            return fail(TrackerErrorParse("Comment page for " + issueKey + " did not parse: " + ex.what()));
         }
     }
     return true;
@@ -303,13 +314,18 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
 
 // Outcome of driving the /search/jql pagination loop for a prebuilt search URL.
 struct JiraPageLoopResult {
-    bool endedCleanly = false;        // every page consumed with a clean isLast (no abort / cap / error)
-    int fetchedPages = 0;             // pages that returned HTTP 200 and were mapped
-    bool tokenLeftover = false;       // a next-page cursor was still pending when the loop broke
-    size_t totalFetchedBytes = 0;     // cumulative response size (bytes) across all pages
-    bool totalSizeLimitHit = false;   // true if total fetch size exceeded the cap
-    bool resultCountLimitHit = false; // true if result count exceeded the cap
+    bool endedCleanly = false;    // every page consumed with a clean isLast (no abort / cap / error)
+    int fetchedPages = 0;         // pages that returned HTTP 200 and were mapped
+    bool tokenLeftover = false;   // a next-page cursor was still pending when the loop broke
+    size_t totalFetchedBytes = 0; // cumulative response size (bytes) across all pages
 };
+
+// A guard that stopped the page loop leaves the result cut short: say so on the summary (a soft
+// warning — the rows fetched are valid), so the sync shows a caveat instead of a plain success.
+void AppendJiraTruncationWarning(TrackerIssueFetchSummary& summary, const std::string& warning) {
+    LOG_WARN("JiraClient: %s", warning.c_str());
+    summary.AppendWarning(warning);
+}
 
 // Drive the token-paginated /search/jql loop for `baseSearchUrl`, mapping each page through
 // ProcessJiraSearchPage into `onBatch` and classifying failures onto `summary`. Extracted so the
@@ -324,9 +340,9 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
                       TrackerIssueFetchSummary& summary) {
     JiraPageLoopResult result;
     std::string nextPageToken;
-    const int kMaxPages = 50;
-    const size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
-    const size_t kMaxResultCount = 10000u;                   // hard cap on issue count
+    const int kMaxPages = smatchet::search_guards::kJiraMaxPages;
+    const size_t kMaxTotalFetchBytes = smatchet::search_guards::kJiraMaxTotalFetchBytes;
+    const size_t kMaxResultCount = smatchet::search_guards::kJiraMaxResultCount;
 
     for (int page = 1; page <= kMaxPages; ++page) {
         if (shouldCancel && shouldCancel()) {
@@ -359,9 +375,9 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
         // Track cumulative response size for total-fetch guard.
         result.totalFetchedBytes += lastResponseBody.size();
         if (result.totalFetchedBytes > kMaxTotalFetchBytes) {
-            LOG_WARN("JiraClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
-                     result.totalFetchedBytes, kMaxTotalFetchBytes);
-            result.totalSizeLimitHit = true;
+            AppendJiraTruncationWarning(summary, "Jira result size exceeded " +
+                                                     std::to_string(kMaxTotalFetchBytes / 1024 / 1024) +
+                                                     " MB; remaining issues not fetched. Narrow the view's JQL.");
             result.endedCleanly = false;
             break;
         }
@@ -376,9 +392,8 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
 
         // Guard result count to prevent memory exhaustion from massive result sets.
         if (summary.FetchedCount > kMaxResultCount) {
-            LOG_WARN("JiraClient: result count (%zu issues) exceeds limit (%zu). Stopping pagination.",
-                     summary.FetchedCount, kMaxResultCount);
-            result.resultCountLimitHit = true;
+            AppendJiraTruncationWarning(summary, "Jira result count exceeded " + std::to_string(kMaxResultCount) +
+                                                     " issues; remaining issues not fetched. Narrow the view's JQL.");
             result.endedCleanly = false;
             break;
         }
@@ -398,7 +413,8 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
     // cap, pre-request cancel, HTTP error); every Stop outcome clears it.
     result.tokenLeftover = !nextPageToken.empty();
     if (result.fetchedPages >= kMaxPages && result.tokenLeftover) {
-        LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);
+        AppendJiraTruncationWarning(summary, "Jira pagination page cap (" + std::to_string(kMaxPages) +
+                                                 ") reached; remaining issues not fetched. Narrow the view's JQL.");
     }
     return result;
 }
@@ -630,10 +646,9 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
     // maxResults == key count is a safe upper bound), a single parent can have arbitrarily many
     // children — an epic with 50 stories, say. So each parent-key batch's result set is paged
     // properly via nextPageToken, independent of how many keys are in the `parent in (...)`
-    // clause. kMaxPagesPerBatch bounds worst-case pathological data (a parent with thousands of
-    // children) without truncating any real-world hierarchy silently forever — hitting the cap
-    // just means the remaining children surface on a later sync, same fail-open shape as the
-    // ancestor-fetch hop cap in TicketSyncService::FetchMissingParentsIntoQueue.
+    // clause. kMaxPagesPerBatch bounds worst-case pathological data (one parent-key batch with
+    // more than kMaxPagesPerBatch * kPageSize children). Every sync asks the same way, so children
+    // past the cap are not loaded by any sync; hitting it is logged.
     constexpr std::size_t kMaxKeysPerRequest = 40;
     constexpr int kMaxPagesPerBatch = 50;
     constexpr int kPageSize = 100;
@@ -692,7 +707,7 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
                 nextPageToken = std::move(newToken);
                 if (page == kMaxPagesPerBatch - 1) {
                     LOG_WARN("JiraClient::FetchChildrenOfKeys: hit the %d-page cap for one parent-key batch; "
-                             "remaining children will surface on a later sync.",
+                             "the remaining children are not loaded.",
                              kMaxPagesPerBatch);
                 }
             } catch (const std::exception& ex) {
@@ -847,9 +862,10 @@ Result<std::vector<TrackerIssueComment>, TrackerError> JiraClient::FetchIssueCom
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     nlohmann::json nodes = nlohmann::json::array();
-    if (!JiraFetchIssueCommentsPages(base, headers, issueKey, nodes)) {
-        return CommentsResult::Err(
-            TrackerErrorUnknown("JiraClient::FetchIssueComments: comment fetch failed for " + issueKey, 0));
+    TrackerError fetchError =
+        TrackerErrorUnknown("JiraClient::FetchIssueComments: comment fetch failed for " + issueKey);
+    if (!JiraFetchIssueCommentsPages(base, headers, issueKey, nodes, &fetchError)) {
+        return CommentsResult::Err(std::move(fetchError));
     }
 
     std::vector<TrackerIssueComment> all = smatchet::jira::MapJiraIssueComments(nodes);

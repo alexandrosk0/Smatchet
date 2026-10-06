@@ -11,6 +11,142 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 26 — #2180–#2299 + late #2164, #2263, #2288 (95-unit sweep, 2026-10-06) — all fixed
+
+Coverage: **84 PRs as 95 units — 91 reviewed (57 with findings, 34 clean), 4 fully superseded, 0 errored.** Net: **0 CRITICAL, 10 HIGH, 43 MEDIUM, 59 LOW** (112 findings, 43 `userVisible`). **109 are fixed: most in this PR, and the ones in files the agent-layer flip (#2321) moved into the `agent-layer/` submodule in a PR on `the-unwilling-agentic-bunch` (marked *layer PR* below). 3 were already fixed on develop: F32 and F33 by #2319, and F84 by the flip itself (the layer repo ships its own `.gitattributes`).** No Issue was filed for the user-visible ones, because they ship fixed here (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2299 contiguous for PRs merged as of 2026-10-06; the next sweep resumes from #2300, plus the four PRs still open below the frontier (late-merge rule): #2244, #2279, #2291, #2296.**
+
+**Range.** #2180–#2299 merged into develop, plus three late merges below earlier frontiers: #2164 (open at Batch 25), #2263 (open when this sweep started) and #2288. #2151 closed without merging and is dropped. #2198 merged into #2207's branch, so #2207's constituent units cover it. Merge-commit PRs (#2202, #2207) were expanded to one unit per constituent commit. 22 units were reviewed by hand-run review agents and 69 by a workflow fan-out of opus `code-review` agents over `historical-review-survivors.sh` digests. The planned adversarial verify stage produced no verdicts, so each finding was re-verified against HEAD while fixing it.
+
+**Tooling fixes found by this sweep (in this PR).**
+- `historical-review-worklist.sh` now falls back to GitHub's merge-commit oid (`--merge-oids`, else `gh`) for a squash whose subject lacks `(#N)` and for a PR merged into another PR's branch (shared coverage, counted as covered). Without it the range resolved short of 79/79. Selftest fixture D added.
+- `archive-backlog-entry.sh` wrote an archived entry through a Windows pipe as cp1252 with CRLF, so an em dash landed in `applied.md` as invalid UTF-8. Its Python now writes UTF-8 with LF; new bats case.
+- Both scripts live in the agent layer since #2321, so both ship in the layer PR.
+
+**Code review of this PR's own diff** (code-review agent, before commit) found no CRITICAL; its HIGH and MEDIUM items are fixed here too. The Lua splitter save now goes through a new raw-key slot on the config-save worker instead of a locked read-write on the frame; a failed hierarchy hop turns the stale purge off only when the failure is not a definitive tracker refusal (400 / 404), and the hop cap only when refs are really left; the wheel accumulator no longer resets on frames without wheel input; the status combo shows an offline cue for a live list that is no longer fresh; a GitHub 410 is read through its body; the secret-migration Load no longer caches an image the file does not hold; and a wrong-typed view scalar no longer drops the view.
+
+**Headlines.** Offline and sync data loss: a failed hierarchy hop (F42, F44) or a partial user roster (F47, F93) overwrote cached data; the views file could drop every view on one bad width (F54); queued grid edits were dropped on a pane-focus hop (F66) and never pumped on mobile (F14); a comment that was provably never sent stayed ambiguous (F85, F86). Gate and tooling fail-opens: `record-review-verdict.sh` from a subdirectory (F39); the CR finding gate parking a later head in "pending" on an earlier head's `@coderabbitai review` (F21, F22), and a waiver overwritten by an older polling run (F23); the Trusted Signing setup script could never finish (F15, F16).
+
+### Fixed — HIGH + every `userVisible` finding (46), one line each
+
+The full problem, scenario and fix text for all 112 is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl) (`batch: batch-26`, keyed by `pr` + `file` + `line`, with a `disposition` field). `Fn` is the finding id within this batch; `#n` is a PR or Issue.
+
+**HIGH (10)**
+- F14 · #2202 (bff43537) · `Source/Core/src/Ui/SmatchetMobileShellUi.cpp:223` · **userVisible** — the mobile host never pumped queued grid field edits, so an edit made on a phone stayed queued until the window went desktop-width. `pumpGridFieldEditsOncePerFrame` now runs from both hosts.
+- F15 · #2206 (c2d49fde) · `scripts/publish/setup-trusted-signing-sp.sh:174` — the Trusted Signing setup script read az's three-line TSV reply as one tab-separated row, so it died after creating the app and secret and stranded the secret. It now reads either shape and strips CR; new `setup_trusted_signing_sp.bats` with a stubbed az.
+- F32 · #2217 (8f8e1ef8) · `agents/scripts/core/seed-agent-layer-repo.sh:611` — phase 3 of the agent-layer seed staged `seed-paths.txt` inside the clone, so git-filter-repo refused it. Already fixed on develop by #2319 before this PR. (superseded by #2319)
+- F39 · #2221 (4f18e13e) · `agents/scripts/core/record-review-verdict.sh:94` — `record-review-verdict.sh` run from a subdirectory read every diff as not substantive and stamped an unproven verdict. It now cds to the work-tree top; selftest case added. (layer PR)
+- F44 · #2225 (4c234aa9) · `Source/Core/src/Sync/TicketSyncService.cpp:1046` · **userVisible** — a failed children fetch left `FullSyncCompleted` true, so the sync purged every cached descendant it had not re-fetched. `MarkHierarchyWalkIncomplete` now clears it (also on hop caps).
+- F53 · #2231 (1b85a392) · `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp:507` · **userVisible** — the header-drag writeback treated any difference between the rendered order and the view as a drag, so a view with an unrenderable key was rewritten and autosaved every frame. It now acts only on a real visual reorder.
+- F54 · #2231 (1b85a392) · `Source/Core/src/Config/ConfigManager_Views.cpp:55` · **userVisible** — a non-number column width in the views file threw out of the v3 loader and dropped that backend's views and every later one. Width/direction are type-checked, sanitized, and each view parses under its own try/catch.
+- F59 · #2233 (af3de917) · `Source/Core/src/AppController_PaneContexts.cpp:793` · **userVisible** — `SaveTickets` / `DeleteTicket` ran bare in the change-probe post-back, so a busy SQLite rethrow escaped the dispatcher. Both are caught and logged.
+- F66 · #2238 (b3b9cd4b) · `Source/Core/src/Ui/SmatchetUI.cpp:740` · **userVisible** — every cross-backend pane-focus hop dropped every queued grid edit. The backend-switch discard now drops only edits with no pane target.
+- F78 · #2273 (0a6dfff0) · `Source/Core/src/Ui/SmatchetUI.cpp:718` · **userVisible** — a cache-site change cleared `fieldCatalogLoading` while the catalog future was in flight, so the next frame launched a second fetch over it. The reset no longer clears the in-flight flags.
+
+**MEDIUM (26)**
+- F1 · #2188 (1652176e) · `Source/Core/src/TicketGridFilterPure.cpp:88` · **userVisible** — the grid filter matched hidden stored values (Plane UUIDs, `_smatchet_*` sentinels) and missed the option names the cells show. It skips internal keys and matches through the catalog's id-to-name map.
+- F5 · #2196 (1068a07f) · `Source/Core/src/Ui/SmatchetBugReportUi.cpp:196` · **userVisible** — the bug-report consent text said the minidump holds only the crashing thread's stack; it carries every thread's. Text corrected in the dialog, PRIVACY.md, BugReportService, the crash handler and the relay docs.
+- F10 · #2202 (b1d18043) · `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:45` · **userVisible** — jump-to-ticket compared keys case-sensitively although the classifier accepts a lowercase key. The jump is case-insensitive.
+- F26 · #2212 (050bcceb) · `Source/Core/src/Config/JiraBackendInstancesPure.cpp:165` · **userVisible** — `ReplaceExtras` followed the active extra Jira site by list position, so removing a row in front of it switched the live site. It follows the row by identity (`originalDomain`).
+- F42 · #2223 (6bef56dc) · `Source/Core/src/Sync/TicketSyncService.cpp:976` · **userVisible** — a failed ancestor fetch kept `FullSyncCompleted` true and purged cached ancestors. Marked incomplete (see F44); ancestors are de-duplicated across hops.
+- F47 · #2226 (9eca306d) · `Source/Core/src/Tracker/JiraUserAndMeta.cpp:58` · **userVisible** — a failure mid-way through `FetchUsers` returned a partial roster, which then replaced the saved offline roster. `outUsers` is cleared on every failure and an empty result never overwrites the roster.
+- F49 · #2228 (d22455bb) · `Source/Core/src/Tracker/JiraIssueSearch.cpp:361` · **userVisible** — Jira search stopped at its size/count/page caps silently. Each cap now appends a truncation warning (shared `SearchFetchGuards.h`).
+- F50 · #2228 (d22455bb) · `Source/Core/src/Tracker/PlaneIssueSearch.cpp:404` · **userVisible** — Plane search, same silent truncation as F49; same fix.
+- F55 · #2231 (1b85a392) · `Source/Core/include/ViewColumnsPure.h:128` · **userVisible** — `NormalizeViewDefinition` kept column keys the grid cannot render, so the rendered order never matched the view. Unrenderable keys are dropped; `view.*` reads a bare field id as `field:<id>`.
+- F56 · #2231 (1b85a392) · `Source/Core/src/Ui/SmatchetUI.cpp:1445` · **userVisible** — the layout autosave was deferred indefinitely while the query strip was up and was lost at exit. It now saves the layout with the confirmed query, and `~SmatchetUI` flushes a pending save.
+- F60 · #2233 (af3de917) · `Source/Core/src/AppController_PaneContexts.cpp:776` · **userVisible** — the change-probe merge replaced a row without carrying lazy comment fields forward, so comments vanished until the next enrichment. The carry-forward now runs before the compare.
+- F64 · #2236 (f5e8a508) · `Source/Core/src/Ui/SmatchetPreferencesUi_Shell.cpp:233` · **userVisible** — the Save & Sync button had a hard-coded 140 px width and clipped its label at large fonts / HiDPI. The width is computed from the label.
+- F103 · #2243 (5c23c3f4) · `Source/Core/src/Ui/SmatchetStatusBarUi.cpp:275` · **userVisible** — the auto-hide status bar was brought to the display front every frame, over open popups and menus. It is raised only when no popup is open.
+- F96 · #2249 (e6a977b2) · `Source/Core/src/IssueTransitionsCacheService.cpp:172` · **userVisible** — `RememberLearned` dropped the whole learned transition set when one target equalled the from-status. Only flagged self-targets (`isGlobal`/`isLooped`) are dropped.
+- F108 · #2250 (c6d50588) · `Source/Core/src/Ui/SmatchetGridColumnInteraction.cpp:101` · **userVisible** — ImGui 1.92 single-column auto-fit was overwritten by the width sync the same frame. The column being auto-fitted is skipped (`PendingSingleColumnAutoFit`).
+- F85 · #2257 (12228c29) · `Source/Core/src/Sync/PendingActionQueueService.cpp:362` · **userVisible** — a failed comment dedupe fetch flattened the error to Unknown, so a provably-unsent comment stayed `ambiguous`. The fetch keeps its kind (`StateAfterFailedDedupeCheck`).
+- F74 · #2259 (c68640f1) · `Source/Core/src/TicketFieldEditor_Worklog.cpp:167` · **userVisible** — an ambiguous worklog add reported plain success. It is flagged `NeedsReview` and shows a review toast (en + fr).
+- F75 · #2262 (bd49dfec) · `Source/Core/src/Sync/OfflineQueueService.cpp:1202` · **userVisible** — the estimate conflict check ignored the other estimate field and had no path without a base. Estimate payloads re-fetch and refresh the untouched estimate.
+- F93 · #2265 (e756d1e9) · `Source/Core/src/Ui/SmatchetUI.cpp:342` · **userVisible** — see F47 (UI half: an empty user list is never stored or saved offline).
+- F94 · #2265 (e756d1e9) · `Source/Core/src/EditMetaCacheService.cpp:396` · **userVisible** — the edit-metadata prune erased a live per-type entry, losing the type's saved permissions for the session. It demotes the entry instead.
+- F98 · #2267 (d797b9d2) · `Source/Core/src/AppController_PaneContexts.cpp:394` · **userVisible** — a restored pane field catalog was never treated as populated (`fieldCatalogEverLoaded_` stayed false). `fieldCatalogRestored_` now counts.
+- F89 · #2271 (80b85feb) · `Source/Core/src/AttachmentDiskCache.cpp:48` · **userVisible** — an attachment with a non-ASCII file name failed to open (ShellExecuteA, narrow ifstream). Opened via `ShellExecuteW` and read through ghc paths.
+- F90 · #2271 (80b85feb) · `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:359` · **userVisible** — the watchers/votes/watch-self futures were not drained at teardown and could outlive the AppController they reference. All three are drained.
+- F79 · #2273 (0a6dfff0) · `Source/Core/src/Ui/SmatchetUI.cpp:713` · **userVisible** — a site switch cleared the catalog through `SetFieldCatalog`, which also persisted the empty catalog. New `ClearFieldCatalogInMemory` never writes the snapshot.
+- F82 · #2276 (b2594e47) · `Source/Core/src/Ui/ImGuiHotkey.cpp:317` · **userVisible** — wheel bindings fired on the bare sign of every wheel event (touchpads zoomed many steps per gesture), and `AdjustFontSize` saved synchronously. Wheel deltas accumulate to whole notches; the save goes through the config-save worker.
+- F105 · #2280 (385f3833) · `Source/Core/src/Tracker/TrackerHttpPure.cpp:147` · **userVisible** — the issue-exists probe treated only 404 as deleted; GitHub returns 410 Gone for a deleted issue. A GitHub 410 now reads as deleted only when the body says so (GitHub also answers 410 when Issues are disabled, which must not purge the repo's cached issues).
+
+**LOW (10)**
+- F8 · #2197 (f9bacb16) · `Source/Core/src/Config/ConfigManager_Load.cpp:924` · **userVisible** — the legacy-secret migration re-save wrote an image read before the RMW lock, so it could revert a queued UI snapshot. `SaveSecretMigration` takes the lock, lets a pending snapshot win and skips a file that changed since it was read.
+- F11 · #2202 (b1d18043) · `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:69` · **userVisible** — the grid filter used the raw box text while the classifier used the trimmed text, so stray spaces filtered everything out. The filter trims.
+- F19 · #2207 (c5d56e5f) · `Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp:49` · **userVisible** — the parent-hierarchy preference tooltip described a single-level top-up. Rewritten (also F91/F92 docs).
+- F92 · #2207 (775cef12) · `Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp:50` · **userVisible** — see F19.
+- F27 · #2212 (050bcceb) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:1142` · **userVisible** — a rejected extra Jira site (empty or duplicate host) was dropped silently. A toast says so (en + fr).
+- F38 · #2219 (a0132eb5) · `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp:684` · **userVisible** — the row hover highlight used the unclipped row rect and painted over the header / outside the body. Clamped to `BgClipRect`.
+- F99 · #2230 (49b5cccc) · `Source/Core/include/SmatchetDragCheckbox.h:146` · **userVisible** — the drag-checkbox press frame could paint rows drawn after the origin row. Painting waits for the next frame (`!mousePressed`).
+- F97 · #2249 (e6a977b2) · `Source/Core/src/TicketFieldEditor.cpp:791` · **userVisible** — the status combo read "live" from `freshness == Fresh`, mislabelling a just-learned set. `GetAvailableTransitions` reports `fromLive`.
+- F86 · #2257 (12228c29) · `Source/Core/src/Sync/PendingActionQueueService.cpp:393` · **userVisible** — a provably-not-applied send was archived while its row still read `sending`. The claim is released before archiving.
+- F109 · #2298 (3b9c2515) · `Source/Core/src/Ui/MarkdownToAdf.cpp:342` · **userVisible** — an image with neither src nor alt, or a mention with an empty id, emitted an empty ADF text node that Jira rejects. Both are skipped.
+
+### Fixed — internal debt, 17 MEDIUM + 49 LOW, indexed by file
+
+All `userVisible:false`, all fixed in this PR unless marked. Listed per file; the full text is in the JSONL.
+
+- `.coderabbit.yaml` — 1 LOW — #2212:152 (F28)
+- `.github/actions/cr-finding-gate/action.yml` — 2 MEDIUM — #2209:533 (F21), #2209:255 (F23)
+- `.github/workflows/cr-finding-gate.yml` — 1 LOW — #2209:38 (F24)
+- `Source/Core/include/Config/ConfigManager.h` — 1 LOW — #2197:873 (F9)
+- `Source/Core/include/SmatchetDragCheckbox.h` — 1 LOW — #2230:40 (F100)
+- `Source/Core/include/Ui/SmatchetGridUiSupport.h` — 1 LOW — #2202:31 (F12)
+- `Source/Core/src/Commands/ViewCommands.cpp` — 1 LOW — #2231:361 (F57)
+- `Source/Core/src/Persistence/AGENTS.md` — 1 LOW — #2257:12 (F87)
+- `Source/Core/src/Sync/AGENTS.md` — 1 MEDIUM — #2207:15 (F91)
+- `Source/Core/src/Sync/TicketSyncService.cpp` — 1 MEDIUM + 1 LOW — #2223:916 (F43), #2225:1032 (F45)
+- `Source/Core/src/Tracker/PlaneIssueSearch.cpp` — 1 LOW — #2228:247 (F52)
+- `Source/Core/src/Tracker/TrackerFieldCatalog.cpp` — 1 LOW — #2234:608 (F61)
+- `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp` — 1 LOW — #2202:1169 (F13)
+- `Source/Core/src/Ui/SmatchetOfflineQueueUi_Actions.cpp` — 1 LOW — #2273:240 (F80)
+- `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` — 1 LOW — #2236:1414 (F65)
+- `Source/Core/src/Ui/SmatchetUI.cpp` — 1 MEDIUM — #2235:395 (F62)
+- `agents/scripts/core/classify-layer-consumers.sh` — 1 LOW — #2180:104 (F0; layer PR)
+- `agents/scripts/core/lock-staleness-sweep.sh` — 1 LOW — #2195:254 (F4; layer PR)
+- `agents/scripts/core/record-review-verdict.sh` — 1 MEDIUM — #2221:96 (F40; layer PR)
+- `agents/scripts/core/safe-admin-merge.sh` — 1 LOW — #2209:288 (F25; host + layer PR)
+- `agents/scripts/core/seed-agent-layer-repo.d/README.md` — 1 MEDIUM + 1 LOW — #2217:76 (F34; host + layer PR), #2217:107 (F35; layer PR)
+- `agents/scripts/core/seed-agent-layer-repo.sh` — 3 MEDIUM — #2217:700 (F33; superseded by #2319), #2218:385 (F36; layer PR), #2287:88 (F84; superseded by #2321 (the layer ships its own .gitattributes))
+- `agents/scripts/core/seed-audit-sweep.py` — 1 MEDIUM — #2218:152 (F37; layer PR)
+- `docs/CONTEXT.md` — 1 LOW — #2247:31 (F70)
+- `docs/audits/DEVIATION_AUDIT_2026-08-16.md` — 2 LOW — #2277:204 (F83), #2290:152 (F110)
+- `docs/guides/cli.md` — 1 LOW — #2231:206 (F58)
+- `docs/guides/parent-hierarchy.md` — 2 LOW — #2207:21 (F17), #2207:112 (F18)
+- `docs/plans/active/drag-to-paint-checkbox-lists.md` — 1 LOW — #2230:5 (F101)
+- `docs/plans/active/offline-first.md` — 1 LOW — #2238:139 (F67)
+- `docs/self-improvement/categories/debt/2026-09-20-cell-editor-commit-closes-combo-mid-gesture.md` — 1 LOW — #2230:12 (F102)
+- `docs/self-improvement/categories/debt/2026-09-30-internal-command-dispatch-from-args-json.md` — 1 LOW — #2272:7 (F77)
+- `docs/self-improvement/categories/debt/2026-10-01-dock-window-layout-repair-helpers.md` — 1 LOW — #2275:12 (F81)
+- `docs/self-improvement/categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md` — 1 MEDIUM — #2292:45 (F106)
+- `docs/self-improvement/categories/process/2026-08-18-merge-snapshot-ledger-28-pr-hole.md` — 1 LOW — #2295:90 (F104)
+- `docs/self-improvement/categories/process/2026-09-07-rerunning-a-body-reading-gate-replays-a-frozen-payload.md` — 1 LOW — #2204:72 (F95)
+- `docs/self-improvement/categories/process/2026-09-10-orphaned-lock-release-has-no-direct-write-path.md` — 1 LOW — #2211:7 (F88; host + layer PR)
+- `docs/self-improvement/categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md` — 2 LOW — #2214:55 (F29), #2214:56 (F30)
+- `docs/self-improvement/categories/process/2026-09-14-review-gate-substantive-check-is-cpp-only-so-gate-scripts-self-edit-exempt.md` — 1 LOW — #2221:61 (F41)
+- `docs/self-improvement/categories/tooling/2026-09-30-wrapped-deviation-markers-never-expire.md` — 1 LOW — #2272:7 (F76)
+- `docs/self-improvement/categories/tooling/2026-10-04-postmortem-owed-graphql-504-reads-as-clean.md` — 1 LOW — #2292:39 (F107)
+- `docs/self-improvement/postmortems.md` — 2 LOW — #2214:225 (F31), #2247:287 (F71)
+- `docs/self-improvement/recurring-finding-classes.md` — 1 LOW — #2247:48 (F69)
+- `scripts/dev/trigger-coderabbit-review.sh` — 1 MEDIUM — #2209:147 (F22)
+- `scripts/publish/SIGNING.md` — 1 LOW — #2193:189 (F3)
+- `scripts/publish/setup-trusted-signing-sp.sh` — 1 MEDIUM — #2206:133 (F16)
+- `tests/Core/JiraUserAndMetaHttp.test.cpp` — 1 LOW — #2226:186 (F48)
+- `tests/Core/JqlSearchGuards.test.cpp` — 1 LOW — #2228:12 (F51)
+- `tests/Core/KeyedLookupCache.test.cpp` — 1 LOW — #2240:127 (F68)
+- `tests/bats/lint_rules.bats` — 1 LOW — #2247:1112 (F72; layer PR)
+- `tests/bats/release_signing_selectors.bats` — 1 MEDIUM — #2193:159 (F2)
+- `tests/bats/safe_admin_merge.bats` — 1 LOW — #2299:456 (F111; layer PR)
+- `tests/ui/grid_parent_hierarchy.test.cpp` — 2 LOW — #2208:204 (F20), #2225:246 (F46)
+- `tests/ui/mobile_desktop_layout_roundtrip.test.cpp` — 1 LOW — #2235:135 (F63)
+- `tests/ui/offline_first.test.cpp` — 1 MEDIUM — #2253:279 (F73)
+- `tools/bug-report-relay/README.md` — 1 MEDIUM — #2196:134 (F6)
+- `tools/bug-report-relay/package.json` — 1 LOW — #2196:10 (F7)
+
+**Clean (34 units, surviving lines read in full, no findings):** #2164, #2184, #2185, #2187, #2189, #2190, #2192, #2194, #2200, #2201, #2202 (1 of its units), #2203, #2207 (5 of its units), #2210, #2213, #2220, #2222, #2224, #2232, #2242, #2245, #2248, #2255, #2263, #2285, #2286, #2288, #2289, #2293, #2294.
+
+**Fully superseded (4 units, no review surface):** #2181, #2229, and two #2207 constituents (`382fd171a`, `98cb236b5`) — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Batch 25 — #2160–#2161 + #2176–#2179 (6-PR sweep, 2026-09-06)
 
 Coverage: **6 reviewed — 5 with findings, 1 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 3 MEDIUM, 5 LOW** (8 findings, 1 `userVisible`). **The frontier is now #1–#2179 contiguous for PRs merged as of 2026-09-06; the next sweep resumes from #2180 — plus #2151 and #2164, the two PRs still open below the frontier at sweep time (late-merge rule below).** Reviewer agents inherited the session model; 6/6 returned, ~0.48M tokens, ~4 min.

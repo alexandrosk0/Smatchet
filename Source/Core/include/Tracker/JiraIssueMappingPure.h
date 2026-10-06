@@ -53,7 +53,8 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
 
 /// Parse a Jira /transitions response into the list of statuses (id, name)
 /// reachable from the issue's current state. Returns empty vector if transitionsArray
-/// is not valid or contains no transitions.
+/// is not valid or contains no transitions. A target reached by a global or looped transition
+/// is marked ReachableFromAnyStatus.
 std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray);
 
 /// Fills `outFieldsList` (all fields to request from Jira) and `outSelectedFields`

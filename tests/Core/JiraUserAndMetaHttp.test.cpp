@@ -170,10 +170,12 @@ TEST_CASE("JiraClient::FetchUsers — exhausting the page-count safety bound is 
     // 50,000-user sanity bound) must not be reported as a complete, successful fetch — that
     // would silently drop the remainder from every user-type field dropdown.
     JiraCatalogHttpFixture fx;
-    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request&) {
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        // Ids depend on the page offset, so every page adds 1000 new users to the roster.
+        const std::string startAt = req.get_param_value("startAt");
         nlohmann::json page = nlohmann::json::array();
         for (int i = 0; i < 1000; ++i) {
-            const std::string id = "a" + std::to_string(i);
+            const std::string id = "a" + startAt + "_" + std::to_string(i);
             page.push_back(nlohmann::json{{"accountId", id}, {"displayName", "User " + id}, {"active", true}});
         }
         return page;
@@ -186,8 +188,33 @@ TEST_CASE("JiraClient::FetchUsers — exhausting the page-count safety bound is 
     // The accumulated 50,000-row partial roster must be discarded on failure, not left for a
     // caller that only checks the bool to silently publish a truncated catalog (#2226 CR finding).
     CHECK(out.empty());
-    // 50 pages (kMaxPages) of 1000 rows each, all unique accountIds this time.
+    // 50 pages (kMaxPages) of 1000 rows each, all unique accountIds.
     CHECK(fx.RequestCount("/rest/api/3/users/search") == 50);
+}
+
+TEST_CASE("JiraClient::FetchUsers — a page that fails after earlier pages leaves no partial roster") {
+    // Page 1 is a full page; page 2 is not a users array (a proxy or captive-portal body, a changed
+    // API). The users gathered so far must not be returned: the caller would publish and save them as
+    // the whole roster.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        if (req.get_param_value("startAt") != "0") {
+            return nlohmann::json{{"error", "not a users array"}};
+        }
+        nlohmann::json page = nlohmann::json::array();
+        for (int i = 0; i < 1000; ++i) {
+            const std::string id = "p" + std::to_string(i);
+            page.push_back(nlohmann::json{{"accountId", id}, {"displayName", "User " + id}, {"active", true}});
+        }
+        return page;
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    CHECK_FALSE(client.FetchUsers(fx.Config(), out, err));
+    CHECK(err.find("Invalid users response") != std::string::npos);
+    CHECK(out.empty());
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
 }
 
 TEST_CASE("JiraClient::FetchIssueWatchers — success parses the watchers array") {

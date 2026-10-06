@@ -4,7 +4,8 @@
   both parse a stored args-JSON string with `json_safe::ParseBounded`, fall back to an empty object on
   a parse error, fill a `CommandContext` with `CommandSource::Internal` and call
   `app.Commands().Dispatch`. Only the log prefix differs. The toolbar copy carries a `rule=duplication`
-  exemption (`revisit=2027-03-31`). `Ui/SmatchetImGuiHost.cpp` has a third, stricter variant (rejects
+  exemption (the marker inside `SmatchetToolbarUi::DispatchButton` in `SmatchetToolbarUi.cpp`, which
+  carries its revisit date). `Ui/SmatchetImGuiHost.cpp` has a third, stricter variant (rejects
   bad JSON with a ValidationError envelope) that should stay separate.
 
   Concrete next action: add one UI-side helper, e.g.

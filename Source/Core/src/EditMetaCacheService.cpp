@@ -390,11 +390,15 @@ void EditMetaCacheService::PruneEditMetaCacheToActiveTickets() {
     }
     for (auto& byBackend : issueTypeEditMeta_) {
         EditMetaById& byType = byBackend.second;
-        for (auto it = byType.begin(); it != byType.end();) {
-            // A restored entry is kept: it is loaded once per backend, so pruning it would lose the
-            // type's saved permissions for the rest of the session.
-            const bool drop = it->second.live && keepTypes.find(it->first) == keepTypes.end();
-            it = drop ? byType.erase(it) : std::next(it);
+        for (auto& entry : byType) {
+            // Per-type entries are never erased: saved rows load once per backend, and a live fetch
+            // replaced the restored entry in place, so erasing it would lose the type's saved
+            // permissions for the rest of the session (they still answer CanEdit* offline). A live
+            // entry for a type no pane shows is demoted instead, so it is refetched when next needed
+            // online. The map is bounded by the tracker's issue types.
+            if (entry.second.live && keepTypes.find(entry.first) == keepTypes.end()) {
+                entry.second.live = false;
+            }
         }
     }
 }

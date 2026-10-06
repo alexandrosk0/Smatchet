@@ -116,6 +116,15 @@ std::mutex& GetIoMutexRef();
 // WriteConfigJson never re-locks this — fixed lock order is RMW (outer) then IO (inner), never reversed.
 std::mutex& GetConfigRmwMutexRef();
 std::mutex& GetCacheMutexRef();
+
+// The legacy-secret migration re-save of a Load (Win32 / Android): `migrated` is the image that Load
+// built from the file content `readFrom`. Under the RMW lock, a queued worker snapshot wins — it is
+// newer than the file this Load read, and writing it re-seals every secret — and a file another writer
+// changed since the read is left alone (the next Load migrates again if anything is still unsealed).
+// Only otherwise is `migrated` written. Never writes a stale image over a newer one (#2191 class).
+// Returns true when `migrated` is what the file now holds; false when the file holds another image, so
+// the caller must not cache `migrated` as the current config.
+bool SaveSecretMigration(const TrackerConfig& migrated, const nlohmann::json& readFrom);
 // Guards the base-directory globals (runtime-asset + user-data dirs) so a background reader
 // — e.g. the BackendAuditTrail writer thread re-resolving its path per event, or the config-save
 // worker — never observes a torn/realloc'd std::string while a UI/test thread reassigns it via

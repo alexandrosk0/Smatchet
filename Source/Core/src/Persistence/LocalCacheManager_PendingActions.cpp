@@ -12,8 +12,8 @@
 #include <utility>
 #include <vector>
 
-// LocalCacheManager's pending-action queue (Quality Pillar 6): comments (and later worklogs and
-// watch) saved while the tracker is unreachable, replayed by PendingActionQueueService. Additive
+// LocalCacheManager's pending-action queue (Quality Pillar 6): comments, worklogs and watches
+// saved while the tracker is unreachable, replayed by PendingActionQueueService. Additive
 // tables; an older cache file gains them on open. Every method uses its own local SQLite::Statement,
 // so none touches the cached-statement slots stmtMutex_ guards; the connection is OPEN_FULLMUTEX.
 // Failures are logged and rethrown — the service counts and retries them, like the field-edit queue.

@@ -21,9 +21,15 @@ void DriveGridHeaderDragReorder(ImGuiTable* table);
 bool GridHeaderDragInProgress(const ImGuiTable* table);
 
 /// Pushes per-index widths onto the table (ImGui keeps widths by index and only applies
-/// TableSetupColumn's width at init), skipping a column being resized or auto-fitted.
+/// TableSetupColumn's width at init), skipping a column being resized or auto-fitted, and
+/// `autoFitColumn` (>= 0): a single-column fit ImGui applied in this frame's BeginTable, which
+/// leaves no trace on the table once applied (latch it with PendingSingleColumnAutoFit).
 /// Call between TableSetupColumn and the first TableNextRow.
-void SyncGridTableColumnWidths(ImGuiTable* table, const std::vector<float>& widthsByIndex);
+void SyncGridTableColumnWidths(ImGuiTable* table, const std::vector<float>& widthsByIndex, int autoFitColumn = -1);
+
+/// The column a single-column auto-fit (border double-click, "Size column to fit") was requested for
+/// this frame, which the next BeginTable applies; -1 when none. Read after the table's layout.
+int PendingSingleColumnAutoFit(const ImGuiTable* table);
 
 } // namespace ui
 } // namespace smatchet

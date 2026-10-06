@@ -56,7 +56,7 @@ std::string StringField(const nlohmann::json& object, const char* key) {
 // The WorklogAdd payload keys and the fields they carry: the one mapping both directions use.
 struct WorklogField {
     const char* Key;
-    std::string WorklogActionPayload::*Member;
+    std::string WorklogActionPayload::* Member;
 };
 const WorklogField kWorklogFields[] = {
     {"timeSpent", &WorklogActionPayload::TimeSpent},
@@ -76,6 +76,17 @@ const char* StateAfterFailedSend(PendingActionKind kind, const TrackerError& err
         return PendingActionState::kPending;
     }
     return PendingActionState::kAmbiguous;
+}
+
+const char* StateAfterFailedDedupeCheck(const TrackerError& error) {
+    switch (error.Kind) {
+    case TrackerErrorKind::Auth:
+    case TrackerErrorKind::NotFound:
+    case TrackerErrorKind::InvalidRequest:
+        return "";
+    default:
+        return PendingActionState::kAmbiguous;
+    }
 }
 
 std::string NormalizeCommentForDedupe(const std::string& text) {

@@ -213,10 +213,9 @@ void RegisterPerfTogglePanelCommand(CommandRegistry& reg, AppController& app) {
                                         g_ui.showPerformance = v;
                                         return v;
                                     });
-                                    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-                                    cfgJson["show_performance_window"] = newOpen;
-                                    ConfigManager::WriteConfigJson(cfgJson);
-                                    ConfigManager::InvalidateCache();
+                                    ConfigManager::UpdateConfigJson([newOpen](nlohmann::json& cfgJson) {
+                                        cfgJson["show_performance_window"] = newOpen;
+                                    });
                                     return CommandResult::Success({{"showPerformance", newOpen}});
                                 } catch (const std::exception& e) {
                                     return CommandResult::Failure(ErrorCode::HandlerError,

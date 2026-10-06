@@ -42,7 +42,7 @@ A red required check is inherited by every open PR's merge ref under block-on-an
    - fails fast on the first non-advisory red;
    - succeeds only when everything is terminal and green.
 
-   Add that job name to `branch_protection.required_contexts`. Reuse the poller's semantics so the aggregate and `merge-gates.sh` agree on what "red" means. That means sourcing or porting the CI half of `merge-gates.d/10-gate-filter.sh`:
+   Add that job name to `branch_protection.required_contexts`. Then re-run `bash agents/scripts/core/setup-branch-protection.sh` and confirm the aggregate is live with `gh api repos/alexandrosk0/Smatchet/branches/develop/protection/required_status_checks --jq '.contexts'`: editing the config is inert until that script re-runs, because no workflow re-applies it ([`ci-required-check-pattern.md`](../../../agent-rules/ci-required-check-pattern.md) § Config↔live drift; the #1227 Coverage escape). Mark this entry applied only after that live check passes. Reuse the poller's semantics so the aggregate and `merge-gates.sh` agree on what "red" means. That means sourcing or porting the CI half of `merge-gates.d/10-gate-filter.sh`:
    - newest-suite duplicate collapse;
    - the `advisory` name exemption;
    - the `*-out-of-band` downgrades, re-evaluated on a `labeled` event.
@@ -55,6 +55,7 @@ A red required check is inherited by every open PR's merge ref under block-on-an
 Preconditions for (1):
 - The new context must always report. A required check that never reports deadlocks every PR (`docs/agent-rules/ci-required-check-pattern.md`), so the workflow takes no `paths:` filter.
 - Land it only on a green develop tip. Adding a required context while any lane is red blocks every open PR.
+- Bind it live: re-run `setup-branch-protection.sh` after the config edit and check the live contexts (above).
 
 **Enumerator + replay** (per `AGENT_SELF_IMPROVEMENT.md`): the enumerator is the head commit's check-run list, `GET repos/alexandrosk0/Smatchet/commits/dfa2e0ce6c52711d0825e5aa772818785050887f/check-runs` (52 runs), deduplicated by name to the newest suite. Replayed on that list:
 
