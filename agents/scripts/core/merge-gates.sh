@@ -824,9 +824,16 @@ poll_merge_gates() {
     # the filter goes to a temp file instead and gh only fetches the raw
     # response — no ceiling at all. jq-less hosts (gh is the only hard dep on
     # Windows) keep the `--jq` path, which the argv budget bats case guards.
+    # A jq on PATH must also be able to RUN the filter: jq 1.5 has no IN/1, so
+    # picking it would fail every poll and score the run GH_API_DOWN (rc 3).
+    # Probe once; an old or broken jq falls back to gh's bundled engine.
     local gate_jq_engine=gh
     if command -v jq >/dev/null 2>&1; then
-        gate_jq_engine=jq
+        if jq -n -e '1 | IN(1)' >/dev/null 2>&1; then
+            gate_jq_engine=jq
+        else
+            echo "INFO: standalone jq ($(jq --version 2>/dev/null || echo 'version unknown')) cannot run the gate filter (needs jq >= 1.6 for IN/1); using gh's bundled engine (gh --jq) instead." >&2
+        fi
     fi
 
     # Stale-red Plan-lock re-check cache: re-evaluated once per head, not every

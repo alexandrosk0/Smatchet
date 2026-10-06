@@ -4415,6 +4415,38 @@ STUB
     grep -qx -- '--jq' "$argv_file"
 }
 
+@test "argv: a jq too old to run the filter (no IN/1) falls back to gh --jq instead of failing every poll" {
+    # jq 1.5 is on PATH but lacks IN/1: picking it failed every poll and scored
+    # the run GH_API_DOWN. The fake rejects any program that uses IN( — given
+    # inline or through -f — the way jq 1.5 does, and runs everything else.
+    local old="$BATS_TEST_TMPDIR/oldjq" argv_file="$BATS_TEST_TMPDIR/gh-argv" real_jq
+    real_jq="$(command -v jq)"
+    mkdir -p "$old"
+    cat > "$old/jq" <<STUB
+#!/usr/bin/env bash
+prev=""
+for a in "\$@"; do
+    if [[ "\$a" == *"IN("* ]] || { [ "\$prev" = "-f" ] && grep -q 'IN(' "\$a" 2>/dev/null; }; then
+        echo "jq: error: IN/1 is not defined at <top-level>, line 1:" >&2
+        exit 3
+    fi
+    prev="\$a"
+done
+[ "\${1:-}" = "--version" ] && { echo "jq-1.5"; exit 0; }
+exec "$real_jq" "\$@"
+STUB
+    chmod +x "$old/jq"
+    export MERGE_GATES_STUB_JQ="$real_jq"
+    export MERGE_GATES_STUB_ARGV_FILE="$argv_file"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    PATH="$old:$PATH" run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cannot run the gate filter"* ]]
+    [[ "$output" != *"gh failed"* ]]
+    grep -qx -- '--jq' "$argv_file"
+}
+
 @test "argv: gh failure under the jq engine reports gh's own error, not a jq parse error" {
     # gh's stderr is kept off the pipe into jq, so a failed fetch surfaces the
     # gh message verbatim and keeps the gh-fail classification (retry, then
