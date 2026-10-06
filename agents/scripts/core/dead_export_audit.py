@@ -75,6 +75,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comment_lib as cl
+import layer_paths
 
 # --- scope ------------------------------------------------------------------------------------
 # Declarations are harvested from the PUBLIC Core header surface only — that is the "export" this
@@ -399,8 +400,8 @@ def render_baseline(findings):
     out = [
         "# Dead exports — grandfathered baseline",
         "",
-        "_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-dead-export-audit.sh"
-        " --baseline` and commit._",
+        "_Auto-generated. Do not hand-edit; run `bash %s"
+        " --baseline` and commit._" % layer_paths.from_project("agents/scripts/core/test-dead-export-audit.sh"),
         "_The gate (`dead_export_audit.py --check`) is ADVISORY: it WARNs on findings absent from"
         " this file and never blocks. Graduation to blocking is a separate decision (mirrors"
         " ADR-0015)._",

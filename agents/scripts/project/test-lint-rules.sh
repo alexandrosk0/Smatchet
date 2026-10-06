@@ -733,7 +733,15 @@ case "$MODE" in
     gen_catalog() {
         echo "# High-Integrity C++ — grandfathered baseline"
         echo
-        echo "_Auto-generated. Do not hand-edit; run \`bash agents/scripts/project/test-lint-rules.sh --catalog --refresh\` and commit._"
+        # This script as the project's checkout spells it: agent-layer/agents/... once
+        # the layer is the project's agent-layer/ submodule, agents/... otherwise
+        # (as layer_paths.py does). Physical paths on both sides: REPO_ROOT can come
+        # from git, which resolves symlinks, and the layer root from `cd && pwd`.
+        local self_rel="agents/scripts/project/test-lint-rules.sh"
+        if [ "$(cd "$_tlr_layer_root" && pwd -P)" = "$(cd "$REPO_ROOT" && pwd -P)/agent-layer" ]; then
+            self_rel="agent-layer/$self_rel"
+        fi
+        echo "_Auto-generated. Do not hand-edit; run \`bash $self_rel --catalog --refresh\` and commit._"
         echo "_Refreshed on \`develop\` post-merge (fail-on-drift); gate uses live scan vs \`origin/develop\`, not this file._"
         local total=0 rule cnt
         for rule in narrowing-conversions no-printf-stderr no-raw-new define-imgui deviation-overdue; do

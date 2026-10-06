@@ -85,15 +85,20 @@ fi
 PY="$(smatchet_python)" || exit 1
 
 cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT."
+# The gates are agent-layer content, run against this tree:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+VERIFY_LAYER="$REPO_ROOT"
+[ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] && VERIFY_LAYER="$REPO_ROOT/agent-layer"
 
 # Comment-noise delta gate (exit 1 = violations, >=2 = infra failure).
 echo "verify: comment-noise delta gate vs $BASE ..."
-"$PY" agents/scripts/core/comment_audit.py --diff "$BASE" \
+"$PY" "$VERIFY_LAYER/agents/scripts/core/comment_audit.py" --diff "$BASE" \
     || die "comment-noise delta gate found violations (exit $?) - fix before pushing."
 
 # Full delta lint gate (comment-noise + function-size + strict-zone).
 echo "verify: delta lint gate (test-lint-rules.sh) vs $BASE ..."
-bash agents/scripts/project/test-lint-rules.sh --diff "$BASE" \
+bash "$VERIFY_LAYER/agents/scripts/project/test-lint-rules.sh" --diff "$BASE" \
     || die "delta lint gate failed (exit $?) - fix before pushing."
 
 echo "verify: PASS - build green + comment-noise + delta lint gate clean."

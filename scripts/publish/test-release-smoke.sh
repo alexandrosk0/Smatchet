@@ -66,8 +66,13 @@ die() { echo "test-release-smoke: $*" >&2; exit 1; }
 
 [ -n "${RELEASE_DIR//[[:space:]]/}" ] || die "--release-dir is required."
 
+# resolve-py.sh is agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_trs_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_trs_layer/agent-layer/scripts/dev/project-config.sh" ] && _trs_layer="$_trs_layer/agent-layer"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+. "$_trs_layer/agents/scripts/core/lib/resolve-py.sh"
 PYTHON="$(resolve_py)" || PYTHON=""
 command -v "$PYTHON" >/dev/null 2>&1 || die "python is required."
 

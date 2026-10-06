@@ -69,8 +69,13 @@ done
 
 die() { echo "test-installer-smoke: $*" >&2; exit 1; }
 
+# resolve-py.sh is agent-layer content:
+# the agent-layer/ mount once it holds the layer's project-config.sh (plan
+# agent-surface-extraction-repo, row 12), else this tree.
+_tis_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$_tis_layer/agent-layer/scripts/dev/project-config.sh" ] && _tis_layer="$_tis_layer/agent-layer"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+. "$_tis_layer/agents/scripts/core/lib/resolve-py.sh"
 PYTHON="$(resolve_py)" || PYTHON=""
 command -v "$PYTHON" >/dev/null 2>&1 || die "python is required."
 

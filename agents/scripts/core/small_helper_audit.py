@@ -68,6 +68,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comment_lib as cl
+import layer_paths
 # The upper band edge + the normalization are IMPORTED, never copied: if dup_audit.py ever retunes
 # MIN_CLONE_TOKENS, this audit's ceiling follows it and the two stay exactly complementary.
 import dup_audit
@@ -319,8 +320,8 @@ def render_baseline(groups):
     out = [
         "# Small-helper clones — grandfathered baseline",
         "",
-        "_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-small-helper-audit.sh"
-        " --baseline` and commit._",
+        "_Auto-generated. Do not hand-edit; run `bash %s"
+        " --baseline` and commit._" % layer_paths.from_project("agents/scripts/core/test-small-helper-audit.sh"),
         "_The gate (`small_helper_audit.py --check`) is ADVISORY: it WARNs on groups absent from this"
         " file and never blocks. Graduation to blocking is a separate decision (mirrors ADR-0015)._",
         "",

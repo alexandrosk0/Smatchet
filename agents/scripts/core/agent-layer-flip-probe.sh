@@ -163,6 +163,11 @@ PROBES=(
     # The admin-merge guard's required contexts: the HOST's, not the layer's three.
     $'admin-merge-contexts\tmatch:Windows \\+ MSVC\tctl\t. {L}agents/scripts/core/safe-admin-merge.sh >/dev/null 2>&1; read_required_contexts'
     $'mirrored-paths\tmatch:^layer: .*/agent-layer$\t-\tbash scripts/dev/test-mirrored-paths.sh'
+    # A regenerated host baseline names its regeneration command the way the host
+    # spells it (row 16a): `agent-layer/agents/...` after the flip, or the command
+    # in the header names a file that is not there. One Python generator (through
+    # layer_paths.py) and the bash catalog; both files are restored afterwards.
+    $'baseline-header\tmatch:^header-ok$\tctl\tr=0; { bash {L}agents/scripts/core/test-dead-export-audit.sh --baseline && bash {L}agents/scripts/project/test-lint-rules.sh --catalog --refresh; } >/dev/null 2>&1 && grep -qF "run \\`bash {L}agents/scripts/core/test-dead-export-audit.sh" docs/high-integrity/dead-export-baseline.md && grep -qF "run \\`bash {L}agents/scripts/project/test-lint-rules.sh --catalog" docs/high-integrity/baseline.md || r=1; git checkout -q -- docs/high-integrity/dead-export-baseline.md docs/high-integrity/baseline.md 2>/dev/null; [ "$r" -eq 0 ] && echo header-ok; exit "$r"'
 )
 
 # FIXTURES — fixture_<probe> <tree> <layer-prefix>, for a probe whose real host
