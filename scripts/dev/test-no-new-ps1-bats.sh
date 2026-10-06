@@ -3,8 +3,9 @@
 #
 # Bucket A (CLI). Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
 # Covers the `no-new-ps1` gate (scripts/dev/test-no-new-ps1.sh): tracked .ps1
-# files must equal the docs/harness/SETUP.md § Windows-only shims table and stay
-# ASCII / no BOM / LF. See that bats file's header for the system under test.
+# files must equal the agent layer's docs/harness/SETUP.md § Windows-only shims
+# table and stay ASCII / no BOM / LF. See that bats file's header for the system
+# under test.
 #
 # Exit codes:
 #   0 — every bats test passed

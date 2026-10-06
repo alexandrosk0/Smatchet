@@ -2,26 +2,32 @@
 # tests/bats/no_new_ps1.bats
 # ----------------------------------------------------------------------------
 # scripts/dev/test-no-new-ps1.sh (rule `no-new-ps1`, tooling 2026-08-05): the
-# tracked .ps1 files equal the docs/harness/SETUP.md § Windows-only shims table,
-# each listed one carries its marker comment, and every one is ASCII / no BOM / LF.
-# The gate's --selftest covers each violation on synthetic trees; these cases pin
-# the real tree green and drive the NO_NEW_PS1_ROOT fixture seam end to end on a
-# copy of the real SETUP.md, so a table-format change that the parser no longer
-# reads shows up here.
+# tracked .ps1 files (host + the agent-layer/ mount) equal the agent layer's
+# docs/harness/SETUP.md § Windows-only shims table, each listed one carries its
+# marker comment, and every one is ASCII / no BOM / LF. The gate's --selftest
+# covers each violation on synthetic trees; these cases pin the real tree green
+# and drive the NO_NEW_PS1_ROOT fixture seam end to end on a copy of the real
+# SETUP.md, so a table-format change that the parser no longer reads shows up
+# here. The fixture is flat (SETUP.md at its root, the shims at their checkout
+# paths as plain files), which is the gate's no-mount layout.
 # ----------------------------------------------------------------------------
 
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     GATE="$REPO_ROOT/scripts/dev/test-no-new-ps1.sh"
+    # SETUP.md is agent-layer content: the populated agent-layer/ mount, else
+    # this tree (the gate's own rule).
+    LAYER_ROOT="$REPO_ROOT"
+    [ -f "$REPO_ROOT/agent-layer/scripts/dev/project-config.sh" ] && LAYER_ROOT="$REPO_ROOT/agent-layer"
     FIX="$(mktemp -d)"
     mkdir -p "$FIX/docs/harness"
-    cp "$REPO_ROOT/docs/harness/SETUP.md" "$FIX/docs/harness/SETUP.md"
+    cp "$LAYER_ROOT/docs/harness/SETUP.md" "$FIX/docs/harness/SETUP.md"
     git init -q "$FIX"
-    # The real shims, copied byte for byte.
+    # The real shims, copied byte for byte (the layer's included).
     while IFS= read -r f; do
         mkdir -p "$FIX/$(dirname "$f")"
         cp "$REPO_ROOT/$f" "$FIX/$f"
-    done < <(git -C "$REPO_ROOT" ls-files '*.ps1')
+    done < <(git -C "$REPO_ROOT" ls-files --recurse-submodules '*.ps1')
     git -C "$FIX" add -A
 }
 
