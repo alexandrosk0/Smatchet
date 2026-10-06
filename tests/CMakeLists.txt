@@ -310,6 +310,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/PublishedSnapshot.test.cpp
+        Core/SerialTaskQueue.test.cpp
         Core/StringUtilTrim.test.cpp
         Core/TrackerIssueExistsProbe.test.cpp
         Core/Tracker2xxErrorGuard.test.cpp
@@ -1244,6 +1246,8 @@ add_executable(SmatchetTests
     # (ParseComments delegation, the lazy first-hover fetch and the modal post-back all
     # converge here). Pure — no I/O, no Logger.
     Core/CommentBlobFormatPure.test.cpp
+    Core/PublishedSnapshot.test.cpp
+    Core/SerialTaskQueue.test.cpp
     Core/BulkImportStatusPure.test.cpp
     Core/LazyEnrichmentCarryForwardPure.test.cpp
     Core/SmatchetCommentsModalSeedPure.test.cpp

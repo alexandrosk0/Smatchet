@@ -2,8 +2,10 @@
 
 // Shared "Project" combobox used by the new-issue draft picker and the bulk-import modal.
 // Hybrid surface (OQ-2):
-//   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
-//     current backend+endpoint, ordered by lastUsedUnix desc.
+//   - Recently used: FieldCatalogCache::ListCachedProjects(), filtered to the current
+//     backend+endpoint, ordered by lastUsedUnix desc. It is read on the joined background-task pool
+//     once per popup open, so the file read and JSON parse never run per frame (Quality Pillar 2).
+//     A reopen shows the previous rows until the new read lands.
 //   - All projects: collapsible. First expand loads the list on the app-owned joined background-task
 //     pool (smatchet::projects::LoadProjectList); subsequent renders use the vector on the picker
 //     state. The fetch captures a shared_ptr to the backend so a live tracker swap (which frees the
@@ -14,6 +16,7 @@
 // Renders inside the current ImGui scope — caller is responsible for ImGui::SetNextItemWidth
 // upstream if a specific width is desired.
 
+#include "FieldCatalogCache.h"
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
@@ -54,6 +57,14 @@ struct State {
     bool fetchSkippedOffline = false;  // guarded by fetchMutex: the last load sent no request (offline)
     std::string fetchBackendKey;       // guarded by fetchMutex: the tracker the list was requested for
     std::uint64_t fetchGeneration = 0; // guarded by fetchMutex: bumped per load; a stale load publishes nothing
+    // The "Recently used" rows, read off the UI thread once per popup open by StartRecentProjectsLoad.
+    // recentMutex guards the rows, recentLoaded (true once a read finished) and recentGeneration, which every
+    // read bumps so that a stale read publishes nothing. popupWasOpen is the UI thread's open-edge latch.
+    std::mutex recentMutex;
+    std::vector<FieldCatalogCache::CachedProjectEntry> recent;
+    bool recentLoaded = false;
+    std::uint64_t recentGeneration = 0;
+    bool popupWasOpen = false;
 };
 
 /** Start loading the "All projects" list for `state` on the app's background-task pool, unless a load is
@@ -63,6 +74,10 @@ struct State {
  *  tracker is superseded (its result is discarded), and the focused tracker's list loads. UI thread.
  *  Draw calls it on every frame the section is open; tests call it directly. */
 void StartAllProjectsFetch(State& state, AppController& app);
+
+/** Re-read the "Recently used" rows for `state` on the app's background-task pool. Draw calls it when the
+ *  popup opens; the rows already shown stay until the read lands. UI thread. */
+void StartRecentProjectsLoad(State& state, AppController& app);
 
 /** Draw the picker combobox.
  *

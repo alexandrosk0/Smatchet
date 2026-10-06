@@ -997,23 +997,34 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
         const std::int64_t actionId = queued.QueueId;
         const std::int64_t createId = cache->EnqueuePendingCreate(otherSite, R"({"fields":{"summary":"other site"}})");
+        // A comment written straight to the cache as well: the retry's reread must publish it too.
+        const std::int64_t directActionId =
+            cache->EnqueuePendingAction(otherSite, PendingActionKindWire(PendingActionKind::CommentAdd), "OFF-1",
+                                        R"({"body":"written outside the queue service","created":1})", "pending");
         IM_CHECK_NO_RET(actionId > 0);
         IM_CHECK_NO_RET(createId > 0);
+        IM_CHECK_NO_RET(directActionId > 0);
         smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
 
-        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent.
+        // Back online, replay runs, twice over: the other site's rows stay queued and nothing is sent. The
+        // create and the direct comment were written straight to the cache, so they reach the published queue
+        // views through the retry's reread, as rows another writer left in the database would.
         IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
         app->RetryOfflineQueuesNow();
-        const auto actionListed = [app, actionId]() {
+        const auto pendingListed = [app](std::int64_t id) {
             const auto snap = app->GetPendingActionsSnapshot();
             return std::any_of(snap->Pending.begin(), snap->Pending.end(),
-                               [actionId](const PendingActionRecord& r) { return r.Id == actionId; });
+                               [id](const PendingActionRecord& r) { return r.Id == id; });
         };
+        const auto actionListed = [&pendingListed, actionId]() { return pendingListed(actionId); };
+        const auto directActionListed = [&pendingListed, directActionId]() { return pendingListed(directActionId); };
         IM_CHECK_NO_RET(YieldUntil(ctx, 600, actionListed));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, directActionListed));
         ctx->Yield(60);
         app->RetryOfflineQueuesNow();
         ctx->Yield(60);
         IM_CHECK_NO_RET(actionListed());
+        IM_CHECK_NO_RET(directActionListed());
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
         const std::vector<PendingCreate> creates = app->GetPendingCreates();
         IM_CHECK_NO_RET(std::any_of(creates.begin(), creates.end(),
@@ -1021,28 +1032,166 @@ static void RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(ImGuiTestEngi
         IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
         IM_CHECK_NO_RET(fake->CreateIssueCalls().size() == createsBefore);
 
-        // The Offline Queue panel draws both rows as held in a single draw (see the GuiFunc).
+        // The Offline Queue panel draws all three rows as held in a single draw (see the GuiFunc).
         HeldQueueProbe& probe = HeldQueueProbeState();
         probe.Draw = true;
         bool drawnHeld = false;
         for (int frame = 0; frame < 120 && !drawnHeld; ++frame) {
             ctx->Yield();
-            drawnHeld = probe.HeldRowsLastDraw >= 2;
+            drawnHeld = probe.HeldRowsLastDraw >= 3;
         }
         probe.Draw = false;
         if (!drawnHeld) {
-            ctx->LogError("held rows in the last panel draw: %d (want >= 2)", probe.HeldRowsLastDraw);
+            ctx->LogError("held rows in the last panel draw: %d (want >= 3)", probe.HeldRowsLastDraw);
         }
         IM_CHECK_NO_RET(drawnHeld);
 
         // Never leak the rows into a later test.
-        if (actionId > 0) {
-            app->DiscardPendingActions({actionId});
-            IM_CHECK_NO_RET(YieldUntil(ctx, 600, [&actionListed]() { return !actionListed(); }));
+        std::vector<std::int64_t> actionIds;
+        for (const std::int64_t id : {actionId, directActionId}) {
+            if (id > 0) {
+                actionIds.push_back(id);
+            }
+        }
+        if (!actionIds.empty()) {
+            app->DiscardPendingActions(actionIds);
+            IM_CHECK_NO_RET(YieldUntil(
+                ctx, 600, [&actionListed, &directActionListed]() { return !actionListed() && !directActionListed(); }));
         }
         if (createId > 0) {
             app->DeletePendingCreates({createId});
         }
+    };
+}
+
+namespace {
+
+// Copies the focused pane's row `issueId` into `out`; false when the pane does not show it.
+bool FindActiveTicket(AppController& app, const char* issueId, CachedTicket& out) {
+    const auto snap = app.GetActiveTicketsSnapshot();
+    if (!snap) {
+        return false;
+    }
+    const auto it =
+        std::find_if(snap->begin(), snap->end(), [issueId](const CachedTicket& t) { return t.id == issueId; });
+    if (it == snap->end()) {
+        return false;
+    }
+    out = *it;
+    return true;
+}
+
+} // namespace
+
+// OfflineFirst/UpdateTicket_ShowsNowAndSavesInOrder: UpdateTicket patches the grid row at once and writes
+// the local cache on a worker (Pillar 2: no SQLite on the UI thread). Two quick updates of one ticket land
+// in call order, and the grid re-read after the last save keeps the latest row.
+static void RegisterOfflineFirstUpdateTicketShowsNowAndSavesInOrder(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "UpdateTicket_ShowsNowAndSavesInOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<LocalCacheManager> cache =
+            std::dynamic_pointer_cast<LocalCacheManager>(app->LookupCacheShared());
+        CachedTicket original;
+        IM_CHECK_NO_RET(cache != nullptr);
+        IM_CHECK_NO_RET(FindActiveTicket(*app, "OFF-2", original));
+        if (!cache || original.id.empty()) {
+            return;
+        }
+        const std::string backendKey = app->FocusedCacheBackendKey();
+        const auto savedSummary = [&cache, &backendKey]() {
+            CachedTicket row;
+            return cache->TryGetTicket(backendKey, "OFF-2", row) ? row.GetFieldValue("summary") : std::string();
+        };
+        const auto shownSummary = [app]() {
+            CachedTicket row;
+            return FindActiveTicket(*app, "OFF-2", row) ? row.GetFieldValue("summary") : std::string();
+        };
+
+        CachedTicket first = original;
+        first.fieldValues["summary"] = "update ticket first";
+        CachedTicket second = original;
+        second.fieldValues["summary"] = "update ticket second";
+        app->UpdateTicket(first);
+        IM_CHECK_NO_RET(shownSummary() == "update ticket first"); // shown before any cache round trip
+        app->UpdateTicket(second);
+        IM_CHECK_NO_RET(shownSummary() == "update ticket second");
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, [&savedSummary]() { return savedSummary() == "update ticket second"; }));
+        // Settled: the saves ran in call order and the re-read kept the latest row.
+        ctx->Yield(10);
+        IM_CHECK_NO_RET(savedSummary() == "update ticket second");
+        IM_CHECK_NO_RET(shownSummary() == "update ticket second");
+
+        const std::string originalSummary = original.GetFieldValue("summary");
+        app->UpdateTicket(original);
+        IM_CHECK_NO_RET(
+            YieldUntil(ctx, 300, [&savedSummary, &originalSummary]() { return savedSummary() == originalSummary; }));
+    };
+}
+
+// OfflineFirst/BulkPrefetch_FailureBacksOff: the bulk-import panel asks for its keys every frame. A failed
+// prefetch holds its keys back for the lookup backoff instead of resending each frame, and a connectivity
+// recovery clears the backoff so the next ask fetches again.
+static void RegisterOfflineFirstBulkPrefetchFailureBacksOff(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "BulkPrefetch_FailureBacksOff");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        IM_CHECK_NO_RET(fake != nullptr);
+        if (!fake) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        // Put the fixture's script back however the test ends.
+        struct RestoreScript {
+            smatchet_tests::FakeTrackerClient* Fake;
+            bool Ok;
+            std::vector<CachedTicket> Tickets;
+            ~RestoreScript() { Fake->SetFetchIssuesForKeysResult(Ok, Tickets); }
+        } restore{fake, fake->FetchIssuesForKeysScriptedOk(), fake->FetchIssuesForKeysScriptedTickets()};
+        fake->SetFetchIssuesForKeysError(TrackerErrorServer("fake bulk prefetch failure", 503));
+
+        // A key no other path fetches, so its count is this test's alone.
+        const char* key = "OFF-404";
+        const int before = fake->FetchIssuesForKeysCallsFor(key);
+        const auto settled = [app, key]() { return !app->IsBulkImportPrefetchInFlight(key); };
+        app->PrefetchIssueTicketsForKeys({key}, true);
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, settled));
+        IM_CHECK_NO_RET(fake->FetchIssuesForKeysCallsFor(key) == before + 1);
+
+        // Asked again every frame, as the panel does: nothing is resent inside the backoff.
+        for (int i = 0; i < 30; ++i) {
+            app->PrefetchIssueTicketsForKeys({key}, true);
+            ctx->Yield();
+        }
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, settled));
+        IM_CHECK_NO_RET(fake->FetchIssuesForKeysCallsFor(key) == before + 1);
+
+        // Down and back up: the frame loop consumes the recovery, which clears the backoff.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        ctx->Yield(2);
+        app->PrefetchIssueTicketsForKeys({key}, true);
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, settled));
+        IM_CHECK_NO_RET(fake->FetchIssuesForKeysCallsFor(key) == before + 2);
     };
 }
 
@@ -1059,6 +1208,8 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstWatchersOfflineKeepsSavedList(engine);
     RegisterOfflineFirstUserInfoGroupsOfflineOfferRetry(engine);
     RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(engine);
+    RegisterOfflineFirstUpdateTicketShowsNowAndSavesInOrder(engine);
+    RegisterOfflineFirstBulkPrefetchFailureBacksOff(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

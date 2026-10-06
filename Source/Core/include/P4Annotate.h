@@ -2,8 +2,10 @@
 #define P4_ANNOTATE_H
 
 #include "ConfigManager.h"
+#include "OfflineFirstPure.h" // kLookupRetryAfterSeconds — the failed-describe backoff
 #include "SmatchetResult.h"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -95,26 +97,39 @@ Result<std::vector<P4ChangeSummary>> P4ChangesForUser(const AnnotateAnalysisConf
  */
 std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string& email);
 
-/** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
+/** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. A describe that failed for any
+ *  reason but "no such changelist" is answered from the cache only for `failureRetryAfter`; the next lookup
+ *  after that runs p4 again, so a server that was unreachable is asked again once it may be back. */
 class P4ChangelistDescribeCache {
   public:
-    explicit P4ChangelistDescribeCache(int maxEntries = 512);
+    explicit P4ChangelistDescribeCache(
+        int maxEntries = 512,
+        std::chrono::seconds failureRetryAfter = std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds));
 
     /** Returns cached or empty with Loaded=false if missing; caller may call Store. */
     P4ChangelistDetails Get(const std::string& changelist) const;
 
+    /** Remember `d` for good (no retry). */
     void Store(const std::string& changelist, P4ChangelistDetails d);
 
-    /** Fetch via p4 describe -s if not cached (blocking). */
+    /** Fetch via p4 describe -s if not cached, or if a remembered failure's backoff has passed (blocking). */
     P4ChangelistDetails GetOrFetch(const AnnotateAnalysisConfig& cfg, const std::string& changelist);
 
   private:
+    using Clock = std::chrono::steady_clock;
+    struct Entry {
+        P4ChangelistDetails Details;
+        bool Final = true; ///< false: a failure that may be retried once RetryAfter passes
+        Clock::time_point RetryAfter{};
+    };
+    void StoreEntry(const std::string& changelist, Entry entry);
     void Touch(const std::string& cl);
     void EvictIfNeeded();
 
     int maxEntries_;
+    std::chrono::seconds failureRetryAfter_;
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, P4ChangelistDetails> map_;
+    std::unordered_map<std::string, Entry> map_;
     std::vector<std::string> lru_;
 };
 

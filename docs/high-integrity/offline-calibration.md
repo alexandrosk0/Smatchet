@@ -81,7 +81,7 @@ The per-hit classification below starts at S13 (35 hits at its first sweep, 27 a
 
 | Site | Verdict | Why |
 |---|---|---|
-| `AppController_TicketPrefetch.cpp` (gone) | TP | Fixed in S13. The best-effort prefetch is skipped while the tracker is offline, instead of spending a worker's retry window per frame on it. The online no-backoff retry is filed as debt ([entry](../self-improvement/categories/debt/2026-09-29-bulk-hydration-prefetch-retries-every-frame.md)). |
+| `AppController_TicketPrefetch.cpp` (gone) | TP | Fixed in S13. The best-effort prefetch is skipped while the tracker is offline, instead of spending a worker's retry window per frame on it. The online no-backoff retry is filed as debt ([entry](../self-improvement/categories/applied.md)). |
 | `AppController.cpp` `FetchIssuesForActiveView` | FP | The sync itself. `TicketSyncService` marks the tracker `TransportDown` on a transport failure and pushes the replay timers, and the grid keeps its cached tickets. |
 | `AppController_CatalogAndFieldEdit.cpp` `RefreshFieldCatalog` | FP | A failed refresh keeps the catalog and shows a Warning (S1). |
 | `AppController_PaneContexts.cpp` pane catalog fetch | FP | Runs after a successful sync. A failure loads the saved catalog snapshot (S12). |

@@ -162,6 +162,7 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     ClearLastTrackerTicketSyncWarning();
     if (offlineQueue_) {
         offlineQueue_->legacyPendingStartupBanner_.clear();
+        offlineQueue_->RequestSnapshotRefresh(); // the queue view must come from the new file
     }
     if (pendingActions_) {
         pendingActions_->RequestSnapshotRefresh(); // the queue view must come from the new file

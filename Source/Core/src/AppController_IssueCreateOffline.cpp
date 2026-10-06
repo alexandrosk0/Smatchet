@@ -412,6 +412,11 @@ PendingActionSubmitResult AppController::SubmitOrQueueWatch(const PendingActionT
                                smatchet::pendingaction::kWatchActionPayload);
 }
 
+std::shared_ptr<const OfflineQueueSnapshot> AppController::GetOfflineQueueSnapshot() const {
+    static const std::shared_ptr<const OfflineQueueSnapshot> kEmpty = std::make_shared<OfflineQueueSnapshot>();
+    return offlineQueue_ ? offlineQueue_->Snapshot() : kEmpty;
+}
+
 std::shared_ptr<const PendingActionsSnapshot> AppController::GetPendingActionsSnapshot() const {
     static const std::shared_ptr<const PendingActionsSnapshot> kEmpty = std::make_shared<PendingActionsSnapshot>();
     return pendingActions_ ? pendingActions_->Snapshot() : kEmpty;
@@ -458,12 +463,16 @@ void AppController::SendPendingActionAgain(std::int64_t id) {
 }
 
 void AppController::RetryOfflineQueuesNow() {
-    // An explicit retry must not wait out a timer pushed forward during an outage.
+    // An explicit retry must not wait out a timer pushed forward during an outage. It also rereads both
+    // queues (on a worker), so the panel and the replay decide from what the database holds now, rows
+    // written outside the queue services included. Replay starts once the reread view is published.
     const auto now = std::chrono::steady_clock::now();
     if (offlineQueue_) {
+        offlineQueue_->RequestSnapshotRefresh();
         offlineQueue_->RestartReplayTimersNow(now);
     }
     if (pendingActions_) {
+        pendingActions_->RequestSnapshotRefresh();
         pendingActions_->RestartReplayTimersNow(now);
     }
     TickOfflineCreates();

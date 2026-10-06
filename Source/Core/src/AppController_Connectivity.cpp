@@ -6,6 +6,7 @@
 #include "ProjectComponentsCacheService.h"
 
 #include <chrono>
+#include <mutex>
 #include <string>
 
 // Tracker connectivity surface (god-object decomposition Phase 3): the probe FSM, recovery latch,
@@ -42,6 +43,8 @@ bool AppController::ConsumeTrackerConnectivityRecovery() {
         if (editMeta_) {
             editMeta_->OnConnectivityRecovered();
         }
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        bulkImportPrefetchRetryAfter_.clear();
     }
     return recovered;
 }

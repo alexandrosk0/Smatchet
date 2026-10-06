@@ -68,11 +68,12 @@ TrackerError Dispatch(ITrackerCollaboration& collab, const TrackerConfig& cfg, P
 } // namespace
 
 PendingActionQueueService::PendingActionQueueService(IOfflineQueueDeps& deps)
-    : deps_(deps), snapshot_(std::make_shared<const PendingActionsSnapshot>()) {}
+    : deps_(deps), snapshot_("PendingActionQueueService", deps, [](ISyncCache& cache, PendingActionsSnapshot& next) {
+          next.Pending = cache.LoadPendingActions();
+          next.Dead = cache.LoadDeadPendingActions();
+      }) {}
 
-std::shared_ptr<const PendingActionsSnapshot> PendingActionQueueService::Snapshot() const {
-    return std::atomic_load(&snapshot_);
-}
+std::shared_ptr<const PendingActionsSnapshot> PendingActionQueueService::Snapshot() const { return snapshot_.Get(); }
 
 PendingActionQueueService::SubmitOutcome PendingActionQueueService::SubmitOrQueue(PendingActionKind kind,
                                                                                   const PendingActionTarget& target,
@@ -162,9 +163,9 @@ void PendingActionQueueService::Tick() {
     if (!cache) {
         return;
     }
-    if (!snapshotLoaded_.load()) {
-        LoadSnapshotAsync(cache);
-        if (!snapshotLoaded_.load()) {
+    if (!snapshot_.Loaded()) {
+        LoadSnapshotAsync();
+        if (!snapshot_.Loaded()) {
             return;
         }
     }
@@ -210,37 +211,12 @@ void PendingActionQueueService::Tick() {
     }
 }
 
-void PendingActionQueueService::LoadSnapshotAsync(const std::shared_ptr<ISyncCache>& cache) {
-    if (snapshotLoadInFlight_.exchange(true)) {
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> lock(scheduleMutex_);
-        const auto now = std::chrono::steady_clock::now();
-        if (now < nextSnapshotLoadAt_) {
-            snapshotLoadInFlight_.store(false);
-            return;
-        }
-        nextSnapshotLoadAt_ = now + kReplayBackoff; // a failed load is retried after the backoff
-    }
-    try {
-        deps_.LaunchBackgroundTask([this, cache]() {
-            ScopeExit done([this]() { snapshotLoadInFlight_.store(false); });
-            PublishSnapshot(*cache);
-        });
-    } catch (const std::exception& ex) {
-        LOG_WARN("PendingActionQueueService: could not start loading the queue: %s", ex.what());
-        snapshotLoadInFlight_.store(false);
-    }
+void PendingActionQueueService::LoadSnapshotAsync() {
+    // A failed first load is retried after the backoff.
+    snapshot_.RequestAsync(/*force=*/false, kReplayBackoff);
 }
 
-void PendingActionQueueService::RequestSnapshotRefresh() {
-    {
-        std::lock_guard<std::mutex> lock(scheduleMutex_);
-        nextSnapshotLoadAt_ = std::chrono::steady_clock::time_point();
-    }
-    snapshotLoaded_.store(false);
-}
+void PendingActionQueueService::RequestSnapshotRefresh() { snapshot_.Invalidate(); }
 
 void PendingActionQueueService::PushReplayTimersForward(std::chrono::steady_clock::time_point pushTo) {
     std::lock_guard<std::mutex> lock(scheduleMutex_);
@@ -417,24 +393,7 @@ void PendingActionQueueService::Archive(ISyncCache& cache, const PendingActionRe
     }
 }
 
-void PendingActionQueueService::PublishSnapshot(ISyncCache& cache) {
-    // Held across the reload so an older read can never overwrite a newer one. Only workers take it,
-    // and the UI thread reads the published pointer without locking.
-    std::lock_guard<std::mutex> lock(publishMutex_);
-    std::shared_ptr<PendingActionsSnapshot> next = std::make_shared<PendingActionsSnapshot>();
-    try {
-        next->Pending = cache.LoadPendingActions();
-        next->Dead = cache.LoadDeadPendingActions();
-    } catch (const std::exception& ex) {
-        LOG_WARN("PendingActionQueueService: reloading the queue failed; keeping the previous view: %s", ex.what());
-        return;
-    }
-    if (deps_.CacheShared().get() != &cache) {
-        return; // the cache file was replaced meanwhile: its rows must not become the published view
-    }
-    std::atomic_store(&snapshot_, std::shared_ptr<const PendingActionsSnapshot>(std::move(next)));
-    snapshotLoaded_.store(true);
-}
+void PendingActionQueueService::PublishSnapshot(ISyncCache& cache) { snapshot_.Publish(cache); }
 
 void PendingActionQueueService::RunCacheActionAsync(const char* what, std::function<void(ISyncCache&)> action) {
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();

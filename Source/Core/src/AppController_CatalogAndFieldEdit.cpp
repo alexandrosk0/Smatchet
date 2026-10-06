@@ -58,12 +58,15 @@ void AppController::RefreshLocalData() { RefreshLocalDataCheckedImpl_(focusedCon
 
 void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
                                                  const std::string& admitId) {
-    if (Cache) {
+    // Latched once: worker callers (offline replay, UpdateTicket's queued saves) must not race the UI
+    // thread's atomic_store in RecreateLocalCacheDatabase.
+    const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
+    if (cache) {
         // Full-table read stays OUTSIDE activeTicketsMutex_ (SQLite I/O under the tickets
         // mutex would block the UI-thread readers, Pillar 2); the generation re-check below
         // is therefore the authoritative gate, taken immediately before the swap-in.
         const std::string cacheKey = ctx.CacheBackendKeyCopy();
-        auto latestTickets = Cache->GetAllTickets(cacheKey);
+        auto latestTickets = cache->GetAllTickets(cacheKey);
         // GetAllTickets returns the WHOLE backend-keyed namespace, which every pane shares
         // (ADR-0018 decision 4) — so a bare replace repopulates this pane with its siblings'
         // rows. Filter down to the ids this pane's own sync recorded. Only the ABSENCE of a
@@ -116,10 +119,9 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
         }
         PruneEditMetaCacheToActiveTickets();
         ctx.ActiveTicketsRevision.fetch_add(1);
-        // Single hook site for Lua window dirty-bump on ticket data change. UpdateTicket
-        // already chains here through `RefreshLocalData()` at the end of its body, so a
-        // duplicate bump from UpdateTicket would double-fire per single edit. Stub build
-        // turns this into a no-op.
+        // Lua window dirty-bump on ticket data change; the only other site is UpdateTicket's
+        // in-memory patch (PatchActiveTicketInPlace_), whose queued save re-reads through here.
+        // Stub build turns this into a no-op.
         NotifyLuaTicketDataChanged();
     }
 }
@@ -131,47 +133,102 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
 
 void AppController::UpdateTicketInContext_(GridLiveContext& ctx, std::uint64_t capturedGeneration,
                                            const CachedTicket& ticket) {
-    if (Cache) {
-        // Latch key + generation TOGETHER (issue #1081): reading the key here and re-reading
-        // it inside RefreshLocalData raced a backend swap — the save landed under the OLD key
-        // while the refresh read the NEW key (proven TOCTOU: a Jira row contaminating the
-        // GitHub namespace). The generation re-load only detects a swap between the two latch
-        // loads — it does NOT close the window before SaveTicket. A swap landing after the
-        // check is benign: the write still lands under the CAPTURED key, which is exactly
-        // where the row belongs; the checked refresh below then drops the stale grid replace.
-        const std::string capturedKey = ctx.CacheBackendKeyCopy();
+    const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
+    if (!cache) {
+        return;
+    }
+    // Latch key + generation TOGETHER (issue #1081): reading the key here and re-reading it inside the
+    // refresh raced a backend swap — the save landed under the OLD key while the refresh read the NEW key
+    // (proven TOCTOU: a Jira row contaminating the GitHub namespace). A swap after this check is benign:
+    // the write still lands under the CAPTURED key, which is where the row belongs, and the checked
+    // patch and refresh drop their grid replace.
+    const std::string capturedKey = ctx.CacheBackendKeyCopy();
+    if (ctx.backendGeneration_.load() != capturedGeneration) {
+        // WARN, not INFO: callers reach UpdateTicket after the backend mutation already succeeded
+        // upstream — dropping the local save leaves a stale row until the old backend's next sync.
+        LOG_WARN("AppController::UpdateTicket skipped — backend swapped during key latch (issue #1081): "
+                 "key='%s' ticket='%s' generation=%llu",
+                 capturedKey.c_str(), ticket.id.c_str(), static_cast<unsigned long long>(capturedGeneration));
+        return;
+    }
+    // Pillar 2: callers run on the UI thread, so the grid shows the change now and the SQLite write plus
+    // the full-table re-read run on a worker, in call order (two quick edits of one ticket never land
+    // reversed).
+    PatchActiveTicketInPlace_(ctx, capturedGeneration, ticket);
+    const std::uint64_t saveSeq = ctx.ticketSaveSeq_.fetch_add(1) + 1;
+    // A context is never freed while the app runs (retired ones become husks), and the queued cache is
+    // held weakly so a queued save never keeps a replaced database file open.
+    GridLiveContext* const ctxPtr = &ctx;
+    const std::weak_ptr<LocalCacheManager> queuedCache = cache;
+    const std::string launchError =
+        ticketSaves_.Post([this, ctxPtr, capturedGeneration, capturedKey, ticket, queuedCache, saveSeq]() {
+            SaveTicketThenRefresh_(*ctxPtr, capturedGeneration, capturedKey, ticket, queuedCache, saveSeq);
+        });
+    if (!launchError.empty()) {
+        // The save stays queued and runs with the next one; the grid already shows the change.
+        LOG_ERROR("AppController::UpdateTicket could not start the cache write worker ticket='%s' err=%s",
+                  ticket.id.c_str(), launchError.c_str());
+    }
+}
+
+void AppController::PatchActiveTicketInPlace_(GridLiveContext& ctx, std::uint64_t capturedGeneration,
+                                              const CachedTicket& ticket) {
+    {
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
         if (ctx.backendGeneration_.load() != capturedGeneration) {
-            // WARN, not INFO: callers reach UpdateTicket after the backend mutation already
-            // succeeded upstream — dropping the local save leaves a stale row until the old
-            // backend's next sync.
-            LOG_WARN("AppController::UpdateTicket skipped — backend swapped during key latch (issue #1081): "
-                     "key='%s' ticket='%s' generation=%llu",
-                     capturedKey.c_str(), ticket.id.c_str(), static_cast<unsigned long long>(capturedGeneration));
             return;
         }
-        // A SQLite write can throw here — most plausibly BUSY, once RunWriteTxnWithBusyRetry's
-        // total-deadline budget is exhausted and it rethrows. NOTHING between this call and
-        // `main`'s entry-point catch handles it: MainThreadDispatcher::Drain runs posted tasks
-        // bare, so an escape unwinds the frame loop and `ShutdownApplication` + exit code 1 is
-        // the user-visible result. Trading a UI stall for an app exit is not the deal the
-        // deadline was meant to make. Report it and keep the frame loop alive instead; the cache
-        // row simply stays stale until the next write, which is what the offline queue and the
-        // next sync already expect.
-        try {
-            Cache->SaveTicket(capturedKey, ticket);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::UpdateTicket local cache write failed key='%s' ticket='%s' err=%s",
-                      capturedKey.c_str(), ticket.id.c_str(), ex.what());
-            // Log-only by necessity: `gridEditError` is UiDrawSession state and this is a domain
-            // TU, which the "no Ui/ include in domain subsystems" lint rule keeps out of Ui/.
-            // Surfacing it in the grid needs a domain->UI latch (the shape ConnectivityMonitor
-            // uses for its warning); flagged as follow-up rather than smuggled in here.
-            return;
+        const auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                     [&ticket](const CachedTicket& row) { return row.id == ticket.id; });
+        if (it == ctx.ActiveTickets.end()) {
+            return; // not shown in this pane (any more): the queued refresh admits it if it belongs here
         }
-        // Push changes back to ActiveTickets — checked against the SAME latched ctx (MEDIUM-1).
-        // `ticket.id` is admitted explicitly: the pane-scoping filter inside the refresh works off
-        // the last SYNCED id set, which cannot yet contain a row created/edited this instant.
+        *it = ticket;
+        ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+    }
+    ctx.ActiveTicketsRevision.fetch_add(1);
+    NotifyLuaTicketDataChanged();
+}
+
+void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t capturedGeneration,
+                                           const std::string& capturedKey, const CachedTicket& ticket,
+                                           const std::weak_ptr<LocalCacheManager>& queuedCache, std::uint64_t saveSeq) {
+    const std::shared_ptr<LocalCacheManager> cache = queuedCache.lock();
+    if (!cache || cache != std::atomic_load(&Cache)) {
+        // The database was recreated since: it resyncs from the tracker, and this row with it.
+        LOG_INFO("AppController::UpdateTicket dropped a queued cache write — the local cache was replaced "
+                 "ticket='%s'",
+                 ticket.id.c_str());
+        return;
+    }
+    // A SQLite write can throw — most plausibly BUSY once RunWriteTxnWithBusyRetry's deadline is spent.
+    // Report it and keep the row as the grid shows it; the offline queue and the next sync already
+    // expect a stale cache row. (Log-only: this domain TU cannot reach the grid's error state, which
+    // lives in Ui/.)
+    try {
+        cache->SaveTicket(capturedKey, ticket);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::UpdateTicket local cache write failed key='%s' ticket='%s' err=%s",
+                  capturedKey.c_str(), ticket.id.c_str(), ex.what());
+        return;
+    }
+    if (ctx.ticketSaveSeq_.load() != saveSeq) {
+        // A newer save for this pane is queued and its re-read shows both rows. That re-read admits only its own
+        // id, so record this row as the pane's now, as the skipped re-read would have (a no-op on a pane with no
+        // recorded set yet, which shows the whole namespace anyway).
+        if (ctx.backendGeneration_.load() == capturedGeneration) {
+            AddPaneOwnedTicketId(capturedKey, ctx.PaneId, ticket.id);
+        }
+        return;
+    }
+    // Re-read checked against the SAME latched ctx (MEDIUM-1). `ticket.id` is admitted explicitly: the
+    // pane-scoping filter works off the last SYNCED id set, which may not contain this row yet.
+    try {
         RefreshLocalDataCheckedImpl_(ctx, &capturedGeneration, ticket.id);
+    } catch (const std::exception& ex) {
+        // The grid keeps its patched row; the next refresh re-reads the cache.
+        LOG_ERROR("AppController::UpdateTicket grid re-read failed key='%s' ticket='%s' err=%s", capturedKey.c_str(),
+                  ticket.id.c_str(), ex.what());
     }
 }
 

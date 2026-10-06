@@ -48,15 +48,21 @@ void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBac
 
 namespace {
 
-// "Recently used" section of the combo popup: cache-backed rows filtered by backend/endpoint/text.
-// Sets selectedKey + returns true when a row is picked (and closes the popup, matching the
-// pre-decomposition body). Runs inside the active BeginCombo scope.
-bool DrawRecentSection(const std::string& backendKind, const std::string& endpoint, const std::string& filter,
-                       std::string& selectedKey) {
+// "Recently used" section of the combo popup: the rows StartRecentProjectsLoad read, filtered by
+// backend/endpoint/text. Sets selectedKey + returns true when a row is picked (and closes the popup,
+// matching the pre-decomposition body). Runs inside the active BeginCombo scope.
+bool DrawRecentSection(State& state, const std::string& backendKind, const std::string& endpoint,
+                       const std::string& filter, std::string& selectedKey) {
     bool changed = false;
     ImGui::Separator();
     ImGui::TextDisabled("%s", SmatchetLocalization::T("draft.project.section.recent", "Recently used"));
-    std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+    std::vector<FieldCatalogCache::CachedProjectEntry> cached;
+    bool loaded = false;
+    {
+        std::lock_guard<std::mutex> lk(state.recentMutex);
+        cached = state.recent; // at most the LRU cap (16) small rows
+        loaded = state.recentLoaded;
+    }
     int recentShown = 0;
     for (const auto& e : cached) {
         if (!detail::RecentEntryPasses(e, backendKind, endpoint, filter)) {
@@ -72,7 +78,9 @@ bool DrawRecentSection(const std::string& backendKind, const std::string& endpoi
         ImGui::PopID();
         ++recentShown;
     }
-    if (recentShown == 0) {
+    // Before the first read lands (a few milliseconds) the section stays empty rather than claiming
+    // there are no recent projects.
+    if (recentShown == 0 && loaded) {
         ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.recent.none", "No recent projects"));
     }
     return changed;
@@ -253,6 +261,31 @@ void StartAllProjectsFetch(State& state, AppController& app) {
     }
 }
 
+void StartRecentProjectsLoad(State& state, AppController& app) {
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lk(state.recentMutex);
+        generation = ++state.recentGeneration;
+    }
+    // `statePtr` is app-lifetime window state, as for StartAllProjectsFetch.
+    State* statePtr = &state;
+    try {
+        app.LaunchBackgroundTask([statePtr, generation]() {
+            // Logs and returns an empty list on any failure; it never throws.
+            std::vector<FieldCatalogCache::CachedProjectEntry> rows = FieldCatalogCache::ListCachedProjects();
+            std::lock_guard<std::mutex> lk(statePtr->recentMutex);
+            if (statePtr->recentGeneration != generation) {
+                return; // a newer read (the popup reopened) owns the rows
+            }
+            statePtr->recent = std::move(rows);
+            statePtr->recentLoaded = true;
+        });
+    } catch (const std::exception& ex) {
+        // The rows already shown stay; the next open reads again.
+        LOG_WARN("SmatchetProjectPicker: reading the recently used projects did not start: %s", ex.what());
+    }
+}
+
 bool Draw(const char* idScope, State& state, AppController& app, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey) {
     ImGui::PushID(idScope);
@@ -262,14 +295,18 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
 
     if (ImGui::BeginCombo("##projectpicker", preview.c_str())) {
+        if (!state.popupWasOpen) {
+            StartRecentProjectsLoad(state, app); // once per open, never per frame (Pillar 2)
+        }
+        state.popupWasOpen = true;
         // Search field at top.
         const char* searchPlaceholder = SmatchetLocalization::T("draft.project.search", "Search...");
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##projsearch", searchPlaceholder, state.searchBuf, sizeof(state.searchBuf));
         const std::string filter(state.searchBuf);
 
-        // --- Recently used (always populated from cache; no async needed). ---
-        if (DrawRecentSection(backendKind, endpoint, filter, selectedKey)) {
+        // --- Recently used (read on a worker when the popup opened). ---
+        if (DrawRecentSection(state, backendKind, endpoint, filter, selectedKey)) {
             changed = true;
         }
 
@@ -279,6 +316,8 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
         }
 
         ImGui::EndCombo();
+    } else {
+        state.popupWasOpen = false;
     }
 
     ImGui::PopID();
