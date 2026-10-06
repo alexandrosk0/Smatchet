@@ -36,7 +36,7 @@
     brittleness: it looks for `next review available`, while the follow-up said
     "Reviews are available now".
   Concrete next action: (1) add the already-settled rule to the CR rate-limit
-    playbook in [`merge-gates.md`](../../../agent-rules/merge-gates.md) §
+    playbook in [`merge-gates.md`](../../../../agent-layer/docs/agent-rules/merge-gates.md) §
     CodeRabbit rate-limit playbook — *after any rate-limited pass on the
     current head, escalate to `full review` rather than repeating `review`,
     since a plain re-trigger is a no-op on an already-seen commit*. The

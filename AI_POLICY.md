@@ -7,7 +7,7 @@
 > contract's autonomy — they do not delete any operating rule, they place it
 > under the mode spectrum defined here. The operating mechanics
 > (ship-loop stages, merge gates) live in `AGENTS.md` and
-> [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
+> [`docs/agent-rules/ship-loops.md`](agent-layer/docs/agent-rules/ship-loops.md).
 
 ## Authority
 
@@ -25,7 +25,7 @@ SessionStart by the `## === loop-mode: <on|in> ===` banner
 `project.config.json` § `governance`.
 
 - **human-on-the-loop** (`SMATCHET_LOOP_MODE=on`) — the action-biased mode
-  defined at [`ship-loops.md`](docs/agent-rules/ship-loops.md) § Standing user
+  defined at [`ship-loops.md`](agent-layer/docs/agent-rules/ship-loops.md) § Standing user
   default: commit / push / open-PR autonomously; resolve **reversible** forks
   with a sensible default and surface them in the turn summary; pause only on
   the enumerated ship-loop exceptions. The agent acts; the human monitors and
@@ -71,7 +71,7 @@ cannot-validate-**here** (escalate / defer to the tier that owns it), never as a
 silent pass. "Validated" means a **concrete** signal
 (gate/test/spec, authorised scope, bounded cost); rationalising an assumption as
 "validated" is itself a misjudgement the
-[`gate-escape-postmortem`](agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+[`gate-escape-postmortem`](agent-layer/agents/_shared/skills/gate-escape-postmortem/SKILL.md)
 loop catches after the fact.
 
 ## Cost control
@@ -92,7 +92,7 @@ graduation to blocking is a deliberate future decision (`--blocking` exists).
 The ceiling is the human's number: tune or disable (0) in config.
 
 The second cost lever is **per-agent model tiering**
-([`delegation.md § Model tiering`](docs/agent-rules/delegation.md)): each
+([`delegation.md § Model tiering`](agent-layer/docs/agent-rules/delegation.md)): each
 agent pins a `model:` tier (opus / sonnet / haiku) matched to its task class
 instead of inheriting the session model.
 

@@ -25,7 +25,7 @@ capture at all.
 
 Not yet diagnosed — this entry records the gap, not the fix. What is already known:
 
-[`ship-loops.md:44`](../../../agent-rules/ship-loops.md) names four writers, and
+[`ship-loops.md:44`](../../../../agent-layer/docs/agent-rules/ship-loops.md) names four writers, and
 `ship-loops.md:57` adds two that are code rather than rule (merge-pipeline-02):
 `safe-admin-merge.sh` appends its own row, and `git-janitor.sh --post-merge` Step 5.5
 backfills a row for a merge **no** actor recorded (verdict `BACKFILLED`, actor

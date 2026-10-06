@@ -105,7 +105,7 @@ Five testing buckets per `AGENTS.md` § Verification automation + `agents/core/t
 
 ## Harness concepts
 
-Terminology for agentic-harness wiring — see [`docs/harness/SETUP.md`](harness/SETUP.md) + `AGENTS.md` § Harness adapter for the operational shape.
+Terminology for agentic-harness wiring — see [`docs/harness/SETUP.md`](../agent-layer/docs/harness/SETUP.md) + `AGENTS.md` § Harness adapter for the operational shape.
 
 - **Harness adapter** — per-harness directory (`.claude/`, `.codex/`, `.cursor/`) gitignored at the repo root, regenerated locally from canonical `agents/` tree via `bash agents/scripts/core/setup-harness.sh <name>`. Edits to `agents/*.md` propagate immediately via directory junctions / symlinks (file-level on Windows often falls back to copy — see SETUP.md § Worktree base for the known stale-HEAD pitfall and `link_file` short-circuit caveat).
 - **Worktree** — git worktree under `.claude/worktrees/<id>/`, typically Claude Code SDK-spawned `claude/<id>` worktrees. The SDK-spawned path bases on parent repo's current local HEAD — pre-session `git switch develop && git pull --ff-only` keeps it on develop. The `agent/<proposalId>/<short-slug>` shape from the deleted `ClaudeCodeLocalRunner` is gone (per v1 PR1 of `plans/shipped/github-tracker-backend.md`).

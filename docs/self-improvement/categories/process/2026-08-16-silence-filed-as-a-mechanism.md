@@ -27,11 +27,11 @@
     not exist. It also seeded a false sentence into a sibling entry's action
     item, which was queued for a rule-doc. Fabricated mechanisms propagate the
     same way fabricated quotes do, and the existing class-sweep rule in
-    [`process-rules.md`](../../../agent-rules/process-rules.md) already covers
+    [`process-rules.md`](../../../../agent-layer/docs/agent-rules/process-rules.md) already covers
     the sweep once one is found — what is missing is the guard that stops it
     being written in the first place.
   Concrete next action: add one line to
-    [`process-rules.md`](../../../agent-rules/process-rules.md) § Self-improvement
+    [`process-rules.md`](../../../../agent-layer/docs/agent-rules/process-rules.md) § Self-improvement
     entries — *an entry may state what was observed at any time; it may state
     WHY a third-party system behaved that way only from a positive observation.
     An inference drawn from a non-response is labelled `Hypothesis:` in the

@@ -19,7 +19,7 @@
     delimiters in place is therefore the *default* state of every PR body, and
     the one keystroke that arms the release is the one nothing checks. The rule
     itself is unambiguous —
-    [`ship-loops.md:162`](../../../agent-rules/ship-loops.md) requires the `open
+    [`ship-loops.md:162`](../../../../agent-layer/docs/agent-rules/ship-loops.md) requires the `open
     PR` step to write "*the exact line `lock-cleanup.yml` matches*", i.e. the
     bare form — so this is an operator error, not a doc conflict;
     it is worth a guard precisely because the correct and incorrect forms are
@@ -34,7 +34,7 @@
     is reachable only via
     `gh api repos/<owner>/<repo>/check-runs/<jobid>/annotations`. The existing
     downstream catch,
-    [`lock-staleness-sweep.sh:177`](../../../../agents/scripts/core/lock-staleness-sweep.sh),
+    [`lock-staleness-sweep.sh:177`](../../../../agent-layer/agents/scripts/core/lock-staleness-sweep.sh),
     already names this exact failure in its remediation text ("the PR was missing
     a `lock-slug: ${slug}` line in its body") — so the class is known and the
     sweep is the only thing catching it, days late.

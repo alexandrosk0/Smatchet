@@ -1,6 +1,6 @@
 - 2026-08-16 · orchestrator · [tooling] · P2 — `test-gate-selftests.sh --selftest` fails all 11 negative fixtures on Windows/msys because its untracked-file mode fallback is `[ -x "$f" ]`, which msys answers TRUE for every temp file — so `scripts/dev/pre-ship.sh` cannot go green on a Windows dev box and its red becomes background noise
   Details: the raw-self-exec rule in
-    [`test-gate-selftests.sh`](../../../../agents/scripts/core/test-gate-selftests.sh)
+    [`test-gate-selftests.sh`](../../../../agent-layer/agents/scripts/core/test-gate-selftests.sh)
     only applies to mode-100644 scripts (the "126 Permission denied" premise does
     not hold on a `+x` file). It reads the mode from the git index and falls back
     to the filesystem bit for untracked files — and the synthetic selftest

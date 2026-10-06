@@ -398,7 +398,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/lua-bindings-host-interface-lift` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/ILuaBindingHost.h` (NEW)
   - `Source_Core/src/AppController_LuaBindingsCore.cpp` (NEW)
@@ -503,7 +503,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/audit-trail-per-event-path`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/src/BackendAuditTrail.cpp` (writer re-resolves `GetAuditFilePath()` per-event)
   - `tests/Source_Core/BackendAuditTrail.test.cpp` (add runtime-dir-change case; existing TEST_CASE workaround drops)
@@ -517,7 +517,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/cached-ticket-types-header-split`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../../agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/CachedTicketTypes.h` (NEW)
   - `Source_Core/include/LocalCacheManager.h`

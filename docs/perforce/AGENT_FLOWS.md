@@ -262,7 +262,7 @@ The shelf step subsumes the Pillar-4 visual-validation pause — the user review
 
 ### Promote-to-PR in a shared tree — plumbing-commit recipe
 
-The canonical p4-mode promote step. The git ship-line needs a branch with the change, but the canonical client tree (`C:\Dev\Smatchet`) is the **shared integration tree** — usually with sibling sessions live in it. Two hard constraints collide there: `guard-shared-tree.sh` blocks any HEAD/working-tree-mutating git op (`checkout`/`switch`/`reset`/…) while a sibling is live, and the p4-mode invariant forbids `git worktree add` ([`ship-loops.md`](../agent-rules/ship-loops.md) § P4-gated ship-loop). So promote must publish a branch **without touching HEAD or the working tree**.
+The canonical p4-mode promote step. The git ship-line needs a branch with the change, but the canonical client tree (`C:\Dev\Smatchet`) is the **shared integration tree** — usually with sibling sessions live in it. Two hard constraints collide there: `guard-shared-tree.sh` blocks any HEAD/working-tree-mutating git op (`checkout`/`switch`/`reset`/…) while a sibling is live, and the p4-mode invariant forbids `git worktree add` ([`ship-loops.md`](../../agent-layer/docs/agent-rules/ship-loops.md) § P4-gated ship-loop). So promote must publish a branch **without touching HEAD or the working tree**.
 
 After `p4 submit`, the on-disk files already hold the submitted content (p4 does not revert the workspace on submit) and git HEAD is still on `develop`. Build the PR commit in a throwaway index with git plumbing — no `checkout`/`add`/`commit`, so the guard never fires, no sibling is rug-pulled, and the working tree stays at the p4 depot head:
 

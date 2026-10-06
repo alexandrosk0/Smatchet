@@ -2,7 +2,7 @@
 
 Retroactive CodeRabbit review of every PR that merged carrying `cr-out-of-band`
 — the label that downgrades the CR merge-gate block to WARN
-([`merge-gates.md`](../agent-rules/merge-gates.md) § Per-PR overrides). The label
+([`merge-gates.md`](../../agent-layer/docs/agent-rules/merge-gates.md) § Per-PR overrides). The label
 waives the *gate*, never the *review*: each such merge left a diff on `develop`
 that CR either never looked at or looked at and found something in. This is the
 drain for that debt.
@@ -27,14 +27,14 @@ window — roughly one PR per 45 minutes, days of wall-clock for a 90-PR queue.
 
 The first cut ran as a session-scoped 15-minute cron. The session was reclaimed
 and the drip made **zero progress in 39 hours**. That is the same class
-[`unwatched-pr-nudge.sh`](../../agents/scripts/core/unwatched-pr-nudge.sh) was
+[`unwatched-pr-nudge.sh`](../../agent-layer/agents/scripts/core/unwatched-pr-nudge.sh) was
 written for: a check-in that was supposed to post a review trigger once CR's
 quota reopened, and never did. A drain measured in days cannot live in a process
 measured in hours.
 
 [`cr-oob-review-backfill.yml`](../../.github/workflows/cr-oob-review-backfill.yml)
 runs the poller on a `*/15`-equivalent schedule;
-[`cr-oob-review-backfill.sh`](../../agents/scripts/core/cr-oob-review-backfill.sh)
+[`cr-oob-review-backfill.sh`](../../agent-layer/agents/scripts/core/cr-oob-review-backfill.sh)
 holds the logic.
 
 ## Stateless by design

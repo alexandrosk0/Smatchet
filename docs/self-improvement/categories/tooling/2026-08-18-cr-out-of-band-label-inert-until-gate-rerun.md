@@ -31,7 +31,7 @@ Two mechanisms that both key on `cr-out-of-band` are not wired to each other:
 
 1. **`merge-gates.sh`** downgrades the *CodeRabbit gate* (gate 2) to WARN. It deliberately
    does **not** touch the CI counters — the comment at
-   [`merge-gates.sh:1414`](../../../../agents/scripts/core/merge-gates.sh) says so outright:
+   [`merge-gates.sh:1414`](../../../../agent-layer/agents/scripts/core/merge-gates.sh) says so outright:
    *"(ci_fail / ci_pend) … are NOT touched"*. But `GATES_PASSED` requires `ci_pend -eq 0`
    (lines 1502 and 1557), and `CR findings (0 actionable)` is an ordinary StatusContext that
    lands in `ci_pend` (`fields[7]`, line 736) like any other check.
