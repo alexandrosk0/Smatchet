@@ -326,11 +326,19 @@ run_live() {
     [[ "$output" == *"superseded"* ]]
 }
 
-@test "live: a PR that is no longer open voids the run" {
-    stub_gh; replay final "$GREEN_EDIT"; serve runs; serve status; serve_pr "$HEAD_SHA" closed
+@test "live: a PR that is no longer open ends the run green as moot (no red on the merged head)" {
+    # Even with a red check on the head: there is no merge left to gate, and a
+    # FAILURE left on a merged head reads as a gate escape.
+    stub_gh; replay "2026-10-04T01:56:45Z"; serve runs; serve status; serve_pr "$HEAD_SHA" closed
     run_live
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"is closed"* ]]
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict moot: PR is closed"* ]]
+    [[ "$output" != *"::error"* ]]
+    jq -n --arg h "$HEAD_SHA" '{head: {sha: $h}, state: "closed", merged: true, labels: [], body: ""}' > "$STUB/pr.json"
+    rm -f "$STUB"/*.count
+    run_live
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict moot: PR is merged"* ]]
 }
 
 @test "live: still pending when the budget is spent -> timeout is red" {

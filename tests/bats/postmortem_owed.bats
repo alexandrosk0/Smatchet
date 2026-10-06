@@ -317,6 +317,48 @@ JSON
     [[ "$output" != *"PR #2009"* ]]
 }
 
+# The All-checks-green aggregate re-derives the other checks' verdict; it is not
+# an independent gate. A red aggregate on a merged head (its run raced the merge,
+# or timed out) beside an otherwise-green rollup is no escape.
+@test "a red All-checks-green aggregate alone owes nothing (it is not an independent gate)" {
+    prlist <<'JSON'
+[{"number":2014,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a14"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"All checks green (block-on-any-red)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #2014"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "a real red beside a red aggregate is still owed, named without the aggregate" {
+    prlist <<'JSON'
+[{"number":2015,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a15"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"All checks green (block-on-any-red)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"postmortem owed: PR #2015 — red-check: Windows + MSVC"* ]]
+    [[ "$output" != *"All checks green"* ]]
+}
+
+@test "a REQUIRED All-checks-green aggregate still running at merge is not never-terminal" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS="Windows + MSVC,All checks green (block-on-any-red)"
+    prlist <<'JSON'
+[{"number":2016,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a16"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"All checks green (block-on-any-red)","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #2016"* ]]
+    [[ "$output" != *"required-never-terminal"* ]]
+}
+
 @test "allow-list is sourced from merge-gates.sh, not hand-duplicated (drift guard)" {
     # Guards the exact duplication that drifted and caused #1258: there must be a
     # `source merge-gates.sh`, and the ONLY ALLOW_LIST_RE assignment must read the

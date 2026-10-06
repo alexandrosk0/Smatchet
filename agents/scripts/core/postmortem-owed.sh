@@ -667,6 +667,12 @@ merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigg
 #       .required_contexts ($reqNames) OR its name matches the meant-to-block
 #       allow-list (ALLOW_LIST_RE) and is not "advisory". An advisory / non-
 #       allow-list lane can never block a merge, so its red owes no postmortem.
+#   (d) skip the `All checks green (block-on-any-red)` aggregate by name (here
+#       and in the required-never-terminal column) — it re-derives the verdict
+#       of the OTHER checks (all-checks-green.sh), so it is not an independent
+#       gate: a real red it saw is already in this column under its own name,
+#       and the aggregate alone red or pending (a run the merge raced, a
+#       timeout) is no escape. merge-gates.d/10-gate-filter.sh skips it too.
 # (postmortems.md 2026-06-09 PR #1046–#1072 over-report; #923 allow-list.)
 #
 # `gh pr list` has no mergedAt sort key, so over-fetch by its default
@@ -675,7 +681,8 @@ merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigg
 # late falls outside a createdAt-ordered window and its escape is never seen.
 FETCH_N="${POSTMORTEM_FETCH_N:-$((SCAN_N * 3))}"
 # shellcheck disable=SC2016  # $c/$reqNames are jq variables, not shell expansions
-JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
+JQ_ROWS='"All checks green (block-on-any-red)" as $aggregate
+| (sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
     (.number|tostring),
     (.mergeCommit.oid // ""),
     ([.labels[].name] | join(" ")),
@@ -687,6 +694,8 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
             | .[] )
           | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $n
           | select(
+              ($n != $aggregate)
+              and
               (
                 (.__typename == "CheckRun" and (.status // "") == "COMPLETED"
                  and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")))
@@ -737,6 +746,8 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
             | .[] )
           | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $n
           | select(
+              ($n != $aggregate)
+              and
               ($reqNames | any(. == $n))
               and
               (

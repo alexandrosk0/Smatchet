@@ -50,8 +50,12 @@
 #   * all terminal + green -> re-poll after ACG_SETTLE_SECONDS (default 60) and
 #     pass only if the check set is unchanged (late checks: a dependent job, the
 #     code-scanning result check, a label-triggered re-run);
-#   * PR head moved / PR no longer open -> exit 1 (this run's verdict is void;
-#     the new head gets its own run);
+#   * PR head moved -> exit 1 (this run's verdict is void; the new head gets
+#     its own run);
+#   * PR no longer open (merged / closed) -> exit 0 with a "verdict moot"
+#     notice: a red here would leave a FAILURE check on nearly every merged
+#     head (a merge through safe-merge.sh does not wait for this check), which
+#     reads as a gate escape to anything auditing merged heads;
 #   * still pending at ACG_MAX_WAIT_SECONDS (default 5100) -> exit 1 (a timeout
 #     is red, fail-closed; re-running the job or any label change clears it);
 #   * ACG_MAX_API_FAILURES (default 10) consecutive API failures -> exit 2.
@@ -67,8 +71,8 @@
 # project.config.json's set — set but empty disables the required-absent rule).
 # Test seam: ACG_SLEEP_BIN (default `sleep`).
 #
-# Exit: 0 success · 1 failure (red, timeout, superseded) · 2 usage / API error ·
-#       3 pending (fixture mode only).
+# Exit: 0 success / verdict moot (PR no longer open) · 1 failure (red, timeout,
+#       superseded) · 2 usage / API error · 3 pending (fixture mode only).
 # Tests: tests/bats/all_checks_green.bats.
 # ----------------------------------------------------------------------------
 set -uo pipefail
@@ -248,22 +252,27 @@ fetch_checks() {
         | jq -s '.' > "$WORK/stats.json" || return 1
 }
 
-# fetch_pr — head SHA, state, live labels + body (the cr-disposition marker).
+# fetch_pr — head SHA, state (open | closed | merged), live labels + body (the
+# disposition markers).
 fetch_pr() {
     gh api "repos/$REPO/pulls/$PR" \
-        --jq '{head: .head.sha, state: .state, labels: [.labels[]?.name], body: (.body // "")}' \
+        --jq '{head: .head.sha, state: (if .merged == true then "merged" else .state end), labels: [.labels[]?.name], body: (.body // "")}' \
         > "$WORK/pr.json.new" || return 1
     mv "$WORK/pr.json.new" "$WORK/pr.json"
 }
 
-# pr_superseded — exit 1 when the PR moved on: this run's verdict would be void.
+# pr_superseded — end the run when the PR moved on. A PR that is no longer open
+# exits 0: there is no merge left to gate, and a red here would sit on the
+# merged head as a false gate escape. A moved head exits 1 (void; the new head
+# gets its own run).
 pr_superseded() {
     local head state
     head="$(jq -r '.head' "$WORK/pr.json")"
     state="$(jq -r '.state' "$WORK/pr.json")"
     if [ "$state" != "open" ]; then
-        echo "::error title=All checks green — PR not open::PR #$PR is $state; this run's verdict is void."
-        exit 1
+        echo "::notice title=All checks green — verdict moot::verdict moot: PR #$PR is $state; there is no merge left to gate."
+        echo "all-checks-green: verdict moot: PR is $state."
+        exit 0
     fi
     if [ "$head" != "$SHA" ]; then
         echo "::error title=All checks green — superseded::PR #$PR head moved ${SHA:0:12} -> ${head:0:12}; this run's verdict is void (the new head gets its own run)."
