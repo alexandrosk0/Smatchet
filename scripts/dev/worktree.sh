@@ -35,20 +35,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # this is that worktree (its .git points at the shared object store, so
 # `worktree add` still registers globally).
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-# layer_of <tree> — the tree holding agents/ for <tree>: its agent-layer/ mount
-# once that holds the layer's project-config.sh (plan agent-surface-extraction-repo,
-# row 12), or once agent-layer is registered as a submodule even before it is
-# checked out (so a remedy names where the script will be), else the tree itself.
-# setup-harness.sh and the session-registry lib are agent-layer content.
-layer_of() {
-    if [ -f "$1/agent-layer/scripts/dev/project-config.sh" ] \
-            || [ "$(git -C "$1" ls-files -s -- agent-layer 2>/dev/null | cut -c1-6)" = 160000 ]; then
-        printf '%s/agent-layer\n' "$1"
-    else
-        printf '%s\n' "$1"
-    fi
-}
 TREES_ROOT="${SMATCHET_TREES_ROOT:-C:/Dev/trees}"
 
 die() { echo "worktree: $*" >&2; exit 1; }
@@ -134,7 +120,7 @@ registry_dir() { printf '%s/.claude/.active-sessions' "$1"; }
 # HEAD-drift guards see. That matters on Windows: the registry stores Win32 pids,
 # which `kill -0` in git-bash can never probe (the fallback loop below would call
 # a long-idle-but-open session dead while the guards still count it live).
-SESSION_REGISTRY_LIB="$(layer_of "$REPO_ROOT")/agents/scripts/core/session-registry-lib.sh"
+SESSION_REGISTRY_LIB="$REPO_ROOT/agents/scripts/core/session-registry-lib.sh"
 if [ -f "$SESSION_REGISTRY_LIB" ]; then
     # shellcheck source=/dev/null
     . "$SESSION_REGISTRY_LIB"
@@ -192,8 +178,8 @@ cmd_new() {
     # See docs/harness/SETUP.md § Concurrent-session HEAD-drift guard.
     if [ ! -f "$REPO_ROOT/.claude/hooks/guard-head-drift.sh" ]; then
         echo "First run: provisioning .claude/ in the integration tree ($REPO_ROOT) so its HEAD-drift guard is active ..."
-        bash "$(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh" claude-code \
-            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'bash $(layer_of "$REPO_ROOT")/agents/scripts/core/setup-harness.sh claude-code' there manually." >&2
+        bash "$REPO_ROOT/agents/scripts/core/setup-harness.sh" claude-code \
+            || echo "  WARNING: could not provision the integration tree's .claude/ — run 'bash agents/scripts/core/setup-harness.sh claude-code' there manually." >&2
     fi
 
     echo "Fetching origin/$BASE ..."
@@ -223,7 +209,7 @@ cmd_new() {
     # its own location, so this provisions $path, not the main clone.
     echo "Wiring .claude/ adapter in the new worktree ..."
     local wired=1
-    bash "$(layer_of "$path")/agents/scripts/core/setup-harness.sh" claude-code || wired=0
+    bash "$path/agents/scripts/core/setup-harness.sh" claude-code || wired=0
 
     echo ""
     if [ "$wired" -eq 1 ] && [ -f "$path/.claude/settings.json" ]; then
@@ -233,7 +219,7 @@ cmd_new() {
     else
         echo "WARNING: worktree created at $path (branch $branch_name) but .claude/ is NOT wired —" >&2
         echo "         the HEAD-drift guard is INACTIVE there. Finish setup before relying on isolation:" >&2
-        echo "         git -C \"$path\" submodule update --init --recursive && bash \"$(layer_of "$path")/agents/scripts/core/setup-harness.sh\" claude-code" >&2
+        echo "         bash \"$path/agents/scripts/core/setup-harness.sh\" claude-code" >&2
     fi
 }
 
@@ -345,7 +331,7 @@ cmd_sync() {
     git -C "$path" submodule update --init --recursive         || die "submodule update failed in $path"
 
     echo "Re-wiring .claude/ adapter in $path ..."
-    bash "$(layer_of "$path")/agents/scripts/core/setup-harness.sh" claude-code         || die "setup-harness failed in $path — the adapter may still hold stale agent definitions."
+    bash "$path/agents/scripts/core/setup-harness.sh" claude-code         || die "setup-harness failed in $path — the adapter may still hold stale agent definitions."
 
     echo "Synced: $path"
 }
