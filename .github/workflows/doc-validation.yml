@@ -221,12 +221,15 @@ jobs:
           PAT_CONFIGURED: ${{ secrets.PLAN_INDEX_PAT != '' }}
         run: |
           # The checkout token is `PLAN_INDEX_PAT || github.token`, so the two
-          # failure causes need different owners: a SET secret was used and
-          # rejected (expired / revoked — only an admin rotation fixes it), while
-          # an ABSENT secret means the checkout ran under GITHUB_TOKEN and failed
-          # for another reason (re-run), and auto-fix stays off until one is added.
+          # failure causes need different owners: a SET secret was used, and an
+          # expired / revoked PAT is the likely cause (only an admin rotation
+          # fixes it) — but the step outcome cannot tell that from a network or
+          # ref failure, so the warning says "likely" and points at the step
+          # log. An ABSENT secret means the checkout ran under GITHUB_TOKEN and
+          # failed for another reason (re-run); auto-fix stays off until one is
+          # added.
           if [ "$PAT_CONFIGURED" = "true" ]; then
-            echo "::warning title=PLAN_INDEX_PAT rejected::INDEX autosync skipped — PLAN_INDEX_PAT is set but the checkout could not authenticate with it (expired or revoked). Rotate it: a repo admin saves a fresh fine-grained PAT (this repo only, Contents: Read and write) as the PLAN_INDEX_PAT Actions secret (see job header). This advisory auto-fixer is a no-op until then; INDEX correctness stays hard-gated by the required test-plan-index check."
+            echo "::warning title=PLAN_INDEX_PAT checkout failed::INDEX autosync skipped — the checkout with the configured PLAN_INDEX_PAT failed: the PAT is likely expired or revoked (or the checkout failed for another reason — check the step log). If the log shows an authentication error, rotate it: a repo admin saves a fresh fine-grained PAT (this repo only, Contents: Read and write) as the PLAN_INDEX_PAT Actions secret (see job header); otherwise re-run the job. This advisory auto-fixer is a no-op until then; INDEX correctness stays hard-gated by the required test-plan-index check."
           else
             echo "::warning title=PLAN_INDEX_PAT absent::INDEX autosync skipped — PLAN_INDEX_PAT is not configured, and the checkout under the default GITHUB_TOKEN failed anyway (likely transient — re-run the job). Auto-fix additionally needs the PLAN_INDEX_PAT secret (see job header); INDEX correctness stays hard-gated by the required test-plan-index check."
           fi
