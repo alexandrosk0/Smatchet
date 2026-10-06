@@ -440,9 +440,11 @@ _classify_diff() {
 # string DATA and is replaced by a sentinel the classifier never exempts. A file
 # whose tracking cannot be trusted — a hunk that ends with the #if stack open,
 # closes an arm it never opened, ends inside a comment/raw string, splices a line
-# with a trailing backslash outside a directive's own continuation, puts a comment
-# between '#' and the directive name or a conditional directive after a closing
-# */, or uses a %: digraph directive — gets
+# with a trailing backslash outside a directive's own continuation, splices a
+# directive where the join could change what the lexer sees (a split directive
+# name, or a quote, comment token, '/' or '*' at the splice on a spliced directive
+# line), puts a comment between '#' and the directive name or a directive after a
+# closing */, or uses a %: digraph directive — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -647,27 +649,40 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
 # STARTS outside a comment / raw string — a `#if` there is text, not a directive)
 # and then the lexer. Sets pl_raw (line starts inside a raw string literal);
 # returns 1 for a conditional directive.
-function post_line(body,   r, st, tl, splice, isdir) {
+function post_line(body,   r, st, tl, splice, cont, isdir) {
     pl_raw = lx_raw
     # Shapes the per-line tracking cannot follow mark the file untrusted (its lines then fall
     # through to the classifier, never dropped):
     #   - a backslash line splice outside a preprocessor directive's continuation (the
     #     compiler joins the lines first, so a string, char literal or comment can run on);
+    #   - a directive splice the tracking could misread: one that splits the directive
+    #     name (`#el\` + `se`), or a spliced directive line holding a quote, a comment
+    #     token, or a '/' or '*' just before the backslash (the join can open or close a
+    #     string or comment the per-line lexer never sees);
     #   - a comment between '#' and the directive name (`# /* c */ else`);
     #   - a `%:` digraph directive.
     st = trim(body)
     tl = body
     sub(/[ \t\r]+$/, "", tl)
     splice = (tl ~ /\\$/)
-    isdir = (substr(st, 1, 1) == "#" || substr(st, 1, 2) == "%:")
+    # A continuation line is the directive's own text (a `#else` there is macro body, not a
+    # directive), and a line that starts inside a comment or raw string is no directive.
+    cont = lx_macro
+    isdir = !cont && !lx_blk && !lx_raw && (substr(st, 1, 1) == "#" || substr(st, 1, 2) == "%:")
     if (substr(st, 1, 2) == "%:" || st ~ /^#[ \t]*\/\*/) lx_untrusted = 1
-    if (splice && !isdir && !lx_macro) lx_untrusted = 1
-    lx_macro = splice && (isdir || lx_macro)
-    # A conditional directive after a closing */ (`/* x */ #else`, or the last line of
-    # a multi-line comment) is one the compiler honours but track_directive never
-    # sees: the #if stack would be wrong, so the file's tracking is not trusted.
-    if (body ~ /\*\/[ \t]*#[ \t]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)/) lx_untrusted = 1
-    r = (lx_blk || lx_raw) ? 0 : track_directive(body)
+    if (splice && !isdir && !cont) lx_untrusted = 1
+    if (isdir && splice && st ~ /^#[ \t]*[A-Za-z0-9_]*\\$/) lx_untrusted = 1
+    if ((splice && isdir) || cont) {
+        if (index(body, "\"") || index(body, SQ) || index(body, "/*") || index(body, "*/") || index(body, "//") ||
+            tl ~ /[\/*]\\$/) lx_untrusted = 1
+    }
+    lx_macro = splice && (isdir || cont)
+    # A directive after a closing */ (`/* x */ #else`, `/* a */ # /* b */ else`, `/* x */ %:else`,
+    # or the last line of a multi-line comment) is one the compiler honours but track_directive
+    # never sees: the #if stack would be wrong, so the file's tracking is not trusted.
+    # (Only a conditional name or a comment after the '#': an ImGui id path "**/##id" is no directive.)
+    if (body ~ /\*\/[ \t]*(%:|#[ \t]*(\/\*|(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)))/) lx_untrusted = 1
+    r = isdir ? track_directive(body) : 0
     lex_line(body)
     return r
 }
@@ -1265,6 +1280,125 @@ diff --git a/Source/Core/src/Sync/Digraph.cpp b/Source/Core/src/Sync/Digraph.cpp
  %:else
 -    (void)x;
 +    launchMissiles(x);
+ #endif
+EOF
+    # Directive splices the per-line tracking would misread: the join opens a string or
+    # closes a comment, splits the directive name, or hides a directive after a comment.
+    _expect FALLTHROUGH "string spliced inside a #define marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/MStr.cpp b/Source/Core/src/Sync/MStr.cpp
+--- a/Source/Core/src/Sync/MStr.cpp
++++ b/Source/Core/src/Sync/MStr.cpp
+@@ -1,8 +1,8 @@
+ #define S "abc\
+ def /* not a comment opener"
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* a real comment */
+EOF
+    _expect FALLTHROUGH "comment closed through a #define splice marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/MBlk.cpp b/Source/Core/src/Sync/MBlk.cpp
+--- a/Source/Core/src/Sync/MBlk.cpp
++++ b/Source/Core/src/Sync/MBlk.cpp
+@@ -1,8 +1,8 @@
+ #define X 1 /* c *\
+ /
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* a real comment */
+EOF
+    _expect FALLTHROUGH "directive name split by a splice marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/DSplit.cpp b/Source/Core/src/Sync/DSplit.cpp
+--- a/Source/Core/src/Sync/DSplit.cpp
++++ b/Source/Core/src/Sync/DSplit.cpp
+@@ -1,6 +1,6 @@
+ #ifdef __ANDROID__
+ androidOnly();
+ #el\
+ se
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    _expect FALLTHROUGH "bare # spliced onto its directive name marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/HSplit.cpp b/Source/Core/src/Sync/HSplit.cpp
+--- a/Source/Core/src/Sync/HSplit.cpp
++++ b/Source/Core/src/Sync/HSplit.cpp
+@@ -1,6 +1,6 @@
+ #ifdef __ANDROID__
+ androidOnly();
+ #\
+ else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    # The `#else` is the macro's body text, so the desktop arm is still open below it.
+    _expect FALLTHROUGH "#else on a #define continuation line is macro text, not a directive" <<'EOF'
+diff --git a/Source/Core/src/Sync/MElse.cpp b/Source/Core/src/Sync/MElse.cpp
+--- a/Source/Core/src/Sync/MElse.cpp
++++ b/Source/Core/src/Sync/MElse.cpp
+@@ -1,6 +1,6 @@
+ #ifndef __ANDROID__
+ #define X \
+ #else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    _expect FALLTHROUGH "%: digraph directive after a comment marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/CDig.cpp b/Source/Core/src/Sync/CDig.cpp
+--- a/Source/Core/src/Sync/CDig.cpp
++++ b/Source/Core/src/Sync/CDig.cpp
+@@ -1,6 +1,6 @@
+ #ifdef __ANDROID__
+ androidOnly();
+ /* x */ %:else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    _expect FALLTHROUGH "comment, #, comment, else marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/CHC.cpp b/Source/Core/src/Sync/CHC.cpp
+--- a/Source/Core/src/Sync/CHC.cpp
++++ b/Source/Core/src/Sync/CHC.cpp
+@@ -1,6 +1,6 @@
+ #ifdef __ANDROID__
+ androidOnly();
+ /* a */ # /* b */ else
+-    (void)x;
++    launchMissiles(x);
+ #endif
+EOF
+    # A '#' line that starts inside a block comment is comment text, so its splice is no
+    # directive continuation.
+    _expect FALLTHROUGH "splice on a #-line inside a block comment marks the file untrusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/BHS.cpp b/Source/Core/src/Sync/BHS.cpp
+--- a/Source/Core/src/Sync/BHS.cpp
++++ b/Source/Core/src/Sync/BHS.cpp
+@@ -1,9 +1,9 @@
+ /* notes:
+ # see below *\
+ /
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+ /* a real comment */
+EOF
+    # An ImGui id path in a string ("**/##id") is not a comment closer before a directive.
+    _expect EXEMPT "ImGui id path string keeps the file trusted" <<'EOF'
+diff --git a/Source/Core/src/Sync/IdPath.cpp b/Source/Core/src/Sync/IdPath.cpp
+--- a/Source/Core/src/Sync/IdPath.cpp
++++ b/Source/Core/src/Sync/IdPath.cpp
+@@ -1,6 +1,6 @@
+ static const char* kId = "**/##AiAssistantInput";
+ #ifdef __ANDROID__
+-androidOnly(1);
++androidOnly(2);
  #endif
 EOF
     # A macro's own continuation lines are not a splice the tracking misreads: an
