@@ -147,7 +147,9 @@ JSON
     run bash "$SCRIPT" --list
     [ "$status" -eq 0 ]
     grep -q '^api repos/test/repo/pulls?state=closed&base=develop&sort=updated&direction=desc&per_page=100&page=1$' "$HOLES_DATA/gh.log"
-    ! grep -q 'graphql' "$HOLES_DATA/gh.log"
+    # Counted, not `! grep`: bats ignores a negated status anywhere but the
+    # last line of a test, which made these absence checks no-ops.
+    [ "$(grep -c 'graphql' "$HOLES_DATA/gh.log")" -eq 0 ]
     export MERGE_SNAPSHOT_HOLES_BASE=main
     run bash "$SCRIPT" --list
     grep -q 'base=main&' "$HOLES_DATA/gh.log"
@@ -171,12 +173,16 @@ JSON
     [[ "$output" == *"PR #2242"* ]]
     [[ "$output" != *"PR #2241"* ]]
     # page 2's oldest updated_at predates the cutoff → page 3 is never fetched.
-    ! grep -q 'page=3' "$HOLES_DATA/gh.log"
+    # Anchored on `&page=N$`: with PER_PAGE=2 every URL carries `per_page=2`,
+    # so a bare 'page=2' matches page 1 too (the old `! grep` hid that).
+    grep -q '&page=2$' "$HOLES_DATA/gh.log"
+    [ "$(grep -c '&page=3$' "$HOLES_DATA/gh.log")" -eq 0 ]
     # and MAX_PAGES=1 stops after the first page.
     : > "$HOLES_DATA/gh.log"
     export MERGE_SNAPSHOT_HOLES_MAX_PAGES=1
     run bash "$SCRIPT" --list
-    ! grep -q 'page=2' "$HOLES_DATA/gh.log"
+    grep -q '&page=1$' "$HOLES_DATA/gh.log"
+    [ "$(grep -c '&page=2$' "$HOLES_DATA/gh.log")" -eq 0 ]
     [[ "$output" != *"PR #2242"* ]]
 }
 

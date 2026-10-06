@@ -4386,8 +4386,10 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [ -s "$argv_file" ]
-    ! grep -qx -- '--jq' "$argv_file"
-    ! grep -q 'selfImpOnly' "$argv_file"
+    # Counted, not `! grep`: bats ignores a negated status anywhere but the
+    # last line, which made these two assertions no-ops.
+    [ "$(grep -cx -- '--jq' "$argv_file")" -eq 0 ]
+    [ "$(grep -c 'selfImpOnly' "$argv_file")" -eq 0 ]
     grep -qx -- 'query=@.*' "$argv_file"
     # The subshell EXIT trap removed the staged filter (and gh stderr) files.
     [ -z "$(ls -A "$tmpd")" ]
