@@ -53,9 +53,13 @@ struct GridContextFieldCatalog {
     bool LastTrackerFieldCatalogErrorTransient = false;
     std::string LastTrackerFieldCatalogWarning;
     bool fieldCatalogEverLoaded_ = false;
-    /// Project the in-memory catalog was fetched for: set with the catalog it describes (see
-    /// SetCurrentCatalogProject for the grid's fetch).
+    /// Project the in-memory catalog was fetched for: set with the catalog it describes.
     std::string currentCatalogProjectKey_;
+    /// The project SetCurrentCatalogProject named for the next unguarded SetFieldCatalog (the grid's own
+    /// fetch). That apply consumes it and pins it with its catalog; a refresh landing in between never
+    /// moves it, so the grid's catalog is never filed under the refresh's project.
+    bool hasPendingCatalogProjectKey_ = false;
+    std::string pendingCatalogProjectKey_;
     // Per-project component options are not per-pane: ProjectComponentsCacheService keys them by
     // tracker and project, so panes on one tracker share them.
 };

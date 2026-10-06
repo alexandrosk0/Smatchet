@@ -258,11 +258,15 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
             if (!guard.Holds()) {
                 return; // the pane moved on; its catalog is no longer this fetch's to restore
             }
-            cat.AvailableFields = std::move(snapFields);
-            cat.AvailableComponents = std::move(snapComponents);
-            cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-            guard.PinProjectLocked(cat);
-            cat.fieldCatalogEverLoaded_ = true;
+            if (cat.AvailableFields.empty()) {
+                cat.AvailableFields = std::move(snapFields);
+                cat.AvailableComponents = std::move(snapComponents);
+                cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+                guard.PinProjectLocked(cat);
+                cat.fieldCatalogEverLoaded_ = true;
+            } else {
+                snapshotLoaded = false; // a catalog landed while the snapshot loaded: it is newer, keep it
+            }
         }
     }
     // The banner names the configured backend (Jira / Plane / GitHub / Linear), never a hard-coded one.
@@ -275,7 +279,9 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
         if (!guard.Holds()) {
             return;
         }
-        banner = smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasFieldsNow, snapshotLoaded,
+        // The catalog as it is now: another apply may have filled it since it was first sampled.
+        const bool hasLiveFields = !snapshotLoaded && !cat.AvailableFields.empty();
+        banner = smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasLiveFields, snapshotLoaded,
                                                                       cat.fieldCatalogEverLoaded_);
         bumpRevision = WriteCatalogFailureBannerLocked(cat, banner, backendKey, error, errorTransient);
     }
@@ -296,30 +302,28 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     const TrackerConfig cfgSnap = guard.Config != nullptr ? *guard.Config : ConfigManager::Load();
     const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
     const bool catalogPlane = backendKey == "Plane";
-    // No legacy global project fields exist. Saves under the unscoped ("") cache key when
-    // the caller hasn't pinned a project via SetCurrentCatalogProject(). Per-project refetches
-    // (driven by the new-issue draft / picker UI) set that hint so the snapshot lands under
-    // the right per-project entry. (A future refactor may thread the project as an explicit
-    // parameter on the call chain instead of via this latched hint.)
-    // Read cat.currentCatalogProjectKey_ under the lock into a local — SetCurrentCatalogProject /
-    // RefreshFieldCatalog write it under cat.availableFieldsMutex_ from other threads, so an unlocked
-    // read of the std::string here is a data race.
-    std::string projectKeyForCache;
-    if (guard.HasProject) {
-        projectKeyForCache = guard.Project;
-    } else {
+    // An unguarded apply (the grid's own fetch) takes the project SetCurrentCatalogProject named for it,
+    // consuming it, or else the project of the catalog in memory; either way it keys the snapshot and is
+    // pinned with the catalog. Read under the lock: other threads write both.
+    CatalogWriteGuard scoped = guard;
+    if (!scoped.HasProject) {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        projectKeyForCache = cat.currentCatalogProjectKey_;
+        scoped.HasProject = true;
+        scoped.Project =
+            cat.hasPendingCatalogProjectKey_ ? cat.pendingCatalogProjectKey_ : cat.currentCatalogProjectKey_;
+        cat.hasPendingCatalogProjectKey_ = false;
+        cat.pendingCatalogProjectKey_.clear();
     }
+    const std::string& projectKeyForCache = scoped.Project;
     const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, projectKeyForCache);
     (void)catalogPlane;
 
     if (!error.empty()) {
-        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, guard);
+        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, scoped);
         return false;
     }
 
-    if (!guard.Holds()) {
+    if (!scoped.Holds()) {
         return false; // already superseded: skip the snapshot write too
     }
     {
@@ -341,20 +345,43 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     }
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        if (!guard.Holds()) {
+        if (!scoped.Holds()) {
             return false;
         }
         cat.AvailableFields = std::move(fields);
         cat.AvailableComponents = std::move(components);
         cat.AvailableIssueTypeMeta = std::move(issueTypeMeta);
-        guard.PinProjectLocked(cat);
+        scoped.PinProjectLocked(cat);
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogErrorTransient = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.fieldCatalogEverLoaded_ = true;
     }
-    cat.LastTrackerFieldCatalogError.clear();
-    cat.LastTrackerFieldCatalogErrorTransient = false;
-    cat.LastTrackerFieldCatalogWarning.clear();
-    cat.fieldCatalogEverLoaded_ = true;
     cat.TrackerFieldCatalogRevision.fetch_add(1);
     return true;
+}
+
+// The configuration a catalog fetch for the pane keyed `paneKey` runs with, in `out`; false when the
+// pane cannot take it. A configuration naming another tracker kind than the pane runs comes from a
+// backend override (SMATCHET_BACKEND_TYPE, a fixture backend) or a switch whose backend swap is still
+// pending (a deferred Save & Sync). An unscoped fetch then runs for the tracker the pane runs. A
+// project-scoped one names a project of the configured tracker, which the pane's backend cannot
+// answer, so it does not run. A pane keyed by a site (not just a bare kind) only takes a fetch for
+// that same site, or one site's catalog would land in another's pane and snapshot.
+bool ResolvePaneFetchConfig(const std::string& paneKey, const TrackerConfig& cfg, const std::string& projectKey,
+                            TrackerConfig& out) {
+    out = cfg;
+    if (paneKey.empty()) {
+        return true;
+    }
+    const std::string paneKind = smatchet::cache_keys::CacheBackendKeyKind(paneKey);
+    if (paneKind != smatchet::cache_keys::CacheBackendKeyKind(smatchet::cache_keys::TrackerCacheBackendKey(cfg))) {
+        if (!projectKey.empty()) {
+            return false;
+        }
+        out.TrackerType = paneKind;
+    }
+    return paneKey == paneKind || smatchet::cache_keys::TrackerCacheBackendKey(out) == paneKey;
 }
 
 } // namespace
@@ -589,26 +616,15 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     guard.ExpectedGeneration = ctx.backendGeneration_.load();
     guard.Epoch = &cat.CatalogEpoch;
     guard.ExpectedEpoch = cat.CatalogEpoch.load();
-    // A configuration naming another tracker kind than the pane runs comes from a backend override
-    // (SMATCHET_BACKEND_TYPE, a fixture backend) or a switch whose backend swap is still pending (a
-    // deferred Save & Sync). An unscoped refresh then fetches for the tracker the pane runs, when the
-    // configuration's settings for that tracker are the ones the pane is keyed by. A project-scoped
-    // refresh names a project of the configured tracker, which the pane's backend cannot answer, and a
-    // fetch the pane's key does not match would land one site's catalog in another's pane and
-    // snapshot: neither runs.
-    TrackerConfig fetchCfg = cfg;
+    TrackerConfig fetchCfg;
     const std::string paneKey = ctx.CacheBackendKeyCopy();
-    const std::string paneKind = smatchet::cache_keys::CacheBackendKeyKind(paneKey);
-    const std::string cfgKind =
-        smatchet::cache_keys::CacheBackendKeyKind(smatchet::cache_keys::TrackerCacheBackendKey(cfg));
-    if (!paneKey.empty() && paneKind != cfgKind) {
-        fetchCfg.TrackerType = paneKind;
-        if (!projectKey.empty() || smatchet::cache_keys::TrackerCacheBackendKey(fetchCfg) != paneKey) {
-            LOG_INFO("AppController::RefreshFieldCatalog: pane '%s' runs '%s' while the configuration names '%s'; "
-                     "skipped",
-                     ctx.PaneId.c_str(), paneKind.c_str(), cfgKind.c_str());
-            return false;
-        }
+    if (!ResolvePaneFetchConfig(paneKey, cfg, projectKey, fetchCfg)) {
+        LOG_INFO(
+            "AppController::RefreshFieldCatalog: pane '%s' runs '%s' while the configuration names '%s'; "
+            "skipped",
+            ctx.PaneId.c_str(), smatchet::cache_keys::DescribeCacheBackendKey(paneKey).c_str(),
+            smatchet::cache_keys::DescribeCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(cfg)).c_str());
+        return false;
     }
     guard.Config = &fetchCfg;
     guard.HasProject = true;
@@ -753,7 +769,10 @@ void AppController::SetCurrentCatalogProject(const std::string& projectKey) {
     GridContextFieldCatalog& cat =
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-    cat.currentCatalogProjectKey_ = projectKey;
+    // Pinned with the catalog the next SetFieldCatalog applies, not now: the catalog in memory is not
+    // that project's yet.
+    cat.pendingCatalogProjectKey_ = projectKey;
+    cat.hasPendingCatalogProjectKey_ = true;
 }
 
 void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
@@ -839,6 +858,9 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
             std::vector<TrackerField>().swap(cat.AvailableFields);
             std::vector<TrackerComponent>().swap(cat.AvailableComponents);
             std::vector<TrackerIssueTypeCreateMeta>().swap(cat.AvailableIssueTypeMeta);
+            cat.currentCatalogProjectKey_.clear();
+            cat.hasPendingCatalogProjectKey_ = false;
+            cat.pendingCatalogProjectKey_.clear();
         }
         cat.LastTrackerFieldCatalogError.clear();
         cat.LastTrackerFieldCatalogErrorTransient = false;
