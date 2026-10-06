@@ -191,5 +191,6 @@ JSON
 }
 
 @test "the SessionStart template wires --nudge" {
-    grep -q 'merge-snapshot-holes.sh\\" --nudge' "$REPO_ROOT/docs/harness/claude-code/settings.json.tmpl"
+    # The template launches SessionStart scripts through layer-run.sh: `layer-run.sh" agents/scripts/core/<script> --nudge`.
+    grep -q 'agents/scripts/core/merge-snapshot-holes.sh --nudge' "$REPO_ROOT/docs/harness/claude-code/settings.json.tmpl"
 }
