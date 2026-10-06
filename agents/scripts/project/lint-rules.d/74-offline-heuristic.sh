@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 74-offline-heuristic.sh — Quality Pillar 6 (offline-first) HEURISTIC rules (sourced by
-# test-lint-rules.sh, not run directly). WARN-FIRST / ADVISORY: never touches $rc; diff-scoped to changed
-# first-party .cpp files. Each graduates to blocking on its own per ADR-0026.
+# test-lint-rules.sh, not run directly). Diff-scoped to changed first-party .cpp files. Each rule starts
+# WARN-first and graduates to blocking on its own per ADR-0026; the driver decides which block
+# (OFFLINE_HEURISTIC_BLOCKING_RULES, delta per changed file) and which only warn (OFFLINE_WARN_RULES).
+# Graduated: offline-failure-cached-as-loaded and offline-cache-cleared.
 #
 # offline-loading-only-render — a "Loading" line drawn in a TU that fetches, with no freshness cue within
 # the window. Offline it stays up for the whole retry window (up to ~90 s) even when cached data exists.

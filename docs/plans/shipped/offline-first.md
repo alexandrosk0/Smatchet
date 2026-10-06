@@ -3012,6 +3012,23 @@ This plan touches `Source/Core/`.
   - The fixture's `watchers`, `userGroups` and `groupMembers` keys.
   - The bucket-E tests `OfflineFirst/Watchers_OfflineKeepsSavedList` and `OfflineFirst/UserInfo_GroupsOfflineOfferRetry`.
 
+### Follow-ups after closeout — [#2313](https://github.com/alexandrosk0/Smatchet/pull/2313) and the gate-graduation PR
+These close everything the sweep filed and did not fix inside a slice: the four debt entries, [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270), and the graduation proposals in `docs/high-integrity/offline-calibration.md`.
+
+- #2313 (fixes #2270; merged 2026-10-06 as `a6f29cca`) removes per-frame I/O and adds failure backoffs:
+  - **Queue views.** The Offline Queue panel and the status bar read an in-memory view of the queue tables (`Sync/PublishedSnapshot.h` + `Sync/SourcedSnapshot.h`), which a worker republishes after every change. They no longer load four SQLite tables per frame. The replay ticks decide from that view too. The panel's "Retry now" rereads both queues before it replays.
+  - **Ticket saves.** `UpdateTicket` patches the row in memory and queues the SQLite write plus the grid re-read on a worker, in call order (`SerialTaskQueue.h`).
+  - **Project picker.** It reads its recently used projects on a worker once per popup open.
+  - **Bulk prefetch.** A failed bulk-import prefetch backs off per (tracker, issue key) until the backoff passes or the connection recovers.
+  - **Perforce describe.** A failed `p4 describe` is retried after the lookup backoff, and "no such changelist" stays final. A failure never replaces a success that a concurrent lookup stored. The CL tooltip shows a worker exception as an error.
+  - The four debt entries are archived.
+- The gate-graduation PR changes the gates and the record:
+  - `tracker-error-kind-collapsed` moves to absolute-0.
+  - `offline-failure-cached-as-loaded` and `offline-cache-cleared` block, delta-gated per changed `.cpp`.
+  - The other three heuristics stay WARN until the tracker-surface scoping in the calibration doc lands.
+  - It also carries the postmortems for the two plan-lock overrides: #2309's (a lock claiming the generated `docs/plans/INDEX.md`) and #2313's (a live lock whose three overlapping files merged clean), with a tooling entry each.
+- Still open: the manual Windows end-to-end pass (§ Manual end-to-end test plan below). It needs a real tracker and network control, so a Linux container cannot run it.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.

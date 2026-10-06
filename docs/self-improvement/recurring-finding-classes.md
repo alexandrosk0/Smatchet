@@ -37,12 +37,12 @@ whole-tree clean invariants bats-asserted, campaign sweep modes
 
 | Rank | Class | Recurrence evidence | Gate shipped | Tier |
 |---|---|---|---|---|
-| 1 | Write bypasses the offline queue | comment post, worklog, watch, Annotate, command/Lua field edits, bulk import (offline-first sweep 2026-09-24) | `offline-write-bypasses-queue` | **blocking** (delta) |
-| 2 | Error kind collapsed to Unknown | #21b TODO in `JiraClient::FetchFieldCatalog` wiped the catalog offline; Linear team lookup | `tracker-error-kind-collapsed` | **blocking** (delta) |
+| 1 | Write bypasses the offline queue | comment post, worklog, watch, Annotate, command/Lua field edits, bulk import (offline-first sweep 2026-09-24) | `offline-write-bypasses-queue` | **blocking** (absolute-0 since S9) |
+| 2 | Error kind collapsed to Unknown | #21b TODO in `JiraClient::FetchFieldCatalog` wiped the catalog offline; Linear team lookup | `tracker-error-kind-collapsed` | **blocking** (absolute-0 since 2026-10-05) |
 | 3 | Loading-only render while cache exists | PR #2234 status combo; comments modal; components editor | `offline-loading-only-render` | WARN-first |
 | 4 | In-flight latch without an exit guard | comments modal; transitions service; plan-doc viewer (#2056/#2057/#2108) | `offline-inflight-latch-unguarded` | WARN-first |
-| 5 | Failure cached as final / no backoff | transitions service; editmeta per-frame storm | `offline-failure-cached-as-loaded` | WARN-first |
-| 6 | Cached state cleared on error | catalog + users wipe on catalog failure | `offline-cache-cleared` | WARN-first |
+| 5 | Failure cached as final / no backoff | transitions service; editmeta per-frame storm | `offline-failure-cached-as-loaded` | **blocking** (delta; graduated 2026-10-05) |
+| 6 | Cached state cleared on error | catalog + users wipe on catalog failure | `offline-cache-cleared` | **blocking** (delta; graduated 2026-10-05) |
 | 7 | Network read with no connectivity gate | comments modal, tooltip fetch, project picker | `offline-network-read-ungated` | WARN-first |
 
 Blocking-vs-advisory rationale: the two exact signals (ranks 1–2) block, delta-gated per changed file so the

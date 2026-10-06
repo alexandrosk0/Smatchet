@@ -1198,6 +1198,46 @@ _resolve_py() {
     [[ "$output" != *"Sync/Queue.h"* ]]
 }
 
+@test "tracker-error-kind-collapsed is absolute-0: the real tree has no collapsed tracker error" {
+    run bash -c "cd '$REPO_ROOT' && source agents/scripts/project/lint-rules.d/00-common.sh && source agents/scripts/project/lint-rules.d/72-offline-exact.sh && compute_offline_kind_violations"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "the absolute kind sweep flags an existing collapse, in headers too, and only in tracker scope" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Tracker" "$tmp/Source/Core/include" "$tmp/Source/Core/src/Ui"
+    printf 'TrackerError F() {\n    return TrackerErrorUnknown(outError);\n}\n' > "$tmp/Source/Core/src/Tracker/Old.cpp"
+    printf 'inline TrackerError G() {\n    return TrackerErrorUnknown(detail);\n}\n' > "$tmp/Source/Core/include/ITrackerThing.h"
+    printf 'TrackerError H() {\n    return TrackerErrorUnknown(outError);\n}\n' > "$tmp/Source/Core/src/Ui/Out.cpp"
+    printf 'TrackerError K() {\n    return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n}\n' > "$tmp/Source/Core/src/Tracker/Idiom.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && compute_offline_kind_violations"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tracker-error-kind-collapsed"*"Source/Core/src/Tracker/Old.cpp:2"* ]]
+    [[ "$output" == *"Source/Core/include/ITrackerThing.h:2"* ]]
+    [[ "$output" != *"Ui/Out.cpp"* ]]
+    [[ "$output" != *"Idiom.cpp"* ]]
+}
+
+@test "the graduated offline heuristics block a NEW hit and keep an existing one grandfathered" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void C() {\n    cat.AvailableFields.clear();\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    printf '// moved\nvoid C() {\n    cat.AvailableFields.clear();\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm moved ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/74-offline-heuristic.sh' && offline_delta_hits scan_offline_heuristic_file develop \"\${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}\""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    printf 'void L() {\n    if (!ok) {\n        LOG_WARN("lookup failed: %%s", e);\n        s.loaded = true;\n    }\n}\n' > "$tmp/Source/Core/src/Ui/New.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/74-offline-heuristic.sh' && offline_delta_hits scan_offline_heuristic_file develop \"\${OFFLINE_HEURISTIC_BLOCKING_RULES[@]}\""
+    [[ "$output" == *"offline-failure-cached-as-loaded"*"New.cpp:4"* ]]
+}
+
 # ---------- lint-rules.d module loading (monolith split) ----------
 # The scanner sources its per-rule-family modules from lint-rules.d/ next to the
 # entry point. Loading must FAIL CLOSED: a missing module means a silently
