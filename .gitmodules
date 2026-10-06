@@ -1,0 +1,4 @@
+[submodule "agent-layer"]
+	path = agent-layer
+	url = https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git
+	branch = develop
