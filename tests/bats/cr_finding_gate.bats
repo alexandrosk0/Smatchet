@@ -89,7 +89,8 @@ step_timeout() {
     [ "$status" -eq 0 ]
     [ -n "$output" ]
     # The old defect form: a fixed attempt count with no deadline.
-    ! grep -qE '^\s*ATTEMPTS=' "$ACTION"
+    run grep -qE '^\s*ATTEMPTS=' "$ACTION"
+    [ "$status" -ne 0 ]
     # A deadline computed from bash's SECONDS is what makes the exit time an
     # invariant of the step rather than a consequence of API latency.
     grep -q 'deadline=$(( SECONDS + POLL_BUDGET_SECONDS ))' "$ACTION"
@@ -843,7 +844,8 @@ run_nudge() {
     printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"         # new code: -> terminal fail
     # And it must NOT be mistaken for the rate-limit marker — they are distinct
     # states needing distinct recoveries (full review vs a first review).
-    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
+    [ "$status" -ne 0 ]
     # Exercise the CLASSIFICATION, not just the fields: inspecting state/desc
     # cannot tell whether the verdict actually holds the terminal OSS arm.
     [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
@@ -856,8 +858,10 @@ run_nudge() {
     setup_jq
     f="$(payload '[]' SUCCESS 'Review skipped due to path filters')"
     desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
-    ! printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"
-    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    run grep -qiE "$MANUAL_REVIEW_RE" <<<"$desc"
+    [ "$status" -ne 0 ]
+    run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
+    [ "$status" -ne 0 ]
     # The terminal path-filter skip must still PASS through the model — this is
     # the fail-shut half, and it is what an over-broad match would break.
     [ "$(verdict "$f")" = "not-reviewed" ]
