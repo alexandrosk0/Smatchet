@@ -86,13 +86,12 @@ void MarkNonEditableTimetrackingReadOnly(std::vector<TrackerField>& fields) {
     }
 }
 
-// The Jira-only fixups every applied catalog gets:
-// - drop Jira's legacy system `comment` field (ADF blob, label "Comment"). It duplicated the synthetic
-//   `comments` count column in the picker (#1291 follow-up); the blob still rides in per-ticket
-//   fieldValues["comment"] and surfaces as the Comments-cell tooltip, so no text is lost;
-// - add the synthetic read-only `history` column (#823);
-// - add the synthetic read-only `comments` count column, typed "number" like the GitHub catalog's
-//   comments field so the shared comments cell renders a count.
+// The Jira-only fixups every applied catalog gets. Jira's legacy system `comment` field (an ADF blob
+// labelled "Comment") is dropped because it duplicated the synthetic comments count column in the
+// picker (#1291 follow-up). Its text still rides in each ticket's field values and shows as the
+// Comments-cell tooltip, so nothing is lost. Then the synthetic read-only history column (#823) and the
+// comments count column are added; the latter is typed "number" like the GitHub catalog's comments
+// field, so the shared comments cell renders a count.
 void EraseLegacyCommentField(std::vector<TrackerField>& fields) {
     fields.erase(
         std::remove_if(fields.begin(), fields.end(), [](const TrackerField& field) { return field.Id == "comment"; }),
