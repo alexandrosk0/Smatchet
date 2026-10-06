@@ -33,6 +33,9 @@ struct ViewDefinition;
 struct GridContextFieldCatalog {
     /// Bumped when the field catalog changes (fetch, error clear, etc.); UI sort caches key on it.
     std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
+    /// Bumped by an explicit catalog clear (AppController::SetFieldCatalog with nothing in it), the reset
+    /// a tracker switch starts with. A worker fetch latched before the clear drops its result.
+    std::atomic<std::uint64_t> CatalogEpoch{0};
     /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
     mutable std::mutex availableFieldsMutex_;
     std::vector<TrackerField> AvailableFields;
