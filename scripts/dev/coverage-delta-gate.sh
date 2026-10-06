@@ -424,8 +424,25 @@ _classify_diff() {
 # nesting of each added line is knowable) and print a reduced diff for
 # _classify_diff: the file/hunk headers plus the '+' lines that are NOT exempted
 # here. Context and '-' lines are dropped (the classifier never reads them), which
-# also keeps the bash read loop cheap on big diffs. Two exemptions, both
-# conservative (anything unrecognised is printed, i.e. falls through):
+# also keeps the bash read loop cheap on big diffs. Because a full-context diff is
+# ONE hunk per file, the classifier's carried state (inside a /* */ block, inside a
+# wrapped LOG_*( ... )) would otherwise never reset — a reworded first line of an
+# existing comment or LOG call would swallow every later '+' line of the file. So
+# whenever a context line or a dropped '+' line sits between two printed '+'
+# lines, a synthetic `@@` header is printed first: classifier state never spans
+# post-image lines it cannot see (the default-context diff only reset at real
+# hunk boundaries, so this is never looser than that).
+#
+# A small lexer walks the same post-image tracking /* */ comments and raw string
+# literals (R"delim( ... )delim"). A '+' line that is only whitespace/comment is
+# dropped (no surface; not a gap) — so an edit to a comment whose opener is a
+# context line stays exempt. A '+' line that starts inside a raw string literal is
+# string DATA and is replaced by a sentinel the classifier never exempts. A file
+# whose tracking cannot be trusted — a hunk that ends with the #if stack open,
+# closes an arm it never opened, or ends inside a comment/raw string — gets
+# neither the comment drop nor the off-target drop: its lines reach the
+# classifier as-is (falls through). Two exemptions, both conservative (anything
+# unrecognised is printed, i.e. falls through):
 #
 #   1. Off-target platform arm. Walking the post-image (' ' + '+' lines) of each
 #      first-party product C/C++ file, keep an #if/#ifdef/#ifndef/#elif/#else/
@@ -440,8 +457,9 @@ _classify_diff() {
 #      #else arm is the Linux/POSIX path CI builds and runs), as does
 #      `#elif defined(__ANDROID__) || defined(__linux__)`. A directive line with a
 #      backslash continuation or a multi-line comment is classified OTHER (gated).
-#      The stack resets at every hunk header, so a partial-context diff can only
-#      under-exempt.
+#      A `#if` line that starts inside a /* */ comment or a raw string literal is
+#      not a directive and is not tracked. The stack resets at every hunk header,
+#      so a partial-context diff can only under-exempt.
 #
 #   2. Header→cpp body relocation. Pass 1 collects every complete, brace-balanced
 #      function definition inside a run of REMOVED lines of a product header
@@ -547,23 +565,113 @@ function track_directive(body,   s, kw, rest, c) {
             else c = classify_cond(rest)
             arm[depth] = (neg[depth] || c == "OFF")
             if (c == "NEGOFF") neg[depth] = 1
-        }
+        } else uflow = 1
     } else if (kw == "else") {
         if (depth > 0) arm[depth] = neg[depth]
+        else uflow = 1
     } else if (kw == "endif") {
         if (depth > 0) depth--
+        else uflow = 1
     }
     return 1
 }
 function first_tok(s) { sub(/[ \t\/].*$/, "", s); return s }
 function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; return 0 }
+# Lexical state across the post-image lines of one hunk: lx_blk (inside a /* */
+# comment) and lx_raw (inside a raw string literal, closed by ")" lx_rdel "\"").
+function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = "" }
+# lex_line(s) — advance the lexical state across one line; sets lx_code = 1 when
+# any non-whitespace byte lies outside a comment (string-literal bytes are code).
+# Ordinary string/char literals cannot span lines, so they are skipped in place
+# (a C++14 digit separator 1'000 is not a char literal).
+function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
+    lx_code = 0
+    n = length(s)
+    i = 1
+    while (i <= n) {
+        if (lx_blk) {
+            k = index(substr(s, i), "*/")
+            if (k == 0) return
+            i += k + 1
+            lx_blk = 0
+            continue
+        }
+        if (lx_raw) {
+            lx_code = 1
+            k = index(substr(s, i), ")" lx_rdel "\"")
+            if (k == 0) return
+            i += k + length(lx_rdel) + 1
+            lx_raw = 0
+            continue
+        }
+        rest = substr(s, i)
+        p = match(rest, /[\/"']/)
+        if ((p ? substr(rest, 1, p - 1) : rest) ~ /[^ \t\r]/) lx_code = 1
+        if (!p) return
+        i += p - 1
+        c = substr(s, i, 1)
+        if (substr(s, i, 2) == "//") return
+        if (substr(s, i, 2) == "/*") { lx_blk = 1; i += 2; continue }
+        lx_code = 1
+        if (c == "/") { i++; continue }
+        pre = substr(s, 1, i - 1)
+        if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])(u8|u|U|L)?R$/) {
+            m = substr(s, i + 1)
+            d = index(m, "(")
+            if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\\)"]/) {
+                lx_rdel = substr(m, 1, d - 1)
+                lx_raw = 1
+                i += d + 1
+                continue
+            }
+        }
+        if (c == SQ && pre ~ /(^|[^A-Za-z0-9_])[0-9][A-Za-z0-9_.']*$/) { i++; continue }
+        i++
+        while (i <= n) {
+            k = substr(s, i, 1)
+            if (k == "\\") { i += 2; continue }
+            i++
+            if (k == c) break
+        }
+    }
+}
+# post_line(body) — feed one post-image line through the #if stack (only when it
+# STARTS outside a comment / raw string — a `#if` there is text, not a directive)
+# and then the lexer. Sets pl_raw (line starts inside a raw string literal);
+# returns 1 for a conditional directive.
+function post_line(body,   r) {
+    pl_raw = lx_raw
+    r = (lx_blk || lx_raw) ? 0 : track_directive(body)
+    lex_line(body)
+    return r
+}
+# Pass-1 balance check, at each hunk end: tracking that leaves the #if stack open,
+# closed an arm it never opened, or stops inside a comment / raw string cannot be
+# trusted — that file gets neither the off-target nor the comment-only drop.
+function end_hunk1() {
+    if (prod1 && (depth != 0 || uflow || lx_blk || lx_raw)) untrusted[f1] = 1
+    depth = 0
+    uflow = 0
+    lex_reset()
+}
+# Pass-2 output of one kept '+' line: a synthetic hunk header first when a context
+# or dropped line separates it from the previous printed '+' line, so classifier
+# state (block comment / wrapped LOG_) never spans lines it cannot see.
+function emit(b) {
+    if (gap) { print "@@ prefilter: post-image gap @@"; gap = 0 }
+    print "+" b
+}
 # Pass-1 helpers: close the current removed-header / added-cpp run.
 function end_runs() { in_rrun = 0; in_arun = 0 }
-BEGIN { SQ = sprintf("%c", 39); nr = 0; na = 0 }
+BEGIN {
+    SQ = sprintf("%c", 39); nr = 0; na = 0
+    RAWLINE = "__coverage_gate_raw_string_literal_line__;"
+}
 NR == FNR {
-    if ($0 ~ /^diff --git / || $0 ~ /^@@/) { end_runs(); next }
+    if ($0 ~ /^diff --git / || $0 ~ /^@@/) { end_runs(); end_hunk1(); next }
     if ($0 ~ /^--- /) { end_runs(); next }
-    if ($0 ~ /^\+\+\+ /) { end_runs(); f1 = path_of($0); next }
+    if ($0 ~ /^\+\+\+ /) { end_runs(); f1 = path_of($0); prod1 = is_prod(f1); next }
+    if (prod1 && (substr($0, 1, 1) == " " || substr($0, 1, 1) == "+")) post_line(substr($0, 2))
     if (substr($0, 1, 1) == "-" && is_prod(f1) && is_hdr(f1)) {
         if (!in_rrun) { nr++; rn[nr] = 0; in_rrun = 1 }
         rl[nr, ++rn[nr]] = trim(substr($0, 2))
@@ -583,6 +691,7 @@ NR == FNR {
 }
 FNR == 1 && !paired {
     paired = 1
+    end_hunk1()
     # Extract complete definitions from each removed header run, then pair each
     # with a contiguous byte-identical added run segment in a .cpp.
     for (r = 1; r <= nr; r++) {
@@ -617,24 +726,28 @@ FNR == 1 && !paired {
 }
 {
     if ($0 ~ /^diff --git / || $0 ~ /^--- /) { print; next }
-    if ($0 ~ /^\+\+\+ /) { f2 = path_of($0); prod = is_prod(f2); depth = 0; print; next }
-    if ($0 ~ /^@@/) { depth = 0; print; next }
+    if ($0 ~ /^\+\+\+ /) {
+        f2 = path_of($0); prod = is_prod(f2); trusted = !(f2 in untrusted)
+        depth = 0; gap = 0; lex_reset(); print; next
+    }
+    if ($0 ~ /^@@/) { depth = 0; gap = 0; lex_reset(); print; next }
     c1 = substr($0, 1, 1)
-    if (c1 == " ") { if (prod) track_directive(substr($0, 2)); next }
+    if (c1 == " ") { if (prod) { post_line(substr($0, 2)); gap = 1 } next }
     if (c1 != "+") next
     if (!prod) { print; next }
     body = substr($0, 2)
-    if (track_directive(body)) { print; next }
-    if (FNR in reloc) next
-    if (in_off_arm()) next
+    if (post_line(body)) { emit(body); next }
+    if (FNR in reloc) { gap = 1; next }
+    if (trusted && in_off_arm()) { gap = 1; next }
+    if (trusted && !lx_code) next
     t = trim(body)
-    if (relfile[f2] && t ~ /^namespace([ \t]+[A-Za-z_][A-Za-z0-9_:]*)?[ \t]*\{$/) next
+    if (relfile[f2] && t ~ /^namespace([ \t]+[A-Za-z_][A-Za-z0-9_:]*)?[ \t]*\{$/) { gap = 1; next }
     if (is_hdr(f2) && t ~ /;$/) {
         s2 = t
         sub(/[ \t]*;$/, "", s2)
-        if (s2 in relsig) next
+        if (s2 in relsig) { gap = 1; next }
     }
-    print
+    emit(pl_raw ? RAWLINE : body)
 }
 AWK
 )"
@@ -943,8 +1056,125 @@ diff --git a/Source/Core/src/DictationHook.cpp b/Source/Core/src/DictationHook.c
 +}  // namespace LocalizedImGui
 EOF
 
+    # Full-context diffs are one hunk per file, so the prefilter's lexer tracks
+    # /* */ across CONTEXT lines: rewording non-adjacent lines of one doc-comment
+    # block (the second edit's opener is a context line) stays comment-only.
+    _expect EXEMPT "interleaved edits inside one /** */ block (opener is context)" <<'EOF'
+diff --git a/Source/Core/src/Sync/Doc.cpp b/Source/Core/src/Sync/Doc.cpp
+--- a/Source/Core/src/Sync/Doc.cpp
++++ b/Source/Core/src/Sync/Doc.cpp
+@@ -1,7 +1,7 @@
+ #include "Doc.h"
+-/** Old summary.
++/** New summary.
+  * unchanged detail
+- * old note
++ * new note
+  */
+ int v = 1;
+EOF
+
     # ---- FALLTHROUGH cases (must NOT exempt — real runtime surface) ----
     # selftest: asserts-failure — real runtime-surface diffs must NOT be exempted (the gate's block path).
+
+    # A full-context diff is ONE hunk per file: classifier state entered on a
+    # reworded first line of an existing /* */ block, or of a wrapped LOG_*( ,
+    # must not persist past the context lines to a real statement far below
+    # (default-context diffs reset at each @@; the prefilter emits a synthetic @@
+    # at every post-image gap so this stays as strict as that).
+    _expect FALLTHROUGH "reworded /* */ block opener + untested statement far below" <<'EOF'
+diff --git a/Source/Core/src/Sync/Blk.cpp b/Source/Core/src/Sync/Blk.cpp
+--- a/Source/Core/src/Sync/Blk.cpp
++++ b/Source/Core/src/Sync/Blk.cpp
+@@ -1,10 +1,10 @@
+ #include "Blk.h"
+-/* Old first line of the block.
++/* New first line of the block.
+  * second line
+  */
+ int v1 = 1;
+ int v2 = 2;
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+EOF
+    _expect FALLTHROUGH "reworded wrapped LOG_INFO( opener + untested statement far below" <<'EOF'
+diff --git a/Source/Core/src/Sync/Lg.cpp b/Source/Core/src/Sync/Lg.cpp
+--- a/Source/Core/src/Sync/Lg.cpp
++++ b/Source/Core/src/Sync/Lg.cpp
+@@ -1,10 +1,10 @@
+ #include "Lg.h"
+ void f(int x) {
+-    LOG_INFO("old {}",
++    LOG_INFO("new {}",
+              x);
+ }
+ int v1 = 1;
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+EOF
+
+    # A `#if defined(__ANDROID__)` that is comment text or raw-string data is not
+    # a directive — tracking it left the #if stack open and dropped every later
+    # '+' line of the file as "off-target".
+    _expect FALLTHROUGH "#if defined(__ANDROID__) inside a /* */ comment is not a directive" <<'EOF'
+diff --git a/Source/Core/src/Sync/Pp.cpp b/Source/Core/src/Sync/Pp.cpp
+--- a/Source/Core/src/Sync/Pp.cpp
++++ b/Source/Core/src/Sync/Pp.cpp
+@@ -1,8 +1,8 @@
+ #include "Pp.h"
+ /* Usage note:
+ #if defined(__ANDROID__)
+    (the guard above is illustrative)
+  */
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+EOF
+    _expect FALLTHROUGH "#if defined(__ANDROID__) inside a raw string literal is not a directive" <<'EOF'
+diff --git a/Source/Core/src/Sync/Raw.cpp b/Source/Core/src/Sync/Raw.cpp
+--- a/Source/Core/src/Sync/Raw.cpp
++++ b/Source/Core/src/Sync/Raw.cpp
+@@ -1,7 +1,7 @@
+ static const char* kShader = R"glsl(
+ #if defined(__ANDROID__)
+ )glsl";
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+EOF
+    # Tracking the lexer cannot follow (a `//` comment continued by a trailing
+    # backslash swallows the next line) leaves the #if stack unbalanced at end of
+    # file: the off-target drop is untrusted for that file, so it falls through.
+    _expect FALLTHROUGH "#if stack unbalanced at end of file (untrusted) falls through" <<'EOF'
+diff --git a/Source/Core/src/Sync/Cont.cpp b/Source/Core/src/Sync/Cont.cpp
+--- a/Source/Core/src/Sync/Cont.cpp
++++ b/Source/Core/src/Sync/Cont.cpp
+@@ -1,6 +1,6 @@
+ // historical note \
+ #if defined(__ANDROID__)
+ void g(int x) {
+-    (void)x;
++    launchMissiles(x);
+ }
+EOF
+    # A line inside a raw string literal is string DATA (an embedded script or
+    # shader) even when it looks like a comment / include / brace.
+    _expect FALLTHROUGH "comment-looking line inside a raw string literal is data" <<'EOF'
+diff --git a/Source/Core/src/Sync/Lua.cpp b/Source/Core/src/Sync/Lua.cpp
+--- a/Source/Core/src/Sync/Lua.cpp
++++ b/Source/Core/src/Sync/Lua.cpp
+@@ -1,4 +1,4 @@
+ static const char* kScript = R"(
+-// old
++// new
+ )";
+EOF
 
     # The SAME #1021 shape on the desktop (#ifdef _WIN32) side must still gate.
     _expect FALLTHROUGH "statement on the #ifdef _WIN32 (desktop) side" <<'EOF'

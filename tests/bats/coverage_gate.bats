@@ -220,6 +220,9 @@ cov_step() {
     [[ "$output" == *"coverage-delta-gate --selftest: PASS"* ]]
     [[ "$output" == *"2-line wrapped LOG_ERROR"* ]]
     [[ "$output" == *"3-line wrapped LOG_ERROR"* ]]
+    [[ "$output" == *"reworded /* */ block opener + untested statement far below"* ]]
+    [[ "$output" == *"#if defined(__ANDROID__) inside a raw string literal is not a directive"* ]]
+    [[ "$output" == *"#if stack unbalanced at end of file (untrusted) falls through"* ]]
 }
 
 # ---------- coverage-delta-gate.sh: TEST_CHANGES recognition ----------
@@ -355,4 +358,68 @@ _wph_gate() {
     _wph_gate
     [ "$status" -eq 1 ]
     [[ "$output" == *"FAIL"* ]]
+}
+
+# ==========================================================================
+# coverage-delta-gate.sh: classifier state across a full-context diff. The
+# --unified=100000 diff is ONE hunk per file, so state the classifier enters on
+# a reworded first line of an existing /* */ block or wrapped LOG_*( call must
+# not swallow a real statement far below (the default-context diff reset at
+# each @@). Also: a `#if defined(__ANDROID__)` that is comment text is not a
+# directive (it used to open the #if stack and drop every later '+' line).
+# ==========================================================================
+
+# _ctx_repo <first-block-lines...> — a base TU: the given lines, 40 filler
+# statements, then `void g(int x) { (void)x; }`; leaves the tree on `head`.
+_ctx_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    {
+        printf '%s\n' '#include "a.h"' "$@"
+        for i in $(seq 1 40); do printf 'int v%d = %d;\n' "$i" "$i"; done
+        printf '%s\n' 'void g(int x) {' '    (void)x;' '}'
+    } > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+# _ctx_edit <sed-expr> — apply one edit plus the untested `launchMissiles(x);`.
+_ctx_edit() {
+    sed -i -e "$1" -e 's|^    (void)x;|    launchMissiles(x);|' "$FIXREPO/Source/Core/src/a.cpp"
+}
+
+@test "coverage-delta-gate.sh: reworded block-comment opener does not exempt a statement far below" {
+    _ctx_repo '/* Old first line of the block.' ' * second line' ' */'
+    _ctx_edit 's|^/\* Old first line|/* New first line|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: reworded wrapped LOG_INFO opener does not exempt a statement far below" {
+    _ctx_repo 'void f(int x) {' '    LOG_INFO("old {}",' '             x);' '}'
+    _ctx_edit 's|LOG_INFO("old {}",|LOG_INFO("new {}",|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: an #if defined(__ANDROID__) inside a block comment is not a directive" {
+    _ctx_repo '/* Usage note:' '#if defined(__ANDROID__)' '   (illustrative only)' ' */'
+    _ctx_edit 's|^   (illustrative only)|   (illustrative only, see below)|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: comment-only edits inside an existing block comment stay exempt" {
+    _ctx_repo '/** Old summary.' ' * unchanged detail' ' * old note' ' */'
+    sed -i -e 's|^/\*\* Old summary.|/** New summary.|' -e 's|^ \* old note| * new note|' \
+        "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
 }
