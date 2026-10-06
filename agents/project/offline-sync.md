@@ -74,4 +74,4 @@ Offline path smoke (bucket A `GlobalFakeNetwork()` / bucket E `scripts/dev/test-
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator files it as one entry under `docs/self-improvement/categories/<category>/` (format: `agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`).
