@@ -393,8 +393,8 @@ _path_repo() {
 }
 
 # ==========================================================================
-# coverage-delta-gate.sh: full-context exemptions (off-target platform arm +
-# header->cpp body relocation). Separate block: real `git diff --unified=100000`
+# coverage-delta-gate.sh: full-context exemptions (an off-target platform arm is
+# exempt; a header->cpp body move is not). Separate block: real `git diff --unified=100000`
 # fixtures, both directions, through the gate's normal (non-selftest) path.
 # ==========================================================================
 
@@ -464,7 +464,9 @@ _wph_gate() {
     [[ "$output" == *"FAIL"* ]]
 }
 
-@test "coverage-delta-gate.sh: inline header body relocated byte-identical to a new .cpp is exempt" {
+@test "coverage-delta-gate.sh: an inline header body moved byte-identical to a new .cpp is not exempt" {
+    # Callers in other translation units can reach another overload once the body moves, so a move
+    # between files is compared like any other change.
     _wph_repo
     printf '%s\n' '#pragma once' 'namespace ui {' '// Defined out-of-line in hook.cpp.' \
         'int Hook(int x);' '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
@@ -472,8 +474,9 @@ _wph_gate() {
         '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' '' \
         '}  // namespace ui' > "$FIXREPO/Source/Core/src/hook.cpp"
     _wph_gate
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"test-light exemption"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+    [[ "$output" == *"no test-light exemption"* ]]
 }
 
 @test "coverage-delta-gate.sh: relocated body with one edited line still FAILs" {
