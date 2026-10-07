@@ -242,7 +242,7 @@ The arm-side fixes covered the arm paths seen so far. The arm path here, a harne
 
 The only mitigation applied was prose. The arming session noted that GitHub auto-merge only waits on required checks, and that auto-merge should be turned off if a non-required check went red. That was not wired to any check result. The session had no activity after 01:44:25Z, so the 3-minute window between the red and the merge passed with nothing acting on it.
 
-**(2) Detection — a failed fetch reads as "clean".** Trigger 1+2 of `postmortem-owed.sh` fetches the window in one GraphQL call: `gh pr list --limit $FETCH_N --json …statusCheckRollup`, with `FETCH_N` = 3 × `SCAN_N` = 60 (`:612`, `:707-709`). At about 52 check runs per develop PR, that query returns `HTTP 504 Gateway Timeout` (3 of 3 on 2026-10-04; `--limit 40` succeeds). `2>/dev/null … || true` discards the failure, so `ROWS` stays empty. The script then prints its clean line (`:1092`) for a window it never read.
+**(2) Detection — a failed fetch reads as "clean".** Trigger 1+2 of `postmortem-owed.sh` fetches the window in one GraphQL call: `gh pr list --limit $FETCH_N --json …statusCheckRollup`, with `FETCH_N` = 3 × `SCAN_N` = 60 (`:612`, `:707-709` at `c9479274d`; the `FETCH_N=` assignment and the `ROWS` fetch). At about 52 check runs per develop PR, that query returns `HTTP 504 Gateway Timeout` (3 of 3 on 2026-10-04; `--limit 40` succeeds). `2>/dev/null … || true` discards the failure, so `ROWS` stays empty. The script then prints its clean line (`:1092` at `c9479274d`, the `merges clean` echo) for a window it never read.
 
 With `POSTMORTEM_FETCH_N=30`, the same script and tree report `PR #2286 — red-check: Bucket-E UI tests (Mesa headless GL)`. They also report the separately owed #2280 (`Plan-lock gate` red under `plan-lock-out-of-band`), which has its own entry above. The detector goes blind as rollups grow, and it gives no sign that it has.
 
@@ -252,7 +252,7 @@ PRIMARY (prevention, independent of arm path) — add one **required aggregate c
 - fails fast on any non-advisory red;
 - passes only when everything is terminal and green, using the CI semantics of `merge-gates.d/10-gate-filter.sh` (newest-suite collapse, the `advisory` name exemption, `*-out-of-band` downgrades re-evaluated on `labeled`).
 
-Add the job to `branch_protection.required_contexts`, landing it on a green develop tip. Replayed on #2286, the aggregate is pending at the 01:43:54Z arm and red from 01:56:45Z, so auto-merge holds at 01:59:29Z.
+Add the job to `branch_protection.required_contexts`, landing it on a green develop tip, then re-run `bash agent-layer/agents/scripts/core/setup-branch-protection.sh` and confirm the context is in the live `.../branches/develop/protection/required_status_checks` list: the config alone is inert until that script re-runs ([`ci-required-check-pattern.md`](../../agent-layer/docs/agent-rules/ci-required-check-pattern.md) § Config↔live drift; the #1227 Coverage escape). Replayed on #2286, the aggregate is pending at the 01:43:54Z arm and red from 01:56:45Z, so auto-merge holds at 01:59:29Z.
 
 A `workflow_run`-triggered disarm was replayed and rejected: `Build and test` completed at 02:00:25Z, 39 s *after* the merge, and that trigger cannot see pending checks. Defence-in-depth companion: a `PreToolUse` deny for harness auto-merge tools, plus naming them in `merge-gates.md` § Sanctioned non-admin merge path.
 
@@ -284,7 +284,7 @@ UX Quality Pillar 6 (ADR-0026): blocking `offline-write-bypasses-queue` + `track
 The PR #2234 diff of `TicketFieldEditor.cpp` + `IssueTransitionsCacheService.cpp`: a reviewer must flag the loading-only combo branch and the failure cached as loaded as High.
 
 ### Filed as
-`docs/plans/offline-first.md` (slices S1–S13).
+`docs/plans/shipped/offline-first.md` (slices S1–S13).
 
 ## 2026-09-12 · PR #2160 · `plan-lock-out-of-band` waived a red `Plan-lock gate` with no recorded reason
 
@@ -305,10 +305,12 @@ The plan-lock hatch is a bare boolean: `merge-gates.d/10-gate-filter.sh:36` read
 `($labels | any(. == "plan-lock-out-of-band")) as $planlock`, so label presence alone downgrades the
 red to WARN with no record of which lock was crossed or why that was safe. The repo already solved
 this for the sibling hatch — `cr-out-of-band` alone is explicitly NOT honoured, requiring a
-`cr-disposition:<reason>` label or body marker (`10-gate-filter.sh:76-77`) that `merge-gates.sh:1486`
+`cr-disposition:<reason>` label or body marker (`10-gate-filter.sh:76-77`) that
+merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`)
 refuses to proceed without (PR-3 `cr-out-of-band-disposition-trail`). Plan-lock never got the same
 treatment. Compounding it, the same label clears three unrelated conditions (a real write-set
-overlap `:50`, an *unverifiable* lock state `:44`, an unresolvable base ref `:73`), and both places
+overlap `:50`, an *unverifiable* lock state `:44`, an unresolvable base ref — the
+`origin/${base} does not resolve` error, currently `:104`), and both places
 that could have preserved the reason fail: GitHub strips override labels post-merge, and ADR-0017's
 merge-snapshot ledger has no row for #2160 because the default merge path never writes one. The
 decision is therefore unreconstructible — this entry can say the gate was waived, but not what was
@@ -317,8 +319,8 @@ waived or whether it was right.
 ### Preventing gate
 Require a disposition trail for the plan-lock hatch, mirroring the shipped CR pattern: stop honouring
 `plan-lock-out-of-band` alone, and require a `plan-lock-disposition:`-prefixed label or a
-`plan-lock-disposition:<reason>` body marker naming the lock slug and the justification, with the
-`merge-gates.sh:1486` refusal as the template. Separately, split the unverifiable-lock-state
+`plan-lock-disposition:<reason>` body marker naming the lock slug and the justification, with
+merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`) as the template. Separately, split the unverifiable-lock-state
 condition onto its own token so an infra failure cannot be cleared by an operator's "I coordinated
 this" attestation. Regression case in `tests/bats/merge_gates.bats`: a bare `plan-lock-out-of-band`
 must NOT downgrade a red `Plan-lock gate`.

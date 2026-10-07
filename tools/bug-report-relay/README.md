@@ -93,7 +93,7 @@ relay and is rate-limited + rotatable server-side, so bundling it is acceptable.
 
 ## Crash minidumps must go to a PRIVATE repo
 
-A minidump carries the crashing thread's **stack memory** and the loaded-module
+A minidump carries every application thread's **stack memory** and the loaded-module
 list. A GitHub Release asset on a **public** repo is world-downloadable with no
 auth, so uploading one there publishes a stranger's process state.
 
@@ -127,14 +127,18 @@ Run **both** layers — they cover different things:
 | Binding | Key | Default budget |
 |---|---|---|
 | `REPORT_RATE_LIMITER` | client IP (`CF-Connecting-IP`) | 5 requests / 60s |
-| `GLOBAL_RATE_LIMITER` | the whole relay | 60 requests / 60s |
+| `GLOBAL_RATE_LIMITER` | one shared key, counted **per Cloudflare location** | 60 requests / 60s per location |
 
 Both apply to `POST /report` and run **before** the `RELAY_KEY` check, so a
 key-guessing flood is throttled too. Over budget → `429` with `Retry-After: 60`.
-The global bucket is what stops a distributed flood (many IPs, each individually
-under the per-IP budget) from burning the GitHub token's secondary-rate-limit
-allowance. Tune the numbers in `wrangler.toml` and redeploy; `simple.period`
-accepts only `10` or `60`.
+The global bucket caps what one Cloudflare location forwards, not the whole
+relay: Cloudflare counts a rate-limit key separately in each location the Worker
+runs in, and the counts are approximate (eventually consistent). A flood spread
+across N locations can reach GitHub at up to N × 60 requests/min, which is more
+than GitHub's secondary rate limit on content creation allows. For a true
+relay-wide cap, add a dashboard WAF rate-limiting rule (needs a custom domain —
+step 2 below) or move the counter into a Durable Object. Tune the numbers in
+`wrangler.toml` and redeploy; `simple.period` accepts only `10` or `60`.
 
 These are enforced in the Worker itself, so they also apply on `*.workers.dev`,
 where a dashboard WAF rule cannot reach. They fail **open** — a limiter outage
@@ -161,7 +165,8 @@ Free tier covers basic rules. See the
 ## Local test
 
 ```bash
-npm test           # rate-limit + private-dump-repo gates (node:test, no network)
+npm test           # rate-limit + private-dump-repo gates (node:test, no network; CI runs it
+                   # through scripts/dev/test-bug-report-relay.sh)
 
 npx wrangler dev   # serves on http://localhost:8787
 curl -s localhost:8787/health
