@@ -385,7 +385,7 @@ TEST_CASE("AppController::RefreshFieldCatalog never falls back to a snapshot an 
             << "\",\"lastUsedUnix\":100}],\"" << unscopedKey
             << "\":{\"fields\":[{\"id\":\"pr.head\",\"name\":\"PR Head Branch\"}]}}";
     }
-    REQUIRE(SnapshotHasField(jira, std::string(), "pr.head"));
+    REQUIRE_FALSE(SnapshotHasField(jira, std::string(), "pr.head")); // the cache refuses it to every reader
 
     AppController app;
     GridContextDepsAdapter adapter(app);
@@ -393,6 +393,29 @@ TEST_CASE("AppController::RefreshFieldCatalog never falls back to a snapshot an 
     backend->Fail = true;
     adapter.SetBackend(std::move(backend));
     CHECK_FALSE(app.RefreshFieldCatalog(jira, "FOO"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "pr.head"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog never restores an older build's unscoped Jira snapshot") {
+    // The unscoped refresh restores the unscoped key directly: the same older-build snapshot is refused.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig jira = ConfigManager::Load();
+    jira.TrackerType = "Jira";
+    jira.Domain = "https://acme.atlassian.net";
+    const std::string unscopedKey = FieldCatalogCache::BuildFieldCatalogCacheKey(jira, std::string());
+    {
+        std::ofstream out(ConfigManager::GetUserDataDirectory() + "smatchet_field_catalog_cache.json",
+                          std::ios::binary | std::ios::trunc);
+        out << "{\"schema_version\":3,\"entries\":[],\"" << unscopedKey
+            << "\":{\"fields\":[{\"id\":\"pr.head\",\"name\":\"PR Head Branch\"}]}}";
+    }
+
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->Fail = true;
+    adapter.SetBackend(std::move(backend));
+    CHECK_FALSE(app.RefreshFieldCatalog(jira));
     CHECK_FALSE(HasField(app.GetAvailableFields(), "pr.head"));
 }
 

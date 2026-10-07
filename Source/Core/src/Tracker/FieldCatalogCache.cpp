@@ -277,15 +277,23 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         e["projectKey"] = projectKey;
         e["backend"] = backend;
         e["endpoint"] = endpoint;
-        e["lastUsedUnix"] = lastUsed;
+        // A time ahead of the clock (a clock moved back, a hand edit) would pin the entry first in the LRU
+        // order for good: it counts as used now.
+        e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
         e["kindKeyed"] = kindKeyed;
         indexArr.push_back(std::move(e));
     };
 
-    if (oldVer >= 3 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_array()) {
-        // v3 → v3: preserve the index, minus entries that name no blob, a reserved key or a key twice.
+    const bool v2 = oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object();
+    const bool v1 = !v2 && rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array();
+    if (rootOnDisk.is_object() && !v1 && !v2) {
+        // v3 → v3: preserve the index, minus entries that name no blob, a reserved key or a key twice. A
+        // root whose index or schema version is damaged still keeps its blobs (indexed as below).
         std::unordered_set<std::string> indexed;
-        for (const auto& idx : rootOnDisk["entries"]) {
+        const nlohmann::json noEntries = nlohmann::json::array();
+        const auto entriesIt = rootOnDisk.find("entries");
+        const nlohmann::json& entries = entriesIt != rootOnDisk.end() && entriesIt->is_array() ? *entriesIt : noEntries;
+        for (const auto& idx : entries) {
             if (!idx.is_object())
                 continue;
             const std::string cacheKey = JsonStringFieldOr(idx, "cacheKey");
@@ -312,7 +320,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         return out;
     }
 
-    if (oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object()) {
+    if (v2) {
         // v2 → v3: hoist each cacheKey blob from entries-object to root, add an index entry per blob
         // with empty backend/endpoint/projectKey (next Save backfills them). lastUsedUnix = now so a
         // newly-upgraded cache doesn't evict good entries on the first write.
@@ -329,7 +337,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         return out;
     }
 
-    if (rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array()) {
+    if (v1) {
         // v1 → v3: legacy flat layout was Jira-only; store under the historical "Jira_legacy_v1" key
         // (TryLoadFieldCatalogSnapshot below substitutes this when a "Jira|..." key isn't found).
         nlohmann::json legacyEntry = nlohmann::json::object();
@@ -527,11 +535,22 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
 
 namespace {
 
-// Body of both loads; `requireKindKeyed` accepts only a snapshot this build saved, under a key that names
-// its tracker kind (no legacy blob).
-bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std::vector<TrackerField>& outFields,
-                         std::vector<TrackerComponent>& outComponents,
-                         std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
+// Builds before per-tracker keys saved a GitHub pane's catalog under the Jira site's key, with the pane's
+// project: none, or the repository's "owner/repo". A Jira key of that shape saved by such a build may
+// hold GitHub's catalog, so it is not restored; one this build saved (kindKeyed) is Jira's.
+bool IsAmbiguousLegacyJiraKey(const std::string& cacheKey) {
+    if (cacheKey.rfind("Jira|", 0) != 0) {
+        return false;
+    }
+    const std::string project = cacheKey.substr(cacheKey.rfind('|') + 1);
+    return project.empty() || project.find('/') != std::string::npos;
+}
+
+} // namespace
+
+bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
+                                 std::vector<TrackerComponent>& outComponents,
+                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
     outError.clear();
     outFields.clear();
     outComponents.clear();
@@ -544,7 +563,7 @@ bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std
         // (mirrors the previous v2 behavior so a fresh upgrade keeps reading the v1 snapshot).
         std::string resolvedKey = cacheKey;
         if (!root.contains(resolvedKey) || !root[resolvedKey].is_object()) {
-            if (!requireKindKeyed && cacheKey.rfind("Jira|", 0) == 0 && root.contains("Jira_legacy_v1") &&
+            if (cacheKey.rfind("Jira|", 0) == 0 && root.contains("Jira_legacy_v1") &&
                 root["Jira_legacy_v1"].is_object()) {
                 resolvedKey = "Jira_legacy_v1";
             } else {
@@ -554,7 +573,8 @@ bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std
         }
         nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
         const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
-        if (requireKindKeyed && (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed"))) {
+        if (resolvedKey == cacheKey && IsAmbiguousLegacyJiraKey(cacheKey) &&
+            (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed"))) {
             outError = "The cached field catalog for this tracker context predates per-tracker keys.";
             return false;
         }
@@ -570,7 +590,7 @@ bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std
         // of truth.
         const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (indexIt != indexArr.end() &&
-            now - ParseJsonInt64FieldLoose(*indexIt, "lastUsedUnix", 0) >= kLruTouchIntervalSeconds) {
+            ParseJsonInt64FieldLoose(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
             (*indexIt)["lastUsedUnix"] = now;
             std::string writeErr;
             if (!PersistRootLocked(root, writeErr)) {
@@ -588,21 +608,6 @@ bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: unknown exception");
         return false;
     }
-}
-
-} // namespace
-
-bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
-                                 std::vector<TrackerComponent>& outComponents,
-                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
-    return TryLoadSnapshotImpl(cacheKey, false, outFields, outComponents, outIssueTypeMeta, outError);
-}
-
-bool TryLoadKindKeyedFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
-                                          std::vector<TrackerComponent>& outComponents,
-                                          std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta,
-                                          std::string& outError) {
-    return TryLoadSnapshotImpl(cacheKey, true, outFields, outComponents, outIssueTypeMeta, outError);
 }
 
 std::vector<CachedProjectEntry> ListCachedProjects() {

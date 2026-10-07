@@ -218,6 +218,9 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
         FieldCatalogCache::BuildFieldCatalogIndexIdentity(d.cfg);
     const std::string& backendKind = cacheIndex.backend;
     const std::string& endpoint = cacheIndex.endpoint;
+    // A pick rewrites the query as a JQL `project =` clause or Plane's project_id: other trackers' queries
+    // have neither, so the pill offers their projects nothing to pick.
+    const bool pillScopesQuery = isPlane || backendKind == "Jira";
     const std::string scopeProj = backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
     const bool single = !scopeProj.empty();
     const char* pillLabel = nullptr;
@@ -255,7 +258,7 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
         const std::vector<FieldCatalogCache::CachedProjectEntry>& cached = d.cachedProjectsSnapshot;
         int shown = 0;
         for (const auto& e : cached) {
-            if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
+            if (!pillScopesQuery || !SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
                 continue;
             }
             ImGui::PushID(shown);

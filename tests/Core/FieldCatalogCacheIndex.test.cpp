@@ -7,6 +7,7 @@
 
 #include "../support/TestEnvGuard.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -115,22 +116,20 @@ TEST_CASE("FieldCatalogCache: the LRU cap evicts the least recently used snapsho
 }
 
 TEST_CASE("FieldCatalogCache: a snapshot just saved is never the one evicted") {
-    // Entries saved within one second tie on lastUsedUnix (and a clock step can put the others ahead):
-    // the save itself must survive the cap.
+    // Entries saved within one second tie on lastUsedUnix: the save itself must survive the cap.
     smatchet_tests::TestEnvGuard env;
     CacheFileCleanup file(env);
+    const std::string now = std::to_string(TimeNowPure::NowUnixSeconds() + 1);
     WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
-                         "{\"cacheKey\":\"k-a\",\"projectKey\":\"A\",\"backend\":\"Jira\",\"endpoint\":\"e\","
-                         "\"lastUsedUnix\":4102444800},"
-                         "{\"cacheKey\":\"k-b\",\"projectKey\":\"B\",\"backend\":\"Jira\",\"endpoint\":\"e\","
-                         "\"lastUsedUnix\":4102444801}],"
-                         "\"k-a\":" +
-                             Blob("a") + ",\"k-b\":" + Blob("b") + "}");
+                         "{\"cacheKey\":\"k-a\",\"projectKey\":\"A\",\"lastUsedUnix\":" +
+                             now +
+                             "},"
+                             "{\"cacheKey\":\"k-b\",\"projectKey\":\"B\",\"lastUsedUnix\":" +
+                             now + "}],\"k-a\":" + Blob("a") + ",\"k-b\":" + Blob("b") + "}");
 
     REQUIRE(Save("k-new", "NEW", 2));
     CHECK(Loads("k-new"));
-    CHECK(Loads("k-b"));
-    CHECK_FALSE(Loads("k-a"));
+    CHECK(Loads("k-a") != Loads("k-b"));
 }
 
 TEST_CASE("FieldCatalogCache: a snapshot the index lost is indexed and evicted first") {
@@ -209,25 +208,51 @@ TEST_CASE("FieldCatalogCache: a restore moves its snapshot up the LRU order at m
     CHECK(ReadCacheFile(file) != json);
 }
 
-TEST_CASE("FieldCatalogCache: the kind-keyed load takes only a snapshot saved under a per-tracker key") {
-    // Older builds saved a GitHub pane's catalog under the Jira site's key.
+TEST_CASE("FieldCatalogCache: an older build's Jira snapshot that may be GitHub's is not restored") {
+    // Older builds saved a GitHub pane's catalog under the Jira site's key, with no project or the
+    // repository's owner/repo: those shapes load only once this build has saved them.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":[],"
+                         "\"Jira|https://acme.atlassian.net|\":" +
+                             Blob("pr.head") + ",\"Jira|https://acme.atlassian.net|octo/repo\":" + Blob("pr.base") +
+                             ",\"Jira|https://acme.atlassian.net|FOO\":" + Blob("customfield_foo") +
+                             ",\"Plane|https://api.plane.so|ws|\":" + Blob("plane_state") + "}");
+
+    CHECK_FALSE(Loads("Jira|https://acme.atlassian.net|"));
+    CHECK_FALSE(Loads("Jira|https://acme.atlassian.net|octo/repo"));
+    CHECK(Loads("Jira|https://acme.atlassian.net|FOO")); // a Jira project key: Jira's
+    CHECK(Loads("Plane|https://api.plane.so|ws|"));      // another tracker's key was never shared
+
+    REQUIRE(Save("Jira|https://acme.atlassian.net|", "", 16));
+    CHECK(Loads("Jira|https://acme.atlassian.net|"));
+}
+
+TEST_CASE("FieldCatalogCache: a damaged index or schema version keeps the snapshots") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":\"three\",\"entries\":{\"k-a\":1},\"k-a\":" + Blob("a") + "}");
+    CHECK(Loads("k-a"));
+    REQUIRE(Save("k-b", "B", 16));
+    CHECK(Loads("k-a"));
+    CHECK(Loads("k-b"));
+}
+
+TEST_CASE("FieldCatalogCache: a lastUsedUnix ahead of the clock counts as used now") {
+    // Left as it is, it would sort first for good and never be evicted.
     smatchet_tests::TestEnvGuard env;
     CacheFileCleanup file(env);
     WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
-                         "{\"cacheKey\":\"Jira|https://acme.atlassian.net|\",\"projectKey\":\"\","
-                         "\"backend\":\"Jira\",\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":100}],"
-                         "\"Jira|https://acme.atlassian.net|\":" +
-                             Blob("pr.head") + "}");
-    const std::string key = "Jira|https://acme.atlassian.net|";
-    std::vector<TrackerField> fields;
-    std::vector<TrackerComponent> components;
-    std::vector<TrackerIssueTypeCreateMeta> meta;
-    std::string err;
-    CHECK_FALSE(FieldCatalogCache::TryLoadKindKeyedFieldCatalogSnapshot(key, fields, components, meta, err));
-    CHECK(Loads(key));
-
-    REQUIRE(Save(key, "", 16));
-    CHECK(FieldCatalogCache::TryLoadKindKeyedFieldCatalogSnapshot(key, fields, components, meta, err));
+                         "{\"cacheKey\":\"k-future\",\"projectKey\":\"F\",\"lastUsedUnix\":99999999999},"
+                         "{\"cacheKey\":\"k-extreme\",\"projectKey\":\"X\","
+                         "\"lastUsedUnix\":-9223372036854775808}],"
+                         "\"k-future\":" +
+                             Blob("f") + ",\"k-extreme\":" + Blob("x") + "}");
+    CHECK(Loads("k-extreme")); // the once-a-day check must not overflow on it
+    const std::int64_t now = TimeNowPure::NowUnixSeconds();
+    for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
+        CHECK(e.lastUsedUnix <= now + 1);
+    }
 }
 
 TEST_CASE("FieldCatalogCache: an empty GitHub or Linear base URL keys and lists like its default") {

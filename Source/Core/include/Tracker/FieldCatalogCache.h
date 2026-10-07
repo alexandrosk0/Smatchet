@@ -43,17 +43,12 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
                               const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError);
 
+/** Loads the snapshot saved under `cacheKey`. Refuses a Jira snapshot an older build saved with no project
+ *  or an "owner/repo" one: those builds saved a GitHub pane's catalog under the Jira site's key. */
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
                                  std::vector<TrackerComponent>& outComponents,
                                  std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
 
-/** TryLoadFieldCatalogSnapshot, but only for a snapshot saved under a key that names its tracker kind.
- *  Builds before that saved a GitHub catalog under the Jira site's key, so a snapshot from them (or the
- *  legacy v1 blob) may hold another tracker's catalog. */
-bool TryLoadKindKeyedFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
-                                          std::vector<TrackerComponent>& outComponents,
-                                          std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta,
-                                          std::string& outError);
 
 /** Sorted by lastUsedUnix descending (most-recent first). Used by the Preferences readout. */
 std::vector<CachedProjectEntry> ListCachedProjects();
