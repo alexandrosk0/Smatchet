@@ -11,7 +11,7 @@
 
 ## What happened
 
-When a finding lands on lines outside the PR's diff, CodeRabbit cannot post it inline. It puts it in the review body under a `⚠️ Outside diff range comments (N)` block, and omits the `**Actionable comments posted: N**` header.
+When a finding lands on lines outside the PR's diff, CodeRabbit cannot post it inline. It puts it in the review body under an `Outside diff range comments (N)` block (headed with a warning emoji), and omits the `**Actionable comments posted: N**` header.
 
 The poller reads two signals:
 - that header, for the actionable count;
