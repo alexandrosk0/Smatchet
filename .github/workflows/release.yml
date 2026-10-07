@@ -214,9 +214,11 @@ jobs:
           TRUSTED_SIGNING_ENDPOINT: ${{ vars.SMATCHET_TRUSTED_SIGNING_ENDPOINT }}
           TRUSTED_SIGNING_ACCOUNT: ${{ vars.SMATCHET_TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ vars.SMATCHET_TRUSTED_SIGNING_PROFILE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # Presence only: this step downloads and unpacks a third-party package, so
+          # the secret values stay in the build step alone (see that step's env).
+          AZURE_TENANT_ID_SET: ${{ secrets.AZURE_TENANT_ID != '' }}
+          AZURE_CLIENT_ID_SET: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          AZURE_CLIENT_SECRET_SET: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
         run: |
           $ErrorActionPreference = 'Stop'
           # Fail on configuration, not on a bare signtool HRESULT 45 minutes into
@@ -225,11 +227,15 @@ jobs:
             'SMATCHET_TRUSTED_SIGNING_ENDPOINT (variable)' = $env:TRUSTED_SIGNING_ENDPOINT
             'SMATCHET_TRUSTED_SIGNING_ACCOUNT (variable)'  = $env:TRUSTED_SIGNING_ACCOUNT
             'SMATCHET_TRUSTED_SIGNING_PROFILE (variable)'  = $env:TRUSTED_SIGNING_PROFILE
-            'AZURE_TENANT_ID (secret)'                     = $env:AZURE_TENANT_ID
-            'AZURE_CLIENT_ID (secret)'                     = $env:AZURE_CLIENT_ID
-            'AZURE_CLIENT_SECRET (secret)'                 = $env:AZURE_CLIENT_SECRET
           }
-          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key } | Sort-Object)
+          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key })
+          $secretsSet = @{
+            'AZURE_TENANT_ID (secret)'     = $env:AZURE_TENANT_ID_SET
+            'AZURE_CLIENT_ID (secret)'     = $env:AZURE_CLIENT_ID_SET
+            'AZURE_CLIENT_SECRET (secret)' = $env:AZURE_CLIENT_SECRET_SET
+          }
+          $missing += @($secretsSet.GetEnumerator() | Where-Object { $_.Value -ne 'true' } | ForEach-Object { $_.Key })
+          $missing = @($missing | Sort-Object)
           if ($missing.Count -gt 0) {
             Write-Error "Azure Trusted Signing is not fully configured — missing: $($missing -join ', '). See scripts/publish/SIGNING.md § Azure Trusted Signing."
             exit 1
@@ -299,7 +305,8 @@ jobs:
           # Read by the Trusted Signing provider DLL (Azure.Identity's
           # DefaultAzureCredential) at each signature. Scoped to this step
           # rather than exported through GITHUB_ENV so the client secret never
-          # outlives the one step that needs it.
+          # outlives the one step that needs it; the setup step above sees only
+          # whether each secret is set.
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}

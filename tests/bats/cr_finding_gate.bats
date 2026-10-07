@@ -418,7 +418,7 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
     # silently fail on the alternation and read as "guard missing".
     grep -qF "$RATE_LIMIT_RE" "$ACTION"
     # The guard is inert unless the GraphQL query actually selects description.
-    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+    grep -qF 'on StatusContext{ context state description createdAt }' "$ACTION"
 }
 
 @test "selftest: without the guard, a rate-limited SUCCESS would pass" {
@@ -668,7 +668,7 @@ run_nudge() {
     # negative-testing this very assertion).
     grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"
     # Inert unless the GraphQL query actually selects description.
-    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+    grep -qF 'on StatusContext{ context state description createdAt }' "$ACTION"
 }
 
 @test "selftest: without the guard, a manual-review-required SUCCESS would pass" {
@@ -779,4 +779,58 @@ run_nudge() {
     row github-actions[bot] 2026-08-16T03:02:00Z 'cr-full-review-nudge:ccc'
     NUDGE_MODE=never-reviewed run_nudge
     [ ! -s "$POST_LOG" ]
+}
+
+# ============================================================================
+# Waiver + OSS-ask scoping (historical review Batch 26, PR #2209 findings)
+# ============================================================================
+
+@test "an OSS human ask counts only when newer than the head's CodeRabbit status" {
+    # CR posts the manual-review status on EVERY head, so an ask from an earlier
+    # head must not park a later head in the wait arm until the window expires.
+    grep -qF '[ -n "$cr_ctx_at" ] && [ "$created" \> "$cr_ctx_at" ] || continue' "$ACTION"
+    grep -qF '.created_at // ""' "$ACTION"
+}
+
+@test "post re-reads the waiver before any non-success verdict" {
+    # A run already polling when the waiver lands must not overwrite the
+    # override the labeled run posted (statuses are last-write-wins).
+    grep -qF 'if [ "$state" != success ] && [ "$waiver_check_ready" = true ] && waiver_present; then' "$ACTION"
+    grep -qF 'waiver_check_ready=true' "$ACTION"
+}
+
+@test "the workflow re-runs on a PR body edit (body-form disposition)" {
+    grep -qE '^    types: \[.*\bedited\b.*\]' "$WF"
+}
+
+@test "the action's disposition predicate rejects the playbook placeholder" {
+    # The same predicates are in the agent layer's merge-gates.d/10-gate-filter.sh and
+    # safe-admin-merge.sh; the layer's own safe_admin_merge.bats tests those copies.
+    local re='^[[:blank:]]*([-*][[:blank:]]+)?cr-disposition:[[:blank:]]*[^[:space:]<]'
+    local label_re='^cr-disposition:[^[:space:]<]'
+    grep -qF "grep -qiE '$re'" "$ACTION"
+    grep -qF "grep -qE '$label_re'" "$ACTION"
+    # The playbook placeholder quoted in a PR body does not attest; a real reason does,
+    # as its own line or a bulleted one.
+    ! printf '%s' 'needs cr-out-of-band + a cr-disposition:<reason> attestation' | grep -qiE "$re" || false
+    printf '%s' 'cr-disposition: cr-auto-review-disabled' | grep -qiE "$re"
+    printf 'Waiver.\r\n  - cr-disposition: rate-limit-acked\r\n' | grep -qiE "$re"
+    # A mid-sentence mention and a blank marker followed by text on the next line do not.
+    ! printf '%s\n' 'Rate limit hit; no cr-disposition: needed here.' | grep -qiE "$re" || false
+    ! printf 'cr-disposition:\nUnrelated text\n' | grep -qiE "$re" || false
+    # As a label: the placeholder, a blank suffix and a bare prefix do not attest.
+    local label
+    for label in 'cr-disposition:<reason>' 'cr-disposition: ' 'cr-disposition:'; do
+        ! printf '%s\n' "$label" | grep -qE "$label_re" || false
+    done
+    printf '%s\n' 'cr-disposition:rate-limit-acked' | grep -qE "$label_re"
+    # The jq side agrees.
+    command -v jq >/dev/null 2>&1 || skip "jq not installed"
+    [ "$(jq -n '["cr-disposition:<reason>"] | any(test("^cr-disposition:[^[:space:]<]"))')" = false ]
+    [ "$(jq -n '["cr-disposition:x"] | any(test("^cr-disposition:[^[:space:]<]"))')" = true ]
+    local jq_body='test("(^|\n)[[:blank:]]*([-*][[:blank:]]+)?cr-disposition:[[:blank:]]*[^[:space:]<]"; "i")'
+    [ "$(jq -n --arg b 'cr-disposition:<reason>' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b $'cr-disposition:\nUnrelated' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b 'no cr-disposition: needed' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b $'Waiver.\n- cr-disposition: ok' "\$b | $jq_body")" = true ]
 }

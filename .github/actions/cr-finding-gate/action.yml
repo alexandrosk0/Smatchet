@@ -48,9 +48,18 @@ runs:
         # relies on explicit exit codes + checked returns, not errexit.
         set +e -uo pipefail
 
+        waiver_check_ready=false
         post() {
           # $1 state (success|failure|pending|error), $2 description
           local state="$1" desc="$2"
+          # Statuses are last-write-wins and this workflow has no concurrency
+          # group, so a run that was already polling when the waiver was applied
+          # would overwrite the success the `labeled` run posted. Re-read the
+          # waiver before every non-success verdict.
+          if [ "$state" != success ] && [ "$waiver_check_ready" = true ] && waiver_present; then
+            state=success
+            desc="cr-out-of-band + cr-disposition set — gate overridden"
+          fi
           # GitHub truncates description at 140 chars.
           desc="${desc:0:140}"
           echo "CR finding gate -> ${state}: ${desc}"
@@ -248,21 +257,32 @@ runs:
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
         # `cr-out-of-band` + a `cr-disposition:<reason>` attestation lets a
         # maintainer force-pass this gate (PR-3 disposition trail). The workflow
-        # re-runs on `labeled` / `unlabeled` so applying the pair is enough —
-        # no manual `gh run rerun` (tooling 2026-08-18).
-        labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
-        pr_body=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.body // ""' 2>/dev/null || true)
-        if printf '%s\n' "$labels" | grep -qx 'cr-out-of-band'; then
-          # Body match mirrors merge-gates jq (unanchored cr-disposition:<reason>)
-          # so the two layers honour the same attestation forms. Label form is
-          # the playbook default.
-          if printf '%s\n' "$labels" | grep -qE '^cr-disposition:.+' \
-             || printf '%s' "$pr_body" | grep -qiE 'cr-disposition:[[:space:]]*[^[:space:]<]'; then
-            post success "cr-out-of-band + cr-disposition set — gate overridden"
-            exit 0
-          fi
+        # re-runs on `labeled` / `unlabeled` / `edited` (a body marker) so
+        # applying the pair is enough — no manual `gh run rerun` (tooling
+        # 2026-08-18). post() re-reads it too, so a run already polling when the
+        # waiver lands cannot overwrite the override.
+        #
+        # One predicate across the layers (merge-gates.d/10-gate-filter.sh and
+        # safe-admin-merge.sh apply the same rule in jq): a label, or a PR-body
+        # line that starts with `cr-disposition:` (optionally after blanks and a
+        # `-` / `*` bullet), whose reason is on that line, is not blank and does
+        # not start with `<`. So the playbook's own `cr-disposition:<reason>`
+        # placeholder, and prose that merely mentions the token, do not attest.
+        waiver_present() {
+          local labels pr_body
+          labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
+          printf '%s\n' "$labels" | grep -qx 'cr-out-of-band' || return 1
+          printf '%s\n' "$labels" | grep -qE '^cr-disposition:[^[:space:]<]' && return 0
+          pr_body=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.body // ""' 2>/dev/null || true)
+          printf '%s' "$pr_body" | grep -qiE '^[[:blank:]]*([-*][[:blank:]]+)?cr-disposition:[[:blank:]]*[^[:space:]<]' && return 0
           echo "WARN: cr-out-of-band present but no cr-disposition:<reason> label/body marker — override not honoured (PR-3)." >&2
+          return 1
+        }
+        if waiver_present; then
+          post success "cr-out-of-band + cr-disposition set — gate overridden"
+          exit 0
         fi
+        waiver_check_ready=true
 
         # --- Dependabot github-actions SHA bumps (auto-pass) ------------------
         # CodeRabbit's auto_review never engages on Dependabot PRs (observed: no
@@ -378,7 +398,7 @@ runs:
               }
               commits(last:1){
                 nodes{ commit{ statusCheckRollup{ contexts(first:100){
-                  nodes{ __typename ... on StatusContext{ context state description } }
+                  nodes{ __typename ... on StatusContext{ context state description createdAt } }
                 } } } }
               }
             }
@@ -527,18 +547,30 @@ runs:
             # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
-              # If a human already asked, keep waiting — CR may still be working
-              # (synchronize / human-trigger comment re-runs land here).
+              # If a human already asked FOR THIS HEAD, keep waiting — CR may
+              # still be working (synchronize / human-trigger comment re-runs land
+              # here). CR posts this status on every head, so only an ask newer
+              # than the status counts: an ask from an earlier head must fall
+              # through to the terminal failure, or every later head would wait
+              # out the window into an unbounded pending. No status time -> no
+              # ask counts (the terminal failure is the recoverable side: a new
+              # human comment re-runs the gate).
+              cr_ctx_at=$(printf '%s' "$resp" | jq -r '
+                [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+                  | select(.__typename == "StatusContext" and .context == "CodeRabbit")
+                  | (.createdAt // "") ] | (.[0] // "")
+                ' 2>/dev/null) || cr_ctx_at=""
               human_asked=false
-              while IFS=$'\t' read -r login utype cmt; do
+              while IFS=$'\t' read -r created login utype cmt; do
                 case "$utype" in Bot) continue ;; esac
                 case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
+                [ -n "$cr_ctx_at" ] && [ "$created" \> "$cr_ctx_at" ] || continue
                 if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
                   human_asked=true
                   break
                 fi
               done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
-                        --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
+                        --jq '.[] | ((.created_at // "") + "\t" + (.user.login // "") + "\t" + (.user.type // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
               if [ "$human_asked" = true ]; then
                 echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
                 return 1
