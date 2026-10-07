@@ -307,6 +307,28 @@ _path_repo() {
     [[ "$output" == *"tests/support/Fake.cpp -> Source/Core/src/Fake.cpp"* ]]
 }
 
+@test "coverage-delta-gate.sh: an included file renamed to a translation unit is never exempt" {
+    _path_repo
+    mkdir -p "$FIXREPO/Source/Core/include/Detail"
+    printf 'static int g_purged = PurgeOnLoad();\n' > "$FIXREPO/Source/Core/include/Detail/AutoPurge.inl"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "inl"
+    git -C "$FIXREPO" branch -f main HEAD
+    mkdir -p "$FIXREPO/Source/Core/src/Sync"
+    git -C "$FIXREPO" mv Source/Core/include/Detail/AutoPurge.inl Source/Core/src/Sync/AutoPurge.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"AutoPurge.inl -> Source/Core/src/Sync/AutoPurge.cpp"* ]]
+}
+
+@test "coverage-delta-gate.sh: a coloured diff configuration changes nothing" {
+    _path_repo
+    git -C "$FIXREPO" config color.ui always
+    printf 'int foo() { return 2; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
 @test "coverage-delta-gate.sh: a removed guard statement is a production change" {
     _path_repo
     printf '%s\n' 'int foo(bool c) {' '    if (!c) return 0;' '    return 1;' '}' > "$FIXREPO/Source/Core/src/a.cpp"
