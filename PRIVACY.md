@@ -85,10 +85,11 @@ censoring tool for anything sensitive on screen.
 **Crash minidumps are not redacted.** A minidump is a snapshot of the
 application's state at the moment it crashed. Smatchet narrows what goes into
 one — it captures the stacks and CPU state of every application thread and the
-list of loaded modules, but no heap memory (so credentials held in memory are not
-swept in) and no module file paths (which would carry your account name). Stack
-memory is still included, for every thread, and stack memory can hold fragments of
-whatever the application was working on. Untick "Attach crash minidump" in the report dialog to file the report
+list of loaded modules, but no heap memory (so the credentials Smatchet keeps on the
+heap are not swept in) and no module file paths (which would carry your account name).
+Stack memory is still included, for every thread, and stack memory can hold fragments of
+whatever the application was working on at that moment, including part of a credential
+that was being used when it crashed. Untick "Attach crash minidump" in the report dialog to file the report
 without it.
 
 Minidumps are only ever uploaded to a **private** repository. If the configured

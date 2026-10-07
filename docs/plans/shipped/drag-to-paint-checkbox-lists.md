@@ -160,7 +160,7 @@ N/A — this plan adds a widget, it extracts nothing.
 - PR #2230 merged 2026-09-21 with its Bucket-E UI tests lane (which runs
   `drag_checkbox_paint.test.cpp`) and both sanitizer test lanes green.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+## Archive
+Done in the historical-review Batch 26 follow-up (#2330), since #2230 itself left the plan in
+`active/`: the § Status header reads `shipped`, the plan moved to `docs/plans/shipped/`, and
+`docs/plans/INDEX.md` was regenerated with `test-plan-index.sh --fix`.

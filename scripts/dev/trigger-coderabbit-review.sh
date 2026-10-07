@@ -94,18 +94,18 @@ Playbook: agent-layer/docs/agent-rules/merge-gates.md § CodeRabbit OSS manual-t
 EOF
 }
 
-# count_head_asks <graphql-json> <head-sha> — human `@coderabbitai review` asks that
-# belong to THIS head: carrying this script's per-head marker, or posted after the
-# head's anchor (CodeRabbit's StatusContext on it, which CR posts on every head; the
-# commit date when CR has not posted one). An ask from an earlier head does not count,
-# or a later head would never get the trigger it needs.
+# count_head_asks <graphql-json> <head-sha> [<anchor>] — human `@coderabbitai review` asks
+# that belong to THIS head: carrying this script's per-head marker, or posted after the
+# head's anchor. The anchor is CodeRabbit's FIRST status on the head (CR posts one on every
+# head, right after the push), else the commit date. It must not be CR's latest status:
+# that moves every time CR updates it — its rate-limit reply to the ask itself, say — and an
+# ask on this head would then stop counting and be posted again. An ask from an earlier
+# head does not count, or a later head would never get the trigger it needs.
 count_head_asks() {
-    printf '%s' "$1" | jq -r --arg h "$2" '
+    printf '%s' "$1" | jq -r --arg h "$2" --arg first "${3:-}" '
       .data.repository.pullRequest as $pr
       | ($pr.commits.nodes[0].commit // {}) as $c
-      | ([ $c.statusCheckRollup.contexts.nodes[]?
-           | select(.__typename == "StatusContext" and .context == "CodeRabbit")
-           | (.createdAt // "") ][0] // $c.committedDate // "") as $anchor
+      | (if $first != "" then $first else ($c.committedDate // "") end) as $anchor
       | [ $pr.comments.nodes[]?
           | select(.author.__typename != "Bot"
                    and ((.author.login // "") | test("\\[bot\\]$|github-actions|^cursor$") | not)
@@ -121,19 +121,26 @@ if [ "$SELFTEST" = true ]; then
     [ "$(classify_author_kind 'cursor' '')" = bot ]
     [ "$(classify_author_kind 'coderabbitai[bot]' 'Bot')" = bot ]
     if command -v jq >/dev/null 2>&1; then
-        # An ask from an earlier head (before this head's CR status) does not count;
-        # one after it, or one carrying this head's marker, does.
+        # CR's first status on this head is 10:00; its latest (rollup) is 10:10, after it
+        # answered an ask. An ask from an earlier head (before 10:00) does not count; one
+        # after 10:00 does, even though CR updated its status after it, and so does one
+        # carrying this head's marker.
         st_json() {
-            printf '{"data":{"repository":{"pullRequest":{"headRefOid":"bbb","commits":{"nodes":[{"commit":{"committedDate":"2026-10-01T09:00:00Z","statusCheckRollup":{"contexts":{"nodes":[{"__typename":"StatusContext","context":"CodeRabbit","createdAt":"2026-10-01T10:00:00Z"}]}}}}]},"comments":{"nodes":[%s]}}}}}' "$1"
+            printf '{"data":{"repository":{"pullRequest":{"headRefOid":"bbb","commits":{"nodes":[{"commit":{"committedDate":"2026-10-01T09:00:00Z","statusCheckRollup":{"contexts":{"nodes":[{"__typename":"StatusContext","context":"CodeRabbit","createdAt":"2026-10-01T10:10:00Z"}]}}}}]},"comments":{"nodes":[%s]}}}}}' "$1"
         }
+        first=2026-10-01T10:00:00Z
         old='{"author":{"login":"alice","__typename":"User"},"body":"@coderabbitai review","createdAt":"2026-10-01T08:00:00Z"}'
         new='{"author":{"login":"alice","__typename":"User"},"body":"@coderabbitai review","createdAt":"2026-10-01T10:05:00Z"}'
         marked='{"author":{"login":"alice","__typename":"User"},"body":"@coderabbitai review <!-- cr-human-first-review-nudge:bbb -->","createdAt":"2026-10-01T08:00:00Z"}'
         bot='{"author":{"login":"github-actions[bot]","__typename":"Bot"},"body":"@coderabbitai review","createdAt":"2026-10-01T10:05:00Z"}'
-        [ "$(count_head_asks "$(st_json "$old")" bbb)" = 0 ]
-        [ "$(count_head_asks "$(st_json "$new")" bbb)" = 1 ]
-        [ "$(count_head_asks "$(st_json "$marked")" bbb)" = 1 ]
-        [ "$(count_head_asks "$(st_json "$bot")" bbb)" = 0 ]
+        early='{"author":{"login":"alice","__typename":"User"},"body":"@coderabbitai review","createdAt":"2026-10-01T09:30:00Z"}'
+        [ "$(count_head_asks "$(st_json "$old")" bbb "$first")" = 0 ]
+        [ "$(count_head_asks "$(st_json "$new")" bbb "$first")" = 1 ]
+        [ "$(count_head_asks "$(st_json "$marked")" bbb "$first")" = 1 ]
+        [ "$(count_head_asks "$(st_json "$bot")" bbb "$first")" = 0 ]
+        # No CR status on the head yet: the commit date (09:00) is the anchor.
+        [ "$(count_head_asks "$(st_json "$early")" bbb "")" = 1 ]
+        [ "$(count_head_asks "$(st_json "$old")" bbb "")" = 0 ]
     fi
     echo "selftest: trigger-coderabbit-review OK"
     exit 0
@@ -182,7 +189,11 @@ if [ "${on_head:-0}" -gt 0 ]; then
 fi
 
 # A human already asked for THIS head → do not double-post; CR may still be working.
-human_nudge="$(count_head_asks "$data" "$head")"
+# CodeRabbit's first status on the head anchors which asks belong to it (see count_head_asks).
+cr_first_status="$(gh api --paginate "repos/$owner/$repo/commits/$head/statuses?per_page=100" \
+    --jq '.[] | select(.context == "CodeRabbit") | .created_at' 2>/dev/null | sort | sed -n 1p)" \
+    || cr_first_status=""
+human_nudge="$(count_head_asks "$data" "$head" "$cr_first_status")"
 if [ "${human_nudge:-0}" -gt 0 ]; then
     echo "INFO: human @coderabbitai review already on PR #$PR for head ${head:0:8} — waiting for CodeRabbit."
     exit 0

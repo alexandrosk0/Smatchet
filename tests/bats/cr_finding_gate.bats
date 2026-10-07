@@ -785,18 +785,90 @@ run_nudge() {
 # Waiver + OSS-ask scoping (historical review Batch 26, PR #2209 findings)
 # ============================================================================
 
-@test "an OSS human ask counts only when newer than the head's CodeRabbit status" {
+@test "an OSS human ask counts only when newer than CodeRabbit's first status on the head" {
     # CR posts the manual-review status on EVERY head, so an ask from an earlier
     # head must not park a later head in the wait arm until the window expires.
-    grep -qF '[ -n "$cr_ctx_at" ] && [ "$created" \> "$cr_ctx_at" ] || continue' "$ACTION"
+    # The anchor is CR's FIRST status on the head (REST statuses, oldest), not the
+    # rollup's latest, which moves when CR answers the ask itself.
+    grep -qF '[ -n "$cr_first_at" ] && [ "$created" \> "$cr_first_at" ] || continue' "$ACTION"
+    grep -qF 'commits/${SHA}/statuses?per_page=100' "$ACTION"
     grep -qF '.created_at // ""' "$ACTION"
+    ! grep -qF 'cr_ctx_at' "$ACTION" || false
+}
+
+# Extract post() and waiver_present() from the action's run block (base indent 8, so each
+# function closes on exactly "        }") and run them against a stubbed gh.
+setup_post() {
+    awk '/^        post\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' "$ACTION" > "$BATS_TEST_TMPDIR/post.fn"
+    awk '/^        waiver_present\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' "$ACTION" >> "$BATS_TEST_TMPDIR/post.fn"
+    # Non-vacuity: both functions must have been extracted.
+    grep -q 'statuses/' "$BATS_TEST_TMPDIR/post.fn"
+    grep -q 'issues/${PR}/labels' "$BATS_TEST_TMPDIR/post.fn"
+    POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
+    export POST_LOG
+    OWNER=o REPO=r PR=1 SHA=0123456789abcdef0123456789abcdef01234567 CONTEXT='CR findings (0 actionable)'
+    export OWNER REPO PR SHA CONTEXT
+    # shellcheck disable=SC1091
+    source "$BATS_TEST_TMPDIR/post.fn"
+    waiver_check_ready=true
+}
+
+# gh stub for post(): the labels and body reads serve $LABELS / $BODY, failing with
+# $GH_READ_RC; the current-status read serves $CURRENT_DESC, failing with $GH_STATUS_RC;
+# a statuses POST is logged.
+post_gh() {
+    case "$*" in
+        *"/labels"*) [ "${GH_READ_RC:-0}" = 0 ] || return "$GH_READ_RC"; printf '%s\n' "${LABELS:-}" ;;
+        *"/pulls/"*) [ "${GH_READ_RC:-0}" = 0 ] || return "$GH_READ_RC"; printf '%s\n' "${BODY:-}" ;;
+        *"/commits/"*"/statuses"*) [ "${GH_STATUS_RC:-0}" = 0 ] || return "$GH_STATUS_RC"; printf '%s\n' "${CURRENT_DESC:-}" ;;
+        *"/statuses/"*) printf '%s\n' "$@" >> "$POST_LOG" ;;
+    esac
 }
 
 @test "post re-reads the waiver before any non-success verdict" {
-    # A run already polling when the waiver lands must not overwrite the
-    # override the labeled run posted (statuses are last-write-wins).
-    grep -qF 'if [ "$state" != success ] && [ "$waiver_check_ready" = true ] && waiver_present; then' "$ACTION"
-    grep -qF 'waiver_check_ready=true' "$ACTION"
+    # A run already polling when the waiver lands must not overwrite the override the labeled
+    # run posted (statuses are last-write-wins).
+    setup_post
+    gh() { post_gh "$@"; }
+    LABELS=$'cr-out-of-band\ncr-disposition:rate-limit-acked'
+    run post pending "awaiting CodeRabbit review on current head"
+    [ "$status" -eq 0 ]
+    grep -qx 'state=success' "$POST_LOG"
+    # Without the waiver the verdict is posted as is.
+    : > "$POST_LOG"; LABELS='cr-out-of-band'; BODY='no reason given'
+    run post pending "awaiting CodeRabbit review on current head"
+    grep -qx 'state=pending' "$POST_LOG"
+}
+
+@test "post keeps an override status when the waiver cannot be read" {
+    # A failed labels read is not "no waiver": posting pending then would replace the override
+    # success. After the retries, an override on the head is left alone.
+    setup_post
+    gh() { post_gh "$@"; }
+    sleep() { :; }
+    GH_READ_RC=1
+    CURRENT_DESC='cr-out-of-band + cr-disposition set — gate overridden'
+    run post pending "awaiting CodeRabbit review on current head"
+    [ "$status" -eq 0 ]
+    [ ! -s "$POST_LOG" ]
+    [[ "$output" == *"keeping the current override status"* ]]
+}
+
+@test "post still replaces a non-override status when the waiver cannot be read" {
+    # Keeping ANY status on a failed read would leave a stale green: a waiver since removed, or a
+    # clean pass before a re-review found issues. Only the override is kept; anything else, or a
+    # current status that cannot be read either, is replaced by the verdict.
+    setup_post
+    gh() { post_gh "$@"; }
+    sleep() { :; }
+    GH_READ_RC=1
+    CURRENT_DESC='0 actionable findings on current head'
+    run post failure "2 actionable CodeRabbit findings on current head"
+    [ "$status" -eq 0 ]
+    grep -qx 'state=failure' "$POST_LOG"
+    : > "$POST_LOG"; GH_STATUS_RC=1
+    run post pending "awaiting CodeRabbit review on current head"
+    grep -qx 'state=pending' "$POST_LOG"
 }
 
 @test "the workflow re-runs on a PR body edit (body-form disposition)" {
