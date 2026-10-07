@@ -71,7 +71,7 @@ A dated snapshot that is *not* a numbered-findings audit (a one-off measurement,
 - A plan → `docs/plans/active/` (shipped → `shipped/`).
 - Agent friction/idea → `docs/self-improvement/categories/<category>.md`.
 - A binding decision → `docs/adr/NNNN-<slug>.md`.
-- A reusable engineering-role agent → `agents/core/`; a subsystem-bound one → `agents/project/`.
+- A reusable engineering-role agent → the layer repo's `agents/core/` (mounted here as `agent-layer/agents/core/`; edited in the layer repo, then a pointer bump); a subsystem-bound one → `agents/project/`.
 - A project value (path, preset, threshold, label) → `project.config.json` (never hardcode in a portable file).
 - A how-to → `docs/guides/` (+ a `tier:` marker); a dated snapshot → `docs/reference/`.
 - A whole-tree audit campaign with numbered findings → `docs/audits/SCREAMING_CASE.md` (+ a taxonomy row) — see § Naming.
@@ -83,4 +83,4 @@ A dated snapshot that is *not* a numbered-findings audit (a one-off measurement,
 
 ## Known follow-up
 
-The portable **structure** is in place, but the portable files still embed project literals in prose (baselined in `portable-purity-baseline.txt` — see that file for the current count). **Full de-Smatchet-ification** of `agents/core/` + `docs/agent-rules/` prose (replace literals with `project.config` references) is tracked in `docs/self-improvement/categories/` — until done, reuse means copy + adapt the prompts, not copy verbatim. `test-portable-purity` prevents the baseline from growing.
+The portable **structure** is in place, but the portable files still embed project literals in prose (baselined in `portable-purity-baseline.txt` — see that file for the current count). **Full de-Smatchet-ification** of `agent-layer/agents/core/` + `agent-layer/docs/agent-rules/` prose (replace literals with `project.config` references) is tracked in `docs/self-improvement/categories/` — until done, reuse means copy + adapt the prompts, not copy verbatim. `test-portable-purity` prevents the baseline from growing.

@@ -78,4 +78,4 @@ New palette token? doctest CHECK added (`tests/Core/SmatchetTheme*.test.cpp`) �
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (new dock-migration gotcha, missing theme-token pin, host dual-target edge). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (new dock-migration gotcha, missing theme-token pin, host dual-target edge). Empty is fine. Orchestrator files it as one entry under `docs/self-improvement/categories/<category>/` (format: `agent-layer/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`).
