@@ -1014,6 +1014,35 @@ TEST_CASE("OfflineQueueServiceRuntime: a queued estimate replays its timetrackin
     CHECK(deps.BackendImpl->AddIssueToSprintCallCount() == 0u);
 }
 
+TEST_CASE("OfflineQueueServiceRuntime: an estimate replay sends the tracker's current other estimate") {
+    // Queued offline: Original Estimate 2h -> 3h, with Remaining Estimate 2h copied from the cached
+    // ticket. A teammate's worklog has since moved Remaining Estimate to 1h on the tracker; the replay
+    // must send that, not write the stale 2h back.
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    CachedTicket fresh;
+    fresh.id = "PROJ-64";
+    fresh.fieldValues["timeoriginalestimate"] = "2h";
+    fresh.fieldValues["timeestimate"] = "1h";
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-64", "timeoriginalestimate", payload.dump(), err, std::string(), "2h",
+                                      true) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    const nlohmann::json sent = deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields;
+    CHECK(sent["timetracking"]["originalEstimate"] == "3h");
+    CHECK(sent["timetracking"]["remainingEstimate"] == "1h");
+}
+
 // The conflict dialog shows the user's queued value for a sprint / estimate edit, not the base.
 TEST_CASE("OfflineQueueServiceRuntime: a sprint conflict shows the queued sprint as mine") {
     OfflineQueueTestEnvGuard guard;

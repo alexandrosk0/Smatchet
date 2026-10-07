@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "ProjectResolver.h"
 #include "Sync/JqlChangedSincePure.h"
+#include "Tracker/SearchFetchGuards.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
@@ -210,7 +211,7 @@ struct PlaneIssuePageFetch {
     // (retire-transport-error-text item 12).
     TrackerError Classified;
     nlohmann::json Body;
-    std::string RawBody; // raw HTTP response text for size tracking
+    std::size_t RawBodyBytes = 0; // HTTP response size, for the cumulative size guard
 };
 
 // Phase 4: HTTP GET one work-items page + classify the response body. Reproduces the original
@@ -243,8 +244,7 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     // backoff/retry window is honoured immediately, not only at the next page boundary.
     auto response = TrackerGetLogged("PlaneClient", listBase, headers, params, shouldCancel);
 
-    // Store raw response for size tracking.
-    out.RawBody = response.text;
+    out.RawBodyBytes = response.text.size();
 
     if (response.status_code != 200) {
         const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
@@ -343,10 +343,15 @@ struct PlanePageLoopResult {
     bool HardFailed = false;
     bool EndedCleanly = false;
     int PageCount = 0;
-    size_t TotalFetchedBytes = 0;     // cumulative response size (bytes) across all pages
-    bool TotalSizeLimitHit = false;   // true if total fetch size exceeded the cap
-    bool ResultCountLimitHit = false; // true if result count exceeded the cap
+    size_t TotalFetchedBytes = 0; // cumulative response size (bytes) across all pages
 };
+
+// A guard that stopped the page loop leaves the result cut short: a soft warning on the summary (the
+// rows fetched are valid), so the sync shows a caveat instead of a plain success.
+void AppendPlaneTruncationWarning(TrackerIssueFetchSummary& summary, const std::string& warning) {
+    LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warning.c_str());
+    summary.AppendWarning(warning);
+}
 
 // Phase 4-6: drive the cursor-paginated work-items loop — fetch + classify each page, map its
 // rows via the pure mapper, stream completed batches, and advance/terminate on the cursor.
@@ -360,13 +365,13 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
                  const std::string& sequenceIdInFilter, const std::string& updatedAtGteFilter,
                  std::unordered_map<std::string, std::string>& localKeyToId, TrackerIssueFetchSummary& summary) {
     PlanePageLoopResult result;
-    const int pageSize = 100;
+    const int pageSize = smatchet::search_guards::kPageSize;
     // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
     // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
     // and matches the per-server safety limit in JiraIssueSearch.cpp.
-    constexpr int kMaxPlanePages = 50;
-    constexpr size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
-    constexpr size_t kMaxResultCount = 10000u;                   // hard cap on issue count
+    constexpr int kMaxPlanePages = smatchet::search_guards::kPlaneMaxPages;
+    constexpr size_t kMaxTotalFetchBytes = smatchet::search_guards::kPlaneMaxTotalFetchBytes;
+    constexpr size_t kMaxResultCount = smatchet::search_guards::kPlaneMaxResultCount;
     std::string listCursor;
 
     while (true) {
@@ -376,13 +381,11 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         }
 
         if (result.PageCount >= kMaxPlanePages) {
-            const std::string warn = "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
-                                     ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
-            LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
             // Soft warning: the issues we did fetch are valid; treat as a partial success
             // rather than a fetch failure so the UI fires its success notify and the
             // connectivity banner stays clear.
-            summary.Warning = warn;
+            AppendPlaneTruncationWarning(summary, "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
+                                                      ") reached; remaining issues not fetched. Narrow your view.");
             break;
         }
         ++result.PageCount;
@@ -400,12 +403,11 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         }
 
         // Track cumulative response size for total-fetch guard.
-        result.TotalFetchedBytes += page.RawBody.size();
+        result.TotalFetchedBytes += page.RawBodyBytes;
         if (result.TotalFetchedBytes > kMaxTotalFetchBytes) {
-            LOG_WARN(
-                "PlaneClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
-                result.TotalFetchedBytes, kMaxTotalFetchBytes);
-            result.TotalSizeLimitHit = true;
+            AppendPlaneTruncationWarning(summary, "Plane result size exceeded " +
+                                                      std::to_string(kMaxTotalFetchBytes / 1024 / 1024) +
+                                                      " MB; remaining issues not fetched. Narrow your view.");
             result.EndedCleanly = false;
             break;
         }
@@ -438,9 +440,8 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
 
         // Guard result count to prevent memory exhaustion from massive result sets.
         if (summary.FetchedCount > kMaxResultCount) {
-            LOG_WARN("PlaneClient: result count (%zu issues) exceeds limit (%zu). Stopping pagination.",
-                     summary.FetchedCount, kMaxResultCount);
-            result.ResultCountLimitHit = true;
+            AppendPlaneTruncationWarning(summary, "Plane result count exceeded " + std::to_string(kMaxResultCount) +
+                                                      " issues; remaining issues not fetched. Narrow your view.");
             result.EndedCleanly = false;
             break;
         }

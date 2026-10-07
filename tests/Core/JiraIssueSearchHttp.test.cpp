@@ -137,6 +137,33 @@ TEST_CASE("JiraClient::FetchIssuesStreamed — a terminal page streams a batch a
     CHECK(collected.size() == 2);
 }
 
+TEST_CASE("JiraClient::FetchIssuesStreamed — a result cut short by the page cap carries a warning") {
+    // Every page claims more results, so the loop stops at its page cap. The rows fetched stay valid,
+    // but the sync must show a caveat rather than a plain success.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(
+        kSearchPath,
+        [](const httplib::Request&) -> nlohmann::json {
+            nlohmann::json body = nlohmann::json::object();
+            body["isLast"] = false;
+            body["nextPageToken"] = "more";
+            body["issues"] = nlohmann::json::array();
+            return body;
+        },
+        "GET");
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    auto onBatch = [](std::vector<CachedTicket>&&) {};
+    auto noCancel = []() { return false; };
+
+    const TrackerIssueFetchSummary summary = client.FetchIssuesStreamed(onBatch, noCancel, &cfg, &views);
+    CHECK(summary.FetchError.empty());
+    CHECK_FALSE(summary.FullSyncCompleted);
+    CHECK(summary.Warning.find("page cap") != std::string::npos);
+}
+
 TEST_CASE("JiraClient::FetchIssuesStreamed — missing credentials is skipped with an InvalidRequest summary") {
     TrackerConfig cfg;
     cfg.TrackerType = "Jira"; // Domain + ApiToken empty.

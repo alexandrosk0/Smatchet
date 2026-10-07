@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -911,18 +912,120 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
 namespace {
 /// Ceiling on ancestor hops chased within a single sync. Independent of
 /// `ParentHierarchyPure::kMaxHierarchyDepth` (which bounds *display* depth over whatever is
-/// already cached): this bounds *network round-trips*, so a pathological or cyclic parent
-/// chain in backend data can't turn one sync into unbounded sequential fetches. A chain deeper
-/// than this still resolves — the remainder surfaces on the next sync, same as before this cap
-/// existed for hop 1.
+/// already cached): this bounds *network round-trips*, so pathological backend data can't turn
+/// one sync into unbounded sequential fetches (a cycle already ends early through the keep-set
+/// dedup). Every sync restarts the walk from the streamed rows, so levels past the cap are not
+/// loaded by any sync; hitting it is logged and marks the sync partial (see
+/// MarkHierarchyWalkIncomplete), so ancestors cached earlier are kept rather than purged.
 constexpr int kMaxParentFetchHops = 16;
 
 /// Ceiling on descendant hops chased within a single sync (the downward mirror of
 /// kMaxParentFetchHops). Bounds network round-trips for a pathologically wide/deep tree (a
-/// view showing one Epic that fans out into hundreds of stories/tasks/subtasks) without
-/// truncating any real-world hierarchy silently forever — hitting the cap just means the
-/// remaining descendants surface on the next sync.
+/// view showing one Epic that fans out into hundreds of stories/tasks/subtasks). As for the
+/// parents, descendants past the cap are not loaded by any sync; hitting it is logged and marks
+/// the sync partial, so descendants cached earlier are kept rather than purged.
 constexpr int kMaxChildFetchHops = 16;
+
+/// A parent / children walk that stopped before it finished (a failed request or a hop cap) did not
+/// see every ticket the view holds through the hierarchy. The sync must then not be authoritative for
+/// the stale purge: rows cached by an earlier, complete walk are not in this sync's keep set, and
+/// treating them as gone would delete cached data after a failed fetch (Quality Pillar 6). The rows
+/// this sync did fetch still apply.
+void MarkHierarchyWalkIncomplete(TrackerIssueFetchSummary& summary, const std::string& warning) {
+    summary.FullSyncCompleted = false;
+    summary.AppendWarning(warning);
+    LOG_WARN("TicketSyncService: %s", warning.c_str());
+}
+
+using KeyBatchFetch = std::function<Result<std::vector<CachedTicket>, TrackerError>(const std::vector<std::string>&)>;
+
+/// Refused keys one hop may isolate before it gives up and keeps the cached rows (see
+/// FetchKeysIsolatingRefusals).
+constexpr int kMaxIsolatedRefusalsPerHop = 4;
+
+/// Extra requests a hop over `keyCount` keys may spend isolating refusals. Each split costs two requests,
+/// and isolating k refused keys among n takes at most k * ceil(log2 n) splits, so this covers
+/// kMaxIsolatedRefusalsPerHop refused keys wherever they sit in the batch.
+int RefusalSplitBudget(std::size_t keyCount) {
+    int depth = 0;
+    for (std::size_t span = 1; span < keyCount; span *= 2) {
+        ++depth;
+    }
+    return 2 * depth * kMaxIsolatedRefusalsPerHop;
+}
+
+bool IsTrackerRefusal(const TrackerError& error) {
+    return error.Kind == TrackerErrorKind::InvalidRequest || error.Kind == TrackerErrorKind::NotFound;
+}
+
+/// Fetches `keys`. A refusal of a multi-key request says nothing about the individual keys: Jira rejects
+/// a whole `key in (...)` batch with a 400 when ONE key does not exist or cannot be browsed. So the halves
+/// are retried until the refused keys are isolated; a single refused key is a definitive answer about that
+/// ticket and goes into `refusedKeys`, and the rest load normally. Any other failure, or a refusal once
+/// `budget` extra requests are spent, is returned as an error (the caller then keeps the cached rows).
+/// Once `cancelled` reports true no further request is sent and a Cancelled error is returned.
+Result<std::vector<CachedTicket>, TrackerError>
+FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
+                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
+    if (cancelled()) {
+        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorCancelled());
+    }
+    Result<std::vector<CachedTicket>, TrackerError> fetched = fetch(keys);
+    if (fetched.has_value() || !IsTrackerRefusal(fetched.error())) {
+        return fetched;
+    }
+    if (keys.size() == 1) {
+        refusedKeys.push_back(keys.front());
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::vector<CachedTicket>());
+    }
+    if (budget < 2) {
+        return fetched;
+    }
+    budget -= 2;
+    const auto mid = keys.begin() + static_cast<std::ptrdiff_t>(keys.size() / 2);
+    Result<std::vector<CachedTicket>, TrackerError> first =
+        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
+    if (!first.has_value()) {
+        return first;
+    }
+    Result<std::vector<CachedTicket>, TrackerError> second =
+        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
+    if (!second.has_value()) {
+        return second;
+    }
+    std::vector<CachedTicket> merged = std::move(first.value());
+    for (CachedTicket& ticket : second.value()) {
+        merged.push_back(std::move(ticket));
+    }
+    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(merged));
+}
+
+/// The tracker refused these keys one by one: a definitive answer that repeats on every sync, so the
+/// walk stays authoritative (a refused ticket's cached row may be purged) and the keys are named.
+void NoteRefusedKeys(TrackerIssueFetchSummary& summary, const std::vector<std::string>& refusedKeys, const char* what) {
+    if (refusedKeys.empty()) {
+        return;
+    }
+    std::string warning = std::to_string(refusedKeys.size()) + " " + what + " refused by the tracker:";
+    for (std::size_t i = 0; i < refusedKeys.size() && i < 5; ++i) {
+        warning += " " + refusedKeys[i];
+    }
+    if (refusedKeys.size() > 5) {
+        warning += " ...";
+    }
+    summary.AppendWarning(warning);
+    LOG_WARN("TicketSyncService: %s", warning.c_str());
+}
+
+/// True when `keys` names a ticket this sync has not loaded: the hop cap then cut the walk short.
+bool AnyKeyNotLoaded(const std::vector<std::string>& keys, const std::unordered_set<std::string>& loaded) {
+    for (const std::string& key : keys) {
+        if (loaded.count(key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
 
 void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
@@ -963,18 +1066,23 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 
         LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu", missing.size(),
                  hop, static_cast<unsigned long long>(reqId));
-        Result<std::vector<CachedTicket>, TrackerError> fetched =
-            deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
+        std::vector<std::string> refused;
+        int splitBudget = RefusalSplitBudget(missing.size());
+        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
+            [&](const std::vector<std::string>& keys) {
+                return deps_.Backend()->FetchIssuesForKeys(cfgCopy, keys, viewsCopy);
+            },
+            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; },
+            missing, splitBudget, refused);
+        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            return; // the sync's result is discarded; nothing to warn about
+        }
         if (!fetched.has_value()) {
-            const std::string parentWarning =
-                std::to_string(missing.size()) + " parent issue(s) could not be loaded: " + fetched.error().Detail;
-            // Append rather than overwrite: the streamed fetch (or an earlier hop) may already
-            // carry its own warning — losing it here would silently hide a real result-set
-            // problem behind this hop's failure.
-            summary.Warning = summary.Warning.empty() ? parentWarning : (summary.Warning + "; " + parentWarning);
-            LOG_WARN("TicketSyncService: %s", parentWarning.c_str());
+            MarkHierarchyWalkIncomplete(summary, std::to_string(missing.size()) +
+                                                     " parent issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
+        NoteRefusedKeys(summary, refused, "parent issue(s)");
 
         std::vector<CachedTicket> parents = std::move(fetched.value());
         std::vector<std::string> nextRefs;
@@ -1000,6 +1108,10 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
             return;
         }
         currentRefs = std::move(nextRefs);
+    }
+    if (AnyKeyNotLoaded(currentRefs, workerKeepIds)) {
+        MarkHierarchyWalkIncomplete(summary, "parent chain deeper than " + std::to_string(kMaxParentFetchHops) +
+                                                 " levels; the levels above are not loaded");
     }
 }
 
@@ -1027,11 +1139,20 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
     // in one sync from a view that only matched the epic. Stops when a hop finds no children,
     // a fetch fails, or `kMaxChildFetchHops` is hit.
     std::vector<std::string> currentParentKeys = streamedIds;
+    // Keys already asked about in this sync, across hops: a child already queried as a parent (every
+    // streamed id is one) is not asked about again, so a view that already holds the whole tree stops
+    // after one hop instead of re-downloading it level by level.
+    std::unordered_set<std::string> queriedParents;
     for (int hop = 0; hop < kMaxChildFetchHops; ++hop) {
+        {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
+                return;
+            }
+        }
         std::vector<std::string> keys;
-        std::unordered_set<std::string> seen;
         for (const std::string& key : currentParentKeys) {
-            if (seen.insert(key).second) {
+            if (queriedParents.insert(key).second) {
                 keys.push_back(key);
             }
         }
@@ -1041,18 +1162,23 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
 
         LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(), hop,
                  static_cast<unsigned long long>(reqId));
-        Result<std::vector<CachedTicket>, TrackerError> fetched =
-            deps_.Backend()->FetchChildrenOfKeys(cfgCopy, keys, viewsCopy);
+        std::vector<std::string> refused;
+        int splitBudget = RefusalSplitBudget(keys.size());
+        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
+            [&](const std::vector<std::string>& parentKeys) {
+                return deps_.Backend()->FetchChildrenOfKeys(cfgCopy, parentKeys, viewsCopy);
+            },
+            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; }, keys,
+            splitBudget, refused);
+        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            return; // the sync's result is discarded; nothing to warn about
+        }
         if (!fetched.has_value()) {
-            const std::string childWarning = "children of " + std::to_string(keys.size()) +
-                                             " issue(s) could not be loaded: " + fetched.error().Detail;
-            // Append rather than overwrite: an earlier hop (or the ancestor fetch above it) may
-            // already carry its own warning — losing it here would silently hide a real
-            // result-set problem behind this hop's failure.
-            summary.Warning = summary.Warning.empty() ? childWarning : (summary.Warning + "; " + childWarning);
-            LOG_WARN("TicketSyncService: %s", childWarning.c_str());
+            MarkHierarchyWalkIncomplete(summary, "children of " + std::to_string(keys.size()) +
+                                                     " issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
+        NoteRefusedKeys(summary, refused, "issue(s) whose children were");
 
         std::vector<CachedTicket> children = std::move(fetched.value());
         std::vector<CachedTicket> newChildren;
@@ -1084,5 +1210,10 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
             return;
         }
         currentParentKeys = std::move(nextParentKeys);
+    }
+    // Keys already asked about cannot hold unseen children; only an unasked one means the cap cut it.
+    if (AnyKeyNotLoaded(currentParentKeys, queriedParents)) {
+        MarkHierarchyWalkIncomplete(summary, "descendant tree deeper than " + std::to_string(kMaxChildFetchHops) +
+                                                 " levels; the levels below are not loaded");
     }
 }

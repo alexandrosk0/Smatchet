@@ -153,6 +153,21 @@ Result<bool, TrackerError> ClassifyIssueExistsProbe(long statusCode) {
     return ProbeResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(statusCode), "ProbeIssueExists HTTP error"));
 }
 
+Result<bool, TrackerError> ClassifyGitHubIssueExistsProbe(long statusCode, const std::string& body) {
+    using ProbeResult = Result<bool, TrackerError>;
+    if (statusCode != 410) {
+        return ClassifyIssueExistsProbe(statusCode);
+    }
+    std::string lowered = body;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lowered.find("deleted") != std::string::npos) {
+        return ProbeResult::Ok(false);
+    }
+    return ProbeResult::Err(
+        TrackerErrorInvalidRequest("ProbeIssueExists: 410 Gone without a deletion (are Issues disabled?)", 410));
+}
+
 } // namespace TrackerHttpPure
 
 // IsTrackerTransportErrorText was deleted here in N12 slice 3 — see TrackerHttpPure.h.

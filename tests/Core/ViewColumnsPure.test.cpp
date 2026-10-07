@@ -6,6 +6,8 @@
 
 #include <doctest/doctest.h>
 
+#include <limits>
+
 #include <algorithm>
 
 namespace {
@@ -117,6 +119,27 @@ TEST_CASE("NormalizeViewDefinition") {
                                      [](const ViewColumn& c) { return c.Key == "field:summary"; });
         REQUIRE(it != v.Columns.end());
         CHECK(it->Width == doctest::Approx(200.0f));
+    }
+    SUBCASE("a key the grid cannot render is dropped") {
+        // A bare field id (not "field:<id>") or an empty "field:" never renders, so keeping it would make
+        // the rendered column order differ from Columns on every frame.
+        ViewDefinition v;
+        v.Columns = {{"id", 90.0f}, {"summary", 0.0f}, {"field:", 0.0f}, {"field:status", 0.0f}};
+        NormalizeViewDefinition(v);
+        REQUIRE(v.Columns.size() == 2);
+        CHECK(v.Columns[0].Key == "id");
+        CHECK(v.Columns[1].Key == "field:status");
+    }
+    SUBCASE("a non-finite or oversized width falls back to the default") {
+        ViewDefinition v;
+        v.Columns = {{"id", std::numeric_limits<float>::infinity()},
+                     {"field:summary", 1.0e9f},
+                     {"field:status", std::numeric_limits<float>::quiet_NaN()}};
+        NormalizeViewDefinition(v);
+        REQUIRE(v.Columns.size() == 3);
+        CHECK(v.Columns[0].Width == doctest::Approx(90.0f));
+        CHECK(v.Columns[1].Width == doctest::Approx(180.0f));
+        CHECK(v.Columns[2].Width == doctest::Approx(180.0f));
     }
     SUBCASE("id is prepended when absent") {
         ViewDefinition v;

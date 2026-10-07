@@ -202,12 +202,14 @@ derived from it (same order, ids only) and kept for existing consumers.
 | `view.set_column_order` | `order` *(required, JSON array of keys)*, `id?` | Reorder columns without touching which exist or their widths. A key not naming an existing column is reported in `ignored`, not dropped; a column omitted from `order` keeps its position, appended after the ordered ones. Defaults to the active view. Dry-run supported. |
 | `view.set_column_width` | `key` *(required)*, `width` *(required, number, `<=0` resets to default)*, `id?` | Set one column's width. Defaults to the active view. Dry-run supported. |
 | `view.delete` | `id` *(required)* | Destructive (`--yes`). Refuses to delete the last remaining view. Dry-run supported. |
+| `view.toggle.<id>` | `action?` | Toggle a side-bar / panel window. `action` is `show`, `hide`, or `toggle` (default), for any `<id>`. `<id>` is one of `views_dashboard`, `source_annotate`, `log`, `notifications`, `backend_audit`, `performance`, `bulk_import`, `bulk_export`, `preferences`, `mcp_server`, `scripts`. Returns `{open: bool}`. |
+| `view.toggle.notifications` | `action` | Open / toggle the Notification Center (the newest-first log of every toast the app has raised). `action` is `show`, `hide`, or `toggle` (default). Returns `{open: bool}`. The bare name `notifications` survives as an alias. |
 
 `columns` (on `view.create` / `view.update`) is a JSON array of either key strings
 (`["id","field:summary"]`) or `{"key":...}` objects — it is the full REPLACEMENT column set, in
-display order; widths default and `"id"` is added automatically if omitted.
-| `view.toggle.<id>` | `action?` | Toggle a side-bar / panel window. `action` is `show`, `hide`, or `toggle` (default), for any `<id>`. `<id>` is one of `views_dashboard`, `source_annotate`, `log`, `notifications`, `backend_audit`, `performance`, `bulk_import`, `bulk_export`, `preferences`, `mcp_server`, `scripts`. Returns `{open: bool}`. |
-| `view.toggle.notifications` | `action` | Open / toggle the Notification Center (the newest-first log of every toast the app has raised). `action` is `show`, `hide`, or `toggle` (default). Returns `{open: bool}`. The bare name `notifications` survives as an alias. |
+display order; widths default and `"id"` is added automatically if omitted. A bare field id
+(`"summary"`, the shape `fields` takes) is read as `"field:summary"`. `view.set_column_width`
+rejects a non-finite width or one above 10000 px with `ValidationError`.
 
 ```bash
 # List existing views

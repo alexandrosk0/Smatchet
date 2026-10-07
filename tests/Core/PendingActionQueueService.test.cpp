@@ -125,6 +125,24 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue queues a send that may have 
     CHECK(rows[0].State == PendingActionState::kAmbiguous);
 }
 
+TEST_CASE("PendingActionQueueService::SubmitOrQueue flags a worklog that may have landed for review") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.Tracker().EnqueueAddWorklogResult(TrackerErrorTransport("operation timed out"));
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::WorklogAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        "{\"timeSpent\":\"2h\"}");
+    CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
+    CHECK(r.NeedsReview); // replay never resends it, so the caller must not promise it will be logged
+    // A comment in the same state is checked against the tracker and resent if missing: no review.
+    rig.Tracker().EnqueueAddCommentResult(TrackerErrorTransport("operation timed out"));
+    const PendingActionSubmitResult c = rig.svc.SubmitOrQueue(
+        PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::AuthenticatedReachable), "ABC-1",
+        CommentPayload("maybe"));
+    CHECK(c.K == PendingActionSubmitResult::Kind::Queued);
+    CHECK_FALSE(c.NeedsReview);
+}
+
 TEST_CASE("PendingActionQueueService::SubmitOrQueue queues a rate-limited send as pending") {
     OfflineQueueTestEnvGuard env;
     Rig rig;
@@ -292,6 +310,51 @@ TEST_CASE("PendingActionQueueService replay archives a rejected comment") {
     CHECK(dead[0].TerminalReason == "replay_rejected");
     CHECK(dead[0].Row.LastError == "Issue is closed");
     CHECK(rig.svc.Snapshot()->Dead.size() == 1);
+}
+
+TEST_CASE("PendingActionQueueService replay keeps an ambiguous comment ambiguous when the check fails") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id = rig.QueueComment("maybe posted", PendingActionState::kAmbiguous);
+    rig.Tracker().SetIssueCommentsError(TrackerErrorServer("Service Unavailable", 503));
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddCommentCalls().empty()); // never resent blind
+    CHECK(rig.Cache().LoadDeadPendingActions().empty());
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].Id == id);
+    CHECK(rows[0].State == PendingActionState::kAmbiguous);
+    CHECK(rows[0].Attempts == 1);
+}
+
+TEST_CASE("PendingActionQueueService replay archives an ambiguous comment whose issue is gone") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.QueueComment("orphaned", PendingActionState::kAmbiguous);
+    rig.Tracker().SetIssueCommentsError(TrackerErrorNotFound("Issue does not exist"));
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddCommentCalls().empty());
+    CHECK(rig.Cache().LoadPendingActions().empty());
+    const std::vector<DeadPendingAction> dead = rig.Cache().LoadDeadPendingActions();
+    REQUIRE(dead.size() == 1);
+    CHECK(dead[0].TerminalReason == "replay_rejected");
+    CHECK(dead[0].Row.State == PendingActionState::kAmbiguous); // still unknown whether it landed
+}
+
+TEST_CASE("PendingActionQueueService replay archives a rejected send in its pre-send state, not `sending`") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id =
+        rig.Cache().EnqueuePendingAction("Jira", PendingActionKindWire(PendingActionKind::WorklogAdd), "ABC-1",
+                                         "{\"timeSpent\":\"1h\"}", PendingActionState::kPending);
+    rig.Tracker().EnqueueAddWorklogResult(TrackerErrorInvalidRequest("Issue is closed", 400));
+    rig.ReplayNow();
+    const std::vector<DeadPendingAction> dead = rig.Cache().LoadDeadPendingActions();
+    REQUIRE(dead.size() == 1);
+    CHECK(dead[0].Row.Id == id);
+    // A Retry restores from this state: `sending` would turn a refused worklog into "Sent, but the
+    // response was lost".
+    CHECK(dead[0].Row.State == PendingActionState::kPending);
 }
 
 TEST_CASE("PendingActionQueueService replay archives a comment at the attempt cap") {

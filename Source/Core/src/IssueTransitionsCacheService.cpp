@@ -49,6 +49,7 @@ TransitionsLookup IssueTransitionsCacheService::GetAvailableTransitions(const Tr
     if (entry.HasValue && entry.Live) {
         lookup.options = entry.Payload;
         lookup.freshness = live_.Freshness(liveKey, connectivity);
+        lookup.fromLive = true;
         return lookup;
     }
     const std::string learnedKey =
@@ -168,17 +169,30 @@ void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey
     if (learnedKey.empty()) {
         return;
     }
+    // The from-status itself among the targets means the issue moved on the server (these targets
+    // belong to another from-status) — unless a global or looped transition offers it, which Jira lists
+    // from every status (every status of a team-managed workflow allows all). Such a self-target is
+    // dropped from what is remembered; the combo always shows the current status anyway.
+    std::vector<TrackerFieldOption> remembered;
+    remembered.reserve(options.size());
     for (const TrackerFieldOption& opt : options) {
         if (opt.Id == q.FromStatusKey) {
-            return; // the issue moved on the server; these targets belong to another from-status
+            if (!opt.ReachableFromAnyStatus) {
+                return;
+            }
+            continue;
         }
+        remembered.push_back(opt);
+    }
+    if (remembered.empty()) {
+        return;
     }
     {
         std::lock_guard<std::mutex> lock(learnedMutex_);
-        learned_[LearnedMemoryKey(backendKey, learnedKey)] = options;
+        learned_[LearnedMemoryKey(backendKey, learnedKey)] = remembered;
     }
     if (store) {
         store->UpsertLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey,
-                            smatchet::workflow::SerializeTransitionTargets(options));
+                            smatchet::workflow::SerializeTransitionTargets(remembered));
     }
 }

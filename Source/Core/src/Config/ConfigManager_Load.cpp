@@ -879,13 +879,37 @@ bool CliOverridesAllowCache(const ConfigManager::CliOverrides& cli) {
     return !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
 }
 
+#if defined(_WIN32) || defined(__ANDROID__)
+// The legacy-secret migration re-save (see LoadImpl's ordering note). Not ConfigManager::Save: that
+// drains a queued UI snapshot and then writes this older image on top, reverting the snapshot's edits.
+// Returns false when the file now holds an image other than `cfg`.
+bool RunLegacySecretMigration(const TrackerConfig& cfg, const nlohmann::json& j, const SecretMigrationFlags& migrate) {
+#if defined(__ANDROID__)
+    (void)migrate;
+    LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to Keystore-protected storage "
+             "(audit H2 fail-closed re-save: unseal-able secrets re-sealed, the rest dropped).");
+#elif defined(SMATCHET_WITH_WHISPER)
+    LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+             "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
+             migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
+             migrate.AiDeepSeekApiKey ? 1 : 0, migrate.WhisperApiKey ? 1 : 0);
+#else
+    LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+             "(mcp=%d ai=%d anthropic=%d deepseek=%d)",
+             migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
+             migrate.AiDeepSeekApiKey ? 1 : 0);
+#endif
+    return smatchet::config_detail::SaveSecretMigration(cfg, j);
+}
+#endif
+
 /// The shared Load body. `forWriteLock` is set only by `LoadTrackerConfigForUpdate` (#2191), and
 /// turns off the two behaviors that are wrong for a read taken INSIDE the config write lock: the
 /// Load cache (stale by construction there) and the legacy-secret migration re-`Save` (a re-entry
 /// of the non-recursive RMW mutex, i.e. a deadlock). See ConfigManager_Internal.h for why dropping
 /// that re-save loses nothing.
 TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock) {
-    const bool canUseCache = !forWriteLock && CliOverridesAllowCache(cli);
+    bool canUseCache = !forWriteLock && CliOverridesAllowCache(cli);
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
         // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not
@@ -966,22 +990,10 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent re-save with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    if (migrate.Any() && !forWriteLock) {
-#if defined(__ANDROID__)
-        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to Keystore-protected storage "
-                 "(audit H2 fail-closed re-save: unseal-able secrets re-sealed, the rest dropped).");
-#elif defined(SMATCHET_WITH_WHISPER)
-        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
-                 migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
-                 migrate.AiDeepSeekApiKey ? 1 : 0, migrate.WhisperApiKey ? 1 : 0);
-#else
-        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d deepseek=%d)",
-                 migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
-                 migrate.AiDeepSeekApiKey ? 1 : 0);
-#endif
-        ConfigManager::Save(cfg);
+    if (migrate.Any() && !forWriteLock && !RunLegacySecretMigration(cfg, j, migrate)) {
+        // The file now holds a newer image (a queued snapshot, or another writer's): caching this one
+        // would hand later Load() callers values the disk no longer has.
+        canUseCache = false;
     }
 #endif
 

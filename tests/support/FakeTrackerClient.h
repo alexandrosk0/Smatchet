@@ -215,6 +215,12 @@ class FakeTrackerClient : public ITrackerBackend,
                 ++fetchIssuesForKeysByKey_[key];
             }
         }
+        if (std::find_first_of(issueKeys.begin(), issueKeys.end(), fetchIssuesForKeysRefusedKeys_.begin(),
+                               fetchIssuesForKeysRefusedKeys_.end()) != issueKeys.end()) {
+            // Jira's shape: one key it cannot see rejects the whole `key in (...)` batch.
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(
+                TrackerErrorInvalidRequest("refused key in batch", 400));
+        }
         if (!fetchIssuesForKeysOk_) {
             // A scripted structured error wins; the legacy string setter keeps its historical
             // InvalidRequest shape so untouched suites see identical behaviour.
@@ -476,6 +482,9 @@ class FakeTrackerClient : public ITrackerBackend,
             return Result<std::vector<TrackerIssueComment>, TrackerError>::Err(network_->MakeError());
         }
         ++fetchIssueCommentsCalls_;
+        if (!issueCommentsError_.IsOk()) {
+            return Result<std::vector<TrackerIssueComment>, TrackerError>::Err(issueCommentsError_);
+        }
         const auto it = issueCommentsByIssueKey_.find(issueKey);
         if (it != issueCommentsByIssueKey_.end()) {
             return Result<std::vector<TrackerIssueComment>, TrackerError>::Ok(it->second);
@@ -776,6 +785,11 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssuesForKeysError_ = error.Detail;
         fetchIssuesForKeysStructuredError_ = std::move(error);
     }
+    /// Every FetchIssuesForKeys batch that contains one of `issueKeys` fails with a 400, as Jira rejects a
+    /// whole `key in (...)` query for one key it cannot browse. Empty clears it.
+    void SetFetchIssuesForKeysRefusedKeys(std::vector<std::string> issueKeys) {
+        fetchIssuesForKeysRefusedKeys_ = std::move(issueKeys);
+    }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
     /// How many FetchIssuesForKeys calls asked for `issueKey`. Safe while workers fetch: other app paths
     /// (sync hydration) call FetchIssuesForKeys concurrently, so a per-key count is what a test can pin.
@@ -870,6 +884,7 @@ class FakeTrackerClient : public ITrackerBackend,
     void SetIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment> comments) {
         issueCommentsByIssueKey_[issueKey] = std::move(comments);
     }
+    void SetIssueCommentsError(TrackerError error) { issueCommentsError_ = std::move(error); }
     void SetIssueWatchers(const std::string& issueKey, std::vector<TrackerUser> watchers) {
         issueWatchersByIssueKey_[issueKey] = std::move(watchers);
     }
@@ -958,6 +973,7 @@ class FakeTrackerClient : public ITrackerBackend,
 
     // FetchIssuesForKeys
     bool fetchIssuesForKeysOk_ = true;
+    std::vector<std::string> fetchIssuesForKeysRefusedKeys_;
     mutable std::mutex fetchIssuesForKeysByKeyMutex_;
     std::unordered_map<std::string, int> fetchIssuesForKeysByKey_; // guarded by fetchIssuesForKeysByKeyMutex_
     std::vector<CachedTicket> fetchIssuesForKeysTickets_;
@@ -1061,6 +1077,7 @@ class FakeTrackerClient : public ITrackerBackend,
 
     // FetchIssueComments (Pillar 6)
     std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
+    TrackerError issueCommentsError_;
     std::size_t fetchIssueCommentsCalls_ = 0;
 
     // Watchers + the activity role's groups (Pillar 6)

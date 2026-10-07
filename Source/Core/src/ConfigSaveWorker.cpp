@@ -7,10 +7,14 @@
 // this worker took over from `Views::Save` must keep folding in out-of-band ToolbarAppend writes.
 #include "Ui/Views.h"
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <map>
 #include <mutex>
+#include <string>
 #include <thread>
 
 namespace smatchet {
@@ -39,6 +43,8 @@ struct WorkerState {
     AnnotateAnalysisConfig annotatePending;
     bool viewsDirty = false;
     PersistentViewsFile viewsPending;
+    // Raw config-JSON keys, coalesced per key (latest value wins).
+    std::map<std::string, nlohmann::json> rawKeysPending;
 };
 
 WorkerState& State() {
@@ -46,7 +52,17 @@ WorkerState& State() {
     return s;
 }
 
-bool HasPendingLocked(const WorkerState& s) { return s.trackerDirty || s.annotateDirty || s.viewsDirty; }
+bool HasPendingLocked(const WorkerState& s) {
+    return s.trackerDirty || s.annotateDirty || s.viewsDirty || !s.rawKeysPending.empty();
+}
+
+void WriteConfigJsonKeys(const std::map<std::string, nlohmann::json>& keys) {
+    ConfigManager::UpdateConfigJson([&keys](nlohmann::json& j) {
+        for (const auto& kv : keys) {
+            j[kv.first] = kv.second;
+        }
+    });
+}
 
 /// The `config_save_queue` take-one hook (#2191). Installed for the worker's whole lifetime and
 /// called by `ConfigManager` with the config write lock HELD, so it only ever touches `s.mtx` —
@@ -84,8 +100,10 @@ void DrainOnce(WorkerState& s) {
     bool doViews = false;
     AnnotateAnalysisConfig acfg;
     PersistentViewsFile vfile;
+    std::map<std::string, nlohmann::json> rawKeys;
     {
         std::lock_guard<std::mutex> lk(s.mtx);
+        rawKeys.swap(s.rawKeysPending);
         if (s.annotateDirty) {
             doAnnotate = true;
             acfg = s.annotatePending;
@@ -114,6 +132,12 @@ void DrainOnce(WorkerState& s) {
     if (doViews) {
         try {
             WritePersistentViews(vfile);
+        } catch (...) { // catch-all-ok: see above.
+        }
+    }
+    if (!rawKeys.empty()) {
+        try {
+            WriteConfigJsonKeys(rawKeys);
         } catch (...) { // catch-all-ok: see above.
         }
     }
@@ -182,6 +206,7 @@ void Stop() {
             s.trackerDirty = false;
             s.annotateDirty = false;
             s.viewsDirty = false;
+            s.rawKeysPending.clear();
         }
         workerToJoin = std::move(s.thread);
         s.running = false;
@@ -264,6 +289,28 @@ void EnqueuePersistentViews(const PersistentViewsFile& disk) {
     // the caller so the views write is never lost.
     try {
         WritePersistentViews(disk);
+    } catch (...) { // catch-all-ok: see above.
+    }
+}
+
+void EnqueueConfigJsonKey(const std::string& key, const nlohmann::json& value) {
+    auto& s = State();
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lk(s.mtx);
+        if (s.running) {
+            s.rawKeysPending[key] = value;
+            queued = true;
+        }
+    }
+    if (queued) {
+        s.cv.notify_one();
+        return;
+    }
+    try {
+        std::map<std::string, nlohmann::json> one;
+        one[key] = value;
+        WriteConfigJsonKeys(one);
     } catch (...) { // catch-all-ok: see above.
     }
 }

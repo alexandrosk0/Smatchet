@@ -16,6 +16,7 @@
 // hop, so it takes the narrow poster ref and drops AppController.h entirely.
 #include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "SmatchetUiSession.h"
 
 #include <string>
@@ -49,7 +50,9 @@ CommandResult AdjustFontSize(IMainThreadPoster& poster, int delta, bool reset) {
             pt = SmatchetDefaults::kFontSizeMaxPt;
         }
         g_ui.cfg.FontSizePt = pt;
-        ConfigManager::Save(g_ui.cfg);
+        // Off the UI thread and coalesced: a zoom gesture can step several times a second, and a
+        // synchronous save (config re-read, secret encryption, file write) per step hitches frames.
+        smatchet::config_save::EnqueueTrackerConfig(g_ui.cfg);
         nlohmann::json out;
         out["fontSizePt"] = g_ui.cfg.FontSizePt;
         return CommandResult::Success(std::move(out));

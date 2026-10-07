@@ -16,6 +16,7 @@ using smatchet::pendingaction::kCommentDedupeWindowSec;
 using smatchet::pendingaction::NormalizeCommentForDedupe;
 using smatchet::pendingaction::ParseCommentActionPayload;
 using smatchet::pendingaction::ParseWorklogActionPayload;
+using smatchet::pendingaction::StateAfterFailedDedupeCheck;
 using smatchet::pendingaction::StateAfterFailedSend;
 using smatchet::pendingaction::WorklogActionPayload;
 
@@ -49,6 +50,20 @@ TEST_CASE("StateAfterFailedSend — a rejection is final, a maybe-landed send is
     // Watching twice is harmless, so a watch is simply retried.
     CHECK(StateAfterFailedSend(PendingActionKind::WatchAdd, TrackerErrorTransport("timeout")) == pending);
     CHECK(StateAfterFailedSend(PendingActionKind::WatchAdd, TrackerErrorServer("503", 503)) == pending);
+}
+
+TEST_CASE("StateAfterFailedDedupeCheck — a failed check stays ambiguous unless it proves the comment unresolvable") {
+    const std::string ambiguous = PendingActionState::kAmbiguous;
+    // Jira's comment fetch reports these kinds for a network blip, a 5xx and a 429: none is the tracker
+    // refusing the comment, so none may archive it.
+    CHECK(StateAfterFailedDedupeCheck(TrackerErrorTransport("connection reset")) == ambiguous);
+    CHECK(StateAfterFailedDedupeCheck(TrackerErrorServer("503", 503)) == ambiguous);
+    CHECK(StateAfterFailedDedupeCheck(TrackerErrorRateLimited("slow down")) == ambiguous);
+    CHECK(StateAfterFailedDedupeCheck(TrackerErrorParse("truncated page")) == ambiguous);
+    CHECK(StateAfterFailedDedupeCheck(TrackerErrorUnknown("unclassified")) == ambiguous);
+    CHECK(std::string(StateAfterFailedDedupeCheck(TrackerErrorAuth("no", 401))) == "");
+    CHECK(std::string(StateAfterFailedDedupeCheck(TrackerErrorNotFound("gone"))) == "");
+    CHECK(std::string(StateAfterFailedDedupeCheck(TrackerErrorInvalidRequest("bad", 400))) == "");
 }
 
 TEST_CASE("StateAfterFailedSend — a request that never left the machine stays plainly pending") {
