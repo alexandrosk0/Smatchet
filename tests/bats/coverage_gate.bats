@@ -264,6 +264,53 @@ make_fixture_repo() {
     [[ "$output" == *"FAIL"* ]]
 }
 
+# ---------- coverage-delta-gate.sh: which files count, renames, odd paths ----------
+# _path_repo — a base commit with a product TU and a data file holding code-like text, on branch
+# main; leaves the work tree on branch `head` with nothing changed yet.
+_path_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    printf 'int foo() { return 1; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    printf 'int launch() { return 1; }\n' > "$FIXREPO/Source/Core/src/notes.txt"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+@test "coverage-delta-gate.sh: a product file moved within the product trees stays exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/a.cpp Source/Core/src/b.cpp
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: a file renamed into the product trees is never exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/notes.txt Source/Core/src/Mover.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"moves a file into the product trees"* ]]
+}
+
+@test "coverage-delta-gate.sh: a product path holding a space is classified" {
+    _path_repo
+    printf 'int launch() { return 2; }\n' > "$FIXREPO/Source/Core/src/a b.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: an .inl change alone is a production change" {
+    _path_repo
+    printf 'int impl() { return 2; }\n' > "$FIXREPO/Source/Core/src/Impl.inl"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
 # ==========================================================================
 # coverage-delta-gate.sh: full-context exemptions (off-target platform arm +
 # header->cpp body relocation). Separate block: real `git diff --unified=100000`

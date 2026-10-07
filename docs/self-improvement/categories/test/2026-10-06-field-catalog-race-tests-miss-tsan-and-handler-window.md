@@ -16,10 +16,18 @@
   caller's own pre-check, so reverting the in-handler checks leaves every test green (adversarial review
   of the backlog sweep, round 4).
 
+  The grid's own catalog apply (`SmatchetUI.cpp`, the `fieldCatalogFuture` result handling, and
+  `StartFieldCatalogFetchAsync`'s worker) is not linked into any test either. Its contract (name the fetch's
+  project for a failure too, so an offline failure after a clear restores that project's snapshot) is
+  tested only at the `AppController` level, by a test that makes the `SetCurrentCatalogProject` call itself.
+
   Concrete next actions:
   1. Give the TSan rig a headless `AppController` (link the posix-core-check archive, or a reduced one) and
      add `AppControllerFieldCatalog.posix.test.cpp` to it.
-  2. Add a snapshot-load seam, for example a `FieldCatalogCache` loader hook that tests can override, so a
+  2. Extract the grid's result apply into a free function the posix test links
+     (`ApplyGridCatalogFetchResult(AppController&, FieldCatalogFetchResult&&)`), and test: clear, then a
+     failed result for project FOO, then FOO's snapshot restored.
+  3. Add a snapshot-load seam, for example a `FieldCatalogCache` loader hook that tests can override, so a
      test can apply a catalog during the unlocked load and assert the restore and banner skip it.
 
   Status: open

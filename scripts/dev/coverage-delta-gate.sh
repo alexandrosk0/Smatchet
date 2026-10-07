@@ -14,9 +14,11 @@
 # label stays as a manual escape for genuine cases the classifier can't cover.
 #
 # Test-light exemption (no override, no postmortem) — auto-PASS a diff whose
-# *every* added/modified line in first-party C/C++ product files
-# (.cpp/.h/.hpp/.cc/.cxx under Source/Core, Source/Plugins, Source/Standalone,
-# tests/) is provably no-new-runtime-surface. Classes (CONSERVATIVE — anything
+# *every* added/modified line in first-party product files (every file under
+# Source/Core, Source/Plugins, Source/Standalone, tests/ but known data: docs,
+# assets, fixtures, scripts, build files — _DATA_EXT_RE) is provably
+# no-new-runtime-surface. A file renamed into those trees from outside them is never
+# exempt (its lines are newly built). Classes (CONSERVATIVE — anything
 # not on this list falls through to the normal coverage-delta gate):
 #   * comment/marker-only  — //, /* */, doc-* continuation, // catch-all-ok: …
 #   * logging-only         — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…) calls
@@ -191,10 +193,10 @@ _line_is_no_runtime_surface() {
 # FALLTHROUGH ⇒ at least one added C/C++ product line is real surface; the
 #           caller runs the unchanged coverage-delta logic.
 #
-# Scope: only .cpp/.h/.hpp/.cc/.cxx (and the included .c/.inl/.inc/.ipp) under
-# Source/Core, Source/Plugins, Source/Standalone, tests/. Lines in other files (build/docs/scripts/non-product
-# C++) are ignored for the purposes of this classifier — they carry no runtime
-# surface the gate enforces, so they neither block nor force a fallthrough.
+# Scope: every product file (_is_product_path: anything under Source/Core, Source/Plugins,
+# Source/Standalone, tests/ but known data, whatever its extension). Lines in other files
+# (build/docs/scripts, data) are ignored for the purposes of this classifier — they carry no
+# runtime surface the gate enforces, so they neither block nor force a fallthrough.
 # Net paren balance of a string: count of '(' minus count of ')'. Used to know when a
 # wrapped LOG_*( ... ) statement has closed. Parens INSIDE a double-quoted string literal
 # (e.g. a LOG format arg `LOG_ERROR("x (", y);`) must NOT count — otherwise the accumulator
@@ -277,6 +279,24 @@ _tail_after_log_close() {
     echo ""
 }
 
+# Data files under the product trees, never built as C++ (docs, assets, fixtures, scripts, build
+# files). One list for the bash checks and the awk prefilter (passed in as -v dataext).
+_DATA_EXT_RE='md|txt|json|png|jpg|jpeg|gif|svg|ico|bmp|wav|ttf|otf|woff|woff2|a|lib|so|dll|tsv|csv|bats|py|sh|ps1|cmake|in|rc|yml|yaml|toml|xml|html'
+
+# _is_product_path <path> — a file under the product trees whose lines a compiler may build. Fail
+# closed: anything there that is not known data counts, whatever its extension (or none), because any
+# file can be #included.
+_is_product_path() {
+    case "$1" in
+        Source/Core/*|Source/Plugins/*|Source/Standalone/*|tests/*) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in
+        tests/fuzz/corpus/*|*/.gitkeep|*/.gitignore) return 1 ;;
+    esac
+    [[ ! "$1" =~ \.(${_DATA_EXT_RE})$ ]]
+}
+
 _classify_diff() {
     local cur_file=""
     local in_product_cpp=0
@@ -295,23 +315,17 @@ _classify_diff() {
         case "$raw" in
             '+++ '*)
                 # New-file header: +++ b/<path>  (or /dev/null on delete)
+                # git ends the header with a TAB when the path holds a space.
                 cur_file="${raw#+++ }"
+                cur_file="${cur_file%$'\t'}"
                 cur_file="${cur_file#b/}"
                 in_product_cpp=0
                 in_block_comment=0
                 in_log_stmt=0
                 log_depth=0
-                case "$cur_file" in
-                    Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|\
-                    Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|\
-                    Source/Standalone/*.cpp|Source/Standalone/*.h|Source/Standalone/*.hpp|Source/Standalone/*.cc|Source/Standalone/*.cxx|\
-                    tests/*.cpp|tests/*.h|tests/*.hpp|tests/*.cc|tests/*.cxx|\
-                    Source/Core/*.c|Source/Core/*.inl|Source/Core/*.inc|Source/Core/*.ipp|\
-                    Source/Plugins/*.c|Source/Plugins/*.inl|Source/Plugins/*.inc|Source/Plugins/*.ipp|\
-                    Source/Standalone/*.c|Source/Standalone/*.inl|Source/Standalone/*.inc|Source/Standalone/*.ipp|\
-                    tests/*.c|tests/*.inl|tests/*.inc|tests/*.ipp)
-                        in_product_cpp=1 ;;
-                esac
+                if _is_product_path "$cur_file"; then
+                    in_product_cpp=1
+                fi
                 continue ;;
             '--- '*) continue ;;
             'diff --git '*) in_block_comment=0; in_log_stmt=0; log_depth=0; continue ;;
@@ -437,13 +451,17 @@ _classify_diff() {
 # post-image lines it cannot see (the default-context diff only reset at real
 # hunk boundaries, so this is never looser than that).
 #
-# A small lexer walks the same post-image tracking /* */ comments and raw string
-# literals (R"delim( ... )delim"). A '+' line that is only whitespace/comment is
+# A small lexer walks the same post-image token by token, as the compilers do
+# (identifiers, pp-numbers, header-names, string / char / raw string literals),
+# tracking /* */ comments and raw string literals (R"delim( ... )delim") across
+# lines. A file it cannot follow (C, an unknown extension, a '$' / non-ASCII / \u
+# in an identifier) is untrusted. A '+' line that is only whitespace/comment is
 # dropped (no surface; not a gap) — so an edit to a comment whose opener is a
 # context line stays exempt. A '+' line that starts inside a raw string literal is
 # string DATA and is replaced by a sentinel the classifier never exempts, as is a
-# '+' line with a carriage return inside it. A C/C++ file git prints as binary
-# ("Binary files ... differ", e.g. one NUL byte) is never exempt. A file
+# '+' line with a carriage return inside it. A product file git prints as binary
+# ("Binary files ... differ", e.g. one NUL byte) or under a quoted path is never
+# exempt. A file
 # whose tracking cannot be trusted — a hunk that ends with the #if stack open,
 # closes an arm it never opened, ends inside a comment/raw string, splices a line
 # with a trailing backslash outside a directive's own continuation, splices a
@@ -452,8 +470,7 @@ _classify_diff() {
 # line), puts a comment between '#' and the directive name or a directive after a
 # closing */, uses a %: digraph directive, holds a control byte the compilers read
 # differently (a carriage return inside a line, a form feed, a vertical tab, a
-# backslash followed by whitespace), or puts '$', a non-ASCII byte or a pp-number
-# (1.R, 1'R, 1e+R) before a raw string's R prefix — gets
+# backslash followed by whitespace) — gets
 # neither the comment drop nor the off-target drop: its lines reach the
 # classifier as-is (falls through). Two exemptions, both conservative (anything
 # unrecognised is printed, i.e. falls through):
@@ -486,10 +503,21 @@ _classify_diff() {
 #      surface — the existing callers' tests still exercise it.
 _PREFILTER_AWK="$(cat <<'AWK'
 function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
-function is_prod(p) { return p ~ /^(Source\/(Core|Plugins|Standalone)|tests)\/.*\.(cpp|h|hpp|cc|cxx|c|inl|inc|ipp)$/ }
+# Mirrors _is_product_path (dataext is _DATA_EXT_RE).
+function is_prod(p) {
+    if (p !~ /^(Source\/(Core|Plugins|Standalone)|tests)\//) return 0
+    if (p ~ /^tests\/fuzz\/corpus\// || p ~ /\/\.git(keep|ignore)$/) return 0
+    return p !~ ("\\.(" dataext ")$")
+}
+# A UTF-8 byte-order mark opening a file is no token to the compilers. (The prefilter runs under
+# LC_ALL=C, so every awk reads bytes.)
+function strip_bom(s) { return substr(s, 1, 3) == "\357\273\277" ? substr(s, 4) : s }
+# The C++ files this lexer reads; any other product file (C, an unknown extension) is untrusted.
+function is_cxx(p) { return p ~ /\.(cpp|cc|cxx|h|hpp|hxx|hh|inl|ipp|tpp|inc)$/ }
 function is_hdr(p) { return p ~ /\.(h|hpp)$/ }
 function is_cpp(p) { return p ~ /\.(cpp|cc|cxx)$/ }
-function path_of(raw,   p) { p = substr(raw, 5); sub(/^b\//, "", p); return p }
+# git ends a "+++ b/<path>" header with a TAB when the path holds a space.
+function path_of(raw,   p) { p = substr(raw, 5); sub(/\t$/, "", p); sub(/^b\//, "", p); return p }
 function drop_inline(s) { s = " " s " "; gsub(/[ \t]inline[ \t]/, " ", s); return trim(s) }
 # Net { minus } outside string/char literals and a trailing // comment.
 function brace_delta(s,   t, o, c) {
@@ -596,12 +624,23 @@ function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; r
 function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0; lx_macro = 0 }
 # lex_line(s) — advance the lexical state across one line; sets lx_code = 1 when
 # any non-whitespace byte lies outside a comment (string-literal bytes are code).
-# Ordinary string/char literals cannot span lines, so they are skipped in place
-# (a C++14 digit separator 1'000 is not a char literal).
-function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
+# It scans token by token, as the compilers do, so a quote opens a literal only where
+# a token starts: identifiers (a raw-string prefix is a whole identifier R, u8R, uR, UR
+# or LR), pp-numbers (1'000, 1.R, 1e+'5 and 0x1e+5 are each one token), header-names
+# after #include / __has_include (skipped whole), and ordinary string / char literals,
+# which cannot span lines. A '$', non-ASCII byte or \u / \U in an identifier or
+# pp-number is accepted differently by different compilers: the file is not trusted.
+function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
     lx_code = 0
     n = length(s)
     i = 1
+    if (!lx_blk && !lx_raw && match(s, /^[ \t]*#[ \t]*(include|include_next|import)[ \t]*[<"]/)) {
+        lx_code = 1
+        q = substr(s, RLENGTH, 1) == "<" ? ">" : "\""
+        m = index(substr(s, RLENGTH + 1), q)
+        if (m == 0) { lx_untrusted = 1; return }
+        i = RLENGTH + m + 1
+    }
     while (i <= n) {
         if (lx_blk) {
             k = index(substr(s, i), "*/")
@@ -618,53 +657,78 @@ function lex_line(s,   i, n, rest, p, c, pre, m, d, k) {
             lx_raw = 0
             continue
         }
-        rest = substr(s, i)
-        p = match(rest, /[\/"']/)
-        if ((p ? substr(rest, 1, p - 1) : rest) ~ /[^ \t\r]/) lx_code = 1
-        if (!p) return
-        i += p - 1
         c = substr(s, i, 1)
-        if (substr(s, i, 2) == "//") {
+        if (c ~ /[ \t\r\f\v]/) { i++; continue }
+        c2 = substr(s, i, 2)
+        if (c2 == "//") {
             # A trailing backslash splices the next line into this comment, which the
             # per-line lexer cannot follow: the file's tracking is not trusted.
             if (s ~ /\\[ \t\r]*$/) lx_untrusted = 1
             return
         }
-        if (substr(s, i, 2) == "/*") { lx_blk = 1; i += 2; continue }
+        if (c2 == "/*") { lx_blk = 1; i += 2; continue }
         lx_code = 1
-        if (c == "/") { i++; continue }
-        pre = substr(s, 1, i - 1)
-        # GCC, Clang and MSVC take '$' and non-ASCII bytes as identifier characters, so before an R
-        # prefix they make it part of an identifier; this lexer cannot follow that.
-        if (c == "\"" && pre ~ /([$]|[^\t -~])(u8|u|U|L)?R$/) lx_untrusted = 1
-        # Nor can it follow an R that continues a pp-number (1.R, 1'R, 1e+R): the quote after it opens an
-        # ordinary string for the compilers.
-        if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])[.]?[0-9]([A-Za-z0-9_.']|[eEpP][+-])*R$/) lx_untrusted = 1
-        if (c == "\"" && pre ~ /(^|[^A-Za-z0-9_])(u8|u|U|L)?R$/) {
-            m = substr(s, i + 1)
-            d = index(m, "(")
-            # A delimiter is up to 16 characters, any but space, the parentheses, backslash and the
-            # tab, vertical-tab and form-feed controls ('"' is allowed: R""( ... )"").
-            if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\v\f\\)]/) {
-                lx_rdel = substr(m, 1, d - 1)
-                lx_raw = 1
-                i += d + 1
-                continue
+        if (c ~ /[A-Za-z_$]/ || c ~ /[^\t -~]/ || c2 ~ /^\\[uU]$/) {
+            j = i
+            while (j <= n) {
+                k = substr(s, j, 1)
+                if (k ~ /[A-Za-z0-9_]/) { j++; continue }
+                if (k == "$" || k ~ /[^\t -~]/) { lx_untrusted = 1; j++; continue }
+                if (k == "\\" && substr(s, j + 1, 1) ~ /[uU]/) { lx_untrusted = 1; j += 2; continue }
+                break
             }
+            id = substr(s, i, j - i)
+            i = j
+            if (substr(s, i, 1) == "\"" && id ~ /^(u8|u|U|L)?R$/) {
+                m = substr(s, i + 1)
+                d = index(m, "(")
+                # A delimiter is up to 16 characters, any but space, the parentheses, backslash and the
+                # tab, vertical-tab and form-feed controls ('"' is allowed: R""( ... )"").
+                if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\v\f\\)]/) {
+                    lx_rdel = substr(m, 1, d - 1)
+                    lx_raw = 1
+                    i += d + 1
+                    continue
+                }
+                lx_untrusted = 1 # an R prefix with no delimiter the compilers accept
+            }
+            if (id == "__has_include" || id == "__has_include_next") {
+                rest = substr(s, i)
+                if (match(rest, /^[ \t]*\([ \t]*[<"]/)) {
+                    q = substr(rest, RLENGTH, 1) == "<" ? ">" : "\""
+                    m = index(substr(rest, RLENGTH + 1), q)
+                    if (m == 0) { lx_untrusted = 1; return }
+                    i += RLENGTH + m
+                }
+            }
+            continue
         }
-        # A digit separator continues a pp-number, so it is followed by a digit or a letter; any other
-        # quote after a digit opens a character literal.
-        if (c == SQ && pre ~ /(^|[^A-Za-z0-9_])[0-9][A-Za-z0-9_.']*$/ && substr(s, i + 1, 1) ~ /[A-Za-z0-9_]/) {
+        if (c ~ /[0-9]/ || (c == "." && substr(s, i + 1, 1) ~ /[0-9]/)) {
+            j = i + 1
+            while (j <= n) {
+                k = substr(s, j, 1)
+                if (k ~ /[A-Za-z0-9_.]/) { j++; continue }
+                if (k ~ /[+-]/ && substr(s, j - 1, 1) ~ /[eEpP]/) { j++; continue }
+                if (k == SQ && substr(s, j + 1, 1) ~ /[A-Za-z0-9_]/) { j += 2; continue }
+                if (k == SQ && substr(s, j + 1, 1) ~ /[$\\]|[^\t -~]/) { lx_untrusted = 1; j += 2; continue }
+                if (k == "$" || k ~ /[^\t -~]/) { lx_untrusted = 1; j++; continue }
+                if (k == "\\" && substr(s, j + 1, 1) ~ /[uU]/) { lx_untrusted = 1; j += 2; continue }
+                break
+            }
+            i = j
+            continue
+        }
+        if (c == "\"" || c == SQ) {
             i++
+            while (i <= n) {
+                k = substr(s, i, 1)
+                if (k == "\\") { i += 2; continue }
+                i++
+                if (k == c) break
+            }
             continue
         }
         i++
-        while (i <= n) {
-            k = substr(s, i, 1)
-            if (k == "\\") { i += 2; continue }
-            i++
-            if (k == c) break
-        }
     }
 }
 # post_line(body) — feed one post-image line through the #if stack (only when it
@@ -740,8 +804,12 @@ BEGIN {
 NR == FNR {
     if ($0 ~ /^diff --git / || $0 ~ /^@@/) { end_runs(); end_hunk1(); next }
     if ($0 ~ /^--- /) { end_runs(); next }
-    if ($0 ~ /^\+\+\+ /) { end_runs(); f1 = path_of($0); prod1 = is_prod(f1); next }
-    if (prod1 && (substr($0, 1, 1) == " " || substr($0, 1, 1) == "+")) post_line(substr($0, 2))
+    if ($0 ~ /^\+\+\+ /) {
+        end_runs(); f1 = path_of($0); prod1 = is_prod(f1)
+        if (prod1 && !is_cxx(f1)) untrusted[f1] = 1
+        next
+    }
+    if (prod1 && (substr($0, 1, 1) == " " || substr($0, 1, 1) == "+")) post_line(strip_bom(substr($0, 2)))
     if (substr($0, 1, 1) == "-" && is_prod(f1) && is_hdr(f1)) {
         if (!in_rrun) { nr++; rn[nr] = 0; in_rrun = 1 }
         rl[nr, ++rn[nr]] = trim(substr($0, 2))
@@ -802,10 +870,10 @@ FNR == 1 && !paired {
     }
     if ($0 ~ /^@@/) { depth = 0; gap = 0; lex_reset(); print; next }
     c1 = substr($0, 1, 1)
-    if (c1 == " ") { if (prod) { post_line(substr($0, 2)); gap = 1 } next }
+    if (c1 == " ") { if (prod) { post_line(strip_bom(substr($0, 2))); gap = 1 } next }
     if (c1 != "+") next
     if (!prod) { print; next }
-    body = substr($0, 2)
+    body = strip_bom(substr($0, 2))
     if (post_line(body)) { emit(body); next }
     if (FNR in reloc) { gap = 1; next }
     if (trusted && in_off_arm()) { gap = 1; next }
@@ -823,7 +891,9 @@ AWK
 )"
 
 _prefilter_diff() {
-    awk "$_PREFILTER_AWK" "$1" "$1"
+    # LC_ALL=C: byte semantics in every awk (gawk would read UTF-8 characters), so the lexer's
+    # non-ASCII checks and offsets mean the same thing on every runner.
+    LC_ALL=C awk -v dataext="$_DATA_EXT_RE" "$_PREFILTER_AWK" "$1" "$1"
 }
 
 # _classify_diff_file <diff-file> — prefilter a full-context diff, then classify the
@@ -836,7 +906,20 @@ _classify_diff_file() {
     # git prints a file it takes for binary (one NUL byte, even inside a comment the compilers
     # ignore) as a single "Binary files ... differ" line: a C/C++ file in that form hides its whole
     # change from the classifier, so it is never exempt.
-    if grep -qE '^Binary files .*\.(cpp|h|hpp|cc|cxx|c|inl|inc|ipp)"? differ$' "$1"; then
+    local bin p
+    while IFS= read -r bin; do
+        p="${bin#Binary files }"
+        p="${p##* and }"
+        p="${p% differ}"
+        p="${p#b/}"
+        if [[ "$p" == \"* ]] || _is_product_path "$p"; then
+            echo FALLTHROUGH
+            return 0
+        fi
+    done < <(grep '^Binary files ' "$1" || true)
+    # git quotes a path that holds a quote, a backslash or a control byte ("+++ \"b/..."): the
+    # patterns here cannot read it, so it is never exempt.
+    if grep -qE '^(\+\+\+|---) "' "$1"; then
         echo FALLTHROUGH
         return 0
     fi
@@ -1604,6 +1687,83 @@ diff --git a/Source/Core/src/Sync/Impl.inl b/Source/Core/src/Sync/Impl.inl
  // implementation, included by Sync.cpp
 +launchMissiles(x);
 EOF
+    # '1'_a is a char literal with a user-defined-literal suffix, then 'b' and "'/*": no comment opens.
+    _expect FALLTHROUGH "a quote after a literal's suffix opens no phantom literal" <<'EOF'
+diff --git a/Source/Core/src/Sync/Udl.cpp b/Source/Core/src/Sync/Udl.cpp
+--- a/Source/Core/src/Sync/Udl.cpp
++++ b/Source/Core/src/Sync/Udl.cpp
+@@ -1,2 +1,3 @@
+ #define M '1'_a'b' "'/*"
++int launch = launchMissiles(5);
+ /* real */
+EOF
+    # 1e+'5 is one pp-number (an exponent sign, then a digit separator).
+    _expect FALLTHROUGH "a digit separator after an exponent sign stays in the pp-number" <<'EOF'
+diff --git a/Source/Core/src/Sync/Exp.cpp b/Source/Core/src/Sync/Exp.cpp
+--- a/Source/Core/src/Sync/Exp.cpp
++++ b/Source/Core/src/Sync/Exp.cpp
+@@ -1,2 +1,3 @@
+ #define M 1e+'5 "'/*"
++int launch = launchMissiles(5);
+ /* real */
+EOF
+    # <none/*> after __has_include is a header-name, not a comment opener.
+    _expect FALLTHROUGH "a header-name holds no comment opener" <<'EOF'
+diff --git a/Source/Core/src/Sync/HasInc.cpp b/Source/Core/src/Sync/HasInc.cpp
+--- a/Source/Core/src/Sync/HasInc.cpp
++++ b/Source/Core/src/Sync/HasInc.cpp
+@@ -1,3 +1,4 @@
+ #if !__has_include(<none/*>)
++int launch = launchMissiles(5);
+ /* real */
+ #endif
+EOF
+    # git ends the header with a TAB when the path holds a space.
+    _expect FALLTHROUGH "a product path with a space is classified" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Sync/a b.cpp b/Source/Core/src/Sync/a b.cpp' \
+        "--- a/Source/Core/src/Sync/a b.cpp$(printf '\t')" "+++ b/Source/Core/src/Sync/a b.cpp$(printf '\t')" \
+        '@@ -1,1 +1,2 @@' ' // a' '+int launch = launchMissiles(5);')
+    _expect FALLTHROUGH "a quoted path is never exempt" <<'EOF'
+diff --git "a/Source/Core/src/Sync/De\177l.cpp" "b/Source/Core/src/Sync/De\177l.cpp"
+--- "a/Source/Core/src/Sync/De\177l.cpp"
++++ "b/Source/Core/src/Sync/De\177l.cpp"
+@@ -1,1 +1,2 @@
+ // a
++// only a comment
+EOF
+    # Any file can be #included: an unknown extension under the product trees is product code.
+    _expect FALLTHROUGH "real code in an included .tpp file is not exempt" <<'EOF'
+diff --git a/Source/Core/src/Sync/FooImpl.tpp b/Source/Core/src/Sync/FooImpl.tpp
+--- a/Source/Core/src/Sync/FooImpl.tpp
++++ b/Source/Core/src/Sync/FooImpl.tpp
+@@ -1,1 +1,2 @@
+ // implementation
++launchMissiles(x);
+EOF
+    _expect EXEMPT "a data file under the product trees is not product code" <<'EOF'
+diff --git a/Source/Core/src/Sync/README.md b/Source/Core/src/Sync/README.md
+--- a/Source/Core/src/Sync/README.md
++++ b/Source/Core/src/Sync/README.md
+@@ -1,1 +1,2 @@
+ # Sync
++launchMissiles(x);
+EOF
+    _expect FALLTHROUGH "a binary file with an unknown product extension is never exempt" <<'EOF'
+diff --git a/Source/Core/src/Sync/Table.def b/Source/Core/src/Sync/Table.def
+index 1111111..2222222 100644
+Binary files a/Source/Core/src/Sync/Table.def and b/Source/Core/src/Sync/Table.def differ
+EOF
+    # A .c file follows C's lexical rules, not C++'s (no raw strings, no digit separators).
+    _expect FALLTHROUGH "a .c file gets no off-target drop" <<'EOF'
+diff --git a/Source/Core/src/Sync/Plain.c b/Source/Core/src/Sync/Plain.c
+--- a/Source/Core/src/Sync/Plain.c
++++ b/Source/Core/src/Sync/Plain.c
+@@ -1,3 +1,3 @@
+ #ifdef __ANDROID__
+-int a = 1;
++int a = launchMissiles(2);
+ #endif
+EOF
     # A macro's own continuation lines are not a splice the tracking misreads: an
     # off-target arm holding a multi-line #define still drops its new lines.
     _expect EXEMPT "multi-line #define in an Android arm stays exempt" <<'EOF'
@@ -1900,10 +2060,23 @@ MERGE_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || echo "$BASE_REF")
 # Compute the diff once. --name-only --diff-filter=ACMR keeps adds, copies,
 # modifies, renames (the cases that actually change content). Deletes intentionally
 # excluded — removing a production file shouldn't require a new test.
-# --no-renames: a rename's carried-over lines are content the gate must see, never a silent move.
-# core.quotePath=false: a non-ASCII path stays a plain path the patterns below can match.
-mapfile -t CHANGED < <(git -c core.quotePath=false diff --no-renames --name-only --diff-filter=ACMR \
+# -z: every path arrives verbatim, whatever bytes it holds (git quotes some even with
+# core.quotePath=false). Renames are detected: a file moved within the product trees brings
+# no new lines; RENAMED_INTO_PRODUCT below catches the move that does.
+mapfile -d '' -t CHANGED < <(git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR \
     "$MERGE_BASE"...HEAD 2>/dev/null || true)
+
+# A file renamed INTO the product trees from a path that is not product (notes.txt -> Foo.cpp)
+# shows no new lines, yet the compilers newly build every line it carries: never exempt.
+RENAMED_INTO_PRODUCT=""
+mapfile -d '' -t _RENAME_FIELDS < <(git -c core.quotePath=false diff -z --name-status --diff-filter=R \
+    "$MERGE_BASE"...HEAD 2>/dev/null || true)
+for ((_ri = 0; _ri + 2 < ${#_RENAME_FIELDS[@]}; _ri += 3)); do
+    if ! _is_product_path "${_RENAME_FIELDS[_ri + 1]}" && _is_product_path "${_RENAME_FIELDS[_ri + 2]}"; then
+        RENAMED_INTO_PRODUCT="${_RENAME_FIELDS[_ri + 1]} -> ${_RENAME_FIELDS[_ri + 2]}"
+        break
+    fi
+done
 
 if [ "${#CHANGED[@]}" -eq 0 ]; then
     echo "[coverage-delta-gate] no changed files vs $BASE_REF; gate passes"
@@ -1915,12 +2088,15 @@ TEST_CHANGES=()
 
 for f in "${CHANGED[@]}"; do
     case "$f" in
-        # Production surface that the gate cares about. Source/Core/src/*.cpp is
-        # the core enforcement target; *.h headers under Source/Core/include/ are
-        # treated as docs-or-API-shape (different review surface) so they don't
-        # require a paired test delta on their own.
-        Source/Core/src/*.cpp)
-            PROD_CHANGES+=("$f") ;;
+        # Production surface that the gate cares about: every product file under
+        # Source/Core/src/ but a header (a .cpp, and the .inl / .tpp / unknown-extension
+        # implementation files a .cpp includes). Headers are treated as docs-or-API-shape
+        # (different review surface), so they don't require a paired test delta on their own.
+        Source/Core/src/*.h|Source/Core/src/*.hpp|Source/Core/src/*.hxx|Source/Core/src/*.hh) ;;
+        Source/Core/src/*)
+            if _is_product_path "$f"; then
+                PROD_CHANGES+=("$f")
+            fi ;;
         # Test surface — only actual test TUs count toward a delta. tests/support/
         # and tests/fixtures/ (shared helpers) are excluded as trivially
         # dismissable (an empty helper would "satisfy" the gate). Any OTHER
@@ -1939,7 +2115,7 @@ echo "[coverage-delta-gate] prod changes: ${#PROD_CHANGES[@]}"
 echo "[coverage-delta-gate] test changes: ${#TEST_CHANGES[@]}"
 
 if [ "${#PROD_CHANGES[@]}" -eq 0 ]; then
-    echo "[coverage-delta-gate] PASS — no production Source/Core/src/*.cpp changes"
+    echo "[coverage-delta-gate] PASS — no production Source/Core/src/ changes"
     exit 0
 fi
 
@@ -1969,7 +2145,7 @@ fi
 # of every added line and pair a removed header body with its relocated copy.
 GIT_DIFF_TMPFILE="$(mktemp)"
 trap 'rm -f "$GIT_DIFF_TMPFILE"' EXIT
-if ! git -c core.quotePath=false diff --no-renames --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+if ! git -c core.quotePath=false diff --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
         Source/Core Source/Plugins Source/Standalone tests >"$GIT_DIFF_TMPFILE" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
     exit 1
@@ -1977,6 +2153,10 @@ fi
 if ! EXEMPTION="$(_classify_diff_file "$GIT_DIFF_TMPFILE")"; then
     echo "[coverage-delta-gate] FAIL — diff prefilter (awk) failed" >&2
     exit 1
+fi
+if [ "$EXEMPTION" = "EXEMPT" ] && [ -n "$RENAMED_INTO_PRODUCT" ]; then
+    echo "[coverage-delta-gate] no test-light exemption: $RENAMED_INTO_PRODUCT moves a file into the product trees"
+    EXEMPTION=FALLTHROUGH
 fi
 if [ "$EXEMPTION" = "EXEMPT" ]; then
     echo "[coverage-delta-gate] PASS — test-light exemption: every product-code"
