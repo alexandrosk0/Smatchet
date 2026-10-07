@@ -115,3 +115,9 @@ inline long long ParseJsonInt64FieldLoose(const nlohmann::json& j, const char* k
     }
     return ParseJsonInt64Loose(*it, fallback);
 }
+
+// The string at `key`, or an empty string when the key is absent or holds another type (never throws).
+inline std::string JsonStringFieldOr(const nlohmann::json& j, const char* key) {
+    const auto it = j.find(key);
+    return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
+}

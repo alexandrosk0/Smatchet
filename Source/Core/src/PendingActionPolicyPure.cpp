@@ -1,6 +1,7 @@
 #include "PendingActionPolicyPure.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "JsonParseUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -46,11 +47,6 @@ bool ParsePayloadObject(const std::string& json, nlohmann::json& out) {
     std::string err;
     out = smatchet::json_safe::ParseBounded(json, err, kMaxPayloadBytes);
     return err.empty() && out.is_object();
-}
-
-std::string StringField(const nlohmann::json& object, const char* key) {
-    const auto it = object.find(key);
-    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
 }
 
 // The WorklogAdd payload keys and the fields they carry: the one mapping both directions use.
@@ -122,7 +118,7 @@ bool ParseCommentActionPayload(const std::string& json, std::string& outBody, st
     if (!ParsePayloadObject(json, parsed)) {
         return false;
     }
-    std::string body = StringField(parsed, "body");
+    std::string body = JsonStringFieldOr(parsed, "body");
     if (body.empty()) {
         return false;
     }
@@ -147,7 +143,7 @@ bool ParseWorklogActionPayload(const std::string& json, WorklogActionPayload& ou
     }
     WorklogActionPayload worklog;
     for (const WorklogField& field : kWorklogFields) {
-        worklog.*(field.Member) = StringField(parsed, field.Key);
+        worklog.*(field.Member) = JsonStringFieldOr(parsed, field.Key);
     }
     if (worklog.TimeSpent.empty()) {
         return false;

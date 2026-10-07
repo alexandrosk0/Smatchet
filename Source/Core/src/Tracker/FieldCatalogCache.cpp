@@ -6,13 +6,13 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "Json/BoundedJsonParse.h"
+#include "JsonParseUtil.h"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
-#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -257,25 +257,6 @@ bool IsReservedRootKey(const std::string& key) { return key == "schema_version" 
 
 // Typed reads that fall back instead of throwing: a hand-edited or corrupt field must not make every
 // later load, save, listing or Forget fail.
-std::string JsonStringOr(const nlohmann::json& object, const char* key) {
-    const auto it = object.find(key);
-    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
-}
-
-std::int64_t JsonInt64Or(const nlohmann::json& object, const char* key, std::int64_t fallback) {
-    const auto it = object.find(key);
-    if (it == object.end()) {
-        return fallback;
-    }
-    if (it->is_number_unsigned()) {
-        const std::uint64_t value = it->get<std::uint64_t>();
-        return value <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
-                   ? static_cast<std::int64_t>(value)
-                   : fallback;
-    }
-    return it->is_number_integer() ? it->get<std::int64_t>() : fallback;
-}
-
 bool JsonBoolOr(const nlohmann::json& object, const char* key) {
     const auto it = object.find(key);
     return it != object.end() && it->is_boolean() && it->get<bool>();
@@ -286,7 +267,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     out["schema_version"] = kFieldCatalogCacheSchemaVersion;
     nlohmann::json indexArr = nlohmann::json::array();
 
-    const std::int64_t oldVer = rootOnDisk.is_object() ? JsonInt64Or(rootOnDisk, "schema_version", 0) : 0;
+    const std::int64_t oldVer = rootOnDisk.is_object() ? ParseJsonInt64FieldLoose(rootOnDisk, "schema_version", 0) : 0;
     const std::int64_t now = TimeNowPure::NowUnixSeconds();
 
     auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey, const std::string& backend,
@@ -307,12 +288,12 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         for (const auto& idx : rootOnDisk["entries"]) {
             if (!idx.is_object())
                 continue;
-            const std::string cacheKey = JsonStringOr(idx, "cacheKey");
+            const std::string cacheKey = JsonStringFieldOr(idx, "cacheKey");
             if (cacheKey.empty() || IsReservedRootKey(cacheKey) || !rootOnDisk.contains(cacheKey) ||
                 !rootOnDisk[cacheKey].is_object() || !indexed.insert(cacheKey).second)
                 continue;
-            appendIndexEntry(cacheKey, JsonStringOr(idx, "projectKey"), JsonStringOr(idx, "backend"),
-                             JsonStringOr(idx, "endpoint"), JsonInt64Or(idx, "lastUsedUnix", now),
+            appendIndexEntry(cacheKey, JsonStringFieldOr(idx, "projectKey"), JsonStringFieldOr(idx, "backend"),
+                             JsonStringFieldOr(idx, "endpoint"), ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now),
                              JsonBoolOr(idx, "kindKeyed"));
         }
         // Preserve per-cacheKey blobs at root (every object but the reserved keys). A blob the index does
@@ -589,7 +570,7 @@ bool TryLoadSnapshotImpl(const std::string& cacheKey, bool requireKindKeyed, std
         // of truth.
         const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (indexIt != indexArr.end() &&
-            now - JsonInt64Or(*indexIt, "lastUsedUnix", std::int64_t{0}) >= kLruTouchIntervalSeconds) {
+            now - ParseJsonInt64FieldLoose(*indexIt, "lastUsedUnix", 0) >= kLruTouchIntervalSeconds) {
             (*indexIt)["lastUsedUnix"] = now;
             std::string writeErr;
             if (!PersistRootLocked(root, writeErr)) {
