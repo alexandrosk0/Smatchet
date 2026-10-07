@@ -231,7 +231,7 @@ bool IsRepoPrivate(const std::string& baseUrl, const std::string& pat, const std
 // upload host comes from the release JSON's `upload_url`.
 //
 // Refuses outright when the destination repo is public: a Release asset there is
-// world-downloadable with no auth, and a minidump carries the crashing thread's stack
+// world-downloadable with no auth, and a minidump carries every application thread's stack
 // memory. The relay enforces the same rule server-side (tools/bug-report-relay).
 std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                                    const std::string& repo, const std::string& dumpPath, const std::string& dumpName) {

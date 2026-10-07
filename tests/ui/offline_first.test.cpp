@@ -250,14 +250,17 @@ static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngi
         }
         const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
         auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
-        const TrackerField* statusField = app->FindFieldById("status");
+        // Copied at once: FindFieldById points into the catalog vector, which a field-catalog
+        // fetch completing on any later frame (the yields below) replaces.
+        const TrackerField* foundStatusField = app->FindFieldById("status");
         const auto tickets = app->GetActiveTicketsSnapshot();
         IM_CHECK_NO_RET(fake != nullptr);
-        IM_CHECK_NO_RET(statusField != nullptr);
+        IM_CHECK_NO_RET(foundStatusField != nullptr);
         IM_CHECK_NO_RET(tickets != nullptr);
-        if (!fake || !statusField || !tickets) {
+        if (!fake || !foundStatusField || !tickets) {
             return;
         }
+        const TrackerField statusField = *foundStatusField;
         const auto ticketIt = std::find_if(tickets->begin(), tickets->end(),
                                            [](const CachedTicket& ticket) { return ticket.id == "OFF-1"; });
         IM_CHECK_NO_RET(ticketIt != tickets->end());
@@ -276,7 +279,7 @@ static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngi
         // "To Do" -> "In Progress" (option id "2"), with the scalar base the grid captures.
         PendingFieldEdit edit;
         edit.IssueId = "OFF-1";
-        edit.Field = *statusField;
+        edit.Field = statusField;
         edit.Values = {"2"};
         edit.OriginalValue = ticketIt->GetFieldValue("status");
         edit.HasOriginalValue = true;

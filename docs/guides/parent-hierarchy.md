@@ -18,10 +18,10 @@ the active view (per-backend, alongside the view's filter, columns and sort):
 | **Parent group** | Reorder the grid so every issue sits directly under its parent, nested by depth. The regular column sort still decides the order *among* siblings and among top-level rows. |
 | **Hide parent stories** | Drop every row that is the parent of another row, leaving only the leaf tasks/bugs, drawn flat: no indent and no parent tint even when *Parent group* is also on. Handy for a personal "what do I actually work on" view. |
 
-Flipping either toggle marks the view as changed, so the *Unsaved layout
-changes* strip appears and you can **Save**, **Save as new...** or **Discard**
-exactly like a column or sort edit. In `smatchet_views.json` the two switches
-are stored as `story_group_sort` and `hide_parents` on the view.
+Either toggle is saved with the view automatically, like a column or sort
+edit: there is no *Unsaved* strip and nothing to Discard. In
+`smatchet_views.json` the two switches are stored as `story_group_sort` and
+`hide_parents` on the view.
 
 ## What the grid shows
 
@@ -48,9 +48,9 @@ collects the parent keys referenced by the fetched issues, subtracts the ones
 already present, and asks the tracker for the rest through the backend-agnostic
 issue reader interface. If those parents reference parents of their own,
 Smatchet chases them too — one request per hop, in the same sync — until a
-hop turns up nothing new or 16 hops have run. A chain deeper than that
-(unusual outside cyclic or malformed data) resolves the remaining levels on
-the next sync instead of stalling this one.
+hop turns up nothing new or 16 hops have run. Levels above 16 (unusual
+outside malformed data) are not loaded by any sync: every sync starts the
+chase again from the rows it streamed. Reaching the cap is logged.
 
 - Fetched parents are cached in SQLite like any other issue and take part in
   the tree, the tint and the indent.
@@ -58,12 +58,14 @@ the next sync instead of stalling this one.
   entirely: the rows would be dropped anyway.
 - **Load parent issues** (Preferences → Editing → Grid behaviour, on by
   default; `load_parent_issues` in the config file, `config.set
-  loadParentIssues` from the CLI) turns the extra fetch off for every view.
-  Children of a missing parent then show as top-level rows. Takes effect on
-  the next sync.
+  loadParentIssues` from the CLI) turns the extra fetch off for every view —
+  and the children fetch below with it. Children of a missing parent then show
+  as top-level rows. Takes effect on the next sync.
 - A failed parent fetch never fails the sync. The grid keeps the children and
   the sync summary carries a warning such as
-  `3 parent issue(s) could not be loaded: <detail>`.
+  `3 parent issue(s) could not be loaded: <detail>`. Parents cached by an
+  earlier sync stay in the cache: a sync whose parent fetch failed (or hit the
+  16-hop cap) does not purge rows it could not re-fetch.
 
 ## How missing children are loaded
 
@@ -95,6 +97,11 @@ still needs one (empty) round-trip to rule out further descendants.
 - A failed children fetch never fails the sync, same as a failed parent
   fetch: a warning such as `children of 2 issue(s) could not be loaded:
   <detail>` is appended to the sync summary and the streamed rows still land.
+  Descendants cached by an earlier sync are kept, not purged.
+- A ticket already asked about in this sync is not asked about again, so a
+  view that already holds the whole tree costs one children request.
+- Levels below 16 hops are not loaded by any sync; reaching the cap is
+  logged.
 
 ## Backend support
 
@@ -109,6 +116,5 @@ field:
 
 ## Related
 
-- [Keyboard shortcuts](keyboard-shortcuts.md) for the view-apply and view-create
-  shortcuts used alongside the Sort By popup.
-- [CLI Guide](cli.md) for scripting view changes.
+- [CLI Guide](cli.md) for scripting view changes, including the `view.*`
+  commands that create and apply views.

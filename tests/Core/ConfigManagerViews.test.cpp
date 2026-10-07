@@ -485,6 +485,62 @@ TEST_CASE("ConfigManager v3 'columns' shape round-trips exactly and takes preced
     }
 }
 
+TEST_CASE("ConfigManager v3 load reads a width that is not a number as unset, keeping every backend") {
+    // A null width (what a non-finite float serializes to) or a string must not throw out of the parse:
+    // that dropped this backend and every later one from the loaded file, and the bootstrap rewrite
+    // then lost their saved views for good.
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    WriteViewsFileRaw(R"({
+        "version": 2,
+        "backends": {
+            "Jira": {"active_view_id": "j", "views": [
+                {"id": "j", "name": "J", "jql": "",
+                 "columns": [{"key": "id", "width": null}, {"key": "field:summary", "width": "200"}],
+                 "sort_specs": [{"column": "field:summary", "direction": "up"}]}]},
+            "Plane": {"active_view_id": "p", "views": [
+                {"id": "p", "name": "P", "jql": "", "columns": [{"key": "field:status", "width": 150.0}]}]}
+        }
+    })");
+
+    PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(disk.Backends.count("Jira") == 1);
+    REQUIRE(disk.Backends.count("Plane") == 1);
+    const ViewDefinition& j = disk.Backends["Jira"].Views.at(0);
+    CHECK(ColumnWidthOf(j, "id") == doctest::Approx(90.0f));
+    CHECK(ColumnWidthOf(j, "field:summary") == doctest::Approx(180.0f));
+    CHECK(j.SortSpecs.empty());
+    CHECK(ColumnWidthOf(disk.Backends["Plane"].Views.at(0), "field:status") == doctest::Approx(150.0f));
+}
+
+TEST_CASE("ConfigManager v3 load keeps a view whose optional scalars have the wrong type") {
+    // A wrong-typed scalar (a bool written as a string, a number name) used to throw out of the parse
+    // and skip the view; the next save then deleted it from disk with its JQL and columns.
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    WriteViewsFileRaw(R"({
+        "version": 2,
+        "backends": {
+            "Jira": {"active_view_id": "j", "views": [
+                {"id": "j", "name": 7, "jql": "project = X", "hide_parents": "yes", "story_group_sort": 1,
+                 "columns": [{"key": "id"}, {"key": "field:summary", "width": 200.0}]}]}
+        }
+    })");
+
+    PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(disk.Backends.count("Jira") == 1);
+    REQUIRE(disk.Backends["Jira"].Views.size() == 1u);
+    const ViewDefinition& j = disk.Backends["Jira"].Views.at(0);
+    CHECK(j.Id == "j");
+    CHECK(j.Name == "j"); // a non-string name falls back to the id
+    CHECK(j.Jql == "project = X");
+    CHECK_FALSE(j.HideParents);
+    CHECK_FALSE(j.StoryGroupSort);
+    CHECK(ColumnWidthOf(j, "field:summary") == doctest::Approx(200.0f));
+}
+
 TEST_CASE("ConfigManager::EnsureViewBucketBootstrapped is idempotent and repairs an empty active id") {
     smatchet_tests::TestEnvGuard env;
     ViewsFileCleanup cleanup;

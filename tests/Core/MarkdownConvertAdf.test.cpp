@@ -67,6 +67,34 @@ TEST_CASE("MarkdownToAdf: nested blockquote flattens to a single blockquote") {
     }
 }
 
+namespace {
+// True when any text node under `node` has empty text (ADF rejects it, failing the whole document).
+bool HasEmptyTextNode(const json& node) {
+    if (node.is_array()) {
+        for (const json& child : node) {
+            if (HasEmptyTextNode(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (!node.is_object()) {
+        return false;
+    }
+    if (node.value("type", std::string()) == "text" && node.value("text", std::string()).empty()) {
+        return true;
+    }
+    return node.contains("content") && HasEmptyTextNode(node["content"]);
+}
+} // namespace
+
+TEST_CASE("MarkdownToAdf: an image with no source and no alt text emits no empty text node") {
+    CHECK_FALSE(HasEmptyTextNode(MarkdownConvert::MarkdownToAdf("before ![]() after")));
+    CHECK_FALSE(HasEmptyTextNode(MarkdownConvert::MarkdownToAdf("![![]()]()")));
+    const json adf = MarkdownConvert::MarkdownToAdf("![](attachment:)");
+    CHECK(CountByType(adf, "mediaInline") == 0);
+}
+
 TEST_CASE("MarkdownToAdf: external image becomes a text link, not mediaInline") {
     // Jira ADF mediaInline requires a file-store `id` + type "file" | "link".
     // External URLs are not accepted; the payload HTTP-400s with INVALID_INPUT.

@@ -788,6 +788,11 @@ class AppController : public IAppThreading,
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                          bool errorTransient = false);
+    /// Empty the focused catalog in memory (fields, components, issue-type metadata, banners) for a
+    /// tracker / site switch. Unlike SetFieldCatalog with empty arrays it never writes the offline
+    /// snapshot — that would overwrite the site's saved catalog with an empty one (Pillar 6) — and does
+    /// no disk I/O, so it is safe on the UI thread.
+    void ClearFieldCatalogInMemory();
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
     /// state. `backendKey` is the caller's NormalizeViewsBackendKey result (names the backend in
@@ -1196,7 +1201,7 @@ class AppController : public IAppThreading,
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
-    /// Owns the pending-action queue (comments, later worklogs and watch) saved while the tracker is
+    /// Owns the pending-action queue (comments, worklogs and watches) saved while the tracker is
     /// unreachable. Constructed next to `offlineQueue_` in `Initialize`, on the same deps adapter.
     std::unique_ptr<PendingActionQueueService> pendingActions_;
     /// Owns the per-issue + per-issue-type editmeta cache (`editMetaMutex_` + its three

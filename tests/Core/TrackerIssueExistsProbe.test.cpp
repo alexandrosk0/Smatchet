@@ -38,3 +38,18 @@ TEST_CASE("ClassifyIssueExistsProbe: any other status is an inconclusive error, 
     CHECK(ClassifyIssueExistsProbe(410).error().Kind == TrackerErrorKind::InvalidRequest);
     CHECK(ClassifyIssueExistsProbe(503).error().Detail == "ProbeIssueExists HTTP error");
 }
+
+// GitHub answers 410 Gone for a deleted issue AND for every issue of a repository with Issues
+// disabled; only the first may purge the cached row.
+TEST_CASE("ClassifyGitHubIssueExistsProbe reads 410 as deleted only when the body says so") {
+    using TrackerHttpPure::ClassifyGitHubIssueExistsProbe;
+    const auto deleted = ClassifyGitHubIssueExistsProbe(410, R"({"message":"This issue was deleted"})");
+    REQUIRE(deleted.has_value());
+    CHECK_FALSE(deleted.value());
+    const auto disabled = ClassifyGitHubIssueExistsProbe(410, R"({"message":"Issues are disabled for this repo"})");
+    REQUIRE_FALSE(disabled.has_value());
+    CHECK(disabled.error().Kind == TrackerErrorKind::InvalidRequest);
+    REQUIRE(ClassifyGitHubIssueExistsProbe(404, "").has_value());
+    CHECK_FALSE(ClassifyGitHubIssueExistsProbe(404, "").value());
+    CHECK(ClassifyGitHubIssueExistsProbe(200, "{}").value());
+}

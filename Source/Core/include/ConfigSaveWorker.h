@@ -3,6 +3,8 @@
 
 #include "Config/ConfigManager.h" // TrackerConfig, AnnotateAnalysisConfig
 
+#include <string>
+
 /// Single-thread coalescing config-save worker.
 /// Replaces the per-save detached-thread shims (`ScheduleConfigSaveDetached` /
 /// `ScheduleAnnotateConfigSaveDetached`) with one background thread that serializes + coalesces
@@ -40,6 +42,12 @@ void EnqueueAnnotateConfig(const AnnotateAnalysisConfig& cfg);
 /// COMPLETE intended file image, so latest-wins loses nothing. Same not-running fallback as the
 /// other kinds.
 void EnqueuePersistentViews(const PersistentViewsFile& disk);
+
+/// Enqueue one raw top-level key of the merged config JSON (a key TrackerConfig does not model,
+/// e.g. a plugin's layout value). Keys coalesce per name, latest value wins; the worker writes them
+/// through `ConfigManager::UpdateConfigJson`, so a frame-thread caller (a splitter drag) never waits
+/// on the config write lock or the disk. Same not-running fallback as the other kinds.
+void EnqueueConfigJsonKey(const std::string& key, const nlohmann::json& value);
 
 // Persisted-field repair hooks (#2047) live in the Config layer, beside the writer they guard:
 // see Config/TrackerConfigSaveRepair.h. `EnqueueTrackerConfig` applies them to the snapshot as it

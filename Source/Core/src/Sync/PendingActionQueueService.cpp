@@ -116,6 +116,10 @@ PendingActionQueueService::SubmitOutcome PendingActionQueueService::SubmitOrQueu
     }
     out = Enqueue(kind, target.BackendKey, issueKey, payloadJson, state);
     out.QueuedAfterNetworkFailure = out.K == SubmitOutcome::Kind::Queued;
+    // A worklog that may have landed is never resent blind (replay moves it to needs_review), so the caller
+    // must not promise it will be logged.
+    out.NeedsReview = out.K == SubmitOutcome::Kind::Queued && kind == PendingActionKind::WorklogAdd &&
+                      std::string(state) == PendingActionState::kAmbiguous;
     if (out.K == SubmitOutcome::Kind::Failed) {
         out.Error = err.Detail + " " + out.Error;
     }
@@ -333,9 +337,10 @@ bool PendingActionQueueService::ResolveAmbiguousComment(ISyncCache& cache, ITrac
     }
     Result<std::vector<TrackerIssueComment>, TrackerError> fetched = collab.FetchIssueComments(row.IssueKey);
     if (!fetched.has_value()) {
-        // Unknown whether it landed, so it is not resent now; a retryable failure keeps it ambiguous.
+        // Unknown whether it landed, so it is not resent now. A failed check is not the tracker rejecting
+        // the comment, so it stays ambiguous unless the check proves it can never be resolved.
         const TrackerError& err = fetched.error();
-        RecordFailure(cache, row, err, err.IsRetryable() ? PendingActionState::kAmbiguous : "", tally);
+        RecordFailure(cache, row, err, pendingaction::StateAfterFailedDedupeCheck(err), tally);
         return true;
     }
     if (!pendingaction::CommentAlreadyPosted(fetched.value(), body, queuedAt)) {
@@ -366,6 +371,16 @@ void PendingActionQueueService::RecordFailure(ISyncCache& cache, const PendingAc
         tally.TransportDown = true;
     }
     if (retryState[0] == '\0') {
+        if (error.ProvablyNotApplied()) {
+            // The tracker refused this send, so the `sending` claim must not reach the archive: a restore
+            // resumes from the stored state and would treat the row as possibly sent.
+            try {
+                cache.UpdatePendingAction(row.Id, row.State, row.Attempts, row.LastError);
+            } catch (const std::exception& ex) {
+                LOG_ERROR("PendingActionQueueService: releasing the claim on rejected id=%lld failed: %s",
+                          static_cast<long long>(row.Id), ex.what());
+            }
+        }
         Archive(cache, row, "replay_rejected", error.Detail);
         return;
     }

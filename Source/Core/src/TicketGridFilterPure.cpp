@@ -73,7 +73,9 @@ bool ContainsFolded(const std::string& haystack, const std::string& needleLower)
 
 } // namespace
 
-bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter) {
+bool IsInternalTicketFieldKey(const std::string& key) { return key == "uuid" || (!key.empty() && key[0] == '_'); }
+
+bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter, const IGridFilterDisplay* display) {
     if (filter.empty()) {
         return true;
     }
@@ -82,10 +84,12 @@ bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filt
         return true;
     }
     for (const auto& fieldEntry : ticket.fieldValues) {
-        if (IsRawJsonDump(fieldEntry.second)) {
+        if (IsInternalTicketFieldKey(fieldEntry.first) || IsRawJsonDump(fieldEntry.second)) {
             continue;
         }
-        if (ContainsFolded(fieldEntry.second, needle)) {
+        const std::string& shown =
+            display != nullptr ? display->Shown(fieldEntry.first, fieldEntry.second) : fieldEntry.second;
+        if (ContainsFolded(shown, needle)) {
             return true;
         }
     }

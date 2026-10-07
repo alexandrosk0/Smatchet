@@ -752,6 +752,41 @@ TEST_CASE("ParseAvailableTransitionTargets — basic transitions extraction") {
     CHECK(result[1].Value == "Done");
 }
 
+TEST_CASE("ParseAvailableTransitionTargets — marks targets of global and looped transitions") {
+    nlohmann::json transitions = nlohmann::json::array();
+    nlohmann::json plain;
+    plain["id"] = "11";
+    plain["to"]["id"] = "3";
+    plain["to"]["name"] = "In Progress";
+    transitions.push_back(plain);
+    nlohmann::json global;
+    global["id"] = "31";
+    global["isGlobal"] = true;
+    global["to"]["id"] = "5";
+    global["to"]["name"] = "Done";
+    transitions.push_back(global);
+    nlohmann::json looped;
+    looped["id"] = "41";
+    looped["isLooped"] = true;
+    looped["to"]["id"] = "1";
+    looped["to"]["name"] = "To Do";
+    transitions.push_back(looped);
+    nlohmann::json plainThenGlobal = global; // the same target again, through a plain transition first
+    plainThenGlobal["id"] = "51";
+    plainThenGlobal["isGlobal"] = true;
+    plainThenGlobal["to"]["id"] = "3";
+    transitions.push_back(plainThenGlobal);
+
+    const auto result = ParseAvailableTransitionTargets(transitions);
+    REQUIRE(result.size() == 3);
+    CHECK(result[0].Id == "3");
+    CHECK(result[0].ReachableFromAnyStatus); // also reachable through the global transition "51"
+    CHECK(result[1].Id == "5");
+    CHECK(result[1].ReachableFromAnyStatus);
+    CHECK(result[2].Id == "1");
+    CHECK(result[2].ReachableFromAnyStatus);
+}
+
 TEST_CASE("ParseAvailableTransitionTargets — handles numeric status ids") {
     nlohmann::json transitions = nlohmann::json::array();
     nlohmann::json t1;

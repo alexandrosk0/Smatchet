@@ -32,6 +32,21 @@
 /// 90.0f/180.0f literals that could (and did) drift.
 inline float DefaultColumnWidthPx(const std::string& key) { return key == "id" ? 90.0f : 180.0f; }
 
+/// Widest stored column width honoured. Anything wider, non-finite or non-positive is "unset" (the
+/// kind default): a non-finite float serializes to JSON null, which would make the views file fail to
+/// load.
+constexpr float kMaxViewColumnWidthPx = 10000.0f;
+
+/// `width` if it is a usable stored width (finite, > 0, <= kMaxViewColumnWidthPx), else 0 (unset).
+inline float SanitizeViewColumnWidth(double width) {
+    return (std::isfinite(width) && width > 0.0 && width <= kMaxViewColumnWidthPx) ? static_cast<float>(width) : 0.0f;
+}
+
+/// True for a canonical column key the grid can render: the synthetic "id" column or "field:<id>".
+inline bool IsRenderableGridColumnKey(const std::string& canonicalKey) {
+    return canonicalKey == "id" || (canonicalKey.compare(0, 6, "field:") == 0 && canonicalKey.size() > 6);
+}
+
 /// The width a column would render at: its stored value if present and positive, else the
 /// kind default. Missing-key and explicit-default-value compare equal — this is what makes a
 /// fresh view (only "id" has a stored width) read as NOT dirty on first render.
@@ -113,8 +128,9 @@ inline std::vector<ViewColumn> MigrateLegacyColumns(const std::vector<std::strin
     return result;
 }
 
-/// Canonicalize + dedupe `view.Columns` (keeping first occurrence), guarantee `"id"` is
-/// present (prepended if absent), fill every zero/negative width from DefaultColumnWidthPx,
+/// Canonicalize + dedupe `view.Columns` (keeping first occurrence), drop keys the grid cannot render
+/// (not "id" or "field:<id>"), guarantee `"id"` is present (prepended if absent), fill every unset or
+/// unusable width (SanitizeViewColumnWidth) from DefaultColumnWidthPx,
 /// regenerate `view.Fields` from the result, and prune `view.SortSpecs` entries whose key is
 /// no longer a column. Idempotent: calling it twice in a row is a no-op the second time. This
 /// is both the load-time migration step and the general "make a ViewDefinition internally
@@ -125,11 +141,13 @@ inline void NormalizeViewDefinition(ViewDefinition& view) {
     normalized.reserve(view.Columns.size() + 1);
     for (const auto& col : view.Columns) {
         const std::string key = CanonicalGridColumnKey(col.Key);
-        if (key.empty() || !seen.insert(key).second) {
+        // A key the grid never renders would make the rendered order differ from Columns forever, so
+        // the header-drag writeback would rewrite the view every frame.
+        if (!IsRenderableGridColumnKey(key) || !seen.insert(key).second) {
             continue;
         }
-        const float width = col.Width > 0.0f ? col.Width : DefaultColumnWidthPx(key);
-        normalized.push_back({key, width});
+        const float stored = SanitizeViewColumnWidth(col.Width);
+        normalized.push_back({key, stored > 0.0f ? stored : DefaultColumnWidthPx(key)});
     }
     const bool hasId =
         std::any_of(normalized.begin(), normalized.end(), [](const ViewColumn& c) { return c.Key == "id"; });
