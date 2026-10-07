@@ -14,6 +14,8 @@
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <unordered_set>
 
 namespace {
 // FieldCatalogCache exposes free functions and reads/writes a single JSON file under the user data
@@ -263,21 +265,29 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
 
     if (oldVer >= 3 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_array()) {
         // v3 → v3: preserve the index as-is.
+        std::unordered_set<std::string> indexed;
         for (const auto& idx : rootOnDisk["entries"]) {
             if (!idx.is_object())
                 continue;
             const std::string cacheKey = idx.value("cacheKey", std::string());
-            if (cacheKey.empty())
+            if (cacheKey.empty() || !indexed.insert(cacheKey).second)
                 continue;
             appendIndexEntry(cacheKey, idx.value("projectKey", std::string()), idx.value("backend", std::string()),
                              idx.value("endpoint", std::string()), idx.value("lastUsedUnix", now));
         }
-        // Preserve per-cacheKey blobs at root (everything except schema_version + entries).
+        // Preserve per-cacheKey blobs at root (everything except schema_version + entries). A blob the
+        // index does not name (earlier builds dropped the index on every load, so no blob was ever
+        // evicted) is indexed with no metadata and lastUsedUnix 0: the LRU cap evicts it first, and a
+        // save under its key fills the metadata in.
         for (auto it = rootOnDisk.begin(); it != rootOnDisk.end(); ++it) {
             if (it.key() == "schema_version" || it.key() == "entries")
                 continue;
             out[it.key()] = it.value();
+            if (indexed.insert(it.key()).second) {
+                appendIndexEntry(it.key(), std::string(), std::string(), std::string(), std::int64_t{0});
+            }
         }
+        out["entries"] = std::move(indexArr);
         return out;
     }
 
@@ -344,15 +354,21 @@ nlohmann::json::iterator FindIndexEntry(nlohmann::json& indexArr, const std::str
     return indexArr.end();
 }
 
-// Sort the index array by lastUsedUnix descending and drop everything past `cap-1`, also freeing
-// the per-cacheKey blobs at root. cap is clamped to a minimum of 1.
-void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap) {
+// Sort the index array by lastUsedUnix descending and drop everything past `cap`, also freeing the
+// per-cacheKey blobs at root. cap is clamped to a minimum of 1. `keepKey` (the entry just saved) sorts
+// first: entries saved within the same second tie on lastUsedUnix, and it must never be the victim.
+void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap, const std::string& keepKey) {
     if (cap < 1)
         cap = 1;
     if (!root.contains("entries") || !root["entries"].is_array())
         return;
     nlohmann::json& indexArr = root["entries"];
-    std::sort(indexArr.begin(), indexArr.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+    std::stable_sort(indexArr.begin(), indexArr.end(), [&keepKey](const nlohmann::json& a, const nlohmann::json& b) {
+        const bool aKept = a.value("cacheKey", std::string()) == keepKey;
+        const bool bKept = b.value("cacheKey", std::string()) == keepKey;
+        if (aKept != bKept) {
+            return aKept;
+        }
         return a.value("lastUsedUnix", std::int64_t{0}) > b.value("lastUsedUnix", std::int64_t{0});
     });
     while (static_cast<int>(indexArr.size()) > cap) {
@@ -398,11 +414,30 @@ std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::strin
         return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
                projectKey;
     }
+    if (bk == "GitHub") {
+        return std::string("GitHub|") + NormalizeEndpointForCache(cfg.GitHubBaseUrl) + "|" + cfg.GitHubOwner + "/" +
+               cfg.GitHubRepo + "|" + projectKey;
+    }
     if (bk == "Linear") {
         return std::string("Linear|") + NormalizeEndpointForCache(cfg.LinearBaseUrl) + "|" + cfg.LinearTeamId + "|" +
                projectKey;
     }
     return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + projectKey;
+}
+
+FieldCatalogIndexIdentity BuildFieldCatalogIndexIdentity(const TrackerConfig& cfg) {
+    FieldCatalogIndexIdentity id;
+    id.backend = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
+    if (id.backend == "Plane") {
+        id.endpoint = cfg.PlaneUrl + "|" + cfg.PlaneWorkspaceSlug;
+    } else if (id.backend == "GitHub") {
+        id.endpoint = cfg.GitHubBaseUrl + "|" + cfg.GitHubOwner + "/" + cfg.GitHubRepo;
+    } else if (id.backend == "Linear") {
+        id.endpoint = cfg.LinearBaseUrl + "|" + cfg.LinearTeamId;
+    } else {
+        id.endpoint = cfg.Domain;
+    }
+    return id;
 }
 
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& backend, const std::string& endpoint,
@@ -439,7 +474,7 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
         }
 
         const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
-        EvictLeastRecentlyUsedIfOverCap(root, cap);
+        EvictLeastRecentlyUsedIfOverCap(root, cap, cacheKey);
 
         return PersistRootLocked(root, outError);
     } catch (const std::exception& ex) {

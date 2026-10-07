@@ -602,6 +602,8 @@ add_executable(SmatchetTests
     # ConfigManager (already linked) + nlohmann — no cpr/sqlite, safe in the doctest rig.
     Core/FieldCatalogCacheScopedRoundTrip.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
+    # The snapshot index (recently used list, Forget, LRU cap) survives a reload.
+    Core/FieldCatalogCacheIndex.test.cpp
     Core/OfflineQueueReplayPolicy.test.cpp
     # Pure filter/key/label helpers extracted from SmatchetProjectPicker::Draw. The _detail TU
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.

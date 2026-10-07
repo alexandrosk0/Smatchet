@@ -12,17 +12,27 @@ struct TrackerConfig;
 namespace FieldCatalogCache {
 
 /** Stable key for `schema_version` 3 entries: `Jira|<domain>|<project>`, `Plane|<url>|<ws>|<project>`,
- *  or `Linear|<baseUrl>|<teamId>|<project>`. `projectKey` is the per-operation project (Jira key, e.g.
- *  "PROJ", Plane project UUID, or Linear team key). Confines the per-project axis to an explicit
- *  parameter so the global `cfg.ProjectKey` can be dropped without touching this signature. */
+ *  `GitHub|<baseUrl>|<owner>/<repo>|<project>` or `Linear|<baseUrl>|<teamId>|<project>`. Each tracker
+ *  kind has its own prefix, so one kind's catalog is never read back as another's. `projectKey` is the
+ *  per-operation project (Jira key, e.g. "PROJ", Plane project UUID, or Linear team key). Confines the
+ *  per-project axis to an explicit parameter so the global `cfg.ProjectKey` can be dropped without
+ *  touching this signature. */
 std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::string& projectKey);
+
+/** The (backend, endpoint) pair a snapshot saved for `cfg` is indexed under: the tracker kind and its
+ *  site, in the form Preferences' "Recently used projects" list filters by. */
+struct FieldCatalogIndexIdentity {
+    std::string backend;
+    std::string endpoint;
+};
+FieldCatalogIndexIdentity BuildFieldCatalogIndexIdentity(const TrackerConfig& cfg);
 
 /** Index entry tracking which (backend, endpoint, projectKey) tuples have a cached catalog
  *  on disk, plus an LRU timestamp. The Preferences readout consumes ListCachedProjects(). */
 struct CachedProjectEntry {
     std::string projectKey;
-    std::string backend; // "Jira", "Plane", or "Linear"
-    std::string endpoint; // normalized — Jira domain, Plane API origin (+ workspace slug), or Linear base URL (+ team id).
+    std::string backend;  // "Jira", "Plane", "GitHub" or "Linear"
+    std::string endpoint; // Jira domain, Plane URL|workspace, GitHub base URL|owner/repo, or Linear base URL|team id.
     std::int64_t lastUsedUnix = 0;
 };
 

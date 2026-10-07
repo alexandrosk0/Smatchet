@@ -339,12 +339,11 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
         // The snapshot keeps the raw catalog, saved from this call's own vectors (never from the shared
         // catalog, which the UI thread may be writing); the sweep and fixups are re-applied on restore.
         std::string snapErr;
-        const std::string saveBackend = catalogPlane ? std::string("Plane") : std::string("Jira");
-        const std::string saveEndpoint =
-            catalogPlane ? (cfgSnap.PlaneUrl + std::string("|") + cfgSnap.PlaneWorkspaceSlug) : cfgSnap.Domain;
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, saveBackend, saveEndpoint, projectKeyForCache,
-                                                         cfgSnap.FieldCatalogCacheMaxProjects, fields, components,
-                                                         issueTypeMeta, snapErr)) {
+        const FieldCatalogCache::FieldCatalogIndexIdentity index =
+            FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfgSnap);
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, index.backend, index.endpoint,
+                                                         projectKeyForCache, cfgSnap.FieldCatalogCacheMaxProjects,
+                                                         fields, components, issueTypeMeta, snapErr)) {
             LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
         }
     }

@@ -277,6 +277,97 @@ TEST_CASE("AppController::SetFieldCatalog falls back to the unscoped snapshot wh
     CHECK(app.GetFieldCatalogError().empty());
 }
 
+TEST_CASE("AppController::SetFieldCatalog prefers the project's snapshot to the unscoped one") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    app.SetCurrentCatalogProject(std::string());
+    std::vector<TrackerField> any(1);
+    any[0].Id = "customfield_any";
+    any[0].Name = "Unscoped field";
+    app.SetFieldCatalog(std::move(any), std::vector<TrackerComponent>(), std::string(), false);
+    app.SetCurrentCatalogProject("FOO");
+    std::vector<TrackerField> foo(1);
+    foo[0].Id = "customfield_foo";
+    foo[0].Name = "Foo field";
+    app.SetFieldCatalog(std::move(foo), std::vector<TrackerComponent>(), std::string(), false);
+    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
+    REQUIRE(SnapshotHasField(cfg, "FOO", "customfield_foo"));
+
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    app.SetCurrentCatalogProject("FOO");
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_any"));
+    CHECK(app.IsFieldCatalogScopedToProject("FOO"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog falls back to the unscoped snapshot for a failed project fetch") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(CatalogWithField("customfield_any"));
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+    REQUIRE(app.RefreshFieldCatalog(cfg));
+    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
+
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    raw->Fail = true;
+    CHECK_FALSE(app.RefreshFieldCatalog(cfg, "FOO"));
+    CHECK(HasField(app.GetAvailableFields(), "customfield_any"));
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog never restores another tracker's snapshot for a failure") {
+    // A GitHub pane beside a Jira configuration refreshes for GitHub. Its catalog is saved under GitHub's
+    // own key: a Jira project that then fails offline must not restore it.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig jira = ConfigManager::Load();
+    jira.TrackerType = "Jira";
+    jira.Domain = "https://acme.atlassian.net";
+    jira.Email = "dev@example.com";
+    jira.GitHubOwner = "octo";
+    jira.GitHubRepo = "repo";
+    TrackerConfig github = jira;
+    github.TrackerType = "GitHub";
+    CHECK(FieldCatalogCache::BuildFieldCatalogCacheKey(github, std::string()) !=
+          FieldCatalogCache::BuildFieldCatalogCacheKey(jira, std::string()));
+    {
+        AppController githubApp;
+        GridContextDepsAdapter githubAdapter(githubApp);
+        auto backend = std::make_unique<SwapDuringFetchBackend>();
+        backend->SetFieldCatalogResult(CatalogWithField("pr.head"));
+        githubAdapter.SetBackend(std::move(backend));
+        githubAdapter.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(github));
+        REQUIRE(githubApp.RefreshFieldCatalog(jira)); // unscoped: runs for the pane's own tracker
+        REQUIRE(HasField(githubApp.GetAvailableFields(), "pr.head"));
+    }
+    CHECK(SnapshotHasField(github, std::string(), "pr.head"));
+    CHECK_FALSE(SnapshotHasField(jira, std::string(), "pr.head"));
+    // Preferences lists the snapshot under GitHub and its repository, not under the Jira site.
+    const FieldCatalogCache::FieldCatalogIndexIdentity githubIndex =
+        FieldCatalogCache::BuildFieldCatalogIndexIdentity(github);
+    CHECK(githubIndex.backend == "GitHub");
+    bool listed = false;
+    for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
+        listed = listed || (e.backend == githubIndex.backend && e.endpoint == githubIndex.endpoint);
+    }
+    CHECK(listed);
+
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->Fail = true;
+    adapter.SetBackend(std::move(backend));
+    adapter.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(jira));
+    CHECK_FALSE(app.RefreshFieldCatalog(jira, "FOO"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "pr.head"));
+}
+
 TEST_CASE("AppController::SetFieldCatalog files the grid's catalog under the grid's project when a refresh lands "
           "in between") {
     // The grid applies its fetch in two calls (pin the project, then apply). A draft refresh for another
