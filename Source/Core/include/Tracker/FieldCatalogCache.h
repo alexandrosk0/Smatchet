@@ -49,7 +49,6 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
                                  std::vector<TrackerComponent>& outComponents,
                                  std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
 
-
 /** Sorted by lastUsedUnix descending (most-recent first). Used by the Preferences readout. */
 std::vector<CachedProjectEntry> ListCachedProjects();
 
