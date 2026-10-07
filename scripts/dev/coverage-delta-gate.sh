@@ -14,30 +14,39 @@
 # label stays as a manual escape for genuine cases the classifier can't cover.
 #
 # Test-light exemption (no override, no postmortem) — auto-PASS a diff whose
-# *every* added/modified line in first-party product files (every file under
-# Source/Core, Source/Plugins, Source/Standalone, tests/ but known data: docs,
+# *every* added, modified AND removed line in first-party product files (every file
+# under Source/Core, Source/Plugins, Source/Standalone, tests/ but known data: docs,
 # assets, fixtures, scripts, build files — _DATA_EXT_RE) is provably
-# no-new-runtime-surface. A file renamed into those trees from outside them is never
-# exempt (its lines are newly built). Classes (CONSERVATIVE — anything
-# not on this list falls through to the normal coverage-delta gate):
+# no-new-runtime-surface. Removing a line is a change too: deleting a guard
+# (`if (!confirmed) return;`) changes behaviour exactly as adding one does. A file
+# renamed between the product trees, or into or out of them, is never exempt (the
+# compilers newly build, or stop building, every line it carries). Classes
+# (CONSERVATIVE — anything not on this list falls through to the normal
+# coverage-delta gate):
 #   * comment/marker-only  — //, /* */, doc-* continuation, // catch-all-ok: …
-#   * logging-only         — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…) calls
-#   * static_assert-only   — static_assert(…) (compile-time; the build is the test)
+#   * logging-only         — a LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…); statement that
+#                            starts a statement (after ; { or }), including the lines
+#                            of one that wraps; the arguments are not inspected
+#   * static_assert-only   — static_assert(…); (compile-time; the build is the test)
 #   * forward-decl-only    — `class/struct/union/enum Foo;` name declarations
 #                            (optionally template-prefixed) — a type name with no
 #                            body and no object carries no runtime surface (the
 #                            #1308 fan-in swaps a heavy include for a fwd-decl).
 #   * include/using-only   — #include / using directives
 #   * preprocessor-guard   — #if/#ifdef/#ifndef/#elif/#else/#endif conditional
-#                            directives (compile-config selection; the wrapped
-#                            code is classified on its own added lines, so a guard
-#                            around NEW statements still falls through). NOT
-#                            #define/#undef/#pragma (a macro can carry real logic).
+#                            directives whose condition names a configuration macro
+#                            (compile-config selection; the wrapped code is
+#                            classified on its own changed lines, so a guard around
+#                            NEW statements still falls through). A condition that
+#                            is a constant, or holds a constant operand of || / &&
+#                            (`#if 0` -> `#if 1`, `#if FOO || 1`), turns existing code
+#                            on or off: NOT exempt. Nor are #define/#undef/#pragma
+#                            (a macro can carry real logic).
 #   * catch-scaffold       — exception-handler structure (catch (…) { , try { ,
 #                            and the brace/closing tokens) whose body is only the
 #                            above (the swallow→log pattern: no rethrow, no logic)
 #   * build-only           — no .cpp/.h/.hpp product change at all (CMake/yml/sh/…)
-#   * off-target platform arm — an added line whose enclosing #if/#elif/#else arm
+#   * off-target platform arm — a changed line whose enclosing #if/#elif/#else arm
 #                            can only be compiled for Android (__ANDROID__): never
 #                            built by the desktop/Linux test targets, validated
 #                            instead by the Android NDK/APK cross-compile jobs
@@ -51,9 +60,11 @@
 #                            trimmed, `inline` dropped) as an out-of-line
 #                            definition in a .cpp, plus its header declaration
 #                            and the new TU's namespace opener (#1317).
-#   The last two need nesting/pairing context, so the diff is generated with full
-#   file context and _prefilter_diff drops exempt lines before _classify_diff.
-# A new function, a new branch, a changed condition, a new statement — NOT exempt.
+#   Every class but the shape checks needs C++ lexing and pairing context, so the diff is
+#   generated with full file context: _prefilter_diff lexes both sides of each file, drops
+#   the exempt lines, and hands _classify_diff each remaining line with its comments removed
+#   and its literals emptied.
+# A new function, a new branch, a changed condition, a new or removed statement — NOT exempt.
 # Motivation: a GitHub merge queue runs this required check on the merge_group
 # ref where PR labels don't apply, so tests-out-of-band can't dismiss it there;
 # the gate must PASS legitimately for genuinely-untestable correctness diffs.
@@ -61,7 +72,8 @@
 #
 # Override mechanism for local runs:
 #   SMATCHET_COVERAGE_GATE_BASE   base ref to diff against. Default: origin/develop
-#                                 (falls back to develop, then HEAD~1).
+#                                 (falls back to develop, then HEAD~1). A ref that does
+#                                 not resolve fails the gate.
 #   SMATCHET_COVERAGE_GATE_BYPASS set to 1 to short-circuit (advisory mode).
 #
 # Self-test (both-direction fixtures, no network):
@@ -70,420 +82,184 @@
 # Exit codes:
 #   0 — gate satisfied (no Source/Core change, test files also changed, or the
 #       test-light exemption fired)
-#   1 — gate failed (Source/Core changed without test delta and not exempt) /
-#       --selftest failure
+#   1 — gate failed (Source/Core changed without test delta and not exempt, or a
+#       git command failed) / --selftest failure
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Test-light exemption classifier
 # ---------------------------------------------------------------------------
-# Decide whether a single added/modified C/C++ line (already stripped of its
-# leading diff '+' and surrounding whitespace) is no-new-runtime-surface.
-# Returns 0 (exempt) / 1 (real surface). CONSERVATIVE: unknown ⇒ 1.
-#
-# Block-comment state is tracked by the caller (in_block_comment) because a
-# multi-line /* … */ spans lines; this helper only judges single-line shapes.
+# The shapes of a no-new-runtime-surface line. Each is one whole statement or directive:
+# _prefilter_diff empties every string and character literal (so a ';', '{' or '}' here is
+# code, never text) and removes comments.
+_USING_RE='^using[[:space:]][^;{}]*;$'
+_STATIC_ASSERT_RE='^static_assert[[:space:]]*\([^;{}]*\)[[:space:]]*;$'
+_CATCH_RE='^(\}[[:space:]]*)?catch[[:space:]]*\([^;{}]*\)[[:space:]]*\{$'
+_TRY_RE='^(\}[[:space:]]*)?try([[:space:]]*\{)?$'
+_BRACE_RE='^(\{|\}|\};)$'
+_INCLUDE_RE='^#[[:space:]]*include(_next)?([^A-Za-z0-9_]|$)'
+_PRAGMA_ONCE_RE='^#[[:space:]]*pragma[[:space:]]+once$'
+_CONDITIONAL_RE='^#[[:space:]]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)'
+# Forward declaration — `class Foo;` / `struct Foo;` / `union Foo;` /
+# `enum [class|struct] Foo [: underlying];`, optionally template-prefixed
+# (`template <…> class Foo;`). A pure name declaration introduces a type name
+# with NO definition body and NO object, so it carries zero runtime surface
+# (the #1308 AppController fan-in swaps a heavy `#include` for a bare
+# `class LocalCacheManager;` fwd-decl). The trailing `;$` anchor keeps this
+# tight: a definition opener (`class Foo : public Bar {` / `enum E { … }`),
+# an elaborated-type object (`class Foo bar;`), or anything with `=`/`(`
+# all fail to match and fall through to real surface. The regex lives in a
+# single-quoted var referenced unquoted so `<`/`>`/`;` stay literal ERE (an
+# inline `\<` would mean a GNU word-boundary, not a literal angle bracket).
+_FWD_DECL_RE='^(template[[:space:]]*<[^{}]*>[[:space:]]*)?(class|struct|union|enum([[:space:]]+(class|struct))?)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[[:space:]]*[A-Za-z_:][A-Za-z0-9_:]*)?[[:space:]]*;$'
+# A constant (a pp-number, true or false, already replaced by '#') that is a whole operand of
+# ||, && or !: the condition no longer depends on the configuration there.
+_CONST_OPERAND_RE='(^|[|][|]|&&|!|[(])[[:space:]]*[(]*[[:space:]]*#[[:space:]]*[)]*[[:space:]]*([|][|]|&&|[)]|$)'
+
+# _guard_selects_config <directive> — 0 when a conditional directive selects code by the
+# build configuration; 1 when its condition is constant, or turns code on or off whatever
+# the configuration (`#if 0` -> `#if 1`, `#if FOO || 1`, `#if BAR && 0`).
+_guard_selects_config() {
+    local cond norm
+    [[ "$1" =~ ^#[[:space:]]*(if|elif)([^A-Za-z0-9_].*)?$ ]] || return 0
+    cond="${BASH_REMATCH[2]}"
+    # Every pp-number, true and false becomes '#'; `defined` is an operator, not a macro.
+    norm="$(LC_ALL=C sed -E ":a
+s/(^|[^A-Za-z0-9_#])([0-9][A-Za-z0-9_.']*|true|false)([^A-Za-z0-9_]|$)/\\1#\\3/
+ta
+s/(^|[^A-Za-z0-9_])defined([^A-Za-z0-9_]|$)/\\1 \\2/g" <<<"$cond")"
+    [[ "$norm" =~ [A-Za-z_] ]] || return 1
+    [[ "$norm" =~ $_CONST_OPERAND_RE ]] && return 1
+    return 0
+}
+
+# _line_is_no_runtime_surface <code> — decide one changed line, as _prefilter_diff prints it
+# (trimmed, comments removed, literals emptied). Returns 0 (exempt) / 1 (real surface).
+# CONSERVATIVE: unknown ⇒ 1.
 _line_is_no_runtime_surface() {
-    local line="$1"
-
-    # Blank line — no surface.
-    [ -z "$line" ] && return 0
-
-    # Whole-line `//` comment.
-    case "$line" in
-        '//'*) return 0 ;;
-    esac
-
-    # A leading `/* … */` span: strip it and classify the RESIDUAL.
-    # Historically this was `'/*'*) return 0`, which exempted
-    # `/* note */ launchTask();` — real surface (#918 MEDIUM). The bare `'*'*`
-    # and `'*/'*` continuation cases were ALSO removed: genuine block-comment
-    # continuation lines are consumed by the `in_block_comment` state machine in
-    # the caller BEFORE reaching this helper, so a line arriving here that starts
-    # with `*` is a pointer-deref statement (`*out = compute();`, `*it = next();`),
-    # NOT a comment — exempting it falsely PASSED the required test-delta gate on
-    # output-pointer writes (#918 `'*'*` finding).
-    case "$line" in
-        '/*'*'*/'*)
-            local rest="${line#*\*/}"
-            rest="${rest#"${rest%%[![:space:]]*}"}"
-            [ -z "$rest" ] && return 0   # comment-only — no surface
-            line="$rest"                 # fall through to classify the residual code
-            ;;
-    esac
-
-    # Strip a trailing line-comment so an exempt token followed by `// note`
-    # still classifies (e.g. `} catch (...) { // catch-all-ok: …`). Only strip
-    # `//` (a `/*…*/` mid-line is unusual in product code and we stay strict).
-    local code="${line%%//*}"
-    # Trim trailing whitespace left by the strip.
-    code="${code%"${code##*[![:space:]]}"}"
+    local code="$1"
     [ -z "$code" ] && return 0
-
-    # #include / #pragma once / using directive.
-    case "$code" in
-        '#include'*) return 0 ;;
-        '#pragma once'*) return 0 ;;
-        'using '*) return 0 ;;
-    esac
-
-    # Preprocessor conditional guards — #if/#ifdef/#ifndef/#elif/#else/#endif.
-    # A guard wrapping EXISTING code is compile-config selection (no runtime
-    # surface); NEW code inside the guard arrives as its own added line and is
-    # classified on its own merits, so a guard around new statements still falls
-    # through. NOT #define/#undef/#pragma (a macro can carry real logic).
-    case "$code" in
-        # '#if'* subsumes '#ifdef'/'#ifndef'; '#elif'/'#else'/'#endif' are explicit.
-        '#if'*|'#elif'*|'#else'*|'#endif'*) return 0 ;;
-    esac
-
-    # static_assert(…) — compile-time; the build is the test.
-    case "$code" in
-        'static_assert('*) return 0 ;;
-    esac
-
-    # Forward declaration — `class Foo;` / `struct Foo;` / `union Foo;` /
-    # `enum [class|struct] Foo [: underlying];`, optionally template-prefixed
-    # (`template <…> class Foo;`). A pure name declaration introduces a type name
-    # with NO definition body and NO object, so it carries zero runtime surface
-    # (the #1308 AppController fan-in swaps a heavy `#include` for a bare
-    # `class LocalCacheManager;` fwd-decl). The trailing `;$` anchor keeps this
-    # tight: a definition opener (`class Foo : public Bar {` / `enum E { … }`),
-    # an elaborated-type object (`class Foo bar;`), or anything with `=`/`(`
-    # all fail to match and fall through to real surface. The regex lives in a
-    # single-quoted var referenced unquoted so `<`/`>`/`;` stay literal ERE (an
-    # inline `\<` would mean a GNU word-boundary, not a literal angle bracket).
-    local fwd_decl_re='^(template[[:space:]]*<[^{}]*>[[:space:]]*)?(class|struct|union|enum([[:space:]]+(class|struct))?)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[[:space:]]*[A-Za-z_:][A-Za-z0-9_:]*)?[[:space:]]*;$'
-    if [[ "$code" =~ $fwd_decl_re ]]; then
-        return 0
+    if [[ "$code" =~ $_CONDITIONAL_RE ]]; then
+        _guard_selects_config "$code"
+        return
     fi
-
-    # Logging-only — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…). Must be the start of
-    # the statement (a LOG_ embedded as an argument would have other tokens
-    # before it, which we don't exempt here — conservative).
-    case "$code" in
-        'LOG_DEBUG('*|'LOG_INFO('*|'LOG_WARN('*|'LOG_ERROR('*|'LOG_TRACE('*) return 0 ;;
-        # Continuation of a multi-line LOG_ call argument list (string literal /
-        # closing paren on its own line). A bare closing `");` or a quoted
-        # fragment is scaffold for the call above; real statements would carry
-        # an identifier + operator. Be strict: only a lone `");`-ish tail or a
-        # pure string-literal continuation.
-        '");'|');') return 0 ;;
-        '"'*'"'|'"'*'",'|'"'*'");') return 0 ;;
-    esac
-
-    # catch-scaffold — exception-handler structure with no logic of its own.
-    # The swallow→log pattern adds a `} catch (...) {` / `catch (const T& e) {`
-    # plus a logging body (handled above). Lone braces / try open also scaffold.
-    case "$code" in
-        'try'|'try {'|'} try {') return 0 ;;
-        'catch'*'{'|'} catch'*'{') return 0 ;;
-        '{'|'}'|'};') return 0 ;;
-    esac
-
-    # Anything else is real runtime surface.
+    [[ "$code" =~ $_INCLUDE_RE ]] && return 0
+    [[ "$code" =~ $_PRAGMA_ONCE_RE ]] && return 0
+    [[ "$code" =~ $_USING_RE ]] && return 0
+    [[ "$code" =~ $_STATIC_ASSERT_RE ]] && return 0
+    [[ "$code" =~ $_FWD_DECL_RE ]] && return 0
+    [[ "$code" =~ $_CATCH_RE ]] && return 0
+    [[ "$code" =~ $_TRY_RE ]] && return 0
+    [[ "$code" =~ $_BRACE_RE ]] && return 0
     return 1
 }
 
-# Read a unified diff on stdin; emit "EXEMPT" or "FALLTHROUGH" on stdout.
-# EXEMPT  ⇒ every added line in a first-party C/C++ product file is
-#           no-new-runtime-surface (or there are zero such added lines —
-#           build-only). The caller short-circuits to PASS.
-# FALLTHROUGH ⇒ at least one added C/C++ product line is real surface; the
-#           caller runs the unchanged coverage-delta logic.
-#
-# Scope: every product file (_is_product_path: anything under Source/Core, Source/Plugins,
-# Source/Standalone, tests/ but known data, whatever its extension). Lines in other files
-# (build/docs/scripts, data) are ignored for the purposes of this classifier — they carry no
-# runtime surface the gate enforces, so they neither block nor force a fallthrough.
-# Net paren balance of a string: count of '(' minus count of ')'. Used to know when a
-# wrapped LOG_*( ... ) statement has closed. Parens INSIDE a double-quoted string literal
-# (e.g. a LOG format arg `LOG_ERROR("x (", y);`) must NOT count — otherwise the accumulator
-# stays open past a balanced statement and swallows the next real-surface line. We strip
-# quoted spans (honouring backslash-escaped quotes) before counting; an unterminated quote
-# on the line leaves its tail stripped, which is the safe direction (a wrapped string literal
-# carries no parens we care about and the close `);` arrives on a later line).
-_paren_delta() {
-    local s="$1" out="" i=0 n ch in_str=0 esc=0
-    local bslash=$'\\'   # single literal backslash via ANSI-C quoting (avoids SC1003)
-    n=${#s}
-    while [ "$i" -lt "$n" ]; do
-        ch="${s:i:1}"
-        if [ "$in_str" -eq 1 ]; then
-            if [ "$esc" -eq 1 ]; then
-                esc=0
-            elif [ "$ch" = "$bslash" ]; then
-                esc=1
-            elif [ "$ch" = '"' ]; then
-                in_str=0
-            fi
-        else
-            if [ "$ch" = '"' ]; then
-                in_str=1
-            else
-                out="$out$ch"
-            fi
+# Read _prefilter_diff's output on stdin (one changed product line per line); emit "EXEMPT"
+# or "FALLTHROUGH" on stdout.
+# EXEMPT  ⇒ every changed line is no-new-runtime-surface (or there are none — build-only).
+#           The caller short-circuits to PASS.
+# FALLTHROUGH ⇒ at least one changed line is real surface; the caller runs the
+#           unchanged coverage-delta logic.
+_classify_diff() {
+    local line
+    while IFS= read -r line; do
+        if ! _line_is_no_runtime_surface "$line"; then
+            echo FALLTHROUGH
+            return 0
         fi
-        i=$(( i + 1 ))
     done
-    local opens closes
-    opens="${out//[^(]/}"
-    closes="${out//[^)]/}"
-    echo $(( ${#opens} - ${#closes} ))
-}
-
-# Given a line and the paren depth on ENTRY (>=1, the unbalanced opener carried over), find
-# where the LOG_*( ... ) statement closes on this line and echo any trailing code that follows
-# the closing `)` (and an immediately-following `;`/`,`). Parens inside string literals are
-# ignored (same quote-tracking as _paren_delta). Echoes the empty string when the statement
-# does NOT close on this line, or when nothing but whitespace trails the close. The caller
-# re-classifies the returned tail as its own statement so `LOG_x(...); realStmt();` is not
-# blanket-skipped.
-_tail_after_log_close() {
-    local s="$1" depth="$2" i=0 n ch in_str=0 esc=0 tail=""
-    local bslash=$'\\'   # single literal backslash via ANSI-C quoting (avoids SC1003)
-    n=${#s}
-    while [ "$i" -lt "$n" ]; do
-        ch="${s:i:1}"
-        if [ "$in_str" -eq 1 ]; then
-            if [ "$esc" -eq 1 ]; then
-                esc=0
-            elif [ "$ch" = "$bslash" ]; then
-                esc=1
-            elif [ "$ch" = '"' ]; then
-                in_str=0
-            fi
-        else
-            if [ "$ch" = '"' ]; then
-                in_str=1
-            elif [ "$ch" = '(' ]; then
-                depth=$(( depth + 1 ))
-            elif [ "$ch" = ')' ]; then
-                depth=$(( depth - 1 ))
-                if [ "$depth" -le 0 ]; then
-                    # statement closes here; the tail is whatever follows, minus a leading
-                    # statement terminator/separator that belongs to the LOG call.
-                    tail="${s:i+1}"
-                    tail="${tail#;}"
-                    tail="${tail#,}"
-                    # Trim leading whitespace.
-                    tail="${tail#"${tail%%[![:space:]]*}"}"
-                    echo "$tail"
-                    return 0
-                fi
-            fi
-        fi
-        i=$(( i + 1 ))
-    done
-    echo ""
+    echo EXEMPT
 }
 
 # Data files under the product trees, never built as C++ (docs, assets, fixtures, scripts, build
 # files). One list for the bash checks and the awk prefilter (passed in as -v dataext).
 _DATA_EXT_RE='md|txt|json|png|jpg|jpeg|gif|svg|ico|bmp|wav|ttf|otf|woff|woff2|a|lib|so|dll|tsv|csv|bats|py|sh|ps1|cmake|in|rc|yml|yaml|toml|xml|html'
+# A configure_file template of a C/C++ file (Foo.cpp.in) is built once configured: not data.
+_CXX_TEMPLATE_RE='c|cc|cpp|cxx|h|hh|hpp|hxx|inl|ipp|tpp|inc'
+
+# _product_root <path> — the product tree a path lies in (Source/Core, Source/Plugins,
+# Source/Standalone, tests), or nothing.
+_product_root() {
+    case "$1" in
+        Source/Core/*) echo Source/Core ;;
+        Source/Plugins/*) echo Source/Plugins ;;
+        Source/Standalone/*) echo Source/Standalone ;;
+        tests/*) echo tests ;;
+    esac
+}
 
 # _is_product_path <path> — a file under the product trees whose lines a compiler may build. Fail
 # closed: anything there that is not known data counts, whatever its extension (or none), because any
 # file can be #included.
 _is_product_path() {
-    case "$1" in
-        Source/Core/*|Source/Plugins/*|Source/Standalone/*|tests/*) ;;
-        *) return 1 ;;
-    esac
+    [ -n "$(_product_root "$1")" ] || return 1
     case "$1" in
         tests/fuzz/corpus/*|*/.gitkeep|*/.gitignore) return 1 ;;
     esac
+    [[ "$1" =~ \.(${_CXX_TEMPLATE_RE})\.in$ ]] && return 0
     [[ ! "$1" =~ \.(${_DATA_EXT_RE})$ ]]
 }
 
-_classify_diff() {
-    local cur_file=""
-    local in_product_cpp=0
-    local in_block_comment=0
-    local saw_real_surface=0
-    # Multi-line LOG_*( ... ) accumulation: when a logging call opens with unbalanced parens,
-    # keep consuming added lines (treating them as part of the one logging-only-exempt unit)
-    # until the paren depth returns to zero. A non-LOG real-surface line is never swallowed
-    # because we only enter this state on a LOG_ opener — once balanced we resume normal
-    # per-line classification.
-    local in_log_stmt=0
-    local log_depth=0
-    local raw line code
-
-    while IFS= read -r raw; do
-        case "$raw" in
-            '+++ '*)
-                # New-file header: +++ b/<path>  (or /dev/null on delete)
-                # git ends the header with a TAB when the path holds a space.
-                cur_file="${raw#+++ }"
-                cur_file="${cur_file%$'\t'}"
-                cur_file="${cur_file#b/}"
-                in_product_cpp=0
-                in_block_comment=0
-                in_log_stmt=0
-                log_depth=0
-                if _is_product_path "$cur_file"; then
-                    in_product_cpp=1
-                fi
-                continue ;;
-            '--- '*) continue ;;
-            'diff --git '*) in_block_comment=0; in_log_stmt=0; log_depth=0; continue ;;
-            '@@'*) in_block_comment=0; in_log_stmt=0; log_depth=0; continue ;;
-        esac
-
-        # Only added lines matter. Skip context / removed / metadata.
-        case "$raw" in
-            '+'*) ;;   # added line (the leading + is the diff marker)
-            *) continue ;;
-        esac
-        # Drop the leading '+'.
-        line="${raw#+}"
-        # Only product C/C++ files contribute surface.
-        [ "$in_product_cpp" -eq 1 ] || continue
-
-        # Trim leading/trailing whitespace.
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-
-        # In a block comment: stays a comment until the close `*/`. If real code
-        # trails the close on the same line (`... */ launchTask();`), it must still
-        # be classified — don't blanket-continue past it (mirrors the LOG-statement
-        # close handling below; the single-line `/* */ code` path already does this).
-        if [ "$in_block_comment" -eq 1 ]; then
-            case "$line" in
-                *'*/'*)
-                    in_block_comment=0
-                    line="${line#*'*/'}"                       # drop through the close
-                    line="${line#"${line%%[![:space:]]*}"}"    # ltrim the remainder
-                    case "$line" in
-                        ''|'//'*) continue ;;                  # nothing (or a line comment) follows
-                    esac
-                    ;;                                          # else fall through to classify trailing code
-                *)
-                    continue ;;                                 # still inside the block comment
-            esac
-        fi
-        # Opening of a block comment that does not close on this line.
-        case "$line" in
-            '/*'*'*/'*) : ;;            # opens and closes — handled by helper
-            '/*'*) in_block_comment=1; continue ;;
-        esac
-
-        # Mid-LOG-statement continuation: keep consuming until parens balance. The whole
-        # multi-line LOG_*( ... ) is one logging-only-exempt unit — its continuation lines
-        # (format-string fragments, arg lists, the closing `);`) carry no runtime surface.
-        # When the statement closes, any real code trailing the close paren on the same line
-        # must still be classified — don't blanket-continue past it.
-        if [ "$in_log_stmt" -eq 1 ]; then
-            local _new_depth _tail
-            _new_depth=$(( log_depth + $(_paren_delta "$line") ))
-            if [ "$_new_depth" -le 0 ]; then
-                _tail="$(_tail_after_log_close "$line" "$log_depth")"
-                in_log_stmt=0
-                log_depth=0
-                if [ -n "$_tail" ]; then
-                    line="$_tail"
-                    # fall through to classify the trailing code below.
-                else
-                    continue
-                fi
-            else
-                log_depth="$_new_depth"
-                continue
-            fi
-        fi
-
-        # A LOG_*( opener: if its parens are NOT balanced on this line, enter the multi-line
-        # accumulation state (the statement wraps across 2-3 lines). A single-line LOG_*(...);
-        # is already handled by _line_is_no_runtime_surface below. If real code trails the
-        # closing paren on the SAME line (`LOG_x(...); realStmt();`), classify that tail.
-        if [ "$in_log_stmt" -eq 0 ]; then
-            case "$line" in
-                'LOG_DEBUG('*|'LOG_INFO('*|'LOG_WARN('*|'LOG_ERROR('*|'LOG_TRACE('*)
-                    log_depth=$(_paren_delta "$line")
-                    if [ "$log_depth" -gt 0 ]; then
-                        in_log_stmt=1
-                        continue
-                    fi
-                    # balanced on one line: check for trailing real code after the close.
-                    # Entry depth 0 — this line contains the opener's own `(`.
-                    local _otail
-                    _otail="$(_tail_after_log_close "$line" 0)"
-                    log_depth=0
-                    if [ -n "$_otail" ]; then
-                        line="$_otail"
-                        # fall through to classify the trailing code below.
-                    fi
-                    # else: pure logging line — fall through to _line_is_no_runtime_surface,
-                    # which exempts it.
-                    ;;
-            esac
-        fi
-
-        if ! _line_is_no_runtime_surface "$line"; then
-            saw_real_surface=1
-            break
-        fi
-    done
-
-    if [ "$saw_real_surface" -eq 1 ]; then
-        echo "FALLTHROUGH"
+# _rename_class <path> — the product tree a path is built in, or "none" for a path outside them
+# (or data inside them). A rename that changes it changes what the compilers build.
+_rename_class() {
+    if _is_product_path "$1"; then
+        _product_root "$1"
     else
-        echo "EXEMPT"
+        echo none
     fi
 }
 
 # ---------------------------------------------------------------------------
-# Full-context prefilter (platform-arm + header→cpp body relocation exemptions)
+# Full-context prefilter (lexing, logging, platform-arm + header→cpp body relocation exemptions)
 # ---------------------------------------------------------------------------
 # _prefilter_diff <diff-file> — read a FULL-CONTEXT unified diff (git diff
-# --unified=<huge>, so every hunk carries the whole post-image and the #if
-# nesting of each added line is knowable) and print a reduced diff for
-# _classify_diff: the file/hunk headers plus the '+' lines that are NOT exempted
-# here. Context and '-' lines are dropped (the classifier never reads them), which
-# also keeps the bash read loop cheap on big diffs. Because a full-context diff is
-# ONE hunk per file, the classifier's carried state (inside a /* */ block, inside a
-# wrapped LOG_*( ... )) would otherwise never reset — a reworded first line of an
-# existing comment or LOG call would swallow every later '+' line of the file. So
-# whenever a context line or a dropped '+' line sits between two printed '+'
-# lines, a synthetic `@@` header is printed first: classifier state never spans
-# post-image lines it cannot see (the default-context diff only reset at real
-# hunk boundaries, so this is never looser than that).
+# --unified=<huge>, so every hunk carries the whole file and the #if nesting of
+# each changed line is knowable) and print, one per line, every changed line of a
+# product file that is NOT exempted here, for _classify_diff: trimmed, its comments
+# removed and every string / character literal emptied ("" / ''). A line that is not
+# trustworthy as text prints as a sentinel _classify_diff never exempts.
 #
-# A small lexer walks the same post-image token by token, as the compilers do
+# Both sides of each hunk are lexed: the post-image (context and '+' lines) for an
+# added line, the pre-image (context and '-' lines) for a removed one, each with its
+# own state. A small lexer walks each side token by token, as the compilers do
 # (identifiers, pp-numbers, header-names, string / char / raw string literals),
 # tracking /* */ comments and raw string literals (R"delim( ... )delim") across
-# lines. A file it cannot follow (C, an unknown extension, a '$' / non-ASCII / \u
-# in an identifier) is untrusted. A '+' line that is only whitespace/comment is
-# dropped (no surface; not a gap) — so an edit to a comment whose opener is a
-# context line stays exempt. A '+' line that starts inside a raw string literal is
-# string DATA and is replaced by a sentinel the classifier never exempts, as is a
-# '+' line with a carriage return inside it. A product file git prints as binary
-# ("Binary files ... differ", e.g. one NUL byte) or under a quoted path is never
-# exempt. A file
-# whose tracking cannot be trusted — a hunk that ends with the #if stack open,
-# closes an arm it never opened, ends inside a comment/raw string, splices a line
-# with a trailing backslash outside a directive's own continuation, splices a
-# directive where the join could change what the lexer sees (a split directive
-# name, or a quote, comment token, '/' or '*' at the splice on a spliced directive
-# line), puts a comment between '#' and the directive name or a directive after a
-# closing */, uses a %: digraph directive, holds a control byte the compilers read
-# differently (a carriage return inside a line, a form feed, a vertical tab, a
-# backslash followed by whitespace) — gets
-# neither the comment drop nor the off-target drop: its lines reach the
-# classifier as-is (falls through). Two exemptions, both conservative (anything
-# unrecognised is printed, i.e. falls through):
+# lines. A changed line that is only whitespace/comment is dropped (no surface). A
+# changed line that starts inside a raw string literal is string DATA and prints as the
+# sentinel, as does one with a carriage return inside it.
 #
-#   1. Off-target platform arm. Walking the post-image (' ' + '+' lines) of each
-#      first-party product C/C++ file, keep an #if/#ifdef/#ifndef/#elif/#else/
+# A file whose lexing cannot be trusted gets no exemption at all — every changed line
+# prints as the sentinel: C, an unknown extension, a '$' / non-ASCII / \u in an
+# identifier, a hunk that ends with the #if stack open, closes an arm it never opened,
+# ends inside a comment/raw string, splices a line with a trailing backslash outside a
+# directive's own continuation, splices a directive where the join could change what the
+# lexer sees (a split directive name, or a quote, comment token, '/' or '*' at the splice
+# on a spliced directive line), puts a comment between '#' and the directive name, between
+# #include / __has_include and the header-name, or a directive after a closing */, uses a
+# %: digraph directive, or holds a control byte the compilers read differently (a carriage
+# return inside a line, a form feed, a vertical tab, a backslash followed by whitespace).
+# A product file git prints as binary ("Binary files ... differ", e.g. one NUL byte) or
+# under a quoted path is never exempt (_classify_diff_file). Exemptions, all conservative
+# (anything unrecognised is printed, i.e. classified):
+#
+#   1. Logging. The lexer follows LOG_{DEBUG,INFO,WARN,ERROR,TRACE}( ... ); calls that
+#      start a statement (the previous token, outside directives, is ; { or } — or the
+#      call opens the file). A changed line whose every token belongs to such a call
+#      (its name, its parenthesised arguments, its closing ;) is dropped, so an edit to
+#      one line of a wrapped call is exempt and `LOG_X(...); other();` is not. A LOG
+#      after `if (c)` or `else`, or at the top of a partial hunk, is not a statement
+#      start: it falls through.
+#
+#   2. Off-target platform arm. Each side keeps an #if/#ifdef/#ifndef/#elif/#else/
 #      #endif stack. An arm is OFF-TARGET when its effective condition requires an
 #      off-target platform macro: its own condition is an ||/&& combination of
 #      ONLY __ANDROID__ atoms (`defined(X)`, `defined X`, bare `X`), or an
 #      earlier arm of the same group was the pure negation of such a combination
 #      (`#ifndef __ANDROID__ … #else`). Android is the only off-target platform
 #      with a CI build (mobile-android-ndk / APK jobs); __APPLE__ / TARGET_OS_*
-#      arms stay gated until a macOS/iOS job exists. A '+' line inside any
+#      arms stay gated until a macOS/iOS job exists. A changed line inside any
 #      off-target arm is dropped. So `#ifdef _WIN32 … #else` stays gated (the
 #      #else arm is the Linux/POSIX path CI builds and runs), as does
 #      `#elif defined(__ANDROID__) || defined(__linux__)`. A directive line with a
@@ -492,21 +268,22 @@ _classify_diff() {
 #      not a directive and is not tracked. The stack resets at every hunk header,
 #      so a partial-context diff can only under-exempt.
 #
-#   2. Header→cpp body relocation. Pass 1 collects every complete, brace-balanced
+#   3. Header→cpp body relocation. Pass 1 collects every complete, brace-balanced
 #      function definition inside a run of REMOVED lines of a product header
 #      (.h/.hpp), and every run of ADDED lines of a product .cpp/.cc/.cxx. A
 #      definition re-added as a contiguous, byte-identical (per-line trimmed;
 #      `inline` dropped from the signature line) block in a .cpp is a relocation:
-#      those added lines are dropped, as are the header's added declaration of
-#      the same signature (`<sig>;`) and a bare namespace opener in a .cpp that
-#      received a relocated body. The body moved unchanged, so no new runtime
-#      surface — the existing callers' tests still exercise it.
+#      both copies are dropped, as are the header's added declaration of the same
+#      signature (`<sig>;`) and a bare namespace opener in a .cpp that received a
+#      relocated body. The body moved unchanged, so no new runtime surface — the
+#      existing callers' tests still exercise it.
 _PREFILTER_AWK="$(cat <<'AWK'
 function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
-# Mirrors _is_product_path (dataext is _DATA_EXT_RE).
+# Mirrors _is_product_path (dataext is _DATA_EXT_RE, cxxtmpl is _CXX_TEMPLATE_RE).
 function is_prod(p) {
     if (p !~ /^(Source\/(Core|Plugins|Standalone)|tests)\//) return 0
     if (p ~ /^tests\/fuzz\/corpus\// || p ~ /\/\.git(keep|ignore)$/) return 0
+    if (p ~ ("\\.(" cxxtmpl ")\\.in$")) return 1
     return p !~ ("\\.(" dataext ")$")
 }
 # A UTF-8 byte-order mark opening a file is no token to the compilers. (The prefilter runs under
@@ -516,8 +293,9 @@ function strip_bom(s) { return substr(s, 1, 3) == "\357\273\277" ? substr(s, 4) 
 function is_cxx(p) { return p ~ /\.(cpp|cc|cxx|h|hpp|hxx|hh|inl|ipp|tpp|inc)$/ }
 function is_hdr(p) { return p ~ /\.(h|hpp)$/ }
 function is_cpp(p) { return p ~ /\.(cpp|cc|cxx)$/ }
-# git ends a "+++ b/<path>" header with a TAB when the path holds a space.
-function path_of(raw,   p) { p = substr(raw, 5); sub(/\t$/, "", p); sub(/^b\//, "", p); return p }
+# The path of a "--- a/<path>" / "+++ b/<path>" header; git ends one with a TAB when the path holds a
+# space. A deleted or added file's other side is /dev/null, which is no product path.
+function path_of(raw,   p) { p = substr(raw, 5); sub(/\t$/, "", p); sub(/^[ab]\//, "", p); return p }
 function drop_inline(s) { s = " " s " "; gsub(/[ \t]inline[ \t]/, " ", s); return trim(s) }
 # Net { minus } outside string/char literals and a trailing // comment.
 function brace_delta(s,   t, o, c) {
@@ -582,9 +360,9 @@ function classify_cond(e,   s, inner, p, q) {
     return "OTHER"
 }
 function is_off_macro(m) { return m == "__ANDROID__" }
-# Update the #if stack for one post-image line; returns 1 when it is a
-# conditional directive (#define/#include/#pragma return 0 and are classified as
-# ordinary lines, so one inside an off-target arm is still dropped).
+# Update the #if stack for one line; returns 1 when it is a conditional directive
+# (#define/#include/#pragma return 0 and are classified as ordinary lines, so one
+# inside an off-target arm is still dropped).
 function track_directive(body,   s, kw, rest, c) {
     s = trim(body)
     if (substr(s, 1, 1) != "#") return 0
@@ -619,27 +397,107 @@ function track_directive(body,   s, kw, rest, c) {
 }
 function first_tok(s) { sub(/[ \t\/].*$/, "", s); return s }
 function in_off_arm(   i) { for (i = 1; i <= depth; i++) if (arm[i]) return 1; return 0 }
-# Lexical state across the post-image lines of one hunk: lx_blk (inside a /* */
-# comment) and lx_raw (inside a raw string literal, closed by ")" lx_rdel "\"").
-function lex_reset() { lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0; lx_macro = 0 }
-# lex_line(s) — advance the lexical state across one line; sets lx_code = 1 when
-# any non-whitespace byte lies outside a comment (string-literal bytes are code).
+# Lexical state of one side of a hunk: lx_blk (inside a /* */ comment), lx_raw (inside a raw
+# string literal, closed by ")" lx_rdel "\""), lx_macro (the next line continues a directive),
+# lx_untrusted, the #if stack (depth, arm[], neg[], uflow), the logging-call tracker (lx_prev, the
+# last token outside directives; lg_open, lg_depth, lg_close) and lx_bom (the next line opens the
+# file, so a byte-order mark may lead it).
+function lex_reset() {
+    lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_untrusted = 0; lx_macro = 0
+    depth = 0; uflow = 0
+    lx_prev = ""; lg_open = 0; lg_depth = 0; lg_close = 0; lx_bom = 0
+}
+# Each side of a hunk keeps its own copy of that state; side() swaps the named one in.
+function side_save(m,   k) {
+    SS[m, "blk"] = lx_blk; SS[m, "raw"] = lx_raw; SS[m, "rdel"] = lx_rdel; SS[m, "unt"] = lx_untrusted
+    SS[m, "mac"] = lx_macro; SS[m, "depth"] = depth; SS[m, "uflow"] = uflow; SS[m, "prev"] = lx_prev
+    SS[m, "lgo"] = lg_open; SS[m, "lgd"] = lg_depth; SS[m, "lgc"] = lg_close; SS[m, "bom"] = lx_bom
+    for (k = 1; k <= depth; k++) { SA[m, k] = arm[k]; SN[m, k] = neg[k] }
+}
+function side_load(m,   k) {
+    lx_blk = SS[m, "blk"]; lx_raw = SS[m, "raw"]; lx_rdel = SS[m, "rdel"]; lx_untrusted = SS[m, "unt"]
+    lx_macro = SS[m, "mac"]; depth = SS[m, "depth"]; uflow = SS[m, "uflow"]; lx_prev = SS[m, "prev"]
+    lg_open = SS[m, "lgo"]; lg_depth = SS[m, "lgd"]; lg_close = SS[m, "lgc"]; lx_bom = SS[m, "bom"]
+    for (k = 1; k <= depth; k++) { arm[k] = SA[m, k]; neg[k] = SN[m, k] }
+}
+function side(m) { if (cur_side != m) { side_save(cur_side); side_load(m); cur_side = m } }
+# A hunk header resets both sides. A side that starts at line 1 starts at the top of the file: a
+# byte-order mark may lead its first line, and a logging call there starts a statement.
+function hunk_begin(h,   t, pre_start, post_start) {
+    t = h; sub(/^@@ -/, "", t); pre_start = t + 0
+    t = h; sub(/^@@ -[0-9]+(,[0-9]+)? \+/, "", t); post_start = t + 0
+    lex_reset(); lx_bom = (pre_start <= 1); lx_prev = pre_start <= 1 ? "" : "?"; side_save("pre")
+    lex_reset(); lx_bom = (post_start <= 1); lx_prev = post_start <= 1 ? "" : "?"; side_save("post")
+    cur_side = "post"
+    hunk_open = 1
+}
+# feed(m, raw) — run one diff line's text through side m; returns 1 for a conditional directive.
+function feed(m, raw,   b) {
+    side(m)
+    b = substr(raw, 2)
+    if (lx_bom) { b = strip_bom(b); lx_bom = 0 }
+    return post_line(b)
+}
+# lg_tok(kind, val) — one token for the logging-call tracker ("id" / "num" / "lit" / "punct", with the
+# identifier or punctuator). A token outside a statement-starting LOG_*( ... ); call sets lx_nonlog.
+# A directive's tokens are never part of one.
+function lg_tok(kind, val,   inlog) {
+    if (lx_dir) { lx_nonlog = 1; return }
+    inlog = 0
+    if (lg_depth > 0) {
+        inlog = 1
+        if (val == "(") lg_depth++
+        else if (val == ")" && --lg_depth == 0) lg_close = 1
+    } else if (lg_open) {
+        lg_open = 0
+        if (val == "(") { lg_depth = 1; inlog = 1 }
+    } else if (lg_close) {
+        lg_close = 0
+        inlog = (val == ";")
+    } else if (kind == "id" && val ~ /^LOG_(DEBUG|INFO|WARN|ERROR|TRACE)$/ &&
+               (lx_prev == "" || lx_prev == ";" || lx_prev == "{" || lx_prev == "}")) {
+        lg_open = 1
+        inlog = 1
+    }
+    if (!inlog) lx_nonlog = 1
+    lx_prev = kind == "punct" ? val : kind
+}
+# lex_line(s, dir) — advance the lexical state across one line (dir: the line is a directive or
+# continues one). Sets lx_code = 1 when any non-whitespace byte lies outside a comment (string-literal
+# bytes are code), lx_nonlog (see lg_tok), and lx_text: the line with each comment replaced by a space
+# and each string / char literal emptied.
 # It scans token by token, as the compilers do, so a quote opens a literal only where
 # a token starts: identifiers (a raw-string prefix is a whole identifier R, u8R, uR, UR
 # or LR), pp-numbers (1'000, 1.R, 1e+'5 and 0x1e+5 are each one token), header-names
 # after #include / __has_include (skipped whole), and ordinary string / char literals,
 # which cannot span lines. A '$', non-ASCII byte or \u / \U in an identifier or
-# pp-number is accepted differently by different compilers: the file is not trusted.
-function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
+# pp-number is accepted differently by different compilers: the file is not trusted, as
+# it is for a comment before a header-name (the per-line lexer reads the header-name as
+# tokens there).
+function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q) {
     lx_code = 0
+    lx_nonlog = 0
+    lx_text = ""
+    lx_dir = dir
     n = length(s)
     i = 1
-    if (!lx_blk && !lx_raw && match(s, /^[ \t]*#[ \t]*(include|include_next|import)[ \t]*[<"]/)) {
+    if (!lx_blk && !lx_raw && match(s, /^[ \t]*#[ \t]*(include_next|include|import)/) &&
+        substr(s, RLENGTH + 1, 1) !~ /[A-Za-z0-9_]/) {
         lx_code = 1
-        q = substr(s, RLENGTH, 1) == "<" ? ">" : "\""
-        m = index(substr(s, RLENGTH + 1), q)
-        if (m == 0) { lx_untrusted = 1; return }
-        i = RLENGTH + m + 1
+        lx_nonlog = 1
+        m = RLENGTH
+        rest = substr(s, m + 1)
+        match(rest, /^[ \t]*/)
+        k = RLENGTH
+        rest = substr(rest, k + 1)
+        if (rest ~ /^\/[*\/]/) lx_untrusted = 1
+        if (rest ~ /^[<"]/) {
+            q = substr(rest, 1, 1) == "<" ? ">" : "\""
+            d = index(substr(rest, 2), q)
+            if (d == 0) { lx_untrusted = 1; return }
+            lx_text = substr(s, 1, m + k) (q == ">" ? "<>" : "\"\"")
+            i = m + k + d + 2
+        }
     }
     while (i <= n) {
         if (lx_blk) {
@@ -647,6 +505,7 @@ function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
             if (k == 0) return
             i += k + 1
             lx_blk = 0
+            lx_text = lx_text " "
             continue
         }
         if (lx_raw) {
@@ -655,10 +514,11 @@ function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
             if (k == 0) return
             i += k + length(lx_rdel) + 1
             lx_raw = 0
+            lx_text = lx_text "\"\""
             continue
         }
         c = substr(s, i, 1)
-        if (c ~ /[ \t\r\f\v]/) { i++; continue }
+        if (c ~ /[ \t\r\f\v]/) { lx_text = lx_text c; i++; continue }
         c2 = substr(s, i, 2)
         if (c2 == "//") {
             # A trailing backslash splices the next line into this comment, which the
@@ -687,17 +547,25 @@ function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
                 if (d > 0 && d <= 17 && substr(m, 1, d - 1) !~ /[ \t\v\f\\)]/) {
                     lx_rdel = substr(m, 1, d - 1)
                     lx_raw = 1
+                    lx_text = lx_text id
+                    lg_tok("lit", "")
                     i += d + 1
                     continue
                 }
                 lx_untrusted = 1 # an R prefix with no delimiter the compilers accept
             }
+            lx_text = lx_text id
+            lg_tok("id", id)
             if (id == "__has_include" || id == "__has_include_next") {
                 rest = substr(s, i)
+                if (rest ~ /^[ \t]*(\/[*\/]|\([ \t]*\/[*\/])/) lx_untrusted = 1
                 if (match(rest, /^[ \t]*\([ \t]*[<"]/)) {
                     q = substr(rest, RLENGTH, 1) == "<" ? ">" : "\""
                     m = index(substr(rest, RLENGTH + 1), q)
                     if (m == 0) { lx_untrusted = 1; return }
+                    lx_text = lx_text "(" (q == ">" ? "<>" : "\"\"")
+                    lg_tok("punct", "(")
+                    lg_tok("lit", "")
                     i += RLENGTH + m
                 }
             }
@@ -715,6 +583,8 @@ function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
                 if (k == "\\" && substr(s, j + 1, 1) ~ /[uU]/) { lx_untrusted = 1; j += 2; continue }
                 break
             }
+            lx_text = lx_text substr(s, i, j - i)
+            lg_tok("num", "")
             i = j
             continue
         }
@@ -726,19 +596,22 @@ function lex_line(s,   i, n, c, c2, k, m, d, j, id, rest, q) {
                 i++
                 if (k == c) break
             }
+            lx_text = lx_text c c
+            lg_tok("lit", "")
             continue
         }
+        lx_text = lx_text c
+        lg_tok("punct", c)
         i++
     }
 }
-# post_line(body) — feed one post-image line through the #if stack (only when it
-# STARTS outside a comment / raw string — a `#if` there is text, not a directive)
-# and then the lexer. Sets pl_raw (line starts inside a raw string literal);
-# returns 1 for a conditional directive.
+# post_line(body) — feed one line of the current side through the #if stack (only when
+# it STARTS outside a comment / raw string — a `#if` there is text, not a directive) and
+# then the lexer. Sets pl_raw (line starts inside a raw string literal); returns 1 for a
+# conditional directive.
 function post_line(body,   r, st, tl, splice, cont, isdir) {
     pl_raw = lx_raw
-    # Shapes the per-line tracking cannot follow mark the file untrusted (its lines then fall
-    # through to the classifier, never dropped):
+    # Shapes the per-line tracking cannot follow mark the file untrusted:
     #   - a backslash line splice outside a preprocessor directive's continuation (the
     #     compiler joins the lines first, so a string, char literal or comment can run on);
     #   - a directive splice the tracking could misread: one that splits the directive
@@ -773,51 +646,79 @@ function post_line(body,   r, st, tl, splice, cont, isdir) {
     # (Only a conditional name or a comment after the '#': an ImGui id path "**/##id" is no directive.)
     if (body ~ /\*\/[ \t]*(%:|#[ \t]*(\/\*|(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)))/) lx_untrusted = 1
     r = isdir ? track_directive(body) : 0
-    lex_line(body)
+    lex_line(body, isdir || cont)
     return r
 }
-# Pass-1 balance check, at each hunk end: tracking that leaves the #if stack open,
-# closed an arm it never opened, or stops inside a comment / raw string cannot be
-# trusted — that file gets neither the off-target nor the comment-only drop.
+# Pass-1 trust check, at each hunk end: a side whose tracking leaves the #if stack open, closed an
+# arm it never opened, or stops inside a comment / raw string cannot be trusted, nor can its file.
+function side_bad() { return depth != 0 || uflow || lx_blk || lx_raw || lx_untrusted }
 function end_hunk1() {
-    if (prod1 && (depth != 0 || uflow || lx_blk || lx_raw || lx_untrusted)) untrusted[f1] = 1
-    depth = 0
-    uflow = 0
-    lex_reset()
-}
-# Pass-2 output of one kept '+' line: a synthetic hunk header first when a context
-# or dropped line separates it from the previous printed '+' line, so classifier
-# state (block comment / wrapped LOG_) never spans lines it cannot see.
-function emit(b) {
-    # A carriage return inside the line ends it for the compilers: whatever follows is code the
-    # classifier would read as part of the line before (a comment, a directive), so it is never exempt.
-    if (b ~ /\r[^\r]/) b = RAWLINE
-    if (gap) { print "@@ prefilter: post-image gap @@"; gap = 0 }
-    print "+" b
+    if (hunk_open && (prodo1 || prodn1)) {
+        side("pre")
+        if (prodo1 && side_bad()) untrusted[fd] = 1
+        side("post")
+        if (prodn1 && side_bad()) untrusted[fd] = 1
+    }
+    hunk_open = 0
 }
 # Pass-1 helpers: close the current removed-header / added-cpp run.
 function end_runs() { in_rrun = 0; in_arun = 0 }
-BEGIN {
-    SQ = sprintf("%c", 39); nr = 0; na = 0
-    RAWLINE = "__coverage_gate_raw_string_literal_line__;"
+# Pass 2: decide one changed line of side m (file f) and print it unless it is exempt here.
+function changed(m, raw, f,   r, t, s2) {
+    r = feed(m, raw)
+    # A carriage return inside the line ends it for the compilers: whatever follows is code the
+    # classifier would read as part of the line before (a comment, a directive), so it is never exempt.
+    if (!trusted || pl_raw || raw ~ /\r[^\r]/) { print RAWLINE; return }
+    t = trim(lx_text)
+    if (r) { print t; return }
+    if (FNR in reloc) return
+    if (in_off_arm()) return
+    if (!lx_code || !lx_nonlog) return
+    if (m == "post" && relfile[f] && t ~ /^namespace([ \t]+[A-Za-z_][A-Za-z0-9_:]*)?[ \t]*\{$/) return
+    if (m == "post" && is_hdr(f) && t ~ /;$/) {
+        s2 = t
+        sub(/[ \t]*;$/, "", s2)
+        if (s2 in relsig) return
+    }
+    print t
 }
+BEGIN {
+    SQ = sprintf("%c", 39); nr = 0; na = 0; fd = 0
+    RAWLINE = "__coverage_gate_untrusted_line__;"
+}
+# Pass 1: per file diff (fd), whether its lexing can be trusted; the relocation candidates.
 NR == FNR {
-    if ($0 ~ /^diff --git / || $0 ~ /^@@/) { end_runs(); end_hunk1(); next }
-    if ($0 ~ /^--- /) { end_runs(); next }
-    if ($0 ~ /^\+\+\+ /) {
-        end_runs(); f1 = path_of($0); prod1 = is_prod(f1)
-        if (prod1 && !is_cxx(f1)) untrusted[f1] = 1
+    if ($0 ~ /^diff --git /) {
+        end_runs(); end_hunk1()
+        fd++; in_hdr = 1; fo1 = ""; fn1 = ""; prodo1 = 0; prodn1 = 0
         next
     }
-    if (prod1 && (substr($0, 1, 1) == " " || substr($0, 1, 1) == "+")) post_line(strip_bom(substr($0, 2)))
-    if (substr($0, 1, 1) == "-" && is_prod(f1) && is_hdr(f1)) {
+    if (in_hdr) {
+        if ($0 ~ /^--- /) fo1 = path_of($0)
+        else if ($0 ~ /^\+\+\+ /) fn1 = path_of($0)
+        else if ($0 ~ /^@@/) {
+            in_hdr = 0
+            prodo1 = is_prod(fo1)
+            prodn1 = is_prod(fn1)
+            if ((prodo1 && !is_cxx(fo1)) || (prodn1 && !is_cxx(fn1))) untrusted[fd] = 1
+            hunk_begin($0)
+        }
+        next
+    }
+    if ($0 ~ /^@@/) { end_runs(); end_hunk1(); hunk_begin($0); next }
+    c1 = substr($0, 1, 1)
+    if (prodo1 && (c1 == " " || c1 == "-")) feed("pre", $0)
+    if (prodn1 && (c1 == " " || c1 == "+")) feed("post", $0)
+    if (c1 == "-" && prodo1 && is_hdr(fo1)) {
         if (!in_rrun) { nr++; rn[nr] = 0; in_rrun = 1 }
-        rl[nr, ++rn[nr]] = trim(substr($0, 2))
+        rn[nr]++
+        rl[nr, rn[nr]] = trim(substr($0, 2))
+        rk[nr, rn[nr]] = FNR
         in_arun = 0
         next
     }
-    if (substr($0, 1, 1) == "+" && is_prod(f1) && is_cpp(f1)) {
-        if (!in_arun) { na++; an[na] = 0; af[na] = f1; in_arun = 1 }
+    if (c1 == "+" && prodn1 && is_cpp(fn1)) {
+        if (!in_arun) { na++; an[na] = 0; af[na] = fn1; in_arun = 1 }
         an[na]++
         al[na, an[na]] = trim(substr($0, 2))
         ak[na, an[na]] = FNR
@@ -829,6 +730,7 @@ NR == FNR {
 }
 FNR == 1 && !paired {
     paired = 1
+    end_runs()
     end_hunk1()
     # Extract complete definitions from each removed header run, then pair each
     # with a contiguous byte-identical added run segment in a .cpp.
@@ -850,7 +752,11 @@ FNR == 1 && !paired {
                     for (q = 1; q < k && ok; q++)
                         if (used[a, st + q] || al[a, st + q] != rl[r, i + q]) ok = 0
                     if (!ok) continue
-                    for (q = 0; q < k; q++) { used[a, st + q] = 1; reloc[ak[a, st + q]] = 1 }
+                    for (q = 0; q < k; q++) {
+                        used[a, st + q] = 1
+                        reloc[ak[a, st + q]] = 1
+                        reloc[rk[r, i + q]] = 1
+                    }
                     relfile[af[a]] = 1
                     s2 = sig
                     sub(/[ \t]*\{.*$/, "", s2)
@@ -861,31 +767,35 @@ FNR == 1 && !paired {
             i = j
         }
     }
+    fd = 0
+    in_hdr = 0
+    hunk_open = 0
 }
+# Pass 2: print every changed product line that is not exempt.
 {
-    if ($0 ~ /^diff --git / || $0 ~ /^--- /) { print; next }
-    if ($0 ~ /^\+\+\+ /) {
-        f2 = path_of($0); prod = is_prod(f2); trusted = !(f2 in untrusted)
-        depth = 0; gap = 0; lex_reset(); print; next
+    if ($0 ~ /^diff --git /) { fd++; in_hdr = 1; fo2 = ""; fn2 = ""; prodo2 = 0; prodn2 = 0; next }
+    if (in_hdr) {
+        if ($0 ~ /^--- /) fo2 = path_of($0)
+        else if ($0 ~ /^\+\+\+ /) fn2 = path_of($0)
+        else if ($0 ~ /^@@/) {
+            in_hdr = 0
+            prodo2 = is_prod(fo2)
+            prodn2 = is_prod(fn2)
+            trusted = !(fd in untrusted)
+            hunk_begin($0)
+        }
+        next
     }
-    if ($0 ~ /^@@/) { depth = 0; gap = 0; lex_reset(); print; next }
+    if ($0 ~ /^@@/) { hunk_begin($0); next }
     c1 = substr($0, 1, 1)
-    if (c1 == " ") { if (prod) { post_line(strip_bom(substr($0, 2))); gap = 1 } next }
-    if (c1 != "+") next
-    if (!prod) { print; next }
-    body = strip_bom(substr($0, 2))
-    if (post_line(body)) { emit(body); next }
-    if (FNR in reloc) { gap = 1; next }
-    if (trusted && in_off_arm()) { gap = 1; next }
-    if (trusted && !lx_code) next
-    t = trim(body)
-    if (relfile[f2] && t ~ /^namespace([ \t]+[A-Za-z_][A-Za-z0-9_:]*)?[ \t]*\{$/) { gap = 1; next }
-    if (is_hdr(f2) && t ~ /;$/) {
-        s2 = t
-        sub(/[ \t]*;$/, "", s2)
-        if (s2 in relsig) { gap = 1; next }
+    if (c1 == " ") {
+        if (prodo2) feed("pre", $0)
+        if (prodn2) feed("post", $0)
+    } else if (c1 == "-") {
+        if (prodo2) changed("pre", $0, fo2)
+    } else if (c1 == "+") {
+        if (prodn2) changed("post", $0, fn2)
     }
-    emit(pl_raw ? RAWLINE : body)
 }
 AWK
 )"
@@ -893,12 +803,36 @@ AWK
 _prefilter_diff() {
     # LC_ALL=C: byte semantics in every awk (gawk would read UTF-8 characters), so the lexer's
     # non-ASCII checks and offsets mean the same thing on every runner.
-    LC_ALL=C awk -v dataext="$_DATA_EXT_RE" "$_PREFILTER_AWK" "$1" "$1"
+    LC_ALL=C awk -v dataext="$_DATA_EXT_RE" -v cxxtmpl="$_CXX_TEMPLATE_RE" "$_PREFILTER_AWK" "$1" "$1"
+}
+
+# _binary_names_product <rest> — <rest> is a "Binary files X and Y differ" line without its
+# "Binary files " and " differ": X is a/<path> or /dev/null, Y is b/<path> or /dev/null. A path can
+# hold " and " itself, so every split that reads that way is tried: 0 when any of them names a
+# product path, when none reads, or when git quoted a path (one these patterns cannot read).
+_binary_names_product() {
+    local rest="$1" off=0 head left right p readable=0
+    [[ "$rest" == *\"* ]] && return 0
+    while [[ "${rest:off}" == *" and "* ]]; do
+        head="${rest:off}"
+        head="${head%%" and "*}"
+        left="${rest:0:off+${#head}}"
+        right="${rest:off+${#head}+5}"
+        off=$(( off + ${#head} + 5 ))
+        [[ "$left" == a/* || "$left" == /dev/null ]] || continue
+        [[ "$right" == b/* || "$right" == /dev/null ]] || continue
+        readable=1
+        for p in "$left" "$right"; do
+            [ "$p" != /dev/null ] && _is_product_path "${p:2}" && return 0
+        done
+    done
+    [ "$readable" -eq 1 ] || return 0
+    return 1
 }
 
 # _classify_diff_file <diff-file> — prefilter a full-context diff, then classify the
 # reduced diff. Both stages read/write temp FILES, never a pipe: _classify_diff
-# breaks out of its read loop early, and an early-closing pipe reader would SIGPIPE
+# returns early, and an early-closing pipe reader would SIGPIPE
 # the producer (see the GIT_DIFF_TMPFILE note in the normal run below). Echoes
 # EXEMPT / FALLTHROUGH; returns non-zero (echoing nothing) if the prefilter fails.
 _classify_diff_file() {
@@ -906,13 +840,10 @@ _classify_diff_file() {
     # git prints a file it takes for binary (one NUL byte, even inside a comment the compilers
     # ignore) as a single "Binary files ... differ" line: a C/C++ file in that form hides its whole
     # change from the classifier, so it is never exempt.
-    local bin p
+    local bin
     while IFS= read -r bin; do
-        p="${bin#Binary files }"
-        p="${p##* and }"
-        p="${p% differ}"
-        p="${p#b/}"
-        if [[ "$p" == \"* ]] || _is_product_path "$p"; then
+        bin="${bin#Binary files }"
+        if _binary_names_product "${bin% differ}"; then
             echo FALLTHROUGH
             return 0
         fi
@@ -991,7 +922,8 @@ EOF
 diff --git a/Source/Core/src/Sync/Wrap2.cpp b/Source/Core/src/Sync/Wrap2.cpp
 --- a/Source/Core/src/Sync/Wrap2.cpp
 +++ b/Source/Core/src/Sync/Wrap2.cpp
-@@ -10,0 +11,2 @@
+@@ -10,1 +10,3 @@
+ void Sync() {
 +    LOG_ERROR("sync failed for ticket %s with status %d",
 +              ticketKey.c_str(), httpStatus);
 EOF
@@ -1002,7 +934,8 @@ EOF
 diff --git a/Source/Core/src/Sync/Wrap3.cpp b/Source/Core/src/Sync/Wrap3.cpp
 --- a/Source/Core/src/Sync/Wrap3.cpp
 +++ b/Source/Core/src/Sync/Wrap3.cpp
-@@ -20,0 +21,3 @@
+@@ -20,1 +20,4 @@
+ void Create() {
 +    LOG_ERROR(
 +        "create failed: %s (code %d)",
 +        ex.what(), code);
@@ -1014,7 +947,8 @@ EOF
 diff --git a/Source/Core/src/Sync/WrapMix.cpp b/Source/Core/src/Sync/WrapMix.cpp
 --- a/Source/Core/src/Sync/WrapMix.cpp
 +++ b/Source/Core/src/Sync/WrapMix.cpp
-@@ -30,0 +31,3 @@
+@@ -30,1 +30,4 @@
+ void Retry() {
 +    LOG_ERROR("partial: %s",
 +              detail.c_str());
 +    retries = retries + 1;
@@ -1027,7 +961,8 @@ EOF
 diff --git a/Source/Core/src/Sync/WrapLit.cpp b/Source/Core/src/Sync/WrapLit.cpp
 --- a/Source/Core/src/Sync/WrapLit.cpp
 +++ b/Source/Core/src/Sync/WrapLit.cpp
-@@ -40,0 +41,1 @@
+@@ -40,1 +40,2 @@
+ void Report() {
 +    LOG_ERROR("x (", y);
 EOF
 
@@ -1037,7 +972,8 @@ EOF
 diff --git a/Source/Core/src/Sync/WrapTrail.cpp b/Source/Core/src/Sync/WrapTrail.cpp
 --- a/Source/Core/src/Sync/WrapTrail.cpp
 +++ b/Source/Core/src/Sync/WrapTrail.cpp
-@@ -50,0 +51,1 @@
+@@ -50,1 +50,2 @@
+ void Retry() {
 +    LOG_ERROR("partial: %s", detail.c_str()); retries = retries + 1;
 EOF
 
@@ -1047,7 +983,8 @@ EOF
 diff --git a/Source/Core/src/Sync/WrapLitTrail.cpp b/Source/Core/src/Sync/WrapLitTrail.cpp
 --- a/Source/Core/src/Sync/WrapLitTrail.cpp
 +++ b/Source/Core/src/Sync/WrapLitTrail.cpp
-@@ -60,0 +61,1 @@
+@@ -60,1 +60,2 @@
+ void Count() {
 +    LOG_ERROR("done )", n); count = count + 1;
 EOF
 
@@ -2020,6 +1957,279 @@ diff --git a/Source/Core/src/Sync/Elab.cpp b/Source/Core/src/Sync/Elab.cpp
 +    struct Foo f = make();
 EOF
 
+    # ---- Removed lines are changes too ----
+
+    # Deleting a guard changes behaviour exactly as adding one does.
+    _expect FALLTHROUGH "a removed guard statement" <<'EOF'
+diff --git a/Source/Core/src/Sync/Guard.cpp b/Source/Core/src/Sync/Guard.cpp
+--- a/Source/Core/src/Sync/Guard.cpp
++++ b/Source/Core/src/Sync/Guard.cpp
+@@ -1,4 +1,3 @@
+ void Commit(bool confirmed) {
+-    if (!confirmed) return;
+     Apply();
+ }
+EOF
+
+    # Removing a comment and a logging statement is still exempt.
+    _expect EXEMPT "a removed comment and logging statement" <<'EOF'
+diff --git a/Source/Core/src/Sync/Quiet.cpp b/Source/Core/src/Sync/Quiet.cpp
+--- a/Source/Core/src/Sync/Quiet.cpp
++++ b/Source/Core/src/Sync/Quiet.cpp
+@@ -1,6 +1,3 @@
+ void Commit() {
+-    // stale note
+-    LOG_INFO("committing %s",
+-             key.c_str());
+     Apply();
+ }
+EOF
+
+    # An added line "++ counter;" prints as "+++ counter;": a body line, not a file header that would
+    # hide every line after it.
+    _expect FALLTHROUGH "an added line that reads like a +++ header" <<'EOF'
+diff --git a/Source/Core/src/Sync/Count.cpp b/Source/Core/src/Sync/Count.cpp
+--- a/Source/Core/src/Sync/Count.cpp
++++ b/Source/Core/src/Sync/Count.cpp
+@@ -1,2 +1,4 @@
+ void Bump() {
++++ counter;
++    DeleteAllTickets();
+ }
+EOF
+
+    # ---- Logging statements are followed by the lexer ----
+
+    # A char literal paren in the format arguments leaves no call open to swallow the next line.
+    _expect FALLTHROUGH "a char literal paren in a LOG call, then real code" <<'EOF'
+diff --git a/Source/Core/src/Sync/CharLit.cpp b/Source/Core/src/Sync/CharLit.cpp
+--- a/Source/Core/src/Sync/CharLit.cpp
++++ b/Source/Core/src/Sync/CharLit.cpp
+@@ -1,2 +1,5 @@
+ void Query() {
++    LOG_INFO("expected %c in the query", '(');
++    LOG_INFO("expected %c in the query", '"');
++    DeleteAllTickets(); return Wipe();
+ }
+EOF
+
+    _expect FALLTHROUGH "two LOG calls then real code on one line" <<'EOF'
+diff --git a/Source/Core/src/Sync/TwoLogs.cpp b/Source/Core/src/Sync/TwoLogs.cpp
+--- a/Source/Core/src/Sync/TwoLogs.cpp
++++ b/Source/Core/src/Sync/TwoLogs.cpp
+@@ -1,2 +1,3 @@
+ void Query() {
++    LOG_INFO("a"); LOG_INFO("b"); DeleteAllTickets();
+ }
+EOF
+
+    # A LOG added as the body of an existing if takes the branch's statement away from it.
+    _expect FALLTHROUGH "a LOG call that becomes the body of an if" <<'EOF'
+diff --git a/Source/Core/src/Sync/IfBody.cpp b/Source/Core/src/Sync/IfBody.cpp
+--- a/Source/Core/src/Sync/IfBody.cpp
++++ b/Source/Core/src/Sync/IfBody.cpp
+@@ -1,4 +1,5 @@
+ void Run(bool c) {
+     if (c)
++        LOG_INFO("taking the branch");
+         DoIt();
+ }
+EOF
+
+    # A changed argument between string literals of an ordinary call is real code.
+    _expect FALLTHROUGH "a call between string literals" <<'EOF'
+diff --git a/Source/Core/src/Sync/Between.cpp b/Source/Core/src/Sync/Between.cpp
+--- a/Source/Core/src/Sync/Between.cpp
++++ b/Source/Core/src/Sync/Between.cpp
+@@ -1,4 +1,4 @@
+ void Show() {
+     Render("title",
+-           "label", ComputeSafe(), "other",
++           "label", DeleteAllTickets(), "other",
+            0);
+EOF
+
+    # A string argument of an ordinary call is runtime data, unlike a LOG message.
+    _expect FALLTHROUGH "a string argument of an ordinary call" <<'EOF'
+diff --git a/Source/Core/src/Sync/Cmd.cpp b/Source/Core/src/Sync/Cmd.cpp
+--- a/Source/Core/src/Sync/Cmd.cpp
++++ b/Source/Core/src/Sync/Cmd.cpp
+@@ -1,4 +1,4 @@
+ void Clean() {
+     RunCommand(
+-        "ls /tmp");
++        "rm -rf /tmp/x");
+ }
+EOF
+
+    _expect EXEMPT "a reworded line inside a wrapped LOG call" <<'EOF'
+diff --git a/Source/Core/src/Sync/Reword.cpp b/Source/Core/src/Sync/Reword.cpp
+--- a/Source/Core/src/Sync/Reword.cpp
++++ b/Source/Core/src/Sync/Reword.cpp
+@@ -1,4 +1,4 @@
+ void Report(int n) {
+     LOG_INFO("first part "
+-             "old tail %d", n);
++             "new tail %d", n);
+ }
+EOF
+
+    # The call's value feeds an expression the context line finishes: not a logging statement.
+    _expect FALLTHROUGH "a LOG call that continues into an expression" <<'EOF'
+diff --git a/Source/Core/src/Sync/Comma.cpp b/Source/Core/src/Sync/Comma.cpp
+--- a/Source/Core/src/Sync/Comma.cpp
++++ b/Source/Core/src/Sync/Comma.cpp
+@@ -1,3 +1,4 @@
+ void Run() {
++    LOG_INFO("x"),
+         Compute();
+ }
+EOF
+
+    _expect FALLTHROUGH "static_assert followed by a statement" <<'EOF'
+diff --git a/Source/Core/src/Sync/Shapes.cpp b/Source/Core/src/Sync/Shapes.cpp
+--- a/Source/Core/src/Sync/Shapes.cpp
++++ b/Source/Core/src/Sync/Shapes.cpp
+@@ -1,2 +1,3 @@
+ void Shapes() {
++    static_assert(sizeof(int) == 4, "//"); DeleteAllTickets();
+ }
+EOF
+
+    _expect FALLTHROUGH "a using declaration followed by a statement" <<'EOF'
+diff --git a/Source/Core/src/Sync/Using.cpp b/Source/Core/src/Sync/Using.cpp
+--- a/Source/Core/src/Sync/Using.cpp
++++ b/Source/Core/src/Sync/Using.cpp
+@@ -1,2 +1,3 @@
+ void Shapes() {
++    using Id = int; Wipe();
+ }
+EOF
+
+    # ---- Preprocessor guards ----
+
+    _expect FALLTHROUGH "#if 0 turned into #if 1" <<'EOF'
+diff --git a/Source/Core/src/Sync/Purge.cpp b/Source/Core/src/Sync/Purge.cpp
+--- a/Source/Core/src/Sync/Purge.cpp
++++ b/Source/Core/src/Sync/Purge.cpp
+@@ -1,5 +1,5 @@
+ void Purge() {
+-#if 0
++#if 1
+     PurgeAllLocalTickets();
+ #endif
+ }
+EOF
+
+    _expect FALLTHROUGH "a guard with a constant || operand" <<'EOF'
+diff --git a/Source/Core/src/Sync/Purge2.cpp b/Source/Core/src/Sync/Purge2.cpp
+--- a/Source/Core/src/Sync/Purge2.cpp
++++ b/Source/Core/src/Sync/Purge2.cpp
+@@ -1,3 +1,5 @@
+ void Purge() {
++#if defined(SMATCHET_DEBUG) || 1
+     PurgeAllLocalTickets();
++#endif
+ }
+EOF
+
+    _expect EXEMPT "a version guard around existing code" <<'EOF'
+diff --git a/Source/Core/src/Sync/Ver.cpp b/Source/Core/src/Sync/Ver.cpp
+--- a/Source/Core/src/Sync/Ver.cpp
++++ b/Source/Core/src/Sync/Ver.cpp
+@@ -1,3 +1,5 @@
+ void Tune() {
++#if defined(_MSC_VER) && _MSC_VER >= 1920
+     TuneForMsvc();
++#endif
+ }
+EOF
+
+    # ---- Lexing the lexer cannot trust gives no exemption ----
+
+    # A byte-order mark leads only the file's first line; one further down is a non-ASCII byte, and
+    # "<BOM>#endif" is no directive (the lexer would otherwise end the #if 0 early and drop Hidden as
+    # Android-only).
+    _expect FALLTHROUGH "a byte-order mark below the first line" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Bom.cpp b/Source/Core/src/Bom.cpp' \
+        '--- a/Source/Core/src/Bom.cpp' '+++ b/Source/Core/src/Bom.cpp' '@@ -1,8 +1,9 @@' \
+        ' #if 0' $' \357\273\277#endif' $' \357\273\277#ifdef __ANDROID__' $' \357\273\277#ifdef __ANDROID__' \
+        ' #endif' '+int Hidden() { return 9; }' ' #if 0' $' \357\273\277#endif' ' #endif')
+
+    _expect EXEMPT "a byte-order mark on the first line stays trusted" < <(printf '%s\n' \
+        'diff --git a/Source/Core/src/Bom1.cpp b/Source/Core/src/Bom1.cpp' \
+        '--- a/Source/Core/src/Bom1.cpp' '+++ b/Source/Core/src/Bom1.cpp' '@@ -1,2 +1,2 @@' \
+        $'-\357\273\277// old note' $'+\357\273\277// new note' ' int x;')
+
+    _expect FALLTHROUGH "a comment before __has_include's header-name" <<'EOF'
+diff --git a/Source/Core/src/HasInc.cpp b/Source/Core/src/HasInc.cpp
+--- a/Source/Core/src/HasInc.cpp
++++ b/Source/Core/src/HasInc.cpp
+@@ -1,3 +1,4 @@
+ #if !__has_include( /**/ <none/*>)
++int Hidden() { return 42; }
+ // */
+ #endif
+EOF
+
+    _expect FALLTHROUGH "a comment between __has_include and its parenthesis" <<'EOF'
+diff --git a/Source/Core/src/HasInc2.cpp b/Source/Core/src/HasInc2.cpp
+--- a/Source/Core/src/HasInc2.cpp
++++ b/Source/Core/src/HasInc2.cpp
+@@ -1,3 +1,4 @@
+ #if !__has_include/**/(<none/*>)
++int Hidden() { return 42; }
+ // */
+ #endif
+EOF
+
+    _expect FALLTHROUGH "a comment before #include's header-name" <<'EOF'
+diff --git a/Source/Core/src/Inc.cpp b/Source/Core/src/Inc.cpp
+--- a/Source/Core/src/Inc.cpp
++++ b/Source/Core/src/Inc.cpp
+@@ -1,3 +1,4 @@
+ #include /**/ <none/*>
++int Hidden() { return 42; }
+ // */
+EOF
+
+    # An untrusted file is never classified line by line: a splice inside the string carries the
+    # comment opener, which a per-line reading would take for a comment.
+    _expect FALLTHROUGH "an untrusted file gets no line-by-line exemption" <<'EOF'
+diff --git a/Source/Core/src/Splice.cpp b/Source/Core/src/Splice.cpp
+--- a/Source/Core/src/Splice.cpp
++++ b/Source/Core/src/Splice.cpp
+@@ -1,2 +1,6 @@
+ int x;
++static_assert(sizeof(int) == 4, "int is \
++/* 32-bit");
++int Hidden() { return 7; }
++// */
+EOF
+
+    # ---- Paths ----
+
+    _expect FALLTHROUGH "a binary C++ file whose path holds ' and '" <<'EOF'
+diff --git a/Source/Core/src/Load and Save.cpp b/Source/Core/src/Load and Save.cpp
+index 1111111..2222222 100644
+Binary files a/Source/Core/src/Load and Save.cpp and b/Source/Core/src/Load and Save.cpp differ
+EOF
+
+    _expect EXEMPT "a binary data file whose path holds ' and '" <<'EOF'
+diff --git a/Source/Core/assets/a and b.png b/Source/Core/assets/a and b.png
+index 1111111..2222222 100644
+Binary files a/Source/Core/assets/a and b.png and b/Source/Core/assets/a and b.png differ
+EOF
+
+    _expect FALLTHROUGH "a configure_file template of a C++ file is product code" <<'EOF'
+diff --git a/Source/Core/src/Version.cpp.in b/Source/Core/src/Version.cpp.in
+--- a/Source/Core/src/Version.cpp.in
++++ b/Source/Core/src/Version.cpp.in
+@@ -1,1 +1,2 @@
+ const char* kVersion = "@SMATCHET_VERSION@";
++int Hidden() { return 1; }
+EOF
+
     if [ "$fail" -eq 0 ]; then
         echo "coverage-delta-gate --selftest: PASS"
         exit 0
@@ -2042,9 +2252,13 @@ fi
 # so the diff reflects only the PR's contribution, not develop drift since
 # branching.
 BASE_REF="${SMATCHET_COVERAGE_GATE_BASE:-}"
+if [ -n "$BASE_REF" ] && ! git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>&1; then
+    echo "[coverage-delta-gate] FAIL — SMATCHET_COVERAGE_GATE_BASE '$BASE_REF' names no commit" >&2
+    exit 1
+fi
 if [ -z "$BASE_REF" ]; then
     for candidate in origin/develop develop HEAD~1; do
-        if git rev-parse --verify --quiet "$candidate" >/dev/null 2>&1; then
+        if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null 2>&1; then
             BASE_REF="$candidate"
             break
         fi
@@ -2057,23 +2271,37 @@ fi
 
 MERGE_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || echo "$BASE_REF")
 
-# Compute the diff once. --name-only --diff-filter=ACMR keeps adds, copies,
-# modifies, renames (the cases that actually change content). Deletes intentionally
-# excluded — removing a production file shouldn't require a new test.
-# -z: every path arrives verbatim, whatever bytes it holds (git quotes some even with
-# core.quotePath=false). Renames are detected: a file moved within the product trees brings
-# no new lines; RENAMED_INTO_PRODUCT below catches the move that does.
-mapfile -d '' -t CHANGED < <(git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR \
-    "$MERGE_BASE"...HEAD 2>/dev/null || true)
+# Every diff below names its prefixes and turns rename detection on, and runs no external diff or
+# textconv driver, whatever the local git configuration: the parsing here depends on all of it.
+_gate_diff() {
+    git -c core.quotePath=false diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ -M "$@"
+}
 
-# A file renamed INTO the product trees from a path that is not product (notes.txt -> Foo.cpp)
-# shows no new lines, yet the compilers newly build every line it carries: never exempt.
-RENAMED_INTO_PRODUCT=""
-mapfile -d '' -t _RENAME_FIELDS < <(git -c core.quotePath=false diff -z --name-status --diff-filter=R \
-    "$MERGE_BASE"...HEAD 2>/dev/null || true)
+# Compute the diff once. --name-only --diff-filter=ACMRT keeps adds, copies, modifies, renames
+# and type changes (a file replaced by a symlink: the cases that actually change content). Deletes
+# intentionally excluded — removing a production file shouldn't require a new test.
+# -z: every path arrives verbatim, whatever bytes it holds (git quotes some even with
+# core.quotePath=false). A failing git command fails the gate: an empty list would pass it.
+_GATE_LIST_TMP="$(mktemp)"
+trap 'rm -f "$_GATE_LIST_TMP"' EXIT
+if ! _gate_diff -z --name-only --diff-filter=ACMRT "$MERGE_BASE"...HEAD >"$_GATE_LIST_TMP" 2>/dev/null; then
+    echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
+    exit 1
+fi
+mapfile -d '' -t CHANGED <"$_GATE_LIST_TMP"
+
+# A file renamed between product trees, or into or out of them (notes.txt -> Foo.cpp,
+# tests/support/Fake.cpp -> Source/Core/src/Fake.cpp), shows no new lines, yet the compilers
+# newly build (or stop building) every line it carries: never exempt. A move inside one tree is.
+RENAMED_ACROSS=""
+if ! _gate_diff -z --name-status --diff-filter=R "$MERGE_BASE"...HEAD >"$_GATE_LIST_TMP" 2>/dev/null; then
+    echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
+    exit 1
+fi
+mapfile -d '' -t _RENAME_FIELDS <"$_GATE_LIST_TMP"
 for ((_ri = 0; _ri + 2 < ${#_RENAME_FIELDS[@]}; _ri += 3)); do
-    if ! _is_product_path "${_RENAME_FIELDS[_ri + 1]}" && _is_product_path "${_RENAME_FIELDS[_ri + 2]}"; then
-        RENAMED_INTO_PRODUCT="${_RENAME_FIELDS[_ri + 1]} -> ${_RENAME_FIELDS[_ri + 2]}"
+    if [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != "$(_rename_class "${_RENAME_FIELDS[_ri + 2]}")" ]; then
+        RENAMED_ACROSS="${_RENAME_FIELDS[_ri + 1]} -> ${_RENAME_FIELDS[_ri + 2]}"
         break
     fi
 done
@@ -2144,8 +2372,8 @@ fi
 # --unified=100000: full-file context, so _prefilter_diff can see the #if nesting
 # of every added line and pair a removed header body with its relocated copy.
 GIT_DIFF_TMPFILE="$(mktemp)"
-trap 'rm -f "$GIT_DIFF_TMPFILE"' EXIT
-if ! git -c core.quotePath=false diff --unified=100000 --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+trap 'rm -f "$GIT_DIFF_TMPFILE" "$_GATE_LIST_TMP"' EXIT
+if ! _gate_diff --unified=100000 --diff-filter=ACMRT "$MERGE_BASE"...HEAD -- \
         Source/Core Source/Plugins Source/Standalone tests >"$GIT_DIFF_TMPFILE" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
     exit 1
@@ -2154,8 +2382,8 @@ if ! EXEMPTION="$(_classify_diff_file "$GIT_DIFF_TMPFILE")"; then
     echo "[coverage-delta-gate] FAIL — diff prefilter (awk) failed" >&2
     exit 1
 fi
-if [ "$EXEMPTION" = "EXEMPT" ] && [ -n "$RENAMED_INTO_PRODUCT" ]; then
-    echo "[coverage-delta-gate] no test-light exemption: $RENAMED_INTO_PRODUCT moves a file into the product trees"
+if [ "$EXEMPTION" = "EXEMPT" ] && [ -n "$RENAMED_ACROSS" ]; then
+    echo "[coverage-delta-gate] no test-light exemption: $RENAMED_ACROSS moves a file between what the build compiles"
     EXEMPTION=FALLTHROUGH
 fi
 if [ "$EXEMPTION" = "EXEMPT" ]; then

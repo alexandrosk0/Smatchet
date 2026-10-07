@@ -292,7 +292,58 @@ _path_repo() {
     git -C "$FIXREPO" mv Source/Core/src/notes.txt Source/Core/src/Mover.cpp
     _wph_gate
     [ "$status" -eq 1 ]
-    [[ "$output" == *"moves a file into the product trees"* ]]
+    [[ "$output" == *"moves a file between what the build compiles"* ]]
+}
+
+@test "coverage-delta-gate.sh: test code renamed into the production tree is never exempt" {
+    _path_repo
+    mkdir -p "$FIXREPO/tests/support"
+    printf 'int fake() { return 1; }\n' > "$FIXREPO/tests/support/Fake.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "test helper"
+    git -C "$FIXREPO" branch -f main HEAD
+    git -C "$FIXREPO" mv tests/support/Fake.cpp Source/Core/src/Fake.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"tests/support/Fake.cpp -> Source/Core/src/Fake.cpp"* ]]
+}
+
+@test "coverage-delta-gate.sh: a removed guard statement is a production change" {
+    _path_repo
+    printf '%s\n' 'int foo(bool c) {' '    if (!c) return 0;' '    return 1;' '}' > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "guard"
+    git -C "$FIXREPO" branch -f main HEAD
+    printf '%s\n' 'int foo(bool c) {' '    return 1;' '}' > "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: a product file replaced by a symlink is classified" {
+    _path_repo
+    printf 'int launch() { return 2; }\n' > "$FIXREPO/Source/Core/src/impl.txt"
+    rm "$FIXREPO/Source/Core/src/a.cpp"
+    ln -s impl.txt "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
+@test "coverage-delta-gate.sh: a configure_file template of a C++ file is a production change" {
+    _path_repo
+    printf 'int version() { return 2; }\n' > "$FIXREPO/Source/Core/src/Version.cpp.in"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
+@test "coverage-delta-gate.sh: a base ref that names no commit fails the gate" {
+    _path_repo
+    printf 'int foo() { return 2; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=no-such-ref bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"names no commit"* ]]
 }
 
 @test "coverage-delta-gate.sh: a product path holding a space is classified" {
