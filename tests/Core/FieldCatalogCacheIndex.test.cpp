@@ -2,12 +2,14 @@
 
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
+#include "TimeNowPure.h"
 #include "TrackerFieldSchema.h"
 
 #include "../support/TestEnvGuard.h"
 
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -67,6 +69,11 @@ std::string Blob(const std::string& id) { return "{\"fields\":[{\"id\":\"" + id 
 void WriteCacheFile(const CacheFileCleanup& file, const std::string& json) {
     std::ofstream out(file.Path(), std::ios::binary | std::ios::trunc);
     out << json;
+}
+
+std::string ReadCacheFile(const CacheFileCleanup& file) {
+    std::ifstream in(file.Path(), std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
 } // namespace
@@ -140,4 +147,108 @@ TEST_CASE("FieldCatalogCache: a snapshot the index lost is indexed and evicted f
     CHECK_FALSE(Loads("k-lost"));
     CHECK(Loads("k-kept"));
     CHECK(Loads("k-new"));
+}
+
+TEST_CASE("FieldCatalogCache: an index entry naming a reserved key is ignored") {
+    // Evicting or forgetting such an entry would erase the index or the schema version itself.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"entries\",\"projectKey\":\"E\",\"lastUsedUnix\":0},"
+                         "{\"cacheKey\":\"schema_version\",\"projectKey\":\"S\",\"lastUsedUnix\":0},"
+                         "{\"cacheKey\":\"k-a\",\"projectKey\":\"A\",\"backend\":\"Jira\",\"endpoint\":\"e\","
+                         "\"lastUsedUnix\":100}],"
+                         "\"k-a\":" +
+                             Blob("a") + "}");
+
+    REQUIRE(Save("k-new", "NEW", 1));
+    CHECK(Loads("k-new"));
+    CHECK_FALSE(Loads("k-a"));
+    CHECK(Listed("NEW"));
+    CHECK_FALSE(Listed("E"));
+    CHECK_FALSE(Listed("S"));
+    CHECK(Save("k-next", "NEXT", 2)); // the index and the schema version survived
+    CHECK(Loads("k-new"));
+}
+
+TEST_CASE("FieldCatalogCache: wrong-typed index fields do not break the cache") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"k-a\",\"projectKey\":5,\"backend\":[],\"endpoint\":{},"
+                         "\"lastUsedUnix\":\"soon\"},"
+                         "{\"cacheKey\":7,\"projectKey\":\"X\",\"lastUsedUnix\":1}],"
+                         "\"k-a\":" +
+                             Blob("a") + "}");
+
+    CHECK(Loads("k-a"));
+    CHECK(Save("k-b", "B", 16));
+    CHECK(Listed("B"));
+    CHECK(FieldCatalogCache::ForgetProject("B", "Jira", "https://acme.atlassian.net"));
+    CHECK_FALSE(Listed("B"));
+    CHECK(Loads("k-a"));
+}
+
+TEST_CASE("FieldCatalogCache: a restore moves its snapshot up the LRU order at most once a day") {
+    // Each move rewrites the whole file, and a restore can run on the UI thread.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::string recent = std::to_string(TimeNowPure::NowUnixSeconds() - 60);
+    const std::string json = "{\"schema_version\":3,\"entries\":["
+                             "{\"cacheKey\":\"k-recent\",\"projectKey\":\"R\",\"lastUsedUnix\":" +
+                             recent +
+                             "},"
+                             "{\"cacheKey\":\"k-old\",\"projectKey\":\"O\",\"lastUsedUnix\":100}],"
+                             "\"k-recent\":" +
+                             Blob("r") + ",\"k-old\":" + Blob("o") + "}";
+    WriteCacheFile(file, json);
+
+    REQUIRE(Loads("k-recent"));
+    CHECK(ReadCacheFile(file) == json);
+    REQUIRE(Loads("k-old"));
+    CHECK(ReadCacheFile(file) != json);
+}
+
+TEST_CASE("FieldCatalogCache: the kind-keyed load takes only a snapshot saved under a per-tracker key") {
+    // Older builds saved a GitHub pane's catalog under the Jira site's key.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"Jira|https://acme.atlassian.net|\",\"projectKey\":\"\","
+                         "\"backend\":\"Jira\",\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":100}],"
+                         "\"Jira|https://acme.atlassian.net|\":" +
+                             Blob("pr.head") + "}");
+    const std::string key = "Jira|https://acme.atlassian.net|";
+    std::vector<TrackerField> fields;
+    std::vector<TrackerComponent> components;
+    std::vector<TrackerIssueTypeCreateMeta> meta;
+    std::string err;
+    CHECK_FALSE(FieldCatalogCache::TryLoadKindKeyedFieldCatalogSnapshot(key, fields, components, meta, err));
+    CHECK(Loads(key));
+
+    REQUIRE(Save(key, "", 16));
+    CHECK(FieldCatalogCache::TryLoadKindKeyedFieldCatalogSnapshot(key, fields, components, meta, err));
+}
+
+TEST_CASE("FieldCatalogCache: an empty GitHub or Linear base URL keys and lists like its default") {
+    // Preferences fills the default in and saves it, so the empty and the default URL are one site.
+    TrackerConfig github;
+    github.TrackerType = "GitHub";
+    github.GitHubOwner = "octo";
+    github.GitHubRepo = "repo";
+    TrackerConfig githubDefault = github;
+    githubDefault.GitHubBaseUrl = "https://api.github.com";
+    CHECK(FieldCatalogCache::BuildFieldCatalogCacheKey(github, "") ==
+          FieldCatalogCache::BuildFieldCatalogCacheKey(githubDefault, ""));
+    CHECK(FieldCatalogCache::BuildFieldCatalogIndexIdentity(github).endpoint == "https://api.github.com|octo/repo");
+
+    TrackerConfig linear;
+    linear.TrackerType = "Linear";
+    linear.LinearTeamId = "team";
+    linear.LinearBaseUrl.clear();
+    TrackerConfig linearDefault = linear;
+    linearDefault.LinearBaseUrl = "https://api.linear.app/graphql";
+    CHECK(FieldCatalogCache::BuildFieldCatalogCacheKey(linear, "") ==
+          FieldCatalogCache::BuildFieldCatalogCacheKey(linearDefault, ""));
+    CHECK(FieldCatalogCache::BuildFieldCatalogIndexIdentity(linear).endpoint == "https://api.linear.app/graphql|team");
 }

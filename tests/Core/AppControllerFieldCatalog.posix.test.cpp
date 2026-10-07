@@ -16,6 +16,7 @@
 #include "Tracker/TrackerFieldSchema.h"
 
 #include <cstdint>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -364,6 +365,33 @@ TEST_CASE("AppController::RefreshFieldCatalog never restores another tracker's s
     backend->Fail = true;
     adapter.SetBackend(std::move(backend));
     adapter.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(jira));
+    CHECK_FALSE(app.RefreshFieldCatalog(jira, "FOO"));
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "pr.head"));
+}
+
+TEST_CASE("AppController::RefreshFieldCatalog never falls back to a snapshot an older build saved") {
+    // Older builds saved a GitHub pane's catalog under the Jira site's unscoped key: that snapshot may be
+    // another tracker's, so a failed Jira project fetch does not restore it.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig jira = ConfigManager::Load();
+    jira.TrackerType = "Jira";
+    jira.Domain = "https://acme.atlassian.net";
+    const std::string unscopedKey = FieldCatalogCache::BuildFieldCatalogCacheKey(jira, std::string());
+    {
+        std::ofstream out(ConfigManager::GetUserDataDirectory() + "smatchet_field_catalog_cache.json",
+                          std::ios::binary | std::ios::trunc);
+        out << "{\"schema_version\":3,\"entries\":[{\"cacheKey\":\"" << unscopedKey
+            << "\",\"projectKey\":\"\",\"backend\":\"Jira\",\"endpoint\":\"" << jira.Domain
+            << "\",\"lastUsedUnix\":100}],\"" << unscopedKey
+            << "\":{\"fields\":[{\"id\":\"pr.head\",\"name\":\"PR Head Branch\"}]}}";
+    }
+    REQUIRE(SnapshotHasField(jira, std::string(), "pr.head"));
+
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->Fail = true;
+    adapter.SetBackend(std::move(backend));
     CHECK_FALSE(app.RefreshFieldCatalog(jira, "FOO"));
     CHECK_FALSE(HasField(app.GetAvailableFields(), "pr.head"));
 }

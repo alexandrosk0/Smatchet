@@ -228,7 +228,9 @@ void LogCatalogFailureBanner(smatchet::catalogoffline::CatalogFailureBanner bann
 // Body of AppController::HandleFieldCatalogError, writing into `cat`. A guarded call that the pane has
 // moved past (see CatalogWriteGuard) changes nothing: no snapshot restore and no banner.
 // `fallbackCacheKey` (empty: none) is the unscoped snapshot to restore when the project's own one is
-// missing, as the startup restore does; a catalog restored from it is pinned to no project.
+// missing, as the startup restore does; a catalog restored from it is pinned to no project. The fallback
+// takes only a snapshot saved under a per-tracker key: an older build may have saved a GitHub pane's
+// catalog under the Jira site's unscoped key.
 void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string& error, bool errorTransient,
                                  const std::string& catalogCacheKey, const std::string& backendKey,
                                  const CatalogWriteGuard& guard = CatalogWriteGuard(),
@@ -256,8 +258,8 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
         snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
                                                                         snapIssueTypeMeta, snapErr);
         if (!snapshotLoaded && !fallbackCacheKey.empty()) {
-            snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(fallbackCacheKey, snapFields,
-                                                                            snapComponents, snapIssueTypeMeta, snapErr);
+            snapshotLoaded = FieldCatalogCache::TryLoadKindKeyedFieldCatalogSnapshot(
+                fallbackCacheKey, snapFields, snapComponents, snapIssueTypeMeta, snapErr);
             unscopedSnapshot = snapshotLoaded;
         }
         if (snapshotLoaded && !catalogPlane) {
