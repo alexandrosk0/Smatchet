@@ -238,6 +238,27 @@ TEST_CASE("FieldCatalogCache: a damaged index or schema version keeps the snapsh
     CHECK(Loads("k-b"));
 }
 
+TEST_CASE("FieldCatalogCache: a damaged index keeps this build's own Jira snapshots restorable") {
+    // Only an older build's snapshot under an ambiguous Jira key is refused. The flag that tells this
+    // build's apart rides in the blob as well as in the index, so losing the index does not lose it.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    REQUIRE(Save("Jira|https://acme.atlassian.net|", "", 16));
+    REQUIRE(Save("Jira|https://acme.atlassian.net|octo/repo", "octo/repo", 16));
+
+    std::string json = ReadCacheFile(file);
+    const std::string entries = "\"entries\":[";
+    const auto at = json.find(entries);
+    REQUIRE(at != std::string::npos);
+    const auto end = json.find(']', at);
+    REQUIRE(end != std::string::npos);
+    json.replace(at, end + 1 - at, "\"entries\":{}");
+    WriteCacheFile(file, json);
+
+    CHECK(Loads("Jira|https://acme.atlassian.net|"));
+    CHECK(Loads("Jira|https://acme.atlassian.net|octo/repo"));
+}
+
 TEST_CASE("FieldCatalogCache: a lastUsedUnix ahead of the clock counts as used now") {
     // Left as it is, it would sort first for good and never be evicted.
     smatchet_tests::TestEnvGuard env;

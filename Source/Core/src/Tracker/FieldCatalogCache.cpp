@@ -313,7 +313,8 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
                 continue;
             out[it.key()] = it.value();
             if (indexed.insert(it.key()).second) {
-                appendIndexEntry(it.key(), std::string(), std::string(), std::string(), std::int64_t{0}, false);
+                appendIndexEntry(it.key(), std::string(), std::string(), std::string(), std::int64_t{0},
+                                 JsonBoolOr(it.value(), "kindKeyed"));
             }
         }
         out["entries"] = std::move(indexArr);
@@ -492,6 +493,9 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
         std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
         nlohmann::json root = LoadAndMigrateRootLocked();
         root[cacheKey] = BuildEntryJson(fields, components, issueTypeMeta);
+        // The blob carries the flag too, so a damaged index cannot make this build's own snapshot read as
+        // an older build's.
+        root[cacheKey]["kindKeyed"] = true;
 
         // Upsert the index entry — backfills (backend, endpoint, projectKey) for entries that came
         // from v2/v1 migration with empty metadata.
@@ -574,7 +578,8 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
         nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
         const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
         if (resolvedKey == cacheKey && IsAmbiguousLegacyJiraKey(cacheKey) &&
-            (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed"))) {
+            (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed")) &&
+            !JsonBoolOr(root[resolvedKey], "kindKeyed")) {
             outError = "The cached field catalog for this tracker context predates per-tracker keys.";
             return false;
         }
