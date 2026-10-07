@@ -254,6 +254,29 @@ TEST_CASE("AppController::SetFieldCatalog restores a project's snapshot for a fa
     CHECK(app.GetFieldCatalogError().empty()); // a restored catalog shows a warning, not an error
 }
 
+TEST_CASE("AppController::SetFieldCatalog falls back to the unscoped snapshot when the project has none") {
+    // As the startup restore does: a project fetched for the first time offline (or evicted from the
+    // snapshot cache) still gets the saved unscoped catalog, which claims no project.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    app.SetCurrentCatalogProject(std::string());
+    std::vector<TrackerField> any(1);
+    any[0].Id = "customfield_any";
+    any[0].Name = "Unscoped field";
+    app.SetFieldCatalog(std::move(any), std::vector<TrackerComponent>(), std::string(), false);
+    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
+    REQUIRE_FALSE(SnapshotHasField(cfg, "FOO", "customfield_any"));
+
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    app.SetCurrentCatalogProject("FOO");
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    CHECK(HasField(app.GetAvailableFields(), "customfield_any"));
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO"));
+    CHECK(app.GetFieldCatalogError().empty());
+}
+
 TEST_CASE("AppController::SetFieldCatalog files the grid's catalog under the grid's project when a refresh lands "
           "in between") {
     // The grid applies its fetch in two calls (pin the project, then apply). A draft refresh for another

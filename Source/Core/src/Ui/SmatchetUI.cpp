@@ -288,6 +288,72 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     ImGui::EndPopup();
 }
 
+// The grid's catalog fetch, run on a worker: fills `result`, which the UI thread applies.
+static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const TrackerConfig& fetchCfg,
+                                      const std::string& activeViewJql,
+                                      const std::shared_ptr<ITrackerBackend>& latchedBackend,
+                                      const std::string& cacheBackendKey) {
+    result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
+    result.CacheBackendKey = cacheBackendKey;
+    std::string projectKey;
+    const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
+    // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
+    // exactly here meant "plane" got a Plane BackendKey but skipped the Plane resolver.
+    if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
+        projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
+    } else {
+        projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
+                                                      std::string(), std::string());
+    }
+    result.ProjectKey = projectKey;
+    std::string error;
+    TrackerFieldCatalogResult catalog;
+    if (!backend) {
+        error = "Tracker backend is not initialized.";
+        result.Ok = false;
+        result.Error = error;
+        return;
+    }
+    if (!backend->FieldCatalog()) {
+        error = "FetchFieldCatalog is not supported by this backend.";
+        result.Ok = false;
+        result.Error = error;
+        return;
+    }
+    const auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(fetchCfg, projectKey);
+    result.Ok = static_cast<bool>(catalogResult);
+    if (!result.Ok) {
+        result.Error = catalogResult.error().Detail;
+        result.ErrorTransient = catalogResult.error().IsRetryable();
+        return;
+    }
+    catalog = std::move(catalogResult.value());
+    result.Fields = std::move(catalog.Fields);
+    result.Components = std::move(catalog.Components);
+    result.IssueTypeMeta = std::move(catalog.IssueTypeMeta);
+    result.Users = std::move(catalog.Users);
+    result.Warning = std::move(catalog.Warning);
+    // Serialized here, off the UI thread, for the offline copy of the roster (Pillar 6).
+    if (!result.Users.empty()) {
+        result.UsersPayloadJson = smatchet::lookup::SerializeUsers(result.Users);
+        if (result.UsersPayloadJson.empty()) {
+            LOG_WARN("SmatchetUI: user roster too large to save for offline use (%zu users)", result.Users.size());
+        }
+    }
+}
+
+// A fetch that threw still answers for its tracker and project, so the UI's failure path restores that
+// project's saved catalog. Nothing else it filled in is kept.
+static FieldCatalogFetchResult FailedGridCatalogFetch(const FieldCatalogFetchResult& partial, std::string error) {
+    FieldCatalogFetchResult failed;
+    failed.BackendKey = partial.BackendKey;
+    failed.CacheBackendKey = partial.CacheBackendKey;
+    failed.ProjectKey = partial.ProjectKey;
+    failed.Ok = false;
+    failed.Error = std::move(error);
+    return failed;
+}
+
 static std::future<FieldCatalogFetchResult>
 StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& activeViewJql) {
     // Latch backend on the UI thread: focusedContext().Backend can become null while the worker
@@ -297,53 +363,12 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
     const std::string cacheBackendKey = app.FocusedCacheBackendKey();
     return std::async(std::launch::async, [fetchCfg, activeViewJql, latchedBackend, cacheBackendKey]() {
         FieldCatalogFetchResult result;
-        result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
-        result.CacheBackendKey = cacheBackendKey;
-        std::string projectKey;
-        const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
-        // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
-        // exactly here meant "plane" got a Plane BackendKey but skipped the Plane resolver.
-        if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
-            projectKey =
-                smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
-        } else {
-            projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
-                                                          std::string(), std::string());
-        }
-        result.ProjectKey = projectKey;
-        std::string error;
-        TrackerFieldCatalogResult catalog;
-        if (!backend) {
-            error = "Tracker backend is not initialized.";
-            result.Ok = false;
-            result.Error = error;
-            return result;
-        }
-        if (!backend->FieldCatalog()) {
-            error = "FetchFieldCatalog is not supported by this backend.";
-            result.Ok = false;
-            result.Error = error;
-            return result;
-        }
-        const auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(fetchCfg, projectKey);
-        result.Ok = static_cast<bool>(catalogResult);
-        if (!result.Ok) {
-            result.Error = catalogResult.error().Detail;
-            result.ErrorTransient = catalogResult.error().IsRetryable();
-            return result;
-        }
-        catalog = std::move(catalogResult.value());
-        result.Fields = std::move(catalog.Fields);
-        result.Components = std::move(catalog.Components);
-        result.IssueTypeMeta = std::move(catalog.IssueTypeMeta);
-        result.Users = std::move(catalog.Users);
-        result.Warning = std::move(catalog.Warning);
-        // Serialized here, off the UI thread, for the offline copy of the roster (Pillar 6).
-        if (!result.Users.empty()) {
-            result.UsersPayloadJson = smatchet::lookup::SerializeUsers(result.Users);
-            if (result.UsersPayloadJson.empty()) {
-                LOG_WARN("SmatchetUI: user roster too large to save for offline use (%zu users)", result.Users.size());
-            }
+        try {
+            FetchGridFieldCatalogInto(result, fetchCfg, activeViewJql, latchedBackend, cacheBackendKey);
+        } catch (const std::exception& ex) {
+            result = FailedGridCatalogFetch(result, std::string("Field catalog load failed: ") + ex.what());
+        } catch (...) {
+            result = FailedGridCatalogFetch(result, "Field catalog load failed.");
         }
         return result;
     });

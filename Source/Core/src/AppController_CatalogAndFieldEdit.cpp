@@ -227,9 +227,12 @@ void LogCatalogFailureBanner(smatchet::catalogoffline::CatalogFailureBanner bann
 
 // Body of AppController::HandleFieldCatalogError, writing into `cat`. A guarded call that the pane has
 // moved past (see CatalogWriteGuard) changes nothing: no snapshot restore and no banner.
+// `fallbackCacheKey` (empty: none) is the unscoped snapshot to restore when the project's own one is
+// missing, as the startup restore does; a catalog restored from it is pinned to no project.
 void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string& error, bool errorTransient,
                                  const std::string& catalogCacheKey, const std::string& backendKey,
-                                 const CatalogWriteGuard& guard = CatalogWriteGuard()) {
+                                 const CatalogWriteGuard& guard = CatalogWriteGuard(),
+                                 const std::string& fallbackCacheKey = std::string()) {
     const bool catalogPlane = backendKey == "Plane";
     bool hasFieldsNow;
     {
@@ -248,9 +251,15 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
     std::vector<TrackerField> snapFields;
     std::vector<TrackerComponent> snapComponents;
     std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
+    bool unscopedSnapshot = false;
     if (!hasFieldsNow) {
         snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
                                                                         snapIssueTypeMeta, snapErr);
+        if (!snapshotLoaded && !fallbackCacheKey.empty()) {
+            snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(fallbackCacheKey, snapFields,
+                                                                            snapComponents, snapIssueTypeMeta, snapErr);
+            unscopedSnapshot = snapshotLoaded;
+        }
         if (snapshotLoaded && !catalogPlane) {
             MarkNonEditableTimetrackingReadOnly(snapFields);
             AddJiraCatalogFieldFixups(snapFields);
@@ -270,7 +279,11 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
             cat.AvailableFields = std::move(snapFields);
             cat.AvailableComponents = std::move(snapComponents);
             cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-            guard.PinProjectLocked(cat);
+            if (unscopedSnapshot) {
+                cat.currentCatalogProjectKey_.clear(); // the unscoped catalog is no project's
+            } else {
+                guard.PinProjectLocked(cat);
+            }
             cat.fieldCatalogEverLoaded_ = true;
         }
         const bool hasLiveFields = !restored && !cat.AvailableFields.empty();
@@ -312,7 +325,10 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     (void)catalogPlane;
 
     if (!error.empty()) {
-        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, scoped);
+        const std::string fallbackCacheKey = projectKeyForCache.empty()
+                                                 ? std::string()
+                                                 : FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, std::string());
+        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, scoped, fallbackCacheKey);
         return false;
     }
 
