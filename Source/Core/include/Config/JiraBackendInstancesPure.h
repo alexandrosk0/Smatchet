@@ -43,11 +43,14 @@ bool AddExtra(TrackerConfig& cfg, const JiraBackendInstance& inst);
 /// row was active. extraIndex is 0-based among extras only.
 bool RemoveExtraAt(TrackerConfig& cfg, std::size_t extraIndex);
 
-/// Replace extras ([1+]) from `extras`. Remaps `ActiveJiraDomain` when the active
-/// extra is renamed; falls back to instance 0 if that row was removed. Returns
-/// false if any extra was rejected (empty or duplicate host). Does not overlay
+/// Replace extras ([1+]) from `extras`. `previousHosts` (parallel to `extras`, optional) names the
+/// host each submitted row had before the edit ("" for a row added in this edit), so the active
+/// extra follows its own row: kept when renamed, instance 0 when its row was removed. Without it,
+/// an active host still submitted stays active, and otherwise the active extra falls back to
+/// instance 0. Returns false if any extra was rejected (empty or duplicate host). Does not overlay
 /// live Domain (Preferences Test connection probes instance 0).
-bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras);
+bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras,
+                   const std::vector<std::string>* previousHosts = nullptr);
 
 const JiraBackendInstance* FindByHost(const TrackerConfig& cfg, const std::string& domain);
 

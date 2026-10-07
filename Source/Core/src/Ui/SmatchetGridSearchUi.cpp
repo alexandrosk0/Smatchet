@@ -41,9 +41,12 @@ namespace {
 void GridSearchJumpToTicket(AppController& app, UiDrawSession& d, GridPane& target, const std::string& key) {
     const std::shared_ptr<const std::vector<CachedTicket>>& rows = target.ticketsSnapshot;
     if (rows) {
+        // Case-insensitive, like the classifier (a lowercase key is a key) and the row filter that is
+        // already showing the row; the row's own id is stored, so the selection stays canonical.
+        const std::string wanted = ToLowerAsciiCopy(key);
         for (const CachedTicket& ticket : *rows) {
-            if (ticket.id == key) {
-                target.gridState.SetActiveIssue(key);
+            if (ToLowerAsciiCopy(ticket.id) == wanted) {
+                target.gridState.SetActiveIssue(ticket.id);
                 return;
             }
         }
@@ -66,7 +69,9 @@ std::string GridSearchRowFilterText(const GridPane& pane) {
     if (!GridSearchFiltersRows(pane)) {
         return std::string();
     }
-    return std::string(pane.gridSearchBuf);
+    // The same trimmed text the classification read: a pasted key with a trailing space must not
+    // become a needle its own row fails to contain.
+    return TrimCopyAsciiWhitespace(pane.gridSearchBuf);
 }
 
 // Routes a committed search-box Enter against `target` per GridSearchInputClassifier. Trims

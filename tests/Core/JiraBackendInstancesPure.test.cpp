@@ -139,11 +139,61 @@ TEST_CASE("ReplaceExtras remaps ActiveJiraDomain onto the renamed extra") {
     renamed.Domain = "third.atlassian.net";
     std::vector<JiraBackendInstance> extras;
     extras.push_back(renamed);
-    REQUIRE(ReplaceExtras(cfg, extras));
+    const std::vector<std::string> previous = {"second.atlassian.net"}; // the row's host before the edit
+    REQUIRE(ReplaceExtras(cfg, extras, &previous));
     CHECK(HostsMatch(cfg.ActiveJiraDomain, "third.atlassian.net"));
     CHECK(cfg.Domain == "second.atlassian.net");
     extras.clear();
-    REQUIRE(ReplaceExtras(cfg, extras));
+    const std::vector<std::string> none;
+    REQUIRE(ReplaceExtras(cfg, extras, &none));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "first.atlassian.net"));
+}
+
+namespace {
+TrackerConfig ConfigWithExtras(const std::vector<std::string>& hosts, const std::string& active) {
+    TrackerConfig cfg;
+    cfg.Domain = "first.atlassian.net";
+    EnsureHydrated(cfg);
+    for (const std::string& host : hosts) {
+        JiraBackendInstance extra;
+        extra.Domain = host;
+        AddExtra(cfg, extra);
+    }
+    SelectActive(cfg, active);
+    return cfg;
+}
+JiraBackendInstance Extra(const std::string& host) {
+    JiraBackendInstance inst;
+    inst.Domain = host;
+    return inst;
+}
+} // namespace
+
+TEST_CASE("ReplaceExtras keeps the active extra when a row in front of it is removed or one is added") {
+    // [B, C] with C active; the user removes B (and, in the second case, adds D).
+    TrackerConfig cfg = ConfigWithExtras({"b.atlassian.net", "c.atlassian.net"}, "c.atlassian.net");
+    const std::vector<std::string> keptC = {"c.atlassian.net"};
+    REQUIRE(ReplaceExtras(cfg, {Extra("c.atlassian.net")}, &keptC));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "c.atlassian.net"));
+
+    cfg = ConfigWithExtras({"b.atlassian.net", "c.atlassian.net"}, "c.atlassian.net");
+    const std::vector<std::string> keptCAddedD = {"c.atlassian.net", ""};
+    REQUIRE(ReplaceExtras(cfg, {Extra("c.atlassian.net"), Extra("d.atlassian.net")}, &keptCAddedD));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "c.atlassian.net"));
+}
+
+TEST_CASE("ReplaceExtras falls back to the first site when the active row is removed") {
+    TrackerConfig cfg = ConfigWithExtras({"b.atlassian.net", "c.atlassian.net"}, "b.atlassian.net");
+    const std::vector<std::string> keptC = {"c.atlassian.net"};
+    REQUIRE(ReplaceExtras(cfg, {Extra("c.atlassian.net")}, &keptC));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "first.atlassian.net"));
+}
+
+TEST_CASE("ReplaceExtras without row identity keeps an active host that is still submitted") {
+    TrackerConfig cfg = ConfigWithExtras({"b.atlassian.net", "c.atlassian.net"}, "c.atlassian.net");
+    REQUIRE(ReplaceExtras(cfg, {Extra("c.atlassian.net")}));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "c.atlassian.net"));
+    REQUIRE(ReplaceExtras(cfg, {Extra("e.atlassian.net")}));
     CHECK(HostsMatch(cfg.ActiveJiraDomain, "first.atlassian.net"));
 }
 

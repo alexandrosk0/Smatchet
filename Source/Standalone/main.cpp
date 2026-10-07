@@ -164,6 +164,7 @@ static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp
     try {
         mainWindow.Draw(smatchetApp);
         pluginHost.OnDraw(smatchetApp);
+        mainWindow.EndFrame();
     } catch (const std::exception&) {
         throw;
     } catch (...) { // catch-all-ok: rethrow only — propagates to the SEH wrapper, swallows nothing

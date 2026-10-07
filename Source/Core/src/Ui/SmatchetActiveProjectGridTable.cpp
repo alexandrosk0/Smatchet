@@ -217,15 +217,47 @@ static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs
 //  - hideParents: a row that is a present parent of another row is dropped (leaf-only view).
 //  - storyGroupSort + non-empty filter: a matched child pulls its ancestor chain back in so the
 //    tree stays readable; ancestors are re-inserted at their sorted position (never hidden ones).
+namespace {
+// The filter's view of the grid's cell text: an option id maps to the option's name, from the pane's
+// catalog. Each field's id->name map is built on first use and lives for one projection rebuild, so
+// the per-ticket match stays a hash lookup.
+class CatalogGridFilterDisplay final : public IGridFilterDisplay {
+  public:
+    explicit CatalogGridFilterDisplay(const TrackerFieldCatalogIndex& catalog) : catalog_(catalog) {}
+    const std::string& Shown(const std::string& fieldId, const std::string& stored) const override {
+        auto it = namesByField_.find(fieldId);
+        if (it == namesByField_.end()) {
+            std::unordered_map<std::string, std::string> names;
+            if (const TrackerField* field = catalog_.Find(fieldId)) {
+                for (const TrackerFieldOption& opt : field->AllowedValueOptions) {
+                    if (!opt.Id.empty() && !opt.Value.empty() && opt.Id != opt.Value) {
+                        names.emplace(opt.Id, opt.Value);
+                    }
+                }
+            }
+            it = namesByField_.emplace(fieldId, std::move(names)).first;
+        }
+        const auto name = it->second.find(stored);
+        return name != it->second.end() ? name->second : stored;
+    }
+
+  private:
+    const TrackerFieldCatalogIndex& catalog_;
+    mutable std::unordered_map<std::string, std::unordered_map<std::string, std::string>> namesByField_;
+};
+} // namespace
+
 static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTicket>& tickets,
-                                      const GridHierarchyOptions& hierarchy) {
+                                      const GridHierarchyOptions& hierarchy,
+                                      const TrackerFieldCatalogIndex& catalogIndex) {
     pane.filteredIndices.clear();
     const std::string filter = GridSearchRowFilterText(pane);
     const bool filterActive = !filter.empty();
+    const CatalogGridFilterDisplay display(catalogIndex);
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        return TicketMatchesGridFilter(tickets[idx], filter);
+        return TicketMatchesGridFilter(tickets[idx], filter, &display);
     };
     auto isPresentParent = [&](size_t idx) {
         return hierarchy.hideParents && idx < tickets.size() && pane.cachedParentIds.count(tickets[idx].id) != 0;
@@ -352,7 +384,7 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
     pane.cachedSortCatalogRevision = catalogRevision;
 
     // 2. Run Filter and rebuild pane.filteredIndices
-    ApplyGridFilterProjection(pane, tickets, hierarchy);
+    ApplyGridFilterProjection(pane, tickets, hierarchy, catalogIndex);
     if (hierarchy.hideParents) {
         // The parent-id set has done its job (dropping the parent rows); the row draw reads it
         // only for the tint, and a leaf-only grid must not carry parent colouring.
@@ -497,6 +529,19 @@ static void CaptureHeaderDragColumnOrder(UiDrawSession& d, Views& viewState,
     // bake a duplicate key into Columns, and the load-side dedupe then drops a column back to
     // the end of the grid.
     if (!GridVisualColumnOrderIsPermutation(visualOrder, columns.size())) {
+        return;
+    }
+    // Only a drag commits: when the table shows its columns in the order they were built, nothing was
+    // dragged. Comparing against the live view instead would revert an order the Views editor saved
+    // earlier this frame, since columns[] was built from the view at frame start.
+    bool reordered = false;
+    for (size_t i = 0; i < visualOrder.size(); ++i) {
+        if (visualOrder[i] != columns[i].Key) {
+            reordered = true;
+            break;
+        }
+    }
+    if (!reordered) {
         return;
     }
     std::vector<std::string> currentOrder;
@@ -681,8 +726,14 @@ static void ApplyRowHoverHighlight(float rowHeight) {
     if (!curTable) {
         return;
     }
-    const ImVec2 rowMin(curTable->InnerClipRect.Min.x, ImGui::GetCursorScreenPos().y);
-    const ImVec2 rowMax(curTable->InnerClipRect.Max.x, rowMin.y + rowHeight);
+    // Clamped to the visible body: a row partly under the frozen header or the horizontal scrollbar
+    // must not light up while the pointer is over the header / scrollbar.
+    const float rowTop = ImGui::GetCursorScreenPos().y;
+    const ImVec2 rowMin(curTable->InnerClipRect.Min.x, ImMax(rowTop, curTable->BgClipRect.Min.y));
+    const ImVec2 rowMax(curTable->InnerClipRect.Max.x, ImMin(rowTop + rowHeight, curTable->BgClipRect.Max.y));
+    if (rowMin.y >= rowMax.y) {
+        return;
+    }
     // IsWindowHovered() (default flags) is false while a popup/floating window covers the grid, so a
     // row under an open dropdown or tooltip doesn't stay lit — IsMouseHoveringRect alone is geometry-only.
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) {
@@ -839,7 +890,7 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     if (widthsArePanesOwn) {
         // Only an owned view is the width authority; a fallback-resolved pane keeps whatever the
         // user resized it to (drawActiveProjectGridPost never captures widths for it either).
-        smatchet::ui::SyncGridTableColumnWidths(ImGui::GetCurrentTable(), colWidths);
+        smatchet::ui::SyncGridTableColumnWidths(ImGui::GetCurrentTable(), colWidths, ctx.pane.pendingAutoFitColumn);
     }
     ctx.requestedColumnWidths = std::move(colWidths);
     ImGui::TableSetupScrollFreeze(1, 1);
@@ -1117,6 +1168,9 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
+    // After layout: a fit requested this frame is applied by the next BeginTable (see
+    // GridPane::pendingAutoFitColumn); the width capture below then persists the fitted width.
+    ctx.pane.pendingAutoFitColumn = smatchet::ui::PendingSingleColumnAutoFit(ImGui::GetCurrentTable());
     RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d, ctx.pane);
     smatchet::ui::DriveGridHeaderDragReorder(ImGui::GetCurrentTable());
 

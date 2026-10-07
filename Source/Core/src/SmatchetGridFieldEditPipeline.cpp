@@ -227,11 +227,18 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
 }
 
 void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d) {
-    if (d.queuedFieldEdits.empty()) {
+    // An edit made in a pane carries that pane's target (backend, queue namespace, generation), so it is
+    // still sent to, queued for and applied in its own pane after focus moves (#2260) — keep it. Only an
+    // unbound edit would bind to whichever pane is focused at dispatch, i.e. the new backend.
+    const std::size_t before = d.queuedFieldEdits.size();
+    d.queuedFieldEdits.erase(std::remove_if(d.queuedFieldEdits.begin(), d.queuedFieldEdits.end(),
+                                            [](const PendingFieldEdit& edit) { return edit.Target.PaneId.empty(); }),
+                             d.queuedFieldEdits.end());
+    const std::size_t discarded = before - d.queuedFieldEdits.size();
+    if (discarded == 0) {
         return;
     }
-    LOG_WARN("GridFieldEdit: discarded %zu unsent edit(s) on tracker backend switch", d.queuedFieldEdits.size());
-    d.queuedFieldEdits.clear();
+    LOG_WARN("GridFieldEdit: discarded %zu unsent unbound edit(s) on tracker backend switch", discarded);
     d.gridEditSuccess.clear();
     d.gridEditError = "Unsent edits discarded: the tracker backend changed before they could be sent.";
 }

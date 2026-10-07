@@ -1814,6 +1814,42 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Parent-hierarchy deep chain: GridParentHierarchyDeepChain against parent-hierarchy-grid.json
+      # (an epic -> story -> task -> subtask chain). That test skips under any other fixture, so it
+      # needs its own run; the zero-run floor in the driver fails a filter that matched nothing.
+      - name: Run parent-hierarchy deep-chain bucket-E (hard)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
+          SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/parent-hierarchy-grid.json
+          UI_TEST_FILTER: GridParentHierarchyDeepChain
+          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/parent-hierarchy-outlog.txt
+        run: |
+          set -uo pipefail
+          mkdir -p "${{ github.workspace }}/build/tmp"
+          attempts=2
+          rc=1
+          for attempt in $(seq 1 "$attempts"); do
+            echo "parent-hierarchy: attempt ${attempt}/${attempts}"
+            set +e
+            bash scripts/dev/test-ui-jira-deterministic-backend.sh
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+              break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::parent-hierarchy: attempt ${attempt}/${attempts} failed (rc=$rc), retrying (Mesa first-frame flake absorber)."
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::parent-hierarchy: GridParentHierarchyDeepChain FAILED (rc=$rc)." >&2
+            exit "$rc"
+          fi
+
       # Offline-first bucket-E (Quality Pillar 6): the OfflineFirst group against offline-first.json.
       # The wrapper sets the fixture + filter itself, so this step deliberately has no fixture env.
       - name: Run offline-first bucket-E (hard)

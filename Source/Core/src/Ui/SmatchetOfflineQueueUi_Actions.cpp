@@ -11,6 +11,7 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -237,7 +238,13 @@ void ShowHeldTooltip(const std::string& backendKey) {
                       site.empty() ? "an unknown site" : site.c_str());
 }
 
-void NoteHeldRowDrawn() { ++s_heldRowsDrawn; }
+void NoteHeldRowDrawn() {
+    // Saturating: production draws count every frame and only tests reset it, so a long session would
+    // otherwise overflow the int (UB).
+    if (s_heldRowsDrawn < INT_MAX) {
+        ++s_heldRowsDrawn;
+    }
+}
 
 int HeldRowsDrawnForTests() { return s_heldRowsDrawn; }
 

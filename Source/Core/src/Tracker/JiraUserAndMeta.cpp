@@ -58,6 +58,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
         if (usersResponse.status_code != 200) {
             outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
+            outUsers.clear(); // never hand back a partial roster as if it were complete
             return false;
         }
 
@@ -68,11 +69,13 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
             if (!parseErr.empty()) {
                 outError = std::string("Failed to parse users response: ") + parseErr;
                 LOG_ERROR("JiraClient: %s", outError.c_str());
+                outUsers.clear();
                 return false;
             }
             if (!usersJson.is_array()) {
                 outError = "Invalid users response format.";
                 LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
+                outUsers.clear();
                 return false;
             }
 
@@ -97,6 +100,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
         } catch (const std::exception& ex) {
             outError = std::string("Failed to parse users response: ") + ex.what();
             LOG_ERROR("JiraClient: %s", outError.c_str());
+            outUsers.clear();
             return false;
         }
 

@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetThemedTextEditorPalette.h"
@@ -41,9 +42,8 @@ void SaveLuaLayoutDebounced(float scriptPaneHeightPx) {
         now - s_lastWrite < std::chrono::milliseconds(350)) {
         return;
     }
-    nlohmann::json j = ConfigManager::LoadMergedConfigJson();
-    j["lua_scripts_panel_height_px"] = scriptPaneHeightPx;
-    ConfigManager::WriteConfigJson(j);
+    // Called during the splitter drag on the UI thread: the write runs on the config-save worker.
+    smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", scriptPaneHeightPx);
     s_lastSaved = scriptPaneHeightPx;
     s_lastWrite = now;
 }

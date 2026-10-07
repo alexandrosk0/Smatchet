@@ -28,13 +28,13 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta);
 
-/// True when `pane`'s search box currently filters the LOADED rows — i.e. its text reads as
-/// plain title words rather than a ticket key or a structured query, which commit on Enter
-/// instead (GridSearchInputClassifier decides). Cheap: an empty box short-circuits before the
-/// classifier runs. Defined in SmatchetGridSearchUi.cpp.
+/// True when `pane`'s search box currently filters the LOADED rows: its text reads as plain title
+/// words or a bare ticket key (which also jumps to the row on Enter). A structured query never
+/// filters — it commits on Enter (GridSearchInputClassifier decides). Cheap: an empty box
+/// short-circuits before the classifier runs. Defined in SmatchetGridSearchUi.cpp.
 bool GridSearchFiltersRows(const GridPane& pane);
 
-/// The text the row filter should match for `pane`: its search-box content when
+/// The text the row filter should match for `pane`: its trimmed search-box content when
 /// GridSearchFiltersRows holds, otherwise empty (which TicketMatchesGridFilter treats as
 /// "match everything"). Defined in SmatchetGridSearchUi.cpp.
 std::string GridSearchRowFilterText(const GridPane& pane);
@@ -90,9 +90,10 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
 /// to, queued for and applied in that pane even if focus moves first (#2260).
 void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
 
-/// Drop every queued, not-yet-dispatched grid edit when the tracker backend changes. The queue is
-/// session-wide and its edits name the previous backend's issues, so they must never reach the
-/// new backend (a tracker-error banner can hold them past the switch). Sets a visible error.
+/// Drop the queued, not-yet-dispatched grid edits that carry no pane target when the tracker backend
+/// changes: the pump would bind those to the newly focused pane, i.e. send another backend's issue ids
+/// to the new backend. An edit made in a pane keeps its own target and is kept (#2260). Sets a visible
+/// error only when something was dropped.
 void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d);
 
 /// Pump half — called ONCE per frame by the pane-window host: dispatches the next queued

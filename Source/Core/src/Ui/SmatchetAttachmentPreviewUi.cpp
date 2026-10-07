@@ -44,6 +44,8 @@
 #include "RgbaDownscalePure.h"
 #endif
 
+#include <ghc/filesystem.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -83,7 +85,9 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     // read still had to leave the render thread.
     /* PILLAR2_WORKER_ONLY */ // est-latency: ~1ms — 64 KB header read on the joined pool via
                               // MaybeKickDimensionParse; no frame budget applies.
-    std::ifstream ifs(path.c_str(), std::ios::binary);
+    // ghc stream: the path is UTF-8 (the attachment cache keeps the real name); a narrow std::ifstream
+    // would read it in the ANSI code page on Windows and miss any non-ASCII name.
+    ghc::filesystem::ifstream ifs(ghc::filesystem::path(path), std::ios::binary);
     if (!ifs.is_open()) {
         result.Error = "Failed to open downloaded attachment file.";
         return result;
