@@ -49,6 +49,169 @@ setup() {
     [ "$output" -ge 2 ]
 }
 
+# ---------- coverage.sh: infra-crash vs test/threshold verdicts (stubbed end-to-end) ----------
+# Backlog infra.md 2026-06-14 ci-infra-flake-reds-masquerade-as-real-breakage: an
+# OpenCppCoverage crash used to surface as a `0%` threshold red. These cases drive the real
+# script against a stub OpenCppCoverage (the OPENCPPCOVERAGE_EXE seam) and dummy test exes,
+# pinning the exit contract without the Windows toolchain:
+#   3 + COVERAGE-INFRA-CRASH — no coverage data even after the one retry (capture or merge);
+#   1 — a test binary failed under capture;
+#   4 — a genuine threshold miss (the only code coverage-out-of-band may waive);
+#   0 — clean, or a transient tooling crash rescued by the retry.
+
+# cov_stub_setup — dummy build dir + stub OpenCppCoverage under $COVDIR. The stub reads
+# COV_CAPTURE_PLAN (one word per capture call: ok | crash | test) and COV_MERGE_PLAN (one
+# word per merge call: ok | empty | fail), writes COV_RATE as the Cobertura line-rate, and
+# counts its calls in $COVDIR/{capture,merge}.count.
+cov_stub_setup() {
+    COVDIR="$BATS_TEST_TMPDIR/cov"
+    mkdir -p "$COVDIR/build/tests/Lua" "$COVDIR/bin" "$COVDIR/out"
+    : > "$COVDIR/build/tests/SmatchetTests.exe"
+    : > "$COVDIR/build/tests/Lua/SmatchetLuaTests.exe"
+    echo 0 > "$COVDIR/capture.count"
+    echo 0 > "$COVDIR/merge.count"
+    # coverage.sh parses the XML with `python`; shim it where only python3 exists.
+    if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+        printf '#!/bin/sh\nexec python3 "$@"\n' > "$COVDIR/bin/python"
+        chmod +x "$COVDIR/bin/python"
+    fi
+    cat > "$COVDIR/bin/occ" <<'STUB'
+#!/usr/bin/env bash
+kind=capture; out=""; prev=""
+for a in "$@"; do
+    [ "$a" = "--input_coverage" ] && kind=merge
+    if [ "$prev" = "--export_type" ]; then
+        case "$a" in binary:*) out="${a#binary:}" ;; cobertura:*) out="${a#cobertura:}" ;; esac
+    fi
+    prev="$a"
+done
+n=$(( $(cat "$COVDIR/$kind.count") + 1 )); echo "$n" > "$COVDIR/$kind.count"
+if [ "$kind" = capture ]; then read -r -a plan <<< "$COV_CAPTURE_PLAN"; else read -r -a plan <<< "$COV_MERGE_PLAN"; fi
+step="${plan[$((n - 1))]:-ok}"
+case "$kind:$step" in
+    capture:crash|merge:fail) exit 1 ;;
+    capture:test) printf 'cov' > "$out"; exit 3 ;;
+    capture:*) printf 'cov' > "$out"; exit 0 ;;
+    merge:empty) : > "$out"; exit 0 ;;
+    *) printf '<?xml version="1.0"?>\n<coverage line-rate="%s" version="1.9">\n</coverage>\n' "$COV_RATE" > "$out"; exit 0 ;;
+esac
+STUB
+    chmod +x "$COVDIR/bin/occ"
+    export COVDIR
+}
+
+# run_cov <capture-plan> <merge-plan> <rate> — run coverage.sh the way coverage.yml does.
+run_cov() {
+    run env PATH="$COVDIR/bin:$PATH" OPENCPPCOVERAGE_EXE="$COVDIR/bin/occ" \
+        SMATCHET_COVERAGE_BUILD_DIR="$COVDIR/build" SMATCHET_COVERAGE_OUTPUT_DIR="$COVDIR/out" \
+        COV_CAPTURE_PLAN="$1" COV_MERGE_PLAN="$2" COV_RATE="$3" \
+        bash "$COVERAGE" --xml-only --threshold 70
+}
+
+@test "coverage.sh: clean capture + merge above threshold exits 0 with no infra marker" {
+    cov_stub_setup
+    run_cov "ok ok" "ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"line coverage: 80%"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a transient capture crash is retried once and recovers (exit 0)" {
+    cov_stub_setup
+    run_cov "crash ok ok" "ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"retrying the capture once"* ]]
+    [ "$(cat "$COVDIR/capture.count")" -eq 3 ]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a persistent capture crash is INFRA -  exit 3 + COVERAGE-INFRA-CRASH, never a 0% red" {
+    cov_stub_setup
+    run_cov "crash crash ok" "ok" "0.80"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"::error title=COVERAGE-INFRA-CRASH::"*"SmatchetTests"* ]]
+    [[ "$output" != *"line coverage:"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 0 ]
+}
+
+@test "coverage.sh: a test-binary failure is exit 1, never retried, no infra marker" {
+    cov_stub_setup
+    run_cov "test ok" "ok" "0.80"
+    [ "$status" -eq 1 ]
+    [ "$(cat "$COVDIR/capture.count")" -eq 2 ]
+    [[ "$output" == *"real test failure"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+@test "coverage.sh: a merge that keeps writing an empty coverage.xml is INFRA (exit 3), not 0%" {
+    cov_stub_setup
+    run_cov "ok ok" "empty empty" "0.80"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"::error title=COVERAGE-INFRA-CRASH::"* ]]
+    [[ "$output" != *"line coverage:"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 2 ]
+}
+
+@test "coverage.sh: a failed merge is retried once and recovers (exit 0)" {
+    cov_stub_setup
+    run_cov "ok ok" "fail ok" "0.80"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"line coverage: 80%"* ]]
+    [ "$(cat "$COVDIR/merge.count")" -eq 2 ]
+}
+
+@test "coverage.sh: a genuine threshold miss is exit 4 (its own code) with no infra marker" {
+    cov_stub_setup
+    run_cov "ok ok" "ok" "0.50"
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"line coverage 50% < threshold 70%"* ]]
+    [[ "$output" != *"COVERAGE-INFRA-CRASH"* ]]
+}
+
+# ---------- coverage.yml: coverage-out-of-band waives ONLY a threshold miss ----------
+# Runs the workflow step's own `run:` block (extracted from the YAML, under the
+# Actions bash flags -e -o pipefail) against a stub coverage.sh exiting STUB_RC.
+
+# cov_step <stub-rc> <labels-json> — run the Capture-coverage step body.
+cov_step() {
+    local d="$BATS_TEST_TMPDIR/step"
+    mkdir -p "$d/scripts/dev" "$d/bin"
+    printf '#!/usr/bin/env bash\nexit %s\n' "$1" > "$d/scripts/dev/coverage.sh"
+    if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+        printf '#!/bin/sh\nexec python3 "$@"\n' > "$d/bin/python"
+        chmod +x "$d/bin/python"
+    fi
+    awk '/- name: Capture coverage/ { f = 1 }
+         f && /^        run: \|/ { r = 1; next }
+         r { if ($0 == "" || $0 ~ /^          /) { sub(/^          /, ""); print } else exit }' \
+        "$REPO_ROOT/.github/workflows/coverage.yml" > "$d/step.sh"
+    grep -q 'coverage.sh --xml-only --threshold 70' "$d/step.sh"
+    run env PATH="$d/bin:$PATH" PR_LABELS="$2" bash -c 'cd "$0" && exec bash -e -o pipefail step.sh' "$d"
+}
+
+@test "coverage.yml: coverage-out-of-band downgrades a threshold miss (exit 4) to a WARN" {
+    cov_step 4 '[{"name":"coverage-out-of-band"}]'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"::warning::line coverage below threshold"* ]]
+}
+
+@test "coverage.yml: coverage-out-of-band does NOT downgrade a test failure, missing binary or infra crash" {
+    for rc in 1 2 3; do
+        cov_step "$rc" '[{"name":"coverage-out-of-band"}]'
+        [ "$status" -eq "$rc" ]
+        [[ "$output" == *"::error::coverage.sh exited $rc"* ]]
+        [[ "$output" != *"::warning::"* ]]
+    done
+}
+
+@test "coverage.yml: without the label a threshold miss is red; a clean run is green either way" {
+    cov_step 4 '[]'
+    [ "$status" -eq 4 ]
+    cov_step 0 '[{"name":"coverage-out-of-band"}]'
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"::warning::"* ]]
+}
+
 # ---------- coverage-delta-gate.sh: classifier incl. wrapped LOG_* join ----------
 
 @test "coverage-delta-gate.sh --selftest passes (classifier + multi-line LOG_ join)" {
@@ -57,6 +220,9 @@ setup() {
     [[ "$output" == *"coverage-delta-gate --selftest: PASS"* ]]
     [[ "$output" == *"2-line wrapped LOG_ERROR"* ]]
     [[ "$output" == *"3-line wrapped LOG_ERROR"* ]]
+    [[ "$output" == *"reworded /* */ block opener + untested statement far below"* ]]
+    [[ "$output" == *"#if defined(__ANDROID__) inside a raw string literal is not a directive"* ]]
+    [[ "$output" == *"#if stack unbalanced at end of file (untrusted) falls through"* ]]
 }
 
 # ---------- coverage-delta-gate.sh: TEST_CHANGES recognition ----------
@@ -96,4 +262,295 @@ make_fixture_repo() {
     rm -rf "$FIXREPO"
     [ "$status" -eq 1 ]
     [[ "$output" == *"FAIL"* ]]
+}
+
+# ---------- coverage-delta-gate.sh: which files count, renames, odd paths ----------
+# _path_repo — a base commit with a product TU and a data file holding code-like text, on branch
+# main; leaves the work tree on branch `head` with nothing changed yet.
+_path_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    printf 'int foo() { return 1; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    printf 'int launch() { return 1; }\n' > "$FIXREPO/Source/Core/src/notes.txt"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+@test "coverage-delta-gate.sh: a product file moved within the product trees stays exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/a.cpp Source/Core/src/b.cpp
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: a file renamed into the product trees is never exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/notes.txt Source/Core/src/Mover.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"moves a file between what the build compiles"* ]]
+}
+
+@test "coverage-delta-gate.sh: test code renamed into the production tree is never exempt" {
+    _path_repo
+    mkdir -p "$FIXREPO/tests/support"
+    printf 'int fake() { return 1; }\n' > "$FIXREPO/tests/support/Fake.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "test helper"
+    git -C "$FIXREPO" branch -f main HEAD
+    git -C "$FIXREPO" mv tests/support/Fake.cpp Source/Core/src/Fake.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"tests/support/Fake.cpp -> Source/Core/src/Fake.cpp"* ]]
+}
+
+@test "coverage-delta-gate.sh: an included file renamed to a translation unit is never exempt" {
+    _path_repo
+    mkdir -p "$FIXREPO/Source/Core/include/Detail"
+    printf 'static int g_purged = PurgeOnLoad();\n' > "$FIXREPO/Source/Core/include/Detail/AutoPurge.inl"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "inl"
+    git -C "$FIXREPO" branch -f main HEAD
+    mkdir -p "$FIXREPO/Source/Core/src/Sync"
+    git -C "$FIXREPO" mv Source/Core/include/Detail/AutoPurge.inl Source/Core/src/Sync/AutoPurge.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"AutoPurge.inl -> Source/Core/src/Sync/AutoPurge.cpp"* ]]
+}
+
+@test "coverage-delta-gate.sh: a translation unit renamed out of the *.cpp glob is never exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/a.cpp Source/Core/src/a.cc
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Source/Core/src/a.cpp -> Source/Core/src/a.cc"* ]]
+}
+
+@test "coverage-delta-gate.sh: a coloured diff configuration changes nothing" {
+    _path_repo
+    git -C "$FIXREPO" config color.ui always
+    printf 'int foo() { return 2; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: a removed guard statement is a production change" {
+    _path_repo
+    printf '%s\n' 'int foo(bool c) {' '    if (!c) return 0;' '    return 1;' '}' > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "guard"
+    git -C "$FIXREPO" branch -f main HEAD
+    printf '%s\n' 'int foo(bool c) {' '    return 1;' '}' > "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: a product file replaced by a symlink is classified" {
+    _path_repo
+    printf 'int launch() { return 2; }\n' > "$FIXREPO/Source/Core/src/impl.txt"
+    rm "$FIXREPO/Source/Core/src/a.cpp"
+    ln -s impl.txt "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
+@test "coverage-delta-gate.sh: a configure_file template of a C++ file is a production change" {
+    _path_repo
+    printf 'int version() { return 2; }\n' > "$FIXREPO/Source/Core/src/Version.cpp.in"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
+@test "coverage-delta-gate.sh: a base ref that names no commit fails the gate" {
+    _path_repo
+    printf 'int foo() { return 2; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=no-such-ref bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"names no commit"* ]]
+}
+
+@test "coverage-delta-gate.sh: a product path holding a space is classified" {
+    _path_repo
+    printf 'int launch() { return 2; }\n' > "$FIXREPO/Source/Core/src/a b.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: an .inl change alone is a production change" {
+    _path_repo
+    printf 'int impl() { return 2; }\n' > "$FIXREPO/Source/Core/src/Impl.inl"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"prod changes: 1"* ]]
+}
+
+# ==========================================================================
+# coverage-delta-gate.sh: full-context exemptions (an off-target platform arm is
+# exempt; a header->cpp body move is not). Separate block: real `git diff --unified=100000`
+# fixtures, both directions, through the gate's normal (non-selftest) path.
+# ==========================================================================
+
+# _wph_repo — a base commit carrying a platform-guarded TU and a header with an
+# inline definition, on branch main; leaves the work tree on branch `head`.
+_wph_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src" "$FIXREPO/Source/Core/include"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    printf '%s\n' '#include "p.h"' '#ifdef _WIN32' 'int Read() { return 1; }' \
+        '#elif defined(__ANDROID__)' 'int Read() { return 2; }' '#else' \
+        'int Read() { return 3; }' '#endif' > "$FIXREPO/Source/Core/src/p.cpp"
+    printf '%s\n' '#pragma once' 'namespace ui {' 'inline int Hook(int x) {' \
+        '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+# _wph_insert_after <file> <line-no> <text> — insert one line after line N.
+_wph_insert_after() {
+    awk -v n="$2" -v t="$3" '{ print } NR == n { print t }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# _wph_gate — commit the head edits, run the gate, drop the fixture repo.
+_wph_gate() {
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=main bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+}
+
+@test "coverage-delta-gate.sh: statement in an __ANDROID__ elif arm is exempt (no test delta)" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 5 'static int g_android = Read();'
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: statement in the non-WIN32 else arm still FAILs (Linux CI builds it)" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 7 'static int g_posix = Read();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: statement in an __APPLE__ arm still FAILs (no Apple CI job)" {
+    _wph_repo
+    printf '%s\n' '#include "p.h"' '#ifdef __APPLE__' 'int Bundle() { return 4; }' '#endif' \
+        >> "$FIXREPO/Source/Core/src/p.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm 'apple arm (base)'
+    git -C "$FIXREPO" branch -f main HEAD
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 11 'static int g_apple = Bundle();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: statement on the _WIN32 if side still FAILs" {
+    _wph_repo
+    _wph_insert_after "$FIXREPO/Source/Core/src/p.cpp" 3 'static int g_win = Read();'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+@test "coverage-delta-gate.sh: an inline header body moved byte-identical to a new .cpp is not exempt" {
+    # Callers in other translation units can reach another overload once the body moves, so a move
+    # between files is compared like any other change.
+    _wph_repo
+    printf '%s\n' '#pragma once' 'namespace ui {' '// Defined out-of-line in hook.cpp.' \
+        'int Hook(int x);' '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
+    printf '%s\n' '#include "h.h"' '' 'namespace ui {' '' 'int Hook(int x) {' \
+        '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' '' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/src/hook.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+    [[ "$output" == *"no test-light exemption"* ]]
+}
+
+@test "coverage-delta-gate.sh: relocated body with one edited line still FAILs" {
+    _wph_repo
+    printf '%s\n' '#pragma once' 'namespace ui {' 'int Hook(int x);' '}  // namespace ui' \
+        > "$FIXREPO/Source/Core/include/h.h"
+    printf '%s\n' '#include "h.h"' 'namespace ui {' 'int Hook(int x) {' \
+        '    if (x >= 0) {' '        return x * 2;' '    }' '    return 0;' '}' \
+        '}  // namespace ui' > "$FIXREPO/Source/Core/src/hook.cpp"
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}
+
+# ==========================================================================
+# coverage-delta-gate.sh: classifier state across a full-context diff. The
+# --unified=100000 diff is ONE hunk per file, so state the classifier enters on
+# a reworded first line of an existing /* */ block or wrapped LOG_*( call must
+# not swallow a real statement far below (the default-context diff reset at
+# each @@). Also: a `#if defined(__ANDROID__)` that is comment text is not a
+# directive (it used to open the #if stack and drop every later '+' line).
+# ==========================================================================
+
+# _ctx_repo <first-block-lines...> — a base TU: the given lines, 40 filler
+# statements, then `void g(int x) { (void)x; }`; leaves the tree on `head`.
+_ctx_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    {
+        printf '%s\n' '#include "a.h"' "$@"
+        for i in $(seq 1 40); do printf 'int v%d = %d;\n' "$i" "$i"; done
+        printf '%s\n' 'void g(int x) {' '    (void)x;' '}'
+    } > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+}
+
+# _ctx_edit <sed-expr> — apply one edit plus the untested `launchMissiles(x);`.
+_ctx_edit() {
+    sed -i -e "$1" -e 's|^    (void)x;|    launchMissiles(x);|' "$FIXREPO/Source/Core/src/a.cpp"
+}
+
+@test "coverage-delta-gate.sh: reworded block-comment opener does not exempt a statement far below" {
+    _ctx_repo '/* Old first line of the block.' ' * second line' ' */'
+    _ctx_edit 's|^/\* Old first line|/* New first line|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: reworded wrapped LOG_INFO opener does not exempt a statement far below" {
+    _ctx_repo 'void f(int x) {' '    LOG_INFO("old {}",' '             x);' '}'
+    _ctx_edit 's|LOG_INFO("old {}",|LOG_INFO("new {}",|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: an #if defined(__ANDROID__) inside a block comment is not a directive" {
+    _ctx_repo '/* Usage note:' '#if defined(__ANDROID__)' '   (illustrative only)' ' */'
+    _ctx_edit 's|^   (illustrative only)|   (illustrative only, see below)|'
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL: Source/Core/ changes without test deltas"* ]]
+}
+
+@test "coverage-delta-gate.sh: comment-only edits inside an existing block comment stay exempt" {
+    _ctx_repo '/** Old summary.' ' * unchanged detail' ' * old note' ' */'
+    sed -i -e 's|^/\*\* Old summary.|/** New summary.|' -e 's|^ \* old note| * new note|' \
+        "$FIXREPO/Source/Core/src/a.cpp"
+    _wph_gate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-light exemption"* ]]
 }

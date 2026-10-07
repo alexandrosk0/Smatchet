@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "caseId": "cr-reads-as-empty-user-catalog",
+  "agent": "code-review",
+  "description": "Real escape (postmortems.md 2026-08-20, PR #2148 -> fixed by #2149): the JQL 'reads as' echo resolves account ids to names only from the app-owned user catalog (GetAvailableUsers) plus same-session @-mention search results. The catalog's user list is legitimately empty in supported states (FetchUsers failure is warning-only; a cache-restored catalog carries no users), so the headline flow -- pick a user from autocomplete, see the name -- renders nothing. The autocomplete row the user clicked already carried the id->name pairing. Pure tests stocked the catalog by construction, so everything was green.",
+  "repoRef": "72471174",
+  "baseBranch": "develop",
+  "files": [
+    "Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp",
+    "Source/Core/src/Ui/SmatchetAutocompleteUi.cpp",
+    "Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
+  ],
+  "diff": "--- a/Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp\n+++ b/Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp\n@@ -392,6 +392,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, ...)\n     }\n     TrackerQueryAcp_FlushPendingReplace(st);\n \n+    // Readable echo of the query: user clauses carry an opaque account id (the only form\n+    // Jira Cloud matches a user on), so spell those ids out as names right under the bar.\n+    TrackerQueryAcp_DrawUserEcho(app.GetAvailableUsers(), st);\n+\n--- a/Source/Core/src/Ui/SmatchetAutocompleteUi.cpp\n+++ b/Source/Core/src/Ui/SmatchetAutocompleteUi.cpp\n@@ -18,10 +20,40 @@\n+static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {\n+    constexpr size_t kMaxResolved = 200;\n+    for (auto& known : st.jqlAcpSearchResolvedUsers) {\n+        if (known.AccountId != u.AccountId) { continue; }\n+        if (!u.DisplayName.empty() && known.DisplayName != u.DisplayName) { known = u; st.jqlUserEchoValid = false; }\n+        return;\n+    }\n+    if (st.jqlAcpSearchResolvedUsers.size() >= kMaxResolved) {\n+        st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());\n+    }\n+    st.jqlAcpSearchResolvedUsers.push_back(u);\n+    st.jqlUserEchoValid = false;\n+}\n+\n+/// Turn a completed @-mention user search into popup rows; remember each name for the echo.\n+static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vector<TrackerUser>& users) {\n+    st.jqlAcpAsyncUserItems.clear();\n+    for (const auto& u : users) {\n+        if (u.AccountId.empty()) { continue; }\n+        const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);\n+        RememberResolvedUser(st, u);\n+        std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + \" -> \" + ins);\n+        st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});\n+    }\n+}\n@@ -278,6 +331,30 @@ void TrackerQueryAcp_DrawPopup(...)\n+void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {\n+    const void* catalogData = static_cast<const void*>(catalogUsers.data());\n+    if (!st.jqlUserEchoValid || st.jqlUserEchoCatalogData != catalogData ||\n+        st.jqlUserEchoCatalogSize != catalogUsers.size() || st.jqlUserEchoSource != st.buf) {\n+        int fromCatalog = 0;\n+        int fromSearch = 0;\n+        std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, catalogUsers, &fromCatalog);\n+        if (!st.jqlAcpSearchResolvedUsers.empty()) {\n+            rendered = jql_user_display::RenderQueryWithUserNames(rendered, st.jqlAcpSearchResolvedUsers, &fromSearch);\n+        }\n+        st.jqlUserEcho = (fromCatalog + fromSearch) > 0 ? rendered : std::string();\n+        st.jqlUserEchoSource = st.buf;\n+        st.jqlUserEchoCatalogData = catalogData;\n+        st.jqlUserEchoCatalogSize = catalogUsers.size();\n+        st.jqlUserEchoValid = true;\n+    }\n+    if (st.jqlUserEcho.empty()) {\n+        return;\n+    }\n+    ImGui::TextWrapped(\"reads as: %s\", st.jqlUserEcho.c_str());\n+}\n--- a/Source/Core/src/Tracker/TrackerFieldCatalog.cpp   (unchanged context — the only producer of AvailableUsers)\n+++ b/Source/Core/src/Tracker/TrackerFieldCatalog.cpp\n@@ FetchFieldCatalogWithUsers @@\n     std::vector<TrackerUser> users;\n     std::string usersError;\n     if (!FetchUsers(cfg, users, usersError)) {\n         outCatalog.Warning = usersError;   // warning only: the catalog loads with NO users\n     }\n",
+  "toolPosture": "read-only",
+  "delegationPacket": "Review this diff, which adds a readable echo under the JQL query bar naming the users whose account ids the query carries. The last hunk is unchanged context: the producer of the app-owned user catalog that GetAvailableUsers() returns. Report each correctness finding with file:line, a severity (critical/high/medium/low/info), and a one-line summary. If there are no genuine bugs, say so explicitly.",
+  "dimensions": [
+    {
+      "key": "correctness",
+      "kind": "judge",
+      "description": "Did the agent flag that with the catalog user list empty (a supported, silent state per the FetchUsers warning-only path), selecting a user from autocomplete produces no echo -- the feature renders nothing in its headline flow?"
+    },
+    {
+      "key": "actionability",
+      "kind": "judge",
+      "description": "Does the finding name the fix direction: capture the id->name pairing from the autocomplete row the user clicked (interaction-time data) instead of relying on a cache that can be empty, rather than a vague 'handle the empty case'?"
+    },
+    {
+      "key": "cited_file_line",
+      "kind": "objective",
+      "check": "cited_file_line"
+    },
+    {
+      "key": "severity_enum",
+      "kind": "objective",
+      "check": "severity_enum"
+    },
+    {
+      "key": "finding_count",
+      "kind": "objective",
+      "check": "finding_count"
+    }
+  ],
+  "referenceOutcome": {
+    "expectedFindingCount": 1,
+    "allowedSeverities": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "info"
+    ],
+    "expectedFindings": [
+      {
+        "file": "Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp",
+        "line": 397,
+        "severity": "high",
+        "summary": "The echo names ids only from GetAvailableUsers() + search results; that catalog is empty when FetchUsers fails (warning-only) or after a cache restore, so selecting a user from autocomplete shows no name -- capture the id->name pair from the clicked autocomplete row instead."
+      }
+    ],
+    "notes": "Ground truth = fix PR #2149 (interaction-time capture of the selected row's name). repoRef 72471174 is #2148's buggy head. The review-checklist rule this case scores lives in agents/core/code-review.md ('Cache-sourced UI output'). A reviewer that only checks the pure transform (well tested) and the memo keying (the two CodeRabbit findings) misses it."
+  }
+}

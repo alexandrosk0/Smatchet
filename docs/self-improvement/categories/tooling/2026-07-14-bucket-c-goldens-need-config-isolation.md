@@ -49,3 +49,5 @@ green-washes it. The determinism recipe now proven for `user-info-*` is the fix.
 
 open (verified this session; the driver-isolation widen + legacy-golden
 re-bootstrap is the implementable fix)
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): item 1 was already done (test-screenshot-diff.sh isolates every scenario) and item 3 landed (backlog-sweep PR #2296: golden determinism recipe in the test-authoring skill, Pattern C). Remaining: item 2, graduate the bucket-C golden-diff lane from masked to blocking once its CI-native captures prove deterministic — needs live CI evidence.

@@ -6,12 +6,14 @@ name: CodeQL
 # use build-mode: manual and run the exact ninja-iter-msvc preset CI already
 # uses (build-and-test.yml windows-msvc).
 #
-# ADVISORY, not merge-blocking: the CodeQL check goes green on a successful
-# analysis regardless of alert count (findings land in Security -> Code
-# scanning, not as a check failure), and the check is deliberately NOT in
-# agents/scripts/core/merge-gates.sh's meant-to-block allow-list (WARN-first
-# calibration, mirroring the duplication / unused-symbol precedent). Graduation
-# to blocking is a separate post-calibration plan.
+# Findings are advisory, the check is not: the CodeQL check goes green on a
+# successful analysis regardless of alert count (findings land in Security ->
+# Code scanning, not as a check failure), so alerts never block a merge. The
+# check itself is not a required context, but when it runs on a PR (paths-scoped,
+# below) a FAILED analysis or build blocks under block-on-any-red like any other
+# check whose name lacks the `advisory` token (the curated meant-to-block
+# allow-list is retired — merge-gates.md). Making ALERTS block is a separate
+# post-calibration plan.
 #
 # Cadence is hybrid: a daily cron over the default branch (develop) +
 # workflow_dispatch, plus a PR trigger scoped to trust-boundary paths only.

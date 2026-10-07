@@ -21,7 +21,9 @@
      verdict you did not earn defeats the gate (ship-loops.md § [pre-first-push gate] item 5).
      `bash agent-layer/agents/scripts/core/record-review-verdict.sh "<tail>"` prints the line with
      the head= binding filled; the CI check rejects a head= that is not the PR head,
-     so every push needs the verdict re-recorded for the new commit.
+     so every push needs the verdict re-recorded for the new commit. Add
+     `--sync-pr <PR number>` and the script writes the line into this body itself
+     (no hand-copied hex; lock-slug / holds-lock lines are kept).
 adversarial-code-review: N findings, <disposition> (head=<sha>)
 adversarial-code-review: n/a — <reason the diff is trivial> (head=<sha>)
 -->
@@ -43,9 +45,9 @@ Apply the label in the PR sidebar (Labels → `tests-out-of-band`) or via `gh pr
 
 ## Plan-lock release (if this PR holds a `refs/locks/<slug>`)
 
-If this PR claimed a plan-lock via `bash agent-layer/agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body (uncomment + edit). On merge to develop, [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the line and deletes the corresponding `refs/locks/<slug>` ref. Without the line the ref stays in place and the Phase 4 staleness sweep flags it after 14 days.
+If this PR claimed a plan-lock via `bash agent-layer/agents/scripts/core/lock-claim.sh <slug> ...`, add the trigger line below somewhere in the PR body as a **bare line**: delete the `<!--` and `-->` around it, then replace the slug. Still inside `<!-- -->`, the line is **unarmed** — it renders as nothing and never matches. When the PR closes (merged or not), [`.github/workflows/lock-cleanup.yml`](workflows/lock-cleanup.yml) parses the bare line and deletes the corresponding `refs/locks/<slug>` ref. It also releases every lock whose claim names this PR's head branch, and it warns about a commented-out marker. A lock no PR close will release (its branch never opened a PR) goes through the [`lock-release-dispatch.yml`](workflows/lock-release-dispatch.yml) workflow.
 
-For **stacked PR sets sharing one lock**: use `lock-slug:` only on the final cutover PR. Intermediate PRs that hold the same lock should use `holds-lock:` instead (informational; not matched by the cleanup workflow regex). Otherwise the first intermediate PR to merge would release the ref before the slice has fully landed.
+For **stacked PR sets sharing one lock**: use `lock-slug:` only on the final cutover PR. Intermediate PRs that hold the same lock carry a bare `holds-lock:` line instead. It is not matched by the cleanup workflow regex, and it switches off the head-branch release. Otherwise the first intermediate PR to close would release the ref before the slice has fully landed.
 
 <!-- lock-slug: your-slug-here -->
 <!-- holds-lock: your-slug-here (use this on stacked-intermediate PRs that should NOT trigger release on merge) -->

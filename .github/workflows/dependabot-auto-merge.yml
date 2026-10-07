@@ -147,6 +147,10 @@ jobs:
           # Bound the poll so a slow sibling check can't pin a runner; if gates
           # are not green inside this window safe-merge refuses (a safe no-merge).
           MERGE_GATES_TIMEOUT_SECONDS: "900"
+          # Do not wait for the armed merge to land: a ledger row written in this
+          # throwaway runner checkout would be discarded, and the wait only pins
+          # the runner. merge-snapshot-holes.sh reports the missing row instead.
+          SAFE_MERGE_SNAPSHOT_WAIT_SECONDS: "0"
         run: |
           set -uo pipefail
           echo "Routing Dependabot PR #${PR_NUM} through the sanctioned safe-merge.sh gate poll."

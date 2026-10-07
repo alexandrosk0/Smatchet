@@ -160,8 +160,9 @@ FieldEditCommitResult CommitOnWorker(AppController& app, const PendingFieldEdit&
 }
 
 // Worker body — runs OFF the UI thread and posts exactly one completion lambda back via
-// MainThreadDispatcher::PostToMainThread. CommitOnWorker contains any exception from the commit, so
-// the post (and with it the UI-thread in-flight gate release) is reached on every path.
+// MainThreadDispatcher::PostCompletionToMainThread, which a droppable-task overflow never evicts. CommitOnWorker
+// contains any exception from the commit, so the post (and with it the UI-thread in-flight gate
+// release) is reached on every path.
 //
 // Captures own value copies of all fields needed; AppController& is the
 // only reference and remains valid for the lifetime of the app (workers
@@ -170,9 +171,10 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, const PendingFieldEdi
                      const FieldEditCommitRequest& req) {
     FieldEditCommitResult result = CommitOnWorker(app, edit, req);
 
-    // Hand the result back to the UI thread. The dispatcher's bounded queue
-    // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
-    app.PostToMainThread(
+    // Hand the result back to the UI thread as a completion: it releases the pump's in-flight gate,
+    // so a queue full of other posts must not evict it. The dispatcher's BeginShutdown-aware post is
+    // safe even if the app is mid-teardown.
+    app.mainThreadDispatcher.PostCompletionToMainThread(
         [&app, &d, edit, result]() mutable { ApplyCommitResultOnUiThread(app, d, edit, std::move(result)); });
 }
 

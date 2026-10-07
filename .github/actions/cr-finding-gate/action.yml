@@ -143,7 +143,7 @@ runs:
           # contains such an assignment (even inside a comment) hijacks the
           # extraction and corrupts the suite's fixtures.
           local tsv rc login ts b64 cmt mine=false n_nudges=0
-          local clean_ts="" busy_ts=""
+          local clean_ts="" busy_ts="" busy_note=""
           # login TAB updated_at TAB base64(body) per comment — base64 keeps
           # multiline bodies one-per-line so the loop sees whole comments;
           # ISO-8601 updated_at compares correctly as a plain string.
@@ -176,11 +176,20 @@ runs:
               # learnings verbatim, and ours contain "Review rate limited" —
               # matching that would mark the genuine clean reply itself busy
               # and suppress the nudge in exactly its target scenario.
+              # "Reviews are available now" is deliberately NOT busy: it is CR
+              # saying the limit has CLEARED.
               if printf '%s' "$cmt" | grep -qiE 'review limit reached|next review available|currently processing|review in progress by coderabbit'; then
-                [ "$ts" \> "$busy_ts" ] && busy_ts="$ts"
+                if [ "$ts" \> "$busy_ts" ]; then busy_ts="$ts"; busy_note="$cmt"; fi
               fi
+              # Clean-pass vocabulary: CR's own verdict phrases only. "No
+              # actionable comments" is CR's summary wording; a targeted
+              # verification reply said just "No findings" (#2023), so that is
+              # accepted too, but only as a standalone verdict sentence that
+              # ends its line — a bare `no findings` substring matched chat
+              # text ("there were no findings in X, but ...") and could post a
+              # full-review request into a live rate-limit window.
               if ! printf '%s' "$cmt" | grep -q 'walkthrough_start' \
-                 && printf '%s' "$cmt" | grep -qiE 'no actionable (comments|findings)'; then
+                 && printf '%s' "$cmt" | grep -qiE 'no actionable (comments|findings)|(^|[.!?:][[:space:]]+)[*_]*no findings[.!]?[*_]*[[:space:]]*$'; then
                 [ "$ts" \> "$clean_ts" ] && clean_ts="$ts"
               fi
             fi
@@ -190,49 +199,54 @@ runs:
             # that is the state nothing else will ever re-trigger.
             [ -n "$clean_ts" ]                   || return 0
             [ "$clean_ts" \> "$busy_ts" ]        || return 0
-          else
-            # never-reviewed: there is NO clean pass to key on — requiring one is
-            # exactly why the existing guard could not self-heal this state. The
-            # rate-limit playbook still binds though: never post while a limit /
-            # in-progress notice is ACTIVE, because a trigger inside an open
-            # window RESETS the countdown (merge-gates.md rule 1), and a busy CR
-            # is already engaged so the nudge is moot anyway.
-            #
-            # ACTIVE, not merely PRESENT. busy_ts is the newest busy comment over
-            # the WHOLE thread with no recency bound, so `[ -z "$busy_ts" ]`
-            # suppressed the nudge forever once a PR had been rate-limited even
-            # once — which on this repo is nearly every PR, leaving the gate
-            # PENDING with nothing able to un-park it (CodeRabbit, #2036). The
-            # prose here already said "newest word"; only the test was stricter.
-            #
-            # Sized to CR's own limit: its notices quote a rolling HOUR, and
-            # in-progress edits clear in minutes, so a busy notice older than the
-            # window cannot still be holding anything.
-            if [ -n "$busy_ts" ]; then
-              # A `date` that cannot do relative math leaves cutoff empty, and
-              # then we keep the OLD conservative behaviour (suppress). Failing
-              # the other way would post into a live window and reset CR's
-              # countdown — the one outcome the playbook forbids.
-              # Digits-only, defaulted IN the function: an empty or garbage
-              # window is not an error to `date` — GNU date reads `-d "- seconds"`
-              # as NOW, which would put the cutoff at the present instant and let
-              # every busy notice read as expired. That is a fail-OPEN on the one
-              # guard whose whole job is to not post into a live window, and it
-              # is invisible (rc=0). Resolving here also keeps the function
-              # self-contained for the bats harness, which extracts it alone.
-              local busy_win="${NUDGE_BUSY_WINDOW_SECONDS:-3600}"
-              case "$busy_win" in ''|*[!0-9]*) busy_win=3600 ;; esac
-              local busy_cutoff
-              busy_cutoff="$(date -u -d "-${busy_win} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
-              # Belt-and-braces, deliberately NOT load-bearing: an empty cutoff
-              # already fails the `\<` below (nothing sorts before ""), so the
-              # guard is suppress-either-way and no test can distinguish it.
-              # Kept because it states the fail-safe DIRECTION explicitly — if
-              # the comparison is ever rewritten, the intent survives the edit
-              # instead of depending on a string-compare side effect.
-              [ -n "$busy_cutoff" ] || return 0
-              [ "$busy_ts" \< "$busy_cutoff" ] || return 0
-            fi
+          fi
+          # never-reviewed: there is NO clean pass to key on — requiring one is
+          # exactly why the existing guard could not self-heal that state.
+          #
+          # BOTH modes: the rate-limit playbook binds — never post while a
+          # limit / in-progress notice is ACTIVE, because a trigger inside an
+          # open window RESETS the countdown (merge-gates.md rule 1), and a busy
+          # CR is already engaged so the nudge is moot anyway. A clean reply
+          # newer than the notice does not end the window by itself (CR answers
+          # chat commands while rate-limited), so stale-clean checks it too.
+          #
+          # ACTIVE, not merely PRESENT. busy_ts is the newest busy comment over
+          # the WHOLE thread, so `[ -z "$busy_ts" ]` suppressed the nudge forever
+          # once a PR had been rate-limited even once — nearly every PR here,
+          # leaving the gate PENDING with nothing able to un-park it
+          # (CodeRabbit, #2036). The window ends at the notice time plus the
+          # wait it quotes ("Next review available in: 38 minutes", "wait 13
+          # minutes and 37 seconds"); a notice quoting none falls back to
+          # NUDGE_BUSY_WINDOW_SECONDS — CR's limit is a rolling HOUR, and
+          # in-progress edits clear in minutes.
+          if [ -n "$busy_ts" ]; then
+            # Digits-only, defaulted IN the function: an empty or garbage
+            # window must not read as "already expired" (a fail-OPEN on the one
+            # guard whose job is to not post into a live window). Resolving
+            # here also keeps the function self-contained for the bats harness,
+            # which extracts it alone.
+            local busy_win="${NUDGE_BUSY_WINDOW_SECONDS:-3600}"
+            case "$busy_win" in ''|*[!0-9]*) busy_win=3600 ;; esac
+            local busy_wait=0 busy_n busy_unit busy_epoch now_epoch
+            while read -r busy_n busy_unit; do
+              case "$busy_unit" in
+                h*) busy_wait=$((busy_wait + busy_n * 3600)) ;;
+                m*) busy_wait=$((busy_wait + busy_n * 60)) ;;
+                s*) busy_wait=$((busy_wait + busy_n)) ;;
+              esac
+            done < <(printf '%s' "$busy_note" | tr '\n' ' ' \
+                       | grep -oiE '(available in|wait)[^0-9]{0,12}[0-9][^.<]{0,60}' | head -n 1 \
+                       | grep -oiE '[0-9]+[[:space:]]*(hours?|minutes?|seconds?)' \
+                       | sed -E 's/([0-9]+)[[:space:]]*/\1 /' | tr '[:upper:]' '[:lower:]')
+            [ "$busy_wait" -gt 0 ] || busy_wait="$busy_win"
+            # A `date` that cannot parse the timestamp keeps the conservative
+            # behaviour (suppress): failing the other way would post into a
+            # live window and reset CR's countdown — the one outcome the
+            # playbook forbids.
+            busy_epoch="$(date -u -d "$busy_ts" +%s 2>/dev/null)" || return 0
+            now_epoch="$(date -u +%s 2>/dev/null)" || return 0
+            case "$busy_epoch$now_epoch" in ''|*[!0-9]*) return 0 ;; esac
+            [ "$now_epoch" -ge $((busy_epoch + busy_wait)) ] || return 0
           fi
           [ "$mine" = false ]                    || return 0
           [ "$n_nudges" -lt "$NUDGE_BUDGET" ]    || return 0
@@ -243,6 +257,56 @@ runs:
         <!-- ${marker} -->
         _Auto-posted by the CR finding gate: ${blurb}_" >/dev/null \
             || echo "WARN: nudge comment POST failed (missing pull-requests:write? the /issues/ path needs it — permissions key on target type, not path)" >&2
+        }
+
+        # oss_ask_state — where the human OSS manual trigger stands on this PR,
+        # for decide()'s `manual review required` arm. Echoes one of:
+        #   none    — no human-authored `@coderabbitai review` / `full review`;
+        #   waiting — a human asked and CodeRabbit has not answered it with an
+        #             error (it may still be working);
+        #   failed  — CodeRabbit's newest reply after the latest human ask is a
+        #             review ERROR ("An error occurred during the review
+        #             process" / "Review failed").
+        # `failed` is a first-class state because a failed invocation otherwise
+        # reads as one still running: on #2090 CR acknowledged two asks and
+        # both ended in an error, the first published by EDITING the ack
+        # comment in place. Waiting on that returns non-terminal on every pass
+        # and parks the PR on an unbounded PENDING (process 2026-08-17
+        # cr-finding-gate-accepts-a-verdict-line-without-a-review, action 4).
+        # Only CR comments positioned AFTER the latest ask count, newest by
+        # updated_at, so an ack edited into a failure counts at its edit time
+        # and a fresh human ask supersedes an earlier failure. A failed fetch
+        # reads as `none`, i.e. the terminal arm that names the human move.
+        oss_ask_state() {
+          local login utype ts cmt asked=false cr_ts="" cr_err=false
+          while IFS=$'\t' read -r login utype ts cmt; do
+            if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
+              if [ "$asked" = true ] && { [ -z "$cr_ts" ] || [ "$ts" \> "$cr_ts" ]; }; then
+                cr_ts="$ts"
+                if printf '%s' "$cmt" | grep -qiE 'an error occurred during the review process|review failed'; then
+                  cr_err=true
+                else
+                  cr_err=false
+                fi
+              fi
+              continue
+            fi
+            case "$utype" in Bot) continue ;; esac
+            case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
+            if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
+              asked=true
+              cr_ts=""
+              cr_err=false
+            fi
+          done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
+                    --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + (.updated_at // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
+          if [ "$asked" = false ]; then
+            echo none
+          elif [ "$cr_err" = true ]; then
+            echo failed
+          else
+            echo waiting
+          fi
         }
 
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
@@ -520,30 +584,31 @@ runs:
             # Terminal arm (postmortems 2026-08-19 / process 2026-08-30): the
             # previous path nudged via GITHUB_TOKEN then returned non-terminal,
             # which exhausted the poll window into an unbounded `pending` —
-            # and CodeRabbit IGNORES bot-authored `@coderabbitai review`, so the
-            # nudge could never heal. Post a TERMINAL failure naming the two
-            # sanctioned moves. Re-run triggers: CR review/comment (workflow
-            # issue_comment filter), labeled/unlabeled waiver, or a human
+            # and the bot-authored nudge never healed it. That is an observed
+            # asymmetry, not a known CodeRabbit policy: bot-authored
+            # `@coderabbitai review` nudges drew no review in the observed
+            # parked cases (0/5 on #2176/#2184) while human-authored ones did
+            # (4/4), yet one github-actions[bot] nudge on #2036 did draw a
+            # reply. Post a TERMINAL failure naming the two sanctioned moves.
+            # Re-run triggers: CR review/comment (workflow issue_comment
+            # filter), labeled/unlabeled waiver, or a human
             # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
               # If a human already asked, keep waiting — CR may still be working
-              # (synchronize / human-trigger comment re-runs land here).
-              human_asked=false
-              while IFS=$'\t' read -r login utype cmt; do
-                case "$utype" in Bot) continue ;; esac
-                case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
-                if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
-                  human_asked=true
-                  break
-                fi
-              done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
-                        --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
-              if [ "$human_asked" = true ]; then
-                echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
-                return 1
-              fi
-              # Keep <=140 chars (GitHub status description limit).
+              # (synchronize / human-trigger comment re-runs land here) — UNLESS
+              # CR has since answered that ask with a review error: waiting on a
+              # failed invocation is an unbounded PENDING, so post a terminal
+              # failure naming the next step instead. Descriptions <=140 chars
+              # (GitHub status description limit).
+              case "$(oss_ask_state)" in
+                waiting)
+                  echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
+                  return 1 ;;
+                failed)
+                  post failure "CodeRabbit errored on the requested review: re-ask '@coderabbitai full review' OR labels cr-out-of-band + cr-disposition:<reason>"
+                  exit 0 ;;
+              esac
               post failure "OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled"
               exit 0
             fi
@@ -664,9 +729,12 @@ runs:
         # Window exhausted. If not a single fetch succeeded, the GraphQL API was
         # down the whole time -> surface error. Otherwise CR simply hasn't
         # settled on this head -> PENDING; a later review event or re-run
-        # resolves it.
+        # resolves it. The description names the next step so a parked PR is
+        # self-explanatory to whoever has to unpark it (tooling 2026-08-16
+        # cr-gate-nudge-403 entry, item 3). ASCII only and <=140 chars: post()
+        # cuts at 140, and nothing parses this text.
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
         else
-          post pending "awaiting CodeRabbit review on current head"
+          post pending "awaiting CodeRabbit on current head; if stalled, a human comments '@coderabbitai review' (scripts/dev/trigger-coderabbit-review.sh)"
         fi

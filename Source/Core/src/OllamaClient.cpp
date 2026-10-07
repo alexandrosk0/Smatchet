@@ -3,6 +3,7 @@
 #include "AiErrorRedact.h"
 #include "AiNdjsonParser.h"
 #include "AiWireIntrospect.h"
+#include "AiWirePure.h"
 #include "OllamaStreamError.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -14,24 +15,14 @@
 #include <cstdint>
 #include <string>
 
+using smatchet::ai::pure::JoinUrl;
+using smatchet::ai::pure::ResolveBaseUrlOr;
+
 namespace {
 
 constexpr const char* kDefaultBaseUrl = "http://localhost:11434";
 
-std::string ResolveBaseUrl(const AiClientConfig& cfg) {
-    if (!cfg.BaseUrl.empty())
-        return cfg.BaseUrl;
-    return kDefaultBaseUrl;
-}
-
-// SMATCHET_DEVIATION(rule=duplication; reason=JoinUrl and the base-URL resolve are copied in each AI provider client; debt 2026-10-03-ai-client-url-and-messages-twins; owner=ai-clients; revisit=2027-05-31)
-std::string JoinUrl(const std::string& base, const char* path) {
-    if (base.empty())
-        return std::string(path);
-    if (base.back() == '/')
-        return base.substr(0, base.size() - 1) + path;
-    return base + path;
-}
+std::string ResolveBaseUrl(const AiClientConfig& cfg) { return ResolveBaseUrlOr(cfg.BaseUrl, kDefaultBaseUrl); }
 
 nlohmann::json BuildChatBody(const AiChatRequest& req) {
     nlohmann::json body;
@@ -51,24 +42,10 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
         body["options"] = std::move(options);
     }
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=system + History messages array build shared with OpenAiClient; debt 2026-10-03-ai-client-url-and-messages-twins; owner=ai-clients; revisit=2027-05-31)
-    nlohmann::json messages = nlohmann::json::array();
     // Ollama's /api/chat takes the system prompt as a leading {role:"system"} message.
     // A top-level `system` field is an /api/generate parameter that /api/chat ignores,
     // so emit it as a message to guarantee agents.md + context reach the model.
-    if (!req.SystemPrompt.empty()) {
-        nlohmann::json sys;
-        sys["role"] = "system";
-        sys["content"] = req.SystemPrompt;
-        messages.push_back(std::move(sys));
-    }
-    for (const auto& h : req.History) {
-        nlohmann::json m;
-        m["role"] = h.Role;
-        m["content"] = h.Content;
-        messages.push_back(std::move(m));
-    }
-    body["messages"] = std::move(messages);
+    body["messages"] = smatchet::ai::pure::BuildChatMessages(req.SystemPrompt, req.History);
     return body;
 }
 

@@ -17,5 +17,10 @@ namespace detail {
 bool EntryPassesPillFilter(const FieldCatalogCache::CachedProjectEntry& e, const std::string& backendKind,
                            const std::string& endpoint);
 
+/** True iff the pill offers recent projects for a tracker of this kind ("Jira", "Plane", "GitHub",
+ *  "Linear", as FieldCatalogCache indexes them). A pick rewrites the query as a JQL `project =` clause
+ *  or Plane's project_id; GitHub and Linear queries have neither. */
+bool PillOffersRecentProjects(const std::string& backendKind);
+
 } // namespace detail
 } // namespace SmatchetJqlProjectPill

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 using SmatchetJqlProjectPill::detail::EntryPassesPillFilter;
+using SmatchetJqlProjectPill::detail::PillOffersRecentProjects;
 
 namespace {
 FieldCatalogCache::CachedProjectEntry MakeEntry(const std::string& key, const std::string& backend,
@@ -46,4 +47,13 @@ TEST_CASE("EntryPassesPillFilter: an empty endpoint filter disables the endpoint
 TEST_CASE("EntryPassesPillFilter: a Plane entry with a matching endpoint passes") {
     CHECK(EntryPassesPillFilter(MakeEntry("uuid-1", "Plane", "https://api.plane.so|acme"), "Plane",
                                 "https://api.plane.so|acme"));
+}
+
+TEST_CASE("PillOffersRecentProjects: only trackers whose query a pick can scope") {
+    CHECK(PillOffersRecentProjects("Jira"));
+    CHECK(PillOffersRecentProjects("Plane"));
+    // A pick writes `project = KEY` (or Plane's project_id): a GitHub or Linear query has no such clause.
+    CHECK_FALSE(PillOffersRecentProjects("GitHub"));
+    CHECK_FALSE(PillOffersRecentProjects("Linear"));
+    CHECK_FALSE(PillOffersRecentProjects(""));
 }

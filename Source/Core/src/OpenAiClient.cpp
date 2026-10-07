@@ -3,6 +3,7 @@
 #include "AiErrorRedact.h"
 #include "AiSseParser.h"
 #include "AiWireIntrospect.h"
+#include "AiWirePure.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -14,31 +15,24 @@
 #include <cstdint>
 #include <string>
 
+using smatchet::ai::pure::JoinUrl;
+using smatchet::ai::pure::ResolveBaseUrlOr;
+
 namespace {
 
 constexpr const char* kDefaultBaseUrl = "https://api.openai.com";
 constexpr int kDefaultMaxTokens = 4096;
 
 std::string ResolveBaseUrl(const AiClientConfig& cfg) {
-    std::string base = cfg.BaseUrl.empty() ? std::string(kDefaultBaseUrl) : cfg.BaseUrl;
-    // Strip a trailing "/v1" or "/v1/" so callers can interchangeably pass
+    std::string base = ResolveBaseUrlOr(cfg.BaseUrl, kDefaultBaseUrl);
+    // Strip a trailing "/v1" (ResolveBaseUrlOr already dropped any trailing '/',
+    // so "/v1/" and "/v1//" land here too) so callers can interchangeably pass
     // "http://localhost:1234" or "http://localhost:1234/v1" — the natural
     // copy-paste from LM Studio / Ollama-OpenAI-compat / OpenAI docs all
     // include the /v1 suffix, which would otherwise produce /v1/v1/... paths.
-    if (base.size() >= 4 && base.compare(base.size() - 4, 4, "/v1/") == 0) {
-        base.resize(base.size() - 4);
-    } else if (base.size() >= 3 && base.compare(base.size() - 3, 3, "/v1") == 0) {
+    if (base.size() >= 3 && base.compare(base.size() - 3, 3, "/v1") == 0)
         base.resize(base.size() - 3);
-    }
     return base;
-}
-
-std::string JoinUrl(const std::string& base, const char* path) {
-    if (base.empty())
-        return std::string(path);
-    if (base.back() == '/')
-        return base.substr(0, base.size() - 1) + path;
-    return base + path;
 }
 
 nlohmann::json BuildChatBody(const AiChatRequest& req) {
@@ -60,20 +54,7 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
         body["reasoning_effort"] = req.ReasoningEffort;
     }
 
-    nlohmann::json messages = nlohmann::json::array();
-    if (!req.SystemPrompt.empty()) {
-        nlohmann::json m;
-        m["role"] = "system";
-        m["content"] = req.SystemPrompt;
-        messages.push_back(std::move(m));
-    }
-    for (const auto& h : req.History) {
-        nlohmann::json m;
-        m["role"] = h.Role;
-        m["content"] = h.Content;
-        messages.push_back(std::move(m));
-    }
-    body["messages"] = std::move(messages);
+    body["messages"] = smatchet::ai::pure::BuildChatMessages(req.SystemPrompt, req.History);
     return body;
 }
 

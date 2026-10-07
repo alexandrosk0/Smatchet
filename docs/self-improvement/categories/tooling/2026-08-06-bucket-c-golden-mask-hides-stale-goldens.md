@@ -137,9 +137,10 @@
   (`code-syntax-coloring`, `command-palette-fuzzy`, `dock-gap-sentinel`) are
   still stale and still masked — they need their own determinism work first,
   since the `ScenarioRunner::Tick` double-call
-  ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md))
+  ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../applied.md))
   double-draws any scenario that renders from `OnFrame`.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the 'regenerate the stale goldens first' prerequisite appears met — tests/golden/PROVENANCE.tsv lists all 7 goldens as CI-native (bootstrap run 32049223602, Mesa 24.2.5, 1920x1009 / 480x1009). What remains is evidence, not code: collect the masked step's per-scenario verdicts from recent bucket-C job summaries, and graduate the user-info-* scenarios to an unmasked diff only once they show deterministic passes. Not doable from a container that cannot read CI job summaries.
   Status: partially-applied (part 1 — masked-step verdict reporting — shipped
     2026-08-15; part 2 — graduate the `user-info-*` subset to an unmasked diff —
     open, gated on regenerating the three remaining stale goldens)
-  Last-reviewed: 2026-08-15
+  Last-reviewed: 2026-10-04

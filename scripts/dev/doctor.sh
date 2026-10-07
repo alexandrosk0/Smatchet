@@ -21,6 +21,7 @@
 #   - cppcheck
 #   - clang-tidy
 #   - clang-format
+#   - core.hooksPath is relative (an absolute one serves main's hooks to every worktree)
 #
 # Opt-in warn-only checks (gated by env var, skipped by default):
 #   - OpenCppCoverage (SMATCHET_DOCTOR_CHECK_COVERAGE=1) -- Windows-only
@@ -376,6 +377,36 @@ if [ -f "$harness_probe" ]; then
         3) write_warn 'harness' "agent layer missing/empty or agent links STALE; fix: git submodule update --init --recursive && bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh claude-code" ;;
         *) write_warn 'harness' "NOT provisioned -- session guards inert; fix: bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh claude-code" ;;
     esac
+fi
+
+# core.hooksPath must be RELATIVE. git runs a hook from the worktree root, so
+# `scripts/git-hooks` resolves inside each worktree; an absolute path makes every
+# worktree run whatever revision of the hooks the MAIN checkout has checked out,
+# which surfaces only mid-incident as "the merged hook fix does not work". Checks
+# the shared local config and this worktree's config.worktree (which overrides it).
+if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    hooks_abs=""
+    hooks_rel=""
+    hooks_wt_cfg="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null)/config.worktree"
+    for hooks_src in local worktree; do
+        if [ "$hooks_src" = local ]; then
+            hooks_val="$(git -C "$REPO_ROOT" config --local --get core.hooksPath 2>/dev/null || true)"
+        elif [ -f "$hooks_wt_cfg" ]; then
+            hooks_val="$(git config --file "$hooks_wt_cfg" --get core.hooksPath 2>/dev/null || true)"
+        else
+            hooks_val=""
+        fi
+        case "$hooks_val" in
+            '') ;;
+            /*|[A-Za-z]:[\\/]*|\\*|"~"*) hooks_abs="${hooks_abs:+$hooks_abs, }$hooks_src '$hooks_val'" ;;
+            *) hooks_rel="$hooks_val" ;;
+        esac
+    done
+    if [ -n "$hooks_abs" ]; then
+        write_warn 'hooksPath' "absolute core.hooksPath ($hooks_abs) runs the main checkout's hooks in every worktree; fix: bash ${harness_layer_rel}agents/scripts/core/setup-harness.sh git-hooks (rewrites it to scripts/git-hooks)"
+    elif [ -n "$hooks_rel" ]; then
+        write_pass 'hooksPath' "relative ($hooks_rel) -- each worktree runs its own hooks"
+    fi
 fi
 
 # Opt-in: OpenCppCoverage check is skipped by default. Set the env var

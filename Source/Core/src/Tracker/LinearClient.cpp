@@ -582,7 +582,7 @@ LinearClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& /*
     return EditMetaResult::Ok(std::move(outFieldIdCanEdit));
 }
 
-// UpdateIssueFields / UpdateField / BuildFieldPayload / BuildCreatePayload /
-// CreateIssue (ITrackerIssueMutations) + AddIssueCommentPlain (ITrackerCollaboration)
-// live in LinearIssueMutation.cpp — the GraphQL mutation surface is split out of
+// UpdateIssueFields / BuildFieldPayload / BuildCreatePayload / CreateIssue
+// (ITrackerIssueMutations; UpdateField is the interface default) + AddIssueCommentPlain
+// (ITrackerCollaboration) live in LinearIssueMutation.cpp — the GraphQL mutation surface is split out of
 // this read shell exactly like JiraIssueMutation.cpp / PlaneIssueMutation.cpp.

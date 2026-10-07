@@ -122,3 +122,5 @@ source. That is precisely the failure mode the #2090 ledger records for its own 
 that exists is not an artifact you have read* — reproduced here by the person writing it down.
 
 Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=25; action=check whether any PR carrying an adversarial-code-review line records who reviewed, and whether a lint-rules.d change has shipped on a self-review alone; baseline=0 of N record a reviewer as of 2026-08-17; fired=never
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): action 4 landed (backlog-sweep PR #2296: in the OSS arm a CodeRabbit error reply after the human ask is a terminal failure naming the re-ask / waiver). Remaining: (1) the verdict line records no reviewer (a reviewer field in verdict_re, synced between check-pr-intent.sh and doc-validation.yml); (2) merge-gates.sh still fast-passes the OSS 'manual review required' skip via cr_review_skipped; (3) no second-pass requirement for gate-logic diffs.

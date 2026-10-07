@@ -29,8 +29,20 @@ class ITrackerIssueMutations {
 
     virtual TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) = 0;
 
+    /**
+     * Set-replace single-field edit: `values` is the field's full intended set, not a delta.
+     * Default: build the one-field payload with BuildFieldPayload, then send it through
+     * UpdateIssueFields (a payload error is returned without a request). Override only to
+     * guard the call (GitHub rejects read-only commit keys, then calls this) or to bypass it.
+     */
     virtual TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
-                                     const std::vector<std::string>& values) = 0;
+                                     const std::vector<std::string>& values) {
+        Result<nlohmann::json, TrackerError> payload = BuildFieldPayload(field, values);
+        if (!payload) {
+            return payload.error();
+        }
+        return UpdateIssueFields(issueId, payload.value());
+    }
 
     virtual Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                                    const std::vector<std::string>& values) = 0;

@@ -70,5 +70,6 @@
     #2036; its 4 merged PRs are recorded there);
     `2026-08-16-cr-gate-greens-with-no-cr-status-on-head.md` (third string: none
     at all); #1996; #2004.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): items 2-4 landed (backlog-sweep PR #2296: a rate-limited code PR blocks inside the CR NONE arm; agents/scripts/ left $pureDocs; bare 'Review skipped' and unknown descriptions pinned). Only item 1 remains: check #1994's cr-finding-gate run log against the #1996 action revision to confirm whether the server-side 'Review rate limited' match is reached on that code path — log forensics, not a code change.
   Status: open
-  Last-reviewed: 2026-08-16
+  Last-reviewed: 2026-10-04

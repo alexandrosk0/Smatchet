@@ -105,3 +105,5 @@ Three distinct failures, none of which announce themselves:
 4. **Say it in `docs/agent-rules/process-rules.md` § Concurrent interactive sessions.** That
    section already owns the "worktrees share one `.git`, so X leaks across sessions" hazards;
    "the hook you run comes from main's branch, not yours" is the same shape and is missing.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): fixes 1-3 landed (backlog-sweep PR #2296: setup-harness.sh rewrites an absolute hooksPath that resolves to this repo's scripts/git-hooks to the relative form in the local config and every config.worktree — also via the new 'setup-harness.sh git-hooks' subcommand — and doctor.sh WARNs on an absolute value). Remaining: step 4, the docs/agent-rules/process-rules.md § Concurrent interactive sessions line (that file was in another session's plan-lock during the sweep). Existing clones heal on their next setup-harness run.

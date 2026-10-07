@@ -22,6 +22,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58815}"
@@ -34,6 +38,12 @@ if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc" >&2
     exit 2
 fi
+
+ui_test_require_fresh_exe "$EXE" || exit 2
+
+# Isolated, UNSEEDED user-data dir: these cases assert first-run (fresh-profile)
+# defaults, so the developer's real profile must never leak in.
+ui_test_isolate_home
 
 echo "[test-ui-tracker-first-run-setup] launching ephemeral Smatchet (port $TEST_PORT)..."
 RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \

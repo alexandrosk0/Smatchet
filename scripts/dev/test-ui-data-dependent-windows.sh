@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58735}"
@@ -35,22 +39,21 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
+ui_test_require_fresh_exe "$EXE" || exit 2
+
 # Isolated user-data dir so this run never writes to the developer's real profile
 # (the Offline Queue test enqueues + deletes a synthetic SQLite create row).
-TMPDIR_DATA="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_DATA"' EXIT
+ui_test_isolate_home
 
 echo "[test-ui-data-dependent-windows] launching ephemeral Smatchet (port $TEST_PORT)..."
 if [ -f "$FIXTURE" ]; then
     echo "  fixture: $FIXTURE (New Issue Draft row test enabled)"
-    RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
-        SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
+    RAW_OUTPUT="$(SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
         "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
         --mcp-port="$TEST_PORT" 2>&1 || true)"
 else
     echo "  fixture: NONE at $FIXTURE — New Issue Draft row test will SKIP"
-    RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
-        "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
         --mcp-port="$TEST_PORT" 2>&1 || true)"
 fi
 

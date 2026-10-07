@@ -19,5 +19,9 @@ bool EntryPassesPillFilter(const FieldCatalogCache::CachedProjectEntry& e, const
     return true;
 }
 
+bool PillOffersRecentProjects(const std::string& backendKind) {
+    return backendKind == "Jira" || backendKind == "Plane";
+}
+
 } // namespace detail
 } // namespace SmatchetJqlProjectPill

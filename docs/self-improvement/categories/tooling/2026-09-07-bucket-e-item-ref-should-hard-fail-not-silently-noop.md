@@ -16,5 +16,6 @@
   check-then-early-return pattern. Also note in `agents/_shared/skills/test-authoring` (or wherever bucket-E
   authoring guidance lives) that a checkbox/button label used as an item ref belongs in a single shared
   constant alongside the `T(key, fallback)` fallback string it mirrors, so a rename cannot drift the two independently.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the authoring note landed (backlog-sweep PR #2296: test-authoring skill — a label and its T() fallback share one constant; the ref text goes in the failure message). Remaining: a shared IM_CHECK_ITEM_EXISTS-style hard-fail helper in the tests/ui support code and converting the ClickSortByCheckbox check-then-return call sites — bucket-E C++ that only a Windows UI-test build can validate.
   Status: open
-  Last-reviewed: 2026-09-07
+  Last-reviewed: 2026-10-04

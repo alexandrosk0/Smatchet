@@ -6,9 +6,10 @@
 // Commands -> AppController include back-edge (DAG-ify core-include-dag, Phase 2).
 // AppController implements this by delegating to its `mainThreadDispatcher` member.
 // The interface lives in the Commands/ layer so MainThreadDispatch.h depends only
-// on a same-layer header. Dependency-light: <functional> only — no Ui/GL include.
+// on a same-layer header. Dependency-light: <functional> + <utility> only — no Ui/GL include.
 
 #include <functional>
+#include <utility>
 
 class IMainThreadPoster {
   public:
@@ -20,6 +21,11 @@ class IMainThreadPoster {
     /// Post `fn` to run on the UI thread at the next dispatcher drain. Safe from any
     /// thread; a no-op once shutdown has begun (see MainThreadDispatcher).
     virtual void PostToMainThread(std::function<void()> fn) = 0;
+
+    /// Post a completion (releases a caller's in-flight latch). MainThreadDispatcher keeps completions
+    /// through a droppable-task overflow; only its own completion cap evicts one. Defaults to
+    /// PostToMainThread, droppable, for posters without a completion path.
+    virtual void PostCompletionToMainThread(std::function<void()> fn) { PostToMainThread(std::move(fn)); }
 };
 
 #endif // SMATCHET_COMMANDS_IMAIN_THREAD_POSTER_H

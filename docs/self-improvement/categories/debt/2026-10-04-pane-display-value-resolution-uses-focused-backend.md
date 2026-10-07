@@ -1,0 +1,5 @@
+- 2026-10-04 · orchestrator (backlog-sweep-2026-10) · [debt] · P2 — a non-focused grid pane resolves display values through the FOCUSED pane's backend reader
+  Details: residue split out of the archived 2026-06-08 "per-pane catalog VALUE-read routing" entry (now in applied.md). Per-pane catalog population and value routing shipped (`ChoosePaneCatalogSource` + `resolvePaneCatalog`, `populatePaneCatalogAfterSync_` in `Source/Core/src/AppController_PaneContexts.cpp`), but backend `Reader().ResolveDisplayValue` stays focused-backend-routed — the only tracking is the comment at `Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp:203-206` ("remains focused-backend-routed (separate follow-up)"). With two panes on different trackers, a value the catalog cannot render (user / option ids resolved by the reader) would be looked up against the wrong backend.
+  Concrete next action: confirm whether it is user-observable (two panes, different backends, a reader-resolved field visible in the unfocused pane). If it is, file a GitHub Issue per ADR-0014 and delete this entry; if not, route the reader per pane alongside the catalog.
+  Status: open
+  Last-reviewed: 2026-10-04

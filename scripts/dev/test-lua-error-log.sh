@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble — this script uses its wedge-proof ui_test_capture.
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 # Use a non-default MCP port so the CLI cannot short-circuit to an already-running Smatchet
@@ -24,6 +28,9 @@ PY="${PYTHON:-python}"
 # the port unreachable, --spawn always launches a fresh ephemeral child against the rebuilt
 # exe — which is the one we want to validate.
 TEST_PORT="${SMATCHET_TEST_PORT:-58731}"
+# Per-snippet wall-clock cap: a hung --spawn child fails its test as a FAILED row
+# instead of wedging the suite (and test-all.sh behind it) indefinitely.
+RUN_TIMEOUT_SECS="${SMATCHET_RUN_TIMEOUT_SECS:-120}"
 
 if [ ! -x "$EXE" ] && [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone" >&2
@@ -62,41 +69,59 @@ assert_contains() {
     fi
 }
 
+# run_test <code> <label> — run one snippet against an ephemeral --spawn child and leave its
+# combined output in OUT. Captured through a FILE with stdin from /dev/null, not `$(...)`:
+# the --spawn child inherits the CLI's stdout, so when it fails to exit a command-substitution
+# pipe never closes and the suite wedges forever after the CLI itself has returned. A run that
+# hits RUN_TIMEOUT_SECS is a FAILED row and returns 1 so the caller skips its assertions.
+OUT=""
 run_test() {
-    local code="$1"
-    "$EXE" cmd debug.lua_log_test --code="$code" --mcp-port="$TEST_PORT" --spawn --yes 2>&1
+    local code="$1" label="$2"
+    ui_test_capture "$RUN_TIMEOUT_SECS" "$EXE" cmd debug.lua_log_test --code="$code" \
+        --mcp-port="$TEST_PORT" --spawn --yes
+    OUT="$UI_TEST_OUTPUT"
+    if ui_test_timed_out; then
+        echo "  FAIL  $label  timed out after ${RUN_TIMEOUT_SECS}s (exit $UI_TEST_RC) — hung --spawn child?"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    return 0
 }
 
 echo
 echo "=== Test 1: log_info() reaches the log sink ==="
-OUT=$(run_test "log_info('hello-from-test')")
-assert_eq      "ok_snippet"                "$(echo "$OUT" | extract ok_snippet)"                "true"
-assert_contains "log_lines contains hello"  "$(echo "$OUT" | extract log_lines)"                 "hello-from-test"
-assert_eq      "window_requested off"      "$(echo "$OUT" | extract window_requested)"           "false"
-assert_eq      "err_lines empty"           "$(echo "$OUT" | extract err_lines)"                  "[]"
+if run_test "log_info('hello-from-test')" "Test 1"; then
+    assert_eq      "ok_snippet"                "$(echo "$OUT" | extract ok_snippet)"                "true"
+    assert_contains "log_lines contains hello"  "$(echo "$OUT" | extract log_lines)"                 "hello-from-test"
+    assert_eq      "window_requested off"      "$(echo "$OUT" | extract window_requested)"           "false"
+    assert_eq      "err_lines empty"           "$(echo "$OUT" | extract err_lines)"                  "[]"
+fi
 
 echo
 echo "=== Test 2: error() reaches BOTH log sink (with [ERROR]) and error sink ==="
-OUT=$(run_test "error('boom-from-test')")
-assert_eq      "ok_snippet false on throw"  "$(echo "$OUT" | extract ok_snippet)"               "false"
-assert_contains "snippet_error has boom"    "$(echo "$OUT" | extract snippet_error)"            "boom-from-test"
-assert_contains "log_lines has [ERROR]"     "$(echo "$OUT" | extract log_lines)"                "\\[ERROR\\]"
-assert_contains "err_lines has boom"        "$(echo "$OUT" | extract err_lines)"                "boom-from-test"
-assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+if run_test "error('boom-from-test')" "Test 2"; then
+    assert_eq      "ok_snippet false on throw"  "$(echo "$OUT" | extract ok_snippet)"               "false"
+    assert_contains "snippet_error has boom"    "$(echo "$OUT" | extract snippet_error)"            "boom-from-test"
+    assert_contains "log_lines has [ERROR]"     "$(echo "$OUT" | extract log_lines)"                "\\[ERROR\\]"
+    assert_contains "err_lines has boom"        "$(echo "$OUT" | extract err_lines)"                "boom-from-test"
+    assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+fi
 
 echo
 echo "=== Test 3: log_info()+error() sequence — both lines captured ==="
-OUT=$(run_test "log_info('line-A'); error('line-B')")
-assert_contains "log_lines has line-A"     "$(echo "$OUT" | extract log_lines)"                 "line-A"
-assert_contains "log_lines has [ERROR]"    "$(echo "$OUT" | extract log_lines)"                 "\\[ERROR\\]"
-assert_contains "err_lines has line-B"     "$(echo "$OUT" | extract err_lines)"                 "line-B"
-assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+if run_test "log_info('line-A'); error('line-B')" "Test 3"; then
+    assert_contains "log_lines has line-A"     "$(echo "$OUT" | extract log_lines)"                 "line-A"
+    assert_contains "log_lines has [ERROR]"    "$(echo "$OUT" | extract log_lines)"                 "\\[ERROR\\]"
+    assert_contains "err_lines has line-B"     "$(echo "$OUT" | extract err_lines)"                 "line-B"
+    assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+fi
 
 echo
 echo "=== Test 4: parse error on bad syntax also fires error sink ==="
-OUT=$(run_test "this is not valid lua %$#")
-assert_eq      "ok_snippet false on parse" "$(echo "$OUT" | extract ok_snippet)"                "false"
-assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+if run_test "this is not valid lua %$#" "Test 4"; then
+    assert_eq      "ok_snippet false on parse" "$(echo "$OUT" | extract ok_snippet)"                "false"
+    assert_eq      "window_requested on"       "$(echo "$OUT" | extract window_requested)"          "true"
+fi
 
 echo
 echo "============================="

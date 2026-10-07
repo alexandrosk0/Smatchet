@@ -3,9 +3,12 @@
 #
 # WHY: CodeRabbit auto-reviews only repos with ≥10 stars. Below that it posts
 # "Review available on request" / "manual review required for this OSS
-# repository" and waits. Bot-authored `@coderabbitai review` (GITHUB_TOKEN /
-# github-actions[bot] / GitHub App installation tokens) is IGNORED — only a
-# human-authored comment triggers review (process 2026-08-30).
+# repository" and waits. Observed, not documented by CodeRabbit: bot-authored
+# `@coderabbitai review` (GITHUB_TOKEN / github-actions[bot] / GitHub App
+# installation tokens) drew no review in the recorded cases while every
+# human-authored trigger did (one bot nudge, on #2036, did draw a reply), so the
+# sanctioned trigger is a human-authored comment (process 2026-08-30; the
+# observation-vs-mechanism rule in AGENT_SELF_IMPROVEMENT.md § Workflow).
 #
 # This script is the sanctioned move:
 #   1. Detect the OSS manual-trigger state on the PR.
@@ -75,7 +78,7 @@ print_escalate() {
     cat <<EOF
 ESCALATE: CodeRabbit needs a HUMAN trigger on PR #${pr} (repo <10 stars).
 
-Bot/app \`@coderabbitai review\` comments are ignored. Pick one:
+Bot/app \`@coderabbitai review\` comments have not been seen to start a review. Pick one:
 
   (1) Human comment on the PR:
         @coderabbitai review
@@ -163,7 +166,7 @@ fi
 body='@coderabbitai review
 
 <!-- cr-human-first-review-nudge:'"$head"' -->
-_Posted by scripts/dev/trigger-coderabbit-review.sh — human-credentialed trigger for OSS <10-star repos (bot nudges are ignored)._'
+_Posted by scripts/dev/trigger-coderabbit-review.sh — human-credentialed trigger for OSS <10-star repos (bot nudges have not been seen to start one)._'
 
 if gh pr comment "$PR" --repo "$owner/$repo" --body "$body" >/dev/null; then
     echo "INFO: posted human @coderabbitai review on PR #$PR (head ${head:0:8})."

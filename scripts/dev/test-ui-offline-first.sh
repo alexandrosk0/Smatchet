@@ -3,6 +3,7 @@
 # Thin wrapper over test-ui-jira-deterministic-backend.sh: same exe, isolated user data and JSON
 # parsing, with the offline-first fixture and the OfflineFirst test group. Exit codes are the wrapped
 # driver's (0 pass, 1 fail, 2 binary missing / UI tests not built).
+# ui-test-home: opt-out — launches no exe itself; the exec'd jira driver runs the shared preamble and isolates the profile UNSEEDED (OfflineFirst asserts fresh-profile defaults).
 set -euo pipefail
 export UI_TEST_FILTER="${UI_TEST_FILTER:-OfflineFirst}"
 export SMATCHET_TEST_JIRA_BACKEND_FIXTURE="${SMATCHET_OFFLINE_FIRST_FIXTURE:-tests/fixtures/jira_backend/offline-first.json}"

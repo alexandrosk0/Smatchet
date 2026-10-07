@@ -37,6 +37,12 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 
 - Steady-state UI work ≤ 6.94 ms (144 Hz); p99 ≤ 10.0 ms. Profile with `SMATCHET_UI_PERF_SCOPE` markers, not by eye.
 
+## Docking
+
+- **Never dock to a slot constant without the liveness guard.** The `SmatchetDockNodeIds.h` constants name slots the *default* layout cuts, and any of them can be gone at runtime: the user dragged the last tab out and the node collapsed, the `.ini` predates the slot, or (`kSecondarySideBar`) no layout ever cut it. `SetNextWindowDockID` to a dead id does not fail: ImGui mints an orphan root node, so the window looks docked but owns no slot until the user drags a splitter. Use `DockNextWindowOnFirstUse(slot)` for a first-use dock; any other write (an `ImGuiCond_Always` re-dock) calls `EnsureDockSlotAlive(slot)` first and skips the write when it returns 0 — leaving the window floating, which is visibly wrong and therefore fixable.
+- **A new slot constant needs a node in the default layout.** `tests/bats/dock_node_ids.bats` (`scripts/dev/test-dock-node-ids-bats.sh`) fails when a `constexpr ImGuiID k*` in the header has no `DockNode ID=` in the embedded default ini (`ConfigManager.cpp`). `kSecondarySideBar` (0x10) is its one allow-listed orphan, pending the cut-a-node-or-delete-the-feature decision in debt entry `2026-08-07-dock-node-id-slot-liveness-followups`.
+- **`ImHashStr` drops everything up to and including `###`.** On a `###` it resets the hash to the seed and steps past the marker, so `ImHashStr("Foo###Bar") == ImHashStr("Bar")`. A window id is `ImHashStr(name)`, so a source title and its localized rendering get the same id — and keep their dock slot and saved settings — as long as both carry the same `###` suffix. Keep that suffix on every translated window title.
+
 ## Before you edit
 
 - A `Draw*` / `Render*` function approaching 200 lines uses the section-helper pattern (`DrawCtx` + `DrawHeader`/`DrawBody`/`DrawFooter`/`DrawModals`/`HandleHotkeys`) per [`docs/guides/imgui-draw-pattern.md`](../../../../docs/guides/imgui-draw-pattern.md). Existing monoliths are ride-along only.

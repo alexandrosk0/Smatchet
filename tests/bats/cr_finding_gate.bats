@@ -89,7 +89,8 @@ step_timeout() {
     [ "$status" -eq 0 ]
     [ -n "$output" ]
     # The old defect form: a fixed attempt count with no deadline.
-    ! grep -qE '^\s*ATTEMPTS=' "$ACTION"
+    run grep -qE '^\s*ATTEMPTS=' "$ACTION"
+    [ "$status" -eq 1 ]
     # A deadline computed from bash's SECONDS is what makes the exit time an
     # invariant of the step rather than a consequence of API latency.
     grep -q 'deadline=$(( SECONDS + POLL_BUDGET_SECONDS ))' "$ACTION"
@@ -139,9 +140,9 @@ step_timeout() {
     # spellings of the same key; comment lines start with '#' and cannot
     # match a key pattern.
     run grep -E "^[[:space:]]*[\"']?concurrency[\"']?[[:space:]]*:" "$WF"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     run grep -E "^[[:space:]]*[\"']?cancel-in-progress[\"']?[[:space:]]*:" "$WF"
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
 }
 
 @test "workflow re-runs on labeled/unlabeled so cr-out-of-band is not inert" {
@@ -171,10 +172,100 @@ step_timeout() {
     grep -qF "context='${ctx}'" "$WF"
 }
 
+# Provenance step (tooling 2026-08-16 comment-triggered-gate-runs-execute-
+# default-branch-code). An issue_comment run checks out and executes the
+# DEFAULT branch's gate code, so on a PR that changes this gate the visible
+# status can come from the code the PR replaces. The step records which code
+# each run executed, so that sequence is legible from the run page.
+# provenance_step <workflow-file> — the step's lines, up to the next step.
+provenance_step() {
+    awk '/^      - name: Record which gate code this run executes$/{f=1; print; next}
+         f && /^      - name: /{exit}
+         f{print}' "$1"
+}
+
+@test "workflow records which gate code each run executes (always-run provenance step)" {
+    run provenance_step "$WF"
+    [ -n "$output" ]
+    grep -qx '        if: always()'                         <<< "$output"
+    grep -q 'EVENT_NAME: ${{ github.event_name }}'          <<< "$output"
+    grep -q 'WORKFLOW_SHA: ${{ github.workflow_sha }}'      <<< "$output"
+    grep -q 'RUN_SHA: ${{ github.sha }}'                    <<< "$output"
+    grep -q 'PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}'      <<< "$output"
+    grep -q 'GITHUB_STEP_SUMMARY'                           <<< "$output"
+    grep -qF "NOTE: running default-branch gate code @"     <<< "$output"
+    grep -qF ", not the PR's"                               <<< "$output"
+    # No expression interpolation inside run: — values arrive via env only
+    # (zizmor template-injection). Everything after `run: |` is shell.
+    run awk '/^        run: \|$/{f=1; next} f' <<< "$output"
+    [ -n "$output" ]
+    run grep -F '${{' <<< "$output"
+    [ "$status" -eq 1 ]
+}
+
+@test "selftest: a provenance step that interpolates inside run: is detected" {
+    tmp="$BATS_TEST_TMPDIR/interp.yml"
+    sed 's/^\(          set -uo pipefail\)$/\1\n          echo "${{ github.event_name }}"/' "$WF" > "$tmp"
+    run provenance_step "$tmp"
+    run awk '/^        run: \|$/{f=1; next} f' <<< "$output"
+    run grep -F '${{' <<< "$output"
+    [ "$status" -eq 0 ]
+}
+
+# A parked PR must say what unparks it (tooling 2026-08-16 cr-gate-nudge-403
+# entry, item 3). Both PENDING descriptions — the action's window-exhausted one
+# and the workflow's fallback poster — name the human next step, and fit
+# GitHub's 140-char status-description limit (post() cuts at 140, so an
+# overlong text would silently lose its tail: the very next-step it carries).
+# ASCII-only, so a byte-counting locale cannot cut it mid-character.
+pending_desc_action() {
+    sed -n 's/^ *post pending "\(.*\)"$/\1/p' "$ACTION"
+}
+fallback_desc_wf() {
+    sed -n 's/^ *-f description="\(.*\)" \\$/\1/p' "$WF"
+}
+
+@test "window-exhausted PENDING names the human next step within 140 chars" {
+    d="$(pending_desc_action)"
+    [ -n "$d" ]
+    [ "$(printf '%s\n' "$d" | wc -l)" -eq 1 ]
+    [ "${#d}" -le 140 ]
+    # run + status, not a bare `!`: a negated pipeline that is not the last
+    # statement never fails a bats test (errexit exempts it).
+    run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
+    [ "$status" -eq 1 ]
+    printf '%s' "$d" | grep -qF "'@coderabbitai review'"
+    printf '%s' "$d" | grep -qF 'scripts/dev/trigger-coderabbit-review.sh'
+    # The helper it names must exist, or the hint is a dead end.
+    [ -f "$REPO_ROOT/scripts/dev/trigger-coderabbit-review.sh" ]
+}
+
+@test "fallback PENDING names the next step within 140 chars" {
+    d="$(fallback_desc_wf)"
+    [ -n "$d" ]
+    [ "${#d}" -le 140 ]
+    run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
+    [ "$status" -eq 1 ]
+    printf '%s' "$d" | grep -qF 're-run'
+    printf '%s' "$d" | grep -qF "'@coderabbitai review'"
+}
+
+@test "selftest: an overlong PENDING description is detected" {
+    d="$(pending_desc_action)"
+    long="${d} and then some extra words that push it well past the GitHub limit"
+    ! [ "${#long}" -le 140 ]
+}
+
 @test "selftest: a workflow with no fallback poster is detected" {
+    # The poster is really there (so removing it changes the file), and the check the poster test runs
+    # then fails on the copy without it.
+    grep -q "state=pending" "$WF"
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"
-    ! grep -q "state=pending" "$tmp"
+    run cmp -s "$WF" "$tmp"
+    [ "$status" -eq 1 ]
+    run grep -q "state=pending" "$tmp"
+    [ "$status" -eq 1 ]
 }
 
 # ============================================================================
@@ -573,7 +664,8 @@ run_nudge() {
     grep -qE '^  pull-requests: write$' "$WF"
     grep -qE '^  issues: write$'        "$WF"
     # Still least-privilege on the axes the job genuinely does not use.
-    ! grep -qE '^  contents: write$'    "$WF"
+    run grep -qE '^  contents: write$'    "$WF"
+    [ "$status" -eq 1 ]
 }
 
 @test "nudge: a forged marker from a non-bot commenter does not suppress recovery" {
@@ -636,6 +728,85 @@ run_nudge() {
     grep -q '@coderabbitai full review' "$POST_LOG"
 }
 
+# Clean-pass vocabulary, one case per wording CR has used. The guard is only as
+# good as its words: on #2023 CR's targeted verification reply said only "No
+# findings", clean_ts never advanced past busy_ts, and the nudge stayed quiet in
+# precisely its target scenario (tooling 2026-08-16 trigger-identity entry, (c)).
+@test "nudge: clean-pass vocabulary - 'no actionable comments' counts" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'No actionable comments were generated in the recent review.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: clean-pass vocabulary - 'no actionable findings' counts" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Verified the fix: no actionable findings remain.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: clean-pass vocabulary - a bare 'No findings' counts (#2023 wording)" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Checked the targeted change. No findings.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: 'Reviews are available now' is NOT a busy signal (the limit cleared)" {
+    setup_nudge
+    # The reply a plain `review` draws on an already-seen head. Reading it as
+    # busy would let the very reply that proves the wedge suppress its cure.
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Review complete — no actionable findings.'
+    row 'coderabbitai[bot]' '2026-08-13T13:30:00Z' 'Reviews are available now.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+# Clean-pass vocabulary is CR's verdict wording, not any mention of findings:
+# a chat reply that merely talks about findings must not read as a clean pass
+# (it would post a full-review request into a live rate-limit window).
+@test "nudge: chat text that merely mentions 'no findings' is NOT clean-pass evidence" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'There were no findings in the last run, but I will re-check once the limit clears.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+# Never post while the newest busy notice's quoted window is still open, even
+# when a newer clean reply exists: CR answers chat commands while limited, so a
+# newer reply does not end the window, and a trigger inside it RESETS it.
+@test "nudge: stale-clean stays silent while the newest notice's quoted window is open" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-5 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '## Review limit reached — Next review available in: 38 minutes'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'No actionable comments were generated in the recent review.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: stale-clean posts once the quoted window has passed (not the 1 h fallback)" {
+    setup_nudge
+    # 50 minutes ago + a quoted 38-minute wait = closed 12 minutes ago, while
+    # the unparsed 1-hour fallback would still read it as open.
+    row coderabbitai[bot] "$(date -u -d '-50 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '## Review limit reached — Next review available in: 38 minutes'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'No actionable comments were generated in the recent review.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: a 'wait N minutes and S seconds' notice is read as its full window" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-10 minutes' '+%Y-%m-%dT%H:%M:%SZ')" '> ## Rate limit exceeded — Please wait **13 minutes and 37 seconds** before requesting another review. Review limit reached.'
+    row coderabbitai[bot] "$(date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')" 'Checked the targeted change. No findings.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
 @test "the nudge is also wired into the not-settled arm (shape 2, no status at all)" {
     # A comment-only clean pass can complete with NO CodeRabbit StatusContext
     # on the head (cr_ctx ABSENT) — the wedge parks in the `*)` arm, one door
@@ -680,7 +851,8 @@ run_nudge() {
     printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"         # new code: -> terminal fail
     # And it must NOT be mistaken for the rate-limit marker — they are distinct
     # states needing distinct recoveries (full review vs a first review).
-    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
+    [ "$status" -eq 1 ]
     # Exercise the CLASSIFICATION, not just the fields: inspecting state/desc
     # cannot tell whether the verdict actually holds the terminal OSS arm.
     [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
@@ -693,14 +865,17 @@ run_nudge() {
     setup_jq
     f="$(payload '[]' SUCCESS 'Review skipped due to path filters')"
     desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
-    ! printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"
-    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    run grep -qiE "$MANUAL_REVIEW_RE" <<<"$desc"
+    [ "$status" -eq 1 ]
+    run grep -qiE "$RATE_LIMIT_RE" <<<"$desc"
+    [ "$status" -eq 1 ]
     # The terminal path-filter skip must still PASS through the model — this is
     # the fail-shut half, and it is what an over-broad match would break.
     [ "$(verdict "$f")" = "not-reviewed" ]
     # Guard the implementation too: matching a bare "review skipped" would be
     # the over-broad form, and would swallow the fixture above.
-    ! grep -qE "grep -qi.*'review skipped'" "$ACTION"
+    run grep -qE "grep -qi.*'review skipped'" "$ACTION"
+    [ "$status" -eq 1 ]
 }
 
 @test "the manual-review guard is wired into decide(), not just defined" {
@@ -723,7 +898,8 @@ run_nudge() {
     grep -q 'coderabbitai review'      "$POST_LOG"
     grep -q 'cr-first-review-nudge'    "$POST_LOG"
     # A plain review, NOT a full review: nothing has consumed this head yet.
-    ! grep -q 'coderabbitai full review' "$POST_LOG"
+    run grep -q 'coderabbitai full review' "$POST_LOG"
+    [ "$status" -eq 1 ]
 }
 
 @test "nudge: never-reviewed stays silent while CR is rate limited or working" {
@@ -779,4 +955,121 @@ run_nudge() {
     row github-actions[bot] 2026-08-16T03:02:00Z 'cr-full-review-nudge:ccc'
     NUDGE_MODE=never-reviewed run_nudge
     [ ! -s "$POST_LOG" ]
+}
+
+# --- OSS arm: a failed requested review is terminal ------------------------
+# process 2026-08-17 cr-finding-gate-accepts-a-verdict-line-without-a-review,
+# action 4. On #2090 CodeRabbit acknowledged two human asks and both ended in
+# "An error occurred during the review process" — the first published by
+# EDITING the ack comment in place. The OSS arm's human_asked branch waited on
+# that forever (non-terminal every pass -> unbounded PENDING). oss_ask_state()
+# makes "requested and failed" a first-class state; these tests run the REAL
+# function, extracted from action.yml, against the stubbed `gh` above.
+
+setup_oss() {
+    awk '/oss_ask_state\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' \
+        "$ACTION" > "$BATS_TEST_TMPDIR/oss.fn"
+    # Non-vacuity: an extraction miss must fail loudly, not test nothing.
+    grep -q 'an error occurred during the review process' "$BATS_TEST_TMPDIR/oss.fn"
+    grep -q 'gh api'                                      "$BATS_TEST_TMPDIR/oss.fn"
+    TSV="$BATS_TEST_TMPDIR/oss.tsv"; : > "$TSV"
+    POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
+    export TSV POST_LOG
+    OWNER=o REPO=r PR=1
+    export OWNER REPO PR
+    # shellcheck disable=SC1090
+    source "$BATS_TEST_TMPDIR/oss.fn"
+}
+
+# ask_row <login> <user.type> <updated_at> <body> — one comment in the
+# function's wire format (login TAB type TAB updated_at TAB flattened body).
+ask_row() {
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$TSV"
+}
+
+CR_LOGIN='coderabbitai[bot]'
+
+@test "oss: no human ask -> none (the terminal OSS failure path)" {
+    setup_oss
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:00:00Z 'Review skipped: manual review required for this OSS repository'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: human ask with no CR reply yet -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: human ask acknowledged, review in flight -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:00:20Z 'Full review requested for #2090 <details>Action performed - Full review triggered</details>'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: ack EDITED in place into 'Review failed' -> failed (the #2090 shape)" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:09:00Z 'Full review requested for #2090 <details>Action failed - Review failed</details>'
+    [ "$(oss_ask_state)" = failed ]
+}
+
+@test "oss: 'An error occurred during the review process' reply -> failed" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process. Please try again later.'
+    [ "$(oss_ask_state)" = failed ]
+}
+
+@test "oss: a fresh human ask after the failure supersedes it -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai full review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    ask_row alice User 2026-08-17T11:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a newer non-error CR reply after the error -> waiting" {
+    setup_oss
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:30:00Z 'Reviewing #2090 at abcdef.'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a CR error from BEFORE the latest ask is not this ask's answer" {
+    setup_oss
+    # Position matters, not just timestamps: an older comment (created before
+    # the ask) edited later must not be read as the reply to this ask.
+    ask_row "$CR_LOGIN" Bot 2026-08-17T12:00:00Z 'Review failed (earlier attempt)'
+    ask_row alice User 2026-08-17T11:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: a bot-authored ask is not a human ask -> none" {
+    setup_oss
+    ask_row 'github-actions[bot]' Bot 2026-08-17T10:00:00Z '@coderabbitai review'
+    ask_row "$CR_LOGIN" Bot 2026-08-17T10:05:00Z 'An error occurred during the review process.'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "the failed-review state is wired into decide()'s OSS arm as a terminal failure" {
+    # The function existing is not enough: decide() must post a TERMINAL
+    # failure on it, not fall through to the waiting `return 1`.
+    awk "/grep -qi 'manual review required'; then/,/^            fi\$/" "$ACTION" \
+        > "$BATS_TEST_TMPDIR/oss-arm.txt"
+    grep -qF 'case "$(oss_ask_state)" in' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    awk '/^ *failed\)$/{f=1} f' "$BATS_TEST_TMPDIR/oss-arm.txt" | head -3 \
+        > "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+    grep -qF 'post failure "CodeRabbit errored on the requested review' "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+    grep -q 'exit 0' "$BATS_TEST_TMPDIR/oss-failed-arm.txt"
+}
+
+@test "the failed-review description names the next step within 140 chars" {
+    d="$(sed -n 's/^ *post failure "\(CodeRabbit errored on the requested review[^"]*\)"$/\1/p' "$ACTION")"
+    [ -n "$d" ]
+    [ "${#d}" -le 140 ]
+    printf '%s' "$d" | grep -qF "'@coderabbitai full review'"
+    printf '%s' "$d" | grep -qF 'cr-out-of-band'
 }

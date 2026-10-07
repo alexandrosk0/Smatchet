@@ -68,5 +68,6 @@
     the manual-review-required sibling (archived in `applied.md`, fixed by
     #2036),
     `docs/adr/0017-merge-time-snapshot-ledger.md`.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): items 2-4 landed (backlog-sweep PR #2296: NONE grace expiry is a terminal block waivable only by cr-out-of-band + cr-disposition, Dependabot github-actions bumps and self-improvement-only diffs keep their pass; safe-merge records crState in the ledger; postmortem-owed gains the cr-context-not-green trigger). Only item 1 remains: a maintainer confirms develop's required-status-check set and admin enforcement (not readable from an agent token).
   Status: open
-  Last-reviewed: 2026-08-16
+  Last-reviewed: 2026-10-04

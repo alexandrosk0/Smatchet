@@ -48,3 +48,5 @@ is the product — e.g. a `[ -t 1 ] || …` guard is too blunt, but a shared
 `run-gate.sh <script> <logfile>` helper that owns the redirect + `EXIT=` stamp would give
 the orchestrator one correct invocation shape to reach for, and make the masked-status
 form the unusual one.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): the helper landed (backlog-sweep PR #2296: agents/scripts/core/run-gate.sh [--name N] <log> -- <cmd…> writes the full output to the log, appends <NAME>_EXIT=<rc>, prints the verdict lines and exits with the gate's own rc; run_gate.bats). Remaining: point docs/agent-rules/process-rules.md § Cadence and verification at it as the canonical invocation (that file was in another session's plan-lock during the sweep).

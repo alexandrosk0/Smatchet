@@ -32,7 +32,7 @@ the bucket-E investment was meant to keep out of human verification.
 ## Proposed fix
 
 1. A bucket-E harness primitive: boot the exe against an isolated user-data dir (see
-   [`2026-08-05-bucket-e-inherits-developer-imgui-ini.md`](2026-08-05-bucket-e-inherits-developer-imgui-ini.md)),
+   [`2026-08-05-bucket-e-inherits-developer-imgui-ini.md`](../applied.md)),
    drive it, shut it down cleanly, then **relaunch against the `imgui.ini` it produced** and
    assert the restored layout. Route to `test-author`.
 2. With that in place, either make the expand transition ini-safe (write the pre-expand
@@ -41,3 +41,5 @@ the bucket-E investment was meant to keep out of human verification.
 3. A line in `Source/Core/src/Ui/AGENTS.md`: any per-frame override of window
    geometry / dock id / visibility is persisted verbatim by ImGui's settings writer — say
    what the app writes at exit, or make the override not be the live state.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): items 2 and 3 have shipped — FreezeExpandedSettings (Source/Core/src/Ui/SmatchetWindowExpand.cpp) makes the expand transition ini-safe, and the persisted-override rule is in Source/Core/src/Ui/AGENTS.md. Only item 1 (the boot → quit → relaunch-against-the-produced-imgui.ini harness primitive) remains; it needs the exe.

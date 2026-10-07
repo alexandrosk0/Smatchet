@@ -9,6 +9,8 @@
 
 #include "Diagnostics/AboutInfo.h"
 
+#include "Config/ConfigManager.h" // TrackerConfig
+
 #include <doctest/doctest.h>
 
 #include <string>
@@ -17,6 +19,14 @@
 using namespace smatchet::diagnostics;
 
 namespace {
+
+// GatherAboutInfo's config comes from here, never ConfigManager::Load(): a doctest
+// must not depend on whatever smatchet_config.json the machine happens to have.
+TrackerConfig SyntheticConfig() {
+    TrackerConfig cfg;
+    cfg.TrackerType = "Plane"; // not the default backend, so a test can tell it was used
+    return cfg;
+}
 
 AboutInfo MakeSyntheticInfo() {
     AboutInfo info;
@@ -179,7 +189,7 @@ TEST_CASE("BuildAboutReportText — agent-debug line appears only on an instrume
 }
 
 TEST_CASE("GatherAboutInfo — AgentDebug mirrors the compile-time define, never a runtime probe") {
-    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo");
+    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo", SyntheticConfig());
     // The doctest rig never gets SMATCHET_AGENT_DEBUG on AboutInfo.cpp: the option
     // is wired PRIVATE to SmatchetStandalone, and tests/CMakeLists.txt force-sets
     // it on SmatchetAgentDebug.test.cpp's own TU only. So false is the expected
@@ -192,18 +202,18 @@ TEST_CASE("GatherAboutInfo — AgentDebug mirrors the compile-time define, never
 // --------------------------------------------------------------------------
 
 TEST_CASE("GatherAboutInfo — passes through version and builds the repo URL") {
-    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo");
+    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo", SyntheticConfig());
     CHECK(info.AppName == "Smatchet");
     CHECK(info.Version == "1.2.3");
     CHECK(info.RepoUrl == "https://github.com/example/repo");
 
-    const AboutInfo noRepo = GatherAboutInfo("", "");
+    const AboutInfo noRepo = GatherAboutInfo("", "", SyntheticConfig());
     CHECK(noRepo.Version == "unknown"); // sentinel, never an empty version
     CHECK(noRepo.RepoUrl.empty());
 }
 
 TEST_CASE("GatherAboutInfo — build fields are populated, never empty") {
-    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo");
+    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo", SyntheticConfig());
     // Values are machine-specific; only non-emptiness is stable.
     CHECK(!info.Build.Config.empty());
     CHECK(!info.Build.CompilerId.empty());
@@ -219,8 +229,15 @@ TEST_CASE("GatherAboutInfo — build fields are populated, never empty") {
     CHECK(!FormatAboutGitLine(info.Git).empty());
 }
 
+TEST_CASE("GatherAboutInfo — the active tracker comes from the supplied config") {
+    CHECK(GatherAboutInfo("1.2.3", "example/repo", SyntheticConfig()).Runtime.Tracker == "Plane");
+    TrackerConfig noBackend;
+    noBackend.TrackerType.clear();
+    CHECK(GatherAboutInfo("1.2.3", "example/repo", noBackend).Runtime.Tracker == "(none)");
+}
+
 TEST_CASE("GatherAboutInfo — the generated dep manifest is present and well-formed") {
-    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo");
+    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo", SyntheticConfig());
     // 10 always-on deps + up to 5 conditional ones. A regression in the CMake
     // codegen (empty SMATCHET_DEPS_TEXT) shows up here and nowhere else.
     REQUIRE(info.Deps.size() >= 9);

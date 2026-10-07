@@ -48,18 +48,19 @@ bool CommandRegistry::HasExact(const std::string& name) const {
 }
 
 bool CommandRegistry::Contains(const std::string& name) const {
-    // Same lookup FindLocked performs (canonical name, else a registered alias),
-    // returned as a bool under the lock so no pointer escapes to a caller that is
-    // not holding the registry mutex.
     std::lock_guard<std::mutex> lk(mutex_);
-    if (byName_.find(name) != byName_.end())
-        return true;
-    auto a = aliasToName_.find(name);
-    return a != aliasToName_.end() && byName_.find(a->second) != byName_.end();
+    return FindHoldingLock(name) != nullptr;
 }
 
 const Command* CommandRegistry::FindLocked(const std::string& name) const {
-    // Caller must serialize externally if they want stable pointers.
+    // The UI thread resolves labels through this while another thread can Register: an unlocked
+    // find racing an insert's rehash is a data race. The pointer itself outlives the lock (see the
+    // header).
+    std::lock_guard<std::mutex> lk(mutex_);
+    return FindHoldingLock(name);
+}
+
+const Command* CommandRegistry::FindHoldingLock(const std::string& name) const {
     auto it = byName_.find(name);
     if (it != byName_.end())
         return &it->second;
@@ -269,7 +270,8 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
             if (!ok) {
                 CommandResult r = CommandResult::Failure(
                     ErrorCode::ValidationError, "Argument '" + p.Name + "' must be one of the allowed enum values.");
-                r.Error.Details = std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}});
+                r.Error.Details =
+                    std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}});
                 outFailure = std::move(r);
                 return false;
             }
@@ -298,7 +300,7 @@ CommandResult CommandRegistry::Dispatch(const std::string& name, const nlohmann:
     bool found = false;
     {
         std::lock_guard<std::mutex> lk(mutex_);
-        const Command* c = FindLocked(name);
+        const Command* c = FindHoldingLock(name);
         if (c) {
             snapshot = *c;
             found = true;

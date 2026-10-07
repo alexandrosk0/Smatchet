@@ -33,6 +33,13 @@ struct ViewDefinition;
 struct GridContextFieldCatalog {
     /// Bumped when the field catalog changes (fetch, error clear, etc.); UI sort caches key on it.
     std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
+    /// Bumped by an explicit catalog clear (AppController::SetFieldCatalog with nothing in it), the reset
+    /// a tracker switch starts with. A worker fetch latched before the clear drops its result.
+    std::atomic<std::uint64_t> CatalogEpoch{0};
+    /// Bumped as each AppController::RefreshFieldCatalog starts: an older refresh still in flight then
+    /// drops its result, so the newest refresh decides the catalog. A catalog applied by another path
+    /// (the grid's own fetch) does not supersede a refresh.
+    std::atomic<std::uint64_t> RefreshSeq{0};
     /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
     mutable std::mutex availableFieldsMutex_;
     std::vector<TrackerField> AvailableFields;
@@ -46,8 +53,13 @@ struct GridContextFieldCatalog {
     bool LastTrackerFieldCatalogErrorTransient = false;
     std::string LastTrackerFieldCatalogWarning;
     bool fieldCatalogEverLoaded_ = false;
-    /// Project key for the most-recent in-flight catalog fetch (see SetCurrentCatalogProject).
+    /// Project the in-memory catalog was fetched for: set with the catalog it describes.
     std::string currentCatalogProjectKey_;
+    /// The project SetCurrentCatalogProject named for the next unguarded SetFieldCatalog (the grid's own
+    /// fetch). That apply consumes it and pins it with its catalog; a refresh landing in between never
+    /// moves it, so the grid's catalog is never filed under the refresh's project.
+    bool hasPendingCatalogProjectKey_ = false;
+    std::string pendingCatalogProjectKey_;
     // Per-project component options are not per-pane: ProjectComponentsCacheService keys them by
     // tracker and project, so panes on one tracker share them.
 };

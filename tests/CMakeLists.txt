@@ -268,6 +268,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
+        # CommandRegistry lookup vs registration race: FindLocked (UI thread) against Register
+        # (a worker); FuzzyMatch + Command join for the registry's alias/fuzzy and result helpers.
+        Core/CommandRegistryConcurrency.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/CacheBackendKeyPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
@@ -342,6 +348,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/CappedBodyAccumulator.test.cpp
         # The reader's default change / membership fetches keep the backend's error kind (S13).
         Core/TrackerIssueReaderDefaults.test.cpp
+        # ITrackerIssueMutations::UpdateField's default body (header-only interface, local fake).
+        Core/TrackerIssueMutationsDefaults.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -404,6 +412,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     is cpr/ImGui-free; BackendAuditTrail + ConfigManager already linked above. Needs
         #     SMATCHET_WITH_AI (target-wide below — ConfigManager carries one AI-gated field).
         Core/AiAssistantStreamHandoff.test.cpp
+        # The StubAiClient's own cancel contract (a worker thread streams while the test
+        # thread flips the AiCancelToken) — header-only stub, no extra .cpp source.
+        Core/StubAiClientCancel.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiAssistantController.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
@@ -420,6 +431,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
+        # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
+        # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
+        Core/AiWirePure.test.cpp
+        # Loose JSON int coercion behind the Jira catalog / board / sprint parsers, incl. the
+        # out-of-range-float regression fuzz_jira_field_catalog found. Header-only.
+        Core/JsonParseUtil.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -585,6 +602,8 @@ add_executable(SmatchetTests
     # ConfigManager (already linked) + nlohmann — no cpr/sqlite, safe in the doctest rig.
     Core/FieldCatalogCacheScopedRoundTrip.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
+    # The snapshot index (recently used list, Forget, LRU cap) survives a reload.
+    Core/FieldCatalogCacheIndex.test.cpp
     Core/OfflineQueueReplayPolicy.test.cpp
     # Pure filter/key/label helpers extracted from SmatchetProjectPicker::Draw. The _detail TU
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
@@ -1007,6 +1026,8 @@ add_executable(SmatchetTests
     Core/AiNdjsonParser.test.cpp
     Core/AiContextBuilder.test.cpp
     Core/AiErrorRedact.test.cpp
+    # Header-only shared AI-client wire plumbing (Source/Core/include/AiWirePure.h).
+    Core/AiWirePure.test.cpp
     # PR-12 — per-client cancel + error-body redaction regressions driving the
     # REAL OpenAiClient / AnthropicClient / OllamaClient (CORE sources below) over
     # a real cpr HTTP round-trip at an in-process httplib loopback server
@@ -1129,6 +1150,7 @@ add_executable(SmatchetTests
     # The remaining AppController-coupled Builtin TUs (Perf/Ai) and the UI-session ones
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
+    Core/CommandRegistryConcurrency.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"
@@ -1266,6 +1288,7 @@ add_executable(SmatchetTests
     Core/AttachmentDiskCache.test.cpp
     Core/CappedBodyAccumulator.test.cpp
     Core/TrackerIssueReaderDefaults.test.cpp
+    Core/TrackerIssueMutationsDefaults.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
@@ -2244,7 +2267,10 @@ set_tests_properties(android_openssl_failfast_no_base PROPERTIES
 # lane builds + runs it with -DSMATCHET_BUILD_TESTS=ON.
 # ============================================================================
 if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
-    add_executable(SmatchetCommandsTests Commands/BuiltinCommandsDispatch.test.cpp)
+    add_executable(SmatchetCommandsTests
+        Commands/BuiltinCommandsDispatch.test.cpp
+        Core/AppControllerFieldCatalog.posix.test.cpp
+    )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"

@@ -214,9 +214,11 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
     const std::string currentJql(d.viewJqlEditor.buf);
     const ITrackerBackend* backend = app.GetTrackerBackend();
     const bool isPlane = smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType);
-    const std::string backendKind = isPlane ? std::string("Plane") : std::string("Jira");
-    const std::string endpoint =
-        isPlane ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug) : d.cfg.Domain;
+    const FieldCatalogCache::FieldCatalogIndexIdentity cacheIndex =
+        FieldCatalogCache::BuildFieldCatalogIndexIdentity(d.cfg);
+    const std::string& backendKind = cacheIndex.backend;
+    const std::string& endpoint = cacheIndex.endpoint;
+    const bool pillScopesQuery = isPlane || SmatchetJqlProjectPill::detail::PillOffersRecentProjects(backendKind);
     const std::string scopeProj = backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
     const bool single = !scopeProj.empty();
     const char* pillLabel = nullptr;
@@ -254,7 +256,7 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
         const std::vector<FieldCatalogCache::CachedProjectEntry>& cached = d.cachedProjectsSnapshot;
         int shown = 0;
         for (const auto& e : cached) {
-            if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
+            if (!pillScopesQuery || !SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
                 continue;
             }
             ImGui::PushID(shown);

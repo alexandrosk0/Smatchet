@@ -29,3 +29,13 @@ Bound the write by a wall-clock deadline and/or route `SaveTicket` through
 `LaunchBackgroundTask` with the latched key + generation captured at dispatch, posting only
 the ActiveTickets republish back to the UI thread — per the #1894 entry's proposed fix.
 Applies to every `UpdateTicket` UI-thread caller, not just comments.
+
+## Folded duplicate (2026-10-04)
+
+The offline-first sweep filed the same defect from the field-edit side (debt/2026-09-24-updateticket-savesticket-on-ui-thread,
+now in [applied.md](../applied.md)): `ApplyFieldEditResult` reaches `UpdateTicket` → `Cache->SaveTicket` through the grid
+pipeline's main-thread post-back, and every queued offline edit applied locally takes the same path. Its proposed
+shape: post only the `SaveTicket` to a worker, keep the issue-#1081 key/generation latch ahead of it and pass the
+latched key into the worker; the in-memory ticket update and `RefreshLocalData()` stay on the UI thread. Note from the
+2026-10-04 triage: `RefreshLocalDataCheckedImpl_` also reads `Cache->GetAllTickets` on the UI thread per edit, so the
+save cannot move alone without that read moving too.

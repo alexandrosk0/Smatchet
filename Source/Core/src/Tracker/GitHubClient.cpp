@@ -937,14 +937,9 @@ TrackerError GitHubClient::UpdateField(const std::string& issueId, const Tracker
     if (smatchet::github::ParseGitHubCommitKey(issueId, commitKey)) {
         return TrackerErrorInvalidRequest(kCommitReadOnlyError);
     }
-    // Set-replace single-field edit: catalog-id-keyed payload → the shared PATCH +
-    // label-reconcile path. Interface-mandated routing shape shared with Jira/Linear.
-    // SMATCHET_DEVIATION(rule=duplication; reason=UpdateField routing shared with Jira/Linear; debt 2026-10-03-github-linear-client-plumbing-twins; owner=tracker; revisit=2027-06-30)
-    auto payloadResult = BuildFieldPayload(field, values);
-    if (!payloadResult) {
-        return payloadResult.error();
-    }
-    return UpdateIssueFields(issueId, payloadResult.value());
+    // Set-replace single-field edit: the shared default builds the catalog-id-keyed
+    // payload and sends it through the PATCH + label-reconcile path (UpdateIssueFields).
+    return ITrackerIssueMutations::UpdateField(issueId, field, values);
 }
 
 Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const TrackerField& field,

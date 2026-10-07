@@ -21,12 +21,23 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58816}"
 # imgui_test_engine's filter is substring-match (NOT a glob); "WindowExpand" is
 # the test category, so this drives every case in one run.
 FILTER="${UI_TEST_FILTER:-WindowExpand}"
+
+if [ ! -f "$EXE" ]; then
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
+    exit 2
+fi
+
+ui_test_require_fresh_exe "$EXE" || exit 2
 
 # Boot against a THROWAWAY user-data dir so the dock layout is the app's built-in
 # default every run. Without this the app resolves %LOCALAPPDATA%\Smatchet and
@@ -35,30 +46,12 @@ FILTER="${UI_TEST_FILTER:-WindowExpand}"
 # docked toggle cannot hover it ("Failed to move window ...! While trying to make
 # space to click at ..."). That is machine state, not a product defect, and it
 # made this suite pass or fail depending on whose desktop it ran on.
-# The vars are the ones ConfigManager::GetPlatformSharedUserDataDirectory reads
-# (ConfigManager_PathUtils.cpp): LOCALAPPDATA/APPDATA on Windows, XDG_CONFIG_HOME
-# elsewhere. Exported for the child only — the caller's environment is untouched.
-# SMATCHET_UI_TEST_HOME pins the dir instead of minting one, and suppresses the
-# cleanup — the app's own log lives under it, and a failing run is undebuggable
-# once the throwaway dir is gone.
-if [ -n "${SMATCHET_UI_TEST_HOME:-}" ]; then
-    UI_TEST_HOME="$SMATCHET_UI_TEST_HOME"
-    mkdir -p "$UI_TEST_HOME"
-    echo "[test-ui-window-expand] user-data dir pinned to $UI_TEST_HOME (kept on exit)"
-    echo "[test-ui-window-expand] layout state persists across pinned runs — a red here may be"
-    echo "[test-ui-window-expand] a stale imgui.ini; re-run unpinned to confirm before believing it."
-else
-    UI_TEST_HOME="$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/smatchet-ui-window-expand-$$")"
-    mkdir -p "$UI_TEST_HOME"
-    cleanup_ui_test_home() { rm -rf "$UI_TEST_HOME"; }
-    trap cleanup_ui_test_home EXIT
-fi
-export LOCALAPPDATA="$UI_TEST_HOME" APPDATA="$UI_TEST_HOME" XDG_CONFIG_HOME="$UI_TEST_HOME"
-
-if [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
-    exit 2
-fi
+# --shadow-platform-dirs also points the vars ConfigManager::GetPlatformSharedUserDataDirectory
+# reads (ConfigManager_PathUtils.cpp: LOCALAPPDATA/APPDATA on Windows,
+# XDG_CONFIG_HOME elsewhere) at the throwaway dir. Unseeded: the layout under
+# test is the fresh-profile default. SMATCHET_UI_TEST_HOME pins the dir instead
+# of minting one and keeps it on exit (see scripts/dev/lib/ui-test-driver.sh).
+ui_test_isolate_home --shadow-platform-dirs
 
 echo "[test-ui-window-expand] launching ephemeral Smatchet (port $TEST_PORT)..."
 RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \

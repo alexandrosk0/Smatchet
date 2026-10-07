@@ -27,3 +27,5 @@
 
   Step 4's assertion is the one that matters: the pre-fix code would have passed a
   naive `IsDocked()` check, since an orphan root node *is* a dock node.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): largely covered — tests/ui/dock_slot_liveness.test.cpp asserts EnsureDockSlotAlive rejects dead and orphan-root slots and DockNextWindowOnFirstUse skips them (the 'orphan root is a dock node' trap). The residual is the end-to-end pendingReDockWindows → floating-at-DefaultLayoutRectFor path and latch retention, which is bucket-E only.

@@ -4,10 +4,21 @@ name: Plan-lock cleanup
 # whether merged to develop OR closed unmerged (an abandoned seeded branch's
 # reservation is void; without this it would orphan-block later PRs that
 # overlap its write set, since the staleness sweep is Issue-only and never
-# deletes). The PR body must contain a single `lock-slug: <slug>` line
-# (typically pulled from the PR template). Without that line the workflow is a
-# no-op. Stacked intermediates carry `holds-lock:` (NOT matched here) so only
-# the final cutover PR's close releases.
+# deletes). Two release paths run on every close:
+#   1. Body marker — a single bare `lock-slug: <slug>` line in the PR body
+#      (typically pulled from the PR template) releases that slug.
+#   2. Branch match — agents/scripts/core/lock-release-on-close.sh releases
+#      every lock whose claim.json `branch` equals the PR's head ref. The body
+#      is mutable and the marker is easy to omit, drop in a rewrite, or leave
+#      commented out; the claim itself records the claiming branch (tooling
+#      backlog 2026-10-04-lock-release-on-close-keys-only-on-a-body-line).
+#      Skipped for a fork head, for develop/main/protected branches, and when
+#      the body carries a bare `holds-lock:` line.
+# Both paths are skipped while the head branch still has an OPEN PR (a second
+# PR from the branch, or this one reopened): the work is live. A reopen after
+# a release must re-claim with lock-claim.sh (the release logs the claim.json).
+# Stacked intermediates carry `holds-lock:` (NOT matched by path 1, and it
+# switches path 2 off) so only the final cutover PR's close releases.
 #
 # Phase 3 of docs/plans/shipped/git-ref-plan-locks.md; closed-unmerged
 # extension per docs/plans/plan-lock-enforcement.md item 11.
@@ -15,11 +26,17 @@ name: Plan-lock cleanup
 # Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
 # Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub
 # App and is deferred to Phase 7 hardening. Mitigation today: this
-# workflow is short, single-purpose, and runs only on merged PRs.
+# workflow is short, single-purpose, and the only code it runs with that
+# token is develop's (the checkout below never takes the PR's ref).
 
+# Base-branch filter: plan locks guard work bound for develop (plan-lock-gate.yml
+# evaluates only PRs into develop). A PR into any other base — a stacked
+# intermediate merging into its feature branch — has not landed the work, so
+# its close must not release the lock; the final PR into develop does.
 on:
   pull_request:
     types: [closed]
+    branches: [develop]
 
 concurrency:
   group: plan-lock-cleanup-${{ github.event.pull_request.number }}
@@ -27,13 +44,24 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: read   # gh pr list — the open-PR guard
+
+env:
+  # Agent-layer indirection: the layer is the agent-layer/ submodule (every checkout
+  # here uses `submodules: recursive`); the project is the checkout root.
+  AGENT_LAYER_ROOT: agent-layer
+  PROJECT_ROOT: .
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   release:
     name: Release refs/locks/<slug> on PR close
-    # Fires on ANY close (merged or abandoned) — the parse step below gates on
-    # the `lock-slug:` line, so a no-slug PR is a clean no-op. Releasing on
-    # closed-unmerged frees an abandoned branch's reservation (item 11).
+    # Fires on ANY close (merged or abandoned) — the parse step below gates the
+    # body-marker path on the `lock-slug:` line, and the branch-match step finds
+    # nothing for a PR that holds no lock, so a lockless PR is a clean no-op.
+    # Releasing on closed-unmerged frees an abandoned branch's reservation
+    # (item 11).
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
@@ -62,6 +90,23 @@ jobs:
             || true)
 
           if [ -z "$slug" ]; then
+            # A marker left inside the template's HTML comment
+            # (`<!-- lock-slug: <slug> -->`) never matches the anchored regex
+            # above and renders as nothing on the PR, so name it. A ::warning::,
+            # not an ::error::: the branch-match step below still releases a lock
+            # this PR's head branch claimed (it keys on claim.json, not on this
+            # line), so a red on an already-closed PR would be noise with nothing
+            # left to act on. The template's own placeholder slug is in every
+            # lockless PR's body and stays silent.
+            commented=$(printf '%s\n' "$PR_BODY" \
+              | grep -oE '<!--[[:space:]]*lock-slug:[[:space:]]*[a-z0-9][a-z0-9-]{0,63}' \
+              | sed -E 's/^<!--[[:space:]]*lock-slug:[[:space:]]*//' \
+              | grep -vxF 'your-slug-here' \
+              | head -n1 \
+              || true)
+            if [ -n "$commented" ]; then
+              echo "::warning::PR body has a commented-out marker '<!-- lock-slug: ${commented} -->', which never releases anything. The branch-match step below still releases refs/locks/${commented} if this PR's head branch claimed it; if another branch claimed it, run the 'Plan-lock release (dispatch)' workflow with slug=${commented}. On future PRs write the bare line 'lock-slug: ${commented}'."
+            fi
             echo "::notice::No 'lock-slug: <slug>' line found in PR body; no release."
             echo "slug=" >> "$GITHUB_OUTPUT"
             exit 0
@@ -76,8 +121,35 @@ jobs:
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
           echo "::notice::Parsed lock-slug=$slug from PR #${{ github.event.pull_request.number }}."
 
+      - name: Checkout develop (the release script only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          # develop, never the PR's ref: this job holds `contents: write`, so the
+          # script it runs must be the reviewed one.
+          ref: develop
+          fetch-depth: 1
+          # Kept: the branch-match step deletes refs/locks/<slug> with `git push
+          # origin :refs/locks/<slug>` under this job's GITHUB_TOKEN (the
+          # github-actions integration the plan-locks ruleset lets delete). This
+          # job uploads no artifact, so the persisted credential never leaves the
+          # runner.
+          persist-credentials: true
+
+      - name: Keep the locks while the head branch still has an open PR
+        # A close is not the end of the work while the same head branch has
+        # another OPEN PR (or this one was reopened): releasing then strips the
+        # lock from live work. A failed query fails the job, releasing nothing.
+        id: active
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --check-open "$HEAD_REF" >> "$GITHUB_OUTPUT"
+
       - name: Delete refs/locks/<slug> if present
-        if: steps.parse.outputs.slug != ''
+        if: steps.parse.outputs.slug != '' && steps.active.outputs.active == 'false'
         env:
           SLUG: ${{ steps.parse.outputs.slug }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,3 +169,16 @@ jobs:
           else
             echo "::notice::refs/${ref} already absent on origin; no-op."
           fi
+
+      - name: Release locks claimed by the PR's head branch
+        # Runs after the body-marker path, on every close: a lock that path
+        # already deleted is simply absent from the fetch. The script repeats
+        # the open-PR guard itself (GH_TOKEN), so a direct run is safe too.
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOCK_REMOTE: origin
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/lock-release-on-close.sh" --branch "$HEAD_REF"

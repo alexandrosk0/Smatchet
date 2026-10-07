@@ -96,3 +96,16 @@ TEST_CASE("Ollama native wire body: system as leading message, /api/chat url") {
     CHECK(b["messages"][2]["role"] == "assistant");
     CHECK(OllamaNativeResolveChatUrl(MakeCfg("http://localhost:11434")) == "http://localhost:11434/api/chat");
 }
+
+TEST_CASE("Chat URLs fall back to each provider's default base URL") {
+    CHECK(OpenAiResolveChatUrl(MakeCfg("")) == "https://api.openai.com/v1/chat/completions");
+    CHECK(AnthropicResolveChatUrl(MakeCfg("")) == "https://api.anthropic.com/v1/messages");
+    CHECK(OllamaNativeResolveChatUrl(MakeCfg("")) == "http://localhost:11434/api/chat");
+}
+
+TEST_CASE("Chat URLs collapse a base URL's repeated trailing slashes") {
+    CHECK(OpenAiResolveChatUrl(MakeCfg("http://host:1234//")) == "http://host:1234/v1/chat/completions");
+    CHECK(OpenAiResolveChatUrl(MakeCfg("http://host:1234/v1//")) == "http://host:1234/v1/chat/completions");
+    CHECK(AnthropicResolveChatUrl(MakeCfg("https://proxy.example//")) == "https://proxy.example/v1/messages");
+    CHECK(OllamaNativeResolveChatUrl(MakeCfg("http://localhost:11434///")) == "http://localhost:11434/api/chat");
+}

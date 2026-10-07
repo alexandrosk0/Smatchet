@@ -124,7 +124,9 @@ Enumerators for the sweep: `grep -rn 'fetch-fontawesome' .github/workflows/` nam
 the asset dependency (6 call sites as of this entry); `grep -rn 'uses:' .github/workflows/ | grep -v
 '\./'` names every job carrying the action-tarball dependency, which is effectively all of them.
 
-Related: [`2026-08-06-bucket-c-goldens-env-dependent-on-icon-font.md`](../test/2026-08-06-bucket-c-goldens-env-dependent-on-icon-font.md)
+Related: [`2026-08-06-bucket-c-goldens-env-dependent-on-icon-font.md`](../applied.md)
 covers the *rendering* consequences of this same font; this entry is about *obtaining* content.
 
 Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=15; action=check whether a Fetch Font Awesome step or a Set up job action download has failed a required check again, and whether caching, vendoring or an action mirror landed; baseline=4 font failures plus 2 codeload Set up job failures across 2 heads on 2026-08-17, a same-job develop failure, and one ~2h outage on 2026-07-09; fired=never
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): surface 1 is fixed (backlog-sweep PR #2296: the committed font is verified offline against its pinned sha256; no fetch). Surface 2 remains: 'Set up job' downloads the SHA-pinned uses: action tarballs from codeload.github.com, which a workflow cannot cache or mirror from inside the repo, so a codeload 429 can still red required jobs.

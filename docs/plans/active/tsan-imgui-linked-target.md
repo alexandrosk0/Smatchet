@@ -76,7 +76,7 @@ The seam approach needs **no** new preset, CMake target, or CI-Mesa wiring (that
 
 - **Risk — the target balloons into AppController decomposition.** *Mitigation:* prefer Option A's narrow test-double seam; if the cut exceeds ~a day, take Option B (app link under Mesa) instead of refactoring the god-object.
 - **Risk — authored blind (no local build in the dev session — egress blocks FetchContent).** *Mitigation:* slice 1 was syntax-checked against the real headers under C++14 clang `-Wall -Wextra`; every slice's real verification is the paths-scoped `tsan-linux-nightly.yml` `pull_request` lane, which compiles + runs it on CI.
-- **Non-goal — making the lane required.** It stays advisory (not in `project.config.json` required_contexts), like the existing TSan + fuzz lanes.
+- **Non-goal — making the lane required.** It stays out of `project.config.json` required_contexts, like the existing TSan + fuzz lanes. Non-required is not advisory: the check name carries no `advisory` token, so the merge poller's block-on-any-red blocks on a red `TSan Linux subset (Clang)` whenever the paths-scoped `pull_request` trigger runs it on a PR.
 - **Non-goal — re-verifying the sync layer.** Already covered; this target is strictly the `g_ui`/AiAssistant surface.
 
 ## Verification

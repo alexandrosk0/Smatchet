@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58743}"
@@ -28,24 +32,24 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
+ui_test_require_fresh_exe "$EXE" || exit 2
+
+# Throwaway seeded profile (scripts/dev/lib/ui-test-driver.sh): the run never
+# reads or writes the developer's real config / imgui.ini, and no first-run
+# banner or update modal sits over the widgets under test.
+ui_test_isolate_home --seed
+
 echo "[test-ui-callstack-tooltip-hover] launching ephemeral Smatchet (port $TEST_PORT)..."
 # Hard timeout so a hung spawn / wedged test run can't block forever and stall CI
-# (CodeRabbit #1364). Override via UI_TEST_TIMEOUT. `timeout` exits 124 on expiry.
+# (CodeRabbit #1364). Override via UI_TEST_TIMEOUT. ui_test_capture runs it under
+# `timeout -k5` (124 on expiry, 137 after the KILL), degrades to no timeout on a
+# shell that lacks `timeout`, and captures through a FILE so a --spawn grandchild
+# that outlives the CLI cannot hold a `$(...)` pipe open forever.
 RUN_TIMEOUT="${UI_TEST_TIMEOUT:-240}"
-# `timeout` (coreutils) ships in git-bash + the Linux CI shells, but guard anyway so a
-# shell that lacks it degrades to no-timeout instead of erroring out (CodeRabbit #1364).
-if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_PREFIX=(timeout "$RUN_TIMEOUT")
-else
-    echo "[test-ui-callstack-tooltip-hover] WARN: 'timeout' not found; running without a hard timeout." >&2
-    TIMEOUT_PREFIX=()
-fi
-set +e
-RAW_OUTPUT="$("${TIMEOUT_PREFIX[@]}" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-    --mcp-port="$TEST_PORT" 2>&1)"
-RUN_RC=$?
-set -e
-if [ "$RUN_RC" -eq 124 ]; then
+ui_test_capture "$RUN_TIMEOUT" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    --mcp-port="$TEST_PORT"
+RAW_OUTPUT="$UI_TEST_OUTPUT"
+if ui_test_timed_out; then
     echo "$RAW_OUTPUT" | tail -40
     echo "FAIL: ui_test.run exceeded ${RUN_TIMEOUT}s hard timeout (hung spawn?) — aborted." >&2
     echo "Passed: 0  Failed: 1"

@@ -17,5 +17,6 @@
   - reserve queue capacity up front so `push_back` cannot allocate;
   - count and log every dropped task.
   Alternatively, give latches a staleness timeout that a UI-thread tick clears, with a visible cue.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the dispatcher side landed (backlog-sweep PR #2296: PostCompletionToMainThread — overflow evicts the oldest droppable task, never a completion; completions have their own 4096 cap (oldest dropped, counted, LOG_ERROR); DroppedTaskCount() + rate-limited logging outside the lock; allocation failure caught; the grid field-edit commit and SubmitPendingActionAsync post completions). Remaining: AppController does not override IMainThreadPoster::PostCompletionToMainThread (needs AppController.h/.cpp, locked during the sweep), so posts through the poster interface still arrive as droppable — a one-line override forwarding to mainThreadDispatcher.
   Status: open
-  Last-reviewed: 2026-09-27
+  Last-reviewed: 2026-10-04

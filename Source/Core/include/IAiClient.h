@@ -8,7 +8,7 @@
 
 class IAiClient {
   public:
-    virtual ~IAiClient() {}
+    virtual ~IAiClient() = default;
 
     virtual std::string GetProviderName() const = 0;
 

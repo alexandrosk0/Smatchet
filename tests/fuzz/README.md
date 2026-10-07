@@ -50,6 +50,8 @@ ctest --preset ninja-fuzzer-linux                # -runs=0 smoke (loads seeds, e
 | `fuzz_ai_error_redact` | `smatchet::ai::pure::RedactProviderErrorBody` (secret redaction) | monkey Layer 3 (#1637) |
 | `fuzz_ai_endpoint_sanitize` | `SanitizeAiEndpointUrl` / `ExtractUrlHost` (config-write SSRF) | monkey Layer 3 (#1637) |
 | `fuzz_locale_format_guard` | `smatchet::l10n::ConversionSpecifiers` / `FormatSpecifiersMatch` (locale format-string guard) | E2d (this PR) |
+| `fuzz_jira_map` | `smatchet::jira::AppendCachedTicketFromJiraSearchIssue` + `FindJiraTransitionId` / `ParseAvailableTransitionTargets` | Jira consuming layer |
+| `fuzz_jira_field_catalog` | `TrackerFieldCatalogPure` (`ParseFieldDefinition`, `ApplyCreateMetaToCatalog`, issue-type / component / board / sprint builders) | Jira consuming layer |
 
 The three E2c drivers fuzz the tracker-response **consuming** layer — the pure
 JSON→`CachedTicket` mappers that walk an already-parsed DOM with structural
@@ -59,6 +61,15 @@ ids). The raw `json::parse` on each tracker HTTP body is already depth/node-boun
 by `json_safe::ParseBounded` (the `bare-json-parse-untrusted` lint), so each driver
 feeds fuzz bytes through `ParseBounded` first — exactly what the production fetcher
 hands the mapper — then drives every pure entry point on the resulting `json`.
+
+The two Jira drivers fuzz the same layer for Jira, but their closure is heavier:
+both reach the field-value parser, which loads its templates through
+`ConfigManager`, so they link the cpr/ImGui-free closure the `ninja-test-linux`
+subset links for `JiraIssueMappingPure` (the `ConfigManager` split TUs, the
+Comments pipeline and the Markdown engines). Their first run found a real bug:
+`ParseJsonIntLoose` cast an out-of-range float board id straight to `int`
+(undefined behaviour); the seed `corpus/jira_field_catalog/board_float_id_overflow`
+keeps it fixed.
 
 ## Adding a driver
 

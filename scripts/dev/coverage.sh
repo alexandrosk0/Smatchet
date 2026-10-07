@@ -9,7 +9,7 @@
 # Usage:
 #   bash scripts/dev/coverage.sh                    # capture coverage + write HTML/XML
 #   bash scripts/dev/coverage.sh --xml-only         # CI mode — just Cobertura XML
-#   bash scripts/dev/coverage.sh --threshold 70     # exit 1 if line coverage < 70%
+#   bash scripts/dev/coverage.sh --threshold 70     # exit 4 if line coverage < 70%
 #
 # Env overrides:
 #   SMATCHET_COVERAGE_BUILD_DIR   build dir to read tests from. Default: pick the
@@ -19,11 +19,19 @@
 #   OPENCPPCOVERAGE_EXE           path to OpenCppCoverage.exe. Default: `OpenCppCoverage`
 #                                 from PATH (Chocolatey install lands at
 #                                 /c/Program Files/OpenCppCoverage/OpenCppCoverage.exe).
+#                                 Also the seam tests/bats/coverage_gate.bats stubs.
 #
-# Exit codes:
+# Exit codes (each verdict has its own code, so a caller can tell them apart —
+# coverage.yml downgrades ONLY 4 under the coverage-out-of-band label):
 #   0 — coverage captured successfully (threshold passed if requested)
-#   1 — tool failure / threshold not met
-#   2 — required binary (test exe or OpenCppCoverage) missing
+#   1 — a test binary failed under capture (fix the code), or an unexpected
+#       script error under `set -e`
+#   2 — required binary (test exe or OpenCppCoverage) missing / bad usage
+#   3 — coverage INFRA failure (fix nothing, re-run): OpenCppCoverage produced no
+#       coverage data, or the merge wrote no usable coverage.xml, even after one
+#       automatic retry. Marked by a `::error title=COVERAGE-INFRA-CRASH::` line so
+#       an instrumentation crash never reads as a 0% coverage regression.
+#   4 — line coverage below --threshold (the only verdict the label may waive)
 #
 # Local install hint: https://github.com/OpenCppCoverage/OpenCppCoverage/releases
 # On MSYS2 / Windows: `choco install opencppcoverage` (CI runner default).
@@ -64,6 +72,39 @@ classify_capture_failure() {
     return 2
 }
 
+# run_capture <label> <bin> <child-exe> [child-args...]
+# One OpenCppCoverage capture of <child-exe> into the <bin> intermediate (reads the globals
+# OCC + OCC_FILTER_ARGS). A TOOLING failure (classify verdict 2 — no .bin) is retried ONCE:
+# an instrumentation crash is usually transient, and one re-attach is far cheaper than a
+# human re-running the whole lane. A TEST-binary failure (verdict 1) is never retried — the
+# child ran and failed, so a second run could only hide a flake or repeat the red.
+# Returns the final attempt's verdict: 0 ok · 1 test failure · 2 persistent tooling failure.
+run_capture() {
+    local label="$1" bin="$2" attempt rc verdict
+    shift 2
+    for attempt in 1 2; do
+        rm -f "$bin"
+        rc=0
+        "$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$bin" -- "$@" || rc=$?
+        verdict=0
+        classify_capture_failure "$label" "$rc" "$bin" || verdict=$?
+        if [ "$verdict" -eq 2 ] && [ "$attempt" -eq 1 ]; then
+            echo "[coverage] $label: tooling failure — retrying the capture once..." >&2
+            continue
+        fi
+        return "$verdict"
+    done
+}
+
+# coverage_infra_error <detail> — the distinct marker for a coverage-HARNESS failure (backlog
+# infra.md 2026-06-14 ci-infra-flake-reds-masquerade-as-real-breakage: an OpenCppCoverage crash
+# used to surface as `0% - 1 hit, 544 misses`, indistinguishable from a real threshold miss).
+# GitHub Actions renders the line as an error annotation titled COVERAGE-INFRA-CRASH; callers
+# exit 3 so the verdict also differs from the test/threshold exit 1.
+coverage_infra_error() {
+    echo "::error title=COVERAGE-INFRA-CRASH::$1 — a coverage-harness failure, not a test or coverage regression. Re-run the job; if it persists, check the OpenCppCoverage install."
+}
+
 # --selftest — exercise classify_capture_failure with synthetic inputs (no build/exe needed).
 # selftest: asserts-failure — feeds known-bad (non-zero) RCs and asserts the test-vs-tooling
 # split returns the distinct exit codes (1 = test failure with .bin present, 2 = tooling failure
@@ -89,9 +130,49 @@ if [ "${1:-}" = "--selftest" ]; then
     : > "$st_tmp/empty.bin"
     classify_capture_failure "X" 5 "$st_tmp/empty.bin" 2>/dev/null; st_rc=$?
     [ "$st_rc" -eq 2 ] || { echo "selftest FAIL: empty-bin not classified as tooling (2) (got $st_rc)" >&2; st_fail=1; }
+    # run_capture retry policy, against a stub OpenCppCoverage whose per-invocation behaviour
+    # is scripted by STUB_PLAN (one word per call: crash = exit 1 with no .bin · test = .bin
+    # written + exit 7 · ok = .bin written + exit 0); STUB_COUNTER counts the invocations.
+    cat > "$st_tmp/occ-stub" <<'STUB'
+#!/usr/bin/env bash
+n=$(( $(cat "$STUB_COUNTER") + 1 )); echo "$n" > "$STUB_COUNTER"
+read -r -a plan <<< "$STUB_PLAN"; step="${plan[$((n - 1))]:-ok}"
+bin=""; prev=""
+for a in "$@"; do
+    if [ "$prev" = "--export_type" ] && [ "${a#binary:}" != "$a" ]; then bin="${a#binary:}"; fi
+    prev="$a"
+done
+case "$step" in
+    crash) exit 1 ;;
+    test) printf 'cov' > "$bin"; exit 7 ;;
+    *) printf 'cov' > "$bin"; exit 0 ;;
+esac
+STUB
+    chmod +x "$st_tmp/occ-stub"
+    OCC="$st_tmp/occ-stub"
+    OCC_FILTER_ARGS=(--sources selftest)
+    export STUB_PLAN STUB_COUNTER="$st_tmp/count"
+    # "<plan>|<want verdict>|<want invocations>|<why>"
+    for st_case in "ok|0|1|clean capture" "crash ok|0|2|transient tooling crash rescued by the retry" \
+                   "crash crash|2|2|persistent tooling crash -> infra" "test|1|1|real test failure is never retried"; do
+        IFS='|' read -r STUB_PLAN st_want st_calls st_why <<< "$st_case"
+        echo 0 > "$STUB_COUNTER"
+        st_rc=0
+        run_capture "X" "$st_tmp/cap.bin" "child.exe" >/dev/null 2>&1 || st_rc=$?
+        st_n="$(cat "$STUB_COUNTER")"
+        if [ "$st_rc" -ne "$st_want" ] || [ "$st_n" -ne "$st_calls" ]; then
+            echo "selftest FAIL: run_capture '$STUB_PLAN' ($st_why): verdict $st_rc/$st_want, invocations $st_n/$st_calls" >&2
+            st_fail=1
+        fi
+    done
+    # The annotation title is what separates an infra red from a coverage red at the rollup.
+    case "$(coverage_infra_error "selftest")" in
+        "::error title=COVERAGE-INFRA-CRASH::selftest"*) ;;
+        *) echo "selftest FAIL: coverage_infra_error does not emit the COVERAGE-INFRA-CRASH annotation" >&2; st_fail=1 ;;
+    esac
     set -e
     if [ "$st_fail" -eq 0 ]; then
-        echo "coverage.sh --selftest: PASS — test-binary vs OpenCppCoverage tooling exit split OK"
+        echo "coverage.sh --selftest: PASS — test-binary vs OpenCppCoverage tooling exit split OK; tooling crash retried once, test failure never"
         exit 0
     fi
     echo "coverage.sh --selftest: FAIL"
@@ -130,7 +211,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,30p' "$0"
+            sed -n '2,35p' "$0"
             exit 0
             ;;
         *)
@@ -246,30 +327,53 @@ OCC_FILTER_ARGS=(
 # code still reflects real failures, so a genuine test failure still fails here.
 # (Surfaced by the flaky-quarantine self-test's intentional WARN-on-false.)
 echo "[coverage] capturing SmatchetTests via $OCC..."
-set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED"
-RC_TESTS=$?
-set -e
+V_TESTS=0
+run_capture "SmatchetTests" "$BIN_TESTS" "$TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED" || V_TESTS=$?
 
 echo "[coverage] capturing SmatchetLuaTests..."
-set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED"
-RC_LUA=$?
-set -e
+V_LUA=0
+run_capture "SmatchetLuaTests" "$BIN_LUA" "$LUA_TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED" || V_LUA=$?
 
 # Distinguish a TEST-BINARY failure (the doctest child returned non-zero — a real test
 # regression OpenCppCoverage faithfully forwarded; the .bin intermediate WAS written) from
-# an OpenCppCoverage TOOLING failure (the tool could not attach / produced no coverage data;
-# no .bin intermediate exists). The two demand different operator action: a test failure means
-# "fix the failing test"; a tooling failure means "fix the coverage harness / install". A
-# non-empty .bin proves the child executed under the debugger, so its non-zero RC is a test
-# exit; a missing/empty .bin means the tool never produced data → tooling failure.
-CAPTURE_FAILED=0
-if ! classify_capture_failure "SmatchetTests" "$RC_TESTS" "$BIN_TESTS"; then CAPTURE_FAILED=1; fi
-if ! classify_capture_failure "SmatchetLuaTests" "$RC_LUA" "$BIN_LUA"; then CAPTURE_FAILED=1; fi
-if [ "$CAPTURE_FAILED" -ne 0 ]; then
+# an OpenCppCoverage TOOLING failure (the tool could not attach / produced no coverage data
+# even after run_capture's one retry). The two demand different operator action: a test
+# failure means "fix the failing test" (exit 1); a tooling failure means "re-run / fix the
+# coverage harness" (exit 3, COVERAGE-INFRA-CRASH). A test failure dominates when both occur
+# (a re-run cannot clear it), but the infra half is still annotated.
+CAPTURE_INFRA=""
+if [ "$V_TESTS" -eq 2 ]; then CAPTURE_INFRA="SmatchetTests"; fi
+if [ "$V_LUA" -eq 2 ]; then CAPTURE_INFRA="${CAPTURE_INFRA:+$CAPTURE_INFRA + }SmatchetLuaTests"; fi
+if [ -n "$CAPTURE_INFRA" ]; then
+    coverage_infra_error "OpenCppCoverage produced no coverage data for $CAPTURE_INFRA (capture retried once)"
+fi
+if [ "$V_TESTS" -eq 1 ] || [ "$V_LUA" -eq 1 ]; then
     exit 1
 fi
+if [ -n "$CAPTURE_INFRA" ]; then
+    exit 3
+fi
+
+# xml_line_rate <xml> — print the Cobertura root line-rate (a float in [0,1]), or NOTHING
+# when the report is missing / empty / has no parseable root rate. Nothing means the export
+# carried no coverage data — an infra failure, never a 0% reading (the old fallback printed
+# "0", turning an empty export into a `0% < threshold` red). The path goes via os.environ
+# (NOT string interpolation into `-c` source) so it cannot break the Python source or run
+# attacker-controlled code under set -euo pipefail.
+xml_line_rate() {
+    [ -s "$1" ] || return 0
+    XML_OUT="$1" python -c '
+import os, re
+with open(os.environ["XML_OUT"], encoding="utf-8", errors="replace") as f:
+    t = f.read()
+m = re.search(r"<coverage[^>]*line-rate=\"([0-9.]+)\"", t)
+try:
+    r = float(m.group(1)) if m else -1.0
+except ValueError:
+    r = -1.0
+print(m.group(1) if 0.0 <= r <= 1.0 else "")
+'
+}
 
 # Merge the two binaries into the final Cobertura (+ optional HTML) report.
 # OpenCppCoverage requires at least one runnable child even on a pure merge; we
@@ -280,37 +384,40 @@ fi
 # takes a plain filename argument, is always in System32, and exits 0 on a hit.
 # MSYS_NO_PATHCONV is not needed here (no `/switch` argument survives to argv),
 # but see tests/bats/msys_argv_switches.bats for the class this used to hit.
+# A merge that fails or writes no usable XML is a tooling failure like a capture
+# crash: retried once, then reported as COVERAGE-INFRA-CRASH (exit 3).
 MERGE_EXPORTS=(--export_type "cobertura:$XML_OUT")
 if [ "$XML_ONLY" -eq 0 ]; then
     MERGE_EXPORTS+=(--export_type "html:$HTML_OUT")
 fi
-echo "[coverage] merging binaries -> $XML_OUT..."
-set +e
-"$OCC" --input_coverage "$BIN_TESTS" --input_coverage "$BIN_LUA" "${MERGE_EXPORTS[@]}" -- where.exe cmd.exe
-RC_MERGE=$?
-set -e
-if [ "$RC_MERGE" -ne 0 ]; then
-    echo "FAIL: OpenCppCoverage merge returned $RC_MERGE" >&2
-    exit 1
+LINE_RATE=""
+RC_MERGE=0
+for MERGE_ATTEMPT in 1 2; do
+    echo "[coverage] merging binaries -> $XML_OUT..."
+    rm -f "$XML_OUT"
+    RC_MERGE=0
+    "$OCC" --input_coverage "$BIN_TESTS" --input_coverage "$BIN_LUA" "${MERGE_EXPORTS[@]}" -- where.exe cmd.exe || RC_MERGE=$?
+    if [ "$RC_MERGE" -eq 0 ]; then
+        LINE_RATE="$(xml_line_rate "$XML_OUT")"
+    fi
+    if [ -n "$LINE_RATE" ]; then
+        break
+    fi
+    if [ "$MERGE_ATTEMPT" -eq 1 ]; then
+        echo "[coverage] merge produced no usable coverage.xml (exit $RC_MERGE) — retrying once..." >&2
+    fi
+done
+if [ -z "$LINE_RATE" ]; then
+    if [ "$RC_MERGE" -ne 0 ]; then
+        coverage_infra_error "OpenCppCoverage merge returned $RC_MERGE (retried once)"
+    else
+        coverage_infra_error "$XML_OUT missing, empty or without a coverage line-rate after the merge (retried once)"
+    fi
+    exit 3
 fi
 
-if [ ! -s "$XML_OUT" ]; then
-    echo "FAIL: $XML_OUT missing or empty after capture" >&2
-    exit 1
-fi
-
-# Extract the line-rate from Cobertura XML. Cobertura's <coverage line-rate="0.72" .../>
-# is a float in [0,1]; we surface a percentage for the threshold compare.
-# Pass paths / values via os.environ (NOT string interpolation into `-c` source)
-# so a path / rate string cannot break the Python source or run attacker-
-# controlled code under set -euo pipefail.
-LINE_RATE=$(XML_OUT="$XML_OUT" python -c '
-import os, re
-with open(os.environ["XML_OUT"]) as f:
-    t = f.read()
-m = re.search(r"<coverage[^>]*line-rate=\"([0-9.]+)\"", t)
-print(m.group(1) if m else "0")
-')
+# Cobertura's <coverage line-rate="0.72" .../> is a float in [0,1]; surface a
+# percentage for the threshold compare.
 PCT=$(LINE_RATE="$LINE_RATE" python -c '
 import os
 print(int(round(float(os.environ["LINE_RATE"]) * 100)))
@@ -324,7 +431,7 @@ fi
 if [ "$THRESHOLD" -gt 0 ]; then
     if [ "$PCT" -lt "$THRESHOLD" ]; then
         echo "FAIL: line coverage ${PCT}% < threshold ${THRESHOLD}%" >&2
-        exit 1
+        exit 4
     fi
     echo "[coverage] threshold ${THRESHOLD}% met (${PCT}%)"
 fi

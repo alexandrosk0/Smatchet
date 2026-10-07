@@ -6,6 +6,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "Json/BoundedJsonParse.h"
+#include "JsonParseUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -14,6 +15,8 @@
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <unordered_set>
 
 namespace {
 // FieldCatalogCache exposes free functions and reads/writes a single JSON file under the user data
@@ -26,6 +29,12 @@ std::mutex& FieldCatalogCacheFileMutex() {
 
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
 constexpr int kDefaultMaxCachedProjects = 16;
+// A restore moves its snapshot up the LRU order at most this often: each move rewrites the whole cache
+// file, and a restore can run on the UI thread.
+constexpr std::int64_t kLruTouchIntervalSeconds = 24 * 60 * 60;
+// The base URLs Preferences fills in, and the clients use, when the configured one is empty.
+constexpr const char* kGitHubDefaultBaseUrl = "https://api.github.com";
+constexpr const char* kLinearDefaultBaseUrl = "https://api.linear.app/graphql";
 
 } // namespace
 
@@ -242,46 +251,77 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
 // MigrateOnDiskRootToV3 produces a v3-shaped root (entries-array index + per-cacheKey blobs at root).
 // Missing metadata (backend/endpoint/projectKey from a v1/v2 entry) is left empty in the index entry
 // and populated on the next Save for that cacheKey.
+// The root keys that are not snapshot blobs. An index entry naming one would let eviction or Forget erase
+// the index or the schema version itself.
+bool IsReservedRootKey(const std::string& key) { return key == "schema_version" || key == "entries"; }
+
+// Typed reads that fall back instead of throwing: a hand-edited or corrupt field must not make every
+// later load, save, listing or Forget fail.
+bool JsonBoolOr(const nlohmann::json& object, const char* key) {
+    const auto it = object.find(key);
+    return it != object.end() && it->is_boolean() && it->get<bool>();
+}
+
 nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     nlohmann::json out = nlohmann::json::object();
     out["schema_version"] = kFieldCatalogCacheSchemaVersion;
     nlohmann::json indexArr = nlohmann::json::array();
 
-    const int oldVer = rootOnDisk.is_object() ? rootOnDisk.value("schema_version", 0) : 0;
+    const std::int64_t oldVer = rootOnDisk.is_object() ? ParseJsonInt64FieldLoose(rootOnDisk, "schema_version", 0) : 0;
     const std::int64_t now = TimeNowPure::NowUnixSeconds();
 
     auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey, const std::string& backend,
-                                const std::string& endpoint, std::int64_t lastUsed) {
+                                const std::string& endpoint, std::int64_t lastUsed, bool kindKeyed) {
         nlohmann::json e = nlohmann::json::object();
         e["cacheKey"] = cacheKey;
         e["projectKey"] = projectKey;
         e["backend"] = backend;
         e["endpoint"] = endpoint;
-        e["lastUsedUnix"] = lastUsed;
+        // A time ahead of the clock (a clock moved back, a hand edit) would pin the entry first in the LRU
+        // order for good: it counts as used now.
+        e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
+        e["kindKeyed"] = kindKeyed;
         indexArr.push_back(std::move(e));
     };
 
-    if (oldVer >= 3 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_array()) {
-        // v3 → v3: preserve the index as-is.
-        for (const auto& idx : rootOnDisk["entries"]) {
+    const bool v2 = oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object();
+    const bool v1 = !v2 && rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array();
+    if (rootOnDisk.is_object() && !v1 && !v2) {
+        // v3 → v3: preserve the index, minus entries that name no blob, a reserved key or a key twice. A
+        // root whose index or schema version is damaged still keeps its blobs (indexed as below).
+        std::unordered_set<std::string> indexed;
+        const nlohmann::json noEntries = nlohmann::json::array();
+        const auto entriesIt = rootOnDisk.find("entries");
+        const nlohmann::json& entries = entriesIt != rootOnDisk.end() && entriesIt->is_array() ? *entriesIt : noEntries;
+        for (const auto& idx : entries) {
             if (!idx.is_object())
                 continue;
-            const std::string cacheKey = idx.value("cacheKey", std::string());
-            if (cacheKey.empty())
+            const std::string cacheKey = JsonStringFieldOr(idx, "cacheKey");
+            if (cacheKey.empty() || IsReservedRootKey(cacheKey) || !rootOnDisk.contains(cacheKey) ||
+                !rootOnDisk[cacheKey].is_object() || !indexed.insert(cacheKey).second)
                 continue;
-            appendIndexEntry(cacheKey, idx.value("projectKey", std::string()), idx.value("backend", std::string()),
-                             idx.value("endpoint", std::string()), idx.value("lastUsedUnix", now));
+            appendIndexEntry(cacheKey, JsonStringFieldOr(idx, "projectKey"), JsonStringFieldOr(idx, "backend"),
+                             JsonStringFieldOr(idx, "endpoint"), ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now),
+                             JsonBoolOr(idx, "kindKeyed"));
         }
-        // Preserve per-cacheKey blobs at root (everything except schema_version + entries).
+        // Preserve per-cacheKey blobs at root (every object but the reserved keys). A blob the index does
+        // not name (earlier builds dropped the index on every load, so no blob was ever evicted) is indexed
+        // with no metadata and lastUsedUnix 0: the LRU cap evicts it first, and a save under its key fills
+        // the metadata in.
         for (auto it = rootOnDisk.begin(); it != rootOnDisk.end(); ++it) {
-            if (it.key() == "schema_version" || it.key() == "entries")
+            if (IsReservedRootKey(it.key()) || !it.value().is_object())
                 continue;
             out[it.key()] = it.value();
+            if (indexed.insert(it.key()).second) {
+                appendIndexEntry(it.key(), std::string(), std::string(), std::string(), std::int64_t{0},
+                                 JsonBoolOr(it.value(), "kindKeyed"));
+            }
         }
+        out["entries"] = std::move(indexArr);
         return out;
     }
 
-    if (oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object()) {
+    if (v2) {
         // v2 → v3: hoist each cacheKey blob from entries-object to root, add an index entry per blob
         // with empty backend/endpoint/projectKey (next Save backfills them). lastUsedUnix = now so a
         // newly-upgraded cache doesn't evict good entries on the first write.
@@ -289,14 +329,16 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
             const std::string& cacheKey = it.key();
             if (!it.value().is_object())
                 continue;
+            if (IsReservedRootKey(cacheKey))
+                continue;
             out[cacheKey] = it.value();
-            appendIndexEntry(cacheKey, std::string(), std::string(), std::string(), now);
+            appendIndexEntry(cacheKey, std::string(), std::string(), std::string(), now, false);
         }
         out["entries"] = std::move(indexArr);
         return out;
     }
 
-    if (rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array()) {
+    if (v1) {
         // v1 → v3: legacy flat layout was Jira-only; store under the historical "Jira_legacy_v1" key
         // (TryLoadFieldCatalogSnapshot below substitutes this when a "Jira|..." key isn't found).
         nlohmann::json legacyEntry = nlohmann::json::object();
@@ -306,7 +348,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         legacyEntry["issue_type_meta"] =
             rootOnDisk.contains("issue_type_meta") ? rootOnDisk["issue_type_meta"] : nlohmann::json::array();
         out["Jira_legacy_v1"] = std::move(legacyEntry);
-        appendIndexEntry("Jira_legacy_v1", std::string(), "Jira", std::string(), now);
+        appendIndexEntry("Jira_legacy_v1", std::string(), "Jira", std::string(), now, false);
     }
 
     out["entries"] = std::move(indexArr);
@@ -344,15 +386,21 @@ nlohmann::json::iterator FindIndexEntry(nlohmann::json& indexArr, const std::str
     return indexArr.end();
 }
 
-// Sort the index array by lastUsedUnix descending and drop everything past `cap-1`, also freeing
-// the per-cacheKey blobs at root. cap is clamped to a minimum of 1.
-void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap) {
+// Sort the index array by lastUsedUnix descending and drop everything past `cap`, also freeing the
+// per-cacheKey blobs at root. cap is clamped to a minimum of 1. `keepKey` (the entry just saved) sorts
+// first: entries saved within the same second tie on lastUsedUnix, and it must never be the victim.
+void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap, const std::string& keepKey) {
     if (cap < 1)
         cap = 1;
     if (!root.contains("entries") || !root["entries"].is_array())
         return;
     nlohmann::json& indexArr = root["entries"];
-    std::sort(indexArr.begin(), indexArr.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+    std::stable_sort(indexArr.begin(), indexArr.end(), [&keepKey](const nlohmann::json& a, const nlohmann::json& b) {
+        const bool aKept = a.value("cacheKey", std::string()) == keepKey;
+        const bool bKept = b.value("cacheKey", std::string()) == keepKey;
+        if (aKept != bKept) {
+            return aKept;
+        }
         return a.value("lastUsedUnix", std::int64_t{0}) > b.value("lastUsedUnix", std::int64_t{0});
     });
     while (static_cast<int>(indexArr.size()) > cap) {
@@ -388,6 +436,14 @@ bool PersistRootLocked(const nlohmann::json& root, std::string& outError) {
     }
 }
 
+std::string EffectiveGitHubBaseUrl(const TrackerConfig& cfg) {
+    return cfg.GitHubBaseUrl.empty() ? std::string(kGitHubDefaultBaseUrl) : cfg.GitHubBaseUrl;
+}
+
+std::string EffectiveLinearBaseUrl(const TrackerConfig& cfg) {
+    return cfg.LinearBaseUrl.empty() ? std::string(kLinearDefaultBaseUrl) : cfg.LinearBaseUrl;
+}
+
 } // namespace
 
 namespace FieldCatalogCache {
@@ -398,11 +454,30 @@ std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::strin
         return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
                projectKey;
     }
+    if (bk == "GitHub") {
+        return std::string("GitHub|") + NormalizeEndpointForCache(EffectiveGitHubBaseUrl(cfg)) + "|" + cfg.GitHubOwner +
+               "/" + cfg.GitHubRepo + "|" + projectKey;
+    }
     if (bk == "Linear") {
-        return std::string("Linear|") + NormalizeEndpointForCache(cfg.LinearBaseUrl) + "|" + cfg.LinearTeamId + "|" +
-               projectKey;
+        return std::string("Linear|") + NormalizeEndpointForCache(EffectiveLinearBaseUrl(cfg)) + "|" +
+               cfg.LinearTeamId + "|" + projectKey;
     }
     return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + projectKey;
+}
+
+FieldCatalogIndexIdentity BuildFieldCatalogIndexIdentity(const TrackerConfig& cfg) {
+    FieldCatalogIndexIdentity id;
+    id.backend = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
+    if (id.backend == "Plane") {
+        id.endpoint = cfg.PlaneUrl + "|" + cfg.PlaneWorkspaceSlug;
+    } else if (id.backend == "GitHub") {
+        id.endpoint = EffectiveGitHubBaseUrl(cfg) + "|" + cfg.GitHubOwner + "/" + cfg.GitHubRepo;
+    } else if (id.backend == "Linear") {
+        id.endpoint = EffectiveLinearBaseUrl(cfg) + "|" + cfg.LinearTeamId;
+    } else {
+        id.endpoint = cfg.Domain;
+    }
+    return id;
 }
 
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& backend, const std::string& endpoint,
@@ -410,10 +485,17 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
                               const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError) {
     outError.clear();
+    if (cacheKey.empty() || IsReservedRootKey(cacheKey)) {
+        outError = "Invalid field catalog cache key.";
+        return false;
+    }
     try {
         std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
         nlohmann::json root = LoadAndMigrateRootLocked();
         root[cacheKey] = BuildEntryJson(fields, components, issueTypeMeta);
+        // The blob carries the flag too, so a damaged index cannot make this build's own snapshot read as
+        // an older build's.
+        root[cacheKey]["kindKeyed"] = true;
 
         // Upsert the index entry — backfills (backend, endpoint, projectKey) for entries that came
         // from v2/v1 migration with empty metadata.
@@ -430,16 +512,18 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             e["backend"] = backend;
             e["endpoint"] = endpoint;
             e["lastUsedUnix"] = now;
+            e["kindKeyed"] = true;
             indexArr.push_back(std::move(e));
         } else {
             (*it)["projectKey"] = projectKey;
             (*it)["backend"] = backend;
             (*it)["endpoint"] = endpoint;
             (*it)["lastUsedUnix"] = now;
+            (*it)["kindKeyed"] = true;
         }
 
         const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
-        EvictLeastRecentlyUsedIfOverCap(root, cap);
+        EvictLeastRecentlyUsedIfOverCap(root, cap, cacheKey);
 
         return PersistRootLocked(root, outError);
     } catch (const std::exception& ex) {
@@ -452,6 +536,21 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
         return false;
     }
 }
+
+namespace {
+
+// Builds before per-tracker keys saved a GitHub pane's catalog under the Jira site's key, with the pane's
+// project: none, or the repository's "owner/repo". A Jira key of that shape saved by such a build may
+// hold GitHub's catalog, so it is not restored; one this build saved (kindKeyed) is Jira's.
+bool IsAmbiguousLegacyJiraKey(const std::string& cacheKey) {
+    if (cacheKey.rfind("Jira|", 0) != 0) {
+        return false;
+    }
+    const std::string project = cacheKey.substr(cacheKey.rfind('|') + 1);
+    return project.empty() || project.find('/') != std::string::npos;
+}
+
+} // namespace
 
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
                                  std::vector<TrackerComponent>& outComponents,
@@ -476,24 +575,32 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
                 return false;
             }
         }
+        nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
+        const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
+        if (resolvedKey == cacheKey && IsAmbiguousLegacyJiraKey(cacheKey) &&
+            (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed")) &&
+            !JsonBoolOr(root[resolvedKey], "kindKeyed")) {
+            outError = "The cached field catalog for this tracker context predates per-tracker keys.";
+            return false;
+        }
         const bool ok =
             ParseCatalogEntryObject(root[resolvedKey], outFields, outComponents, outIssueTypeMeta, outError);
         if (!ok) {
             return false;
         }
 
-        // Touch lastUsedUnix on the index entry (under the resolved key, so legacy reads also bump
-        // the Jira_legacy_v1 entry's timestamp). Best-effort: a write failure here is logged but the
-        // caller still gets the loaded data — the cache is a snapshot, not the source of truth.
-        if (root.contains("entries") && root["entries"].is_array()) {
-            auto it = FindIndexEntry(root["entries"], resolvedKey);
-            if (it != root["entries"].end()) {
-                (*it)["lastUsedUnix"] = TimeNowPure::NowUnixSeconds();
-                std::string writeErr;
-                if (!PersistRootLocked(root, writeErr)) {
-                    LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
-                             writeErr.c_str());
-                }
+        // Touch lastUsedUnix on the index entry (under the resolved key, so legacy reads also bump the
+        // Jira_legacy_v1 entry's timestamp), at most once per interval. Best-effort: a write failure here
+        // is logged but the caller still gets the loaded data — the cache is a snapshot, not the source
+        // of truth.
+        const std::int64_t now = TimeNowPure::NowUnixSeconds();
+        if (indexIt != indexArr.end() &&
+            ParseJsonInt64FieldLoose(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
+            (*indexIt)["lastUsedUnix"] = now;
+            std::string writeErr;
+            if (!PersistRootLocked(root, writeErr)) {
+                LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
+                         writeErr.c_str());
             }
         }
         return true;
