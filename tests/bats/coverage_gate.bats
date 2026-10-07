@@ -320,6 +320,14 @@ _path_repo() {
     [[ "$output" == *"AutoPurge.inl -> Source/Core/src/Sync/AutoPurge.cpp"* ]]
 }
 
+@test "coverage-delta-gate.sh: a translation unit renamed out of the *.cpp glob is never exempt" {
+    _path_repo
+    git -C "$FIXREPO" mv Source/Core/src/a.cpp Source/Core/src/a.cc
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Source/Core/src/a.cpp -> Source/Core/src/a.cc"* ]]
+}
+
 @test "coverage-delta-gate.sh: a coloured diff configuration changes nothing" {
     _path_repo
     git -C "$FIXREPO" config color.ui always

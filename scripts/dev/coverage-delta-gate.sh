@@ -24,30 +24,43 @@
 #     (after ; { or }), its arguments included (they are not inspected);
 #   * a static_assert( … ); statement (compile-time; the build is the test);
 #   * a forward declaration — `class/struct/union Foo;`, `enum [class|struct] Foo
-#     [: base];`, optionally `template <…>`-prefixed (#1308 swaps a heavy include for one);
-#   * a using-directive or using-declaration (`using namespace a::b;`, `using a::b;`;
-#     an alias `using T = …;` stays: it changes a type);
-#   * #include and #pragma once lines;
-#   * an empty catch clause right before an empty `catch (…)` clause (the swallow→log
-#     pattern of #906, once its LOG statements are left out: both swallow);
+#     [: base];`, optionally `template <…>`-prefixed with no default argument (#1308
+#     swaps a heavy include for one);
+#   * at namespace scope only: a using-directive or using-declaration (`using namespace
+#     a::b;`, `using a::b;`; an alias `using T = …;` stays: it changes a type; in a class
+#     or a block a using-declaration changes which overload a call reaches), and an
+#     #include line — unless the file has an #if group whose condition reads a macro a
+#     header could define (not a compiler-predefined one), since an include can turn it;
+#     #pragma once;
+#   * an empty by-reference catch clause right before an empty `catch (…)` clause (the
+#     swallow→log pattern of #906, once its LOG statements are left out: both swallow; a
+#     by-value one copies the exception, which may do anything);
 #   * the code a tested build never compiles: an #if/#elif/#else arm that is false on
 #     the desktop builds and either false everywhere (`#if 0`) or Android-only
 #     (__ANDROID__, validated by the Android NDK/APK cross-compile jobs, #1021). An arm
-#     whose condition the gate cannot decide (any other macro, a comparison) stays in
-#     the stream, its directives with it, so moving code across one changes the stream.
-#     A group whose every arm is decided and whose kept arms are the ones the desktop
-#     builds compile leaves no directive in the stream (`#ifndef
-#     SMATCHET_EMBEDDED_IN_UNREAL` around existing code, #1082). __APPLE__ / TARGET_OS_*
-#     arms are NOT left out — no CI job builds macOS/iOS;
+#     whose condition the gate cannot decide (any other macro, a comparison, a C++23
+#     #elifdef / #elifndef) stays in the stream, its directives with it, so moving code
+#     across one changes the stream. A group whose every arm is decided and whose kept
+#     arms are the ones the desktop builds compile leaves no directive in the stream
+#     (`#ifndef SMATCHET_EMBEDDED_IN_UNREAL` around existing code, #1082), as does an
+#     include guard (`#ifndef X` + `#define X` at a header's top level) or a
+#     define-if-undefined that holds nothing else. __APPLE__ / TARGET_OS_* arms are NOT
+#     left out — no CI job builds macOS/iOS;
 #   * a header→cpp body relocation: an in-header (inline) function definition removed
-#     and re-added byte-identical (whitespace-trimmed, `inline` dropped) as an
-#     out-of-line definition in a .cpp of the same product tree, outside any #if, plus
-#     its header declaration and the new TU's namespace opener and closer (#1317).
+#     and re-added byte-identical (whitespace-trimmed, `inline` dropped from the
+#     signature) as an out-of-line definition in a .cpp of the same product tree, both
+#     copies whole lines of code outside any #if, comment or raw string, with the header
+#     declaring it in the same change; plus that declaration and the new TU's namespace
+#     opener and closer when the namespace wraps nothing that existed (#1317).
 # So a new or removed statement, a changed condition or literal, code commented out or
 # back in, a moved #else/#endif, a removed catch clause or brace — NOT exempt. A file
-# renamed between product trees, or into or out of them, is never exempt (the
-# compilers newly build, or stop building, every line it carries). A file whose lexing
-# the gate cannot trust is never exempt (see _prefilter_diff).
+# renamed between product trees, into or out of them, to another extension (the CMake
+# globs pick up *.cpp) or between a header and a translation unit, is never exempt. A
+# file whose lexing the gate cannot trust is never exempt (see _prefilter_diff).
+# Accepted approximations, as before: a LOG call's arguments are not inspected; a new
+# forward declaration or namespace-scope using-declaration can still change name lookup;
+# an #include in a file whose groups the gate decides can still change a macro the code
+# expands; whitespace inside a stringified macro argument is not compared.
 # Motivation: a GitHub merge queue runs this required check on the merge_group
 # ref where PR labels don't apply, so tests-out-of-band can't dismiss it there;
 # the gate must PASS legitimately for genuinely-untestable correctness diffs.
@@ -100,25 +113,24 @@ _is_product_path() {
 }
 
 # _rename_class <path> — how the build treats a path: "none" outside the product trees (or data
-# inside them), else its tree's first directory and whether it is a translation unit or only ever
-# included ("Source/Core/src:tu", "Source/Core/include:inc"). A rename that changes it changes what the
-# compilers build: the CMake globs pick up translation units by directory, and a header moved to a .cpp
-# is newly compiled on its own.
+# inside them), else its tree's first directory and its extension (everything after the name's first
+# dot: "Source/Core/src:cpp", "Source/Core/include:h", "tests/Core:test.cpp"). A rename that changes it
+# changes what the compilers build: the CMake globs pick up translation units by directory and by
+# extension (*.cpp: a Reg.cpp renamed Reg.cc leaves the build), and a header moved to a .cpp is newly
+# compiled on its own.
 _rename_class() {
-    local root rest kind=inc
+    local root rest base
     if ! _is_product_path "$1"; then
         echo none
         return
     fi
     root="$(_product_root "$1")"
     rest="${1#"$root"/}"
-    case "$1" in
-        *.c|*.cc|*.cpp|*.cxx|*.c.in|*.cc.in|*.cpp.in|*.cxx.in) kind=tu ;;
-    esac
+    base="${1##*/}"
     if [[ "$rest" == */* ]]; then
-        echo "$root/${rest%%/*}:$kind"
+        echo "$root/${rest%%/*}:${base#*.}"
     else
-        echo "$root:$kind"
+        echo "$root:${base#*.}"
     fi
 }
 
@@ -185,11 +197,25 @@ function strip_bom(s) { return substr(s, 1, 3) == "\357\273\277" ? substr(s, 4) 
 # The C++ files this lexer reads; any other product file (C, an unknown extension) is untrusted.
 function is_cxx(p) { return p ~ /\.(cpp|cc|cxx|h|hpp|hxx|hh|inl|ipp|tpp|inc)$/ }
 function is_hdr(p) { return p ~ /\.(h|hpp)$/ }
-function is_cpp(p) { return p ~ /\.(cpp|cc|cxx)$/ }
+function is_cpp(p) { return p ~ /\.cpp$/ }
+function is_tu(p) { return p ~ /\.(cpp|cc|cxx)(\.in)?$/ }
 # The path of a "--- a/<path>" / "+++ b/<path>" header; git ends one with a TAB when the path holds a
 # space. A deleted or added file's other side is /dev/null, which is no product path.
 function path_of(raw,   p) { p = substr(raw, 5); sub(/\t$/, "", p); sub(/^[ab]\//, "", p); return p }
-function drop_inline(s) { s = " " s " "; gsub(/[ \t]inline[ \t]/, " ", s); return trim(s) }
+# A signature with `inline` dropped from its head (before the first parenthesis; never from a literal).
+function drop_inline(s,   p, head) {
+    p = index(s, "(")
+    head = p ? substr(s, 1, p - 1) : s
+    head = " " head " "
+    gsub(/[ \t]inline[ \t]/, " ", head)
+    return trim(trim(head) (p ? substr(s, p) : ""))
+}
+# A header line's declaration text: trimmed, a trailing // comment dropped (when the line has no quote).
+function decl_text(b) {
+    b = trim(b)
+    if (index(b, "\"") == 0 && index(b, SQ) == 0) sub(/[ \t]*\/\/.*$/, "", b)
+    return b
+}
 # Net { minus } outside string/char literals and a trailing // comment.
 function brace_delta(s,   t, o, c) {
     t = s
@@ -220,6 +246,7 @@ function t_not(a) { return a == 2 ? 2 : 1 - a }
 function t_and(a, b) { return (a == 0 || b == 0) ? 0 : ((a == 2 || b == 2) ? 2 : 1) }
 function t_or(a, b) { return (a == 1 || b == 1) ? 1 : ((a == 2 || b == 2) ? 2 : 0) }
 function mdef(name, p) {
+    if (name == "__cplusplus") return 1
     if (name == "__ANDROID__") return p == "A" ? 1 : 0
     if (name == "SMATCHET_EMBEDDED_IN_UNREAL") return p == "U" ? 1 : 0
     return 2
@@ -293,11 +320,22 @@ function e_primary(   t, v, name) {
     }
     return 2
 }
+# Does the condition of a directive (tokens DT[s, 3..n]) read a macro a header could define? The
+# compiler's own platform and version macros cannot be.
+function cond_reads_project_macro(s, n,   i, t) {
+    for (i = 3; i <= n; i++) {
+        t = DT[s, i]
+        if (t ~ /^[A-Za-z_][A-Za-z0-9_]*$/ && t != "defined" && t != "true" && t != "false" && !(t in PREDEF)) return 1
+    }
+    return 0
+}
 # The value, in build p, of the condition of directive kw (tokens DT[s, 1..n]: '#', kw, ...).
 function eval_cond(s, kw, n, p,   i, v) {
     if (kw == "else") return 1
-    if (kw == "ifdef" || kw == "elifdef") return n >= 3 ? mdef(DT[s, 3], p) : 2
-    if (kw == "ifndef" || kw == "elifndef") return n >= 3 ? t_not(mdef(DT[s, 3], p)) : 2
+    # #elifdef / #elifndef are C++23: a C++14 compiler may not honour them, so they stay undecided.
+    if (kw == "elifdef" || kw == "elifndef") return 2
+    if (kw == "ifdef") return n >= 3 ? mdef(DT[s, 3], p) : 2
+    if (kw == "ifndef") return n >= 3 ? t_not(mdef(DT[s, 3], p)) : 2
     for (i = 3; i <= n; i++) if (DT[s, i] == "?") return 2
     ES = s; EP = 3; EN = n; EPL = p
     v = e_or()
@@ -329,6 +367,7 @@ function side_init(s, start) {
     lx_bom = start <= 1
     DEP[s] = 0; UF[s] = 0; NDROP[s] = 0; DTN[s] = 0
     SP[s] = start <= 1 ? "" : "?"; BD[s] = 0; PD[s, 0] = 0; SBN[s] = 0; NSN[s] = 0; UNSURE[s] = 0
+    NSP[s] = 0; CL[s] = 0
     CCS[s] = 0; CCN[s] = 0; CPN[s] = 0
     QH[s] = 0; QT[s] = 0; LN[s] = start > 0 ? start - 1 : 0
 }
@@ -353,11 +392,18 @@ function feed(m, raw,   b) {
 # suppressed relocation lines). ----
 function tok(kind, t,   s) {
     s = cur_side
-    if (lx_dir) { DT[s, ++DTN[s]] = t; return }
+    if (lx_dir) { DT[s, ++DTN[s]] = t; DS[s, DTN[s]] = lx_gap; lx_gap = 0; return }
+    if ((DEP[s] > 1 || !fhdr) && GGUARD[s, DEP[s]]) GGUARD[s, DEP[s]] = 0
     if (pass == 1 || lx_suppress || NDROP[s] > 0) return
     norm_tok(kind, t)
 }
 function boundary(t) { return t == "" || t == ";" || t == "{" || t == "}" }
+# Inside no brace but a namespace's or a linkage specification's (BK "N"): where a using-declaration or
+# an #include adds no code of its own to a body or an initializer.
+function in_ns_scope(s,   i) {
+    for (i = 1; i <= BD[s]; i++) if (BK[s, i] != "N") return 0
+    return 1
+}
 function stmt_start(s) { return !UNSURE[s] && boundary(SP[s]) && PD[s, BD[s]] == 0 }
 function norm_tok(kind, t,   s, k) {
     s = cur_side
@@ -367,7 +413,7 @@ function norm_tok(kind, t,   s, k) {
     if (kind == "id" && stmt_start(s)) {
         if (t ~ /^LOG_(DEBUG|INFO|WARN|ERROR|TRACE)$/ || t == "static_assert") k = "CALL"
         else if (t ~ /^(class|struct|union|enum|template)$/) k = "FWD"
-        else if (t == "using") k = "USING"
+        else if (t == "using" && in_ns_scope(s)) k = "USING"
     }
     if (k == "") { out_tok(t); return }
     SBK[s] = k; SBN[s] = 1; SB[s, 1] = t; SBD[s] = 0
@@ -389,7 +435,7 @@ function sb_add(kind, t,   s, st, isid) {
     if (st == "P2") { if (t == ";") sb_done(); else sb_flush(); return }
     if (st == "T0") { if (t == "<") { SBD[s] = 1; SBS[s] = "T1" } else sb_flush(); return }
     if (st == "T1") {
-        if (t == "{" || t == "}" || t == ";") { sb_flush(); return }
+        if (t == "{" || t == "}" || t == ";" || t == "=") { sb_flush(); return }
         if (t == "<") SBD[s]++
         else if (t == ">") SBD[s]--
         else if (t == ">>") SBD[s] -= 2
@@ -434,13 +480,22 @@ function sb_flush(   s, i, n) {
     SBN[s] = 0
     for (i = 1; i <= n; i++) out_tok(SB[s, i])
 }
-function out_tok(t,   s) {
+function out_tok(t,   s, label) {
     s = cur_side
-    if (t == "{") { BD[s]++; PD[s, BD[s]] = 0 }
+    if (lx_ctx && NSN[s] > 0) fail("line " LN[s] ": existing code moves into a new namespace")
+    label = 0
+    if (t == "{") { BD[s]++; PD[s, BD[s]] = 0; BK[s, BD[s]] = NSP[s] ? "N" : "O" }
     else if (t == "}") { if (BD[s] > 0) BD[s]-- }
     else if (t == "(") PD[s, BD[s]]++
     else if (t == ")") { if (PD[s, BD[s]] > 0) PD[s, BD[s]]-- }
-    SP[s] = t
+    else if ((t == "case" || t == "default") && stmt_start(s)) CL[s] = 1
+    else if (t == ":" && CL[s] && PD[s, BD[s]] == 0) { CL[s] = 0; label = 1 }
+    # `namespace a::b {` and `extern "C" {` open a namespace-scope brace.
+    if (t == "namespace" || t == "extern") NSP[s] = 1
+    else if (t == ";" || t == "{" || t == "}" || t == "(" || t == ")" || t == "=") NSP[s] = 0
+    if (t == ";" || t == "{" || t == "}") CL[s] = 0
+    # The statement after a case label starts like one after a semicolon.
+    SP[s] = label ? ";" : t
     cc_tok(t)
 }
 # The catch stage: an empty catch clause right before an empty catch (...) clause is left out.
@@ -462,6 +517,10 @@ function cc_tok(t,   s, i) {
         cc_flush()
         return
     }
+    # A handler that catches by value copies the exception (a copy constructor may do anything): only a
+    # by-reference one can go.
+    for (i = 3; i < CCN[s] - 2 && CC[s, i] != "&" && CC[s, i] != "&&"; i++) ;
+    if (i >= CCN[s] - 2) { cc_flush(); return }
     for (i = 1; i <= CCN[s]; i++) CP[s, ++CPN[s]] = CC[s, i]
     CCN[s] = 0
     CCS[s] = 0
@@ -491,28 +550,56 @@ function dir_end(   s, n, kw) {
     DTN[s] = 0
     kw = n >= 2 ? DT[s, 2] : ""
     if (kw ~ /^(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)$/) { cond_dir(s, kw, n); return }
+    # A guard: `#ifndef X` whose first directive is `#define X` — a header's include guard at its top
+    # level, or a define-if-undefined that holds nothing else. Either way X ends up defined; the group is
+    # no switch.
+    if ((DEP[s] > 1 || !fhdr) && GGUARD[s, DEP[s]]) GGUARD[s, DEP[s]] = 0
+    if (DEP[s] > 0 && GFIRST[s, DEP[s]]) {
+        GFIRST[s, DEP[s]] = 0
+        if (kw == "define" && n >= 3 && DT[s, 3] == GGC[s, DEP[s]]) GGUARD[s, DEP[s]] = 1
+    }
     if (pass == 1 || lx_suppress || NDROP[s] > 0 || n < 2) return
-    if (kw ~ /^(include|include_next|import)$/) return
+    # An #include inside a body or an initializer pastes code there: only one at namespace scope goes,
+    # and only in a file whose every #if group the gate decides (a header's macros can turn a group it
+    # cannot decide, so there the includes are compared).
+    if (kw ~ /^(include|include_next|import)$/ && in_ns_scope(s) && PD[s, BD[s]] == 0 && SBN[s] == 0 &&
+        !(fd in fundec)) return
     if (kw == "pragma" && n == 3 && DT[s, 3] == "once") return
     dir_token(s, n)
 }
+# A directive as one token, its tokens joined with a space only where the source had whitespace
+# (`#define F(x)` and `#define F (x)` are different macros).
 function dir_token(s, n,   i, t) {
     flush_side(s)
     t = DT[s, 1]
-    for (i = 2; i <= n; i++) t = t " " DT[s, i]
+    for (i = 2; i <= n; i++) t = t (DS[s, i] ? " " : "") DT[s, i]
     q_push(t)
 }
 # Statement starts around a group that leaves its directives in the stream. Each arm starts after the
 # token before the group (GSP); after the group, a statement starts only if one would whichever arm (or,
 # with no #else, none) was compiled. Arms that leave the brace or paren depth different from the
 # group's start make the depth unknowable: no statement start is recognised for the rest of the hunk.
-function grp_open(s, d) { GSP[s, d] = SP[s]; GBD[s, d] = BD[s]; GPD[s, d] = PD[s, BD[s]]; GOK[s, d] = 1; GEL[s, d] = 0 }
-function grp_arm_end(s, d) {
-    if (!boundary(SP[s])) GOK[s, d] = 0
-    if (BD[s] != GBD[s, d] || PD[s, BD[s]] != GPD[s, d]) UNSURE[s] = 1
+function grp_open(s, d) {
+    GSP[s, d] = SP[s]; GBD[s, d] = BD[s]; GPD[s, d] = PD[s, BD[s]]; GOK[s, d] = 1; GEL[s, d] = 0; GAE[s, d] = 0
 }
+# The end of an arm a tested build compiles: arms must all end at one brace / paren depth.
+function grp_arm_end(s, d, dropped) {
+    if (dropped) return
+    if (!boundary(SP[s])) GOK[s, d] = 0
+    if (!GAE[s, d]) {
+        GAE[s, d] = 1
+        GEB[s, d] = BD[s]
+        GEP[s, d] = PD[s, BD[s]]
+    } else if (BD[s] != GEB[s, d] || PD[s, BD[s]] != GEP[s, d]) UNSURE[s] = 1
+}
+# The next arm starts where the group did.
+function grp_next_arm(s, d) { BD[s] = GBD[s, d]; PD[s, BD[s]] = GPD[s, d]; SP[s] = GSP[s, d] }
 function grp_close(s, d) {
-    if (!GEL[s, d] && !boundary(GSP[s, d])) GOK[s, d] = 0
+    if (!GEL[s, d]) {
+        if (!boundary(GSP[s, d])) GOK[s, d] = 0
+        if (GAE[s, d] && (GEB[s, d] != GBD[s, d] || GEP[s, d] != GPD[s, d])) UNSURE[s] = 1
+    }
+    if (GAE[s, d]) { BD[s] = GEB[s, d]; PD[s, BD[s]] = GEP[s, d] } else grp_next_arm(s, d)
     SP[s] = GOK[s, d] ? ";" : "#"
 }
 # An arm is left out when it is false on the desktop and Unreal builds; it keeps its place (no
@@ -528,11 +615,19 @@ function set_arm(s, d, kw, n,   cD, cA, cU) {
     PV[s, d, "U"] = t_or(PV[s, d, "U"], cU)
     if (!arm_settled(s, d)) GT1[s, d] = 0
 }
-function cond_dir(s, kw, n,   d, live) {
+function cond_dir(s, kw, n,   d, live, wasdropped) {
     if (kw == "if" || kw == "ifdef" || kw == "ifndef") {
+        if (DEP[s] > 0) {
+            GFIRST[s, DEP[s]] = 0
+            if (DEP[s] > 1 || !fhdr) GGUARD[s, DEP[s]] = 0
+        }
         d = ++DEP[s]
         GO[s, d] = DFNR[s]
         GT1[s, d] = 1
+        GGC[s, d] = (kw == "ifndef" && n == 3) ? DT[s, 3] : ""
+        GFIRST[s, d] = GGC[s, d] != ""
+        GGUARD[s, d] = 0
+        GPM[s, d] = cond_reads_project_macro(s, n)
         PV[s, d, "D"] = 0; PV[s, d, "A"] = 0; PV[s, d, "U"] = 0
         GT[s, d] = pass == 2 && ((s, DFNR[s]) in gtrans) ? gtrans[s, DFNR[s]] : 0
         set_arm(s, d, kw, n)
@@ -543,12 +638,16 @@ function cond_dir(s, kw, n,   d, live) {
     } else {
         d = DEP[s]
         if (d == 0) { UF[s] = 1; return }
+        wasdropped = AD[s, d]
         if (AD[s, d]) NDROP[s]--
         AD[s, d] = 0
         live = pass == 2 && !GT[s, d] && NDROP[s] == 0 && !lx_suppress
-        if (live) grp_arm_end(s, d)
+        if (live) grp_arm_end(s, d, wasdropped)
         if (kw == "endif") {
-            if (pass == 1) gtrans[s, GO[s, d]] = GT1[s, d]
+            if (pass == 1) {
+                gtrans[s, GO[s, d]] = GT1[s, d] || GGUARD[s, d]
+                if (!gtrans[s, GO[s, d]] && GPM[s, d]) fundec[fd] = 1
+            }
             DEP[s]--
             if (live) {
                 dir_token(s, n)
@@ -556,10 +655,13 @@ function cond_dir(s, kw, n,   d, live) {
             }
             return
         }
+        GGUARD[s, d] = 0
+        GFIRST[s, d] = 0
+        if (cond_reads_project_macro(s, n)) GPM[s, d] = 1
         set_arm(s, d, kw, n)
         if (live) {
             dir_token(s, n)
-            SP[s] = GSP[s, d]
+            grp_next_arm(s, d)
             if (kw == "else") GEL[s, d] = 1
         }
     }
@@ -579,6 +681,7 @@ function cond_dir(s, kw, n,   d, live) {
 # the header-name as tokens there).
 function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
     lx_dir = dir
+    lx_gap = 1
     n = length(s)
     i = 1
     if (!lx_blk && !lx_raw && match(s, /^[ \t]*(#|%:)[ \t]*(include_next|include|import)/) &&
@@ -597,6 +700,7 @@ function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
             q = substr(rest, 1, 1) == "<" ? ">" : "\""
             d = index(substr(rest, 2), q)
             if (d == 0) { lx_untrusted = 1; return }
+            lx_gap = k > 0
             tok("hdr", substr(rest, 1, d + 1))
             i = m + k + d + 2
         } else i = m + 1
@@ -607,6 +711,7 @@ function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
             if (k == 0) return
             i += k + 1
             lx_blk = 0
+            lx_gap = 1
             continue
         }
         if (lx_raw) {
@@ -620,7 +725,7 @@ function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
             continue
         }
         c = substr(s, i, 1)
-        if (c ~ /[ \t\r\f\v]/) { i++; continue }
+        if (c ~ /[ \t\r\f\v]/) { lx_gap = 1; i++; continue }
         c2 = substr(s, i, 2)
         if (c2 == "//") {
             # A trailing backslash splices the next line into this comment, which the
@@ -628,7 +733,7 @@ function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
             if (s ~ /\\[ \t\r]*$/) lx_untrusted = 1
             return
         }
-        if (c2 == "/*") { lx_blk = 1; i += 2; continue }
+        if (c2 == "/*") { lx_blk = 1; lx_gap = 1; i += 2; continue }
         if (c ~ /[A-Za-z_$]/ || c ~ /[^\t -~]/ || c2 ~ /^\\[uU]$/) {
             j = i
             while (j <= n) {
@@ -811,8 +916,8 @@ function changed(m, raw, f,   b, s2, opener) {
         lx_suppress = 1
         opener = 1
     }
-    if (!lx_suppress && m == "post" && is_hdr(f) && b ~ /;$/) {
-        s2 = b
+    s2 = decl_text(b)
+    if (!lx_suppress && m == "post" && is_hdr(f) && s2 ~ /;$/) {
         sub(/[ \t]*;$/, "", s2)
         if (s2 in relsig) lx_suppress = 1
     }
@@ -829,6 +934,12 @@ BEGIN {
     for (i = 1; i <= n2; i++) PUNCT2[tmp[i]] = 1
     DIGRAPH["<%"] = "{"; DIGRAPH["%>"] = "}"; DIGRAPH["<:"] = "["; DIGRAPH[":>"] = "]"
     DIGRAPH["%:"] = "#"; DIGRAPH["%:%:"] = "##"
+    np = split("_WIN32 _WIN64 _MSC_VER _MSC_FULL_VER __linux__ __unix__ __APPLE__ __MACH__ __ANDROID__ " \
+        "__clang__ __clang_major__ __GNUC__ __GNUC_MINOR__ __MINGW32__ __MINGW64__ __cplusplus __has_include " \
+        "__has_include_next __has_cpp_attribute __has_builtin __x86_64__ __aarch64__ __i386__ __arm__ _M_X64 " \
+        "_M_ARM64 _M_IX86 __EMSCRIPTEN__ NDEBUG _DEBUG TARGET_OS_IPHONE TARGET_OS_IOS TARGET_OS_OSX " \
+        "TARGET_OS_MAC __SANITIZE_ADDRESS__ __SANITIZE_THREAD__", tmp, " ")
+    for (i = 1; i <= np; i++) PREDEF[tmp[i]] = 1
 }
 # Pass 1: per file diff (fd), whether its lexing can be trusted; the #if groups that leave no
 # directive token; the relocation candidates.
@@ -846,6 +957,7 @@ NR == FNR {
             in_hdr = 0
             prodo1 = is_prod(fo1)
             prodn1 = is_prod(fn1)
+            fhdr = !is_tu(prodn1 ? fn1 : fo1)
             if ((prodo1 && !is_cxx(fo1)) || (prodn1 && !is_cxx(fn1))) untrusted[fd] = 1
             hunk_begin($0)
         }
@@ -853,14 +965,30 @@ NR == FNR {
     }
     if ($0 ~ /^@@/) { end_runs(); end_hunk1(); hunk_begin($0); next }
     c1 = substr($0, 1, 1)
-    if (prodo1 && (c1 == " " || c1 == "-")) feed("pre", $0)
-    if (prodn1 && (c1 == " " || c1 == "+")) feed("post", $0)
+    # A line a relocation may pair is code from end to end: it starts and ends outside a comment, a raw
+    # string and a directive, outside any #if.
+    if (prodo1 && (c1 == " " || c1 == "-")) {
+        side("pre")
+        wpre = !lx_blk && !lx_raw && !lx_macro
+        feed("pre", $0)
+        wpre = wpre && !lx_blk && !lx_raw && !lx_macro && !lx_dir && DEP["pre"] == 0
+    }
+    if (prodn1 && (c1 == " " || c1 == "+")) {
+        side("post")
+        wpost = !lx_blk && !lx_raw && !lx_macro
+        feed("post", $0)
+        wpost = wpost && !lx_blk && !lx_raw && !lx_macro && !lx_dir && DEP["post"] == 0
+    }
+    if (c1 == "+" && prodn1 && is_hdr(fn1)) {
+        b = decl_text(substr($0, 2))
+        if (b ~ /;$/) { sub(/[ \t]*;$/, "", b); hdecl[b] = 1 }
+    }
     if (c1 == "-" && prodo1 && is_hdr(fo1)) {
         if (!in_rrun) { nr++; rn[nr] = 0; rf[nr] = fo1; in_rrun = 1 }
         rn[nr]++
         rl[nr, rn[nr]] = trim(substr($0, 2))
         rk[nr, rn[nr]] = FNR
-        rd[nr, rn[nr]] = DEP["pre"]
+        rd[nr, rn[nr]] = wpre
         in_arun = 0
         next
     }
@@ -869,7 +997,7 @@ NR == FNR {
         an[na]++
         al[na, an[na]] = trim(substr($0, 2))
         ak[na, an[na]] = FNR
-        ad[na, an[na]] = DEP["post"]
+        ad[na, an[na]] = wpost
         cand[drop_inline(al[na, an[na]])] = cand[drop_inline(al[na, an[na]])] " " na "," an[na]
         in_rrun = 0
         next
@@ -893,8 +1021,11 @@ FNR == 1 && !paired {
             while (d > 0 && j <= rn[r]) { d += brace_delta(rl[r, j]); j++ }
             if (d != 0) { i++; continue }
             k = j - i
-            ok = 1
-            for (q = 0; q < k && ok; q++) if (rd[r, i + q] != 0) ok = 0
+            # The header must declare the moved function (else its callers elsewhere change overloads).
+            s2 = sig
+            sub(/[ \t]*\{.*$/, "", s2)
+            ok = (s2 in hdecl)
+            for (q = 0; q < k && ok; q++) if (!rd[r, i + q]) ok = 0
             matched = 0
             nc = ok ? split(cand[sig], cs, " ") : 0
             for (c = 1; c <= nc && !matched; c++) {
@@ -904,7 +1035,7 @@ FNR == 1 && !paired {
                 if (st + k - 1 > an[a] || product_root(af[a]) != product_root(rf[r])) continue
                 ok = 1
                 for (q = 0; q < k && ok; q++)
-                    if (used[a, st + q] || ad[a, st + q] != 0 || (q > 0 && al[a, st + q] != rl[r, i + q])) ok = 0
+                    if (used[a, st + q] || !ad[a, st + q] || (q > 0 && al[a, st + q] != rl[r, i + q])) ok = 0
                 if (!ok) continue
                 for (q = 0; q < k; q++) {
                     used[a, st + q] = 1
@@ -912,8 +1043,6 @@ FNR == 1 && !paired {
                     reloc[rk[r, i + q]] = 1
                 }
                 relfile[af[a]] = 1
-                s2 = sig
-                sub(/[ \t]*\{.*$/, "", s2)
                 relsig[s2] = 1
                 matched = 1
             }
@@ -939,6 +1068,7 @@ FNR == 1 && !paired {
             in_hdr = 0
             prodo2 = is_prod(fo2)
             prodn2 = is_prod(fn2)
+            fhdr = !is_tu(prodn2 ? fn2 : fo2)
             fpath = prodn2 ? fn2 : fo2
             if ((prodo2 || prodn2) && (fd in untrusted)) fail("its lexing cannot be trusted (see the gate's header)")
             hunk_begin($0)
@@ -949,8 +1079,10 @@ FNR == 1 && !paired {
     if (fbad) next
     c1 = substr($0, 1, 1)
     if (c1 == " ") {
+        lx_ctx = 1
         if (prodo2) feed("pre", $0)
         if (prodn2) feed("post", $0)
+        lx_ctx = 0
     } else if (c1 == "-") {
         if (prodo2) changed("pre", $0, fo2)
     } else if (c1 == "+") {
@@ -2825,6 +2957,315 @@ diff --git a/Source/Core/src/Ui/Host.cpp b/Source/Core/src/Ui/Host.cpp
 -    UseEngineFonts();
 +    UseBundledFonts();
  #endif
+ }
+EOF
+
+    # ---- Round-9 counterexamples and false positives ----
+
+    _expect FALLTHROUGH "a using-declaration in a class (it changes which overload a call reaches)" <<'EOF'
+diff --git a/Source/Core/src/Over.cpp b/Source/Core/src/Over.cpp
+--- a/Source/Core/src/Over.cpp
++++ b/Source/Core/src/Over.cpp
+@@ -1,5 +1,6 @@
+ struct B { int f(int) { return 1; } };
+ struct D : B {
++    using B::f;
+     int f(double) { return 2; }
+ };
+ int Pick() { D d; return d.f(1); }
+EOF
+
+    _expect FALLTHROUGH "a using-declaration in a block" <<'EOF'
+diff --git a/Source/Core/src/Over.cpp b/Source/Core/src/Over.cpp
+--- a/Source/Core/src/Over.cpp
++++ b/Source/Core/src/Over.cpp
+@@ -1,5 +1,6 @@
+ int g(int) { return 1; }
+ namespace n { int g(long) { return 2; } }
+ int Pick() {
++    using n::g;
+     return g(1);
+ }
+EOF
+
+    _expect FALLTHROUGH "a relocated body whose raw string is re-indented" <<'EOF'
+diff --git a/Source/Core/include/Help.h b/Source/Core/include/Help.h
+--- a/Source/Core/include/Help.h
++++ b/Source/Core/include/Help.h
+@@ -1,6 +1,2 @@
+ #pragma once
+-inline const char* HelpText() {
+-    return R"(usage:
+-    smatchet --sync
+-)";
+-}
++const char* HelpText();
+diff --git a/Source/Core/src/Help.cpp b/Source/Core/src/Help.cpp
+--- a/Source/Core/src/Help.cpp
++++ b/Source/Core/src/Help.cpp
+@@ -1,2 +1,7 @@
+ #include "Help.h"
+ int Unused() { return 0; }
++const char* HelpText() {
++    return R"(usage:
++smatchet --sync
++)";
++}
+EOF
+
+    _expect FALLTHROUGH "a relocated body whose string loses an 'inline'" <<'EOF'
+diff --git a/Source/Core/include/Mode.h b/Source/Core/include/Mode.h
+--- a/Source/Core/include/Mode.h
++++ b/Source/Core/include/Mode.h
+@@ -1,2 +1,2 @@
+ #pragma once
+-inline const char* ModeLabel() { return "edit inline mode"; }
++const char* ModeLabel();
+diff --git a/Source/Core/src/Mode.cpp b/Source/Core/src/Mode.cpp
+--- a/Source/Core/src/Mode.cpp
++++ b/Source/Core/src/Mode.cpp
+@@ -1 +1,2 @@
+ #include "Mode.h"
++const char* ModeLabel() { return "edit mode"; }
+EOF
+
+    _expect FALLTHROUGH "a space between a macro name and its parameter list" <<'EOF'
+diff --git a/Source/Core/src/Trace.cpp b/Source/Core/src/Trace.cpp
+--- a/Source/Core/src/Trace.cpp
++++ b/Source/Core/src/Trace.cpp
+@@ -1,5 +1,5 @@
+ static int calls = 0;
+ static int bump(int v) { calls++; return v; }
+-#define TRACE(bump)
++#define TRACE (bump)
+ int Run() { TRACE(1); return calls; }
+ int Keep() { return bump(0); }
+EOF
+
+    _expect FALLTHROUGH "a relocation without a header declaration (callers change overloads)" <<'EOF'
+diff --git a/Source/Core/include/Scale.h b/Source/Core/include/Scale.h
+--- a/Source/Core/include/Scale.h
++++ b/Source/Core/include/Scale.h
+@@ -1,3 +1,2 @@
+ #pragma once
+ inline int Scale(long v) { return static_cast<int>(v * 2); }
+-inline int Scale(int v) { return v * 3; }
+diff --git a/Source/Core/src/Scale.cpp b/Source/Core/src/Scale.cpp
+--- a/Source/Core/src/Scale.cpp
++++ b/Source/Core/src/Scale.cpp
+@@ -1 +1,2 @@
+ #include "Scale.h"
++int Scale(int v) { return v * 3; }
+EOF
+
+    _expect FALLTHROUGH "existing code moved into a namespace a relocation added" <<'EOF'
+diff --git a/Source/Core/include/Calc.h b/Source/Core/include/Calc.h
+--- a/Source/Core/include/Calc.h
++++ b/Source/Core/include/Calc.h
+@@ -1,8 +1,6 @@
+ #pragma once
+ inline int Pick() { return 1; }
+ namespace smatchet {
+ inline int Pick() { return 2; }
+-inline int Twice(int v) {
+-    return v * 2;
+-}
++int Twice(int v);
+ }  // namespace smatchet
+diff --git a/Source/Core/src/Calc.cpp b/Source/Core/src/Calc.cpp
+--- a/Source/Core/src/Calc.cpp
++++ b/Source/Core/src/Calc.cpp
+@@ -1,2 +1,7 @@
+ #include "Calc.h"
++namespace smatchet {
++int Twice(int v) {
++    return v * 2;
++}
+ int g_mode = Pick();
++}
+EOF
+
+    _expect FALLTHROUGH "a commented-out header definition 'relocated' into a .cpp" <<'EOF'
+diff --git a/Source/Core/include/Pick.h b/Source/Core/include/Pick.h
+--- a/Source/Core/include/Pick.h
++++ b/Source/Core/include/Pick.h
+@@ -1,5 +1,4 @@
+ #pragma once
+ inline int Pick(long) { return 1; }
+ /* Disabled:
+-inline int Pick(int) { return 2; }
+ */
+diff --git a/Source/Core/src/Pick.cpp b/Source/Core/src/Pick.cpp
+--- a/Source/Core/src/Pick.cpp
++++ b/Source/Core/src/Pick.cpp
+@@ -1,2 +1,3 @@
+ #include "Pick.h"
++int Pick(int) { return 2; }
+ int Use() { return Pick(5); }
+EOF
+
+    _expect FALLTHROUGH "an empty by-value catch clause before an empty catch (...)" <<'EOF'
+diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
+--- a/Source/Core/src/Catch.cpp
++++ b/Source/Core/src/Catch.cpp
+@@ -1,13 +1,15 @@
+ struct Err {
+     static int copies;
+     Err() {}
+     Err(const Err&) { ++copies; }
+ };
+ int Err::copies = 0;
+ int Run() {
+     try {
+         throw Err();
++    } catch (Err e) {
++        LOG_WARN("caught");
+     } catch (...) {
+     }
+     return Err::copies;
+ }
+EOF
+
+    _expect EXEMPT "a relocation whose header declaration has a trailing comment" <<'EOF'
+diff --git a/Source/Core/include/Calc.h b/Source/Core/include/Calc.h
+--- a/Source/Core/include/Calc.h
++++ b/Source/Core/include/Calc.h
+@@ -1,6 +1,4 @@
+ #pragma once
+ namespace smatchet {
+-inline int Twice(int v) {
+-    return v * 2;
+-}
++int Twice(int v);  // defined in Calc.cpp
+ }  // namespace smatchet
+diff --git a/Source/Core/src/Calc.cpp b/Source/Core/src/Calc.cpp
+--- a/Source/Core/src/Calc.cpp
++++ b/Source/Core/src/Calc.cpp
+@@ -1 +1,9 @@
+ #include "Calc.h"
++
++namespace smatchet {
++
++int Twice(int v) {
++    return v * 2;
++}
++
++}  // namespace smatchet
+EOF
+
+    _expect EXEMPT "a LOG after a case label" <<'EOF'
+diff --git a/Source/Core/src/Sw.cpp b/Source/Core/src/Sw.cpp
+--- a/Source/Core/src/Sw.cpp
++++ b/Source/Core/src/Sw.cpp
+@@ -1,9 +1,9 @@
+ void Sw(int k) {
+     switch (k) {
+     case 1:
+-        LOG_INFO("one");
++        LOG_INFO("one (k=1)");
+         break;
+     default:
+         break;
+     }
+ }
+EOF
+
+    _expect EXEMPT "a LOG reworded after a group whose arms each open a brace" <<'EOF'
+diff --git a/Source/Core/src/Unsure.cpp b/Source/Core/src/Unsure.cpp
+--- a/Source/Core/src/Unsure.cpp
++++ b/Source/Core/src/Unsure.cpp
+@@ -1,11 +1,11 @@
+ #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+ struct Impl : public ILuaHost {
+ #else
+ struct Impl {
+ #endif
+     int x = 0;
+ };
+ 
+ void Later() {
+-    LOG_INFO("later");
++    LOG_INFO("later on");
+ }
+EOF
+
+    # A header's macro can turn an #if the gate cannot decide: there the includes are compared.
+    _expect FALLTHROUGH "an include removed above an #ifndef of a project macro" <<'EOF'
+diff --git a/Source/Core/src/About.cpp b/Source/Core/src/About.cpp
+--- a/Source/Core/src/About.cpp
++++ b/Source/Core/src/About.cpp
+@@ -1,5 +1,4 @@
+-#include <SmatchetBuildInfo.h>
+ #ifndef SMATCHET_BUILDINFO_AVAILABLE
+ #define SMATCHET_GIT_SHA "unknown"
+ #endif
+ const char* Sha() { return SMATCHET_GIT_SHA; }
+EOF
+
+    # An include inside an initializer pastes code into it.
+    _expect FALLTHROUGH "an include removed from inside an initializer" <<'EOF'
+diff --git a/Source/Core/src/Ui/Icons.cpp b/Source/Core/src/Ui/Icons.cpp
+--- a/Source/Core/src/Ui/Icons.cpp
++++ b/Source/Core/src/Ui/Icons.cpp
+@@ -1,3 +1,2 @@
+ const int kCatalog[] = {
+-#include "Icons_Catalog.inl"
+ };
+EOF
+
+    # Platform macros come from the compiler, and a define-if-undefined ends with the macro defined
+    # either way: no header can turn these groups, so the include stays exempt (#2242).
+    _expect EXEMPT "an include added beside platform-only groups" <<'EOF'
+diff --git a/Source/Core/src/Ui/Cells.cpp b/Source/Core/src/Ui/Cells.cpp
+--- a/Source/Core/src/Ui/Cells.cpp
++++ b/Source/Core/src/Ui/Cells.cpp
+@@ -1,9 +1,10 @@
+ #include "Cells.h"
++#include "MarkdownPreviewRender.h"
+ #if defined(_WIN32)
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
+ #endif
+ int Cell() { return 1; }
+EOF
+
+    _expect EXEMPT "an include added under a header's include guard" <<'EOF'
+diff --git a/Source/Core/include/Cells.h b/Source/Core/include/Cells.h
+--- a/Source/Core/include/Cells.h
++++ b/Source/Core/include/Cells.h
+@@ -1,5 +1,6 @@
+ #ifndef SMATCHET_CELLS_H
+ #define SMATCHET_CELLS_H
+ #include <string>
++#include <vector>
+ int Cell();
+ #endif
+EOF
+
+    _expect FALLTHROUGH "a template forward declaration's default argument changed" <<'EOF'
+diff --git a/Source/Core/src/Buf.cpp b/Source/Core/src/Buf.cpp
+--- a/Source/Core/src/Buf.cpp
++++ b/Source/Core/src/Buf.cpp
+@@ -1,3 +1,3 @@
+-template <int N = 4> struct Buf;
++template <int N = 4096> struct Buf;
+ template <int N> struct Buf { char data[N]; };
+ int Size() { return sizeof(Buf<>); }
+EOF
+
+    # A C++14 compiler need not honour #elifndef: the gate decides nothing about it.
+    _expect FALLTHROUGH "a C++23 #elifndef after an #if 0" <<'EOF'
+diff --git a/Source/Core/src/Sync/Elif.cpp b/Source/Core/src/Sync/Elif.cpp
+--- a/Source/Core/src/Sync/Elif.cpp
++++ b/Source/Core/src/Sync/Elif.cpp
+@@ -1,4 +1,6 @@
+ void Purge() {
++#if 0
++#elifndef __ANDROID__
+     PurgeAllLocalTickets();
++#endif
  }
 EOF
 
