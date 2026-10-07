@@ -39,8 +39,7 @@ struct CachedProjectEntry {
 /** Save signature: extra (backend, endpoint, projectKey, maxProjects) so the per-disk `entries`
  *  index can be upserted and LRU-capped in one round-trip. `maxProjects` <= 0 means "use default 16". */
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& backend, const std::string& endpoint,
-                              const std::string& projectKey, int maxProjects,
-                              const std::vector<TrackerField>& fields,
+                              const std::string& projectKey, int maxProjects, const std::vector<TrackerField>& fields,
                               const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError);
 
