@@ -53,3 +53,17 @@ TEST_CASE("ClassifyGitHubIssueExistsProbe reads 410 as deleted only when the bod
     CHECK_FALSE(ClassifyGitHubIssueExistsProbe(404, "").value());
     CHECK(ClassifyGitHubIssueExistsProbe(200, "{}").value());
 }
+
+TEST_CASE("ClassifyGitHubIssueExistsProbe needs GitHub's exact deletion message, not the word") {
+    using TrackerHttpPure::ClassifyGitHubIssueExistsProbe;
+    // A message that merely contains "deleted", a non-JSON body, and a non-string message are all
+    // inconclusive: none may purge the cached issue.
+    CHECK_FALSE(ClassifyGitHubIssueExistsProbe(410, R"({"message":"This issue was not deleted"})").has_value());
+    CHECK_FALSE(ClassifyGitHubIssueExistsProbe(410, "deleted").has_value());
+    CHECK_FALSE(ClassifyGitHubIssueExistsProbe(410, R"({"message":["This issue was deleted"]})").has_value());
+    CHECK_FALSE(ClassifyGitHubIssueExistsProbe(410, "").has_value());
+    // The match ignores case.
+    const auto lower = ClassifyGitHubIssueExistsProbe(410, R"({"message":"this issue was deleted"})");
+    REQUIRE(lower.has_value());
+    CHECK_FALSE(lower.value());
+}

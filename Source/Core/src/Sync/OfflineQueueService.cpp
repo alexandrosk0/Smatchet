@@ -1037,14 +1037,9 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
                  row.FieldId.c_str());
     }
 
-    if ((!fetchOk || freshTickets.empty()) && !hasRichBase && !hasScalarBase) {
-        // Only the untouched estimate needed the re-fetch: a transient failure retries, anything else
-        // keeps this row's last-write-wins (it captured no base to conflict-check).
-        if (!fetchOk && fetchErrTransient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
-            return FieldEditConflictOutcome::RetryTransient;
-        }
-        return FieldEditConflictOutcome::Proceed;
-    }
+    // An estimate-only edit (no captured base) takes this path too: its payload still carries the
+    // untouched sibling estimate as queued, so replaying it unverified could overwrite a newer server
+    // value. It retries while the failure is transient, then asks the user, like a based edit.
     if (!fetchOk || freshTickets.empty()) {
         const bool transient = fetchOk ? true : fetchErrTransient;
         if (transient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {

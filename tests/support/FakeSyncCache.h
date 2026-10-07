@@ -392,6 +392,9 @@ class FakeSyncCache : public ISyncCache {
     void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                              const std::string& lastError) override {
         std::lock_guard<std::mutex> lk(m_);
+        if (!UpdatePendingActionThrowsForState.empty() && state == UpdatePendingActionThrowsForState) {
+            throw std::runtime_error("scripted pending_actions update failure");
+        }
         PendingActionRecord* row = FindAction(id);
         if (row) {
             row->State = state;
@@ -479,6 +482,8 @@ class FakeSyncCache : public ISyncCache {
 
     /// Test knob: every EnqueuePendingAction throws (a failing local database).
     bool EnqueuePendingActionThrows = false;
+    /// Test knob: an UpdatePendingAction that writes this state throws (empty = never).
+    std::string UpdatePendingActionThrowsForState;
     /// Test knob: run `fn` once, right after the next LoadPendingActions has copied the rows — e.g.
     /// a discard landing between a replay pass's load and its sends.
     void RunAfterNextLoadPendingActions(std::function<void()> fn) {

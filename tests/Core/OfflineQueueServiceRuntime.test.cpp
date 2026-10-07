@@ -998,6 +998,11 @@ TEST_CASE("OfflineQueueServiceRuntime: a rejected sprint_add archives like any r
 TEST_CASE("OfflineQueueServiceRuntime: a queued estimate replays its timetracking payload") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
+    // The re-fetch confirms the untouched Remaining Estimate (1d), so the payload goes out as queued.
+    CachedTicket fresh;
+    fresh.id = "PROJ-62";
+    fresh.fieldValues["timeestimate"] = "1d";
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
     OfflineQueueService svc(deps);
@@ -1041,6 +1046,47 @@ TEST_CASE("OfflineQueueServiceRuntime: an estimate replay sends the tracker's cu
     const nlohmann::json sent = deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields;
     CHECK(sent["timetracking"]["originalEstimate"] == "3h");
     CHECK(sent["timetracking"]["remainingEstimate"] == "1h");
+}
+
+// An estimate payload carries the untouched sibling estimate as queued. Without a re-fetch to refresh it,
+// replaying could overwrite a newer server value, so an unverifiable estimate edit never replays blind.
+TEST_CASE("OfflineQueueServiceRuntime: an estimate edit with an empty re-fetch retries instead of replaying") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess(); // the re-fetch returns no ticket (default)
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-65", "timeoriginalestimate", payload.dump(), err, std::string()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK_FALSE(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+TEST_CASE("OfflineQueueServiceRuntime: an estimate edit whose re-fetch fails permanently asks instead") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->SetFetchIssuesForKeysError(TrackerErrorInvalidRequest("issue not visible", 400));
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-66", "timeoriginalestimate", payload.dump(), err, std::string()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    REQUIRE(row.HasMergeConflict);
+    CHECK(nlohmann::json::parse(row.ConflictContextJson)["kind"] == "unverified");
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 }
 
 // The conflict dialog shows the user's queued value for a sprint / estimate edit, not the base.

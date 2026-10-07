@@ -350,6 +350,28 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(offline.options[0].Id == "3");
     }
 
+    TEST_CASE("a fetch offering only a global self-target drops the edge learned before") {
+        // An earlier fetch learned "1 -> 3". Now the only option from "1" is the global self-target, so
+        // "3" is no longer reachable and must not be offered offline, from memory or from the saved row.
+        FakeEditMetaDeps deps;
+        const auto store = SetUpJiraLike(deps);
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1",
+                            smatchet::workflow::SerializeTransitionTargets({Option("3", "Done")}));
+        TrackerFieldOption self = Option("1", "To Do");
+        self.ReachableFromAnyStatus = true;
+        deps.Fake()->SetIssueTransitions("PROJ-1", {self});
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+
+        LookupCacheRow row;
+        CHECK_FALSE(store->TryGetLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1", row));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup offline = svc.GetAvailableTransitions(Query("PROJ-2"));
+        CHECK_FALSE(offline.fromLearned);
+        CHECK(offline.options.empty());
+    }
+
     TEST_CASE("a live list stays marked live once the tracker goes offline, even when empty") {
         FakeEditMetaDeps deps;
         SetUpJiraLike(deps);
