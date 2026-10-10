@@ -223,7 +223,10 @@ AppController::~AppController() {
 
     mainThreadDispatcher.BeginShutdown();
 
-    CancelAndJoinActiveStreamingSync();
+    // Every pane, not just the focused one: each TicketSyncService destructor would otherwise
+    // join its busy worker during gridContexts_ member destruction, one pane after another,
+    // each wait up to a full in-flight HTTP timeout (and after impl_ is gone).
+    CancelAndJoinAllPaneStreamingSyncs();
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 
@@ -568,10 +571,20 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     }
 }
 
-void AppController::CancelAndJoinActiveStreamingSync() {
-    if (focusedContext().ticketSync_) {
-        focusedContext().ticketSync_->CancelAndJoinActiveStreamingSync();
+void AppController::CancelAndJoinAllPaneStreamingSyncs() {
+    std::vector<TicketSyncService*> services;
+    services.reserve(gridContexts_.size() + 1);
+    for (auto& entry : gridContexts_) {
+        if (entry.second && entry.second->ticketSync_) {
+            services.push_back(entry.second->ticketSync_.get());
+        }
     }
+    // The focused context may be a retired husk (ADR-0012 graveyard) outside the live map. When it
+    // is a live entry instead, CancelAndJoinAll drops the duplicate.
+    if (focusedContext().ticketSync_) {
+        services.push_back(focusedContext().ticketSync_.get());
+    }
+    TicketSyncService::CancelAndJoinAll(services);
 }
 
 void AppController::TickStreamingApply() {

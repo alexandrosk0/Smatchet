@@ -128,9 +128,30 @@ TicketSyncService::FilterStaleIdsRetainedElsewhere(const std::vector<std::string
     return kept;
 }
 
-void TicketSyncService::CancelAndJoinActiveStreamingSync() {
+void TicketSyncService::RequestCancel() {
     activeStreamingSync_.Cancelled = true;
     activeStreamingSync_.Superseded = true;
+}
+
+void TicketSyncService::CancelAndJoinAll(const std::vector<TicketSyncService*>& services) {
+    std::vector<TicketSyncService*> unique;
+    unique.reserve(services.size());
+    for (TicketSyncService* svc : services) {
+        if (svc && std::find(unique.begin(), unique.end(), svc) == unique.end()) {
+            unique.push_back(svc);
+        }
+    }
+    LOG_DEBUG("TicketSyncService::CancelAndJoinAll: cancelling and joining %zu service(s)", unique.size());
+    for (TicketSyncService* svc : unique) {
+        svc->RequestCancel();
+    }
+    for (TicketSyncService* svc : unique) {
+        svc->CancelAndJoinActiveStreamingSync();
+    }
+}
+
+void TicketSyncService::CancelAndJoinActiveStreamingSync() {
+    RequestCancel();
 
     if (activeStreamingSync_.WorkerThread.joinable()) {
         activeStreamingSync_.WorkerThread.join();

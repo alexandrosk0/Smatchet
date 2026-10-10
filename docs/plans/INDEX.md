@@ -230,6 +230,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`offline-first`](shipped/offline-first.md) | 2026-09-24 | Plan — Offline-first: fix the regressions, sweep the class, gate it like DRY |
 | [`status-bar-auto-hide`](shipped/status-bar-auto-hide.md) | 2026-09-24 | Plan — Status bar: third "Auto-Hide" state |
 | [`cache-site-identity`](shipped/cache-site-identity.md) | 2026-09-30 | Plan — namespace the local cache by tracker site and account |
+| [`shutdown-cancel-all-pane-syncs`](shipped/shutdown-cancel-all-pane-syncs.md) | 2026-10-04 | Plan — cancel every pane's streaming sync before joining any |
 <!-- END auto-plan-index -->
 
 ### Notes

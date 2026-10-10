@@ -1803,7 +1803,13 @@ class AppController : public IAppThreading,
     // and StartStreamingSync (private) moved to TicketSyncService too — the public
     // SyncWithBackend remains on AppController as a thin delegator.
 
-    void CancelAndJoinActiveStreamingSync();
+    /// Cancel and join the streaming-sync worker of EVERY live pane (plus the focused context,
+    /// which may be a retired husk outside `gridContexts_`) via `TicketSyncService::CancelAndJoinAll`:
+    /// all are flagged before any is joined, so N busy panes cost about one in-flight HTTP timeout,
+    /// not N. UI thread only — iterates `gridContexts_` without `gridContextsMutex_` (the UI thread
+    /// is the only structural mutator, and holding the map lock across a join would deadlock if
+    /// a sync worker ever took it).
+    void CancelAndJoinAllPaneStreamingSyncs();
 
     std::string localCacheDbPath_;
 
