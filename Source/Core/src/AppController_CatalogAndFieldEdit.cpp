@@ -547,10 +547,11 @@ void AppController::ClearFieldCatalogInMemory() {
     GridContextFieldCatalog& cat = fieldCatalog(); // latch once (see SetFieldCatalog)
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only, not a failed fetch: the previous site's catalog and user roster must not show under this one, and the saved snapshot and roster (never written here) restore this site's when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only, not a failed fetch: the previous site's catalog must not show under this one, and the saved snapshot (never written here) restores this site's catalog when its fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
         cat.AvailableFields.clear();
         cat.AvailableComponents.clear();
         cat.AvailableIssueTypeMeta.clear();
+        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only: the previous site's user roster must not autocomplete under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
         cat.AvailableUsers.clear();
         cat.fieldCatalogEverLoaded_ = false;
         cat.fieldCatalogRestored_ = false;
