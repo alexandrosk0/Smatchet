@@ -259,12 +259,13 @@ class FakeSyncCache : public ISyncCache {
         std::lock_guard<std::mutex> lk(m_);
         PendingFieldEditRecord* row = FindEdit(id);
         if (row) {
-            // Mirrors the production UPDATE column list: flag + context + BOTH bases cleared,
-            // HasOriginalValue deliberately untouched.
+            // Mirrors the production UPDATE column list: flag + context + BOTH bases cleared, and
+            // has_original_value = 0, so the replay after a resolution captures no stale base.
             row->HasMergeConflict = false;
             row->ConflictContextJson.clear();
             row->OriginalRichValue.clear();
             row->OriginalValue.clear();
+            row->HasOriginalValue = false;
             row->FieldsPayloadJson = resolvedPayloadJson;
         }
     }

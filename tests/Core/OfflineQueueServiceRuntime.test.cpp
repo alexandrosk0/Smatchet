@@ -1089,6 +1089,49 @@ TEST_CASE("OfflineQueueServiceRuntime: an estimate edit whose re-fetch fails per
     CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 }
 
+// A suspended estimate edit keeps its queued sibling estimate in the stored row, which may be stale by the
+// time the user resolves the conflict. The resolution clears the captured base but not the estimate
+// payload, so the replay after it re-fetches and sends the tracker's current sibling again.
+TEST_CASE("OfflineQueueServiceRuntime: a resolved estimate conflict replays the tracker's current other estimate") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    CachedTicket fresh;
+    fresh.id = "PROJ-67";
+    fresh.fieldValues["timeoriginalestimate"] = "4h"; // moved from the captured base (2h): a conflict
+    fresh.fieldValues["timeestimate"] = "1h";         // a teammate's worklog moved Remaining from 2h
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    const auto id =
+        svc.QueueFieldEditOffline("PROJ-67", "timeoriginalestimate", payload.dump(), err, std::string(), "2h", true);
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    REQUIRE(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+
+    SUBCASE("Use Mine") { REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "scalar")); }
+    SUBCASE("Force Mine") { REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "unverified")); }
+    // The stored row still carries the stale 2h sibling.
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK(nlohmann::json::parse(svc.GetPendingFieldEdits().front().FieldsPayloadJson)["timetracking"]
+                                                                                 ["remainingEstimate"] == "2h");
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    const nlohmann::json sent = deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields;
+    CHECK(sent["timetracking"]["originalEstimate"] == "3h");
+    CHECK(sent["timetracking"]["remainingEstimate"] == "1h");
+}
+
 // The conflict dialog shows the user's queued value for a sprint / estimate edit, not the base.
 TEST_CASE("OfflineQueueServiceRuntime: a sprint conflict shows the queued sprint as mine") {
     OfflineQueueTestEnvGuard guard;
