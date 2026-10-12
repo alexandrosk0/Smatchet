@@ -115,6 +115,19 @@ count_head_asks() {
       | length'
 }
 
+# count_head_reviews <graphql-json> <head-sha> — CodeRabbit reviews of THIS head. A
+# blank-bodied COMMENTED review is CR replying in a thread, which lands on whatever head
+# was current: it is not a review of that head, and counting it skipped the trigger for a
+# head CR never reviewed (#2330 at b81b3ea4f). The CR finding gate and merge-gates skip
+# the same nodes.
+count_head_reviews() {
+    printf '%s' "$1" | jq -r --arg h "$2" '
+      [.data.repository.pullRequest.reviews.nodes[]?
+       | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                and (.commit.oid // "") == $h
+                and (.state != "COMMENTED" or ((.body // "") | test("[^[:space:]]"))))] | length'
+}
+
 if [ "$SELFTEST" = true ]; then
     [ "$(classify_author_kind 'alice' 'User')" = user ]
     [ "$(classify_author_kind 'github-actions[bot]' 'Bot')" = bot ]
@@ -141,6 +154,20 @@ if [ "$SELFTEST" = true ]; then
         # No CR status on the head yet: the commit date (09:00) is the anchor.
         [ "$(count_head_asks "$(st_json "$early")" bbb "")" = 1 ]
         [ "$(count_head_asks "$(st_json "$old")" bbb "")" = 0 ]
+        # A CR thread reply on the head is a blank COMMENTED review: not a review of it.
+        # A real review (a body) or a verdict state counts; another head never does.
+        rv_json() {
+            printf '{"data":{"repository":{"pullRequest":{"headRefOid":"bbb","reviews":{"nodes":[%s]}}}}}' "$1"
+        }
+        cr='"author":{"login":"coderabbitai","__typename":"Bot"}'
+        reply="{$cr,\"state\":\"COMMENTED\",\"body\":\" \\n\",\"commit\":{\"oid\":\"bbb\"}}"
+        real="{$cr,\"state\":\"COMMENTED\",\"body\":\"**Actionable comments posted: 0**\",\"commit\":{\"oid\":\"bbb\"}}"
+        approved="{$cr,\"state\":\"APPROVED\",\"body\":\"\",\"commit\":{\"oid\":\"bbb\"}}"
+        stale="{$cr,\"state\":\"COMMENTED\",\"body\":\"**Actionable comments posted: 2**\",\"commit\":{\"oid\":\"aaa\"}}"
+        [ "$(count_head_reviews "$(rv_json "$reply")" bbb)" = 0 ]
+        [ "$(count_head_reviews "$(rv_json "$real")" bbb)" = 1 ]
+        [ "$(count_head_reviews "$(rv_json "$approved")" bbb)" = 1 ]
+        [ "$(count_head_reviews "$(rv_json "$stale,$reply")" bbb)" = 0 ]
     fi
     echo "selftest: trigger-coderabbit-review OK"
     exit 0
@@ -164,7 +191,7 @@ query($o:String!,$r:String!,$n:Int!) {
   repository(owner:$o,name:$r) {
     pullRequest(number:$n) {
       headRefOid
-      reviews(last:40) { nodes { author { login __typename } commit { oid } } }
+      reviews(last:40) { nodes { author { login __typename } state body commit { oid } } }
       comments(last:40) { nodes { author { login __typename } body createdAt } }
       commits(last:1) { nodes { commit { committedDate statusCheckRollup { contexts(first:100) {
         nodes { __typename ... on StatusContext { context createdAt } } } } } } }
@@ -179,10 +206,7 @@ head="$(printf '%s' "$data" | jq -r '.data.repository.pullRequest.headRefOid // 
 [ -n "$head" ] || { echo "trigger-coderabbit-review: PR #$PR not found" >&2; exit 3; }
 
 # Already has a CR review on this exact head → nothing to trigger.
-on_head="$(printf '%s' "$data" | jq -r --arg h "$head" '
-  [.data.repository.pullRequest.reviews.nodes[]?
-   | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-            and (.commit.oid // "") == $h)] | length')"
+on_head="$(count_head_reviews "$data" "$head")"
 if [ "${on_head:-0}" -gt 0 ]; then
     echo "INFO: CodeRabbit already reviewed head ${head:0:8} on PR #$PR — no trigger needed."
     exit 1
