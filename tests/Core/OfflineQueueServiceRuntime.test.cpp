@@ -1119,8 +1119,8 @@ TEST_CASE("OfflineQueueServiceRuntime: a resolved estimate conflict replays the 
     SUBCASE("Force Mine") { REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "unverified")); }
     // The stored row still carries the stale 2h sibling.
     REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
-    CHECK(nlohmann::json::parse(svc.GetPendingFieldEdits().front().FieldsPayloadJson)["timetracking"]
-                                                                                 ["remainingEstimate"] == "2h");
+    CHECK(nlohmann::json::parse(
+              svc.GetPendingFieldEdits().front().FieldsPayloadJson)["timetracking"]["remainingEstimate"] == "2h");
 
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
