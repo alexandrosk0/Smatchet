@@ -337,10 +337,10 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
                       const std::vector<std::string>& selectedFields,
                       const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
                       const JiraClient::BatchCallback& onBatch, const JiraClient::CancelCallback& shouldCancel,
-                      TrackerIssueFetchSummary& summary) {
+                      TrackerIssueFetchSummary& summary, int maxPages = smatchet::search_guards::kJiraMaxPages) {
     JiraPageLoopResult result;
     std::string nextPageToken;
-    const int kMaxPages = smatchet::search_guards::kJiraMaxPages;
+    const int kMaxPages = maxPages;
     const size_t kMaxTotalFetchBytes = smatchet::search_guards::kJiraMaxTotalFetchBytes;
     const size_t kMaxResultCount = smatchet::search_guards::kJiraMaxResultCount;
 
@@ -797,6 +797,53 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
         return FetchResult::Err(TrackerErrorUnknown("changed-since probe returned a partial page walk"));
     }
     return FetchResult::Ok(std::move(results));
+}
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& /*views*/,
+                                                                const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    // The view's full JQL with `fields=updated`: each issue rides back as its key and last-updated stamp
+    // only. No expand, no comments - a page is a few dozen bytes per row, which is what lets a reload
+    // learn which tickets changed without downloading any of them.
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
+    const std::string baseSearchUrl = smatchet::jira::BuildJiraSearchUrl(
+        base, UrlEncode(jqlRaw), smatchet::search_guards::kJiraRosterPageSize, "updated", false);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    const std::vector<std::string> selectedFields = {"updated"};
+    auto noComments = [](const std::string&, nlohmann::json&) -> bool { return true; };
+    TrackerRoster roster;
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        for (std::size_t i = 0; i < batch.size(); ++i) {
+            if (!batch[i].id.empty()) {
+                TrackerRosterEntry entry;
+                entry.Key = batch[i].id;
+                entry.Updated = batch[i].GetFieldValue("updated");
+                roster.Entries.push_back(std::move(entry));
+            }
+        }
+    };
+    TrackerIssueFetchSummary summary;
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary,
+                              smatchet::search_guards::kJiraMaxRosterPages);
+
+    if (shouldCancel && shouldCancel()) {
+        return RosterResult::Err(TrackerErrorCancelled());
+    }
+    if (!summary.FetchError.empty()) {
+        return RosterResult::Err(
+            summary.Error.Kind != TrackerErrorKind::None ? summary.Error : TrackerErrorUnknown(summary.FetchError));
+    }
+    roster.Warning = summary.Warning;
+    roster.Complete = loop.endedCleanly && !loop.tokenLeftover && loop.fetchedPages > 0 && roster.Warning.empty();
+    return RosterResult::Ok(std::move(roster));
 }
 
 Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView(const TrackerConfig& cfg,

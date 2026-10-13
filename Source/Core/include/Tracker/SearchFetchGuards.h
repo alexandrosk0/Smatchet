@@ -15,6 +15,11 @@ namespace search_guards {
 constexpr int kPageSize = 100;
 
 constexpr int kJiraMaxPages = 50;
+/// Delta-sync roster walk (keys + `updated` only). Conservative defaults - the same page size and page cap
+/// as the full fetch, so a roster never reaches less of a view than the fetch it replaces - until the
+/// Phase 0 live-Jira spike (docs/plans/active/delta-sync.md) measures what a keys-only page can carry.
+constexpr int kJiraRosterPageSize = 100;
+constexpr int kJiraMaxRosterPages = 50;
 constexpr std::size_t kJiraMaxTotalFetchBytes = 100u * 1024u * 1024u;
 /// Reached only when the server returns more rows per page than kPageSize (the page cap bounds a
 /// well-behaved server below it).

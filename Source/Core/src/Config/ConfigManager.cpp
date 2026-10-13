@@ -251,6 +251,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"single_click_to_edit_grid_cells", &TrackerConfig::SingleClickToEditGridCells},
     {"highlight_grid_row_on_hover", &TrackerConfig::HighlightGridRowOnHover},
     {"load_parent_issues", &TrackerConfig::LoadParentIssues},
+    {"delta_sync_enabled", &TrackerConfig::DeltaSyncEnabled},
     {"default_long_text_editor_preview", &TrackerConfig::DefaultLongTextEditorPreview},
     {"read_only_mode", &TrackerConfig::ReadOnlyMode},
     {"backend_has_been_reachable", &TrackerConfig::BackendHasBeenReachable},
@@ -317,6 +318,7 @@ const FieldDesc<int> kIntFields[] = {
     {"user_activity_day_window", &TrackerConfig::UserActivityDayWindow},
     {"max_user_changes", &TrackerConfig::MaxUserChanges},
     {"ticket_change_monitor_interval_sec", &TrackerConfig::TicketChangeMonitorIntervalSec},
+    {"delta_sync_max_row_age_sec", &TrackerConfig::DeltaSyncMaxRowAgeSec},
     {"quick_create_ctx_log_lines", &TrackerConfig::QuickCreateCtxLogLines},
 };
 

@@ -105,6 +105,14 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     if (cfg.TicketChangeMonitorIntervalSec > 3600) {
         cfg.TicketChangeMonitorIntervalSec = 3600;
     }
+    // Delta reload row-age bound: below 5 minutes every refresh would redownload nearly everything; above a
+    // week the parent/link/sprint values copied from other issues are too stale to trust.
+    if (cfg.DeltaSyncMaxRowAgeSec < 300) {
+        cfg.DeltaSyncMaxRowAgeSec = 300;
+    }
+    if (cfg.DeltaSyncMaxRowAgeSec > 604800) {
+        cfg.DeltaSyncMaxRowAgeSec = 604800;
+    }
     // Quick-create engine-context log tail — zero/negative would silently drop the log
     // section; past 300 lines the description prefill stops being a summary.
     if (cfg.QuickCreateCtxLogLines < 1) {

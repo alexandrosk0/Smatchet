@@ -8,6 +8,7 @@
 #include "Commands/MainThreadDispatch.h" // RunOnUiThreadAsCommandResult
 
 #include "Interfaces/IAppSync.h" // fan-in: sync.* depends on the narrow IAppSync facet, not the full AppController.h.
+#include "Sync/SyncMode.h"
 #include "Sync/SyncSessionStats.h"
 #include "Sync/SyncTypes.h"    // TrackerIssueFetchPack
 #include "CachedTicketTypes.h" // CachedTicket (pack.Tickets element)
@@ -25,7 +26,9 @@ namespace {
 
 void RegisterSyncIncrementalCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     {
-        Command c = MakeCommand("sync.incremental", "Re-sync the active view from the tracker (asynchronous).",
+        Command c = MakeCommand("sync.incremental",
+                                "Re-sync the active view from the tracker, downloading only the tickets that "
+                                "changed since they were last loaded (asynchronous).",
                                 [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
                                     if (ctx.DryRun) {
                                         return CommandResult::Success({{"wouldDo", "re-sync the active view"}});
@@ -49,25 +52,52 @@ void RegisterSyncIncrementalCommand(CommandRegistry& reg, IAppSync& app, IMainTh
 
 void RegisterSyncFullCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     {
-        Command c =
-            MakeCommand("sync.full", "Full sync: wipe local cache and re-fetch all tickets from tracker.",
-                        [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
-                            if (ctx.DryRun) {
-                                return CommandResult::Success({{"wouldDo", "wipe local cache + full re-fetch"}});
-                            }
-                            // RecreateLocalCacheDatabase swaps the cache and joins every pane's
-                            // worker: UI-thread-owned state, so the whole sequence runs there.
-                            return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                const VoidResult recreated = app.RecreateLocalCacheDatabase();
-                                app.SyncWithBackend();
-                                nlohmann::json out;
-                                out["triggered"] = true;
-                                if (!recreated.has_value())
-                                    out["warning"] = recreated.error();
-                                return CommandResult::Success(std::move(out));
-                            });
-                        });
-        c.Destructive = true;
+        Command c = MakeCommand("sync.full",
+                                "Re-download the whole active view from the tracker (asynchronous). Keeps the "
+                                "local cache and the offline queue; use cache.recreate to wipe the cache.",
+                                [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
+                                    if (ctx.DryRun) {
+                                        return CommandResult::Success(
+                                            {{"wouldDo", "re-download the whole active view (cache kept)"}});
+                                    }
+                                    return RunOnUiThreadAsCommandResult(poster, [&app]() {
+                                        app.SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+                                        nlohmann::json out;
+                                        out["triggered"] = true;
+                                        return CommandResult::Success(std::move(out));
+                                    });
+                                });
+        c.Destructive = false; // it no longer wipes anything
+        c.Idempotent = false;
+        c.AsyncSafe = false;
+        c.DryRunSupported = true;
+        reg.Register(std::move(c));
+    }
+}
+
+void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
+    {
+        Command c = MakeCommand("cache.recreate",
+                                "Wipe the local cache database (cached tickets AND queued offline edits) and "
+                                "re-fetch the active view from the tracker.",
+                                [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
+                                    if (ctx.DryRun) {
+                                        return CommandResult::Success(
+                                            {{"wouldDo", "wipe local cache + offline queue, then full re-fetch"}});
+                                    }
+                                    // RecreateLocalCacheDatabase swaps the cache and joins every pane's
+                                    // worker: UI-thread-owned state, so the whole sequence runs there.
+                                    return RunOnUiThreadAsCommandResult(poster, [&app]() {
+                                        const VoidResult recreated = app.RecreateLocalCacheDatabase();
+                                        app.SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+                                        nlohmann::json out;
+                                        out["triggered"] = true;
+                                        if (!recreated.has_value())
+                                            out["warning"] = recreated.error();
+                                        return CommandResult::Success(std::move(out));
+                                    });
+                                });
+        c.Destructive = true; // deletes queued offline edits: relies on the registry's confirm gate
         c.Idempotent = false;
         c.AsyncSafe = false;
         c.DryRunSupported = true;
@@ -201,6 +231,7 @@ void RegisterSyncStatsCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPo
 void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     RegisterSyncIncrementalCommand(reg, app, poster);
     RegisterSyncFullCommand(reg, app, poster);
+    RegisterCacheRecreateCommand(reg, app, poster);
     RegisterSyncRefreshLocalCommand(reg, app, poster);
     RegisterSyncTrackerStatusCommand(reg, app);
     RegisterSyncFetchActiveViewCommand(reg, app, poster);

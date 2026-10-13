@@ -375,18 +375,23 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     if (activeViewForGrid) {
         ImGui::SameLine();
         if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE, "Refresh View",
-                               "Re-run this view's query and refresh the grid.")) {
+                               "Re-run this view's query and refresh the grid. Only issues that changed are "
+                               "downloaded; Shift+click re-downloads everything.")) {
+            // Shift+click forces the whole-view download (the escape hatch if a cached row looks wrong).
+            const bool forceFull = ImGuiEffectiveKeyShift();
             if (pane.focused) {
                 d.cfg.JqlQuery = activeViewForGrid->Jql;
                 d.cfg.SelectedFields = activeViewForGrid->Fields;
-                SyncWithCurrentView(app, d, viewState.GetStore(), true);
+                SyncWithCurrentView(app, d, viewState.GetStore(), true,
+                                    forceFull ? smatchet::sync::SyncMode::Full : smatchet::sync::SyncMode::Delta);
             } else {
                 // Not-yet-focused pane (review MEDIUM-2): syncing NOW would re-run a
                 // query against the still-focused pane's live context. Defer — the
                 // host consumes this after applying the focus/view switch this click
                 // triggered (drawGridPaneWindows; consume-once).
                 d.paneDeferredActionPaneId = pane.id;
-                d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::RefreshView;
+                d.paneDeferredActionKind = forceFull ? UiDrawSession::PaneDeferredActionKind::RefreshViewFull
+                                                     : UiDrawSession::PaneDeferredActionKind::RefreshView;
             }
         }
     }

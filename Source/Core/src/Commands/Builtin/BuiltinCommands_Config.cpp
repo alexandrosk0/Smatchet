@@ -145,6 +145,10 @@ const CfgKey* ConfigSetKeyTable() {
         {"ticketChangeMonitorEnabled", "ticket_change_monitor_enabled", "applies on next poll"},
         {"ticketChangeMonitorIntervalSec", "ticket_change_monitor_interval_sec",
          "integer 30..3600; clamped on load; applies on next poll"},
+        // Delta reload (docs/plans/active/delta-sync.md): the kill switch and the row-age bound.
+        {"deltaSyncEnabled", "delta_sync_enabled", "applies on next sync"},
+        {"deltaSyncMaxRowAgeSec", "delta_sync_max_row_age_sec",
+         "integer 300..604800; clamped on load; applies on next sync"},
         {nullptr, nullptr, nullptr},
     };
     return kKeys;

@@ -161,6 +161,15 @@ struct TrackerConfig {
     // descendants the query did not match are not loaded. Exposed in Settings -> Preferences ->
     // Editing -> Grid behaviour.
     bool LoadParentIssues = true;
+    // Delta reload (docs/plans/active/delta-sync.md): when true (default) a refresh lists the view's tickets
+    // with their last-updated stamps and downloads only the ones that changed; the rest come from the local
+    // cache. Off restores the full re-download on every refresh (the kill switch). Exposed in Settings ->
+    // Preferences -> Editing -> Grid behaviour.
+    bool DeltaSyncEnabled = true;
+    // A cached ticket older than this many seconds is downloaded again even when its stamp is unchanged:
+    // values copied from OTHER issues (parent summary, link status, sprint, display names) change without
+    // moving the ticket's own stamp. Clamped to [300, 604800] at load. Default 6 hours.
+    int DeltaSyncMaxRowAgeSec = 21600;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.

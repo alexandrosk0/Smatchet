@@ -17,6 +17,7 @@
 
 #include "OfflineFirstPure.h"        // IsOfflineState (rank-0)
 #include "SmatchetResult.h"          // VoidResult (RecreateLocalCacheDatabase)
+#include "Sync/SyncMode.h"           // SyncMode (rank-0)
 #include "Sync/SyncSessionStats.h"   // SyncSessionStats (rank-0)
 #include "Sync/SyncTypes.h"          // TrackerIssueFetchPack (rank-0)
 #include "Types/ConnectivityTypes.h" // TrackerConnectivityState (rank-0)
@@ -32,6 +33,14 @@ class IAppSync {
 
     virtual void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                                  const ViewsStore* viewsOverride = nullptr) = 0;
+    /// SyncWithBackend with an explicit mode: `Delta` re-downloads only changed tickets, `Full` the whole view
+    /// (`SyncWithBackend` itself means Delta). Non-pure; the default ignores the mode, so a facet fake that
+    /// only counts syncs needs no stub.
+    virtual void SyncWithBackendMode(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                     smatchet::sync::SyncMode mode) {
+        (void)mode;
+        SyncWithBackend(configOverride, viewsOverride);
+    }
     virtual VoidResult RecreateLocalCacheDatabase() = 0;
     /// Absolute path of the local cache database, for display; the raw configured path when it
     /// cannot be resolved.

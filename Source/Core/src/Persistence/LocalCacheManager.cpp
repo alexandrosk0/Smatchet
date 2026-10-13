@@ -7,6 +7,7 @@
 #include <ghc/filesystem.hpp>
 #include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -580,12 +581,18 @@ std::vector<CachedTicket> LocalCacheManager::GetTicketsByIds(const std::string& 
                                                              const std::vector<std::string>& ids) {
     std::vector<CachedTicket> rows;
     rows.reserve(ids.size());
-    std::lock_guard<std::mutex> lock(stmtMutex_);
+    // Read in chunks and release stmtMutex_ between them: the lock is shared with every UI-thread cache call
+    // (the drain's saves, field edits), and a worker reading thousands of rows must not hold it throughout.
+    constexpr std::size_t kChunk = 150;
     try {
-        for (const std::string& id : ids) {
-            CachedTicket row;
-            if (readTicketRows_(backendKey, id, row)) {
-                rows.push_back(std::move(row));
+        for (std::size_t offset = 0; offset < ids.size(); offset += kChunk) {
+            const std::size_t end = (std::min)(ids.size(), offset + kChunk);
+            std::lock_guard<std::mutex> lock(stmtMutex_);
+            for (std::size_t i = offset; i < end; ++i) {
+                CachedTicket row;
+                if (readTicketRows_(backendKey, ids[i], row)) {
+                    rows.push_back(std::move(row));
+                }
             }
         }
     } catch (const std::exception& ex) {

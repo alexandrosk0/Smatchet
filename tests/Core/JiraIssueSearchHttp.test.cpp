@@ -10,6 +10,7 @@
 #include "JiraCatalogHttpFixture.h"
 #include "Config/ConfigManager.h"
 #include "Tracker/JiraClient.h"
+#include "Tracker/SearchFetchGuards.h"
 
 #include <doctest/doctest.h>
 
@@ -313,4 +314,104 @@ TEST_CASE("JiraClient::FetchIssuesForKeys — the keyed fetch follows the same e
     const auto res = client.FetchIssuesForKeys(fx.Config(), {"SMT-1", "SMT-2"}, views);
     REQUIRE(res.has_value());
     CHECK_FALSE(hasExpand);
+}
+
+// --- delta-sync Phase 3: the roster request (keys + updated only) -----------------------------------
+
+TEST_CASE("JiraClient::FetchViewRoster — asks for updated only: no bodies, no expand, 100 per page") {
+    JiraCatalogHttpFixture fx;
+    std::string fields;
+    std::string maxResults;
+    bool hasExpand = true;
+    std::string jql;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        fields = req.get_param_value("fields");
+        maxResults = req.get_param_value("maxResults");
+        hasExpand = req.has_param("expand");
+        jql = req.get_param_value("jql");
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}, {"fields", {{"updated", "T1"}}}},
+                                              nlohmann::json{{"key", "SMT-2"}, {"fields", {{"updated", "T2"}}}}})}};
+    });
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    CHECK(client.SupportsVersionedRoster());
+    const auto res = client.FetchViewRoster(cfg, views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(fields == "updated");
+    CHECK(maxResults == "100");
+    CHECK_FALSE(hasExpand);
+    CHECK(jql == "project = SMT");
+    REQUIRE(res.value().Entries.size() == 2u);
+    CHECK(res.value().Entries[0].Key == "SMT-1");
+    CHECK(res.value().Entries[0].Updated == "T1");
+    CHECK(res.value().Entries[1].Updated == "T2");
+    CHECK(res.value().Complete);
+    CHECK(res.value().Warning.empty());
+    CHECK(fx.RequestCount(kSearchPath) == 1); // the whole reload costs ONE request here
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — follows the page token and is complete after the last page") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        if (req.get_param_value("nextPageToken").empty()) {
+            return nlohmann::json{{"isLast", false},
+                                  {"nextPageToken", "tok2"},
+                                  {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}})}};
+        }
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-2"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(res.value().Entries.size() == 2u);
+    CHECK(res.value().Complete);
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — hitting the roster page cap yields an incomplete roster with a warning") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{{"isLast", false},
+                              {"nextPageToken", "more"},
+                              {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK_FALSE(res.value().Complete);
+    CHECK_FALSE(res.value().Warning.empty());
+    CHECK(fx.RequestCount(kSearchPath) == static_cast<int>(smatchet::search_guards::kJiraMaxRosterPages));
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — failures keep their kind; a cancel is Cancelled; no credentials is Auth") {
+    const ViewsStore views;
+    {
+        JiraCatalogHttpFixture fx;
+        fx.ScriptStatus(kSearchPath, 503, "GET");
+        JiraClient client;
+        const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::ServerError);
+    }
+    {
+        JiraCatalogHttpFixture fx;
+        fx.ScriptJson(kSearchPath, nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}});
+        JiraClient client;
+        const auto res = client.FetchViewRoster(fx.Config(), views, []() { return true; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::Cancelled);
+    }
+    {
+        TrackerConfig cfg;
+        cfg.TrackerType = "Jira";
+        JiraClient client;
+        const auto res = client.FetchViewRoster(cfg, views, []() { return false; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::Auth);
+    }
 }

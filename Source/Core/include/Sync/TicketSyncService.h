@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Sync/SyncMode.h"         // SyncMode: Delta (changed tickets only) vs Full (whole view).
 #include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
@@ -78,7 +79,11 @@ class TicketSyncService {
     /// Begin a tracker refresh. If a session is already busy (worker, apply queue, or
     /// stale-deletion), the request is deferred via `hasPendingSyncRequest_` and the active
     /// session is superseded. Otherwise transitions straight to `StartStreamingSync`.
-    void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride);
+    /// `mode` Delta (the default) lists the view's tickets with their versions and downloads only the changed
+    /// ones, falling back to a full fetch on any failure; Full forces the whole-view download. Requests queued
+    /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
+    void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                         smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
 
     /// Count of streaming sessions started by this service. A change-monitor probe captures it when it
     /// is issued and drops its result when it moved: a sync that began in between writes newer rows
@@ -120,6 +125,23 @@ class TicketSyncService {
                                                                     const std::vector<std::string>& retainedElsewhere);
 
   private:
+    /// One queued group of rows for the UI-thread apply. `CachedUnchanged` rows were read back from the cache
+    /// because the tracker reports them unchanged: the apply neither saves them nor carries comments forward,
+    /// and only touches the in-memory roster when the row is missing or differs.
+    struct SyncBatch {
+        std::vector<CachedTicket> Rows;
+        bool CachedUnchanged = false;
+    };
+    /// Result of the delta attempt: `Finished` = the session's result was published (or the session was
+    /// cancelled) and no full fetch is needed; otherwise `FallbackReason` says why Full must run.
+    struct DeltaOutcome {
+        bool Finished = false;
+        std::string FallbackReason;
+        /// The reason is an expected strategy choice (disabled, unsupported, nothing cached), not a failure.
+        bool ExpectedFallback = false;
+    };
+    struct DeltaWork; // the roster, the fetch set and the rows of one delta attempt (defined in the .cpp)
+
     /// Streaming-sync FSM state. Moved out of AppController in Phase 1C of the item 11
     /// extraction. Worker thread + UI thread coordinate via the atomics + `QueueMutex`.
     struct StreamingSyncState {
@@ -139,7 +161,7 @@ class TicketSyncService {
         std::string Warning;
 
         mutable std::mutex QueueMutex;
-        std::vector<std::vector<CachedTicket>> PendingBatches;
+        std::vector<SyncBatch> PendingBatches;
         std::unordered_set<std::string> KeepIds;
         std::vector<std::string> BackgroundStaleIds;
 
@@ -151,7 +173,7 @@ class TicketSyncService {
         smatchet::sync::TrackerTrafficSample TrafficAtStart;
     };
 
-    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy, smatchet::sync::SyncMode mode);
 
     // StartStreamingSync phases. Each mutates the member FSM state in place; lock scopes match
     // the original inline body (same mutexes, same points).
@@ -162,7 +184,30 @@ class TicketSyncService {
 
     /// Background streaming-fetch worker body. Coordinates with the UI thread via FSM atomics
     /// + `QueueMutex`.
-    void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                smatchet::sync::SyncMode mode);
+
+    /// Today's whole-view streamed fetch + parent/child top-ups, then publishes the session result.
+    /// `fallbackReason` is non-empty when this run replaces an abandoned delta attempt.
+    void RunFullFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                      const std::string& fallbackReason);
+
+    /// Delta attempt: roster -> fetch set -> cached rows for the unchanged -> bodies for the changed ->
+    /// queue + top-ups + publish. Never throws past the caller's fallback; see DeltaOutcome.
+    DeltaOutcome RunDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+
+    /// Queues the delta rows, runs the hierarchy top-ups and publishes the session result.
+    void FinishDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                          DeltaWork& work);
+
+    /// Publishes a finished worker session (result flags, stats, stale ids) under QueueMutex; a no-op when
+    /// the session was superseded or cancelled.
+    void PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
+                             const std::unordered_set<std::string>& keepIds,
+                             const smatchet::sync::SyncSessionStats& partialStats);
+
+    /// Appends rows to the apply queue; false when the session was superseded / cancelled meanwhile.
+    bool QueueBatch(std::uint64_t reqId, std::vector<CachedTicket>&& rows, bool cachedUnchanged);
 
     /// Worker-side parent top-up (parent-issue-hierarchy plan): fetch every parent key the
     /// streamed batches referenced but did not contain, then chase THEIR parents too, one hop
@@ -243,6 +288,7 @@ class TicketSyncService {
     StreamingSyncState activeStreamingSync_;
 
     bool hasPendingSyncRequest_ = false;
+    smatchet::sync::SyncMode pendingMode_ = smatchet::sync::SyncMode::Delta;
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
 

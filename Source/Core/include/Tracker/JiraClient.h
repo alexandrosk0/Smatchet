@@ -153,6 +153,12 @@ class JiraClient : public ITrackerBackend,
     FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                    const ViewsStore& viewStore, const CancelCallback& shouldCancel) override;
 
+    /// Delta-sync roster: the view's JQL with `fields=updated` only (no bodies, no changelog), paged like the
+    /// full fetch. Complete only when every page was read.
+    bool SupportsVersionedRoster() const override { return true; }
+    Result<TrackerRoster, TrackerError> FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& views,
+                                                        const CancelCallback& shouldCancel) override;
+
     // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
     // Server-side change probe + keys-only membership + existence GET, replacing the heavy
     // full-fetch defaults on ITrackerIssueReader with native Jira queries.

@@ -247,10 +247,15 @@ void SmatchetUI::drainPaneDeferredActions(AppController& app, UiDrawSession& d) 
                     applyGridSearchEnter(app, d, *target, d.paneDeferredSearchText);
                 }
             } else if (const ViewDefinition* active = ViewState.GetActiveView()) {
-                if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView) {
+                if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView ||
+                    d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshViewFull) {
                     d.cfg.JqlQuery = active->Jql;
                     d.cfg.SelectedFields = active->Fields;
-                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), true,
+                                        d.paneDeferredActionKind ==
+                                                UiDrawSession::PaneDeferredActionKind::RefreshViewFull
+                                            ? smatchet::sync::SyncMode::Full
+                                            : smatchet::sync::SyncMode::Delta);
                 } else if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::NewIssueDraft) {
                     static const std::vector<CachedTicket> kNoTickets;
                     const GridPane& focusedPane = d.focusedPane();

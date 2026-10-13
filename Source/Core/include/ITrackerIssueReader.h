@@ -8,6 +8,7 @@
 #include "CachedTicketTypes.h"
 #include "SmatchetResult.h"
 #include "TrackerError.h"
+#include "TrackerRoster.h"
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
@@ -106,6 +107,22 @@ class ITrackerIssueReader {
     FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                    const ViewsStore& views, const CancelCallback& /*shouldCancel*/) {
         return FetchChildrenOfKeys(cfg, parentKeys, views);
+    }
+
+    // ---- delta-sync roster surface (docs/plans/active/delta-sync.md § Phase 3) ----
+
+    /// True when FetchViewRoster is implemented. Callers skip the roster path (and keep today's full
+    /// fetch) on a backend that answers false - the default.
+    virtual bool SupportsVersionedRoster() const { return false; }
+
+    /// The keys currently in the view, each with the tracker's last-updated stamp, WITHOUT downloading
+    /// bodies. The roster is `Complete` only when every page was read. Failures keep their kind
+    /// (`Transport` stays retryable), and a cancelled walk returns `Cancelled`. The default reports the
+    /// capability as missing.
+    virtual Result<TrackerRoster, TrackerError>
+    FetchViewRoster(const TrackerConfig& /*cfg*/, const ViewsStore& /*views*/, const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
     }
 
     // ---- ticket-change-monitor reader surface (ticket-change-monitor plan, S1b) ----

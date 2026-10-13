@@ -910,7 +910,7 @@ struct UiDrawSession {
     bool gridPaneFocusReassigned = false;
     /// Kinds for the one-frame deferred pane action latch below (multi-grid Slice 3,
     /// plan item 19 — extends Slice 2's refresh-only latch, review MEDIUM-2).
-    enum class PaneDeferredActionKind { None, RefreshView, NewIssueDraft, GridSearchCommit };
+    enum class PaneDeferredActionKind { None, RefreshView, RefreshViewFull, NewIssueDraft, GridSearchCommit };
     /// One-frame deferred toolbar action from a not-yet-focused pane ({paneId, kind}):
     /// acting on the click frame would target the still-focused pane's live context /
     /// active view. The host consumes this AFTER applying the focus/view switch;

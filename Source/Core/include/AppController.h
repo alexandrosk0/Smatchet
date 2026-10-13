@@ -671,6 +671,9 @@ class AppController : public IAppThreading,
      */
     void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                          const ViewsStore* viewsOverride = nullptr) override;
+    /** SyncWithBackend with an explicit mode: Delta (default above) or a forced Full re-download. */
+    void SyncWithBackendMode(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                             smatchet::sync::SyncMode mode) override;
 
     /** Process queued streaming ticket batches on the UI thread (frame-budgeted). */
     void TickStreamingApply();

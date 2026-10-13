@@ -133,7 +133,14 @@ struct FakeSync : IAppSync {
     std::string CatalogError;
     TrackerIssueFetchPack Pack;
 
+    int FullSyncCalls = 0;
     void SyncWithBackend(const TrackerConfig*, const ViewsStore*) override { ++SyncCalls; }
+    void SyncWithBackendMode(const TrackerConfig*, const ViewsStore*, smatchet::sync::SyncMode mode) override {
+        ++SyncCalls;
+        if (mode == smatchet::sync::SyncMode::Full) {
+            ++FullSyncCalls;
+        }
+    }
     VoidResult RecreateLocalCacheDatabase() override {
         ++RecreateCalls;
         return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
@@ -473,7 +480,8 @@ TEST_CASE("users.* — backend results propagate; a failed fetch is BackendError
     }
 }
 
-TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status mapping, fetch pack") {
+TEST_CASE(
+    "sync.* / cache.recreate — trigger plumbing, destructive gate on cache.recreate, status mapping, fetch pack") {
     FakeSync sync;
     TogglePoster poster;
     CommandRegistry reg;
@@ -487,32 +495,50 @@ TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status ma
         CHECK(poster.Posts == 1); // hopped to the UI thread instead of running on the caller's thread
     }
     {
-        // Unconfirmed automation source is stopped by the registry BEFORE the handler runs.
+        // sync.full no longer wipes anything, so it needs no confirmation: it forces a Full re-download.
         const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx());
-        REQUIRE_FALSE(r.Ok);
-        CHECK(r.Error.Code == ErrorCode::ConfirmRequired);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
         CHECK(sync.RecreateCalls == 0);
+        CHECK(sync.FullSyncCalls == 1);
+        CHECK(sync.SyncCalls == 2);
+        CHECK(poster.Posts == 2);
     }
     {
         const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx(false, /*dryRun*/ true));
         REQUIRE(r.Ok);
         CHECK((*r.Data).contains("wouldDo"));
+        CHECK(sync.FullSyncCalls == 1);
+    }
+    {
+        // cache.recreate is the destructive wipe: an unconfirmed automation source is stopped by the registry
+        // BEFORE the handler runs ...
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx());
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ConfirmRequired);
         CHECK(sync.RecreateCalls == 0);
     }
     {
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(false, /*dryRun*/ true));
+        REQUIRE(r.Ok);
+        CHECK((*r.Data).contains("wouldDo"));
+        CHECK(sync.RecreateCalls == 0);
+    }
+    {
+        // ... and a confirmed one wipes, then re-fetches in full.
         sync.RecreateError = "cache locked";
-        const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx(/*confirmed*/ true));
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
         REQUIRE(r.Ok);
         CHECK((*r.Data)["warning"] == "cache locked");
         CHECK(sync.RecreateCalls == 1);
-        CHECK(sync.SyncCalls == 2);
-        CHECK(poster.Posts == 2);
+        CHECK(sync.FullSyncCalls == 2);
+        CHECK(sync.SyncCalls == 3);
     }
     {
         const CommandResult r = reg.Dispatch("sync.refresh_local", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK(sync.RefreshCalls == 1);
-        CHECK(poster.Posts == 3);
+        CHECK(poster.Posts == 4);
     }
     {
         const CommandResult r = reg.Dispatch("sync.tracker_status", {}, AutomationCtx());

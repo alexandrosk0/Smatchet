@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Sync/SyncMode.h"
 #include "LocalCacheManager.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -87,7 +88,9 @@ bool ImGuiEffectiveKeyCtrl();
 bool ImGuiEffectiveKeyShift();
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId);
 std::string SanitizeClipboardCell(const std::string& value);
-void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
+/// `mode` Delta (default) downloads only changed tickets; Full forces the whole-view download (Shift+Refresh).
+void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory,
+                         smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
 
 // --- Extracted Grid Panels & Pipelines ---
 

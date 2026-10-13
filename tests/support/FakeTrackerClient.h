@@ -296,6 +296,28 @@ class FakeTrackerClient : public ITrackerBackend,
         return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(matched));
     }
 
+    // --- delta-sync roster (scripted) --------------------------------------------------------
+    bool SupportsVersionedRoster() const override { return rosterSupported_; }
+    Result<TrackerRoster, TrackerError> FetchViewRoster(const TrackerConfig& /*cfg*/, const ViewsStore& /*views*/,
+                                                        const CancelCallback& /*shouldCancel*/) override {
+        ++fetchRosterCalls_;
+        if (onRoster_) {
+            onRoster_(); // lets a test cancel the sync "while the roster request is in flight"
+        }
+        if (!rosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(rosterError_);
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster_);
+    }
+    void SetRosterSupported(bool supported) { rosterSupported_ = supported; }
+    void SetRoster(TrackerRoster roster) {
+        roster_ = std::move(roster);
+        rosterError_ = TrackerError::Ok();
+    }
+    void SetRosterError(TrackerError error) { rosterError_ = std::move(error); }
+    void SetOnRoster(std::function<void()> hook) { onRoster_ = std::move(hook); }
+    std::size_t FetchRosterCallCount() const { return fetchRosterCalls_; }
+
     /// Cancellable twins: forward to the plain call, then let a test hook run (typically to cancel the
     /// sync "mid-request") and record whether the token the service handed in reports cancelled.
     Result<std::vector<CachedTicket>, TrackerError>
@@ -1066,6 +1088,11 @@ class FakeTrackerClient : public ITrackerBackend,
     std::atomic<std::size_t> fetchChildrenOfKeysCancellableCalls_{0};
     std::atomic<bool> keyedFetchTokenReportedCancelled_{false};
     std::function<void()> onKeyedFetch_;
+    bool rosterSupported_ = false;
+    TrackerRoster roster_;
+    TrackerError rosterError_;
+    std::function<void()> onRoster_;
+    std::atomic<std::size_t> fetchRosterCalls_{0};
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;

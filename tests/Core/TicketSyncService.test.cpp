@@ -22,11 +22,13 @@
 #include "CachedTicketTypes.h"
 #include "ITicketSyncDeps.h"
 #include "TicketSyncService.h"
+#include "Sync/DeltaSyncPure.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -1515,7 +1517,9 @@ TEST_CASE("TicketSyncService records what a finished session cost") {
     CHECK(stats.BodiesFetched == 2);
     CHECK(stats.Completed);
     CHECK(stats.Error.empty());
-    CHECK(stats.FallbackReason.empty());
+    // A default (Delta) request against a backend that cannot list versions (the fake's default) runs the
+    // full fetch and says why.
+    CHECK(stats.FallbackReason.find("cannot list ticket versions") != std::string::npos);
     CHECK(stats.Requests == 5); // the fake samples +5 requests per call: start vs end
     CHECK(stats.DownloadBytes == 500);
     CHECK(stats.RequestId != 0);
@@ -1558,4 +1562,295 @@ TEST_CASE("TicketSyncService stores the tracker version beside each streamed and
     CHECK(meta.count("ABC-3") == 1u);
 
     svc.CancelAndJoinActiveStreamingSync();
+}
+
+// --- delta-sync Phase 3: roster-driven reload with a full-fetch fallback --------------------------
+
+namespace {
+
+CachedTicket Stamped(const std::string& id, const std::string& updated, const std::string& summary = "cached") {
+    CachedTicket t = MakeTicket(id, summary);
+    t.fieldValues["updated"] = updated;
+    return t;
+}
+
+TrackerRoster MakeRoster(const std::vector<std::pair<std::string, std::string>>& entries, bool complete = true) {
+    TrackerRoster roster;
+    for (const auto& kv : entries) {
+        TrackerRosterEntry e;
+        e.Key = kv.first;
+        e.Updated = kv.second;
+        roster.Entries.push_back(e);
+    }
+    roster.Complete = complete;
+    if (!complete) {
+        roster.Warning = "page cap reached";
+    }
+    return roster;
+}
+
+// A service wired to a fake backend that supports rosters, with a Jira-keyed cache the tests can seed.
+struct DeltaRig {
+    FakeTicketSyncDeps deps;
+    FakeTrackerClient* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    TicketSyncService svc{deps};
+    TrackerConfig cfg;
+    ViewsStore views;
+
+    DeltaRig() {
+        cfg.TrackerType = "fake";
+        fake->SetRosterSupported(true);
+    }
+    ~DeltaRig() { svc.CancelAndJoinActiveStreamingSync(); }
+
+    // Cached rows as an earlier sync would have left them: row + the version it was fetched at.
+    void Seed(const std::vector<CachedTicket>& rows) {
+        std::vector<TicketSyncMeta> metas;
+        for (const CachedTicket& row : rows) {
+            metas.push_back(smatchet::sync::BuildSyncMeta(row, static_cast<std::int64_t>(std::time(nullptr))));
+        }
+        deps.CacheImpl->SaveTicketsWithSyncMeta("Jira", rows, metas);
+    }
+    void Sync(smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta) {
+        svc.SyncWithBackend(&cfg, &views, mode);
+    }
+    // Waits for the started session to finish (worker, apply queue and stale deletion).
+    bool Settle() {
+        return SpinUntil(svc,
+                         [&]() { return !svc.IsActive() && svc.LastSessionStats().RequestId == svc.SessionEpoch(); });
+    }
+    std::size_t CachedCount() { return deps.CacheImpl->GetAllTicketIds("Jira").size(); }
+};
+
+} // namespace
+
+TEST_CASE("Delta reload: an unchanged view downloads no ticket bodies") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1"), Stamped("ABC-3", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T1"}, {"ABC-3", "T1"}}));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterCallCount() == 1);
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);        // no streamed full fetch
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0); // and no keyed body download
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 3);       // the grid is filled from the cache
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.RosterSize == 3);
+    CHECK(stats.Unchanged == 3);
+    CHECK(stats.BodiesFetched == 0);
+    CHECK(stats.FallbackReason.empty());
+    CHECK(stats.Completed);
+}
+
+TEST_CASE("Delta reload: only changed and new tickets are downloaded") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}, {"ABC-4", "T1"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh"), Stamped("ABC-4", "T1", "new")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 1);
+    std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
+    std::sort(asked.begin(), asked.end());
+    CHECK(asked == std::vector<std::string>{"ABC-2", "ABC-4"});
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 3);
+    CachedTicket got;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got));
+    CHECK(got.fieldValues["summary"] == "fresh");
+    CHECK(rig.deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-2").RemoteUpdated == "T2");
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.BodiesFetched == 2);
+    CHECK(stats.Unchanged == 1);
+}
+
+TEST_CASE("Delta reload: a roster error falls back to exactly one full fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRosterError(TrackerErrorTransport("roster down"));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterCallCount() == 1);
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("roster") != std::string::npos);
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.empty()); // the fallback is invisible to the user
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].fieldValues["summary"] == "from full");
+}
+
+TEST_CASE("Delta reload: a body download error falls back to a full fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysError(TrackerErrorTransport("boom"));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T2", "from full")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("download") != std::string::npos);
+    CachedTicket got;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got));
+    CHECK(got.fieldValues["summary"] == "from full");
+}
+
+TEST_CASE("Delta reload: a forced Full skips the roster entirely") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.empty()); // requested, not a fallback
+}
+
+TEST_CASE("Delta reload: an incomplete roster does not purge rows it did not list") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-9", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}, /*complete=*/false));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CachedTicket got;
+    CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-9", got)); // not proven gone
+    CHECK_FALSE(rig.svc.LastSessionStats().Completed);
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+}
+
+TEST_CASE("Delta reload: a complete roster purges cached rows that left the view") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-9", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}, /*complete=*/true));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CachedTicket got;
+    CHECK_FALSE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-9", got));
+    CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(rig.deps.CacheImpl->GetTicketSyncMeta("Jira").count("ABC-9") == 0u);
+}
+
+TEST_CASE("Delta reload: cancelling during the roster request stops without a fallback fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetOnRoster([&rig]() { rig.svc.RequestCancel(); });
+
+    rig.Sync();
+    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.svc.IsActive() && rig.fake->FetchRosterCallCount() >= 1; }));
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.empty());
+}
+
+TEST_CASE("Delta reload: a backend that cannot list versions keeps the old full fetch") {
+    DeltaRig rig;
+    rig.fake->SetRosterSupported(false);
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK_FALSE(rig.svc.LastSessionStats().FallbackReason.empty());
+}
+
+TEST_CASE("Delta reload: the config kill switch and an empty version table both mean a full fetch") {
+    {
+        DeltaRig rig;
+        rig.cfg.DeltaSyncEnabled = false;
+        rig.Seed({Stamped("ABC-1", "T1")});
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+        rig.Sync();
+        REQUIRE(rig.Settle());
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+        CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    }
+    {
+        DeltaRig rig; // rows cached by an older build: no versions known
+        rig.deps.CacheImpl->SaveTicket("Jira", Stamped("ABC-1", "T1"));
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+        rig.Sync();
+        REQUIRE(rig.Settle());
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+        CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    }
+}
+
+TEST_CASE("Delta reload: a view that mostly changed switches to one full fetch") {
+    DeltaRig rig;
+    std::vector<CachedTicket> rows;
+    std::vector<std::pair<std::string, std::string>> roster;
+    std::vector<CachedTicket> fresh;
+    for (int i = 0; i < 150; ++i) {
+        const std::string id = "ABC-" + std::to_string(i + 1);
+        rows.push_back(Stamped(id, "T1"));
+        roster.push_back({id, "T2"}); // every ticket moved
+        fresh.push_back(Stamped(id, "T2", "fresh"));
+    }
+    rig.Seed(rows);
+    rig.fake->SetRoster(MakeRoster(roster));
+    rig.fake->SetFetchIssuesResult(fresh, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("most of the view") != std::string::npos);
+}
+
+TEST_CASE("Delta reload: an empty roster over a non-empty cache keeps the cache (empty-sync guard)") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({}, /*complete=*/true));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.CachedCount() == 2); // a zero-row "complete" view is suspect and never wipes on its own
+}
+
+TEST_CASE("Delta reload: a roster key that comes back with no row is kept but makes the walk non-authoritative") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-9", "T1")});
+    // ABC-5 is listed but the keyed download returns nothing for it (deleted between the two requests).
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-5", "T1"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK_FALSE(rig.svc.LastSessionStats().Completed); // not authoritative: no purge
+    CachedTicket got;
+    CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-9", got));
 }
