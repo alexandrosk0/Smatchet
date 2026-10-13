@@ -237,6 +237,22 @@ GraphQlPageParse ParseGraphQlSearchPage(const std::string& responseText, const s
     return out;
 }
 
+// Surface a fatal page-parse failure on the caller's out-params (split out of RunGraphQlIssueSearch to keep
+// that loop under the function-size cap).
+void ReportGraphQlParseFailure(const std::string& error, int page, std::string* outFetchError,
+                               TrackerError* outFetchErrorStructured, bool* outFatal) {
+    if (outFetchError) {
+        *outFetchError = error;
+    }
+    if (outFetchErrorStructured) {
+        *outFetchErrorStructured = TrackerErrorParse(error);
+    }
+    LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch parse failure on page %d: %s", page, error.c_str());
+    if (outFatal) {
+        *outFatal = true;
+    }
+}
+
 // github-commit-tracker-rows — run the GraphQL issue/PR search loop. Appends
 // mapped tickets to `accum` and emits each page via `emitPage(page, isLast)`.
 // `isFinalSource` controls whether this source owns the terminal `isLast`
@@ -304,17 +320,7 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
 
         GraphQlPageParse parse = ParseGraphQlSearchPage(resp.text, owner, repo, includePullRequests);
         if (parse.Fatal) {
-            if (outFetchError) {
-                *outFetchError = parse.Error;
-            }
-            if (outFetchErrorStructured) {
-                *outFetchErrorStructured = TrackerErrorParse(parse.Error);
-            }
-            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch parse failure on page %d: %s", page,
-                      parse.Error.c_str());
-            if (outFatal) {
-                *outFatal = true;
-            }
+            ReportGraphQlParseFailure(parse.Error, page, outFetchError, outFetchErrorStructured, outFatal);
             return false;
         }
 
