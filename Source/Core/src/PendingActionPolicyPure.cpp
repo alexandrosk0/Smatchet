@@ -52,7 +52,7 @@ bool ParsePayloadObject(const std::string& json, nlohmann::json& out) {
 // The WorklogAdd payload keys and the fields they carry: the one mapping both directions use.
 struct WorklogField {
     const char* Key;
-    std::string WorklogActionPayload::* Member;
+    std::string WorklogActionPayload::*Member;
 };
 const WorklogField kWorklogFields[] = {
     {"timeSpent", &WorklogActionPayload::TimeSpent},
