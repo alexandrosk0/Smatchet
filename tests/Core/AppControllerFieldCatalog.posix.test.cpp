@@ -129,6 +129,57 @@ TEST_CASE("AppController::RefreshFieldCatalog drops the result when the catalog 
     CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
 }
 
+TEST_CASE("AppController::RefreshFieldCatalog drops the result when ClearFieldCatalogInMemory runs mid-fetch") {
+    // A site or backend switch clears through ClearFieldCatalogInMemory; like SetFieldCatalog's explicit
+    // clear, it must supersede the fetch already in flight.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    auto backend = std::make_unique<SwapDuringFetchBackend>();
+    backend->SetFieldCatalogResult(OneFieldCatalog());
+    SwapDuringFetchBackend* const raw = backend.get();
+    adapter.SetBackend(std::move(backend));
+    raw->OnFetch = [&app]() { app.ClearFieldCatalogInMemory(); };
+
+    CHECK_FALSE(app.RefreshFieldCatalog(ConfigManager::Load()));
+    CHECK(raw->FetchFieldCatalogCalls() == 1u);
+    CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_10001"));
+}
+
+TEST_CASE("AppController::ClearFieldCatalogInMemory drops the project pin and the user roster too") {
+    // Both clears empty the catalog and forget its project; only the site-switch clear also drops the
+    // previous site's user roster, which must not autocomplete under the next site.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    std::vector<TrackerUser> users(1);
+    users[0].AccountId = "acct-1";
+    users[0].DisplayName = "Ann";
+    const auto fooCatalog = []() {
+        std::vector<TrackerField> foo(1);
+        foo[0].Id = "customfield_foo";
+        foo[0].Name = "Foo field";
+        return foo;
+    };
+
+    app.SetCurrentCatalogProject("FOO");
+    app.SetFieldCatalog(fooCatalog(), std::vector<TrackerComponent>(), std::string(), false);
+    app.SetAvailableUsers(users);
+    REQUIRE(app.IsFieldCatalogScopedToProject("FOO"));
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    CHECK(app.GetAvailableFields().empty());
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO"));
+    CHECK(app.GetAvailableUsers().size() == 1u);
+
+    app.SetCurrentCatalogProject("FOO");
+    app.SetFieldCatalog(fooCatalog(), std::vector<TrackerComponent>(), std::string(), false);
+    REQUIRE(app.IsFieldCatalogScopedToProject("FOO"));
+    app.ClearFieldCatalogInMemory();
+    CHECK(app.GetAvailableFields().empty());
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO"));
+    CHECK(app.GetAvailableUsers().empty());
+}
+
 TEST_CASE("AppController::RefreshFieldCatalog skips a project fetch for another tracker kind than the pane runs") {
     // A deferred Save & Sync leaves the old backend installed while the config already names the new
     // tracker: a project of the new tracker cannot be fetched through the old backend, so it does not run.
