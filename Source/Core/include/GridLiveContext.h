@@ -46,6 +46,9 @@ struct GridContextFieldCatalog {
     bool LastTrackerFieldCatalogErrorTransient = false;
     std::string LastTrackerFieldCatalogWarning;
     bool fieldCatalogEverLoaded_ = false;
+    /// The catalog holds a saved snapshot restored after a failed fetch (Pillar 6). It serves reads like
+    /// a loaded catalog, but fieldCatalogEverLoaded_ stays false so the next sync retries the live fetch.
+    bool fieldCatalogRestored_ = false;
     /// Project key for the most-recent in-flight catalog fetch (see SetCurrentCatalogProject).
     std::string currentCatalogProjectKey_;
     // Per-project component options are not per-pane: ProjectComponentsCacheService keys them by

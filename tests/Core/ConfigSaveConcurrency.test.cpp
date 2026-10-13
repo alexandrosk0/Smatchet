@@ -19,6 +19,7 @@
 #include "Config/TrackerConfigSaveRepair.h"
 
 #include <doctest/doctest.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -122,6 +123,31 @@ TEST_CASE("config_save worker persists both config kinds and flushes on Stop") {
     smatchet::config_save::EnqueueAnnotateConfig(ac2);
     ConfigManager::InvalidateCache();
     CHECK(ConfigManager::LoadAnnotateAnalysis().ChangelistCacheMaxEntries == 1024);
+}
+
+// The raw config-JSON key slot: a frame-thread caller (the Lua splitter drag) queues a key the
+// TrackerConfig image does not model; the worker writes it through UpdateConfigJson. The latest
+// value per key wins, other keys in the file survive, and after Stop the write is synchronous.
+TEST_CASE("config_save worker writes queued raw config keys, latest value per key") {
+    smatchet_tests::TestEnvGuard env;
+    TrackerConfig seed;
+    seed.TrackerType = "Jira";
+    ConfigManager::Save(seed);
+
+    smatchet::config_save::Start();
+    smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", 120.0);
+    smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", 240.0);
+    smatchet::config_save::EnqueueConfigJsonKey("selftest_raw_key", "kept");
+    smatchet::config_save::Stop();
+    ConfigManager::InvalidateCache();
+
+    const nlohmann::json j = ConfigManager::LoadMergedConfigJson();
+    CHECK(j.value("lua_scripts_panel_height_px", 0.0) == doctest::Approx(240.0));
+    CHECK(j.value("selftest_raw_key", std::string()) == "kept");
+    CHECK(ConfigManager::Load().TrackerType == "Jira");
+
+    smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", 300.0);
+    CHECK(ConfigManager::LoadMergedConfigJson().value("lua_scripts_panel_height_px", 0.0) == doctest::Approx(300.0));
 }
 
 // #2026 — the persistent-views slot. Views::Save used to do this whole read-merge-write inline on

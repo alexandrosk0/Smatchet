@@ -31,12 +31,16 @@ namespace {
 
 // Success data of a field edit, comment or worklog: {"ok": true}, plus "queued": true and the queue row
 // id as "offlineId" when the tracker was unreachable and the write was saved to send on reconnect
-// (offline queues, Quality Pillar 6).
+// (offline queues, Quality Pillar 6), and "needsReview": true when it is NOT resent on its own — a
+// worklog whose send may have landed waits for the user to check the issue.
 nlohmann::json PendingActionSuccessData(const PendingActionSubmitResult& result) {
     nlohmann::json data = {{"ok", true}};
     if (result.K == PendingActionSubmitResult::Kind::Queued) {
         data["queued"] = true;
         data["offlineId"] = result.QueueId;
+        if (result.NeedsReview) {
+            data["needsReview"] = true;
+        }
     }
     return data;
 }

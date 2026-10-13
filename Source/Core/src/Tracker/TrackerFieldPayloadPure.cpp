@@ -839,6 +839,33 @@ bool TryDescribeQueuedFieldValue(const std::string& fieldId, const nlohmann::jso
     return true;
 }
 
+const char* OtherEstimateFieldId(const std::string& fieldId) {
+    if (fieldId == "timeoriginalestimate") {
+        return "timeestimate";
+    }
+    if (fieldId == "timeestimate") {
+        return "timeoriginalestimate";
+    }
+    return nullptr;
+}
+
+bool RefreshUntouchedEstimate(const std::string& editedFieldId, const std::string& currentOtherEstimate,
+                              nlohmann::json& payload) {
+    const char* const otherField = OtherEstimateFieldId(editedFieldId);
+    if (otherField == nullptr || SoleTimetrackingObject(payload) == nullptr) {
+        return false;
+    }
+    const char* const otherKey = TimetrackingKeyForEstimateField(otherField);
+    nlohmann::json& timetracking = payload["timetracking"];
+    const std::string value = TrimCopy(currentOtherEstimate);
+    if (value.empty()) {
+        timetracking.erase(otherKey);
+    } else {
+        timetracking[otherKey] = value;
+    }
+    return true;
+}
+
 SpecialPayloadRebuild RebuildSpecialQueuedPayload(const std::string& fieldId, const nlohmann::json& queued,
                                                   const TrackerField* field, const std::string& resolvedValue,
                                                   nlohmann::json& out) {

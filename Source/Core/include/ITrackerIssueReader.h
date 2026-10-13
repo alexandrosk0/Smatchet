@@ -27,6 +27,14 @@ struct TrackerIssueFetchSummary {
     // Distinct from FetchError so the UI can show "Sync Warning" without suppressing the success
     // notification and without flipping connectivity state to TransportDown.
     std::string Warning;
+
+    /// Adds `warning` to Warning ("; "-joined), keeping any warning already there: an earlier page
+    /// or hop may carry its own caveat, and overwriting it would hide a real result-set problem.
+    void AppendWarning(const std::string& warning) {
+        if (!warning.empty()) {
+            Warning = Warning.empty() ? warning : (Warning + "; " + warning);
+        }
+    }
 };
 
 class ITrackerIssueReader {

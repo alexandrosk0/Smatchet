@@ -118,6 +118,7 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(lookup.applicable);
         CHECK(lookup.freshness == DataFreshness::Fresh);
         CHECK_FALSE(lookup.fromLearned);
+        CHECK(lookup.fromLive);
         REQUIRE(lookup.options.size() == 2);
         CHECK(lookup.options[0].Id == "2");
 
@@ -328,6 +329,63 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(store->UpsertCalls.load() == 0);
         deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
         CHECK(svc.GetAvailableTransitions(Query("PROJ-2")).options.empty());
+    }
+
+    TEST_CASE("a from-status offered by a global or looped transition is remembered without itself") {
+        // Every status of a team-managed workflow allows all: Jira lists the current status as a target.
+        FakeEditMetaDeps deps;
+        const auto store = SetUpJiraLike(deps);
+        TrackerFieldOption self = Option("1", "To Do");
+        self.ReachableFromAnyStatus = true;
+        deps.Fake()->SetIssueTransitions("PROJ-1", {self, Option("3", "Done")});
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+
+        CHECK(store->UpsertCalls.load() == 1);
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup offline = svc.GetAvailableTransitions(Query("PROJ-2"));
+        CHECK(offline.fromLearned);
+        REQUIRE(offline.options.size() == 1);
+        CHECK(offline.options[0].Id == "3");
+    }
+
+    TEST_CASE("a fetch offering only a global self-target drops the edge learned before") {
+        // An earlier fetch learned "1 -> 3". Now the only option from "1" is the global self-target, so
+        // "3" is no longer reachable and must not be offered offline, from memory or from the saved row.
+        FakeEditMetaDeps deps;
+        const auto store = SetUpJiraLike(deps);
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1",
+                            smatchet::workflow::SerializeTransitionTargets({Option("3", "Done")}));
+        TrackerFieldOption self = Option("1", "To Do");
+        self.ReachableFromAnyStatus = true;
+        deps.Fake()->SetIssueTransitions("PROJ-1", {self});
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+
+        LookupCacheRow row;
+        CHECK_FALSE(store->TryGetLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1", row));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup offline = svc.GetAvailableTransitions(Query("PROJ-2"));
+        CHECK_FALSE(offline.fromLearned);
+        CHECK(offline.options.empty());
+    }
+
+    TEST_CASE("a live list stays marked live once the tracker goes offline, even when empty") {
+        FakeEditMetaDeps deps;
+        SetUpJiraLike(deps);
+        deps.Fake()->SetIssueTransitions("PROJ-1", {}); // the tracker allows no move from here
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+
+        const TransitionsLookup lookup = svc.GetAvailableTransitions(Query("PROJ-1"));
+        CHECK(lookup.fromLive);
+        CHECK_FALSE(lookup.fromLearned);
+        CHECK(lookup.options.empty());
+        CHECK(lookup.freshness != DataFreshness::Fresh);
     }
 
     TEST_CASE("an empty live list is Fresh but not remembered") {

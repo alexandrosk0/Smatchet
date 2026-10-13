@@ -19,7 +19,10 @@ struct TransitionsQuery {
 
 struct TransitionsLookup {
     bool applicable = false;                 ///< backend supports transitions (Jira)
-    std::vector<TrackerFieldOption> options; ///< live if Fresh, else remembered, else empty
+    std::vector<TrackerFieldOption> options; ///< this session's live fetch, else remembered, else empty
     smatchet::offline::DataFreshness freshness = smatchet::offline::DataFreshness::UnavailableNoCache;
     bool fromLearned = false; ///< options came from the remembered workflow
+    /// Options came from this session's live fetch for the issue — even when the tracker has since gone
+    /// offline (freshness then reads CachedOffline) and even when empty (the tracker allows no move).
+    bool fromLive = false;
 };
