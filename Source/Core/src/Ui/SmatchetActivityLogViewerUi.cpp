@@ -3,6 +3,7 @@
 #include "MarkdownPreviewRender.h"
 #include "SmatchetLocalization.h"
 #include "Tracker/CommentBlobFormatPure.h"
+#include "Ui/SmatchetHeightCulledList.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -37,24 +38,14 @@ class ActivityLogViewerContent final : public IFieldViewerContent {
         opts.mode = MarkdownPreviewRender::Mode::Full;
         // The blob carries other people's text: links are shown, not followed.
         opts.clickableLinks = false;
-        const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
-        for (size_t i = 0; i < m_EntryPlans.size(); ++i) {
-            // Off-screen entries with a known height draw as a spacer instead of re-emitting every word
-            // each frame (Pillar 1: the blob is up to ~16 KB) — same culling as the comments thread.
-            float& height = m_EntryHeights[i];
-            if (height > itemSpacingY && !ImGui::IsRectVisible(ImVec2(width, height))) {
-                ImGui::Dummy(ImVec2(width, height - itemSpacingY)); // Dummy re-adds the trailing spacing
-                continue;
-            }
-            const float startY = ImGui::GetCursorPosY();
-            ImGui::PushID(static_cast<int>(i));
+        // Off-screen entries draw as spacers instead of re-emitting every word each frame (Pillar 1: the
+        // blob is up to ~16 KB) — same culling as the comments thread.
+        smatchet::ui::DrawHeightCulledItems(m_EntryHeights, width, [&](size_t i) {
             MarkdownPreviewRender::RenderPlan(*m_EntryPlans[i], opts);
             if (i + 1 < m_EntryPlans.size()) {
                 ImGui::Separator();
             }
-            ImGui::PopID();
-            height = ImGui::GetCursorPosY() - startY;
-        }
+        });
         ImGui::EndChild();
     }
 

@@ -17,6 +17,7 @@
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetCommentsModalSeedPure.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
+#include "Ui/SmatchetHeightCulledList.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -388,22 +389,12 @@ void DrawCommentsThread() {
     const float width = ImGui::GetContentRegionAvail().x;
     EnsureCommentBodyPlans(ImGui::GetFontSize(), width);
     const MarkdownPreviewRender::Options bodyOpts = CommentBodyRenderOptions();
-    const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const std::int64_t nowMs = smatchet::ai::NowUnixMs();
-    for (size_t i = 0; i < s_CommentsState.Comments.size(); ++i) {
-        float& height = s_CommentsState.BodyHeights[i];
-        if (height > itemSpacingY && !ImGui::IsRectVisible(ImVec2(width, height))) {
-            ImGui::Dummy(ImVec2(width, height - itemSpacingY)); // Dummy re-adds the trailing spacing
-            continue;
-        }
-        const float startY = ImGui::GetCursorPosY();
-        ImGui::PushID(static_cast<int>(i));
+    smatchet::ui::DrawHeightCulledItems(s_CommentsState.BodyHeights, width, [&](size_t i) {
         DrawCommentHeader(s_CommentsState.Comments[i], nowMs);
         MarkdownPreviewRender::RenderPlan(*s_CommentsState.BodyPlans[i], bodyOpts);
         ImGui::Separator();
-        ImGui::PopID();
-        height = ImGui::GetCursorPosY() - startY;
-    }
+    });
     DrawPendingComments();
 }
 
