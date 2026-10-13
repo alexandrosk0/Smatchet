@@ -187,7 +187,8 @@ an opaque signtool error.
 
 The workflow downloads the provider package by pinned version and SHA-256,
 writes `metadata.json` into `RUNNER_TEMP`, and exposes the `AZURE_*` credentials
-only to the step that builds and signs. Missing configuration fails the run
+only to the step that builds and signs (the setup step that fetches the package
+sees only whether each secret is set). Missing configuration fails the run
 before the build starts, not at the first signature.
 
 A client secret rather than federated OIDC is deliberate: the release job builds

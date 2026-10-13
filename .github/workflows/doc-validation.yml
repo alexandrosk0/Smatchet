@@ -341,11 +341,18 @@ jobs:
         run: |
           python -m pip install --quiet jsonschema
           python - <<'PY'
-          import json, jsonschema
-          cfg = json.load(open("project.config.json"))
-          schema = json.load(open("project.config.schema.json"))
-          jsonschema.validate(cfg, schema)
-          print("project.config.json: valid against schema")
+          import json, os, jsonschema
+          schema = json.load(open("project.config.schema.json", encoding="utf-8"))
+          # The host config, plus the agent layer's own config and its seed copy as the
+          # agent-layer/ submodule mounts them (checked out above). No schema ships in the
+          # layer, so this is the only place the layer config is validated.
+          for path in ("project.config.json",
+                       "agent-layer/project.config.json",
+                       "agent-layer/agents/scripts/core/seed-agent-layer-repo.d/project.config.json"):
+              if path != "project.config.json" and not os.path.isfile(path):
+                  continue
+              jsonschema.validate(json.load(open(path, encoding="utf-8")), schema)
+              print("%s: valid against schema" % path)
           PY
 
       - name: test-plan-index — shipped-plan index in sync with archive
@@ -456,10 +463,10 @@ jobs:
       # docs/mirrored-paths.txt names the files the host and the agent layer both
       # carry; each must exist in both trees and be byte-identical (plan row 8g).
       # Before the flip both roots are this checkout, so this proves the list.
-      # Deliberately NOT gated on steps.detect: after the flip a pointer-bump PR
-      # changes only the agent-layer gitlink, which the detector does not count as
-      # a doc change, and that is exactly the PR that can strand a stale mirror.
-      # The check is a few cmp calls, so it runs on every PR.
+      # Deliberately NOT gated on steps.detect. The detector does count a
+      # pointer-bump PR (the `agent-layer` gitlink matches `^agent-layer$`), and
+      # that is exactly the PR that can strand a stale mirror; but the check is a
+      # few cmp calls, so it runs on every PR rather than trusting the detector.
       - name: test-mirrored-paths — dual-homed files identical in host and agent layer
         run: |
           bash scripts/dev/test-mirrored-paths.sh --selftest

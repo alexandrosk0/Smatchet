@@ -87,11 +87,11 @@ prohibition above, and a fabricated row is worse than the hole it fills.
 
 ## Recurrence (2026-10-04)
 
-The hole reopened right after the #2212 row and is now larger than the one recorded above. On `develop` at `d8b4371e`, `merge-snapshots.jsonl` ends at #2212 (merged 2026-09-12). The 49 develop merges after it (#2213 … #2294) have no row, apart from #2290 and #2294. This note's PR lands those two rows; the in-session orchestrator wrote each one right after its merge call. The other 47 are permanent holes: all are past the janitor's 6 h repair window, and the retro-compose prohibition covers them.
+The hole reopened right after the #2212 row and is now larger than the one recorded above. On `develop` at `d8b4371e`, `merge-snapshots.jsonl` ends at #2212 (merged 2026-09-12). The 51 develop merges after it have no row, apart from #2290 and #2294. They are #2213 … #2294 plus #2184 and #2164, which merged after #2212 on `develop`'s first-parent line despite their lower numbers (`git rev-list --first-parent 050bcceb8..d8b4371ed`). This note's PR lands the #2290 and #2294 rows; the in-session orchestrator wrote each one right after its merge call. The other 49 are permanent holes: all are past the janitor's 6 h repair window, and the retro-compose prohibition covers them. Count the gap in first-parent merge order, never by PR-number range: a range count misses a PR that merges after a higher-numbered one (this note first said 47 for that reason).
 
-Among the 47:
+Among the 49:
 - #2213, the PR that landed #2212's row. That is the regress `categories/tooling/2026-08-19-safe-merge-arms-automerge-and-execs-away-before-writing-a-snapshot-row.md` predicts.
 - #2262, #2272, #2273, #2277, #2280 and #2289, which one in-session orchestrator merged over REST without running the append.
 - #2286, which native auto-merge took past a red bucket-E lane, and #2280 and #2213, which merged under `plan-lock-out-of-band`. Their postmortems in `postmortems.md` had to rebuild each merge instant from the PR timeline because no row existed.
 
-Neither proposed fix has landed. No check reports the gap, and the default merge paths still do not write the row in code. Nothing flagged 47 consecutive skipped writes; this recurrence was found by hand while drafting the #2286 postmortem.
+Neither proposed fix has landed. No check reports the gap, and the default merge paths still do not write the row in code. Nothing flagged 49 consecutive skipped writes; this recurrence was found by hand while drafting the #2286 postmortem.
