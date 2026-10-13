@@ -174,8 +174,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 void AppController::WireCoreServices() {
     // Construct the deps adapter eagerly so the owned services can capture an interface reference at
     // construction time. The adapter is owned by this AppController and outlives every service (per
-    // the destructor ordering: ~AppController joins the streaming-sync worker via
-    // `CancelAndJoinActiveStreamingSync` before any member is destroyed, so the adapter is live for
+    // the destructor ordering: ~AppController joins every pane's streaming-sync worker via
+    // `CancelAndJoinAllPaneStreamingSyncs` before any member is destroyed, so the adapter is live for
     // every `deps_.X` call). All constructions are idempotent (`if (!x)` guards).
     // FOCUS-FOLLOWING (not frozen to the default context): the five services below are owned
     // one-per-process and act on whatever pane the user is looking at. Freezing this adapter to

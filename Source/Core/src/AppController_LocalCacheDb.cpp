@@ -91,24 +91,24 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     // hasPendingSyncRequest_ was removed by the TicketSyncService Phase 1C extraction
     // (CODE_REVIEW item 11) — pending-sync state now lives on ticketSync_; the
     // cancel-and-join below covers what the flag used to gate.
-    CancelAndJoinActiveStreamingSync();
-    JoinBackgroundTasks();
-
-    // Streaming-sync teardown lives entirely on TicketSyncService since Phase 1C of the item
-    // 11 extraction: the cancel-and-join clears PendingBatches / BackgroundStaleIds /
-    // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
-    // counters. Both are no-ops if the service was never `Initialize`d.
     //
     // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each
     // non-focused GridLiveContext runs its own TicketSyncService std::thread that dereferences
     // Cache via the sync-worker path; those must be joined before the atomic_store swap below or
     // they race the freed cache. The DR6 atomic snapshot covers the Lua / offline-queue readers.
+    // All panes are flagged before any is joined, so the UI thread waits about one in-flight
+    // request, not one per busy pane.
+    CancelAndJoinAllPaneStreamingSyncs();
+    JoinBackgroundTasks();
+
+    // Streaming-sync teardown lives entirely on TicketSyncService since Phase 1C of the item
+    // 11 extraction: the cancel-and-join above cleared PendingBatches / BackgroundStaleIds /
+    // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
+    // counters. Both are no-ops if the service was never `Initialize`d.
     // gridContexts_ is a UI-thread-owned map and RecreateLocalCacheDatabase runs on the UI
-    // thread, so iterating it here is free of concurrent structural mutation. Per context the
-    // cancel-and-join is idempotent (a second call finds no active thread).
+    // thread, so iterating it here is free of concurrent structural mutation.
     for (auto& entry : gridContexts_) {
         if (entry.second && entry.second->ticketSync_) {
-            entry.second->ticketSync_->CancelAndJoinActiveStreamingSync();
             entry.second->ticketSync_->ResetStaleDeletionState();
         }
     }
@@ -116,7 +116,6 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     // (ADR-0012 graveyard) that is no longer in the live gridContexts_ map. Idempotent with
     // the loop above when focused is a live entry.
     if (focusedContext().ticketSync_) {
-        focusedContext().ticketSync_->CancelAndJoinActiveStreamingSync();
         focusedContext().ticketSync_->ResetStaleDeletionState();
     }
 
