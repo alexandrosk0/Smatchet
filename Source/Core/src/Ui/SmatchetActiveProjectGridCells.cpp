@@ -219,8 +219,10 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
         }
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
+        const GridKeyCellMenuCtx keyMenu{&ctx.tickets,      &pane.filteredIndices,   &ctx.columns,
+                                         &ctx.catalogIndex, &pane.gridState.RectSel, clippedRow};
         DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(), column.Label, ticket.id,
-                                     std::string(), &app, &d, readOnlyMode, &ticket);
+                                     std::string(), &app, &d, readOnlyMode, &ticket, &keyMenu);
         handleActiveProjectCellRectSel(ctx, clippedRow, colIndex, cellOriginForSel.x, cellWidthForSel, cellGroupMin.y,
                                        cellGroupMax.y, true, ticket.id, activeIssueWasThisRow);
         return;

@@ -8,6 +8,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -21,10 +22,24 @@ class Views;
 void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                         const std::vector<CachedTicket>& tickets);
 
+/// What the Key cell's right-click menu needs to build "Copy N selected rows as CSV". Built on the
+/// stack at the key-cell call site (no allocations); value cells pass nullptr. Every pointer
+/// member must be non-null.
+struct GridKeyCellMenuCtx {
+    const std::vector<CachedTicket>* tickets;
+    const std::vector<size_t>* sortedIdx;
+    const std::vector<TicketGridColumn>* columns;
+    const TrackerFieldCatalogIndex* catalog;
+    const GridRectSelection* sel;
+    int clickedRow;
+};
+
+// SMATCHET_DEVIATION(rule=duplication; reason=declaration mirrors its definition's long parameter list, not a copy-paste clone; owner=grid-engine; revisit=2027-10-13)
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue, AppController* app,
-                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForAnnotateMenu);
+                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForAnnotateMenu,
+                                  const GridKeyCellMenuCtx* keyMenu = nullptr);
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta);
 
@@ -45,6 +60,12 @@ std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn
 void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
                        const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
                        const GridRectSelection& sel);
+
+/// CSV (RFC 4180 quoting, LF line endings) of the visible grid columns for the whole-row selection `rows`: a header
+/// line of column labels, then one line per row in grid sort order, values as Ctrl+C copies them.
+std::string BuildGridRowsCsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
+                             const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
+                             const std::set<int>& rows);
 
 std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::uint64_t ticketsRevision,
                                        std::size_t ticketCount);

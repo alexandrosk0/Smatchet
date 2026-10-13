@@ -22,24 +22,7 @@ bool EmailLocalPartIs(const TrackerUser& user, const std::string& lowerP4User) {
 
 } // namespace
 
-std::string CsvEscape(const std::string& s) {
-    bool needsQuotes =
-        std::any_of(s.begin(), s.end(), [](char c) { return c == ',' || c == '"' || c == '\n' || c == '\r'; });
-    if (!needsQuotes) {
-        return s;
-    }
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (char c : s) {
-        if (c == '"') {
-            out.push_back('"');
-        }
-        out.push_back(c);
-    }
-    out.push_back('"');
-    return out;
-}
+std::string CsvEscape(const std::string& s) { return CsvEscapeField(s); }
 
 std::string NormalizeDateDisplay(const std::string& raw) {
     if (raw.size() >= 10 && raw[4] == '-' && raw[7] == '-') {
