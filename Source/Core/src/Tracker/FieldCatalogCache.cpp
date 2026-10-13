@@ -262,6 +262,43 @@ bool JsonBoolOr(const nlohmann::json& object, const char* key) {
     return it != object.end() && it->is_boolean() && it->get<bool>();
 }
 
+// One v3 index entry. A time ahead of the clock (a clock moved back, a hand edit) would pin the entry first
+// in the LRU order for good: it counts as used now.
+void AppendIndexEntry(nlohmann::json& indexArr, std::int64_t now, const std::string& cacheKey,
+                      const std::string& projectKey, const std::string& backend, const std::string& endpoint,
+                      std::int64_t lastUsed, bool kindKeyed) {
+    nlohmann::json e = nlohmann::json::object();
+    e["cacheKey"] = cacheKey;
+    e["projectKey"] = projectKey;
+    e["backend"] = backend;
+    e["endpoint"] = endpoint;
+    e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
+    e["kindKeyed"] = kindKeyed;
+    indexArr.push_back(std::move(e));
+}
+
+// Carries a v3 root's index into `indexArr`, minus entries that name no blob, a reserved key or a key twice.
+// Returns the cache keys it indexed.
+std::unordered_set<std::string> CarryV3Index(const nlohmann::json& rootOnDisk, nlohmann::json& indexArr,
+                                             std::int64_t now) {
+    std::unordered_set<std::string> indexed;
+    const auto entriesIt = rootOnDisk.find("entries");
+    if (entriesIt == rootOnDisk.end() || !entriesIt->is_array())
+        return indexed;
+    for (const auto& idx : *entriesIt) {
+        if (!idx.is_object())
+            continue;
+        const std::string cacheKey = JsonStringFieldOr(idx, "cacheKey");
+        if (cacheKey.empty() || IsReservedRootKey(cacheKey) || !rootOnDisk.contains(cacheKey) ||
+            !rootOnDisk[cacheKey].is_object() || !indexed.insert(cacheKey).second)
+            continue;
+        AppendIndexEntry(indexArr, now, cacheKey, JsonStringFieldOr(idx, "projectKey"),
+                         JsonStringFieldOr(idx, "backend"), JsonStringFieldOr(idx, "endpoint"),
+                         ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now), JsonBoolOr(idx, "kindKeyed"));
+    }
+    return indexed;
+}
+
 nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     nlohmann::json out = nlohmann::json::object();
     out["schema_version"] = kFieldCatalogCacheSchemaVersion;
@@ -272,44 +309,16 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
 
     auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey, const std::string& backend,
                                 const std::string& endpoint, std::int64_t lastUsed, bool kindKeyed) {
-        nlohmann::json e = nlohmann::json::object();
-        e["cacheKey"] = cacheKey;
-        e["projectKey"] = projectKey;
-        e["backend"] = backend;
-        e["endpoint"] = endpoint;
-        // A time ahead of the clock (a clock moved back, a hand edit) would pin the entry first in the LRU
-        // order for good: it counts as used now.
-        e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
-        e["kindKeyed"] = kindKeyed;
-        indexArr.push_back(std::move(e));
+        AppendIndexEntry(indexArr, now, cacheKey, projectKey, backend, endpoint, lastUsed, kindKeyed);
     };
 
-    const bool v2 = oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object();
-    const bool v1 = !v2 && rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array();
-    if (rootOnDisk.is_object() && !v1 && !v2) {
-        // v3 → v3: preserve the index, minus entries that name no blob, a reserved key or a key twice. A
-        // root whose index or schema version is damaged still keeps its blobs (indexed as below).
-        std::unordered_set<std::string> indexed;
-        const nlohmann::json noEntries = nlohmann::json::array();
-        const auto entriesIt = rootOnDisk.find("entries");
-        const nlohmann::json& entries = entriesIt != rootOnDisk.end() && entriesIt->is_array() ? *entriesIt : noEntries;
-        for (const auto& idx : entries) {
-            if (!idx.is_object())
-                continue;
-            const std::string cacheKey = JsonStringFieldOr(idx, "cacheKey");
-            if (cacheKey.empty() || IsReservedRootKey(cacheKey) || !rootOnDisk.contains(cacheKey) ||
-                !rootOnDisk[cacheKey].is_object() || !indexed.insert(cacheKey).second)
-                continue;
-            appendIndexEntry(cacheKey, JsonStringFieldOr(idx, "projectKey"), JsonStringFieldOr(idx, "backend"),
-                             JsonStringFieldOr(idx, "endpoint"), ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now),
-                             JsonBoolOr(idx, "kindKeyed"));
-        }
-        // Preserve per-cacheKey blobs at root (every object but the reserved keys). A blob the index does
-        // not name (earlier builds dropped the index on every load, so no blob was ever evicted) is indexed
-        // with no metadata and lastUsedUnix 0: the LRU cap evicts it first, and a save under its key fills
-        // the metadata in.
+    // Preserves per-cacheKey blobs at root (every object but the reserved keys) not already in `out`. A
+    // blob the index does not name (earlier builds dropped the index on every load, so no blob was ever
+    // evicted) is indexed with no metadata and lastUsedUnix 0: the LRU cap evicts it first, and a save
+    // under its key fills the metadata in. The blob's own kindKeyed survives a lost index.
+    auto keepRootBlobs = [&](std::unordered_set<std::string>& indexed) {
         for (auto it = rootOnDisk.begin(); it != rootOnDisk.end(); ++it) {
-            if (IsReservedRootKey(it.key()) || !it.value().is_object())
+            if (IsReservedRootKey(it.key()) || !it.value().is_object() || out.contains(it.key()))
                 continue;
             out[it.key()] = it.value();
             if (indexed.insert(it.key()).second) {
@@ -317,6 +326,15 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
                                  JsonBoolOr(it.value(), "kindKeyed"));
             }
         }
+    };
+
+    const bool v2 = oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object();
+    const bool v1 = !v2 && rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array();
+    if (rootOnDisk.is_object() && !v1 && !v2) {
+        // v3 → v3: preserve the index, minus entries that name no blob, a reserved key or a key twice. A
+        // root whose index or schema version is damaged still keeps its blobs (indexed as below).
+        std::unordered_set<std::string> indexed = CarryV3Index(rootOnDisk, indexArr, now);
+        keepRootBlobs(indexed);
         out["entries"] = std::move(indexArr);
         return out;
     }
@@ -324,7 +342,9 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     if (v2) {
         // v2 → v3: hoist each cacheKey blob from entries-object to root, add an index entry per blob
         // with empty backend/endpoint/projectKey (next Save backfills them). lastUsedUnix = now so a
-        // newly-upgraded cache doesn't evict good entries on the first write.
+        // newly-upgraded cache doesn't evict good entries on the first write. A v3 file damaged into
+        // this shape (schema_version 2, an object index) keeps the blobs it holds at root.
+        std::unordered_set<std::string> indexed;
         for (auto it = rootOnDisk["entries"].begin(); it != rootOnDisk["entries"].end(); ++it) {
             const std::string& cacheKey = it.key();
             if (!it.value().is_object())
@@ -332,8 +352,10 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
             if (IsReservedRootKey(cacheKey))
                 continue;
             out[cacheKey] = it.value();
+            indexed.insert(cacheKey);
             appendIndexEntry(cacheKey, std::string(), std::string(), std::string(), now, false);
         }
+        keepRootBlobs(indexed);
         out["entries"] = std::move(indexArr);
         return out;
     }
@@ -550,6 +572,17 @@ bool IsAmbiguousLegacyJiraKey(const std::string& cacheKey) {
     return project.empty() || project.find('/') != std::string::npos;
 }
 
+// A snapshot under an ambiguous older-build Jira key that this build never saved: neither its index entry
+// nor its blob carries kindKeyed. It is neither restored nor listed as a recent project.
+bool IsUnclaimedLegacyJiraSnapshot(const nlohmann::json& root, const nlohmann::json& indexEntry,
+                                   const std::string& cacheKey) {
+    if (!IsAmbiguousLegacyJiraKey(cacheKey) || (indexEntry.is_object() && JsonBoolOr(indexEntry, "kindKeyed"))) {
+        return false;
+    }
+    const auto blob = root.find(cacheKey);
+    return blob == root.end() || !blob->is_object() || !JsonBoolOr(*blob, "kindKeyed");
+}
+
 } // namespace
 
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
@@ -577,9 +610,8 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
         }
         nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
         const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
-        if (resolvedKey == cacheKey && IsAmbiguousLegacyJiraKey(cacheKey) &&
-            (indexIt == indexArr.end() || !JsonBoolOr(*indexIt, "kindKeyed")) &&
-            !JsonBoolOr(root[resolvedKey], "kindKeyed")) {
+        if (resolvedKey == cacheKey &&
+            IsUnclaimedLegacyJiraSnapshot(root, indexIt == indexArr.end() ? nlohmann::json() : *indexIt, cacheKey)) {
             outError = "The cached field catalog for this tracker context predates per-tracker keys.";
             return false;
         }
@@ -624,7 +656,7 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
             return out;
         }
         for (const auto& e : root["entries"]) {
-            if (!e.is_object())
+            if (!e.is_object() || IsUnclaimedLegacyJiraSnapshot(root, e, JsonStringFieldOr(e, "cacheKey")))
                 continue;
             CachedProjectEntry cpe;
             cpe.projectKey = e.value("projectKey", std::string());

@@ -259,6 +259,76 @@ TEST_CASE("FieldCatalogCache: a damaged index keeps this build's own Jira snapsh
     CHECK(Loads("Jira|https://acme.atlassian.net|octo/repo"));
 }
 
+TEST_CASE("FieldCatalogCache: an older build's ambiguous Jira snapshot is not listed as a recent project") {
+    // The load refuses it, so the pill and the picker must not offer it either: a pick would write
+    // `project = octo/repo` into a Jira query.
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"Jira|https://acme.atlassian.net|octo/repo\",\"projectKey\":\"octo/repo\","
+                         "\"backend\":\"Jira\",\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":5},"
+                         "{\"cacheKey\":\"Jira|https://acme.atlassian.net|FOO\",\"projectKey\":\"FOO\","
+                         "\"backend\":\"Jira\",\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":4}],"
+                         "\"Jira|https://acme.atlassian.net|octo/repo\":" +
+                             Blob("pr.base") + ",\"Jira|https://acme.atlassian.net|FOO\":" + Blob("customfield_foo") +
+                             "}");
+    CHECK(Listed("FOO"));
+    CHECK_FALSE(Listed("octo/repo"));
+
+    REQUIRE(Save("Jira|https://acme.atlassian.net|octo/repo", "octo/repo", 16)); // this build's own: listed
+    CHECK(Listed("octo/repo"));
+}
+
+TEST_CASE("FieldCatalogCache: a damaged schema version 2 with an object index keeps the snapshots at root") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":2,\"entries\":{\"k-b\":" + Blob("b") + "},\"k-a\":" + Blob("a") + "}");
+    CHECK(Loads("k-a"));
+    CHECK(Loads("k-b"));
+    REQUIRE(Save("k-c", "C", 16));
+    CHECK(Loads("k-a"));
+}
+
+TEST_CASE("FieldCatalogCache: either copy of this build's flag keeps its Jira snapshot restorable") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::string key = "Jira|https://acme.atlassian.net|octo/repo";
+    const std::string flagged = "\"kindKeyed\":true";
+    const std::string cleared = "\"kindKeyed\":false";
+    // Clears the flag in the index only (index = true) or in the blob only (index = false).
+    const auto clearFlag = [&](bool index) {
+        std::string json = ReadCacheFile(file);
+        const auto entriesAt = json.find("\"entries\":[");
+        REQUIRE(entriesAt != std::string::npos);
+        const auto entriesEnd = json.find(']', entriesAt);
+        const auto at = index ? json.find(flagged, entriesAt) : json.find(flagged);
+        REQUIRE(at != std::string::npos);
+        REQUIRE((at < entriesEnd && at > entriesAt) == index);
+        json.replace(at, flagged.size(), cleared);
+        WriteCacheFile(file, json);
+    };
+
+    REQUIRE(Save(key, "octo/repo", 16));
+    clearFlag(/*index=*/true); // the index lost it, the blob still has it
+    CHECK(Loads(key));
+
+    REQUIRE(Save(key, "octo/repo", 16));
+    std::string json = ReadCacheFile(file);
+    const auto entriesAt = json.find("\"entries\":[");
+    json.replace(entriesAt, json.find(']', entriesAt) + 1 - entriesAt, "\"entries\":{}");
+    WriteCacheFile(file, json); // the index is lost: the first load re-indexes the blob with its flag
+    CHECK(Loads(key));
+    clearFlag(/*index=*/false); // then the blob loses it, the rebuilt index still has it
+    CHECK(Loads(key));
+
+    json = ReadCacheFile(file);
+    for (auto at = json.find(flagged); at != std::string::npos; at = json.find(flagged)) {
+        json.replace(at, flagged.size(), cleared);
+    }
+    WriteCacheFile(file, json); // both copies gone: what an older build rewriting the file leaves
+    CHECK_FALSE(Loads(key));
+}
+
 TEST_CASE("FieldCatalogCache: a lastUsedUnix ahead of the clock counts as used now") {
     // Left as it is, it would sort first for good and never be evicted.
     smatchet_tests::TestEnvGuard env;
