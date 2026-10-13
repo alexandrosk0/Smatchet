@@ -9,6 +9,7 @@
 #include "ConfigSaveWorker.h"
 #include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
+#include "Ui/GridCopyPure.h"
 #include "Ui/SmatchetUserInfoUi.h"
 
 #include "imgui.h"
@@ -170,7 +171,8 @@ static void DrawUserInfoMenuItemIfUserField(AppController* app, UiDrawSession* u
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue, AppController* app,
-                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForAnnotateMenu) {
+                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForAnnotateMenu,
+                                  const GridKeyCellMenuCtx* keyMenu) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -222,6 +224,26 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         const std::string& rawForCopy = !richValue.empty() ? richValue : rawValue;
         if (ImGui::MenuItem("Copy raw")) {
             ImGui::SetClipboardText(rawForCopy.c_str());
+        }
+        // Key cell only (fieldId empty). The URL is built only while the popup is open; trackers
+        // without a browse URL (Linear/GitHub can return "") get the item drawn disabled.
+        if (app && ui && fieldId.empty() && !issueKey.empty()) {
+            const std::string url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
+            if (ImGui::MenuItem("Copy link", nullptr, false, !url.empty())) {
+                ImGui::SetClipboardText(url.c_str());
+            }
+        }
+        // Only when the clicked row is part of a multi-row whole-row selection.
+        if (keyMenu && keyMenu->sel && keyMenu->sel->RowSelected(keyMenu->clickedRow) &&
+            keyMenu->sel->Rows.size() > 1) {
+            // Keyed Format: a pre-formatted label never matches the source-text catalog lookup.
+            const std::string csvLabel = SmatchetLocalization::Format(
+                "grid.key.copy_rows_csv", "Copy %d selected rows as CSV", static_cast<int>(keyMenu->sel->Rows.size()));
+            if (ImGui::MenuItem(csvLabel.c_str())) {
+                ImGui::SetClipboardText(BuildGridRowsCsv(*keyMenu->tickets, *keyMenu->sortedIdx, *keyMenu->columns,
+                                                         *keyMenu->catalog, keyMenu->sel->Rows)
+                                            .c_str());
+            }
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
         DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);
@@ -424,6 +446,28 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
         out.push_back('\n');
     }
     ImGui::SetClipboardText(out.c_str());
+}
+
+std::string BuildGridRowsCsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
+                             const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
+                             const std::set<int>& rows) {
+    std::vector<std::string> cells;
+    cells.reserve(columns.size());
+    for (const TicketGridColumn& col : columns) {
+        cells.push_back(col.Label);
+    }
+    std::string out = BuildCsvLine(cells);
+    for (size_t ticketIdx : ResolveGridRowsToTicketIndices(rows, sortedIdx, tickets.size())) {
+        const CachedTicket& t = tickets[ticketIdx];
+        cells.clear();
+        for (const TicketGridColumn& col : columns) {
+            const TrackerField* meta =
+                (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
+            cells.push_back(GetCellRawForCopy(t, col, meta));
+        }
+        out += BuildCsvLine(cells);
+    }
+    return out;
 }
 
 // Derives a session-local identifier for the current sort/tickets state; used

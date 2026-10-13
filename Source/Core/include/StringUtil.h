@@ -57,6 +57,27 @@ inline std::string JoinStrings(const std::vector<std::string>& items, const std:
     return out;
 }
 
+/// RFC 4180 field escape: wrap in double quotes when the value holds a comma, quote, CR or LF,
+/// doubling any inner quote. Other values pass through unchanged.
+inline std::string CsvEscapeField(const std::string& s) {
+    const bool needsQuotes =
+        std::any_of(s.begin(), s.end(), [](char c) { return c == ',' || c == '"' || c == '\n' || c == '\r'; });
+    if (!needsQuotes) {
+        return s;
+    }
+    std::string out;
+    out.reserve(s.size() + 4);
+    out.push_back('"');
+    for (char c : s) {
+        if (c == '"') {
+            out.push_back('"');
+        }
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
+}
+
 // File NAME component of a path (C++14 — no std::filesystem). For user-facing error
 // text: a full path in a toast leaks the local filesystem layout into screenshots.
 inline std::string FileNameOfPath(const std::string& path) {

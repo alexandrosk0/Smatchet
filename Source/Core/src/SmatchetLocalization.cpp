@@ -1220,6 +1220,8 @@ const TranslationEntry kEntries[] = {
     {"grid.sort.hide_parents", "Hide parent stories", u8"Masquer les stories parentes"},
     {"grid.sort.hide_parents.tip", "Hide parent stories (show only leaf tasks/bugs)",
      u8"Masquer les stories parentes (afficher seulement les tâches/bugs feuilles)"},
+    {"grid.key.copy_link", "Copy link", u8"Copier le lien"},
+    {"grid.key.copy_rows_csv", "Copy %d selected rows as CSV", u8"Copier les %d lignes sélectionnées en CSV"},
     {"cmdpalette.scope", "Showing %s commands only", u8"Affichage des commandes %s uniquement"},
     {"prefs.search.showing", "showing", u8"affichage"},
     {"prefs.search.no_match", "No settings match.", u8"Aucun paramètre ne correspond."},

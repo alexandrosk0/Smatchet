@@ -893,6 +893,9 @@ add_executable(SmatchetTests
     # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over
     # plain vectors; no extra production .cpp to link.
     Core/GridColumnOrderPure.test.cpp
+    # Key-cell "Copy N selected rows as CSV": row -> ticket-index mapping + RFC 4180 line join
+    # (GridCopyPure.h) and CsvEscapeField (StringUtil.h). Header-only; no extra production .cpp.
+    Core/GridCopyPure.test.cpp
     # ViewDefinition::Columns — the ordered-column-list model replacing ColumnOrder +
     # ColumnWidths + an independently-mutable Fields (column-view-save-simplification).
     # Header-only pure helpers over ViewDefinition; no extra production .cpp to link.
