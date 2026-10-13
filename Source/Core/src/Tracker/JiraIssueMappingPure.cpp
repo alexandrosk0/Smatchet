@@ -122,14 +122,26 @@ std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::
         if (toStatusId.empty() && toStatusName.empty()) {
             continue;
         }
+        const bool anyStatus = (transition.contains("isGlobal") && transition["isGlobal"].is_boolean() &&
+                                transition["isGlobal"].get<bool>()) ||
+                               (transition.contains("isLooped") && transition["isLooped"].is_boolean() &&
+                                transition["isLooped"].get<bool>());
         // Dedup by Id-or-Value (same fallback as TicketFieldEditor::RenderSingleSelectComboBody)
         const std::string key = toStatusId.empty() ? toStatusName : toStatusId;
         if (!seenKeys.insert(key).second) {
+            if (anyStatus) { // the same target through a global / looped transition too
+                for (TrackerFieldOption& seen : result) {
+                    if ((seen.Id.empty() ? seen.Value : seen.Id) == key) {
+                        seen.ReachableFromAnyStatus = true;
+                    }
+                }
+            }
             continue; // already seen this option
         }
         TrackerFieldOption option;
         option.Id = toStatusId;
         option.Value = toStatusName;
+        option.ReachableFromAnyStatus = anyStatus;
         result.push_back(std::move(option));
     }
     return result;

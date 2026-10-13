@@ -158,6 +158,18 @@ Result<TimetrackingEstimateEdit> BuildTimetrackingEstimateEdit(const std::string
                                                                const std::string& originalEstimate,
                                                                const std::string& remainingEstimate);
 
+/// The estimate field an estimate edit does NOT change ("timeestimate" for `timeoriginalestimate` and
+/// vice versa), or nullptr when `fieldId` is not an editable estimate.
+const char* OtherEstimateFieldId(const std::string& fieldId);
+
+/// For a queued estimate payload ({"timetracking": {...}} for `editedFieldId`): set the estimate the user
+/// did not edit to `currentOtherEstimate`, the tracker's value now, so a replay never writes a stale copy
+/// back over a change made meanwhile. An empty current value drops the key (Jira keeps or recalculates an
+/// estimate the request leaves out). The edited estimate is never touched. False, `payload` unchanged,
+/// when it is not an estimate payload.
+bool RefreshUntouchedEstimate(const std::string& editedFieldId, const std::string& currentOtherEstimate,
+                              nlohmann::json& payload);
+
 /// The user's queued value for `fieldId` as text for the offline-conflict dialog: the sprint id of a
 /// sprint payload, the edited estimate of a `timetracking` payload, else the value under `fieldId` (or
 /// `fieldId`_html) — a string as-is, anything else as JSON only when `stringifyStructured`. False when

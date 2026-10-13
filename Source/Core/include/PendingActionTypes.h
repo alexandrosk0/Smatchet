@@ -110,5 +110,8 @@ struct PendingActionSubmitResult {
     /// Queued because a live send just failed on the network (not because the last probe already said
     /// offline): the caller should probe connectivity now.
     bool QueuedAfterNetworkFailure = false;
+    /// Queued but never resent on its own: a worklog whose send may have landed (a timeout or 5xx after the
+    /// request went out) waits for the user to check the issue and send or discard it (`needs_review`).
+    bool NeedsReview = false;
     std::string Error;
 };

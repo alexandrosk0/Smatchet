@@ -152,11 +152,14 @@ $1"
     run env \
         SMATCHET_SIGN_TRUSTED_SIGNING_DLIB="$FIXTURE/Azure.CodeSigning.Dlib.dll" \
         SMATCHET_SIGN_TRUSTED_SIGNING_METADATA="$FIXTURE/metadata.json" \
+        SMATCHET_SIGNTOOL_PATH="$FIXTURE/absent-signtool.exe" \
         bash "$RELEASE_SH" --sign
     [ "$status" -ne 0 ]
-    # Config is accepted; the run stops at the Windows-only signtool lookup.
+    # Config is accepted; the run stops at the signtool lookup. The override names a
+    # missing file so the lookup misses on every host: a Windows box with the SDK would
+    # otherwise find signtool.exe and run on into preflight and a real publish build.
     [[ "$output" != *"certificate selector"* ]]
-    [[ "$output" == *"Unable to locate signtool.exe"* ]]
+    [[ "$output" == *"SignTool path not found"* ]]
 }
 
 # --- Emitted signtool argv ----------------------------------------------------

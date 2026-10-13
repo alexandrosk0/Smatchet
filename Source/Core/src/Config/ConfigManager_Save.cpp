@@ -356,6 +356,41 @@ void ConfigManager::Save(const TrackerConfig& configIn) {
     WriteTrackerConfigLocked(configIn);
 }
 
+namespace smatchet {
+namespace config_detail {
+
+bool SaveSecretMigration(const TrackerConfig& migrated, const nlohmann::json& readFrom) {
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    TrackerConfig pending;
+    if (smatchet::config_save_queue::TakePending(pending)) {
+        WriteTrackerConfigLocked(pending);
+        return false;
+    }
+    if (ConfigManager::LoadMergedConfigJson() != readFrom) {
+        LOG_INFO("ConfigManager: the config file changed since it was read; the secret migration waits for the "
+                 "next load");
+        return false;
+    }
+    WriteTrackerConfigLocked(migrated);
+    return true;
+}
+
+} // namespace config_detail
+} // namespace smatchet
+
+void ConfigManager::UpdateConfigJson(const std::function<void(nlohmann::json&)>& mutate) {
+    {
+        std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+        DrainPendingTrackerLocked();
+        nlohmann::json j = LoadMergedConfigJson();
+        if (mutate) {
+            mutate(j);
+        }
+        WriteConfigJson(j);
+    }
+    InvalidateCache();
+}
+
 void ConfigManager::FlushPendingTrackerSave() {
     std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
     DrainPendingTrackerLocked();

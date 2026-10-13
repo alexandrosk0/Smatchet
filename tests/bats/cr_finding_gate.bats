@@ -509,7 +509,7 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
     # silently fail on the alternation and read as "guard missing".
     grep -qF "$RATE_LIMIT_RE" "$ACTION"
     # The guard is inert unless the GraphQL query actually selects description.
-    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+    grep -qF 'on StatusContext{ context state description createdAt }' "$ACTION"
 }
 
 @test "selftest: without the guard, a rate-limited SUCCESS would pass" {
@@ -563,6 +563,7 @@ setup_nudge() {
 gh() {
     case "$*" in
         *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
+        *"/statuses?per_page="*) [ -z "${CR_FIRST_AT:-}" ] || printf '%s\n' "$CR_FIRST_AT" ;;
         *) printf '%s\n' "$@" >> "$POST_LOG" ;;
     esac
 }
@@ -839,7 +840,7 @@ run_nudge() {
     # negative-testing this very assertion).
     grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"
     # Inert unless the GraphQL query actually selects description.
-    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+    grep -qF 'on StatusContext{ context state description createdAt }' "$ACTION"
 }
 
 @test "selftest: without the guard, a manual-review-required SUCCESS would pass" {
@@ -975,16 +976,19 @@ setup_oss() {
     TSV="$BATS_TEST_TMPDIR/oss.tsv"; : > "$TSV"
     POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
     export TSV POST_LOG
-    OWNER=o REPO=r PR=1
-    export OWNER REPO PR
+    OWNER=o REPO=r PR=1 SHA=0123456789abcdef0123456789abcdef01234567
+    # CodeRabbit's first status on the head (served by the gh stub); every ask below is newer.
+    CR_FIRST_AT=2026-08-17T09:00:00Z
+    export OWNER REPO PR SHA CR_FIRST_AT
     # shellcheck disable=SC1090
     source "$BATS_TEST_TMPDIR/oss.fn"
 }
 
-# ask_row <login> <user.type> <updated_at> <body> — one comment in the
-# function's wire format (login TAB type TAB updated_at TAB flattened body).
+# ask_row <login> <user.type> <updated_at> <body> [created_at] — one comment in the function's wire
+# format (login TAB type TAB created_at TAB updated_at TAB flattened body); created_at defaults to
+# updated_at.
 ask_row() {
-    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$TSV"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "${5:-$3}" "$3" "$4" >> "$TSV"
 }
 
 CR_LOGIN='coderabbitai[bot]'
@@ -1054,6 +1058,29 @@ CR_LOGIN='coderabbitai[bot]'
     [ "$(oss_ask_state)" = none ]
 }
 
+@test "oss: an ask made before CodeRabbit's first status on this head -> none" {
+    # CR posts the manual-review status on every head: an ask from an earlier head must fall
+    # through to the terminal failure, not park this head in the wait arm.
+    setup_oss
+    CR_FIRST_AT=2026-08-17T10:30:00Z
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: an ask made after CodeRabbit's first status on this head -> waiting" {
+    setup_oss
+    CR_FIRST_AT=2026-08-17T10:30:00Z
+    ask_row alice User 2026-08-17T10:40:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: no CodeRabbit status time on the head -> no ask counts -> none" {
+    setup_oss
+    CR_FIRST_AT=
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = none ]
+}
+
 @test "the failed-review state is wired into decide()'s OSS arm as a terminal failure" {
     # The function existing is not enough: decide() must post a TERMINAL
     # failure on it, not fall through to the waiting `return 1`.
@@ -1072,4 +1099,130 @@ CR_LOGIN='coderabbitai[bot]'
     [ "${#d}" -le 140 ]
     printf '%s' "$d" | grep -qF "'@coderabbitai full review'"
     printf '%s' "$d" | grep -qF 'cr-out-of-band'
+}
+
+# ============================================================================
+# Waiver + OSS-ask scoping (historical review Batch 26, PR #2209 findings)
+# ============================================================================
+
+@test "an OSS human ask counts only when newer than CodeRabbit's first status on the head" {
+    # CR posts the manual-review status on EVERY head, so an ask from an earlier
+    # head must not park a later head in the wait arm until the window expires.
+    # The anchor is CR's FIRST status on the head (REST statuses, oldest), not the
+    # rollup's latest, which moves when CR answers the ask itself.
+    grep -qF '[ -n "$cr_first_at" ] && [ "$created" \> "$cr_first_at" ] || continue' "$ACTION"
+    grep -qF 'commits/${SHA}/statuses?per_page=100' "$ACTION"
+    grep -qF '.created_at // ""' "$ACTION"
+    ! grep -qF 'cr_ctx_at' "$ACTION" || false
+}
+
+# Extract post() and waiver_present() from the action's run block (base indent 8, so each
+# function closes on exactly "        }") and run them against a stubbed gh.
+setup_post() {
+    awk '/^        post\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' "$ACTION" > "$BATS_TEST_TMPDIR/post.fn"
+    awk '/^        waiver_present\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' "$ACTION" >> "$BATS_TEST_TMPDIR/post.fn"
+    # Non-vacuity: both functions must have been extracted.
+    grep -q 'statuses/' "$BATS_TEST_TMPDIR/post.fn"
+    grep -q 'issues/${PR}/labels' "$BATS_TEST_TMPDIR/post.fn"
+    POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
+    export POST_LOG
+    OWNER=o REPO=r PR=1 SHA=0123456789abcdef0123456789abcdef01234567 CONTEXT='CR findings (0 actionable)'
+    export OWNER REPO PR SHA CONTEXT
+    # shellcheck disable=SC1091
+    source "$BATS_TEST_TMPDIR/post.fn"
+    waiver_check_ready=true
+}
+
+# gh stub for post(): the labels and body reads serve $LABELS / $BODY, failing with
+# $GH_READ_RC; the current-status read serves $CURRENT_DESC, failing with $GH_STATUS_RC;
+# a statuses POST is logged.
+post_gh() {
+    case "$*" in
+        *"/labels"*) [ "${GH_READ_RC:-0}" = 0 ] || return "$GH_READ_RC"; printf '%s\n' "${LABELS:-}" ;;
+        *"/pulls/"*) [ "${GH_READ_RC:-0}" = 0 ] || return "$GH_READ_RC"; printf '%s\n' "${BODY:-}" ;;
+        *"/commits/"*"/statuses"*) [ "${GH_STATUS_RC:-0}" = 0 ] || return "$GH_STATUS_RC"; printf '%s\n' "${CURRENT_DESC:-}" ;;
+        *"/statuses/"*) printf '%s\n' "$@" >> "$POST_LOG" ;;
+    esac
+}
+
+@test "post re-reads the waiver before any non-success verdict" {
+    # A run already polling when the waiver lands must not overwrite the override the labeled
+    # run posted (statuses are last-write-wins).
+    setup_post
+    gh() { post_gh "$@"; }
+    LABELS=$'cr-out-of-band\ncr-disposition:rate-limit-acked'
+    run post pending "awaiting CodeRabbit review on current head"
+    [ "$status" -eq 0 ]
+    grep -qx 'state=success' "$POST_LOG"
+    # Without the waiver the verdict is posted as is.
+    : > "$POST_LOG"; LABELS='cr-out-of-band'; BODY='no reason given'
+    run post pending "awaiting CodeRabbit review on current head"
+    grep -qx 'state=pending' "$POST_LOG"
+}
+
+@test "post keeps an override status when the waiver cannot be read" {
+    # A failed labels read is not "no waiver": posting pending then would replace the override
+    # success. After the retries, an override on the head is left alone.
+    setup_post
+    gh() { post_gh "$@"; }
+    sleep() { :; }
+    GH_READ_RC=1
+    CURRENT_DESC='cr-out-of-band + cr-disposition set — gate overridden'
+    run post pending "awaiting CodeRabbit review on current head"
+    [ "$status" -eq 0 ]
+    [ ! -s "$POST_LOG" ]
+    [[ "$output" == *"keeping the current override status"* ]]
+}
+
+@test "post still replaces a non-override status when the waiver cannot be read" {
+    # Keeping ANY status on a failed read would leave a stale green: a waiver since removed, or a
+    # clean pass before a re-review found issues. Only the override is kept; anything else, or a
+    # current status that cannot be read either, is replaced by the verdict.
+    setup_post
+    gh() { post_gh "$@"; }
+    sleep() { :; }
+    GH_READ_RC=1
+    CURRENT_DESC='0 actionable findings on current head'
+    run post failure "2 actionable CodeRabbit findings on current head"
+    [ "$status" -eq 0 ]
+    grep -qx 'state=failure' "$POST_LOG"
+    : > "$POST_LOG"; GH_STATUS_RC=1
+    run post pending "awaiting CodeRabbit review on current head"
+    grep -qx 'state=pending' "$POST_LOG"
+}
+
+@test "the workflow re-runs on a PR body edit (body-form disposition)" {
+    grep -qE '^    types: \[.*\bedited\b.*\]' "$WF"
+}
+
+@test "the action's disposition predicate rejects the playbook placeholder" {
+    # The same predicates are in the agent layer's merge-gates.d/10-gate-filter.sh and
+    # safe-admin-merge.sh; the layer's own safe_admin_merge.bats tests those copies.
+    local re='^[[:blank:]]*([-*][[:blank:]]+)?cr-disposition:[[:blank:]]*[^[:space:]<]'
+    local label_re='^cr-disposition:[^[:space:]<]'
+    grep -qF "grep -qiE '$re'" "$ACTION"
+    grep -qF "grep -qE '$label_re'" "$ACTION"
+    # The playbook placeholder quoted in a PR body does not attest; a real reason does,
+    # as its own line or a bulleted one.
+    ! printf '%s' 'needs cr-out-of-band + a cr-disposition:<reason> attestation' | grep -qiE "$re" || false
+    printf '%s' 'cr-disposition: cr-auto-review-disabled' | grep -qiE "$re"
+    printf 'Waiver.\r\n  - cr-disposition: rate-limit-acked\r\n' | grep -qiE "$re"
+    # A mid-sentence mention and a blank marker followed by text on the next line do not.
+    ! printf '%s\n' 'Rate limit hit; no cr-disposition: needed here.' | grep -qiE "$re" || false
+    ! printf 'cr-disposition:\nUnrelated text\n' | grep -qiE "$re" || false
+    # As a label: the placeholder, a blank suffix and a bare prefix do not attest.
+    local label
+    for label in 'cr-disposition:<reason>' 'cr-disposition: ' 'cr-disposition:'; do
+        ! printf '%s\n' "$label" | grep -qE "$label_re" || false
+    done
+    printf '%s\n' 'cr-disposition:rate-limit-acked' | grep -qE "$label_re"
+    # The jq side agrees.
+    command -v jq >/dev/null 2>&1 || skip "jq not installed"
+    [ "$(jq -n '["cr-disposition:<reason>"] | any(test("^cr-disposition:[^[:space:]<]"))')" = false ]
+    [ "$(jq -n '["cr-disposition:x"] | any(test("^cr-disposition:[^[:space:]<]"))')" = true ]
+    local jq_body='test("(^|\n)[[:blank:]]*([-*][[:blank:]]+)?cr-disposition:[[:blank:]]*[^[:space:]<]"; "i")'
+    [ "$(jq -n --arg b 'cr-disposition:<reason>' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b $'cr-disposition:\nUnrelated' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b 'no cr-disposition: needed' "\$b | $jq_body")" = false ]
+    [ "$(jq -n --arg b $'Waiver.\n- cr-disposition: ok' "\$b | $jq_body")" = true ]
 }

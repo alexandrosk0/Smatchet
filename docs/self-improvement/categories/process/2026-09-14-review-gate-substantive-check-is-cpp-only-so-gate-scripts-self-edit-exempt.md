@@ -19,7 +19,8 @@ The independent adversarial review of that fix caught that `ra_is_substantive` o
 `RA_CPP_GLOBS` — `Source/Core/*.{cpp,h}`, `Source/Plugins/*.{cpp,h}`,
 `Source/Standalone/*.{cpp,h}`, `tests/*.{cpp,h}`. Confirmed empirically by sourcing the lib
 and running `ra_is_substantive branch origin/develop` against the fix's own diff (4 shell +
-1 markdown file, 0 C++ lines): `NOT substantive: 0 C++ lines, no strict-zone touch`.
+1 markdown file, 0 C++ lines): rc 1 (not substantive), with `RA_SUBSTANTIVE_REASON` set to
+`0 C++ lines, no strict-zone touch`.
 
 ## Why it matters
 
@@ -58,8 +59,10 @@ C++-only scope.
    own header comment (both currently document the C++-only scope as a known limit) once
    closed.
 
-**Enumerator**: `bash -c '. agents/scripts/core/lib/review-ack.sh && ra_is_substantive branch origin/develop'`
-run against a diff touching only `agents/scripts/core/**` — today this always reports
-"not substantive" regardless of how large or behavior-changing the script diff is.
+**Enumerator**: `bash -c '. agents/scripts/core/lib/review-ack.sh; ra_is_substantive branch origin/develop; echo "rc=$? reason=$RA_SUBSTANTIVE_REASON"'`
+run from the repo top against a diff touching only `agents/scripts/core/**` (the function prints
+nothing itself; the echo shows its result) — today this always prints
+`rc=1 reason=0 C++ lines, no strict-zone touch` regardless of how large or behavior-changing the
+script diff is.
 
 Re-scoped 2026-10-04 (backlog-sweep-2026-10): step 1 landed (backlog-sweep PR #2296: lib/review-ack.sh RA_ENFORCEMENT_GLOBS + ra_touches_enforcement_surface / ra_enforcement_fingerprint; pre-ship --ack-review records an enforcement line and the gate WARNs — never blocks — when a gate-script diff has none; RA_CPP_GLOBS and the pre-commit hook unchanged). Remaining: steps 2-3 after a calibration window (WARN-first since 2026-10-05): promote to an ra_is_substantive trigger feeding the .review-findings.json contract, then update ship-loops.md item 5 and the scripts' C++-only scope comments.

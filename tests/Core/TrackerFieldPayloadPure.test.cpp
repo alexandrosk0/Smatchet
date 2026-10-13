@@ -749,6 +749,26 @@ TEST_CASE("TrackerFieldPayloadPure: sprint_add payload round-trips and rejects a
     CHECK(untouched == "keep");
 }
 
+TEST_CASE("TrackerFieldPayloadPure: RefreshUntouchedEstimate replaces only the estimate not edited") {
+    nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    CHECK(TrackerFieldPayloadPure::RefreshUntouchedEstimate("timeoriginalestimate", "1h", payload));
+    CHECK(payload["timetracking"]["originalEstimate"] == "3h");
+    CHECK(payload["timetracking"]["remainingEstimate"] == "1h");
+
+    CHECK(TrackerFieldPayloadPure::RefreshUntouchedEstimate("timeestimate", "4h", payload));
+    CHECK(payload["timetracking"]["originalEstimate"] == "4h");
+    CHECK(payload["timetracking"]["remainingEstimate"] == "1h");
+
+    // An estimate the tracker no longer has is left out, so Jira keeps / recalculates it.
+    CHECK(TrackerFieldPayloadPure::RefreshUntouchedEstimate("timeoriginalestimate", "", payload));
+    CHECK_FALSE(payload["timetracking"].contains("remainingEstimate"));
+
+    nlohmann::json other = {{"summary", "x"}};
+    CHECK_FALSE(TrackerFieldPayloadPure::RefreshUntouchedEstimate("timeoriginalestimate", "1h", other));
+    CHECK(other == nlohmann::json{{"summary", "x"}});
+    CHECK_FALSE(TrackerFieldPayloadPure::RefreshUntouchedEstimate("summary", "1h", payload));
+}
+
 TEST_CASE("TrackerFieldPayloadPure: an estimate edit sends both estimates") {
     const auto original =
         TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timeoriginalestimate", "3d", "1d", "4h");

@@ -23,6 +23,7 @@
 #include "CappedBodyAccumulator.h"
 #include "ConfigManager.h"
 #include "EnvUtil.h"
+#include "FileIo.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SemanticVersionPure.h"
@@ -426,7 +427,10 @@ bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
     const std::string& outFilePath = downloaded.value().FilePath;
     bool launchOk = false;
 #if defined(_WIN32)
-    const HINSTANCE shellResult = ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    // Wide API: the cache stores the file under its real (UTF-8) name, which an ANSI call would mangle
+    // for any non-ASCII character (an accented name, the U+202F in a macOS screenshot name).
+    const std::wstring widePath = smatchet::fileio::Utf8ToWide(outFilePath);
+    const HINSTANCE shellResult = ShellExecuteW(nullptr, L"open", widePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     launchOk = reinterpret_cast<intptr_t>(shellResult) > 32;
     if (!launchOk) {
         LOG_ERROR("OpenAttachmentInSystemViewer: ShellExecute failed path=%s err=%lu",

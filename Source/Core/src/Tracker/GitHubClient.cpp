@@ -409,7 +409,8 @@ GitHubClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore
 
 Result<bool, TrackerError> GitHubClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
     using ProbeResult = Result<bool, TrackerError>;
-    // One `GET /repos/{owner}/{repo}/issues/{n}` to separate a deletion/transfer (404 → Ok(false))
+    // One `GET /repos/{owner}/{repo}/issues/{n}` to separate a deletion/transfer (404, or a 410 whose body says
+    // the issue was deleted → Ok(false))
     // from an issue that merely left the view (still 200 → Ok(true)). Any other non-200 is an
     // inconclusive Err that the reconcile treats non-destructively.
     if (issueKey.empty()) {
@@ -427,7 +428,8 @@ Result<bool, TrackerError> GitHubClient::ProbeIssueExists(const TrackerConfig& c
     const cpr::Header headers = smatchet::github::BuildGitHubHeaders(auth.Pat);
     const std::string url =
         auth.BaseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
-    return TrackerHttpPure::ClassifyIssueExistsProbe(TrackerGetLogged("GitHubClient", url, headers).status_code);
+    const cpr::Response resp = TrackerGetLogged("GitHubClient", url, headers);
+    return TrackerHttpPure::ClassifyGitHubIssueExistsProbe(resp.status_code, resp.text);
 }
 
 Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& cfg,

@@ -45,10 +45,11 @@ whole-tree clean invariants bats-asserted, campaign sweep modes
 | 6 | Cached state cleared on error | catalog + users wipe on catalog failure | `offline-cache-cleared` | **blocking** (delta; graduated 2026-10-05) |
 | 7 | Network read with no connectivity gate | comments modal, tooltip fetch, project picker | `offline-network-read-ungated` | WARN-first |
 
-Blocking-vs-advisory rationale: the two exact signals (ranks 1–2) block, delta-gated per changed file so the
-existing hits S5–S13 burn down stay grandfathered; the five judgment-call heuristics (ranks 3–7) start
-advisory and graduate one by one under the ADR-0026 criteria, mirroring the `duplication` WARN→block
-graduation (ADR-0015). Wiring: all seven ride the existing required `test-lint-rules.sh --diff` lane;
+Blocking-vs-advisory rationale: the two exact signals (ranks 1–2) block as absolute-0 over the whole tree,
+nothing grandfathered (the write rule since S9, the kind rule since 2026-10-05). The judgment-call
+heuristics started advisory and graduate one by one under the ADR-0026 criteria, mirroring the
+`duplication` WARN→block graduation (ADR-0015): ranks 5–6 graduated to blocking on 2026-10-05,
+delta-gated per changed `.cpp`; ranks 3, 4 and 7 stay WARN-first. Wiring: all seven ride the existing required `test-lint-rules.sh --diff` lane;
 whole-tree sweep `--scan-offline`.
 
 ## Reconciliation vs `docs/plans/shipped/ci-falsepositive-hardening.md`

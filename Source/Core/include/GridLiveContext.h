@@ -53,6 +53,9 @@ struct GridContextFieldCatalog {
     bool LastTrackerFieldCatalogErrorTransient = false;
     std::string LastTrackerFieldCatalogWarning;
     bool fieldCatalogEverLoaded_ = false;
+    /// The catalog holds a saved snapshot restored after a failed fetch (Pillar 6). It serves reads like
+    /// a loaded catalog, but fieldCatalogEverLoaded_ stays false so the next sync retries the live fetch.
+    bool fieldCatalogRestored_ = false;
     /// Project the in-memory catalog was fetched for: set with the catalog it describes.
     std::string currentCatalogProjectKey_;
     /// The project SetCurrentCatalogProject named for the next unguarded SetFieldCatalog (the grid's own

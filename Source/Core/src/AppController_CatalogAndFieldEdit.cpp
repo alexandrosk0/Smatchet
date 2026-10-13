@@ -153,6 +153,34 @@ struct CatalogWriteGuard {
     }
 };
 
+// An explicit clear: the reset a tracker or site switch starts with. It supersedes every catalog fetch
+// already in flight for this pane (CatalogEpoch), before the new backend is even installed, and empties
+// only the in-memory catalog: the offline snapshot stays (Pillar 6), and no synthetic columns are
+// published for a tracker whose catalog has not arrived yet. `clearUsers` also drops the user roster.
+void ClearCatalogInMemoryInto(GridContextFieldCatalog& cat, bool clearUsers) {
+    cat.CatalogEpoch.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only, not a failed fetch: the previous site's catalog must not show under this one, and the saved snapshot (never written here) restores this site's catalog when its fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+        cat.AvailableFields.clear();
+        cat.AvailableComponents.clear();
+        cat.AvailableIssueTypeMeta.clear();
+        if (clearUsers) {
+            // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only: the previous site's user roster must not autocomplete under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+            cat.AvailableUsers.clear();
+        }
+        cat.currentCatalogProjectKey_.clear();
+        cat.hasPendingCatalogProjectKey_ = false;
+        cat.pendingCatalogProjectKey_.clear();
+        cat.fieldCatalogEverLoaded_ = false;
+        cat.fieldCatalogRestored_ = false;
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogErrorTransient = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+    }
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
+}
+
 // Writes the failure banner `banner` names into `cat`. Caller holds cat.availableFieldsMutex_. False only
 // when the banner already said this (the catalog revision then stays put).
 bool WriteCatalogFailureBannerLocked(GridContextFieldCatalog& cat,
@@ -191,6 +219,7 @@ bool WriteCatalogFailureBannerLocked(GridContextFieldCatalog& cat,
         break;
     case CatalogFailureBanner::ErrorNoCatalog:
         cat.fieldCatalogEverLoaded_ = false;
+        cat.fieldCatalogRestored_ = false;
         cat.LastTrackerFieldCatalogWarning.clear();
         cat.LastTrackerFieldCatalogErrorTransient = errorTransient;
         cat.LastTrackerFieldCatalogError = errorTransient
@@ -856,31 +885,17 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
     if (fields.empty() && components.empty() && issueTypeMeta.empty() && error.empty()) {
-        // An explicit clear: the reset a tracker switch starts with. It supersedes every catalog fetch
-        // already in flight for this pane, before the new backend is even installed, and it empties
-        // only the in-memory catalog: the offline snapshot stays (Pillar 6), and no synthetic columns
-        // are published for a tracker whose catalog has not arrived yet.
-        cat.CatalogEpoch.fetch_add(1);
-        {
-            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-            std::vector<TrackerField>().swap(cat.AvailableFields);
-            std::vector<TrackerComponent>().swap(cat.AvailableComponents);
-            std::vector<TrackerIssueTypeCreateMeta>().swap(cat.AvailableIssueTypeMeta);
-            cat.currentCatalogProjectKey_.clear();
-            cat.hasPendingCatalogProjectKey_ = false;
-            cat.pendingCatalogProjectKey_.clear();
-        }
-        cat.LastTrackerFieldCatalogError.clear();
-        cat.LastTrackerFieldCatalogErrorTransient = false;
-        cat.LastTrackerFieldCatalogWarning.clear();
-        cat.fieldCatalogEverLoaded_ = false;
-        cat.TrackerFieldCatalogRevision.fetch_add(1);
+        ClearCatalogInMemoryInto(cat, /*clearUsers=*/false);
         return;
     }
     if (ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
                               errorTransient)) {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
+}
+
+void AppController::ClearFieldCatalogInMemory() {
+    ClearCatalogInMemoryInto(fieldCatalog(), /*clearUsers=*/true); // latch once (see SetFieldCatalog)
 }
 
 void AppController::HandleFieldCatalogError(const std::string& error, bool errorTransient,

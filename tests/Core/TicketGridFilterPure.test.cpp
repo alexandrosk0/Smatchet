@@ -115,3 +115,39 @@ TEST_CASE("TicketMatchesGridFilter — non-ASCII text matches byte-exact and is 
     CHECK(TicketMatchesGridFilter(t, "Κωνσταντόνης"));
     CHECK_FALSE(TicketMatchesGridFilter(t, "Γιώργος"));
 }
+
+namespace {
+// A Plane-shaped display: the State field stores a uuid, the grid shows its option name.
+class StateNames final : public IGridFilterDisplay {
+  public:
+    const std::string& Shown(const std::string& fieldId, const std::string& stored) const override {
+        if (fieldId == "status" && stored == uuid_) {
+            return name_;
+        }
+        return stored;
+    }
+
+  private:
+    std::string uuid_ = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+    std::string name_ = "In Progress";
+};
+} // namespace
+
+TEST_CASE("TicketMatchesGridFilter — an option stored by id matches by the name the grid shows") {
+    const CachedTicket t = Ticket("PLN-1", {{"status", "3fa85f64-5717-4562-b3fc-2c963f66afa6"},
+                                            {"uuid", "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"}});
+    const StateNames display;
+    CHECK(TicketMatchesGridFilter(t, "progress", &display));
+    // Neither the stored state uuid nor Plane's internal row uuid is text the user can see.
+    CHECK_FALSE(TicketMatchesGridFilter(t, "5717", &display));
+    CHECK_FALSE(TicketMatchesGridFilter(t, "3b7d", &display));
+}
+
+TEST_CASE("TicketMatchesGridFilter — internal sentinel keys never match") {
+    const CachedTicket t = Ticket("GH-7", {{"_smatchet_is_pr", "1"}, {"summary", "Fix the build"}});
+    CHECK_FALSE(TicketMatchesGridFilter(t, "1"));
+    CHECK(TicketMatchesGridFilter(t, "build"));
+    CHECK(IsInternalTicketFieldKey("uuid"));
+    CHECK(IsInternalTicketFieldKey("_smatchet_is_pr"));
+    CHECK_FALSE(IsInternalTicketFieldKey("summary"));
+}

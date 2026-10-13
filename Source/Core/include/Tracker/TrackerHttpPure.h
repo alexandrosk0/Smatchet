@@ -77,11 +77,17 @@ long ParseRetryAfterSeconds(const std::string& value);
 // cancel token while sleeping, so a longer honored delay stays shutdown-safe.
 long ComputeTrackerRetryDelayMs(int attempt, long baseMs, long expCapMs, long retryAfterSec, long honorCapMs);
 
-// ProbeIssueExists verdict from the status of a GET on the issue: 200 = it exists, 404 = it was
-// deleted. Anything else is inconclusive and returned as an error, which the reconcile treats
-// non-destructively (it keeps the cache row): another 2xx is Unknown, since TrackerErrorFromHttpStatus
-// would read it as Ok, and every other status keeps its classified kind. Shared by every client.
+// ProbeIssueExists verdict from the status of a GET on the issue: 200 = it exists, 404 = it was deleted.
+// Anything else is inconclusive and returned as an error, which the reconcile treats non-destructively (it keeps the
+// cache row): another 2xx is Unknown, since TrackerErrorFromHttpStatus would read it as Ok, and every other status
+// keeps its classified kind. Shared by every client.
 Result<bool, TrackerError> ClassifyIssueExistsProbe(long statusCode);
+
+// GitHub's issue probe. GitHub answers 410 Gone both for an issue deleted from a readable repository and for every
+// issue of a repository whose Issues are disabled, so a 410 reads as "deleted" only when the body says the issue was
+// deleted; any other 410 is an inconclusive InvalidRequest (it must not purge the repository's cached issues).
+// Every other status goes through ClassifyIssueExistsProbe.
+Result<bool, TrackerError> ClassifyGitHubIssueExistsProbe(long statusCode, const std::string& body);
 
 } // namespace TrackerHttpPure
 

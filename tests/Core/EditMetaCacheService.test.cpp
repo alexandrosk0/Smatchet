@@ -222,7 +222,7 @@ TEST_CASE("EditMetaCacheService::RefreshIssueEditMeta invalidates the cached ent
 // PruneEditMetaCacheToActiveTickets — drop entries absent from the active set.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets drops absent issues + types, keeps present") {
+TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets drops absent issues, keeps every issue type") {
     FakeEditMetaDeps deps;
     deps.ActiveTicketsImpl.push_back(MakeTicket("KEEP-1", "story"));
     deps.ActiveTicketsImpl.push_back(MakeTicket("DROP-1", "bug"));
@@ -243,9 +243,17 @@ TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets drops absent 
     CHECK_FALSE(svc.CanEditFieldForIssue("KEEP-1", "labels"));
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
 
-    // DROP-1's per-issue entry was pruned. Its issuetype ("bug") was also pruned (no active bug),
-    // so it is fully optimistic again — labels allowed.
+    // DROP-1's per-issue entry was pruned, and with DROP-1 out of the active set its type cannot be
+    // resolved, so it reads optimistic.
     CHECK(svc.CanEditFieldForIssue("DROP-1", "labels"));
+
+    // Its issuetype ("bug") entry is kept — demoted, not erased. When DROP-1 comes back (the user
+    // switches back to its view, served from the cache) the type's permissions still answer, labels
+    // denied, with no new fetch: erasing the entry would lose them for the session, offline included,
+    // since saved rows load only once per backend.
+    deps.ActiveTicketsImpl.push_back(MakeTicket("DROP-1", "bug"));
+    CHECK_FALSE(svc.CanEditFieldForIssue("DROP-1", "labels"));
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
 }
 
 // ---------------------------------------------------------------------------

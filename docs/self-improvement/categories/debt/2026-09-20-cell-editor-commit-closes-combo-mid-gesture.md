@@ -9,7 +9,8 @@
   Each editor also rebuilds its selection from `currentValue` every frame, so nothing accumulates
   across frames either. Ticking three labels therefore costs three separate open-click-commit cycles
   and three round trips, and any multi-row gesture (drag-to-paint per
-  docs/plans/drag-to-paint-checkbox-lists.md) dies after the frame it starts in. Found while wiring
+  [the drag-to-paint plan](../../../plans/shipped/drag-to-paint-checkbox-lists.md)) dies after the
+  frame it starts in. Found while wiring
   `SmatchetDragCheckbox` into those two lists (PR #2230) — the call sites were reverted for this
   reason; the Views > Fields list is unaffected because its selection set lives on the session.
 

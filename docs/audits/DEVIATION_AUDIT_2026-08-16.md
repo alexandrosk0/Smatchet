@@ -149,7 +149,7 @@ drift stays invisible until someone touches one of those 12 files. Per-file clan
 there is 3–12 lines and is essentially *only* the marker lines.
 
 This is the open P2 finding
-[`2026-08-05-clang-format-reflows-deviation-comments.md`](../self-improvement/categories/applied.md#clang-format-reflows-a-long-smatchet_deviation-comment-and-silently-breaks-its-parser),
+[`2026-08-05-clang-format-reflows-deviation-comments.md`](../self-improvement/categories/applied-2026-07.md#clang-format-reflows-a-long-smatchet_deviation-comment-and-silently-breaks-its-parser),
 still unimplemented a fortnight later.
 
 **Fixed in this change**: its option 2 — `CommentPragmas: '^ *SMATCHET_DEVIATION'`. Verified across
@@ -200,8 +200,9 @@ as a copy-paste clone. Every god-file split therefore costs one exemption per si
 That is exactly the condition `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp:12` names —
 `revisit=when the dup auditor scopes cross-file clones to logic blocks`. It has **not** fired.
 Teaching `dup_audit.py` to skip contiguous preprocessor runs would retire ~73 exemptions at once
-and stop the class regenerating. Filed as a tooling entry, applied 2026-10-03 and archived in
-`docs/self-improvement/categories/applied.md` ("`dup_audit.py` flags shared include prologues").
+and stop the class regenerating. Filed as a tooling entry, applied 2026-10-03 and archived in the
+`docs/self-improvement/categories/applied*.md` partitions ("`dup_audit.py` flags shared include
+prologues"; rotated into `applied-2026-07.md` as of 2026-10-06).
 
 ## S7 · 56 markers hang on triggers nobody owns
 

@@ -124,7 +124,7 @@ TEST_SUITE("KeyedLookupCache") {
         CHECK(fresh == DataFreshness::UnavailableNoCache);
     }
 
-    TEST_CASE("TryBeginFetch returns true after offline with cached data") {
+    TEST_CASE("TryBeginFetch is refused offline even with cached data, which reads CachedOffline") {
         KeyedLookupCache<int> cache;
         KeyedLookupCache<int>::Ticket t;
         auto now = Clock::now();

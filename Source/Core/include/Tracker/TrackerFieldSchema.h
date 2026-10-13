@@ -30,6 +30,10 @@ struct TrackerFieldOption {
     std::string PayloadJson;
     std::vector<TrackerFieldOption> Children;
     bool Disabled = false;
+    /// A status transition target the tracker offers from any status (Jira `isGlobal`) or back to the
+    /// same one (`isLooped`), so it appearing as the issue's current status says nothing about where the
+    /// issue is. Set only by transition parsing; never persisted.
+    bool ReachableFromAnyStatus = false;
 };
 
 struct TrackerField {

@@ -328,6 +328,9 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
         if (LeaveImageSpan(b.img, src, alt)) {
             static const std::string kAttachmentPrefix = "attachment:";
             if (src.compare(0, kAttachmentPrefix.size(), kAttachmentPrefix) == 0) {
+                if (src.size() == kAttachmentPrefix.size()) {
+                    break; // `![](attachment:)` names no file; a mediaInline without an id fails validation
+                }
                 json attrs = json::object();
                 attrs["type"] = "file";
                 attrs["id"] = src.substr(kAttachmentPrefix.size());
@@ -340,6 +343,9 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
                 // file-store `id`). Fall back to a text link so the URL is preserved and the
                 // payload validates. The image-as-image is lost; the image-as-link is kept.
                 const std::string display = alt.empty() ? src : alt;
+                if (display.empty()) {
+                    break; // `![]()`: ADF rejects a text node with empty text, failing the whole document
+                }
                 json mark = {{"type", "link"}, {"attrs", {{"href", src}}}};
                 json textNode = {{"type", "text"}, {"text", display}, {"marks", json::array({std::move(mark)})}};
                 b.topContent()->push_back(std::move(textNode));

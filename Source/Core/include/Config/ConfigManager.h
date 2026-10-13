@@ -155,9 +155,11 @@ struct TrackerConfig {
     // Exposed in Settings -> Preferences -> Appearance.
     bool HighlightGridRowOnHover = true;
     // When true (default), each sync also fetches the parent issues that the streamed rows
-    // reference but the view's query did not return, so the story-group tree has its roots.
-    // Off skips that keyed top-up entirely: missing parents stay absent and their children
-    // render as top-level rows. Exposed in Settings -> Preferences -> Editing -> Grid behaviour.
+    // reference but the view's query did not return (multi-hop, up to 16 levels) and the
+    // children of the streamed rows, so the story-group tree is complete. Off skips both
+    // top-ups: missing parents stay absent, their children render as top-level rows, and
+    // descendants the query did not match are not loaded. Exposed in Settings -> Preferences ->
+    // Editing -> Grid behaviour.
     bool LoadParentIssues = true;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
@@ -871,18 +873,23 @@ class ConfigManager {
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);
     static void WriteConfigJson(const nlohmann::json& j);
+    /// Read-modify-write of individual keys in the raw config JSON, under the config write lock:
+    /// flush any queued worker snapshot, re-read the merged JSON, apply `mutate`, write it back and
+    /// invalidate the Load() cache. Use this instead of LoadMergedConfigJson + WriteConfigJson, which
+    /// is unsequenced against the other writers and can revert a snapshot that lands in between.
+    static void UpdateConfigJson(const std::function<void(nlohmann::json&)>& mutate);
 
     /// Invalidate the in-process Load() cache so the next call re-reads from disk.
     /// Call after WriteConfigJson() to ensure the change is visible without restarting.
     static void InvalidateCache();
 
-    /// Whole-image write of `config` over the on-disk tracker keys. Serialized against every other
-    /// config writer, and — since #2191 — correctly SEQUENCED against the coalescing config-save
-    /// worker: a snapshot still queued when this is called is written FIRST, inside the same
-    /// critical section, so it can never land afterwards and revert this write.
-    /// Correct only for a caller whose `config` derives from the same live object the worker's
-    /// snapshots do (the UI's `d.cfg`). A caller that builds its image from a fresh `Load()` must
-    /// use `Update()` instead, or it will clobber concurrent edits it never read.
+    /// Whole-image write of `config` over the on-disk tracker keys. Serialized against the other
+    /// locked config writers (Update, UpdateConfigJson, SaveAnnotateAnalysis, the config-save worker),
+    /// and — since #2191 — correctly SEQUENCED against the coalescing config-save worker: a snapshot still queued when
+    /// this is called is written FIRST, inside the same critical section, so it can never land afterwards and revert
+    /// this write. Correct only for a caller whose `config` derives from the same live object the worker's snapshots do
+    /// (the UI's `d.cfg`). A caller that builds its image from a fresh `Load()` must use `Update()` instead, or it will
+    /// clobber concurrent edits it never read.
     static void Save(const TrackerConfig& config);
 
     /// Read-modify-write the persisted `TrackerConfig` under the config write lock: flush any
