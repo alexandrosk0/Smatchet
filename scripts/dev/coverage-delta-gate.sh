@@ -41,13 +41,17 @@
 # an #include, #pragma once, a using-declaration or forward declaration, a #define
 # (each stays in the stream, so adding, removing or moving one is a change), or code
 # moved between a header and a .cpp. Whitespace counts only where the compilers read
-# it: between a #define'd name and its '(' (function-like or object-like), across a
-# backslash splice included. A file renamed between product trees, into or out of
+# it: between a #define'd name and its '(' (function-like or object-like), and between
+# an encoding prefix or a user-defined-literal suffix and its literal (L"x", "abc"_s). A
+# spliced directive is read as the one line the compiler joins, so a splice that fuses
+# two tokens (`foo\` + `bar`) or keeps a space (`F \` + `(x)`) counts as it compiles,
+# and one that rejoins a token (`<mem\` + `ory>`) does not. A file renamed between product trees, into or out of
 # them, to another extension (the CMake globs pick up *.cpp) or between a header and a
 # translation unit, is never exempt. A file whose lexing the gate cannot trust is
 # never exempt (see _prefilter_diff).
 # Accepted approximations: a LOG call's arguments are not inspected; whitespace inside a
-# stringified macro argument is not compared.
+# stringified macro argument is not compared. One false positive is kept for safety:
+# `>>` and `> >` closing two template argument lists read as different tokens.
 # Motivation: a GitHub merge queue runs this required check on the merge_group
 # ref where PR labels don't apply, so tests-out-of-band can't dismiss it there;
 # the gate must PASS legitimately for genuinely-untestable correctness diffs.
@@ -131,9 +135,12 @@ _rename_class() {
 #
 # Both sides of each hunk are lexed — the pre-image (context and '-' lines) and the
 # post-image (context and '+' lines) — each with its own state, token by token as the
-# compilers do: identifiers, pp-numbers, punctuators (maximal munch, digraphs read as
-# the tokens they spell), header-names after #include / __has_include, and string /
-# char / raw string literals, kept verbatim (a raw string may span lines). Each side's
+# compilers do: identifiers, pp-numbers, punctuators (maximal munch), header-names
+# after #include / __has_include, and string / char / raw string literals, kept
+# verbatim (a raw string may span lines). An identifier glued to a literal (an
+# encoding prefix or a user-defined-literal suffix) leaves an "<adjacent>" marker
+# between them. A directive continued by backslash splices is lexed once, as the
+# joined line. Each side's
 # tokens pass through the same normalisation (the exemptions listed at the top of this
 # file) into a queue, and the queues are compared as they fill: the first difference
 # fails the file, naming its post-image line.
@@ -155,10 +162,11 @@ _rename_class() {
 # an arm it never opened, ends inside a comment/raw string, a directive that ends
 # inside a block comment, a backslash splice outside a directive's own continuation, a
 # directive splice where the join could change what the lexer sees (a split directive
-# name, or a quote, comment token, '/' or '*' at the splice on a spliced directive
-# line), a comment between '#' and the directive name, between #include /
-# __has_include and the header-name, or a directive after a closing */, a %: digraph
-# directive, or a control byte the compilers read differently (a carriage return inside
+# name, a quote or a comment token anywhere on a spliced directive line or its last
+# continuation line, or a '/' or '*' just before the backslash), a comment between '#'
+# and the directive name, between #include / __has_include and the header-name, a
+# directive after a closing */ on its line, any digraph (its spelling survives
+# stringification), or a control byte the compilers read differently (a carriage return inside
 # a line, a form feed, a vertical tab, a backslash followed by whitespace). A product
 # file git prints as binary ("Binary files ... differ", e.g. one NUL byte) or under a
 # quoted path is never exempt either (_classify_diff_file).
@@ -275,18 +283,18 @@ function eval_cond(s, kw, n, p,   i, v) {
 
 # ---- Lexical state of one side (swapped in by side()): lx_blk (inside a /* */ comment), lx_raw
 # (inside a raw string literal closed by ")" lx_rdel "\"", whose text so far is lx_rtext), lx_macro
-# (the next line continues a directive), lx_sgap (whitespace before that splice's backslash),
+# (the next line continues a directive), lx_pend (that directive's text so far, its splices deleted),
 # lx_untrusted, lx_bom (the next line opens the file). ----
 function lex_reset() {
-    lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_rtext = ""; lx_untrusted = 0; lx_macro = 0; lx_sgap = 0; lx_bom = 0
+    lx_blk = 0; lx_raw = 0; lx_rdel = ""; lx_rtext = ""; lx_untrusted = 0; lx_macro = 0; lx_pend = ""; lx_bom = 0
 }
 function side_save(m) {
     SS[m, "blk"] = lx_blk; SS[m, "raw"] = lx_raw; SS[m, "rdel"] = lx_rdel; SS[m, "rtext"] = lx_rtext
-    SS[m, "unt"] = lx_untrusted; SS[m, "mac"] = lx_macro; SS[m, "sgap"] = lx_sgap; SS[m, "bom"] = lx_bom
+    SS[m, "unt"] = lx_untrusted; SS[m, "mac"] = lx_macro; SS[m, "pend"] = lx_pend; SS[m, "bom"] = lx_bom
 }
 function side_load(m) {
     lx_blk = SS[m, "blk"]; lx_raw = SS[m, "raw"]; lx_rdel = SS[m, "rdel"]; lx_rtext = SS[m, "rtext"]
-    lx_untrusted = SS[m, "unt"]; lx_macro = SS[m, "mac"]; lx_sgap = SS[m, "sgap"]; lx_bom = SS[m, "bom"]
+    lx_untrusted = SS[m, "unt"]; lx_macro = SS[m, "mac"]; lx_pend = SS[m, "pend"]; lx_bom = SS[m, "bom"]
 }
 function side(m) { if (cur_side != m) { side_save(cur_side); side_load(m); cur_side = m } }
 # Every other per-side state is indexed by side: DEP (#if depth), UF (an arm closed it never opened),
@@ -372,7 +380,7 @@ function out_tok(t,   s, label) {
     cc_tok(t)
 }
 # The catch stage: an empty catch clause right before an empty catch (...) clause is left out.
-function cc_tok(t,   s, i) {
+function cc_tok(t,   s, i, d, u) {
     s = cur_side
     if (CCS[s] == 0) {
         if (t == "catch") { CCS[s] = 1; CCN[s] = 1; CC[s, 1] = t; return }
@@ -391,8 +399,16 @@ function cc_tok(t,   s, i) {
         return
     }
     # A handler that catches by value copies the exception (a copy constructor may do anything): only a
-    # by-reference one can go.
-    for (i = 3; i < CCN[s] - 2 && CC[s, i] != "&" && CC[s, i] != "&&"; i++) ;
+    # by-reference one can go. The '&' must be the declarator's own, outside any template argument list,
+    # parenthesis or bracket (`W<int&> e` catches by value).
+    d = 0
+    for (i = 3; i < CCN[s] - 2; i++) {
+        u = CC[s, i]
+        if (u == "<" || u == "(" || u == "[") d++
+        else if (u == ">" || u == ")" || u == "]") d--
+        else if (u == ">>") d -= 2
+        else if ((u == "&" || u == "&&") && d == 0) break
+    }
     if (i >= CCN[s] - 2) { cc_flush(); return }
     for (i = 1; i <= CCN[s]; i++) CP[s, ++CPN[s]] = CC[s, i]
     CCN[s] = 0
@@ -525,11 +541,9 @@ function cond_dir(s, kw, n,   d, live, wasdropped) {
 # an identifier or pp-number is accepted differently by different compilers: the file is
 # not trusted, as it is for a comment before a header-name (the per-line lexer would read
 # the header-name as tokens there).
-function lex_line(s, dir, cont,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
+function lex_line(s, dir,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
     lx_dir = dir
-    # The compiler deletes a splice's backslash-newline: the line it joins starts right after the text
-    # before the backslash.
-    lx_gap = cont ? (lx_sgap || s ~ /^[ \t]/) : 1
+    lx_gap = 1
     n = length(s)
     i = 1
     if (!lx_blk && !lx_raw && match(s, /^[ \t]*(#|%:)[ \t]*(include_next|include|import)/) &&
@@ -583,6 +597,9 @@ function lex_line(s, dir, cont,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
         }
         if (c2 == "/*") { lx_blk = 1; lx_gap = 1; i += 2; continue }
         if (c ~ /[A-Za-z_$]/ || c ~ /[^\t -~]/ || c2 ~ /^\\[uU]$/) {
+            # An identifier glued to the literal before it is its user-defined-literal suffix ("abc"_s):
+            # one token for the compiler, so the adjacency is part of the code.
+            if (i > 1 && substr(s, i - 1, 1) ~ /["\047]/) tok("punct", "<adjacent>")
             j = i
             while (j <= n) {
                 k = substr(s, j, 1)
@@ -639,6 +656,9 @@ function lex_line(s, dir, cont,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
             continue
         }
         if (c == "\"" || c == SQ) {
+            # A literal glued to the identifier before it takes it as its encoding prefix (L"x", u'a'),
+            # however a macro of that name expands: one token for the compiler.
+            if (i > 1 && substr(s, i - 1, 1) ~ /[A-Za-z0-9_]/) tok("punct", "<adjacent>")
             j = i + 1
             while (j <= n) {
                 k = substr(s, j, 1)
@@ -654,6 +674,9 @@ function lex_line(s, dir, cont,   i, n, c, c2, k, m, d, j, id, rest, q, p) {
         if (c == "\\" && substr(s, i + 1) ~ /^[ \t\r]*$/) return
         p = punct_at(s, i)
         i += length(p)
+        # A digraph's spelling survives stringification (`#<:` is "<:"), which the token stream cannot
+        # tell from its primary spelling: no product file uses one, so the file is not trusted.
+        if (p in DIGRAPH) lx_untrusted = 1
         tok("punct", (p in DIGRAPH) ? DIGRAPH[p] : p)
     }
 }
@@ -669,7 +692,7 @@ function punct_at(s, i,   p) {
 }
 # post_line(body) — feed one line of the current side through the lexer, and finish a directive whose
 # last line it is. A line that starts inside a comment or raw string is no directive.
-function post_line(body,   st, tl, splice, cont, isdir, sgap) {
+function post_line(body,   st, tl, splice, cont, isdir, piece) {
     # Shapes the per-line tracking cannot follow mark the file untrusted:
     #   - a backslash line splice outside a preprocessor directive's continuation (the
     #     compiler joins the lines first, so a string, char literal or comment can run on);
@@ -698,15 +721,26 @@ function post_line(body,   st, tl, splice, cont, isdir, sgap) {
             tl ~ /[\/*]\\$/) lx_untrusted = 1
     }
     lx_macro = splice && (isdir || cont)
-    sgap = splice && tl ~ /[ \t]\\$/
     # A directive after a closing */ (`/* x */ #else`, `/* a */ # /* b */ else`, `/* x */ %:else`,
-    # or the last line of a multi-line comment) is one the compiler honours but this tracking
-    # never sees: the #if stack would be wrong, so the file's tracking is not trusted.
-    # (Only a conditional name or a comment after the '#': an ImGui id path "**/##id" is no directive.)
-    if (body ~ /\*\/[ \t]*(%:|#[ \t]*(\/\*|(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)([^A-Za-z0-9_]|$)))/) lx_untrusted = 1
-    if (isdir) { DTN[cur_side] = 0; DFNR[cur_side] = FNR }
-    lex_line(body, isdir || cont, cont)
-    lx_sgap = sgap
+    # `/* c */ #define F(x)`, or the last line of a multi-line comment) is one the compiler honours
+    # but this tracking reads as code: its #if stack, #define spacing or header-name would be wrong,
+    # so the file's tracking is not trusted. (Only a directive name or a comment after the '#': an
+    # ImGui id path "**/##id" is no directive.)
+    if (body ~ /\*\/[ \t]*(%:|#[ \t]*(\/\*|(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif|define|undef|include|include_next|import|pragma|error|warning|line)([^A-Za-z0-9_]|$)))/) lx_untrusted = 1
+    if (isdir) { DTN[cur_side] = 0; DFNR[cur_side] = FNR; lx_pend = "" }
+    if (isdir || cont) {
+        # The compiler deletes every backslash-newline before it reads a token: a spliced directive is
+        # lexed once, as the one logical line the compiler sees (`foo\` + `bar` is foobar).
+        if (lx_macro) {
+            piece = body
+            sub(/\\[ \t\r]*$/, "", piece)
+            lx_pend = lx_pend piece
+            return
+        }
+        body = lx_pend body
+        lx_pend = ""
+    }
+    lex_line(body, isdir || cont)
     if ((isdir || cont) && lx_blk) lx_untrusted = 1
     if ((isdir || cont) && !lx_macro) dir_end()
 }
@@ -3075,6 +3109,130 @@ diff --git a/Source/Core/src/Trace.cpp b/Source/Core/src/Trace.cpp
  int Run() { return TRACE(1); }
 EOF
 
+    # Round-11 counterexamples. A spliced directive is lexed as the one line the compiler joins.
+    _expect FALLTHROUGH "a lone-backslash continuation keeps the space before the first splice" <<'EOF'
+diff --git a/Source/Core/src/Trace.cpp b/Source/Core/src/Trace.cpp
+--- a/Source/Core/src/Trace.cpp
++++ b/Source/Core/src/Trace.cpp
+@@ -1,2 +1,4 @@
+-#define F(x) x
++#define F \
++\
++(x) x
+ int Run() { return F(1); }
+EOF
+
+    _expect FALLTHROUGH "a splice that fuses two tokens of a macro body" <<'EOF'
+diff --git a/Source/Core/src/Neg.cpp b/Source/Core/src/Neg.cpp
+--- a/Source/Core/src/Neg.cpp
++++ b/Source/Core/src/Neg.cpp
+@@ -1,2 +1,3 @@
+-#define NEG - -
++#define NEG -\
++-
+ int f(int x) { int y = NEG x; return y; }
+EOF
+
+    _expect FALLTHROUGH "a splice that fuses two identifiers of a macro body" <<'EOF'
+diff --git a/Source/Core/src/Fuse.cpp b/Source/Core/src/Fuse.cpp
+--- a/Source/Core/src/Fuse.cpp
++++ b/Source/Core/src/Fuse.cpp
+@@ -1,2 +1,3 @@
+-#define X foo bar
++#define X foo\
++bar
+ int g() { return X; }
+EOF
+
+    _expect EXEMPT "an #include split by a splice before its header-name" <<'EOF'
+diff --git a/Source/Core/src/Inc.cpp b/Source/Core/src/Inc.cpp
+--- a/Source/Core/src/Inc.cpp
++++ b/Source/Core/src/Inc.cpp
+@@ -1,2 +1,3 @@
+-#include <a.h>
++#include \
++<a.h>
+ int g() { return 1; }
+EOF
+
+    _expect FALLTHROUGH "a directive after a block comment on its line" <<'EOF'
+diff --git a/Source/Core/src/Lead.cpp b/Source/Core/src/Lead.cpp
+--- a/Source/Core/src/Lead.cpp
++++ b/Source/Core/src/Lead.cpp
+@@ -1,3 +1,3 @@
+ int F = 7;
+-/* note */ #define F(long) 5
++/* note */ #define F (long) 5
+ int v = F;
+EOF
+
+    _expect FALLTHROUGH "a by-value catch of a template type with an '&' argument" <<'EOF'
+diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
+--- a/Source/Core/src/Catch.cpp
++++ b/Source/Core/src/Catch.cpp
+@@ -1,6 +1,5 @@
+ void Run() {
+     try {
+         Work();
+-    } catch (W<int&> e) {
+     } catch (...) {
+     }
+ }
+EOF
+
+    _expect EXEMPT "a by-reference catch of a template type with an '&' argument" <<'EOF'
+diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
+--- a/Source/Core/src/Catch.cpp
++++ b/Source/Core/src/Catch.cpp
+@@ -1,6 +1,5 @@
+ void Run() {
+     try {
+         Work();
+-    } catch (const W<int&>& e) {
+     } catch (...) {
+     }
+ }
+EOF
+
+    _expect FALLTHROUGH "a space between an encoding prefix and its literal" <<'EOF'
+diff --git a/Source/Core/src/Wide.cpp b/Source/Core/src/Wide.cpp
+--- a/Source/Core/src/Wide.cpp
++++ b/Source/Core/src/Wide.cpp
+@@ -1,2 +1,2 @@
+ #define L
+-const char* Pick() { return f(L"x"); }
++const char* Pick() { return f(L "x"); }
+EOF
+
+    _expect FALLTHROUGH "a space between a literal and its user-defined suffix" <<'EOF'
+diff --git a/Source/Core/src/Udl.cpp b/Source/Core/src/Udl.cpp
+--- a/Source/Core/src/Udl.cpp
++++ b/Source/Core/src/Udl.cpp
+@@ -1,2 +1,2 @@
+ #define _s
+-auto Pick() { return "abc"_s; }
++auto Pick() { return "abc" _s; }
+EOF
+
+    _expect EXEMPT "a comment next to unchanged prefixed and suffixed literals" <<'EOF'
+diff --git a/Source/Core/src/Lits.cpp b/Source/Core/src/Lits.cpp
+--- a/Source/Core/src/Lits.cpp
++++ b/Source/Core/src/Lits.cpp
+@@ -1,2 +1,3 @@
++// Wide, char16_t and user-defined literals.
+ auto Pick() { return f(L"x", u'a', "abc"_s, u8R"(raw)"); }
+EOF
+
+    _expect FALLTHROUGH "a digraph's spelling changed inside a stringified argument" <<'EOF'
+diff --git a/Source/Core/src/Dg.cpp b/Source/Core/src/Dg.cpp
+--- a/Source/Core/src/Dg.cpp
++++ b/Source/Core/src/Dg.cpp
+@@ -1,2 +1,2 @@
+ #define STR(x) #x
+-const char* Pick() { return STR(<:); }
++const char* Pick() { return STR([); }
+EOF
+
     # clang-format's directive reflows change no token.
     _expect EXEMPT "clang-format reflows of directives" <<'EOF'
 diff --git a/Source/Core/include/Dbg.h b/Source/Core/include/Dbg.h
@@ -3245,10 +3403,9 @@ fi
 # files is provably no-new-runtime-surface, PASS legitimately (no override). This
 # is what lets the gate run cleanly on a merge_group ref where PR labels (and so
 # tests-out-of-band) don't apply. CONSERVATIVE — any real statement falls through.
-# Write the diff to a temp file rather than piping it into `_classify_diff` directly.
-# `_classify_diff` intentionally `break`s out of its read loop on the first real-surface
-# line (see its body). Under a `|` pipe with `set -o pipefail`, an early-closing reader
-# sends `git diff` SIGPIPE (128+13=141) once its stdout buffer fills, and pipefail
+# Write the diff to a temp file rather than piping it into `_classify_diff_file`. Under a
+# `|` pipe with `set -o pipefail`, a reader that closes early (as the line classifier this
+# gate once used did) sends `git diff` SIGPIPE (128+13=141) once its stdout buffer fills, and pipefail
 # propagates that 141 through the `EXEMPTION=$(...)` assignment, tripping `set -e` and
 # killing the script BEFORE it reaches the "FAIL: ... test deltas" message below — a real
 # diff that should cleanly fail the gate instead crashes it. A plain redirect into a file
