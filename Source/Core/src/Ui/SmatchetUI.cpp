@@ -715,8 +715,6 @@ static void ResetOnCacheSiteChange(AppController& app, UiDrawSession& d) {
              smatchet::cache_keys::DescribeCacheBackendKey(siteKey).c_str());
     DiscardQueuedGridFieldEditsOnBackendSwitch(d);
     app.ClearFieldCatalogInMemory();
-    // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site switch, not a failed fetch: the previous site's users must not show under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
-    app.SetAvailableUsers({});
     d.fieldCatalogWarning.clear();
     // fieldCatalogLoading / the future are left alone: an in-flight fetch for the previous site is
     // discarded by the result guard in drawEnsureCatalogAndInitialSync, while restarting over it would
@@ -744,8 +742,6 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             // pump run): queued edits with no pane target would bind to this backend and must not be sent.
             DiscardQueuedGridFieldEditsOnBackendSwitch(d);
             app.ClearFieldCatalogInMemory();
-            // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=backend switch, not a failed fetch: the previous tracker's users must not show under this one, and the saved roster (lookup_cache kind users) restores this tracker's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
-            app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
             // An in-flight catalog fetch keeps running (see ResetOnCacheSiteChange): its result fails the
             // backend-key guard and re-triggers the fetch, without blocking this frame on the old future.
