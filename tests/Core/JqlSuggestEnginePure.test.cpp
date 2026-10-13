@@ -444,11 +444,11 @@ TEST_CASE("value mode — user rows come from the user catalog only, one row per
         const std::string buf = "assignee = ali";
         const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
         CHECK(HasInsert(out, "\"Alice Smith\"")); // the catalog row's name-form insert
-        CHECK_FALSE(HasInsert(out, "a1"));          // no raw-accountId row
+        CHECK_FALSE(HasInsert(out, "a1"));        // no raw-accountId row
         CHECK_FALSE(HasLabel(out, "Alice Smith (display name) -> \"Alice Smith\""));
-        const int aliceRows = static_cast<int>(std::count_if(
-            out.Items.begin(), out.Items.end(),
-            [](const QuerySuggestion& sug) { return sug.Insert == "\"Alice Smith\""; }));
+        const int aliceRows =
+            static_cast<int>(std::count_if(out.Items.begin(), out.Items.end(),
+                                           [](const QuerySuggestion& sug) { return sug.Insert == "\"Alice Smith\""; }));
         CHECK(aliceRows == 1);
     }
     {

@@ -6,10 +6,10 @@
 // load-time clamp range. Header-only and nlohmann-free so pure helpers and plugins can read it
 // without linking ConfigManager.
 //
-// Access: `smatchet::limits::Get().JiraSearchMaxPages` returns a by-value snapshot (thread-safe;
-// ~70 ints, cheap). ConfigManager::Load() publishes the loaded values via `Set()` on a cache miss,
-// so a hand-edited config.json takes effect on the next launch. Safety bounds that are NOT preferences (recursion
-// depth guards, parser buffer ceilings, wire-protocol sizes) intentionally stay `constexpr`.
+// Access: limits::Get() returns a by-value snapshot of every field (thread-safe; ~70 ints, cheap).
+// ConfigManager::Load() publishes the loaded values via `Set()` on a cache miss, so a hand-edited config.json takes
+// effect on the next launch. Safety bounds that are NOT preferences (recursion depth guards, parser buffer ceilings,
+// wire-protocol sizes) intentionally stay `constexpr`.
 //
 // Unit conventions: `*Ms` milliseconds, `*MiB` mebibytes (use `limits::MiB()` for bytes), the
 // rest are plain counts. Every value is an `int`; call sites cast to the type they need.
@@ -144,6 +144,7 @@ struct State {
 inline State& GetState() {
     // Deliberately leaked: Logger::Log reads Get() and may run during static destruction, after a
     // function-local static here would already be gone.
+    // SMATCHET_DEVIATION(rule=no-raw-new; reason=leaked singleton must outlive Logger at static destruction; owner=config; revisit=2027-10-13)
     static State* const s = new State;
     return *s;
 }

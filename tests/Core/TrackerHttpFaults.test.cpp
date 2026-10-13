@@ -21,9 +21,7 @@
 
 namespace {
 
-std::string Url(const JiraCatalogHttpFixture& fx, const std::string& path) {
-    return fx.Config().Domain + path;
-}
+std::string Url(const JiraCatalogHttpFixture& fx, const std::string& path) { return fx.Config().Domain + path; }
 
 } // namespace
 

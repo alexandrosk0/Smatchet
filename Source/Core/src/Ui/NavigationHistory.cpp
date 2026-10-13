@@ -32,7 +32,8 @@ void NavigationHistory::Push(const NavigationEntry& entry) {
         const int drop = static_cast<int>(_entries.size()) - maxHistory;
         _entries.erase(_entries.begin(), _entries.begin() + drop);
         _index -= drop;
-        if (_index < 0) _index = 0;
+        if (_index < 0)
+            _index = 0;
     }
 }
 
@@ -56,9 +57,3 @@ const NavigationEntry* NavigationHistory::Current() const {
     }
     return &_entries[_index];
 }
-
-
-
-
-
-

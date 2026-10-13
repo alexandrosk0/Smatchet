@@ -270,7 +270,8 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
             if (!ok) {
                 CommandResult r = CommandResult::Failure(
                     ErrorCode::ValidationError, "Argument '" + p.Name + "' must be one of the allowed enum values.");
-                r.Error.Details = std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}});
+                r.Error.Details =
+                    std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}});
                 outFailure = std::move(r);
                 return false;
             }
