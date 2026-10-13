@@ -907,15 +907,23 @@ TEST_CASE("ConfigManager Load clamps limits into range and ignores non-integer v
 
 TEST_CASE("Limits: defaults equal the constants they replaced (pinned to literals)") {
     // The refactor that introduced TunableLimits.h must not move behaviour. Literals here are the
-    // pre-refactor constexpr values; a deliberate default change updates this test on purpose.
+    // pre-refactor constexpr values, except where a comment marks a deliberate change; a default change
+    // updates this test on purpose.
     const smatchet::limits::LimitsConfig d;
     // Search / pagination.
-    CHECK(d.JiraSearchMaxPages == 50);
-    CHECK(d.JiraSearchMaxFetchMiB == 100);
-    CHECK(d.PlaneSearchMaxPages == 50);
-    CHECK(d.PlaneSearchMaxFetchMiB == 100);
+    // Deliberately tightened with the 500-row result cap (were 50 pages / 100 MiB, GitHub 50 MiB): the
+    // old page and byte ceilings no longer bound anything once the row cap is 500.
+    CHECK(d.JiraSearchMaxPages == 10);
+    CHECK(d.JiraSearchMaxFetchMiB == 32);
+    CHECK(d.PlaneSearchMaxPages == 10);
+    CHECK(d.PlaneSearchMaxFetchMiB == 32);
     CHECK(d.GitHubSearchMaxPages == 10);
-    CHECK(d.GitHubSearchMaxFetchMiB == 50);
+    CHECK(d.GitHubSearchMaxFetchMiB == 32);
+    // New guards (no pre-refactor equivalent).
+    CHECK(d.SearchMaxTotalSeconds == 120);
+    CHECK(d.MembershipProbeMaxPages == 50);
+    CHECK(d.MembershipProbeMaxResults == 5000);
+    CHECK(d.MembershipProbeMaxFetchMiB == 100);
     CHECK(d.GitHubCommentsMaxPages == 50);
     CHECK(d.GitHubProjectsV2MaxPages == 5);
     CHECK(d.JiraActivityMaxPages == 20);

@@ -8,6 +8,7 @@
 
 #include "TunableLimits.h"
 
+#include <chrono>
 #include <cstddef>
 
 namespace smatchet {
@@ -34,6 +35,39 @@ inline std::size_t PlaneMaxResultCount() { return static_cast<std::size_t>(limit
 inline int GitHubMaxPages() { return limits::Get().GitHubSearchMaxPages; }
 inline std::size_t GitHubMaxTotalFetchBytes() { return limits::MiB(limits::Get().GitHubSearchMaxFetchMiB); }
 inline std::size_t GitHubMaxResultCount() { return static_cast<std::size_t>(limits::Get().GitHubSearchMaxResults); }
+
+/// Background membership probes (Jira keys-only reconcile, Jira/Plane changed-since) walk a whole view or
+/// update window but must never act on a truncated list, so they get a looser ceiling than the interactive
+/// search above; a probe that still hits it reports a partial walk and the reconcile is skipped.
+inline int ProbeMaxPages() { return limits::Get().MembershipProbeMaxPages; }
+inline std::size_t ProbeMaxResultCount() { return static_cast<std::size_t>(limits::Get().MembershipProbeMaxResults); }
+inline std::size_t ProbeMaxTotalFetchBytes() { return limits::MiB(limits::Get().MembershipProbeMaxFetchMiB); }
+
+/// Page, result-count and byte ceilings handed to a page loop, so one loop serves both the interactive
+/// search (per-backend caps above) and the background probes (ProbeCaps). A changed-since probe fetches
+/// full rows, so its byte ceiling is raised alongside its row ceiling.
+struct LoopCaps {
+    int maxPages;
+    std::size_t maxResultCount;
+    std::size_t maxTotalFetchBytes;
+};
+inline LoopCaps JiraCaps() { return {JiraMaxPages(), JiraMaxResultCount(), JiraMaxTotalFetchBytes()}; }
+inline LoopCaps PlaneCaps() { return {PlaneMaxPages(), PlaneMaxResultCount(), PlaneMaxTotalFetchBytes()}; }
+inline LoopCaps ProbeCaps() { return {ProbeMaxPages(), ProbeMaxResultCount(), ProbeMaxTotalFetchBytes()}; }
+
+/// Wall-clock budget for one whole paginated fetch. The per-request timeout bounds a single call; this
+/// bounds the walk, so a huge query cannot hold a sync worker for pages x request-timeout.
+class Deadline {
+  public:
+    explicit Deadline(int seconds) : end_(std::chrono::steady_clock::now() + std::chrono::seconds(seconds)) {}
+    bool Expired() const { return std::chrono::steady_clock::now() >= end_; }
+
+  private:
+    std::chrono::steady_clock::time_point end_;
+};
+
+/// A deadline of limits::Get().SearchMaxTotalSeconds starting now.
+inline Deadline StartSearchDeadline() { return Deadline(limits::Get().SearchMaxTotalSeconds); }
 
 } // namespace search_guards
 } // namespace smatchet

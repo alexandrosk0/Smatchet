@@ -257,8 +257,16 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
     const int kGitHubMaxPages = smatchet::search_guards::GitHubMaxPages();
     const size_t kGitHubMaxTotalFetchBytes = smatchet::search_guards::GitHubMaxTotalFetchBytes();
     const size_t kGitHubMaxResultCount = smatchet::search_guards::GitHubMaxResultCount();
+    const smatchet::search_guards::Deadline deadline = smatchet::search_guards::StartSearchDeadline();
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
+        // Wall-clock guard on the whole walk (the per-request timeout only bounds one page).
+        if (deadline.Expired()) {
+            AppendOutWarning(outWarning, "GitHub fetch time limit reached; further results not fetched. "
+                                         "Narrow your view JQL to fit.");
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: wall-clock limit reached before page %d", page);
+            break;
+        }
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
         const cpr::Response resp = TrackerPostLogged("GitHubClient", endpoint, headers, body);
 

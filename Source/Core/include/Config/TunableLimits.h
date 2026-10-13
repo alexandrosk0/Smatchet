@@ -27,15 +27,19 @@ namespace limits {
 // X(Field, "json_key", default, min, max)
 #define SMATCHET_LIMITS_TABLE(X)                                                                                       \
     /* ---- Tier A: paginated search fetch guards (SearchFetchGuards.h) ---- */                                        \
-    X(JiraSearchMaxPages, "jira_search_max_pages", 50, 1, 1000)                                                        \
-    X(JiraSearchMaxFetchMiB, "jira_search_max_fetch_mib", 100, 1, 1024)                                                \
+    X(JiraSearchMaxPages, "jira_search_max_pages", 10, 1, 1000)                                                        \
+    X(JiraSearchMaxFetchMiB, "jira_search_max_fetch_mib", 32, 1, 1024)                                                 \
     X(JiraSearchMaxResults, "jira_search_max_results", 500, 1, 100000)                                                 \
-    X(PlaneSearchMaxPages, "plane_search_max_pages", 50, 1, 1000)                                                      \
-    X(PlaneSearchMaxFetchMiB, "plane_search_max_fetch_mib", 100, 1, 1024)                                              \
+    X(PlaneSearchMaxPages, "plane_search_max_pages", 10, 1, 1000)                                                      \
+    X(PlaneSearchMaxFetchMiB, "plane_search_max_fetch_mib", 32, 1, 1024)                                               \
     X(PlaneSearchMaxResults, "plane_search_max_results", 500, 1, 100000)                                               \
     X(GitHubSearchMaxPages, "github_search_max_pages", 10, 1, 10)                                                      \
-    X(GitHubSearchMaxFetchMiB, "github_search_max_fetch_mib", 50, 1, 1024)                                             \
+    X(GitHubSearchMaxFetchMiB, "github_search_max_fetch_mib", 32, 1, 1024)                                             \
     X(GitHubSearchMaxResults, "github_search_max_results", 500, 1, 1000)                                               \
+    X(SearchMaxTotalSeconds, "search_max_total_seconds", 120, 5, 3600)                                                 \
+    X(MembershipProbeMaxPages, "membership_probe_max_pages", 50, 1, 1000)                                              \
+    X(MembershipProbeMaxResults, "membership_probe_max_results", 5000, 1, 100000)                                      \
+    X(MembershipProbeMaxFetchMiB, "membership_probe_max_fetch_mib", 100, 1, 1024)                                      \
     /* ---- Tier A: other pagination ceilings ---- */                                                                  \
     X(GitHubCommentsMaxPages, "github_comments_max_pages", 50, 1, 1000)                                                \
     X(GitHubMilestonesMaxPages, "github_milestones_max_pages", 10, 1, 1000)                                            \

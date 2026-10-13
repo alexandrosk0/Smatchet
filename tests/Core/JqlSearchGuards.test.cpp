@@ -32,6 +32,36 @@ TEST_SUITE("Issue search result guards") {
         CHECK(defaults.GitHubSearchMaxResults == 500);
     }
 
+    TEST_CASE("the page cap does not bind before the result-count cap") {
+        // The result-count cap is the intended soft bound; a page cap that bit first would silently
+        // shrink it. Holds at the defaults and is what the page-rounded truncation logic assumes.
+        const std::size_t page = static_cast<std::size_t>(guards::kPageSize);
+        CHECK(static_cast<std::size_t>(guards::JiraMaxPages()) * page >= guards::JiraMaxResultCount());
+        CHECK(static_cast<std::size_t>(guards::PlaneMaxPages()) * page >= guards::PlaneMaxResultCount());
+        CHECK(static_cast<std::size_t>(guards::GitHubMaxPages()) * page >= guards::GitHubMaxResultCount());
+    }
+
+    TEST_CASE("membership probes get a looser ceiling than the interactive search") {
+        // Keys-only reconcile and changed-since must see a whole view; a probe that hit the interactive
+        // cap would always report a partial walk and never prune stale rows.
+        const guards::LoopCaps probe = guards::ProbeCaps();
+        CHECK(probe.maxResultCount > guards::JiraCaps().maxResultCount);
+        CHECK(probe.maxResultCount > guards::PlaneCaps().maxResultCount);
+        CHECK(probe.maxPages >= guards::JiraCaps().maxPages);
+        CHECK(probe.maxTotalFetchBytes > guards::JiraCaps().maxTotalFetchBytes);
+        CHECK(probe.maxTotalFetchBytes > guards::PlaneCaps().maxTotalFetchBytes);
+        // ...and its page cap can actually reach its own result cap.
+        CHECK(static_cast<std::size_t>(probe.maxPages) * static_cast<std::size_t>(guards::kPageSize) >=
+              probe.maxResultCount);
+    }
+
+    TEST_CASE("the wall-clock deadline expires and is not already expired by default") {
+        CHECK(guards::Deadline(0).Expired());
+        CHECK_FALSE(guards::Deadline(3600).Expired());
+        CHECK_FALSE(guards::StartSearchDeadline().Expired());
+        CHECK(smatchet::limits::LimitsConfig().SearchMaxTotalSeconds == 120);
+    }
+
     TEST_CASE("each cumulative size cap admits several full pages") {
         // A per-page response is bounded by ParseBounded; the cumulative cap must allow more than one
         // maximal page, or a single large page would end every sync.

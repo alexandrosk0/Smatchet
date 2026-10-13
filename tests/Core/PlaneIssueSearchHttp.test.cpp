@@ -100,7 +100,7 @@ TEST_CASE("Plane fetch — two-page cursor pagination streams batches and comple
     CHECK(fx.RequestCount(kStatesPath) == 1);
 }
 
-TEST_CASE("Plane fetch — self-referential cursor is bounded by the 50-page cap (soft warning)") {
+TEST_CASE("Plane fetch — self-referential cursor is bounded by the 10-page cap (soft warning)") {
     JiraCatalogHttpFixture fx;
     ScriptResolveAndStates(fx);
     // A misbehaving server that always advertises the same next cursor. Without the
@@ -119,10 +119,10 @@ TEST_CASE("Plane fetch — self-referential cursor is bounded by the 50-page cap
     const std::vector<CachedTicket> tickets = client.FetchIssues(&fullSync, &cfg, nullptr, &fetchError, &warning);
 
     CHECK(fetchError.empty()); // partial success, not a fetch failure
-    CHECK(warning.find("outer page cap (50)") != std::string::npos);
+    CHECK(warning.find("outer page cap (10)") != std::string::npos);
     CHECK_FALSE(fullSync);
-    CHECK(tickets.size() == 50); // one ticket per page, capped
-    CHECK(fx.RequestCount(kItemsPath) == 50);
+    CHECK(tickets.size() == 10); // one ticket per page, capped
+    CHECK(fx.RequestCount(kItemsPath) == 10);
 }
 
 TEST_CASE("Plane fetch — project-resolve failures surface before any work-items request") {
