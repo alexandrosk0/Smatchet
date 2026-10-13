@@ -272,7 +272,12 @@ void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBar
 
     if (::ImGui::Begin("##StatusBarAutoHide", nullptr, flags)) {
         DrawStatusBarContents(app, d);
-        ::ImGui::BringWindowToDisplayFront(::ImGui::GetCurrentWindow());
+        // Above docked panels, never above a popup: popups share this display layer and raise
+        // themselves only when they appear, so re-raising the bar every frame would cover an open
+        // menu / combo / modal and steal its clicks along the bottom edge.
+        if (!::ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            ::ImGui::BringWindowToDisplayFront(::ImGui::GetCurrentWindow());
+        }
     }
     ::ImGui::End();
 }

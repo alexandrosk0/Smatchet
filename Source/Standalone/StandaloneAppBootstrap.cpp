@@ -164,6 +164,7 @@ static void SetupRuntimePaths(const bool preserveUserDataDir) {
 static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp, PluginHost& pluginHost) {
     mainWindow.Draw(smatchetApp);
     pluginHost.OnDraw(smatchetApp);
+    mainWindow.EndFrame();
 }
 
 static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smatchetApp, PluginHost& pluginHost) {

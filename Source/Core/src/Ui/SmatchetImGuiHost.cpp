@@ -716,6 +716,7 @@ void SmatchetImGuiHost::DrawUI() {
 
     ImplData->Ui.Draw(ImplData->App);
     ImplData->Plugins.OnDraw(ImplData->App);
+    ImplData->Ui.EndFrame();
 }
 
 void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* nativeCommandList) {

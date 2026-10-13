@@ -202,20 +202,23 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // clicked pane's view/context — not the previously focused pane's.
     drainPaneDeferredActions(app, d);
 
-    // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
-    // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
-    // faster. Each edit carries the pane it was made in, so the pump reads THAT pane's
-    // live snapshot for estimate bases, whichever pane holds focus now (#2260).
-    {
-        const bool readOnlyMode =
-            d.cfg.ReadOnlyMode || (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
-        PumpGridFieldEdits(app, d, readOnlyMode);
-    }
+    pumpGridFieldEditsOncePerFrame(app, d, trackerBanner);
 
     if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
     SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);
+}
+
+// Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
+// only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
+// faster. Each edit carries the pane it was made in, so the pump reads THAT pane's
+// live snapshot for estimate bases, whichever pane holds focus now (#2260). Both hosts
+// call it every frame: the mobile shell never runs drawGridPaneWindows.
+void SmatchetUI::pumpGridFieldEditsOncePerFrame(AppController& app, UiDrawSession& d,
+                                                const TrackerConnectivityBannerForUi& banner) {
+    const bool readOnlyMode = d.cfg.ReadOnlyMode || (banner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+    PumpGridFieldEdits(app, d, readOnlyMode);
 }
 
 // Consume-once drain of the {paneId, kind} deferred pane-action latch. Both hosts call this

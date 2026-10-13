@@ -164,6 +164,7 @@ static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp
     try {
         mainWindow.Draw(smatchetApp);
         pluginHost.OnDraw(smatchetApp);
+        mainWindow.EndFrame();
     } catch (const std::exception&) {
         throw;
     } catch (...) { // catch-all-ok: rethrow only — propagates to the SEH wrapper, swallows nothing
@@ -1019,7 +1020,10 @@ static int RunFrameLoop(MainBootState& boot) {
 
     int exitCode = 0;
     try {
-        SmatchetUI mainWindow;
+        // Owned so it can be destroyed before ShutdownApplication resets the AppController: its
+        // destructor queues a final layout write on the AppController's config-save worker.
+        std::unique_ptr<SmatchetUI> mainWindowOwner = std::make_unique<SmatchetUI>();
+        SmatchetUI& mainWindow = *mainWindowOwner;
 
         // log-a-bug-github phase 2 — if the previous run left a crash marker, open the
         // bug-report modal pre-filled with the crash context so the user can file it.
@@ -1102,6 +1106,7 @@ static int RunFrameLoop(MainBootState& boot) {
 
         PersistWindowState(window, s_persistWindowedX, s_persistWindowedY, s_persistWindowedW, s_persistWindowedH);
 
+        mainWindowOwner.reset();
         smatchet::standalone::ShutdownApplication(bootCtx);
     } catch (const std::exception& ex) {
         smatchet::standalone::ShutdownApplication(bootCtx);

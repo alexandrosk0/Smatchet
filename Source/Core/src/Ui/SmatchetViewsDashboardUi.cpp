@@ -87,7 +87,13 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     d.selectedColumnOrderIndex = -1;
-    d.viewsHasOriginalSnapshot = false; // grid-side-only field; unused by the editor, kept clean
+    // viewsHasOriginalSnapshot is the grid query strip's pre-edit copy of the view. Reloading the
+    // editor from the same view (its Discard) must keep it while the strip is up, or the strip's
+    // Discard has nothing to restore and the layout autosave cannot write the view. A snapshot of
+    // another view is stale here and goes.
+    if (d.viewsHasOriginalSnapshot && d.viewsOriginalSnapshot.Id != view.Id) {
+        d.viewsHasOriginalSnapshot = false;
+    }
     d.viewsKeyboardReorderRow = -1;
     d.viewsTitleEditing = false;
 }

@@ -12,8 +12,11 @@
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetIconButtonLabel.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetImGuiFonts.h"
 
+#include <algorithm>
 #include <cfloat>
 #include <cstdio>
 #include <string>
@@ -159,7 +162,8 @@ void PrefsSectionEnd(UiDrawSession& d, const char* sectionId) {
     ImGui::PopID();
 }
 
-void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
+void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty,
+                  float bodyHeight) {
     (void)assistantDirty; // only read when the AI feature is compiled in
     // Order mirrors SmatchetPrefsSchema::Categories(); AI & Voice is compiled
     // out entirely when neither feature is built, matching the schema's guard.
@@ -204,10 +208,19 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         // the visible part only.
         char preview[96];
         std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn, current->Dirty ? " *" : "");
-        // Leave room for the Save & Sync button beside the combo in narrow-width mode.
-        // Button width (140px) + spacing (4px) gives us the reserved width.
-        const float buttonSpaceNeeded = 140.0f + ImGui::GetStyle().ItemSpacing.x;
-        const float comboWidth = ImGui::GetContentRegionAvail().x - buttonSpaceNeeded;
+        // Leave room for the Save & Sync button beside the combo in narrow-width mode. The button is
+        // sized from its own (translated, icon-led) label, so it never clips at a large font or on a
+        // HiDPI phone; the combo takes the rest of the row. When the row cannot hold both with the combo
+        // at its minimum width, the button goes on its own row instead of overflowing the panel.
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const std::string saveLabel = SmatchetIconLeadingLabel(SmatchetAreFaIconsLoaded(), ICON_FA_ARROWS_ROTATE,
+                                                               SmatchetLocalization::TranslateSource("Save & Sync"));
+        const float saveButtonWidth = ImGui::CalcTextSize(saveLabel.c_str()).x + 2.0f * style.FramePadding.x;
+        const float buttonSpaceNeeded = saveButtonWidth + style.ItemSpacing.x;
+        const float rowWidth = ImGui::GetContentRegionAvail().x;
+        const float minComboWidth = 4.0f * ImGui::GetFontSize();
+        const bool buttonOnOwnRow = rowWidth - buttonSpaceNeeded < minComboWidth;
+        const float comboWidth = buttonOnOwnRow ? rowWidth : rowWidth - buttonSpaceNeeded;
         ImGui::SetNextItemWidth(comboWidth);
         if (ImGui::BeginCombo("###prefsNavCombo", preview)) {
             for (const PrefsNavEntry& e : entries) {
@@ -228,9 +241,13 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
             }
             ImGui::EndCombo();
         }
-        // In narrow-width combo mode, place the Save & Sync button to the right of the combo
-        ImGui::SameLine();
-        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
+        // In narrow-width combo mode, place the Save & Sync button to the right of the combo, or
+        // below it when the row is too narrow for both.
+        if (!buttonOnOwnRow) {
+            ImGui::SameLine();
+        }
+        const float buttonWidth = buttonOnOwnRow ? std::min(saveButtonWidth, rowWidth) : saveButtonWidth;
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(buttonWidth, 0.0f))) {
             ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
         return;
@@ -254,7 +271,7 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         ImGui::Spacing();
         ImGui::Separator();
         if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr,
-                                       ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
+                                      ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
             ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
     }

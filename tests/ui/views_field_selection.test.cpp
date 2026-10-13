@@ -162,10 +162,63 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
     };
 }
 
+// The grid query strip's pre-edit snapshot is grid state. An editor reload (LoadBuffersFromView,
+// which the editor's Discard also runs) must leave it alone: dropping it while the strip is up left
+// the strip's Discard nothing to restore and wedged the layout autosave, which writes the view only
+// with the snapshot's confirmed query.
+void RegisterReseedKeepsGridQuerySnapshot(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsFieldSelection", "ReseedKeepsGridQuerySnapshot");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        ViewsDrawerStateGuard guard;
+        const bool dirty = g_ui.viewsDirty;
+        const bool hasSnapshot = g_ui.viewsHasOriginalSnapshot;
+        const ViewDefinition snapshot = g_ui.viewsOriginalSnapshot;
+        g_ui.cfg.UiMode = UiMode::Mobile;
+        g_ui.cfg.TrackerType = "Plane";
+        g_ui.cfg.BackendHasBeenReachable = true;
+        g_ui.mobilePage = MobilePage::Views;
+        g_ui.mobileDrawerOpen = true;
+
+        const bool drawerLive = YieldUntil(ctx, [] { return WindowIsLive("##MobileDrawerPanel"); });
+        IM_CHECK_NO_RET(drawerLive);
+        if (drawerLive) {
+            ctx->Yield();
+            ctx->Yield();
+            // The strip is up: an unconfirmed query with its pre-edit snapshot of this view.
+            g_ui.viewsDirty = true;
+            g_ui.viewsHasOriginalSnapshot = true;
+            g_ui.viewsOriginalSnapshot = g_ui.viewDraft;
+            g_ui.viewsOriginalSnapshot.Jql = "smatchet_confirmed_query_marker";
+
+            const std::string kSentinel = "smatchet_force_reseed_sentinel";
+            bool reloaded = false;
+            for (int i = 0; i < 300 && !reloaded; ++i) {
+                g_ui.mobileDrawerOpen = true;
+                g_ui.mobilePage = MobilePage::Views;
+                g_ui.viewDraftId = kSentinel;
+                ctx->Yield();
+                reloaded = g_ui.viewDraftId != kSentinel;
+            }
+            IM_CHECK_NO_RET(reloaded);
+            IM_CHECK_NO_RET(g_ui.viewsHasOriginalSnapshot);
+            IM_CHECK_NO_RET(g_ui.viewsOriginalSnapshot.Jql == "smatchet_confirmed_query_marker");
+        }
+        g_ui.viewsDirty = dirty;
+        g_ui.viewsHasOriginalSnapshot = hasSnapshot;
+        g_ui.viewsOriginalSnapshot = snapshot;
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterViewsFieldSelectionTests(ImGuiTestEngine* engine) {
     RegisterFieldSetReseedDropsStale(engine);
+    RegisterReseedKeepsGridQuerySnapshot(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

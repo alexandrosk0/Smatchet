@@ -92,7 +92,19 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d);
 
 class SmatchetUI {
   public:
+    SmatchetUI() = default;
+    /// Writes a layout edit still inside the autosave debounce, so it is not lost at exit. Both
+    /// hosts destroy the window before the AppController, whose destructor flushes and joins the
+    /// config-save worker this write is queued on.
+    ~SmatchetUI();
+    SmatchetUI(const SmatchetUI&) = delete;
+    SmatchetUI& operator=(const SmatchetUI&) = delete;
+
     void Draw(AppController& app);
+    /// End-of-frame work that must follow EVERY window of the frame, plugin windows included:
+    /// the Mobile->Desktop imgui.ini restore. Hosts call it after the plugin host's draw and
+    /// immediately before ImGui::Render(). Must be called on the UI thread.
+    void EndFrame();
 
     // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
@@ -101,9 +113,7 @@ class SmatchetUI {
                                            const IAppTicketMutations& ticketMutations, PreferencesFilter& filter) {
         annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations, filter);
     }
-    void OnPreferencesSaveAndSyncForwarded(AppController& app, UiDrawSession& d) {
-        onPreferencesSaveAndSync(app, d);
-    }
+    void OnPreferencesSaveAndSyncForwarded(AppController& app, UiDrawSession& d) { onPreferencesSaveAndSync(app, d); }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
     /// from cfg.Keybindings (rebuildKeybindingCache). The Keyboard Shortcuts editor +
@@ -215,6 +225,10 @@ class SmatchetUI {
         int actionIndex = -1; // index into cfg.Keybindings.Bindings of the owning action
     };
     std::vector<ParsedKeybinding> keybindingCache_;
+    // Wheel delta gathered across frames while a wheel binding's modifiers are held: a binding fires
+    // once per whole notch (|delta| >= 1), so a touchpad or high-resolution wheel that sends a small
+    // delta every frame does not fire on every frame. Reset when no wheel binding matches.
+    float wheelBindingAccum_ = 0.0f;
     // Per-action frame stamp of the last dispatch, sized at cache-rebuild time (never
     // per frame) and written only on a match. Two alias combos of the SAME action can
     // land in one frame (Ctrl held while both '=' and keypad '+' arrive), and the
@@ -365,6 +379,10 @@ class SmatchetUI {
     void drawSecondaryWindowsTail(AppController& app, UiDrawSession& d);
     void drawDockDebugOverlay(UiDrawSession& d);
     void drawEndOfFramePersistence(UiDrawSession& d);
+    /// Persists the views. While the grid's unsaved-query strip is up, the write carries the
+    /// confirmed query and the unconfirmed one stays in memory for the strip's Save/Discard.
+    /// Returns false (nothing written) when the confirmed query is unknown.
+    bool saveViewsKeepingConfirmedQuery(UiDrawSession& d);
 
     /// Hoisted Draw-body function-local `static`s. Behaviour-identical for this single
     /// SmatchetUI instance; promoting to members removes the statics so the section
@@ -499,6 +517,10 @@ class SmatchetUI {
     /// A latch left undrained would not just be dropped: it is session state, so a later
     /// desktop frame would apply it stale.
     void drainPaneDeferredActions(AppController& app, UiDrawSession& d);
+    /// The grid field-edit dispatch pump + chip decay, run once per frame by whichever host draws
+    /// (the desktop pane loop, or the mobile shell): panes only enqueue their edits.
+    void pumpGridFieldEditsOncePerFrame(AppController& app, UiDrawSession& d,
+                                        const TrackerConnectivityBannerForUi& banner);
     // Per-frame steady-state sync for the focused pane: follows the active view
     // (viewId/title), and on a focus SWITCH activates the pane's view + lets the
     // sync path swap the backend (Slice-2: one live context, focused pane drives it).

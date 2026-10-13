@@ -10,9 +10,12 @@
 // the Desktop->Mobile edge dropped the in-memory desktop layout without flushing it, so a
 // dock change inside ImGui's autosave window was lost.
 //
-// Fix: the edge frame still draws the mobile shell and swaps the ini back at end-of-frame,
-// so desktop windows first submit on the next frame against a tree the host has already
-// marked alive; the Desktop->Mobile edge flushes the desktop ini before detaching it.
+// Fix: the edge frame still draws the mobile shell and swaps the ini back in
+// SmatchetUI::EndFrame, after the plugin windows too, so desktop windows first submit on the
+// next frame against a tree the host has already marked alive; the Desktop->Mobile edge
+// flushes the desktop ini before detaching it. The Scripting window is opened for the test
+// because it is a plugin window: it is submitted on the edge frame itself, after
+// SmatchetUI::Draw, so it is the window an in-Draw restore would undock.
 //
 // Why the check is FIRST-FRAME rather than eventual: repairTopLevelWindow re-docks a
 // floating canonical window into its DEFAULT slot a frame later, which hides the bug for
@@ -80,21 +83,29 @@ void RegisterRoundTripKeepsDockingVariant(ImGuiTestEngine* engine) {
         const UiMode origUiMode = g_ui.cfg.UiMode;
         const MobilePage origPage = g_ui.mobilePage;
         const bool origDrawerOpen = g_ui.mobileDrawerOpen;
+        const bool origScripting = g_ui.showLuaAutomationWindow;
+        auto restore = [&]() {
+            g_ui.cfg.UiMode = origUiMode;
+            g_ui.mobilePage = origPage;
+            g_ui.mobileDrawerOpen = origDrawerOpen;
+            g_ui.showLuaAutomationWindow = origScripting;
+        };
 
         // Pin Desktop and let the layout settle so the snapshot sees a steady desktop tree.
         g_ui.cfg.UiMode = UiMode::Desktop;
+        g_ui.showLuaAutomationWindow = true;
         for (int i = 0; i < 8; ++i) {
             ctx->Yield();
         }
         if (::ImGui::GetIO().IniFilename == nullptr) {
             ctx->LogInfo("skip: no desktop imgui.ini attached — nothing to round-trip");
-            g_ui.cfg.UiMode = origUiMode;
+            restore();
             return;
         }
         std::vector<DockedWindowRecord> docked = SnapshotDockedWindows();
         if (docked.empty()) {
             ctx->LogInfo("skip: no docked desktop window pre-flip — headless/non-default host layout");
-            g_ui.cfg.UiMode = origUiMode;
+            restore();
             return;
         }
 
@@ -136,10 +147,14 @@ void RegisterRoundTripKeepsDockingVariant(ImGuiTestEngine* engine) {
             ctx->LogInfo("note: %d docked window(s) were not re-submitted within the frame budget",
                          static_cast<int>(remaining));
         }
+        // The round-trip must have actually come back: the desktop ini re-attached and at least
+        // one desktop window re-submitted. Without these a restore that never runs (the app stuck
+        // on the mobile shell) re-submits nothing and passes with no dock check at all.
+        IM_CHECK_NO_RET(!g_ui.mobileDockSeeded);
+        IM_CHECK_NO_RET(::ImGui::GetIO().IniFilename != nullptr);
+        IM_CHECK_NO_RET(!shellLive || remaining < docked.size());
 
-        g_ui.cfg.UiMode = origUiMode;
-        g_ui.mobilePage = origPage;
-        g_ui.mobileDrawerOpen = origDrawerOpen;
+        restore();
         ctx->Yield();
     };
 }

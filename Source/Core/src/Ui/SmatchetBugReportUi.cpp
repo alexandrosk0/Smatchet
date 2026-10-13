@@ -193,11 +193,11 @@ void DrawCrashDumpConsent(UiDrawSession& d) {
     ImGui::SameLine();
     SmatchetHelpMarker::Render(
         "bugreport.crash_dump.help",
-        "The minidump is what makes the crash diagnosable: it carries the faulting thread's call "
-        "stack and CPU state. Module file paths are stripped, and no heap memory is captured, so "
-        "in-memory secrets (API tokens, PATs) are not swept in — but the thread's own stack memory "
-        "is included, and stack memory can hold fragments of whatever the app was working on. "
-        "Untick to file the report without it.");
+        "The minidump is what makes the crash diagnosable: it carries the call stacks and CPU "
+        "state of every application thread. Module file paths are stripped, and no heap memory is "
+        "captured, so in-memory secrets (API tokens, PATs) are not swept in — but each thread's "
+        "stack memory is included, and stack memory can hold fragments of whatever the app was "
+        "working on (a request being sent, text being typed). Untick to file the report without it.");
     if (d.bugReportInclCrashDump) {
         ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().WarningText);
         ImGui::TextWrapped("%s", SmatchetLocalization::Format(
