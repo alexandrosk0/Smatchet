@@ -367,11 +367,11 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
     PlanePageLoopResult result;
     const int pageSize = smatchet::search_guards::kPageSize;
     // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
-    // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
-    // and matches the per-server safety limit in JiraIssueSearch.cpp.
-    constexpr int kMaxPlanePages = smatchet::search_guards::kPlaneMaxPages;
-    constexpr size_t kMaxTotalFetchBytes = smatchet::search_guards::kPlaneMaxTotalFetchBytes;
-    constexpr size_t kMaxResultCount = smatchet::search_guards::kPlaneMaxResultCount;
+    // The page, byte and result caps are user-tunable (Config/TunableLimits.h) and mirror the per-server
+    // safety limits in JiraIssueSearch.cpp.
+    const int kMaxPlanePages = smatchet::search_guards::PlaneMaxPages();
+    const size_t kMaxTotalFetchBytes = smatchet::search_guards::PlaneMaxTotalFetchBytes();
+    const size_t kMaxResultCount = smatchet::search_guards::PlaneMaxResultCount();
     std::string listCursor;
 
     while (true) {
@@ -438,16 +438,18 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
             onBatch(std::move(pageIssues));
         }
 
-        // Guard result count to prevent memory exhaustion from massive result sets.
-        if (summary.FetchedCount > kMaxResultCount) {
+        // Phase 6: cursor pagination — advance or terminate.
+        listCursor = smatchet::plane::NextPaginationCursor(page.Body);
+
+        // Guard result count to prevent memory exhaustion from massive result sets. The cap is a soft
+        // bound rounded up to a whole page, and it only counts as truncation when more pages remain:
+        // a walk that just finished its last page is complete however many rows it held.
+        if (summary.FetchedCount > kMaxResultCount && !listCursor.empty()) {
             AppendPlaneTruncationWarning(summary, "Plane result count exceeded " + std::to_string(kMaxResultCount) +
                                                       " issues; remaining issues not fetched. Narrow your view.");
             result.EndedCleanly = false;
             break;
         }
-
-        // Phase 6: cursor pagination — advance or terminate.
-        listCursor = smatchet::plane::NextPaginationCursor(page.Body);
         if (listCursor.empty()) {
             result.EndedCleanly = true;
             break;
@@ -625,7 +627,7 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     // loop (was a §2.1 P1 bug: raw cpr::Get bypassed both). Classification via TrackerError
     // also fixes the second §2.1 P1: a 404 from a stale base URL was wrongly TransportDown.
     const cpr::Response resp =
-        TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+        TrackerGetLogged("PlaneClient", url, headers, TrackerProbeConnectTimeoutMs(), TrackerProbeOverallTimeoutMs());
     // §B2: shared reachability-probe classifier (see TrackerHttpClient.h). The per-backend switch
     // was hoisted there so Jira / Plane (and future backends) share one status → probe-kind matrix.
     return ClassifyReachabilityProbe(resp);

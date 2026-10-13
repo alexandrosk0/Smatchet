@@ -340,9 +340,9 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
                       TrackerIssueFetchSummary& summary) {
     JiraPageLoopResult result;
     std::string nextPageToken;
-    const int kMaxPages = smatchet::search_guards::kJiraMaxPages;
-    const size_t kMaxTotalFetchBytes = smatchet::search_guards::kJiraMaxTotalFetchBytes;
-    const size_t kMaxResultCount = smatchet::search_guards::kJiraMaxResultCount;
+    const int kMaxPages = smatchet::search_guards::JiraMaxPages();
+    const size_t kMaxTotalFetchBytes = smatchet::search_guards::JiraMaxTotalFetchBytes();
+    const size_t kMaxResultCount = smatchet::search_guards::JiraMaxResultCount();
 
     for (int page = 1; page <= kMaxPages; ++page) {
         if (shouldCancel && shouldCancel()) {
@@ -390,8 +390,10 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
             summary.Error = TrackerErrorParse(summary.FetchError);
         }
 
-        // Guard result count to prevent memory exhaustion from massive result sets.
-        if (summary.FetchedCount > kMaxResultCount) {
+        // Guard result count to prevent memory exhaustion from massive result sets. The cap is a soft
+        // bound rounded up to a whole page, and it only counts as truncation when more pages remain:
+        // a walk that just finished its last page is complete however many rows it held.
+        if (summary.FetchedCount > kMaxResultCount && !outcome.Stop && !outcome.NextToken.empty()) {
             AppendJiraTruncationWarning(summary, "Jira result count exceeded " + std::to_string(kMaxResultCount) +
                                                      " issues; remaining issues not fetched. Narrow the view's JQL.");
             result.endedCleanly = false;

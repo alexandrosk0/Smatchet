@@ -1,5 +1,6 @@
 #include "Tracker/TrackerQuerySuggestCommon.h"
 
+#include "TunableLimits.h"
 #include "StringUtil.h"
 
 #include <algorithm>
@@ -291,9 +292,10 @@ void SortAndCapQuerySuggestions(std::vector<QuerySuggestion>& items) {
         return na < nb;
     };
     std::sort(items.begin(), items.end(), labelLessAscii);
-    constexpr int kMaxSuggestions = 80;
-    if (static_cast<int>(items.size()) > kMaxSuggestions) {
-        items.resize(static_cast<size_t>(kMaxSuggestions));
+    // User-tunable cap (limits::Get().QuerySuggestMax, default 80).
+    const int maxSuggestions = smatchet::limits::Get().QuerySuggestMax;
+    if (static_cast<int>(items.size()) > maxSuggestions) {
+        items.resize(static_cast<size_t>(maxSuggestions));
     }
 }
 

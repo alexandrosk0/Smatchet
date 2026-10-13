@@ -1,9 +1,18 @@
 #include "SmatchetToast.h"
+#include "TunableLimits.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "imgui_internal.h" // BringWindowToDisplayFront — toast hit-window stays above all windows
 #include <algorithm>
 #include <cstdio>
+
+std::size_t SmatchetToastManager::MaxLiveToasts() {
+    return static_cast<std::size_t>(smatchet::limits::Get().ToastMaxLive);
+}
+
+std::size_t SmatchetToastManager::HistoryCap() {
+    return static_cast<std::size_t>(smatchet::limits::Get().ToastHistoryMax);
+}
 
 SmatchetToastManager& SmatchetToastManager::Instance() {
     static SmatchetToastManager instance;
@@ -31,7 +40,8 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     // (e.g. one toast per failed bulk edit) would otherwise pile past the viewport top
     // and demand one dismissal click each. Oldest-first eviction — the evicted toast's
     // history entry and, for errors, the unread-error badge keep the trail visible.
-    while (m_toasts.size() > kMaxLiveToasts) {
+    const std::size_t maxLive = MaxLiveToasts();
+    while (m_toasts.size() > maxLive) {
         m_toasts.erase(m_toasts.begin());
     }
     if (type == ToastType::Error) {
@@ -45,7 +55,7 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     entry.Message = message;
     entry.Type = type;
     entry.RowAction = std::move(rowAction);
-    PushBoundedHistory(m_history, std::move(entry), kHistoryCap);
+    PushBoundedHistory(m_history, std::move(entry), HistoryCap());
 }
 
 bool SmatchetToastManager::ConsumeOpenCenterRequest() {

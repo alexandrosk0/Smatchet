@@ -196,7 +196,7 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
     }
     {
         // Cap contention: 50 users match only mid-name, one matches by prefix. The prefix
-        // match must survive the kMaxUsers cut — that is what the two-pass order buys.
+        // match must survive the user-cap cut — that is what the two-pass order buys.
         std::vector<TrackerUser> capUsers;
         for (int i = 0; i < 50; ++i) {
             TrackerUser u;
@@ -241,7 +241,7 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
         CHECK(HasInsert(out, "\"Team Zeta\""));
     }
     {
-        // 51 matching users → the kMaxUsers cap binds at exactly 50 (pins the >= bound).
+        // 51 matching users → the JqlSuggestMaxUsers cap binds at exactly 50 (pins the >= bound).
         std::vector<TrackerUser> capUsers;
         for (int i = 0; i < 51; ++i) {
             TrackerUser u;

@@ -6,28 +6,34 @@
 // bounded by json_safe::kDefaultMaxBytes (Json/BoundedJsonParse.h). A loop that stops on any of
 // these sets a soft warning on its fetch summary, so a cut-short result never reads as complete.
 
+#include "TunableLimits.h"
+
 #include <cstddef>
 
 namespace smatchet {
 namespace search_guards {
 
-/// Rows asked for per page by every backend.
+/// Rows asked for per page by every backend (server protocol; not user-tunable).
 constexpr int kPageSize = 100;
 
-constexpr int kJiraMaxPages = 50;
-constexpr std::size_t kJiraMaxTotalFetchBytes = 100u * 1024u * 1024u;
-/// Reached only when the server returns more rows per page than kPageSize (the page cap bounds a
-/// well-behaved server below it).
-constexpr std::size_t kJiraMaxResultCount = 10000u;
+// The ceilings below are user-tunable (Config/TunableLimits.h, config.json "limits"); each call reads the
+// currently published value, so callers snapshot it once before their page loop.
 
-constexpr int kPlaneMaxPages = 50;
-constexpr std::size_t kPlaneMaxTotalFetchBytes = 100u * 1024u * 1024u;
-constexpr std::size_t kPlaneMaxResultCount = 10000u; ///< as kJiraMaxResultCount
+inline int JiraMaxPages() { return limits::Get().JiraSearchMaxPages; }
+inline std::size_t JiraMaxTotalFetchBytes() { return limits::MiB(limits::Get().JiraSearchMaxFetchMiB); }
+/// Soft cap on accumulated rows; a well-behaved server may reach it before the page cap, so a
+/// truncated result carries a warning.
+inline std::size_t JiraMaxResultCount() { return static_cast<std::size_t>(limits::Get().JiraSearchMaxResults); }
 
-/// GitHub search returns at most 1000 items (10 pages of 100), the REST search API's own limit.
-constexpr int kGitHubMaxPages = 10;
-constexpr std::size_t kGitHubMaxTotalFetchBytes = 50u * 1024u * 1024u;
-constexpr std::size_t kGitHubMaxResultCount = 5000u; ///< as kJiraMaxResultCount
+inline int PlaneMaxPages() { return limits::Get().PlaneSearchMaxPages; }
+inline std::size_t PlaneMaxTotalFetchBytes() { return limits::MiB(limits::Get().PlaneSearchMaxFetchMiB); }
+inline std::size_t PlaneMaxResultCount() { return static_cast<std::size_t>(limits::Get().PlaneSearchMaxResults); }
+
+/// GitHub search returns at most 1000 items (10 pages of 100), the REST search API's own limit
+/// (so the page-cap setting is clamped to 10 in TunableLimits.h).
+inline int GitHubMaxPages() { return limits::Get().GitHubSearchMaxPages; }
+inline std::size_t GitHubMaxTotalFetchBytes() { return limits::MiB(limits::Get().GitHubSearchMaxFetchMiB); }
+inline std::size_t GitHubMaxResultCount() { return static_cast<std::size_t>(limits::Get().GitHubSearchMaxResults); }
 
 } // namespace search_guards
 } // namespace smatchet

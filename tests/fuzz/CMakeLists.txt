@@ -107,6 +107,7 @@ smatchet_add_fuzz_target(fuzz_markdown_adf
         "${_fuzz_core}/include"
         "${_fuzz_core}/include/Ui"
         "${_fuzz_core}/include/Privacy"
+        "${_fuzz_core}/include/Config"
     LIBS
         md4c
         nlohmann_json::nlohmann_json
@@ -116,7 +117,8 @@ smatchet_add_fuzz_target(fuzz_markdown_adf
 # Both AI-stream drivers compile ${_fuzz_logger_srcs}, so both need
 # include/Privacy: TextRedaction.cpp bare-includes "TextRedaction.h" (the header
 # lives under include/Privacy/). The markdown target above carries the same dir
-# for the same reason. No include/Ui — neither parser nor the logger srcs touch Ui.
+# for the same reason. include/Config carries TunableLimits.h (Logger.cpp bare-includes it for the log
+# ring cap). No include/Ui — neither parser nor the logger srcs touch Ui.
 
 # AiSseParser::Feed — untrusted Server-Sent-Events byte stream (OpenAI/Anthropic
 # chat completions) -> framed events. Closure: AiSseParser.cpp + the shared logger
@@ -130,6 +132,7 @@ smatchet_add_fuzz_target(fuzz_ai_sse
     INCLUDES
         "${_fuzz_core}/include"
         "${_fuzz_core}/include/Privacy"
+        "${_fuzz_core}/include/Config"
     CORPUS ai_sse)
 
 # AiNdjsonParser::Feed — untrusted newline-delimited JSON byte stream (Ollama
@@ -143,6 +146,7 @@ smatchet_add_fuzz_target(fuzz_ai_ndjson
     INCLUDES
         "${_fuzz_core}/include"
         "${_fuzz_core}/include/Privacy"
+        "${_fuzz_core}/include/Config"
     LIBS
         nlohmann_json::nlohmann_json
     CORPUS ai_ndjson)

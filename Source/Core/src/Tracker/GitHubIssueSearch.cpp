@@ -5,6 +5,7 @@
 #include "GitHubIssueSearchMapping.h"
 #include "GitHubQueryFromJql.h"
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "Tracker/SearchFetchGuards.h"
 #include "TrackerHttpUtils.h"
@@ -27,18 +28,14 @@ namespace github {
 
 namespace {
 
-// 30s overall budget for issue fetching (vs probe's 5s) — accommodates
-// realistic per-page response times on cold backends + the 10-page worst case.
-constexpr long kGitHubFetchConnectTimeoutMs = 5000;
-constexpr long kGitHubFetchOverallTimeoutMs = 30000;
+// The connect/overall fetch timeouts (limits::Get().TrackerConnectTimeoutMs / TrackerOverallTimeoutMs)
+// are read per request; the overall budget must accommodate realistic per-page response times on
+// cold backends + the 10-page worst case.
 
 // GitHub GraphQL search caps at 100 nodes/page (mirrors REST per_page=100).
-// We cap at 10 pages = 1000 items, same ceiling as the GitHub REST search
-// API hard limit. Surface a Warning when reached.
+// The page cap (limits::Get().GitHubSearchMaxPages) is clamped to 10 pages = 1000 items, the
+// GitHub REST search API hard limit. Surface a Warning when reached.
 constexpr int kGitHubPerPage = smatchet::search_guards::kPageSize;
-constexpr int kGitHubMaxPages = smatchet::search_guards::kGitHubMaxPages;
-constexpr size_t kGitHubMaxTotalFetchBytes = smatchet::search_guards::kGitHubMaxTotalFetchBytes;
-constexpr size_t kGitHubMaxResultCount = smatchet::search_guards::kGitHubMaxResultCount;
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
@@ -257,6 +254,9 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
     bool reachedShortPage = false;
     std::string cursor;           // empty → page 1; subsequent pages use endCursor.
     size_t totalFetchedBytes = 0; // cumulative response size guard
+    const int kGitHubMaxPages = smatchet::search_guards::GitHubMaxPages();
+    const size_t kGitHubMaxTotalFetchBytes = smatchet::search_guards::GitHubMaxTotalFetchBytes();
+    const size_t kGitHubMaxResultCount = smatchet::search_guards::GitHubMaxResultCount();
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
@@ -317,8 +317,9 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
         bool isLastPage = false;
         bool stopLoop = false;
 
-        // Guard result count to prevent memory exhaustion from massive result sets.
-        if (accum.size() + pageTickets.size() > kGitHubMaxResultCount) {
+        // Guard result count to prevent memory exhaustion from massive result sets. Only a
+        // truncation when more pages remain; the final page is never reported as cut short.
+        if (hasNext && accum.size() + pageTickets.size() > kGitHubMaxResultCount) {
             AppendOutWarning(outWarning, std::string("GitHub result count exceeds ") +
                                              std::to_string(kGitHubMaxResultCount) + " items; stopped.");
             LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: result count (%zu total) exceeds limit (%zu)",
@@ -372,8 +373,10 @@ bool RunCommitFetch(const std::string& baseUrl, const cpr::Header& headers, cons
                     const std::function<void(const std::vector<CachedTicket>&, bool)>& emitPage,
                     std::string* outWarning) {
     const std::string url = baseUrl + BuildCommitListUrlSuffix(owner, repo, kGitHubPerPage);
+    const limits::LimitsConfig lim = limits::Get();
     const cpr::Response resp =
-        TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
+        TrackerGetLogged("GitHubClient", url, headers, static_cast<long>(lim.TrackerConnectTimeoutMs),
+                         static_cast<long>(lim.TrackerOverallTimeoutMs));
 
     if (resp.status_code != 200) {
         const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
@@ -652,6 +655,7 @@ FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
     }
 
     const cpr::Header headers = BuildGitHubHeaders(pat);
+    const limits::LimitsConfig lim = limits::Get();
     for (const std::string& key : issueKeys) {
         ParsedIssueKey parsed;
         if (!ParseGitHubIssueKey(key, parsed)) {
@@ -661,7 +665,8 @@ FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
         const std::string url =
             baseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
         const cpr::Response resp =
-            TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
+            TrackerGetLogged("GitHubClient", url, headers, static_cast<long>(lim.TrackerConnectTimeoutMs),
+                             static_cast<long>(lim.TrackerOverallTimeoutMs));
         if (resp.status_code != 200) {
             const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             const std::string outError = std::string("GitHub fetch error for ") + key + " (HTTP " +

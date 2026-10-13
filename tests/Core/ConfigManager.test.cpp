@@ -821,3 +821,138 @@ TEST_CASE("ConfigManager Load clamps quick_create_ctx_log_lines to [1, 300]") {
         CHECK(ConfigManager::Load().QuickCreateCtxLogLines == 300);
     }
 }
+
+// ---- Limits (Config/TunableLimits.h): tunable caps / timeouts / cache sizes ----
+
+TEST_CASE("Limits table: every default sits inside its own clamp range and matches the struct") {
+    const smatchet::limits::LimitsConfig def;
+    std::size_t n = 0;
+    const smatchet::limits::LimitDescriptor* rows = smatchet::limits::Descriptors(n);
+    REQUIRE(n > 0);
+    for (std::size_t i = 0; i < n; ++i) {
+        INFO("limit key: " << rows[i].key);
+        CHECK(rows[i].minValue <= rows[i].maxValue);
+        CHECK(rows[i].defaultValue >= rows[i].minValue);
+        CHECK(rows[i].defaultValue <= rows[i].maxValue);
+        CHECK(def.*(rows[i].member) == rows[i].defaultValue);
+        for (std::size_t k = i + 1; k < n; ++k) {
+            CHECK(std::string(rows[i].key) != std::string(rows[k].key)); // keys are persisted: no duplicates
+        }
+    }
+}
+
+TEST_CASE("Limits: search result-count defaults are 500 per backend") {
+    const smatchet::limits::LimitsConfig def;
+    CHECK(def.JiraSearchMaxResults == 500);
+    CHECK(def.PlaneSearchMaxResults == 500);
+    CHECK(def.GitHubSearchMaxResults == 500);
+}
+
+TEST_CASE("ConfigManager Save/Load round-trips limits and publishes them to limits::Get()") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerConfig in;
+    in.Limits.JiraSearchMaxResults = 1234;
+    in.Limits.TrackerOverallTimeoutMs = 45000;
+    in.Limits.ToastMaxLive = 9;
+    ConfigManager::Save(in);
+    ConfigManager::InvalidateCache();
+
+    const TrackerConfig out = ConfigManager::Load();
+    CHECK(out.Limits.JiraSearchMaxResults == 1234);
+    CHECK(out.Limits.TrackerOverallTimeoutMs == 45000);
+    CHECK(out.Limits.ToastMaxLive == 9);
+    // Untouched keys keep their defaults.
+    CHECK(out.Limits.PlaneSearchMaxResults == smatchet::limits::LimitsConfig().PlaneSearchMaxResults);
+
+    const smatchet::limits::LimitsConfig live = smatchet::limits::Get();
+    CHECK(live.JiraSearchMaxResults == 1234);
+    CHECK(live.TrackerOverallTimeoutMs == 45000);
+    CHECK(live.ToastMaxLive == 9);
+
+    smatchet::limits::Set(smatchet::limits::LimitsConfig()); // don't leak into other tests
+}
+
+TEST_CASE("ConfigManager Load clamps limits into range and ignores non-integer values") {
+    smatchet_tests::TestEnvGuard env;
+
+    SUBCASE("out-of-range values clamp to the table's min/max") {
+        TrackerConfig in;
+        in.Limits.ToastMaxLive = 100000;       // max 50
+        in.Limits.TrackerHttpMaxAttempts = -3; // min 1
+        in.Limits.GitHubSearchMaxPages = 9999; // max 10 (REST search API ceiling)
+        ConfigManager::Save(in);
+        ConfigManager::InvalidateCache();
+        const TrackerConfig out = ConfigManager::Load();
+        CHECK(out.Limits.ToastMaxLive == 50);
+        CHECK(out.Limits.TrackerHttpMaxAttempts == 1);
+        CHECK(out.Limits.GitHubSearchMaxPages == 10);
+    }
+
+    SUBCASE("hand-edited garbage keeps the default and does not drop sibling keys") {
+        // One limit is a string, a sibling stays valid.
+        {
+            std::ofstream o(ConfigManager::GetConfigPath(), std::ios::trunc);
+            o << "{\"read_only_mode\":false,\"limits\":{\"toast_history_max\":\"lots\",\"toast_max_live\":7}}";
+        }
+
+        ConfigManager::InvalidateCache();
+        const TrackerConfig out = ConfigManager::Load();
+        CHECK(out.Limits.ToastHistoryMax == smatchet::limits::LimitsConfig().ToastHistoryMax);
+        CHECK(out.Limits.ToastMaxLive == 7);
+    }
+
+    smatchet::limits::Set(smatchet::limits::LimitsConfig());
+}
+
+TEST_CASE("Limits: defaults equal the constants they replaced (pinned to literals)") {
+    // The refactor that introduced TunableLimits.h must not move behaviour. Literals here are the
+    // pre-refactor constexpr values; a deliberate default change updates this test on purpose.
+    const smatchet::limits::LimitsConfig d;
+    // Search / pagination.
+    CHECK(d.JiraSearchMaxPages == 50);
+    CHECK(d.JiraSearchMaxFetchMiB == 100);
+    CHECK(d.PlaneSearchMaxPages == 50);
+    CHECK(d.PlaneSearchMaxFetchMiB == 100);
+    CHECK(d.GitHubSearchMaxPages == 10);
+    CHECK(d.GitHubSearchMaxFetchMiB == 50);
+    CHECK(d.GitHubCommentsMaxPages == 50);
+    CHECK(d.GitHubProjectsV2MaxPages == 5);
+    CHECK(d.JiraActivityMaxPages == 20);
+    CHECK(d.PlaneActivityMaxPages == 5);
+    CHECK(d.LinearMaxPages == 20);
+    CHECK(d.FieldCatalogMaxPages == 50);
+    // HTTP.
+    CHECK(d.TrackerConnectTimeoutMs == 5000);
+    CHECK(d.TrackerOverallTimeoutMs == 30000);
+    CHECK(d.TrackerProbeConnectTimeoutMs == 2000);
+    CHECK(d.TrackerProbeOverallTimeoutMs == 5000);
+    CHECK(d.TrackerHttpMaxAttempts == 3);
+    CHECK(d.TrackerHttpBaseRetryDelayMs == 250);
+    CHECK(d.TrackerHttpMaxRetryDelayMs == 4000);
+    CHECK(d.TrackerHttpMaxRetryAfterHonorMs == 30000);
+    CHECK(d.P4ProcessTimeoutMs == 120000);
+    CHECK(d.P4CaptureMaxMiB == 4);
+    CHECK(d.AttachmentDownloadMaxMiB == 50);
+    CHECK(d.AttachmentDownloadTimeoutMs == 120000);
+    // Caches / history.
+    CHECK(d.ImageTextureCacheMaxEntries == 384);
+    CHECK(d.ImageTextureCacheMaxMiB == 96);
+    CHECK(d.LookupMaxStoredUsers == 50000);
+    CHECK(d.LookupMaxStoredProjects == 10000);
+    CHECK(d.AiMaxCachedPlans == 256);
+    CHECK(d.AiPlanCacheMaxMiB == 4);
+    CHECK(d.NavigationHistoryMax == 200);
+    CHECK(d.ToastHistoryMax == 200);
+    CHECK(d.ToastMaxLive == 6);
+    CHECK(d.LogBufferMaxEntries == 1000);
+    CHECK(d.CommandRecentsMax == 16);
+    CHECK(d.McpActivityLogMax == 100);
+    // UI / feature rows.
+    CHECK(d.AutocompleteMaxResolved == 200);
+    CHECK(d.AutocompleteMaxAsyncRows == 40);
+    CHECK(d.AutocompleteMaxMerged == 120);
+    CHECK(d.AiContextRowsMax == 50);
+    CHECK(d.AiContextAuditMax == 20);
+    CHECK(d.LogLinesDrawnMax == 8000);
+}

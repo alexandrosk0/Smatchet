@@ -76,7 +76,7 @@ class CommandRegistry {
     void LoadRecents();
 
   private:
-    static constexpr size_t kRecentsMax = 16;
+    // Recents cap: limits::Get().CommandRecentsMax (default 16), read where recents_ is mutated.
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Command> byName_;

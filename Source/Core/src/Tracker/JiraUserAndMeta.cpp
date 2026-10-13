@@ -5,6 +5,7 @@
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -46,7 +47,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     // org with more members than one page — see the "not all users loaded" report this
     // fixed.
     constexpr int kPageSize = 1000;
-    constexpr int kMaxPages = 50; // 50,000 users — sanity bound for a UI roster
+    const int kMaxPages = smatchet::limits::Get().JiraUsersMaxPages; // sanity bound for a UI roster
     std::set<std::string> seenAccountIds;
     std::set<std::string> seenDisplayNames;
     size_t startAt = 0;
@@ -600,7 +601,7 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(con
 
     // GET /rest/api/3/group/member — paginated (startAt/maxResults, isLast terminator).
     const int kPageSize = 50;
-    const int kMaxPages = 20; // 1000 members — sanity bound for a UI roster
+    const int kMaxPages = smatchet::limits::Get().JiraMembersMaxPages; // sanity bound for a UI roster
     std::unordered_set<std::string> seen;
     for (int page = 0; page < kMaxPages; ++page) {
         const std::string url = base + "/rest/api/3/group/member?groupname=" + UrlEncode(groupName) +

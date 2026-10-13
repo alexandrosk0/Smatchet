@@ -1,5 +1,6 @@
 #include "Logger.h"
 
+#include "TunableLimits.h"
 #include "Privacy/TextRedaction.h"
 #include "StringUtil.h"
 
@@ -105,7 +106,11 @@ void Logger::Log(LogLevel level, const std::string& message) {
             return;
         }
 
-        if (m_entries.size() >= kMaxEntries) {
+        // Read after the level filter (most calls exit above). The limits mutex is a leaf lock
+        // that never logs or takes m_mutex, so nesting it here cannot deadlock. `while` (not `if`)
+        // so a lowered cap trims the ring on the next log call instead of staying above the limit.
+        const std::size_t maxEntries = static_cast<std::size_t>(smatchet::limits::Get().LogBufferMaxEntries);
+        while (m_entries.size() >= maxEntries && !m_entries.empty()) {
             m_entries.pop_front(); // O(1) on deque, was O(N) on vector::erase(begin()).
         }
         m_entries.push_back(entry); // copy; `entry` still owned for the file-sink push below

@@ -4,6 +4,7 @@
 
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
+#include "TunableLimits.h"
 #include "PlaneQuerySuggestEngine.h"
 #include "Tracker/JqlSuggestEnginePure.h"
 #include "Tracker/JqlUserDisplayPure.h"
@@ -32,7 +33,6 @@ namespace {
 /// in-place name rewrite of the query buffer can still name the account after the popup
 /// closes. De-duplicated by accountId and capped — this outlives a single search by design.
 static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
-    constexpr size_t kMaxResolved = 200;
     for (auto& known : st.jqlAcpSearchResolvedUsers) {
         if (known.AccountId != u.AccountId) {
             continue;
@@ -46,7 +46,9 @@ static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
         }
         return;
     }
-    if (st.jqlAcpSearchResolvedUsers.size() >= kMaxResolved) {
+    // User-tunable cap (limits::Get().AutocompleteMaxResolved, default 200); read at the insert point.
+    const size_t maxResolved = static_cast<size_t>(smatchet::limits::Get().AutocompleteMaxResolved);
+    while (!st.jqlAcpSearchResolvedUsers.empty() && st.jqlAcpSearchResolvedUsers.size() >= maxResolved) {
         st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());
     }
     st.jqlAcpSearchResolvedUsers.push_back(u);
@@ -60,7 +62,8 @@ static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
 /// token the catalog path builds (BuildJqlUserInsert) so async and catalog rows dedup
 /// against each other and a pick shows the user's name in the input, not the account id.
 static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vector<TrackerUser>& users) {
-    constexpr int kMaxAsyncRows = 40;
+    // User-tunable cap (limits::Get().AutocompleteMaxAsyncRows, default 40).
+    const int maxAsyncRows = smatchet::limits::Get().AutocompleteMaxAsyncRows;
     st.jqlAcpAsyncUserItems.clear();
     std::unordered_set<std::string> seen;
     for (const auto& u : users) {
@@ -77,7 +80,7 @@ static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vecto
             label += " (" + u.EmailAddress + ")";
         }
         st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), std::move(ins)});
-        if (static_cast<int>(st.jqlAcpAsyncUserItems.size()) >= kMaxAsyncRows) {
+        if (static_cast<int>(st.jqlAcpAsyncUserItems.size()) >= maxAsyncRows) {
             break;
         }
     }
@@ -93,9 +96,10 @@ static void MergeAsyncUserSuggestionsIntoBuild(const JqlEditorState& st, QuerySu
             b.Items.push_back(a);
         }
     }
-    constexpr int kMaxMerged = 120;
-    if (static_cast<int>(b.Items.size()) > kMaxMerged) {
-        b.Items.resize(static_cast<size_t>(kMaxMerged));
+    // User-tunable cap (limits::Get().AutocompleteMaxMerged, default 120).
+    const int maxMerged = smatchet::limits::Get().AutocompleteMaxMerged;
+    if (static_cast<int>(b.Items.size()) > maxMerged) {
+        b.Items.resize(static_cast<size_t>(maxMerged));
     }
 }
 

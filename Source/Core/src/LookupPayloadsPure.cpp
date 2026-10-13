@@ -1,6 +1,7 @@
 #include "LookupPayloadsPure.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 
 #include <nlohmann/json.hpp>
 
@@ -66,8 +67,12 @@ bool ParseFlatArray(const std::string& json, std::size_t maxItems, std::size_t m
 
 } // namespace
 
+std::size_t MaxStoredUsers() { return static_cast<std::size_t>(limits::Get().LookupMaxStoredUsers); }
+
+std::size_t MaxStoredProjects() { return static_cast<std::size_t>(limits::Get().LookupMaxStoredProjects); }
+
 std::string SerializeUsers(const std::vector<TrackerUser>& users) {
-    return SerializeFlatArray(users, kMaxStoredUsers, kMaxUsersPayloadBytes, [](const TrackerUser& user) {
+    return SerializeFlatArray(users, MaxStoredUsers(), kMaxUsersPayloadBytes, [](const TrackerUser& user) {
         return nlohmann::json::object({{"accountId", user.AccountId},
                                        {"displayName", user.DisplayName},
                                        {"email", user.EmailAddress},
@@ -77,7 +82,7 @@ std::string SerializeUsers(const std::vector<TrackerUser>& users) {
 }
 
 bool ParseUsers(const std::string& json, std::vector<TrackerUser>& out) {
-    return ParseFlatArray(json, kMaxStoredUsers, kMaxUsersPayloadBytes, kUserFields, out,
+    return ParseFlatArray(json, MaxStoredUsers(), kMaxUsersPayloadBytes, kUserFields, out,
                           [](const nlohmann::json& entry, TrackerUser& user) {
                               user.AccountId = StringMember(entry, "accountId");
                               if (user.AccountId.empty()) {
@@ -93,13 +98,13 @@ bool ParseUsers(const std::string& json, std::vector<TrackerUser>& out) {
 }
 
 std::string SerializeProjects(const std::vector<RemoteProject>& projects) {
-    return SerializeFlatArray(projects, kMaxStoredProjects, kMaxProjectsPayloadBytes, [](const RemoteProject& p) {
+    return SerializeFlatArray(projects, MaxStoredProjects(), kMaxProjectsPayloadBytes, [](const RemoteProject& p) {
         return nlohmann::json::object({{"id", p.id}, {"key", p.key}, {"name", p.displayName}});
     });
 }
 
 bool ParseProjects(const std::string& json, std::vector<RemoteProject>& out) {
-    return ParseFlatArray(json, kMaxStoredProjects, kMaxProjectsPayloadBytes, kProjectFields, out,
+    return ParseFlatArray(json, MaxStoredProjects(), kMaxProjectsPayloadBytes, kProjectFields, out,
                           [](const nlohmann::json& entry, RemoteProject& p) {
                               p.id = StringMember(entry, "id");
                               p.key = StringMember(entry, "key");

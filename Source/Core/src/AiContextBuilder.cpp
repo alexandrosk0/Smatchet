@@ -4,6 +4,7 @@
 #include "BackendAuditTrail.h"
 #include "CachedTicketTypes.h"
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 
 #include <nlohmann/json.hpp>
 
@@ -15,6 +16,10 @@
 #include <vector>
 
 namespace AiContextBuilder {
+
+std::size_t RowsCap() { return static_cast<std::size_t>(smatchet::limits::Get().AiContextRowsMax); }
+
+std::size_t AuditCap() { return static_cast<std::size_t>(smatchet::limits::Get().AiContextAuditMax); }
 
 namespace {
 
@@ -94,9 +99,10 @@ std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const s
     }
     std::string out;
     std::size_t emitted = 0;
+    const std::size_t rowsCap = RowsCap();
     // `selectedRows` is `std::set<int>` so iteration is naturally sorted ascending —
     // that preserves the sort order shown in the grid (RectSel.Rows holds sort-order
-    // indices). Cap at kRowsCap to bound the system-prompt size per plan rule.
+    // indices). Cap at RowsCap() to bound the system-prompt size per plan rule.
     for (int row : selectedRows) {
         if (row < 0) {
             continue;
@@ -109,7 +115,7 @@ std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const s
         if (ticketIdx >= tickets.size()) {
             continue;
         }
-        if (emitted >= kRowsCap) {
+        if (emitted >= rowsCap) {
             break;
         }
         out.append(TicketSummaryLine(tickets[ticketIdx]));
@@ -129,12 +135,13 @@ std::string BuildVisibleRowsBody(const std::vector<CachedTicket>& tickets,
     }
     std::string out;
     std::size_t emitted = 0;
+    const std::size_t rowsCap = RowsCap();
     for (std::size_t i = 0; i < visibleRows.size(); ++i) {
         const std::size_t ticketIdx = visibleRows[i];
         if (ticketIdx >= tickets.size()) {
             continue;
         }
-        if (emitted >= kRowsCap) {
+        if (emitted >= rowsCap) {
             break;
         }
         out.append(TicketSummaryLine(tickets[ticketIdx]));
@@ -211,9 +218,10 @@ std::string BuildAuditTrailBody(const std::vector<std::string>& recentJsonLines)
     }
     std::string out;
     std::size_t emitted = 0;
+    const std::size_t auditCap = AuditCap();
     // Most-recent-first per plan rule.
     for (std::size_t i = recentJsonLines.size(); i-- > 0;) {
-        if (emitted >= kAuditCap) {
+        if (emitted >= auditCap) {
             break;
         }
         out.append("- ").append(recentJsonLines[i]).push_back('\n');
@@ -287,7 +295,7 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in) {
                 // ReadRecentEvents returns JSON objects; serialise back to strings so the
                 // builder stays free of UI / SQLite / dispatcher coupling. Cap is also
                 // applied inside BuildAuditTrailBody.
-                std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(kAuditCap).value_or({});
+                std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(AuditCap()).value_or({});
                 std::vector<std::string> lines;
                 lines.reserve(events.size());
                 std::transform(events.begin(), events.end(), std::back_inserter(lines),

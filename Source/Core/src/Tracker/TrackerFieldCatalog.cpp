@@ -7,6 +7,7 @@
 
 #include "JsonParseUtil.h"
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -32,7 +33,7 @@ bool MergeProjectComponentsFromEndpoint(const TrackerConfig& /*cfg*/, const std:
 
     bool mergedAny = false;
     constexpr int kPageSize = 100;
-    constexpr int kMaxPages = 50;
+    const int kMaxPages = smatchet::limits::Get().FieldCatalogMaxPages;
     for (int page = 0; page < kMaxPages; ++page) {
         const int startAt = page * kPageSize;
         const std::string url = base + "/rest/api/3/project/" + UrlEncode(projectKey) +
@@ -240,7 +241,7 @@ std::vector<int> DiscoverSprintBoardIds(const std::string& projectKey, const std
     std::vector<int> boardIds;
     std::set<int> seenBoardIds;
     const int kBoardsPerPage = 50;
-    const int kMaxBoardPages = 20;
+    const int kMaxBoardPages = smatchet::limits::Get().FieldCatalogMaxBoardPages;
     for (int page = 0; page < kMaxBoardPages; ++page) {
         const int startAt = page * kBoardsPerPage;
         const std::string boardsUrl = base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
@@ -504,7 +505,7 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
     // Paged GET /rest/api/3/project/{key}/component — mirrors MergeProjectComponentsFromEndpoint
     // paging, but pushes component + option directly (no catalog/fields vector).
     constexpr int kPageSize = 100;
-    constexpr int kMaxPages = 50;
+    const int kMaxPages = smatchet::limits::Get().FieldCatalogMaxPages;
     bool reachedTerminalPage = false;
     for (int page = 0; page < kMaxPages; ++page) {
         const int startAt = page * kPageSize;

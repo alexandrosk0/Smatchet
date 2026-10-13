@@ -96,7 +96,7 @@ class Logger {
     std::atomic<bool> m_logTrackerHttpBodies{false};
     std::atomic<bool> m_logP4Io{false};
     std::atomic<std::uint64_t> m_revision{0};
-    static constexpr std::size_t kMaxEntries = 1000;
+    // In-memory ring cap: limits::Get().LogBufferMaxEntries (default 1000), read in Log().
 
     // Async file sink lifecycle. m_fileSinkLifecycleMutex is acquired by SetFileSinkPath / dtor /
     // FlushFileSink and serializes worker thread creation, destruction, and synchronous flush.

@@ -14,6 +14,7 @@
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "Sync/JqlChangedSincePure.h"
 #include "TimeNowPure.h"
@@ -206,7 +207,7 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
     const std::string url = auth.BaseUrl + "/rate_limit";
     const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
     const cpr::Response resp =
-        TrackerGetLogged("GitHubClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+        TrackerGetLogged("GitHubClient", url, headers, TrackerProbeConnectTimeoutMs(), TrackerProbeOverallTimeoutMs());
 
     const long sc = resp.status_code;
     if (sc == 200) {
@@ -593,14 +594,14 @@ Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueC
         smatchet::github::BuildIssuePatchUrlSuffix(parsed.Owner, parsed.Repo, parsed.Number) + "/comments";
 
     constexpr int kPerPage = 100;
-    constexpr int kMaxPages = 50; // safety ceiling — 5000 comments is well past any real issue.
+    const int kMaxPages = smatchet::limits::Get().GitHubCommentsMaxPages; // safety ceiling, well past any real issue.
     std::vector<TrackerIssueComment> all;
     for (int page = 1; page <= kMaxPages; ++page) {
         std::ostringstream urlOut;
         urlOut << auth.BaseUrl << baseSuffix << "?per_page=" << kPerPage << "&page=" << page;
         const std::string url = urlOut.str();
         const cpr::Response resp =
-            TrackerGetLogged("GitHubClient", url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
+            TrackerGetLogged("GitHubClient", url, headers, TrackerConnectTimeoutMs(), TrackerOverallTimeoutMs());
         if (resp.status_code != 200) {
             const std::string msg =
                 smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
@@ -708,7 +709,7 @@ bool ResolveGitHubMilestoneNumber(const std::string& baseUrl, const cpr::Header&
     // PaginatedGitHubFetch helper would need a Result-type-generic per-page callback spanning the two
     // call shapes (accumulate-and-map vs find-first-and-stop) for two call sites in one TU.
     constexpr int kPerPage = 100;
-    constexpr int kMaxPages = 10; // 1000 milestones is well past any real repo
+    const int kMaxPages = smatchet::limits::Get().GitHubMilestonesMaxPages; // safety ceiling, well past any real repo
     for (int page = 1; page <= kMaxPages; ++page) {
         std::ostringstream urlOut;
         urlOut << baseUrl << "/repos/" << key.Owner << "/" << key.Repo << "/milestones?state=all&per_page=" << kPerPage
@@ -1116,7 +1117,7 @@ ProjectListResult GitHubClient::ListProjectsTyped() {
     const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
     std::vector<RemoteProject> projects;
     constexpr int kPerPage = 100;
-    constexpr int kMaxPages = 10; // 1000 visible repos is well past a usable picker list
+    const int kMaxPages = smatchet::limits::Get().GitHubReposMaxPages; // safety ceiling, well past a usable picker list
     for (int page = 1; page <= kMaxPages; ++page) {
         const std::string url = auth.BaseUrl + "/user/repos?sort=full_name&per_page=" + std::to_string(kPerPage) +
                                 "&page=" + std::to_string(page);

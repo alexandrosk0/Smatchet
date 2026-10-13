@@ -60,9 +60,10 @@ TEST_SUITE("LookupPayloadsPure") {
     }
 
     TEST_CASE("the roster is capped at the stored-user bound and stays parseable") {
+        const std::size_t maxUsers = smatchet::lookup::MaxStoredUsers();
         std::vector<TrackerUser> users;
-        users.reserve(smatchet::lookup::kMaxStoredUsers + 3);
-        for (std::size_t i = 0; i < smatchet::lookup::kMaxStoredUsers + 3; ++i) {
+        users.reserve(maxUsers + 3);
+        for (std::size_t i = 0; i < maxUsers + 3; ++i) {
             users.push_back(User("a" + std::to_string(i), "U" + std::to_string(i)));
         }
         const std::string json = smatchet::lookup::SerializeUsers(users);
@@ -70,7 +71,7 @@ TEST_SUITE("LookupPayloadsPure") {
 
         std::vector<TrackerUser> parsed;
         REQUIRE(smatchet::lookup::ParseUsers(json, parsed));
-        CHECK(parsed.size() == smatchet::lookup::kMaxStoredUsers);
+        CHECK(parsed.size() == smatchet::lookup::MaxStoredUsers());
     }
 
     TEST_CASE("a roster too large to store serializes to nothing") {
@@ -108,13 +109,13 @@ TEST_SUITE("LookupPayloadsPure") {
         CHECK_FALSE(smatchet::lookup::ParseProjects(R"({"key":"K"})", parsed));
         CHECK_FALSE(smatchet::lookup::ParseProjects(R"([{"key":"K","nested":[1]}])", parsed));
 
-        std::vector<RemoteProject> many(smatchet::lookup::kMaxStoredProjects + 2);
+        std::vector<RemoteProject> many(smatchet::lookup::MaxStoredProjects() + 2);
         for (std::size_t i = 0; i < many.size(); ++i) {
             many[i].key = "P" + std::to_string(i);
         }
         const std::string capped = smatchet::lookup::SerializeProjects(many);
         REQUIRE(smatchet::lookup::ParseProjects(capped, parsed));
-        CHECK(parsed.size() == smatchet::lookup::kMaxStoredProjects);
+        CHECK(parsed.size() == smatchet::lookup::MaxStoredProjects());
 
         RemoteProject huge;
         huge.key = std::string(smatchet::lookup::kMaxProjectsPayloadBytes, 'k');

@@ -25,7 +25,6 @@ std::mutex& FieldCatalogCacheFileMutex() {
 }
 
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
-constexpr int kDefaultMaxCachedProjects = 16;
 
 } // namespace
 
@@ -438,7 +437,8 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             (*it)["lastUsedUnix"] = now;
         }
 
-        const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
+        // The fallback default lives in one place: TrackerConfig.
+        const int cap = maxProjects > 0 ? maxProjects : TrackerConfig().FieldCatalogCacheMaxProjects;
         EvictLeastRecentlyUsedIfOverCap(root, cap);
 
         return PersistRootLocked(root, outError);
