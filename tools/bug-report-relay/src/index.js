@@ -56,7 +56,8 @@ async function withinRateLimit(limiter, key) {
   }
 }
 
-// Per-IP + whole-relay budget on /report. Runs BEFORE the relay-key check so a
+// Per-IP + shared-key budget on /report (the shared key is counted per Cloudflare
+// location, so it is not a relay-wide cap). Runs BEFORE the relay-key check so a
 // key-guessing flood is throttled too. `CF-Connecting-IP` is set by Cloudflare's
 // edge and cannot be spoofed by the client; the "unknown" fallback shares one
 // bucket, which is the conservative side to err on.
@@ -77,9 +78,9 @@ async function rateLimitReport(request, env) {
 // only on reports that actually carry a dump.
 const knownPrivateRepos = new Set();
 
-// A minidump carries the crashing thread's STACK MEMORY and the loaded-module
-// list — file paths under the user's home directory, and whatever strings the
-// crashing frames happened to be holding. A GitHub Release asset on a PUBLIC repo
+// A minidump carries every application thread's STACK MEMORY and the loaded-module
+// list — file paths under the user's home directory, and whatever strings any
+// thread's frames happened to be holding. A GitHub Release asset on a PUBLIC repo
 // is world-downloadable with no auth, so uploading one there publishes a stranger's
 // process state. Refuse unless the destination repo is private.
 //

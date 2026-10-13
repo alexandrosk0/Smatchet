@@ -1,8 +1,10 @@
 # Plan — Drag-to-paint checkbox lists
+<!-- plan-date: 2026-09-21 -->
 
 > **Slug**: `drag-to-paint-checkbox-lists`
 >
-> **Status**: `active`
+> **Status**: `shipped` — PR #2230 (Views > Fields only; the grid cell editors were reverted, see
+> § Deviations from plan).
 
 ## Context
 
@@ -39,8 +41,9 @@ path is hit-tested (a fast flick leaves no holes); and a held-still pointer neve
 that re-flows mid-gesture cannot cascade the run onto whatever row slides under the cursor.
 
 The header lives at the `include/` root rather than `include/Ui/` for the same reason as
-`TouchCellEditGesture.h`: two of its consumers are domain-side cell-editor TUs, and domain code must
-not include `Ui/` headers (`no-ui-include-in-domain`). It is header-only (the gesture's single
+`TouchCellEditGesture.h`: the cell-editor TUs it is meant for are domain-side, and domain code must
+not include `Ui/` headers (`no-ui-include-in-domain`). Views > Fields is its only consumer today;
+the placement is kept for the cell editors once their debt item is fixed. It is header-only (the gesture's single
 instance is a function-local static), so there is no new TU and no link edge from domain code into
 `Ui/`.
 
@@ -50,8 +53,9 @@ instance is a function-local static), so there is no new TU and no link edge fro
    `GestureLapsed`, `SegmentCrossesBand`, `DecideItem`.
 2. `Source/Core/include/SmatchetDragCheckbox.h` (new) — the ImGui widget: live hit-testing, the
    disabled/scope probes, and the write-back that drives the pure decisions.
-3. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:514,565` — the Views > Fields System/Custom
-   groups and the Basic-fields group (the list the request named).
+3. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — the Views > Fields System/Custom
+   groups and the Basic-fields group (the list the request named): the two `SmatchetDragCheckbox`
+   call sites.
 4. `tests/Core/SmatchetDragCheckboxPure.test.cpp` (new) + `tests/CMakeLists.txt` — bucket-A coverage,
    registered in both the full rig and the Linux/TSan curated subset.
 5. `tests/ui/drag_checkbox_paint.test.cpp` (new) + `tests/ui/CMakeLists.txt` +
@@ -59,7 +63,7 @@ instance is a function-local static), so there is no new TU and no link edge fro
 
 ## Existing utilities reused
 
-- `SmatchetLocalization::LabelFromSource` · `Source/Core/src/SmatchetLocalization.cpp:1635` — the
+- `SmatchetLocalization::LabelFromSource` · `Source/Core/src/SmatchetLocalization.cpp` — the
   exact transform `SmatchetLocalizedImGui::Checkbox` applies, so swapping the call keeps each
   widget's visible text and its ImGui id in every locale.
 - `ImRect::ClipWith` / `ImGui::IsMousePosValid` / `ImGuiIO::MousePosPrev` — the swept-path hit test
@@ -130,7 +134,7 @@ N/A — this plan adds a widget, it extracts nothing.
 - **Bucket E (ImGui Test Engine)**: `tests/ui/drag_checkbox_paint.test.cpp` — drives the real widget
   under the engine: press row 0, drag to row 4, release; asserts the crossed rows flipped, the
   disabled row in the middle did not, and the row past the release point did not.
-- **Build gate**: `SmatchetCore_PosixCheck` (compiles every Core TU incl. the three call sites) and
+- **Build gate**: `SmatchetCore_PosixCheck` (compiles every Core TU incl. the two call sites) and
   the `SmatchetTsanTests` Linux subset.
 - **Manual residue**: the feel of the gesture (latency, how far a drag may stray off the row) is
   judged by the user on a running build — the Pillar-4 visual-validation exception.
@@ -143,15 +147,20 @@ N/A — this plan adds a widget, it extracts nothing.
   *Select all visible* / *Clear visible*.
 
 ## Implementation log
-*(populated post-ship)*
+- PR #2230: `SmatchetDragCheckboxPure.h` + `SmatchetDragCheckbox.h`, wired into the two Views >
+  Fields call sites, with the bucket-A and bucket-E tests above. Archived by the Batch 26
+  historical review (the PR left this plan in `active/`).
 
 ## Deviations from plan
-*(populated post-ship)*
+- The multi-select and Labels cell editors were wired up and then reverted in the same PR: their
+  commit closes the combo on the first queued edit, so a run cannot survive there. Backlogged as
+  [`2026-09-20-cell-editor-commit-closes-combo-mid-gesture.md`](../../self-improvement/categories/debt/2026-09-20-cell-editor-commit-closes-combo-mid-gesture.md).
 
 ## Verification (actual)
-*(populated post-ship)*
+- PR #2230 merged 2026-09-21 with its Bucket-E UI tests lane (which runs
+  `drag_checkbox_paint.test.cpp`) and both sanitizer test lanes green.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+## Archive
+Done in the historical-review Batch 26 follow-up (#2330), since #2230 itself left the plan in
+`active/`: the § Status header reads `shipped`, the plan moved to `docs/plans/shipped/`, and
+`docs/plans/INDEX.md` was regenerated with `test-plan-index.sh --fix`.

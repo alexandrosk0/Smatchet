@@ -227,6 +227,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`agent-surface-extraction-repo`](shipped/agent-surface-extraction-repo.md) | 2026-09-06 | Plan — Agent surface extraction into its own repository |
 | [`parent-issue-hierarchy`](shipped/parent-issue-hierarchy.md) | 2026-09-06 | Plan — Parent issue hierarchy (FS parity) |
 | [`multi-jira-backend-domains`](shipped/multi-jira-backend-domains.md) | 2026-09-11 | Multiple Jira origins with inherited credentials and a Views domain picker. |
+| [`drag-to-paint-checkbox-lists`](shipped/drag-to-paint-checkbox-lists.md) | 2026-09-21 | Plan — Drag-to-paint checkbox lists |
 | [`offline-first`](shipped/offline-first.md) | 2026-09-24 | Plan — Offline-first: fix the regressions, sweep the class, gate it like DRY |
 | [`status-bar-auto-hide`](shipped/status-bar-auto-hide.md) | 2026-09-24 | Plan — Status bar: third "Auto-Hide" state |
 | [`cache-site-identity`](shipped/cache-site-identity.md) | 2026-09-30 | Plan — namespace the local cache by tracker site and account |

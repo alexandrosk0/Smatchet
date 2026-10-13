@@ -137,12 +137,7 @@ User decisions:
     - a test you did not touch breaks and the slice does not name it;
     - you would exceed a size cap;
     - you need a file outside the list.
-14. **After merge:** append 3–6 lines under your slice id in `## Out of scope (flagged, not designed)
-
-Offline editing/deleting of existing comments; offline issue search; the three Pillar-2 debt items S4
-files (per-frame pending-count SELECTs, UI-thread `SaveTicket`, per-frame project-picker cache read).
-
-## Implementation log` of
+14. **After merge:** append 3–6 lines under your slice id in `## Implementation log` of
     `docs/plans/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
     docs-only follow-up commit on your next slice's branch, or on the same PR before merge.
 
@@ -2868,6 +2863,11 @@ This plan touches `Source/Core/`.
 - **Plane after restart.** Replay depends on the conflict re-fetch filling the key→UUID map. S10 makes
   every command edit capture a base, so the re-fetch runs.
 - **Non-goals:** editing or deleting existing comments offline, and offline issue search.
+
+## Out of scope (flagged, not designed)
+
+Offline editing/deleting of existing comments; offline issue search; the three Pillar-2 debt items S4
+files (per-frame pending-count SELECTs, UI-thread `SaveTicket`, per-frame project-picker cache read).
 
 ## Verification
 
