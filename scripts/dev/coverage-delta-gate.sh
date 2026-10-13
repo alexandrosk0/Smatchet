@@ -380,7 +380,7 @@ function out_tok(t,   s, label) {
     cc_tok(t)
 }
 # The catch stage: an empty catch clause right before an empty catch (...) clause is left out.
-function cc_tok(t,   s, i, d, u) {
+function cc_tok(t,   s, i) {
     s = cur_side
     if (CCS[s] == 0) {
         if (t == "catch") { CCS[s] = 1; CCN[s] = 1; CC[s, 1] = t; return }
@@ -399,17 +399,16 @@ function cc_tok(t,   s, i, d, u) {
         return
     }
     # A handler that catches by value copies the exception (a copy constructor may do anything): only a
-    # by-reference one can go. The '&' must be the declarator's own, outside any template argument list,
-    # parenthesis or bracket (`W<int&> e` catches by value).
-    d = 0
-    for (i = 3; i < CCN[s] - 2; i++) {
-        u = CC[s, i]
-        if (u == "<" || u == "(" || u == "[") d++
-        else if (u == ">" || u == ")" || u == "]") d--
-        else if (u == ">>") d -= 2
-        else if ((u == "&" || u == "&&") && d == 0) break
+    # by-reference one can go. Bracket depth cannot be read without types (`W<(1>0)&true> e` catches by
+    # value), so the '&' must be the declarator's own: the last token before ')', or the last before the
+    # parameter name. Anything else (`W<int&> e`, a reference to an array) counts as by value.
+    i = CCN[s] - 3
+    if (CC[s, i] != "&" && CC[s, i] != "&&") {
+        if (i - 1 < 3 || CC[s, i] !~ /^[A-Za-z_][A-Za-z0-9_]*$/ || (CC[s, i - 1] != "&" && CC[s, i - 1] != "&&")) {
+            cc_flush()
+            return
+        }
     }
-    if (i >= CCN[s] - 2) { cc_flush(); return }
     for (i = 1; i <= CCN[s]; i++) CP[s, ++CPN[s]] = CC[s, i]
     CCN[s] = 0
     CCS[s] = 0
@@ -3189,6 +3188,34 @@ diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
      try {
          Work();
 -    } catch (const W<int&>& e) {
+     } catch (...) {
+     }
+ }
+EOF
+
+    _expect FALLTHROUGH "a by-value catch whose template argument holds a parenthesised '>' and an '&'" <<'EOF'
+diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
+--- a/Source/Core/src/Catch.cpp
++++ b/Source/Core/src/Catch.cpp
+@@ -1,6 +1,5 @@
+ void Run() {
+     try {
+         Work();
+-    } catch (W<(1 > 0) & true> e) {
+     } catch (...) {
+     }
+ }
+EOF
+
+    _expect EXEMPT "an unnamed by-reference catch" <<'EOF'
+diff --git a/Source/Core/src/Catch.cpp b/Source/Core/src/Catch.cpp
+--- a/Source/Core/src/Catch.cpp
++++ b/Source/Core/src/Catch.cpp
+@@ -1,6 +1,5 @@
+ void Run() {
+     try {
+         Work();
+-    } catch (const std::exception&) {
      } catch (...) {
      }
  }
