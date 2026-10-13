@@ -305,12 +305,12 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     // Drop any in-flight bottom-panel gesture state: the default tree has an empty
     // (hidden) bottom panel, so a stale restore set / pending height must not re-apply
     // against the freshly rebuilt nodes. cfg.ShowPanel mirrors the hidden default.
-    d.bottomPanelRestoreKeys.clear();
-    d.bottomPanelRestoreHeight = 0.0f;
-    d.bottomPanelApplyHeightFrames = 0;
-    d.bottomPanelRevealDragActive = false;
-    d.bottomPanelSplitterDragId = 0;
-    d.bottomPanelHideArmed = false;
+    d.bottomPanelDrag = EdgePanelDragState();
+    // Views is reopened by this reset (showViewsDashboard = true above), so the side
+    // panels' gesture state only needs clearing, same as the bottom panel's.
+    d.viewsColumnDrag = EdgePanelDragState();
+    d.primarySideBarDrag = EdgePanelDragState();
+    d.secondarySideBarDrag = EdgePanelDragState();
     d.cfg.ShowPanel = false;
 
     // Immediate-effect reset (no restart). Three coordinated steps:

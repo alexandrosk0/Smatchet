@@ -85,3 +85,88 @@ TEST_CASE("RestoreHeight prefers a sane remembered height and falls back to the 
     // A degenerate work area still returns at least the minimum.
     CHECK(pure::RestoreHeight(400.0f, minH, 0.0f) == doctest::Approx(minH));
 }
+
+// The Views side column reuses the same helpers with X values: it anchors at the right
+// edge of its parent split, so "extent" is width and "far edge" is the parent's right.
+TEST_CASE("Views column (X axis): hide arms in the band hugging the column's right edge") {
+    const float columnRight = 1900.0f;
+    const float band = pure::HideArmBandPx(32.0f);
+    CHECK(pure::ShouldArmHide(1880.0f, columnRight, band));
+    CHECK(pure::ShouldArmHide(1920.0f, columnRight, band)); // dragged past the viewport edge
+    CHECK_FALSE(pure::ShouldArmHide(1700.0f, columnRight, band));
+}
+
+TEST_CASE("Views column (X axis): reveal opens on leftward travel and width tracks the mouse") {
+    const float start = 1895.0f;
+    CHECK_FALSE(pure::RevealDragCrossedThreshold(start, start - 5.0f));
+    CHECK_FALSE(pure::RevealDragCrossedThreshold(start, start + 50.0f)); // rightward never opens
+    CHECK(pure::RevealDragCrossedThreshold(start, start - pure::kRevealDragThresholdPx));
+
+    const float parentRight = 1900.0f;
+    const float minW = 32.0f;
+    const float maxW = 1700.0f;
+    // Column's left edge tracks the mouse: mouse at 1500 -> 400px wide.
+    CHECK(pure::RevealHeightForMouseY(1500.0f, parentRight, minW, maxW) == doctest::Approx(400.0f));
+    CHECK(pure::RevealHeightForMouseY(1950.0f, parentRight, minW, maxW) == doctest::Approx(minW));
+    CHECK(pure::RevealHeightForMouseY(0.0f, parentRight, minW, maxW) == doctest::Approx(maxW));
+}
+
+TEST_CASE("Views column (X axis): release back inside the band cancels only a real reveal") {
+    const float parentRight = 1900.0f;
+    const float band = 24.0f;
+    CHECK_FALSE(pure::ShouldCollapseOnRevealRelease(12.0f, 1890.0f, parentRight, band));
+    CHECK(pure::ShouldCollapseOnRevealRelease(400.0f, 1890.0f, parentRight, band));
+    CHECK_FALSE(pure::ShouldCollapseOnRevealRelease(400.0f, 1500.0f, parentRight, band));
+}
+
+TEST_CASE("ShouldDrawRevealGrip lets only the most recently collapsed coincident grip draw") {
+    const float tol = pure::kRevealGripHeightPx * 0.5f;
+    // Views (seq 1) hid first, then the Assistant column (seq 2): both grips sit at the
+    // viewport edge. LIFO - the later collapse wins, regardless of nesting depth.
+    CHECK(pure::ShouldDrawRevealGrip(1920.0f, 2, 1920.0f, 1, tol));
+    CHECK_FALSE(pure::ShouldDrawRevealGrip(1920.0f, 1, 1920.0f, 2, tol));
+    // Exactly one of any coincident pair draws.
+    CHECK(pure::ShouldDrawRevealGrip(1920.0f, 2, 1919.0f, 1, tol) !=
+          pure::ShouldDrawRevealGrip(1919.0f, 1, 1920.0f, 2, tol));
+    // Grips at different x never suppress each other (inner grip at the seam).
+    CHECK(pure::ShouldDrawRevealGrip(1300.0f, 1, 1920.0f, 2, tol));
+}
+
+TEST_CASE("RevealDragCommits needs leftward travel that clearly beats vertical travel") {
+    const float start = 1900.0f;
+    const float thr = pure::kRevealDragThresholdPx;
+    // A click or a short wiggle never commits.
+    CHECK_FALSE(pure::RevealDragCommits(start, start, 0.0f));
+    CHECK_FALSE(pure::RevealDragCommits(start, start - (thr - 1.0f), 0.0f));
+    // Rightward travel never commits.
+    CHECK_FALSE(pure::RevealDragCommits(start, start + 50.0f, 0.0f));
+    // Clean leftward drag commits.
+    CHECK(pure::RevealDragCommits(start, start - thr, 0.0f));
+    // A scrollbar-style vertical drag (big dy, small dx) does not.
+    CHECK_FALSE(pure::RevealDragCommits(start, start - thr, 200.0f));
+    CHECK_FALSE(pure::RevealDragCommits(start, start - 30.0f, -100.0f));
+    // Diagonal that is clearly more horizontal than vertical commits, either direction.
+    CHECK(pure::RevealDragCommits(start, start - 60.0f, 20.0f));
+    CHECK(pure::RevealDragCommits(start, start - 60.0f, -20.0f));
+}
+
+TEST_CASE("ShouldYieldToActiveItem protects horizontal-drag and structural interactions only") {
+    // Nothing special active (empty background, grid cell, vertical scrollbar): stealable.
+    CHECK_FALSE(pure::ShouldYieldToActiveItem(false, false, false, false, false, false, false));
+    // Each protected case alone yields.
+    CHECK(pure::ShouldYieldToActiveItem(true, false, false, false, false, false, false)); // dock splitter / tab bar
+    CHECK(pure::ShouldYieldToActiveItem(false, true, false, false, false, false, false)); // text input
+    CHECK(pure::ShouldYieldToActiveItem(false, false, true, false, false, false, false)); // drag and drop
+    CHECK(pure::ShouldYieldToActiveItem(false, false, false, true, false, false, false)); // horizontal scrollbar
+    CHECK(pure::ShouldYieldToActiveItem(false, false, false, false, true, false, false)); // window move
+    CHECK(pure::ShouldYieldToActiveItem(false, false, false, false, false, true, false)); // table column drag
+    CHECK(pure::ShouldYieldToActiveItem(false, false, false, false, false, false, true)); // bottom reveal grip
+}
+
+TEST_CASE("SideStripReachable needs the mouse over dockspace content with nothing above it") {
+    CHECK(pure::SideStripReachable(false, false, true, false));
+    CHECK_FALSE(pure::SideStripReachable(true, false, true, false));   // modal open
+    CHECK_FALSE(pure::SideStripReachable(false, true, true, false));   // a window is being dragged
+    CHECK_FALSE(pure::SideStripReachable(false, false, false, false)); // floating window / status bar above
+    CHECK_FALSE(pure::SideStripReachable(false, false, true, true));   // drag and drop in flight
+}

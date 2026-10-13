@@ -59,11 +59,15 @@ TEST_CASE("i18n-sweep keys resolve to French under fr-FR") {
         CHECK(std::string(SmatchetLocalization::T("audit.offline", kSentinel)) == u8"Hors ligne");
     }
 
-    SUBCASE("bottom-panel drag gestures") {
+    SUBCASE("edge-panel drag gestures") {
         CHECK(std::string(SmatchetLocalization::T("panel.release_to_hide", kSentinel)) ==
               u8"Relâchez pour masquer le panneau");
         CHECK(std::string(SmatchetLocalization::T("panel.drag_to_open", kSentinel)) ==
               u8"Faites glisser vers le haut pour ouvrir le panneau");
+        CHECK(std::string(SmatchetLocalization::T("panel.release_to_hide_side", kSentinel)) ==
+              u8"Relâchez pour masquer le panneau latéral");
+        CHECK(std::string(SmatchetLocalization::T("panel.drag_to_open_side", kSentinel)) ==
+              u8"Faites glisser vers la gauche pour ouvrir le panneau latéral");
     }
 
     SUBCASE("format keys keep their conversion specifiers") {

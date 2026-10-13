@@ -11,6 +11,7 @@
 #include "imgui_internal.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -18,19 +19,23 @@ namespace pure = SmatchetBottomPanelDragPure;
 
 namespace {
 
-// One row per window that docks into the bottom panel by default (mirrors the
-// kBottomPanel rows of SmatchetDockNodeIds' layout-key table). sourceTitle is the
-// English source title handed to Begin(); FindWindowByName goes through the same
-// WindowTitleFromSource transform the localized Begin wrapper applies, so lookups hit
-// in every locale (the selectDockedTab pattern).
-struct BottomWindowEntry {
+// One row per closable dockable window (mirrors the layout-key table of
+// SmatchetDockNodeIds). ONE registry serves every edge panel: collapsing a panel closes
+// every registered window docked anywhere in its node subtree, so a window dragged
+// between the bottom panel and a side panel hides/restores correctly from either.
+// Grid panes ("###GridPane:<id>", "Smatchet - Active Project") are deliberately absent:
+// they stay as leftovers and keep the panel visible. sourceTitle is the English source
+// title handed to Begin(); FindWindowByName goes through the same WindowTitleFromSource
+// transform the localized Begin wrapper applies, so lookups hit in every locale (the
+// selectDockedTab pattern).
+struct ClosableWindowEntry {
     const char* layoutKey;
     const char* sourceTitle;
-    bool UiDrawSession::*showFlag;
-    bool UiDrawSession::*focusFlag; // null when the window has no focus latch
+    bool UiDrawSession::* showFlag;
+    bool UiDrawSession::* focusFlag; // null when the window has no focus latch
 };
 
-const BottomWindowEntry kBottomWindows[] = {
+const ClosableWindowEntry kClosableWindows[] = {
     {"log", "Log", &UiDrawSession::showLogWindow, &UiDrawSession::requestLogFocus},
     {"preferences", "Preferences", &UiDrawSession::showPreferences, &UiDrawSession::requestPreferencesFocus},
     {"performance", "Performance", &UiDrawSession::showPerformance, &UiDrawSession::requestPerformanceFocus},
@@ -40,6 +45,19 @@ const BottomWindowEntry kBottomWindows[] = {
     {"annotate", "Annotate###AnnotateAnalysisModal", &UiDrawSession::showAnnotateAnalysis, nullptr},
     {"plandocs", "Plan Docs", &UiDrawSession::showPlanDocViewer, &UiDrawSession::requestPlanDocViewerFocus},
     {"user_info", "User Info", &UiDrawSession::showUserInfo, &UiDrawSession::requestUserInfoFocus},
+    {"notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
+     &UiDrawSession::requestNotificationCenterFocus},
+    // Restore deliberately skips the open latches of these two, so an in-progress draft
+    // survives hide/reveal instead of being re-seeded.
+    {"quick_create", "Quick Create Issue", &UiDrawSession::showQuickCreateIssue, nullptr},
+    {"bug_report", "Report a Bug", &UiDrawSession::showBugReport, nullptr},
+    // The ### id hashes the same whatever "Views - <backend>" prefix the Begin wrapper
+    // builds, so this one source title finds the window in every state.
+    {"views", "Views###SmatchetViewsDashboard", &UiDrawSession::showViewsDashboard,
+     &UiDrawSession::requestViewsDashboardFocus},
+#if defined(SMATCHET_WITH_AI)
+    {"assistant", "Smatchet Assistant", &UiDrawSession::assistantPanelOpen, &UiDrawSession::requestAssistantFocus},
+#endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     {"scripting", "Scripting", &UiDrawSession::showLuaAutomationWindow, &UiDrawSession::requestLuaAutomationFocus},
 #endif
@@ -48,11 +66,85 @@ const BottomWindowEntry kBottomWindows[] = {
 #endif
 };
 
-ImGuiDockNode* BottomPanelNode() {
+// Everything that differs between the panels this driver serves (bottom panel, Views
+// column, primary and secondary side bars). All anchor at their far edge (bottom / right),
+// which is why the axis-agnostic pure helpers work for all: the "extent" is height for the
+// bottom panel and width for the side columns.
+struct EdgePanelSpec {
+    ImGuiID nodeId;
+    ImGuiAxis axis;                // splitter axis: Y for the bottom panel, X for the side columns
+    const char* defaultRestoreKey; // bottom panel only: revealed when nothing was remembered
+    const char* hideHintKey;
+    const char* hideHintFallback;
+    const char* revealTipKey;
+    const char* revealTipFallback;
+    const char* gripWindowName; // bottom panel only (side strips are draw-list overlays)
+    const char* logName;
+    bool mirrorsShowPanel; // keep cfg.ShowPanel in step (bottom panel only)
+    EdgePanelDragState UiDrawSession::* state;
+};
+
+const EdgePanelSpec kBottomSpec = {SmatchetDockNodeIds::kBottomPanel,
+                                   ImGuiAxis_Y,
+                                   "log",
+                                   "panel.release_to_hide",
+                                   "Release to hide the panel",
+                                   "panel.drag_to_open",
+                                   "Drag up to open the panel",
+                                   "##BottomPanelRevealGrip",
+                                   "BottomPanel",
+                                   true,
+                                   &UiDrawSession::bottomPanelDrag};
+
+// The right-hand columns. Whichever of them holds the tabbed Views/Assistant set, the
+// gesture hides every registered tab in it; a column that is not the far child of an X
+// split (or does not exist) simply has no gesture (SplitterBeforeNodeId / EdgePanelNode).
+const EdgePanelSpec kViewsSpec = {SmatchetDockNodeIds::kViewsColumn,
+                                  ImGuiAxis_X,
+                                  nullptr,
+                                  "panel.release_to_hide_side",
+                                  "Release to hide the side panel",
+                                  "panel.drag_to_open_side",
+                                  "Drag left to open the side panel",
+                                  nullptr,
+                                  "ViewsColumn",
+                                  false,
+                                  &UiDrawSession::viewsColumnDrag};
+
+const EdgePanelSpec kPrimarySideSpec = {SmatchetDockNodeIds::kPrimarySideBar,
+                                        ImGuiAxis_X,
+                                        nullptr,
+                                        "panel.release_to_hide_side",
+                                        "Release to hide the side panel",
+                                        "panel.drag_to_open_side",
+                                        "Drag left to open the side panel",
+                                        nullptr,
+                                        "PrimarySideBar",
+                                        false,
+                                        &UiDrawSession::primarySideBarDrag};
+
+const EdgePanelSpec kSecondarySideSpec = {SmatchetDockNodeIds::kSecondarySideBar,
+                                          ImGuiAxis_X,
+                                          nullptr,
+                                          "panel.release_to_hide_side",
+                                          "Release to hide the side panel",
+                                          "panel.drag_to_open_side",
+                                          "Drag left to open the side panel",
+                                          nullptr,
+                                          "SecondarySideBar",
+                                          false,
+                                          &UiDrawSession::secondarySideBarDrag};
+
+const EdgePanelSpec* const kSideSpecs[] = {&kViewsSpec, &kPrimarySideSpec, &kSecondarySideSpec};
+
+void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec);
+void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredExtentPx);
+
+ImGuiDockNode* EdgePanelNode(const EdgePanelSpec& spec) {
     if (::ImGui::GetCurrentContext() == nullptr) {
         return nullptr;
     }
-    ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel);
+    ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(spec.nodeId);
     // Orphan roots reloaded from a stale ini LOOK like the panel but sit outside the
     // dockspace — the same rejection SmatchetDockNodeIds::EnsureDockSlotAlive applies.
     if (node == nullptr || node->ParentNode == nullptr) {
@@ -65,7 +157,7 @@ bool NodeShowsContent(const ImGuiDockNode* node) {
     return node->IsVisible && (node->Windows.Size > 0 || node->ChildNodes[0] != nullptr);
 }
 
-ImGuiWindow* DockHostWindow(ImGuiDockNode* node) {
+ImGuiWindow* DockHostWindow(const ImGuiDockNode* node) {
     while (node->ParentNode != nullptr) {
         node = node->ParentNode;
     }
@@ -83,31 +175,76 @@ void GatherDockNodeWindows(const ImGuiDockNode* node, std::vector<const ImGuiWin
     GatherDockNodeWindows(node->ChildNodes[1], out);
 }
 
-bool WindowInsideBottomPanel(const ImGuiWindow* w) {
+bool WindowInsideNode(const ImGuiWindow* w, ImGuiID nodeId) {
     for (const ImGuiDockNode* n = w->DockNode; n != nullptr; n = n->ParentNode) {
-        if (n->ID == SmatchetDockNodeIds::kBottomPanel) {
+        if (n->ID == nodeId) {
             return true;
         }
     }
     return false;
 }
 
+// The one arrangement the gesture supports: the panel is the far (second) child of a split
+// along its axis. Anything else (the user rearranged the layout) disables it.
+bool IsFarChildOnAxis(const ImGuiDockNode* node, ImGuiAxis axis) {
+    const ImGuiDockNode* parent = node->ParentNode;
+    return parent != nullptr && parent->SplitAxis == axis && parent->ChildNodes[1] == node;
+}
+
+// Coordinate of the edge the panel is anchored to, along the panel axis: the work-area
+// bottom for the bottom panel, the right edge of the Views node's parent split for Views
+// (the viewport edge when no side bar is docked beside it, else the seam with the side
+// bar). False when that edge is unknown (Views node gone / layout rearranged).
+bool FarEdge(const EdgePanelSpec& spec, const ImGuiViewport* vp, const ImGuiDockNode* node, float& out) {
+    if (spec.axis == ImGuiAxis_Y) {
+        out = vp->WorkPos.y + vp->WorkSize.y;
+        return true;
+    }
+    if (node == nullptr || !IsFarChildOnAxis(node, spec.axis)) {
+        return false;
+    }
+    out = node->ParentNode->Pos.x + node->ParentNode->Size.x;
+    return true;
+}
+
+// True when a hidden side panel has something to give back, i.e. its grip is a candidate.
+bool SideGripCandidate(const EdgePanelSpec& spec, const ImGuiDockNode* node, const UiDrawSession& d) {
+    return node != nullptr && !NodeShowsContent(node) && !(d.*(spec.state)).restoreKeys.empty();
+}
+
+// Two hidden side panels can park their reveal grips at the same x (e.g. 0x08 and 0x04
+// both hidden: 0x01 and 0x09 both end at the viewport edge). Only the most recently
+// collapsed draws (LIFO); the other appears once that one is revealed. One strip per x also
+// means one owner for a mouse press.
+bool SideGripWinsAmongCoincident(const UiDrawSession& d, const EdgePanelSpec& spec, const ImGuiViewport* vp,
+                                 float myEdge) {
+    const unsigned mySeq = (d.*(spec.state)).collapseSeq;
+    for (const EdgePanelSpec* other : kSideSpecs) {
+        const ImGuiDockNode* otherNode = EdgePanelNode(*other);
+        float otherEdge = 0.0f;
+        if (other == &spec || !SideGripCandidate(*other, otherNode, d) || !FarEdge(*other, vp, otherNode, otherEdge)) {
+            continue; // itself, or visible / nothing to restore / unusable: cannot overlap
+        }
+        if (!pure::ShouldDrawRevealGrip(myEdge, mySeq, otherEdge, (d.*(other->state)).collapseSeq,
+                                        pure::kRevealGripHeightPx * 0.5f)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Mirrors DockNodeTreeUpdateSplitter (imgui.cpp): the splitter between a split node's
 // two children is submitted in the dock host window under PushID((int)parent->ID) +
 // GetID("##Splitter"), and the host window's ID stack holds only its own ID at that
-// point. Reproducing the id pins "the active drag IS the splitter directly above the
-// bottom panel" — no cursor or geometry heuristics, no false positives from other
-// splitters or scrollbar drags near the bottom edge.
-ImGuiID SplitterAboveBottomPanelId(ImGuiDockNode* node) {
-    ImGuiDockNode* parent = node->ParentNode;
-    ImGuiWindow* host = DockHostWindow(node);
-    if (parent == nullptr || host == nullptr) {
-        return 0;
-    }
-    // Only the "panel is the lower child of a vertical split" arrangement has a
-    // splitter whose drag-down means "shrink the panel"; any other arrangement (the
-    // user moved the node) just disables the gesture.
-    if (parent->SplitAxis != ImGuiAxis_Y || parent->ChildNodes[1] != node) {
+// point. Reproducing the id pins "the active drag IS the splitter directly before the
+// panel" — no cursor or geometry heuristics, no false positives from other
+// splitters or scrollbar drags near the panel edge.
+ImGuiID SplitterBeforeNodeId(const EdgePanelSpec& spec, const ImGuiDockNode* node) {
+    const ImGuiDockNode* parent = node->ParentNode;
+    const ImGuiWindow* host = DockHostWindow(node);
+    // Only the "panel is the far child of a split along its axis" arrangement has a
+    // splitter whose drag toward the edge means "shrink the panel".
+    if (parent == nullptr || host == nullptr || !IsFarChildOnAxis(node, spec.axis)) {
         return 0;
     }
     const int parentIdBits = static_cast<int>(parent->ID); // PushID(int) hashes the raw int bytes
@@ -115,62 +252,179 @@ ImGuiID SplitterAboveBottomPanelId(ImGuiDockNode* node) {
     return ImHashStr("##Splitter", 0, seed);
 }
 
-void DrawReleaseToHideHint(const ImGuiDockNode* node) {
+void DrawReleaseToHideHint(const EdgePanelSpec& spec, const ImGuiDockNode* node) {
     ImDrawList* dl = ::ImGui::GetForegroundDrawList();
     const ImVec2 rectMin = node->Pos;
     const ImVec2 rectMax(node->Pos.x + node->Size.x, node->Pos.y + node->Size.y);
     dl->AddRectFilled(rectMin, rectMax, ::ImGui::GetColorU32(ImGuiCol_DockingPreview, 0.35f));
-    const char* hint = SmatchetLocalization::T("panel.release_to_hide", "Release to hide the panel");
+    const char* hint = SmatchetLocalization::T(spec.hideHintKey, spec.hideHintFallback);
     const ImVec2 textSize = ::ImGui::CalcTextSize(hint);
+    float textX = rectMin.x + (node->Size.x - textSize.x) * 0.5f;
     float textY = rectMin.y + (node->Size.y - textSize.y) * 0.5f;
-    if (node->Size.y < textSize.y + 8.0f) {
+    if (spec.axis == ImGuiAxis_Y && node->Size.y < textSize.y + 8.0f) {
         textY = rectMin.y - textSize.y - 4.0f; // panel squeezed to a sliver — hint above it
+    } else if (spec.axis == ImGuiAxis_X && node->Size.x < textSize.x + 8.0f) {
+        textX = rectMin.x - textSize.x - 4.0f; // column squeezed to a sliver — hint beside it
     }
-    dl->AddText(ImVec2(rectMin.x + (node->Size.x - textSize.x) * 0.5f, textY), ::ImGui::GetColorU32(ImGuiCol_Text),
-                hint);
+    dl->AddText(ImVec2(textX, textY), ::ImGui::GetColorU32(ImGuiCol_Text), hint);
 }
 
-void TickHideGesture(UiDrawSession& d, ImGuiDockNode* node) {
+void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode* node) {
     ImGuiContext& g = *::ImGui::GetCurrentContext();
-    const ImGuiID splitterId = SplitterAboveBottomPanelId(node);
+    EdgePanelDragState& st = d.*(spec.state);
+    const ImGuiID splitterId = SplitterBeforeNodeId(spec, node);
     if (splitterId != 0 && g.ActiveId == splitterId) {
-        if (d.bottomPanelSplitterDragId == 0 && node->Size.y > g.Style.WindowMinSize.y * 1.5f) {
-            // Drag start: capture the pre-drag height NOW. By the release that hides
+        if (st.splitterDragId == 0 && node->Size[spec.axis] > g.Style.WindowMinSize[spec.axis] * 1.5f) {
+            // Drag start: capture the pre-drag extent NOW. By the release that hides
             // the panel the splitter has long clamped the node to the style minimum,
-            // and the height the user actually worked at would be gone.
-            d.bottomPanelRestoreHeight = node->Size.y;
+            // and the size the user actually worked at would be gone.
+            st.restoreExtent = node->Size[spec.axis];
         }
-        d.bottomPanelSplitterDragId = splitterId;
-        const float nodeBottom = node->Pos.y + node->Size.y;
-        d.bottomPanelHideArmed =
-            pure::ShouldArmHide(g.IO.MousePos.y, nodeBottom, pure::HideArmBandPx(g.Style.WindowMinSize.y));
-        if (d.bottomPanelHideArmed) {
-            DrawReleaseToHideHint(node);
+        st.splitterDragId = splitterId;
+        const float nodeFar = node->Pos[spec.axis] + node->Size[spec.axis];
+        st.hideArmed = pure::ShouldArmHide(g.IO.MousePos[spec.axis], nodeFar,
+                                           pure::HideArmBandPx(g.Style.WindowMinSize[spec.axis]));
+        if (st.hideArmed) {
+            DrawReleaseToHideHint(spec, node);
         }
         return;
     }
-    if (d.bottomPanelSplitterDragId == 0) {
+    if (st.splitterDragId == 0) {
         return;
     }
     // The splitter drag ended this frame. Hide only when it ended in a left-button
     // release while armed (last frame's in-band verdict — the mouse barely moves in one
-    // frame); a cancelled drag or one that wandered back up is a plain resize.
-    const bool hide = d.bottomPanelHideArmed && ::ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-    d.bottomPanelSplitterDragId = 0;
-    d.bottomPanelHideArmed = false;
+    // frame); a cancelled drag or one that wandered back out is a plain resize.
+    const bool hide = st.hideArmed && ::ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    st.splitterDragId = 0;
+    st.hideArmed = false;
     if (hide) {
-        SmatchetBottomPanelDrag::Collapse(d);
+        CollapseEdgePanel(d, spec);
     }
 }
 
-void DrawRevealGrip(UiDrawSession& d) {
+// True when the active item drives a table column drag - a resize handle or a held header
+// being reordered (the grid is Reorderable) - both horizontal drags the reveal must not
+// steal. The resize handles are not reachable from the window, so every column of every
+// table drawn by the active item's window is compared with ImGui's own resize id (instance
+// 0 and the table's current instance); the table pool is small, so this is cheap.
+bool ActiveItemIsTableColumnDrag(ImGuiContext& g) {
+    if (g.ActiveIdWindow == nullptr) {
+        return false;
+    }
+    for (int n = 0; n < g.Tables.GetMapSize(); ++n) {
+        ImGuiTable* table = g.Tables.TryGetMapData(n);
+        if (table == nullptr || (table->OuterWindow != g.ActiveIdWindow && table->InnerWindow != g.ActiveIdWindow)) {
+            continue;
+        }
+        if (table->HeldHeaderColumn >= 0) {
+            return true;
+        }
+        for (int c = 0; c < table->ColumnsCount; ++c) {
+            if (g.ActiveId == ::ImGui::TableGetColumnResizeID(table, c, 0) ||
+                g.ActiveId == ::ImGui::TableGetColumnResizeID(table, c, table->InstanceCurrent)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Active items a reveal drag must not steal from (the decision itself is
+// pure::ShouldYieldToActiveItem). Everything else (vertical scrollbars, table cells,
+// selectables) is stealable once the drag has clearly committed.
+bool ActiveItemIsProtected(ImGuiContext& g) {
+    if (g.ActiveId == 0) {
+        return false;
+    }
+    ImGuiWindow* w = g.ActiveIdWindow;
+    const bool inDockHost = w != nullptr && (w->Flags & ImGuiWindowFlags_DockNodeHost) != 0;
+    const bool hScrollbar = w != nullptr && g.ActiveId == ::ImGui::GetWindowScrollbarID(w, ImGuiAxis_X);
+    const bool bottomGrip = w != nullptr && w == ::ImGui::FindWindowByName(kBottomSpec.gripWindowName);
+    return pure::ShouldYieldToActiveItem(inDockHost, g.InputTextState.ID == g.ActiveId, g.DragDropActive, hScrollbar,
+                                         g.MovingWindow != nullptr, ActiveItemIsTableColumnDrag(g), bottomGrip);
+}
+
+// Side-column reveal strip along the parent split's right edge. It overlaps the neighbour's
+// vertical scrollbar, grid cells and the splitter's grab zone, so it owns NO input up front:
+// it is a draw-list overlay that highlights while nothing is active, and a press inside it
+// merely ARMS a reveal. The reveal commits once the drag travels clearly leftward
+// (RevealDragCommits); whatever item holds the press is released at that point. The items
+// that make the strip yield instead are listed at pure::ShouldYieldToActiveItem.
+void DrawSideRevealStrip(UiDrawSession& d, const EdgePanelSpec& spec, const ImGuiViewport* vp,
+                         const ImGuiDockNode* node, float farEdge) {
+    ImGuiContext& g = *::ImGui::GetCurrentContext();
+    EdgePanelDragState& st = d.*(spec.state);
+    const float gripPx = pure::kRevealGripHeightPx;
+    const ImVec2 pos(farEdge - gripPx, node->ParentNode->Pos.y);
+    const ImVec2 size(gripPx, node->ParentNode->Size.y);
+    const ImVec2 mouse = g.IO.MousePos;
+    const bool inStrip = mouse.x >= pos.x && mouse.x < pos.x + size.x && mouse.y >= pos.y && mouse.y < pos.y + size.y;
+    const bool yielded = ActiveItemIsProtected(g);
+    // Only reachable when the mouse is over the dockspace itself: not through a modal, a
+    // floating window or the status bar above it, nor during a window move / drag-and-drop.
+    const ImGuiWindow* host = DockHostWindow(node);
+    const bool reachable =
+        pure::SideStripReachable(::ImGui::GetTopMostPopupModal() != nullptr, g.MovingWindow != nullptr,
+                                 g.HoveredWindow != nullptr && host != nullptr &&
+                                     g.HoveredWindow->RootWindowDockTree == host->RootWindowDockTree,
+                                 g.DragDropActive);
+    if (!st.revealArmed && inStrip && reachable && !yielded && ::ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        st.revealArmed = true;
+        st.revealDragStart = mouse.x;
+        st.revealDragStartCross = mouse.y;
+    }
+    if (st.revealArmed) {
+        if (yielded || !::ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            st.revealArmed = false;
+        } else if (pure::RevealDragCommits(st.revealDragStart, mouse.x, mouse.y - st.revealDragStartCross)) {
+            if (g.ActiveId != 0) {
+                ::ImGui::ClearActiveID(); // the item that held the press lets go
+            }
+            const float extent = pure::RevealHeightForMouseY(mouse.x, farEdge, g.Style.WindowMinSize.x,
+                                                             vp->WorkSize.x * pure::kMaxRevealWorkShare);
+            ExpandEdgePanel(d, spec, extent);
+            st.revealDragActive = true;
+            st.revealPeakExtent = extent;
+            st.revealArmed = false;
+            return;
+        }
+    }
+    // A hovered cell underneath is expected (the strip overlays it); an ACTIVE item is not.
+    if ((inStrip && reachable && g.ActiveId == 0) || st.revealArmed) {
+        ::ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        ::ImGui::GetForegroundDrawList()->AddRectFilled(
+            pos, ImVec2(pos.x + size.x, pos.y + size.y),
+            ::ImGui::GetColorU32(st.revealArmed ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered));
+        // Don't replace a hovered grid cell's own tooltip.
+        if (!st.revealArmed && g.HoveredId == 0) {
+            ::ImGui::SetTooltip("%s", SmatchetLocalization::T(spec.revealTipKey, spec.revealTipFallback));
+        }
+    }
+}
+
+void DrawRevealGrip(UiDrawSession& d, const EdgePanelSpec& spec, const ImGuiDockNode* node) {
     const ImGuiViewport* vp = ::ImGui::GetMainViewport();
     if (vp == nullptr) {
         return;
     }
-    const float gripH = SmatchetBottomPanelDragPure::kRevealGripHeightPx;
-    const ImVec2 pos(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - gripH);
-    const ImVec2 size(vp->WorkSize.x, gripH);
+    float farEdge = 0.0f;
+    if (!FarEdge(spec, vp, node, farEdge)) {
+        return;
+    }
+    if (spec.axis == ImGuiAxis_X) {
+        // A side column that was never hidden by the gesture / a collapse has nothing to
+        // restore: no grip (the user reopens it from the menu).
+        if (SideGripCandidate(spec, node, d) && SideGripWinsAmongCoincident(d, spec, vp, farEdge)) {
+            DrawSideRevealStrip(d, spec, vp, node, farEdge);
+        } else {
+            (d.*(spec.state)).revealArmed = false;
+        }
+        return;
+    }
+    const float gripPx = pure::kRevealGripHeightPx;
+    const ImVec2 pos(vp->WorkPos.x, farEdge - gripPx);
+    const ImVec2 size(vp->WorkSize.x, gripPx);
     ::ImGui::SetNextWindowPos(pos);
     ::ImGui::SetNextWindowSize(size);
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -180,7 +434,8 @@ void DrawRevealGrip(UiDrawSession& d) {
                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
-    if (::ImGui::Begin("##BottomPanelRevealGrip", nullptr, flags)) {
+    if (::ImGui::Begin(spec.gripWindowName, nullptr, flags)) {
+        EdgePanelDragState& st = d.*(spec.state);
         ::ImGui::InvisibleButton("##grip", size);
         const bool hovered = ::ImGui::IsItemHovered();
         const bool active = ::ImGui::IsItemActive();
@@ -191,115 +446,109 @@ void DrawRevealGrip(UiDrawSession& d) {
                 ::ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered));
         }
         if (hovered && !active) {
-            ::ImGui::SetTooltip("%s", SmatchetLocalization::T("panel.drag_to_open", "Drag up to open the panel"));
+            ::ImGui::SetTooltip("%s", SmatchetLocalization::T(spec.revealTipKey, spec.revealTipFallback));
         }
+        const float mouse = ::ImGui::GetIO().MousePos[spec.axis];
         if (::ImGui::IsItemActivated()) {
-            d.bottomPanelRevealDragStartY = ::ImGui::GetIO().MousePos.y;
+            st.revealDragStart = mouse;
         }
-        if (active && pure::RevealDragCrossedThreshold(d.bottomPanelRevealDragStartY, ::ImGui::GetIO().MousePos.y)) {
-            const float workBottom = vp->WorkPos.y + vp->WorkSize.y;
-            const float h = pure::RevealHeightForMouseY(::ImGui::GetIO().MousePos.y, workBottom,
-                                                        ::ImGui::GetStyle().WindowMinSize.y,
-                                                        vp->WorkSize.y * pure::kMaxRevealWorkShare);
-            SmatchetBottomPanelDrag::Expand(d, h);
-            d.bottomPanelRevealDragActive = true;
-            d.bottomPanelRevealPeakHeight = h;
+        if (active && pure::RevealDragCrossedThreshold(st.revealDragStart, mouse)) {
+            const float extent =
+                pure::RevealHeightForMouseY(mouse, farEdge, ::ImGui::GetStyle().WindowMinSize[spec.axis],
+                                            vp->WorkSize[spec.axis] * pure::kMaxRevealWorkShare);
+            ExpandEdgePanel(d, spec, extent);
+            st.revealDragActive = true;
+            st.revealPeakExtent = extent;
         }
     }
     ::ImGui::End();
     ::ImGui::PopStyleVar(3);
 }
 
-void TickRevealFollow(UiDrawSession& d) {
-    if (!d.bottomPanelRevealDragActive) {
+void TickRevealFollow(UiDrawSession& d, const EdgePanelSpec& spec, const ImGuiDockNode* node) {
+    EdgePanelDragState& st = d.*(spec.state);
+    if (!st.revealDragActive) {
         return;
     }
     const ImGuiViewport* vp = ::ImGui::GetMainViewport();
-    if (vp == nullptr) {
-        d.bottomPanelRevealDragActive = false;
+    float farEdge = 0.0f;
+    if (vp == nullptr || !FarEdge(spec, vp, node, farEdge)) {
+        st.revealDragActive = false;
         return;
     }
-    const float workBottom = vp->WorkPos.y + vp->WorkSize.y;
-    const float mouseY = ::ImGui::GetIO().MousePos.y;
+    const float mouse = ::ImGui::GetIO().MousePos[spec.axis];
     if (::ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         // The grip strip vanished the moment the panel reopened, so the live resize
         // tracks the raw mouse until release rather than a widget's active state.
-        d.bottomPanelPendingHeight = pure::RevealHeightForMouseY(
-            mouseY, workBottom, ::ImGui::GetStyle().WindowMinSize.y, vp->WorkSize.y * pure::kMaxRevealWorkShare);
-        if (d.bottomPanelPendingHeight > d.bottomPanelRevealPeakHeight) {
-            d.bottomPanelRevealPeakHeight = d.bottomPanelPendingHeight;
+        st.pendingExtent = pure::RevealHeightForMouseY(mouse, farEdge, ::ImGui::GetStyle().WindowMinSize[spec.axis],
+                                                       vp->WorkSize[spec.axis] * pure::kMaxRevealWorkShare);
+        if (st.pendingExtent > st.revealPeakExtent) {
+            st.revealPeakExtent = st.pendingExtent;
         }
-        if (d.bottomPanelApplyHeightFrames < 2) {
-            d.bottomPanelApplyHeightFrames = 2;
+        if (st.applyFrames < 2) {
+            st.applyFrames = 2;
         }
         return;
     }
-    d.bottomPanelRevealDragActive = false;
+    st.revealDragActive = false;
     // Symmetry with the splitter gesture: a reveal drag that genuinely opened the panel
-    // (peak height well above the band) and then released back down inside the hide band
-    // collapses it again instead of leaving a minimum-height sliver. The peak guard
+    // (peak extent well above the band) and then released back inside the hide band
+    // collapses it again instead of leaving a minimum-size sliver. The peak guard
     // matters because the open threshold sits INSIDE the band: without it a minimal
     // open-drag would flash the panel open and instantly re-collapse on release.
-    if (pure::ShouldCollapseOnRevealRelease(d.bottomPanelRevealPeakHeight, mouseY, workBottom,
-                                            pure::HideArmBandPx(::ImGui::GetStyle().WindowMinSize.y))) {
-        SmatchetBottomPanelDrag::Collapse(d);
+    if (pure::ShouldCollapseOnRevealRelease(st.revealPeakExtent, mouse, farEdge,
+                                            pure::HideArmBandPx(::ImGui::GetStyle().WindowMinSize[spec.axis]))) {
+        CollapseEdgePanel(d, spec);
     }
 }
 
-void ApplyPendingHeight(UiDrawSession& d, ImGuiDockNode* node) {
-    if (d.bottomPanelApplyHeightFrames <= 0) {
+void ApplyPendingExtent(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode* node) {
+    EdgePanelDragState& st = d.*(spec.state);
+    if (st.applyFrames <= 0) {
         return;
     }
-    --d.bottomPanelApplyHeightFrames;
+    --st.applyFrames;
     if (node == nullptr) {
         return; // node not rebuilt yet this frame — the remaining armed frames retry
     }
     ImGuiDockNode* parent = node->ParentNode;
-    if (parent == nullptr || parent->SplitAxis != ImGuiAxis_Y || parent->ChildNodes[1] != node ||
-        parent->ChildNodes[0] == nullptr) {
+    if (!IsFarChildOnAxis(node, spec.axis) || parent->ChildNodes[0] == nullptr) {
         return;
     }
     // Write BOTH children's SizeRef (what the splitter itself does) so the next
-    // DockNodeTreeUpdatePosSize pass reproduces the exact height instead of
+    // DockNodeTreeUpdatePosSize pass reproduces the exact extent instead of
     // proportionally rescaling a stale pair.
-    const float minY = ::ImGui::GetStyle().WindowMinSize.y;
-    const float maxH = parent->Size.y > minY * 2.0f ? parent->Size.y - minY : minY;
-    const float h = pure::ClampPx(d.bottomPanelPendingHeight, minY, maxH);
-    parent->ChildNodes[0]->SizeRef.y = parent->Size.y - h;
-    node->SizeRef.y = h;
+    const float minPx = ::ImGui::GetStyle().WindowMinSize[spec.axis];
+    const float maxPx = parent->Size[spec.axis] > minPx * 2.0f ? parent->Size[spec.axis] - minPx : minPx;
+    const float extent = pure::ClampPx(st.pendingExtent, minPx, maxPx);
+    parent->ChildNodes[0]->SizeRef[spec.axis] = parent->Size[spec.axis] - extent;
+    node->SizeRef[spec.axis] = extent;
     ::ImGui::MarkIniSettingsDirty();
 }
 
-} // namespace
-
-namespace SmatchetBottomPanelDrag {
-
-bool IsPanelVisible() {
-    ImGuiDockNode* node = BottomPanelNode();
-    return node != nullptr && NodeShowsContent(node);
-}
-
-void Collapse(UiDrawSession& d) {
+void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
     if (::ImGui::GetCurrentContext() == nullptr) {
         return; // no context, no dock tree — nothing to hide (and GetStyle would crash)
     }
-    ImGuiDockNode* node = BottomPanelNode();
-    // Remember only a REAL height: at gesture release the splitter has already clamped
-    // the node to the style minimum, and TickHideGesture recorded the pre-drag height —
+    EdgePanelDragState& st = d.*(spec.state);
+    ImGuiDockNode* node = EdgePanelNode(spec);
+    // Remember only a REAL extent: at gesture release the splitter has already clamped
+    // the node to the style minimum, and TickHideGesture recorded the pre-drag extent —
     // a clamped sliver must not overwrite it (the next reveal would lose the user's size).
-    if (node != nullptr && node->Size.y > ::ImGui::GetStyle().WindowMinSize.y * 1.5f) {
-        d.bottomPanelRestoreHeight = node->Size.y;
+    if (node != nullptr && node->Size[spec.axis] > ::ImGui::GetStyle().WindowMinSize[spec.axis] * 1.5f) {
+        st.restoreExtent = node->Size[spec.axis];
     }
     std::vector<std::string> captured;
     std::vector<const ImGuiWindow*> closed;
-    for (const BottomWindowEntry& entry : kBottomWindows) {
+    for (size_t i = 0; i < sizeof(kClosableWindows) / sizeof(kClosableWindows[0]); ++i) {
+        const ClosableWindowEntry& entry = kClosableWindows[i];
         if (!(d.*(entry.showFlag))) {
             continue;
         }
         ImGuiWindow* w = ::ImGui::FindWindowByName(SmatchetLocalization::WindowTitleFromSource(entry.sourceTitle));
-        if (w == nullptr || !WindowInsideBottomPanel(w)) {
-            // Open somewhere else (floating / user-moved) — hiding the panel must not
-            // close it.
+        if (w == nullptr || !WindowInsideNode(w, spec.nodeId)) {
+            // Open somewhere else (floating / user-moved / expanded) — hiding the panel
+            // must not close it.
             continue;
         }
         captured.push_back(entry.layoutKey);
@@ -308,9 +557,10 @@ void Collapse(UiDrawSession& d) {
     }
     // A capture-less collapse (e.g. an idempotent view.panel.bottom "hide" while the
     // panel is already hidden) keeps the previously remembered tab set — clearing it
-    // would degrade the next reveal to the Log fallback.
+    // would degrade the next reveal to the default window.
     if (!captured.empty()) {
-        d.bottomPanelRestoreKeys = captured;
+        st.restoreKeys = captured;
+        st.collapseSeq = ++d.edgePanelCollapseCounter;
     }
     // Windows outside the registry (grid panes, windows the user drag-docked here)
     // cannot be closed from a show-flag table; the panel stays visible with them, so
@@ -326,24 +576,34 @@ void Collapse(UiDrawSession& d) {
             }
         }
     }
-    d.cfg.ShowPanel = leftovers;
-    d.bottomPanelRevealDragActive = false;
-    d.bottomPanelApplyHeightFrames = 0;
-    LOG_DEBUG("BottomPanel: collapse closed %d tab(s) (leftovers=%d, restore height %.0f)",
-              static_cast<int>(captured.size()), leftovers ? 1 : 0, d.bottomPanelRestoreHeight);
+    if (spec.mirrorsShowPanel) {
+        d.cfg.ShowPanel = leftovers;
+    }
+    st.revealDragActive = false;
+    st.applyFrames = 0;
+    if (leftovers && spec.axis == ImGuiAxis_X &&
+        st.restoreExtent > ::ImGui::GetStyle().WindowMinSize[spec.axis] * 1.5f) {
+        // The column stays (leftover tabs): put it back at its pre-drag width instead of
+        // leaving the clamped sliver the splitter drag ended on.
+        st.pendingExtent = st.restoreExtent;
+        st.applyFrames = 8;
+    }
+    LOG_DEBUG("%s: collapse closed %d tab(s) (leftovers=%d, restore extent %.0f)", spec.logName,
+              static_cast<int>(captured.size()), leftovers ? 1 : 0, st.restoreExtent);
 }
 
-void Expand(UiDrawSession& d, float desiredHeightPx) {
+void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredExtentPx) {
     if (::ImGui::GetCurrentContext() == nullptr) {
         return; // no context, no dock tree — GetMainViewport/GetStyle below need one
     }
-    if (d.bottomPanelRestoreKeys.empty()) {
-        d.bottomPanelRestoreKeys.push_back("log"); // nothing remembered (fresh session) — reveal the Log
+    EdgePanelDragState& st = d.*(spec.state);
+    if (st.restoreKeys.empty() && spec.defaultRestoreKey != nullptr) {
+        st.restoreKeys.push_back(spec.defaultRestoreKey); // nothing remembered (fresh session)
     }
     bool focusGiven = false;
-    for (const BottomWindowEntry& entry : kBottomWindows) {
-        if (std::find(d.bottomPanelRestoreKeys.begin(), d.bottomPanelRestoreKeys.end(), entry.layoutKey) ==
-            d.bottomPanelRestoreKeys.end()) {
+    for (size_t i = 0; i < sizeof(kClosableWindows) / sizeof(kClosableWindows[0]); ++i) {
+        const ClosableWindowEntry& entry = kClosableWindows[i];
+        if (std::find(st.restoreKeys.begin(), st.restoreKeys.end(), entry.layoutKey) == st.restoreKeys.end()) {
             continue;
         }
         d.*(entry.showFlag) = true;
@@ -352,28 +612,54 @@ void Expand(UiDrawSession& d, float desiredHeightPx) {
             focusGiven = true;
         }
     }
-    d.bottomPanelRestoreKeys.clear();
-    d.cfg.ShowPanel = true;
+    st.restoreKeys.clear();
+    if (spec.mirrorsShowPanel) {
+        d.cfg.ShowPanel = true;
+    }
     const ImGuiViewport* vp = ::ImGui::GetMainViewport();
-    const float workH = vp != nullptr ? vp->WorkSize.y : 0.0f;
-    const float minY = ::ImGui::GetStyle().WindowMinSize.y;
-    d.bottomPanelPendingHeight =
-        desiredHeightPx > 0.0f ? desiredHeightPx : pure::RestoreHeight(d.bottomPanelRestoreHeight, minY, workH);
-    d.bottomPanelApplyHeightFrames = 8; // settle window — mirrors layoutForceDefaultsFrames
-    LOG_DEBUG("BottomPanel: expanded (height %.0f)", d.bottomPanelPendingHeight);
+    const float workExtent = vp != nullptr ? vp->WorkSize[spec.axis] : 0.0f;
+    const float minPx = ::ImGui::GetStyle().WindowMinSize[spec.axis];
+    st.pendingExtent =
+        desiredExtentPx > 0.0f ? desiredExtentPx : pure::RestoreHeight(st.restoreExtent, minPx, workExtent);
+    st.applyFrames = 8; // settle window — mirrors layoutForceDefaultsFrames
+    LOG_DEBUG("%s: expanded (extent %.0f)", spec.logName, st.pendingExtent);
 }
+
+void TickEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
+    const EdgePanelDragState& st = d.*(spec.state);
+    ImGuiDockNode* node = EdgePanelNode(spec);
+    TickRevealFollow(d, spec, node);
+    ApplyPendingExtent(d, spec, node);
+    if (node != nullptr && NodeShowsContent(node)) {
+        (d.*(spec.state)).revealArmed = false; // no grip is drawn: a stale arm must not commit a later press
+        TickHideGesture(d, spec, node);
+    } else if (!st.revealDragActive) {
+        DrawRevealGrip(d, spec, node);
+    } else {
+        (d.*(spec.state)).revealArmed = false;
+    }
+}
+
+} // namespace
+
+namespace SmatchetBottomPanelDrag {
+
+bool IsPanelVisible() {
+    const ImGuiDockNode* node = EdgePanelNode(kBottomSpec);
+    return node != nullptr && NodeShowsContent(node);
+}
+
+void Collapse(UiDrawSession& d) { CollapseEdgePanel(d, kBottomSpec); }
+
+void Expand(UiDrawSession& d, float desiredHeightPx) { ExpandEdgePanel(d, kBottomSpec, desiredHeightPx); }
 
 void Tick(UiDrawSession& d) {
     if (::ImGui::GetCurrentContext() == nullptr) {
         return;
     }
-    ImGuiDockNode* node = BottomPanelNode();
-    TickRevealFollow(d);
-    ApplyPendingHeight(d, node);
-    if (node != nullptr && NodeShowsContent(node)) {
-        TickHideGesture(d, node);
-    } else if (!d.bottomPanelRevealDragActive) {
-        DrawRevealGrip(d);
+    TickEdgePanel(d, kBottomSpec);
+    for (const EdgePanelSpec* side : kSideSpecs) {
+        TickEdgePanel(d, *side);
     }
 }
 
