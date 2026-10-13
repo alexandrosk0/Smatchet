@@ -558,12 +558,21 @@ setup_nudge() {
     export SHA OWNER REPO PR NUDGE_BUDGET
 }
 
-# Stub gh: the comments fetch serves the TSV fixture (rc from GH_FETCH_RC);
-# any other invocation is a POST and is appended to the log, one arg per line.
+# Stub gh: the comments fetch serves the TSV fixture (rc from GH_FETCH_RC); the
+# statuses fetch serves CR_FIRST_AT, or, with CR_STATUS_PAGES set, runs the
+# caller's real --jq program over each page file in turn (what --paginate --jq
+# does); any other invocation is a POST and is appended to the log, one arg per line.
 gh() {
     case "$*" in
         *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
-        *"/statuses?per_page="*) [ -z "${CR_FIRST_AT:-}" ] || printf '%s\n' "$CR_FIRST_AT" ;;
+        *"/statuses?per_page="*)
+            if [ -n "${CR_STATUS_PAGES:-}" ]; then
+                local prog="" prev="" a page
+                for a in "$@"; do [ "$prev" = --jq ] && prog="$a"; prev="$a"; done
+                for page in $CR_STATUS_PAGES; do jq -r "$prog" "$page" || return 1; done
+            else
+                [ -z "${CR_FIRST_AT:-}" ] || printf '%s\n' "$CR_FIRST_AT"
+            fi ;;
         *) printf '%s\n' "$@" >> "$POST_LOG" ;;
     esac
 }
@@ -1071,6 +1080,31 @@ CR_LOGIN='coderabbitai[bot]'
     setup_oss
     CR_FIRST_AT=2026-08-17T10:30:00Z
     ask_row alice User 2026-08-17T10:40:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+# Two pages of statuses, newest first as the API serves them: the oldest CodeRabbit
+# status (10:30) is on page 2, a newer one (10:50) on page 1, and another context's
+# older status (10:00) on page 1. The action's own jq, sort and pick run on them.
+status_pages() {
+    printf '%s' '[{"context":"CodeRabbit","created_at":"2026-08-17T10:50:00Z"},{"context":"ci/build","created_at":"2026-08-17T10:00:00Z"}]' \
+        > "$BATS_TEST_TMPDIR/st1.json"
+    printf '%s' '[{"context":"CodeRabbit","created_at":"2026-08-17T10:30:00Z"}]' > "$BATS_TEST_TMPDIR/st2.json"
+    CR_STATUS_PAGES="$BATS_TEST_TMPDIR/st1.json $BATS_TEST_TMPDIR/st2.json"
+    export CR_STATUS_PAGES
+}
+
+@test "oss: the anchor is CodeRabbit's own status, not another context's older one" {
+    setup_oss
+    status_pages
+    ask_row alice User 2026-08-17T10:20:00Z '@coderabbitai review' # after ci/build, before CodeRabbit
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: the anchor is CodeRabbit's oldest status on the head, read across every page" {
+    setup_oss
+    status_pages
+    ask_row alice User 2026-08-17T10:40:00Z '@coderabbitai review' # after 10:30 (page 2), before 10:50
     [ "$(oss_ask_state)" = waiting ]
 }
 
