@@ -12,6 +12,8 @@
 #include "Config/CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "GridContextDepsAdapter.h"
+#include "GridContextFieldCatalogOps.h"
+#include "GridLiveContext.h"
 #include "Tracker/FieldCatalogCache.h"
 #include "Tracker/TrackerFieldSchema.h"
 
@@ -19,6 +21,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -599,4 +602,50 @@ TEST_CASE("AppController::SetFieldCatalog clear empties the pane without publish
     app.SetFieldCatalog({}, {}, {}, std::string());
     CHECK(app.GetAvailableFields().empty()); // no synthetic history/comments for a tracker not loaded yet
     CHECK(app.GetFieldCatalogRevision() != revisionBefore);
+}
+
+TEST_CASE("ClearCatalogInMemoryInto drops a restored snapshot's state with the catalog") {
+    // A pane showing a restored snapshot reads it while fieldCatalogRestored_ is set; once the catalog is
+    // cleared the flag must go too, or the pane keeps reading an empty catalog as populated.
+    for (const bool clearUsers : {false, true}) {
+        GridContextFieldCatalog cat;
+        cat.AvailableFields.resize(1);
+        cat.AvailableUsers.resize(1);
+        cat.fieldCatalogRestored_ = true;
+        cat.currentCatalogProjectKey_ = "FOO";
+        cat.LastTrackerFieldCatalogWarning = "Offline: restored";
+        const std::uint64_t epochBefore = cat.CatalogEpoch.load();
+        const std::uint64_t revisionBefore = cat.TrackerFieldCatalogRevision.load();
+
+        smatchet::catalogops::ClearCatalogInMemoryInto(cat, clearUsers);
+        CHECK(cat.AvailableFields.empty());
+        CHECK_FALSE(cat.fieldCatalogRestored_);
+        CHECK_FALSE(cat.fieldCatalogEverLoaded_);
+        CHECK(cat.currentCatalogProjectKey_.empty());
+        CHECK(cat.LastTrackerFieldCatalogWarning.empty());
+        CHECK(cat.AvailableUsers.empty() == clearUsers);
+        CHECK(cat.CatalogEpoch.load() != epochBefore);
+        CHECK(cat.TrackerFieldCatalogRevision.load() != revisionBefore);
+    }
+}
+
+TEST_CASE("WriteCatalogFailureBannerLocked: only the no-catalog error drops a restored snapshot's state") {
+    using smatchet::catalogoffline::CatalogFailureBanner;
+    GridContextFieldCatalog cat;
+    cat.fieldCatalogRestored_ = true;
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        smatchet::catalogops::WriteCatalogFailureBannerLocked(cat, CatalogFailureBanner::ErrorKeepCatalog, "Jira",
+                                                              "401", false);
+    }
+    CHECK(cat.fieldCatalogRestored_); // the catalog is kept, so its source is too
+    CHECK(cat.LastTrackerFieldCatalogError == "401");
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        smatchet::catalogops::WriteCatalogFailureBannerLocked(cat, CatalogFailureBanner::ErrorNoCatalog, "Jira",
+                                                              "offline", true);
+    }
+    CHECK_FALSE(cat.fieldCatalogRestored_);
+    CHECK_FALSE(cat.fieldCatalogEverLoaded_);
+    CHECK(cat.LastTrackerFieldCatalogErrorTransient);
 }
