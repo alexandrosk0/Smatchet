@@ -788,7 +788,7 @@ class AppController : public IAppThreading,
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                          bool errorTransient = false);
-    /// Empty the focused catalog in memory (fields, components, issue-type metadata, banners) for a
+    /// Empty the focused catalog in memory (fields, components, issue-type metadata, user roster, banners) for a
     /// tracker / site switch. Unlike SetFieldCatalog with empty arrays it never writes the offline
     /// snapshot — that would overwrite the site's saved catalog with an empty one (Pillar 6) — and does
     /// no disk I/O, so it is safe on the UI thread.

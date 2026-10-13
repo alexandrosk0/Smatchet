@@ -1,6 +1,7 @@
 #include "TrackerHttpPure.h"
 
 #include "AiErrorRedact.h"
+#include "Json/BoundedJsonParse.h"
 #include "StringUtil.h"
 
 #include <algorithm>
@@ -158,11 +159,21 @@ Result<bool, TrackerError> ClassifyGitHubIssueExistsProbe(long statusCode, const
     if (statusCode != 410) {
         return ClassifyIssueExistsProbe(statusCode);
     }
-    std::string lowered = body;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (lowered.find("deleted") != std::string::npos) {
-        return ProbeResult::Ok(false);
+    // Only GitHub's own deletion message counts. A 410 also answers for a repository whose Issues are
+    // disabled, and a substring test would read a message such as "...was not deleted" as a deletion
+    // and purge cached issues that still exist.
+    std::string parseErr;
+    const nlohmann::json parsed = smatchet::json_safe::ParseBounded(body, parseErr);
+    if (parseErr.empty() && parsed.is_object()) {
+        const auto message = parsed.find("message");
+        if (message != parsed.end() && message->is_string()) {
+            std::string lowered = message->get<std::string>();
+            std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lowered == "this issue was deleted") {
+                return ProbeResult::Ok(false);
+            }
+        }
     }
     return ProbeResult::Err(
         TrackerErrorInvalidRequest("ProbeIssueExists: 410 Gone without a deletion (are Issues disabled?)", 410));

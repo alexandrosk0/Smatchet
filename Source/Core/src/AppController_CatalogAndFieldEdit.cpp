@@ -551,6 +551,8 @@ void AppController::ClearFieldCatalogInMemory() {
         cat.AvailableFields.clear();
         cat.AvailableComponents.clear();
         cat.AvailableIssueTypeMeta.clear();
+        // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only: the previous site's user roster must not autocomplete under this one, and the saved roster (lookup_cache kind users, keyed by site) restores this site's users when its catalog fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
+        cat.AvailableUsers.clear();
         cat.fieldCatalogEverLoaded_ = false;
         cat.fieldCatalogRestored_ = false;
         cat.LastTrackerFieldCatalogError.clear();

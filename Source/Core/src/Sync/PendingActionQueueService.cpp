@@ -377,8 +377,12 @@ void PendingActionQueueService::RecordFailure(ISyncCache& cache, const PendingAc
             try {
                 cache.UpdatePendingAction(row.Id, row.State, row.Attempts, row.LastError);
             } catch (const std::exception& ex) {
-                LOG_ERROR("PendingActionQueueService: releasing the claim on rejected id=%lld failed: %s",
+                // Archiving now would keep `sending`, which is exactly what this release prevents. Leave
+                // the row live: the next pass treats a `sending` row as ambiguous and handles it safely.
+                LOG_ERROR("PendingActionQueueService: releasing the claim on rejected id=%lld failed: %s; "
+                          "leaving it in the queue",
                           static_cast<long long>(row.Id), ex.what());
+                return;
             }
         }
         Archive(cache, row, "replay_rejected", error.Detail);

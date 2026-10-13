@@ -357,6 +357,23 @@ TEST_CASE("PendingActionQueueService replay archives a rejected send in its pre-
     CHECK(dead[0].Row.State == PendingActionState::kPending);
 }
 
+TEST_CASE("PendingActionQueueService keeps a rejected send live when its claim cannot be released") {
+    // Archiving the row while it still reads `sending` would make a restore treat a refused worklog as
+    // possibly sent. If the release fails, the row stays in the queue for the next pass instead.
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id =
+        rig.Cache().EnqueuePendingAction("Jira", PendingActionKindWire(PendingActionKind::WorklogAdd), "ABC-1",
+                                         "{\"timeSpent\":\"1h\"}", PendingActionState::kPending);
+    rig.Tracker().EnqueueAddWorklogResult(TrackerErrorInvalidRequest("Issue is closed", 400));
+    rig.Cache().UpdatePendingActionThrowsForState = PendingActionState::kPending;
+    rig.ReplayNow();
+    CHECK(rig.Cache().LoadDeadPendingActions().empty());
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].Id == id);
+}
+
 TEST_CASE("PendingActionQueueService replay archives a comment at the attempt cap") {
     OfflineQueueTestEnvGuard env;
     Rig rig;

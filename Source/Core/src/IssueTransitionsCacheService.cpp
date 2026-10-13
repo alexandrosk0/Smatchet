@@ -185,6 +185,15 @@ void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey
         remembered.push_back(opt);
     }
     if (remembered.empty()) {
+        // Every option was a global or looped self-target, so this status has no other move now. An
+        // edge learned from an earlier fetch is obsolete and must not be offered offline.
+        {
+            std::lock_guard<std::mutex> lock(learnedMutex_);
+            learned_.erase(LearnedMemoryKey(backendKey, learnedKey));
+        }
+        if (store) {
+            store->DeleteLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey);
+        }
         return;
     }
     {

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <map>
 #include <mutex>
 #include <string>
@@ -138,7 +139,12 @@ void DrainOnce(WorkerState& s) {
     if (!rawKeys.empty()) {
         try {
             WriteConfigJsonKeys(rawKeys);
-        } catch (...) { // catch-all-ok: see above.
+        } catch (const std::exception& ex) {
+            // The batch is gone from the slot; a later enqueue of the same key writes it again.
+            LOG_ERROR("config_save: writing %zu raw config key(s) failed, batch dropped: %s", rawKeys.size(),
+                      ex.what());
+        } catch (...) { // catch-all-ok: logged; a worker-thread throw must not terminate the process.
+            LOG_ERROR("config_save: writing %zu raw config key(s) failed, batch dropped", rawKeys.size());
         }
     }
 }
