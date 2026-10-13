@@ -150,3 +150,45 @@ TEST_CASE("RequiredFieldsOfView drops blanks and the synthetic id column and sor
     CHECK(RequiredFieldsOfView({"summary", "", "id", "assignee", "summary"}) ==
           std::vector<std::string>{"assignee", "summary"});
 }
+
+// --- change monitor: roster vs what the pane holds -------------------------------------------------------
+
+TEST_CASE("DiffRosterAgainstResident: changed and new keys are fetched, new ones are Added") {
+    TrackerRoster roster;
+    roster.Complete = true;
+    roster.Entries = {R("A-1", "T1"), R("A-2", "T2"), R("A-3", "T1")};
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-2", "T1"}};
+    const RosterDiff diff = DiffRosterAgainstResident(roster, resident);
+    CHECK(diff.ToFetch == std::vector<std::string>{"A-2", "A-3"});
+    CHECK(diff.Added == std::vector<std::string>{"A-3"});
+    CHECK(diff.Vanished.empty());
+}
+
+TEST_CASE("DiffRosterAgainstResident: resident keys missing from a COMPLETE roster vanished; an incomplete one reports "
+          "none") {
+    TrackerRoster roster;
+    roster.Entries = {R("A-1", "T1")};
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"B-2", "T1"}, {"A-9", "T1"}};
+    roster.Complete = true;
+    CHECK(DiffRosterAgainstResident(roster, resident).Vanished == std::vector<std::string>{"A-9", "B-2"});
+    roster.Complete = false;
+    CHECK(DiffRosterAgainstResident(roster, resident).Vanished.empty());
+}
+
+TEST_CASE("DiffRosterAgainstResident: an unstamped roster entry never triggers a fetch for a held row") {
+    TrackerRoster roster;
+    roster.Complete = true;
+    roster.Entries = {R("A-1", "")};
+    const RosterDiff held = DiffRosterAgainstResident(roster, {{"A-1", "T1"}});
+    CHECK(held.ToFetch.empty());
+    // A held row with no stamp yet is refetched once the tracker states one (the refetched row carries it).
+    roster.Entries = {R("A-1", "T1")};
+    CHECK(DiffRosterAgainstResident(roster, {{"A-1", ""}}).ToFetch == std::vector<std::string>{"A-1"});
+}
+
+TEST_CASE("DiffRosterAgainstResident: duplicate roster keys are handled once") {
+    TrackerRoster roster;
+    roster.Complete = true;
+    roster.Entries = {R("A-1", "T1"), R("A-1", "T1")};
+    CHECK(DiffRosterAgainstResident(roster, {}).ToFetch == std::vector<std::string>{"A-1"});
+}

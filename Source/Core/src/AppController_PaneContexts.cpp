@@ -28,6 +28,8 @@
 #include "Views.h"
 
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
+#include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/DeltaSyncPure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/RemoteVersionPure.h"
 #include "Sync/TicketChangeDiffPure.h"
@@ -626,19 +628,41 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // baseline (item 10). The worker diffs these against the view's full key list to find rows
         // that vanished; ctx must not be touched off-thread, so it is captured by value.
         std::vector<std::string> cachedKeys;
+        std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path)
         {
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
             cachedKeys.reserve(ctx.ActiveTickets.size());
+            residentUpdated.reserve(ctx.ActiveTickets.size());
             for (std::size_t i = 0; i < ctx.ActiveTickets.size(); ++i) {
                 cachedKeys.push_back(ctx.ActiveTickets[i].id);
+                residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
             }
         }
-        LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, window, polledAt,
-                              capturedGeneration, capturedSyncEpoch]() mutable {
+        // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query
+        // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
+        const bool useRoster = cfg.DeltaSyncEnabled && backend->Reader().SupportsVersionedRoster();
+        LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, residentUpdated,
+                              useRoster, window, polledAt, capturedGeneration, capturedSyncEpoch]() mutable {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
             ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
             if (!paneJql.empty()) {
                 cfgCopy.JqlQuery = paneJql;
+            }
+            if (useRoster) {
+                std::vector<CachedTicket> rosterFetched;
+                std::vector<smatchet::MembershipRemovalVerdict> rosterVerdicts;
+                if (!smatchet::sync::RunRosterProbe(backend->Reader(), cfgCopy, views, residentUpdated, paneId,
+                                                    rosterFetched, rosterVerdicts)) {
+                    return; // soft failure: logged, the next interval retries
+                }
+                mainThreadDispatcher.PostToMainThread([this, paneId, rosterFetched = std::move(rosterFetched),
+                                                       rosterVerdicts = std::move(rosterVerdicts), polledAt,
+                                                       capturedGeneration, capturedSyncEpoch]() mutable {
+                    applyChangeProbeOnMainThread_(paneId, std::move(rosterFetched), std::move(rosterVerdicts), polledAt,
+                                                  capturedGeneration, capturedSyncEpoch,
+                                                  /*addNewRows=*/true);
+                });
+                return;
             }
             auto res = backend->Reader().FetchIssuesChangedSince(cfgCopy, views, window, salientFieldIds);
             if (!static_cast<bool>(res)) {
@@ -657,7 +681,7 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
                                                    verdicts = std::move(verdicts), polledAt, capturedGeneration,
                                                    capturedSyncEpoch]() mutable {
                 applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
-                                              capturedGeneration, capturedSyncEpoch);
+                                              capturedGeneration, capturedSyncEpoch, /*addNewRows=*/false);
             });
         });
     }
@@ -680,27 +704,15 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
         return verdicts;
     }
     const std::vector<std::string> removed = smatchet::RemovedKeys(cachedKeys, keysRes.value());
-    const std::size_t kMaxProbesPerCycle = 25; // lightweight cap; remainder retried next cycle
-    for (std::size_t i = 0; i < removed.size() && i < kMaxProbesPerCycle; ++i) {
-        auto probe = reader.ProbeIssueExists(cfg, removed[i]);
-        smatchet::MembershipRemovalVerdict v;
-        v.issueKey = removed[i];
-        v.stillExists = static_cast<bool>(probe) ? probe.value() : true; // probe error → non-destructive
-        verdicts.push_back(v);
-    }
-    if (removed.size() > kMaxProbesPerCycle) {
-        LOG_INFO("AppController::TickChangeMonitors reconcile capped pane='%s': %zu vanished, "
-                 "probing %zu this cycle",
-                 paneId.c_str(), removed.size(), kMaxProbesPerCycle);
-    }
-    return verdicts;
+    return smatchet::sync::ProbeVanishedKeys(reader, cfg, removed, paneId);
 }
 
 // SMATCHET_DEVIATION(rule=function-too-long; reason=Grid visibility fix: merged fetched tickets into ActiveTickets for grid visibility (critical data flow) + durable cache persistence + Lua notification dispatch; all mutations under single mutex for thread-safety; revisit=2027-12-31; owner=claude)
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
-                                                  std::uint64_t capturedGeneration, std::uint64_t capturedSyncEpoch) {
+                                                  std::uint64_t capturedGeneration, std::uint64_t capturedSyncEpoch,
+                                                  bool addNewRows) {
     // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
     // generation (swapped mid-flight → drop): a stale apply would diff new-backend rows against
     // the old baseline (capture-then-check, issue #1081). Also drop when a streaming sync started
@@ -785,6 +797,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // ids, then republish + bump revision once if any field changed.
     bool anyFieldUpdated = false;
     std::vector<CachedTicket> updatedTickets; // Track updated tickets for cache persistence
+    std::vector<std::string> addedKeys;       // tickets the roster path added to the grid (Added notifications)
     {
         std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
         // Handle membership removals first (within the same lock) before merge, so removed IDs
@@ -801,6 +814,13 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
             auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
             if (it == ctx.ActiveTickets.end()) {
+                if (addNewRows && !t.id.empty()) {
+                    // The roster path found a ticket that entered the view: it joins the grid (and the cache).
+                    ctx.ActiveTickets.push_back(t);
+                    updatedTickets.push_back(t);
+                    addedKeys.push_back(t.id);
+                    anyFieldUpdated = true;
+                }
                 continue;
             }
             // Never replace a resident row with one the tracker stamped OLDER (a late or reordered
@@ -862,6 +882,17 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         });
     }
 
+    // The added rows now belong to this pane for good; record them, or the next RefreshLocalData (which
+    // scopes the namespace read to the pane's recorded ids) would filter them back out.
+    for (std::size_t i = 0; i < addedKeys.size(); ++i) {
+        AddPaneOwnedTicketId(backendKey, paneId, addedKeys[i]);
+    }
+    for (std::size_t i = 0; i < addedKeys.size(); ++i) {
+        smatchet::TicketChangeSummary s;
+        s.kind = smatchet::TicketChangeKind::Added;
+        s.issueId = addedKeys[i];
+        changes.push_back(s);
+    }
     if (!plan.residentRemovals.empty()) {
         for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
             const smatchet::MembershipRemovalVerdict& v = plan.residentRemovals[i];

@@ -22,6 +22,7 @@
 #include "CachedTicketTypes.h"
 #include "ITicketSyncDeps.h"
 #include "TicketSyncService.h"
+#include "Sync/ChangeMonitorRosterProbe.h"
 #include "Sync/DeltaSyncPure.h"
 
 #include <doctest/doctest.h>
@@ -34,6 +35,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using smatchet_tests::FakeTicketSyncDeps;
@@ -2176,4 +2178,105 @@ TEST_CASE("A stale-row delete that throws a non-std exception still releases the
     CHECK(rig.svc.IsActive());
     rig.deps.RunDeferredTasks();
     REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.svc.IsActive(); }));
+}
+
+// --- delta-sync Phase 6: the change monitor's roster path ---------------------------------------------------
+
+namespace {
+struct ProbeCountingClient : FakeTrackerClient {
+    int Probes = 0;
+    bool Exists = true;
+    Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig&, const std::string&) override {
+        ++Probes;
+        return Result<bool, TrackerError>::Ok(Exists);
+    }
+};
+} // namespace
+
+TEST_CASE("Change monitor roster probe: one roster call, only changed and new bodies, vanished keys probed") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}, {"A-2", "T2"}, {"A-3", "T1"}}));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-2", "T2", "fresh"), Stamped("A-3", "T1", "new")});
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-2", "T1"}, {"A-9", "T1"}};
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+
+    CHECK(fake.FetchRosterCallCount() == 1);
+    CHECK(fake.FetchIssuesForKeysCallCount() == 1);
+    std::vector<std::string> asked = fake.FetchIssuesForKeysLastKeys();
+    std::sort(asked.begin(), asked.end());
+    CHECK(asked == std::vector<std::string>{"A-2", "A-3"}); // A-1 is unchanged: no body
+    CHECK(fetched.size() == 2);
+    REQUIRE(verdicts.size() == 1);
+    CHECK(verdicts[0].issueKey == "A-9");
+    CHECK(verdicts[0].stillExists);
+    CHECK(fake.Probes == 1);
+}
+
+TEST_CASE("Change monitor roster probe: nothing changed means no body download") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}));
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+    CHECK(fake.FetchIssuesForKeysCallCount() == 0);
+    CHECK(fetched.empty());
+    CHECK(verdicts.empty());
+}
+
+TEST_CASE("Change monitor roster probe: a roster error skips the cycle; an incomplete roster probes nothing") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    fake.SetRosterError(TrackerErrorTransport("down"));
+    CHECK_FALSE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+
+    fake.SetRoster(MakeRoster({{"A-2", "T1"}}, /*complete=*/false));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-2", "T1")});
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+    CHECK(verdicts.empty()); // a capped roster cannot prove A-1 left the view
+    CHECK(fake.Probes == 0);
+}
+
+TEST_CASE("Change monitor roster probe: a refused key does not starve the other changed rows") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T2"}, {"A-2", "T2"}, {"A-3", "T2"}}));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-1", "T2"), Stamped("A-3", "T2")});
+    fake.SetFetchIssuesForKeysRefusedKeys({"A-2"});
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}, {"A-3", "T1"}}, "pane",
+                                           fetched, verdicts));
+    CHECK(fetched.size() == 2);
+}
+
+TEST_CASE("Change monitor roster probe: vanished-key probes are capped per cycle") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({}));
+    std::unordered_map<std::string, std::string> resident;
+    for (int i = 0; i < 40; ++i) {
+        resident["K-" + std::to_string(i)] = "T1";
+    }
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+    CHECK(fake.Probes == 25);
+    CHECK(verdicts.size() == 25);
 }

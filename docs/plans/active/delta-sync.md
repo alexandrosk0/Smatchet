@@ -126,6 +126,7 @@ Found in the Phase 3-5 review; none block the phases above.
 - The session stats counters are sampled from a shared tracker traffic counter, so two panes syncing at once can cross-count; treat them as indicative.
 - The change-monitor probe's save happens after its epoch check but before the UI-thread drain, so a sync that starts in between can race it. The version guard in `SaveTicketsWithSyncMeta` narrows this.
 - `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
+- The roster change probe reports every resident row the view roster no longer lists (including parents/children the hierarchy walk added) as vanished and probes the same first 25 (sorted) each cycle; with more than 25 such rows a truly deleted ticket past the cap is never probed. Rotate the probe window or exclude rows the walk owns.
 - `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
 
 ## Implementation log

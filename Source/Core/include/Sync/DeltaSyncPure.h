@@ -9,6 +9,7 @@
 #include "TicketSyncMeta.h"
 #include "TrackerRoster.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -97,6 +98,48 @@ constexpr std::size_t kDeltaFullFetchMinChanged = 100;
 
 inline bool ShouldPreferFullFetch(std::size_t rosterSize, std::size_t changedCount) {
     return changedCount > kDeltaFullFetchMinChanged && changedCount * 2 > rosterSize;
+}
+
+// ---- Change monitor -----------------------------------------------------------------------------
+
+struct RosterDiff {
+    /// Keys whose body the monitor must download: new to the pane, or whose stamp moved. Roster order.
+    std::vector<std::string> ToFetch;
+    /// The subset of ToFetch the pane does not hold yet (they join the grid).
+    std::vector<std::string> Added;
+    /// Resident keys the roster no longer lists - only reported for a COMPLETE roster (a capped walk cannot
+    /// prove a row left the view). Sorted, for a deterministic existence-probe order.
+    std::vector<std::string> Vanished;
+};
+
+/// Compares a roster with what a pane holds (`resident`: id -> the stamp of the held row). A held row is
+/// refetched only when both stamps are known and differ, or when the held row has no stamp yet (once; the
+/// refetched row carries one). A roster entry without a stamp never triggers a fetch on its own.
+inline RosterDiff DiffRosterAgainstResident(const TrackerRoster& roster,
+                                            const std::unordered_map<std::string, std::string>& resident) {
+    RosterDiff diff;
+    std::unordered_set<std::string> listed;
+    for (const TrackerRosterEntry& entry : roster.Entries) {
+        if (entry.Key.empty() || !listed.insert(entry.Key).second) {
+            continue;
+        }
+        const auto it = resident.find(entry.Key);
+        if (it == resident.end()) {
+            diff.ToFetch.push_back(entry.Key);
+            diff.Added.push_back(entry.Key);
+        } else if (!entry.Updated.empty() && it->second != entry.Updated) {
+            diff.ToFetch.push_back(entry.Key);
+        }
+    }
+    if (roster.Complete) {
+        for (const auto& kv : resident) {
+            if (listed.find(kv.first) == listed.end()) {
+                diff.Vanished.push_back(kv.first);
+            }
+        }
+        std::sort(diff.Vanished.begin(), diff.Vanished.end());
+    }
+    return diff;
 }
 
 /// The fields a view needs a cached row to carry: its column ids, minus blanks and the synthetic "id".

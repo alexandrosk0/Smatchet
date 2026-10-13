@@ -1500,7 +1500,7 @@ class AppController : public IAppThreading,
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
-                                       std::uint64_t capturedSyncEpoch);
+                                       std::uint64_t capturedSyncEpoch, bool addNewRows);
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};
