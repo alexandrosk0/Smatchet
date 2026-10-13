@@ -1259,7 +1259,7 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
                                                      const ViewsStore& viewsCopy,
                                                      const std::vector<std::string>& parentRefs,
                                                      std::unordered_set<std::string>& workerKeepIds,
-                                                     TrackerIssueFetchSummary& summary) {
+                                                     TrackerIssueFetchSummary& summary, const HierarchyDelta* delta) {
     if (parentRefs.empty()) {
         return;
     }
@@ -1293,18 +1293,13 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 
         LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu", missing.size(),
                  hop, static_cast<unsigned long long>(reqId));
-        std::vector<std::string> refused;
-        int splitBudget = RefusalSplitBudget(missing.size());
         // One token for the whole hop: the keyed fetch polls it inside the HTTP retry/backoff window
         // too, so a superseded sync stops mid-request rather than at the request's timeout.
         const std::function<bool()> cancelled = [this, reqId]() {
             return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
         };
-        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
-            [&](const std::vector<std::string>& keys) {
-                return deps_.Backend()->FetchIssuesForKeysCancellable(cfgCopy, keys, viewsCopy, cancelled);
-            },
-            cancelled, missing, splitBudget, refused);
+        Result<HopRows, TrackerError> fetched =
+            FetchHierarchyHop(cfgCopy, viewsCopy, cancelled, missing, /*childrenOfKeys=*/false, delta);
         if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
@@ -1313,21 +1308,27 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
                                                      " parent issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
-        NoteRefusedKeys(summary, refused, "parent issue(s)");
+        HopRows hopRows = std::move(fetched.value());
+        NoteRefusedKeys(summary, hopRows.Refused, "parent issue(s)");
+        if (hopRows.Incomplete) {
+            MarkHierarchyWalkIncomplete(summary, "some parent issue(s) listed by the tracker were not returned");
+        }
 
-        std::vector<CachedTicket> parents = std::move(fetched.value());
         std::vector<std::string> nextRefs;
-        for (const CachedTicket& parent : parents) {
-            if (!parent.id.empty()) {
-                workerKeepIds.insert(parent.id);
-            }
-            std::string grandparentKey = ParentHierarchyPure::ParentKeyOf(parent);
-            if (!grandparentKey.empty()) {
-                nextRefs.push_back(std::move(grandparentKey));
+        for (const std::vector<CachedTicket>* rows : {&hopRows.Unchanged, &hopRows.Changed}) {
+            for (const CachedTicket& parent : *rows) {
+                if (!parent.id.empty()) {
+                    workerKeepIds.insert(parent.id);
+                }
+                std::string grandparentKey = ParentHierarchyPure::ParentKeyOf(parent);
+                if (!grandparentKey.empty()) {
+                    nextRefs.push_back(std::move(grandparentKey));
+                }
             }
         }
-        summary.FetchedCount += parents.size();
-        if (!QueueBatch(reqId, std::move(parents), /*cachedUnchanged=*/false)) {
+        summary.FetchedCount += hopRows.Changed.size();
+        if (!QueueBatch(reqId, std::move(hopRows.Unchanged), /*cachedUnchanged=*/true) ||
+            !QueueBatch(reqId, std::move(hopRows.Changed), /*cachedUnchanged=*/false)) {
             return;
         }
 
@@ -1345,7 +1346,7 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
                                                const ViewsStore& viewsCopy, const std::vector<std::string>& streamedIds,
                                                std::unordered_set<std::string>& workerKeepIds,
-                                               TrackerIssueFetchSummary& summary) {
+                                               TrackerIssueFetchSummary& summary, const HierarchyDelta* delta) {
     if (streamedIds.empty()) {
         return;
     }
@@ -1389,16 +1390,11 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
 
         LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(), hop,
                  static_cast<unsigned long long>(reqId));
-        std::vector<std::string> refused;
-        int splitBudget = RefusalSplitBudget(keys.size());
         const std::function<bool()> cancelled = [this, reqId]() {
             return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
         };
-        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
-            [&](const std::vector<std::string>& parentKeys) {
-                return deps_.Backend()->FetchChildrenOfKeysCancellable(cfgCopy, parentKeys, viewsCopy, cancelled);
-            },
-            cancelled, keys, splitBudget, refused);
+        Result<HopRows, TrackerError> fetched =
+            FetchHierarchyHop(cfgCopy, viewsCopy, cancelled, keys, /*childrenOfKeys=*/true, delta);
         if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
@@ -1407,30 +1403,36 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
                                                      " issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
-        NoteRefusedKeys(summary, refused, "issue(s) whose children were");
-
-        std::vector<CachedTicket> children = std::move(fetched.value());
-        std::vector<CachedTicket> newChildren;
-        std::vector<std::string> nextParentKeys;
-        newChildren.reserve(children.size());
-        nextParentKeys.reserve(children.size());
-        for (CachedTicket& child : children) {
-            if (child.id.empty()) {
-                continue;
-            }
-            // Every fetched child is a candidate parent for the NEXT hop regardless of whether
-            // it was already cached — a ticket cached by an earlier sync may still have children
-            // this sync hasn't chased yet. Only genuinely new tickets get queued as a batch.
-            nextParentKeys.push_back(child.id);
-            if (workerKeepIds.insert(child.id).second) {
-                newChildren.push_back(std::move(child));
-            }
+        HopRows hopRows = std::move(fetched.value());
+        NoteRefusedKeys(summary, hopRows.Refused, "issue(s) in the children walk");
+        if (hopRows.Incomplete) {
+            MarkHierarchyWalkIncomplete(summary, "some child issue(s) listed by the tracker were not returned");
         }
-        if (!newChildren.empty()) {
-            summary.FetchedCount += newChildren.size();
-            if (!QueueBatch(reqId, std::move(newChildren), /*cachedUnchanged=*/false)) {
-                return;
+
+        std::vector<CachedTicket> newUnchanged;
+        std::vector<CachedTicket> newChanged;
+        std::vector<std::string> nextParentKeys;
+        nextParentKeys.reserve(hopRows.Unchanged.size() + hopRows.Changed.size());
+        const auto sift = [&](std::vector<CachedTicket>& rows, std::vector<CachedTicket>& fresh) {
+            for (CachedTicket& child : rows) {
+                if (child.id.empty()) {
+                    continue;
+                }
+                // Every fetched child is a candidate parent for the NEXT hop regardless of whether
+                // it was already cached - a ticket cached by an earlier sync may still have children
+                // this sync hasn't chased yet. Only genuinely new tickets get queued as a batch.
+                nextParentKeys.push_back(child.id);
+                if (workerKeepIds.insert(child.id).second) {
+                    fresh.push_back(std::move(child));
+                }
             }
+        };
+        sift(hopRows.Unchanged, newUnchanged);
+        sift(hopRows.Changed, newChanged);
+        summary.FetchedCount += newChanged.size();
+        if (!QueueBatch(reqId, std::move(newUnchanged), /*cachedUnchanged=*/true) ||
+            !QueueBatch(reqId, std::move(newChanged), /*cachedUnchanged=*/false)) {
+            return;
         }
 
         if (nextParentKeys.empty()) {
@@ -1470,32 +1472,43 @@ Result<std::vector<CachedTicket>, TrackerError> DownloadChangedRows(ITrackerIssu
 struct TicketSyncService::DeltaWork {
     TrackerRoster Roster;
     smatchet::sync::DeltaFetchSet Set;
-    std::vector<CachedTicket> Unchanged; // served from the cache
-    std::vector<CachedTicket> Changed;   // downloaded this session
-    std::vector<std::string> Refused;    // keys the tracker refused: treated as gone
+    std::vector<CachedTicket> Unchanged;                  // served from the cache
+    std::vector<CachedTicket> Changed;                    // downloaded this session
+    std::vector<std::string> Refused;                     // keys the tracker refused: treated as gone
+    std::unordered_map<std::string, TicketSyncMeta> Meta; // cached versions the attempt started from
+    std::vector<std::string> RequiredFields;              // fields the active view needs a cached row to carry
+    std::int64_t NowSec = 0;
 };
 
 namespace {
 /// Splits the roster, reads the unchanged rows back from the cache, and moves any row the cache cannot
-/// produce into the download list. Returns the reason to abandon the delta attempt, or empty to go on.
-std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
-                          const std::unordered_map<std::string, TicketSyncMeta>& meta,
-                          const std::vector<std::string>& requiredFields, std::int64_t nowSec,
-                          std::int64_t maxRowAgeSec, const TrackerRoster& roster, smatchet::sync::DeltaFetchSet& set,
-                          std::vector<CachedTicket>& unchangedRows) {
+/// produce into the download list. The rows to use are `unchangedRows`, never set.Unchanged (which still lists
+/// the keys the cache could not serve; they are also appended to ToFetch).
+void ServeUnchangedRows(ISyncCache& cache, const std::string& backendKey,
+                        const std::unordered_map<std::string, TicketSyncMeta>& meta,
+                        const std::vector<std::string>& requiredFields, std::int64_t nowSec, std::int64_t maxRowAgeSec,
+                        const TrackerRoster& roster, smatchet::sync::DeltaFetchSet& set,
+                        std::vector<CachedTicket>& unchangedRows) {
     set = smatchet::sync::ComputeDeltaFetchSet(roster.Entries, meta, requiredFields, nowSec, maxRowAgeSec);
     unchangedRows = cache.GetTicketsByIds(backendKey, set.Unchanged);
     std::unordered_set<std::string> served;
     for (const CachedTicket& row : unchangedRows) {
         served.insert(row.id);
     }
-    // set.Unchanged keeps listing keys the cache could not serve (they are also appended to ToFetch below);
-    // the rows to use are `unchangedRows`, never set.Unchanged.
     for (const std::string& key : set.Unchanged) {
         if (served.find(key) == served.end()) {
             set.ToFetch.push_back(key); // the cache lost the row: download it
         }
     }
+}
+
+/// ServeUnchangedRows plus the view-level threshold. Returns the reason to abandon the delta attempt, or empty.
+std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
+                          const std::unordered_map<std::string, TicketSyncMeta>& meta,
+                          const std::vector<std::string>& requiredFields, std::int64_t nowSec,
+                          std::int64_t maxRowAgeSec, const TrackerRoster& roster, smatchet::sync::DeltaFetchSet& set,
+                          std::vector<CachedTicket>& unchangedRows) {
+    ServeUnchangedRows(cache, backendKey, meta, requiredFields, nowSec, maxRowAgeSec, roster, set, unchangedRows);
     if (smatchet::sync::ShouldPreferFullFetch(roster.Entries.size(), set.ToFetch.size())) {
         return "most of the view changed (" + std::to_string(set.ToFetch.size()) + " of " +
                std::to_string(roster.Entries.size()) + " issues)";
@@ -1548,10 +1561,12 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
 
     DeltaWork work;
     work.Roster = std::move(roster.value());
+    work.Meta = meta;
+    work.NowSec = NowEpochSeconds();
     const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
-    const std::vector<std::string> required =
+    work.RequiredFields =
         smatchet::sync::RequiredFieldsOfView(activeView != nullptr ? activeView->Fields : std::vector<std::string>());
-    out.FallbackReason = PlanDeltaRows(*cache, backendKey, meta, required, NowEpochSeconds(),
+    out.FallbackReason = PlanDeltaRows(*cache, backendKey, meta, work.RequiredFields, work.NowSec,
                                        cfgCopy.DeltaSyncMaxRowAgeSec, work.Roster, work.Set, work.Unchanged);
     if (!out.FallbackReason.empty()) {
         return out;
@@ -1634,13 +1649,18 @@ void TicketSyncService::FinishDeltaFetch(std::uint64_t reqId, const TrackerConfi
     }
     // Rows are queued: from here a failure must NOT fall back to a second full queue. A throwing top-up just
     // makes the result non-authoritative (no purge) and the session still publishes.
-    // Parent and child top-ups still download full bodies each sync; Phase 5 makes them delta too.
+    // The parent and child top-ups are delta too: they list versions first and download only changed rows.
+    HierarchyDelta hierarchyDelta;
+    hierarchyDelta.Meta = &work.Meta;
+    hierarchyDelta.RequiredFields = work.RequiredFields;
+    hierarchyDelta.NowSec = work.NowSec;
+    hierarchyDelta.MaxAgeSec = cfgCopy.DeltaSyncMaxRowAgeSec;
     try {
         if (!cancelled()) {
-            FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, parentRefs, keepIds, summary);
+            FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, parentRefs, keepIds, summary, &hierarchyDelta);
         }
         if (!cancelled()) {
-            FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, streamedIds, keepIds, summary);
+            FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, streamedIds, keepIds, summary, &hierarchyDelta);
         }
     } catch (const std::exception& ex) {
         summary.FullSyncCompleted = false;
@@ -1648,4 +1668,60 @@ void TicketSyncService::FinishDeltaFetch(std::uint64_t reqId, const TrackerConfi
         LOG_WARN("TicketSyncService: delta top-up threw: %s", ex.what());
     }
     PublishWorkerResult(reqId, summary, keepIds, partial);
+}
+
+Result<TicketSyncService::HopRows, TrackerError>
+TicketSyncService::FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                     const std::function<bool()>& cancelled, const std::vector<std::string>& keys,
+                                     bool childrenOfKeys, const HierarchyDelta* delta) {
+    using HopResult = Result<HopRows, TrackerError>;
+    ITrackerIssueReader* backend = deps_.Backend();
+    ISyncCache* cache = deps_.Cache();
+    HopRows rows;
+
+    if (delta != nullptr && delta->Meta != nullptr && backend != nullptr && cache != nullptr) {
+        Result<TrackerRoster, TrackerError> roster = childrenOfKeys
+                                                         ? backend->FetchChildRosterOfKeys(cfgCopy, keys, cancelled)
+                                                         : backend->FetchRosterForKeys(cfgCopy, keys, cancelled);
+        if (!roster.has_value() && (roster.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
+            return HopResult::Err(TrackerErrorCancelled());
+        }
+        if (roster.has_value() && roster.value().Complete) {
+            smatchet::sync::DeltaFetchSet set;
+            ServeUnchangedRows(*cache, deps_.CacheBackendKey(), *delta->Meta, delta->RequiredFields, delta->NowSec,
+                               delta->MaxAgeSec, roster.value(), set, rows.Unchanged);
+            std::vector<std::string> refused;
+            Result<std::vector<CachedTicket>, TrackerError> downloaded =
+                DownloadChangedRows(*backend, cfgCopy, viewsCopy, cancelled, set.ToFetch, refused);
+            if (downloaded.has_value()) {
+                rows.Changed = std::move(downloaded.value());
+                rows.Refused = std::move(refused);
+                rows.Incomplete = set.ToFetch.size() > rows.Changed.size() + rows.Refused.size();
+                return HopResult::Ok(std::move(rows));
+            }
+            if (downloaded.error().Kind == TrackerErrorKind::Cancelled || cancelled()) {
+                return HopResult::Err(TrackerErrorCancelled());
+            }
+            rows = HopRows(); // fall through to the full-body hop
+        }
+        // A roster error or an incomplete roster: today's full-body hop below (it isolates refused keys).
+        LOG_INFO("TicketSyncService: %s roster for %zu key(s) unusable (%s); downloading full bodies for this hop.",
+                 childrenOfKeys ? "child" : "parent", keys.size(),
+                 roster.has_value() ? "incomplete" : roster.error().Detail.c_str());
+    }
+
+    std::vector<std::string> refused;
+    int budget = RefusalSplitBudget(keys.size());
+    Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
+        [&](const std::vector<std::string>& batch) {
+            return childrenOfKeys ? backend->FetchChildrenOfKeysCancellable(cfgCopy, batch, viewsCopy, cancelled)
+                                  : backend->FetchIssuesForKeysCancellable(cfgCopy, batch, viewsCopy, cancelled);
+        },
+        cancelled, keys, budget, refused);
+    if (!fetched.has_value()) {
+        return HopResult::Err(fetched.error());
+    }
+    rows.Changed = std::move(fetched.value());
+    rows.Refused = std::move(refused);
+    return HopResult::Ok(std::move(rows));
 }

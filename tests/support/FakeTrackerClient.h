@@ -309,6 +309,50 @@ class FakeTrackerClient : public ITrackerBackend,
         }
         return Result<TrackerRoster, TrackerError>::Ok(roster_);
     }
+    // Hierarchy rosters are derived from the scripted keyed / children tickets (key + their `updated`), so one
+    // script drives both the roster and the body download the delta walk chooses between.
+    Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& /*cfg*/,
+                                                           const std::vector<std::string>& keys,
+                                                           const CancelCallback& /*shouldCancel*/) override {
+        ++fetchRosterForKeysCalls_;
+        if (!hierarchyRosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(hierarchyRosterError_);
+        }
+        TrackerRoster roster;
+        roster.Complete = true;
+        for (const CachedTicket& t : fetchIssuesForKeysTickets_) {
+            if (std::find(keys.begin(), keys.end(), t.id) != keys.end()) {
+                TrackerRosterEntry e;
+                e.Key = t.id;
+                e.Updated = t.GetFieldValue("updated");
+                roster.Entries.push_back(e);
+            }
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster);
+    }
+    Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& /*cfg*/,
+                                                               const std::vector<std::string>& parentKeys,
+                                                               const CancelCallback& /*shouldCancel*/) override {
+        ++fetchChildRosterCalls_;
+        if (!hierarchyRosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(hierarchyRosterError_);
+        }
+        TrackerRoster roster;
+        roster.Complete = true;
+        for (const CachedTicket& t : fetchChildrenOfKeysTickets_) {
+            const std::string parentKey = ParentHierarchyPure::ParentKeyOf(t);
+            if (!parentKey.empty() && std::find(parentKeys.begin(), parentKeys.end(), parentKey) != parentKeys.end()) {
+                TrackerRosterEntry e;
+                e.Key = t.id;
+                e.Updated = t.GetFieldValue("updated");
+                roster.Entries.push_back(e);
+            }
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster);
+    }
+    void SetHierarchyRosterError(TrackerError error) { hierarchyRosterError_ = std::move(error); }
+    std::size_t FetchRosterForKeysCallCount() const { return fetchRosterForKeysCalls_; }
+    std::size_t FetchChildRosterCallCount() const { return fetchChildRosterCalls_; }
     void SetRosterSupported(bool supported) { rosterSupported_ = supported; }
     void SetRoster(TrackerRoster roster) {
         roster_ = std::move(roster);
@@ -1093,6 +1137,9 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError rosterError_;
     std::function<void()> onRoster_;
     std::atomic<std::size_t> fetchRosterCalls_{0};
+    std::atomic<std::size_t> fetchRosterForKeysCalls_{0};
+    std::atomic<std::size_t> fetchChildRosterCalls_{0};
+    TrackerError hierarchyRosterError_;
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -25,6 +26,8 @@
 #include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
+#include "SmatchetResult.h"       // Result<>
+#include "TrackerError.h"         // TrackerError (hierarchy hop result)
 #include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
@@ -146,6 +149,23 @@ class TicketSyncService {
         /// The reason is an expected strategy choice (disabled, unsupported, nothing cached), not a failure.
         bool ExpectedFallback = false;
     };
+    /// What a delta-aware hierarchy hop needs from the delta attempt: the cached versions it started from,
+    /// the fields the view requires, and the age bound. Null = the hop downloads full bodies (a Full sync).
+    struct HierarchyDelta {
+        const std::unordered_map<std::string, TicketSyncMeta>* Meta = nullptr;
+        std::vector<std::string> RequiredFields;
+        std::int64_t NowSec = 0;
+        std::int64_t MaxAgeSec = 0;
+    };
+    /// One hierarchy hop's rows: served from the cache, downloaded, and the keys the tracker refused.
+    struct HopRows {
+        std::vector<CachedTicket> Unchanged;
+        std::vector<CachedTicket> Changed;
+        std::vector<std::string> Refused;
+        /// A key the roster listed as present came back with neither a row nor a refusal: the walk cannot
+        /// be authoritative (nothing may be purged on its strength).
+        bool Incomplete = false;
+    };
     struct DeltaWork; // the roster, the fetch set and the rows of one delta attempt (defined in the .cpp)
 
     /// Streaming-sync FSM state. Moved out of AppController in Phase 1C of the item 11
@@ -228,8 +248,17 @@ class TicketSyncService {
     /// `summary.Warning`, not a FetchError — the tickets fetched so far still apply.
     void FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
                                       const std::vector<std::string>& parentRefs,
-                                      std::unordered_set<std::string>& workerKeepIds,
-                                      TrackerIssueFetchSummary& summary);
+                                      std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary,
+                                      const HierarchyDelta* delta = nullptr);
+
+    /// One hop's rows for `keys` (parents by key, or children of `keys`). With `delta` it lists versions first
+    /// (FetchRosterForKeys / FetchChildRosterOfKeys), serves unchanged rows from the cache and downloads only the
+    /// changed ones; a roster error or an incomplete roster runs today's full-body hop instead. Without `delta`
+    /// it is the full-body hop. A cancelled hop returns a `Cancelled` error.
+    Result<HopRows, TrackerError> FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                                    const std::function<bool()>& cancelled,
+                                                    const std::vector<std::string>& keys, bool childrenOfKeys,
+                                                    const HierarchyDelta* delta);
 
     /// Downward mirror of FetchMissingParentsIntoQueue: given the keys the view's own JQL/filter
     /// actually streamed this sync, fetch their children (and their children's children, hop by
@@ -242,7 +271,8 @@ class TicketSyncService {
     /// tickets fetched so far still apply.
     void FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
                                 const std::vector<std::string>& streamedIds,
-                                std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary);
+                                std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary,
+                                const HierarchyDelta* delta = nullptr);
 
     // --- TickStreamingApply phase helpers ------------------------------------------------
     // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the

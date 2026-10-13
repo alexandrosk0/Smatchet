@@ -415,3 +415,57 @@ TEST_CASE("JiraClient::FetchViewRoster — failures keep their kind; a cancel is
         CHECK(res.error().Kind == TrackerErrorKind::Auth);
     }
 }
+
+// --- delta-sync Phase 5: roster for keys / children of keys ---------------------------------------------
+
+TEST_CASE("JiraClient::FetchRosterForKeys — key-in query, updated only, 40 keys per request") {
+    JiraCatalogHttpFixture fx;
+    std::vector<std::string> jqls;
+    std::vector<std::string> fieldParams;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        jqls.push_back(req.get_param_value("jql"));
+        fieldParams.push_back(req.get_param_value("fields"));
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}, {"fields", {{"updated", "T1"}}}}})}};
+    });
+    JiraClient client;
+    std::vector<std::string> keys;
+    for (int i = 1; i <= 45; ++i) {
+        keys.push_back("SMT-" + std::to_string(i));
+    }
+    const auto res = client.FetchRosterForKeys(fx.Config(), keys, []() { return false; });
+    REQUIRE(res.has_value());
+    REQUIRE(jqls.size() == 2u); // 40 + 5
+    CHECK(jqls[0].find("key in (") == 0);
+    CHECK(fieldParams[0] == "updated");
+    CHECK(res.value().Entries.size() == 2u); // one scripted row per request
+    CHECK(res.value().Complete);
+}
+
+TEST_CASE("JiraClient::FetchRosterForKeys — a refused batch is an error so the caller can isolate keys") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus(kSearchPath, 400, "GET");
+    JiraClient client;
+    const auto res = client.FetchRosterForKeys(fx.Config(), {"SMT-1"}, []() { return false; });
+    REQUIRE_FALSE(res.has_value());
+    CHECK(res.error().Kind == TrackerErrorKind::InvalidRequest);
+}
+
+TEST_CASE("JiraClient::FetchChildRosterOfKeys — parent-in query returns the children's versions") {
+    JiraCatalogHttpFixture fx;
+    std::string jql;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        jql = req.get_param_value("jql");
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-2"}, {"fields", {{"updated", "T9"}}}}})}};
+    });
+    JiraClient client;
+    const auto res = client.FetchChildRosterOfKeys(fx.Config(), {"SMT-1"}, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(jql.find("parent = ") == 0);
+    REQUIRE(res.value().Entries.size() == 1u);
+    CHECK(res.value().Entries[0].Updated == "T9");
+    CHECK(res.value().Complete);
+}

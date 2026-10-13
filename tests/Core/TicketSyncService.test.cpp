@@ -1937,3 +1937,89 @@ TEST_CASE("The stale sweep is one worker-side batch delete plus one in-memory pa
     CHECK(deps.ActiveTicketsImpl[0].id == "NEW-1");
     svc.CancelAndJoinActiveStreamingSync();
 }
+
+// --- delta-sync Phase 5: the parent and child walks list versions first ---------------------------------
+
+namespace {
+CachedTicket StampedChild(const std::string& id, const std::string& parentRef, const std::string& updated,
+                          const std::string& summary = "cached") {
+    CachedTicket t = Stamped(id, updated, summary);
+    t.fieldValues["parent"] = parentRef;
+    return t;
+}
+} // namespace
+
+TEST_CASE("Delta reload: an unchanged ancestor is served from the cache, not downloaded") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1"), Stamped("EPIC-1", "T1", "epic")});
+    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}})); // the view itself holds only the sub-task
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterForKeysCallCount() == 1);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0); // no ancestor body download
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);       // but the epic is on the grid (from the cache)
+    CHECK(rig.svc.LastSessionStats().BodiesFetched == 0);
+}
+
+TEST_CASE("Delta reload: only a changed ancestor is downloaded") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1"), Stamped("EPIC-1", "T1", "old epic")});
+    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T2", "new epic")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 1);
+    REQUIRE(rig.fake->FetchIssuesForKeysLastKeys().size() == 1);
+    CHECK(rig.fake->FetchIssuesForKeysLastKeys()[0] == "EPIC-1");
+    CachedTicket got;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "EPIC-1", got));
+    CHECK(got.fieldValues["summary"] == "new epic");
+}
+
+TEST_CASE("Delta reload: a hierarchy roster error runs today's full-body hop") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+    rig.fake->SetHierarchyRosterError(TrackerErrorTransport("roster hiccup"));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 1); // the full-body hop
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.empty());
+}
+
+TEST_CASE("Delta reload: an unchanged descendant tree is served from the cache") {
+    DeltaRig rig;
+    rig.Seed({Stamped("EPIC-1", "T1", "epic"), StampedChild("STORY-1", "EPIC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"EPIC-1", "T1"}}));
+    rig.fake->SetFetchChildrenOfKeysResult(true, {StampedChild("STORY-1", "EPIC-1", "T1")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchChildRosterCallCount() >= 1);
+    CHECK(rig.fake->FetchChildrenOfKeysCallCount() == 0); // no child body download
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);
+}
+
+TEST_CASE("A forced Full sync keeps the hierarchy walks on full bodies") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1"), Stamped("EPIC-1", "T1", "epic")});
+    rig.fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterForKeysCallCount() == 0);
+    CHECK(rig.fake->FetchChildRosterCallCount() == 0);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 1);
+}

@@ -125,6 +125,26 @@ class ITrackerIssueReader {
             TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
     }
 
+    /// Roster (key + last-updated stamp, no bodies) of the issues named by `keys`, for the delta parent walk.
+    /// Only meaningful when SupportsVersionedRoster(). A key the tracker will not show fails the call (the
+    /// caller then runs the full-body hop, which isolates refusals); `Complete` is true when every key's
+    /// batch was read.
+    virtual Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& /*cfg*/,
+                                                                   const std::vector<std::string>& /*keys*/,
+                                                                   const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
+    }
+
+    /// Roster of the issues whose parent is one of `parentKeys` - the downward mirror of FetchRosterForKeys,
+    /// for the delta child walk. `Complete` is false when a page cap cut the walk short.
+    virtual Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& /*cfg*/,
+                                                                       const std::vector<std::string>& /*parentKeys*/,
+                                                                       const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
+    }
+
     // ---- ticket-change-monitor reader surface (ticket-change-monitor plan, S1b) ----
     // Three optional capabilities the per-pane change monitor leans on. Each ships with a
     // backend-agnostic DEFAULT here so an unsupporting backend keeps working (heavier, but

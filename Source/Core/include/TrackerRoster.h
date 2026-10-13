@@ -25,4 +25,11 @@ struct TrackerRoster {
     bool Complete = false;
     /// Soft caveat from the walk (e.g. a pagination cap); non-empty implies !Complete.
     std::string Warning;
+
+    /// Adds `text` to Warning ("; "-joined); blank text is ignored.
+    void AppendWarningText(const std::string& text) {
+        if (!text.empty()) {
+            Warning = Warning.empty() ? text : (Warning + "; " + text);
+        }
+    }
 };

@@ -159,6 +159,14 @@ class JiraClient : public ITrackerBackend,
     Result<TrackerRoster, TrackerError> FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& views,
                                                         const CancelCallback& shouldCancel) override;
 
+    /// Delta parent / child walks: `key in (...)` / `parent in (...)` with fields=updated, 40 keys per request.
+    Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& cfg,
+                                                           const std::vector<std::string>& keys,
+                                                           const CancelCallback& shouldCancel) override;
+    Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& cfg,
+                                                               const std::vector<std::string>& parentKeys,
+                                                               const CancelCallback& shouldCancel) override;
+
     // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
     // Server-side change probe + keys-only membership + existence GET, replacing the heavy
     // full-fetch defaults on ITrackerIssueReader with native Jira queries.

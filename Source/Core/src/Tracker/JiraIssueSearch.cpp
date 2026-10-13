@@ -799,26 +799,17 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
     return FetchResult::Ok(std::move(results));
 }
 
-Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& /*views*/,
-                                                                const CancelCallback& shouldCancel) {
-    using RosterResult = Result<TrackerRoster, TrackerError>;
-    // The view's full JQL with `fields=updated`: each issue rides back as its key and last-updated stamp
-    // only. No expand, no comments - a page is a few dozen bytes per row, which is what lets a reload
-    // learn which tickets changed without downloading any of them.
-    std::string outError;
-    if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        return RosterResult::Err(TrackerErrorAuth(outError));
-    }
-    const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string jqlRaw =
-        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
-    const std::string baseSearchUrl = smatchet::jira::BuildJiraSearchUrl(
-        base, UrlEncode(jqlRaw), smatchet::search_guards::kJiraRosterPageSize, "updated", false);
-    const cpr::Header headers = BuildTrackerHeaders(cfg);
-
+namespace {
+/// Runs one roster query (`fields=updated`, no bodies) for `jqlRaw` and appends its entries to `roster`.
+/// Returns the failure (kind preserved), a Cancelled error when `shouldCancel` fired, or Ok; `complete` is
+/// false when a cap cut the walk short (the caller decides what an incomplete answer is worth).
+TrackerError RunJiraRosterQuery(const std::string& base, const cpr::Header& headers, const std::string& jqlRaw,
+                                int pageSize, int maxPages, const JiraClient::CancelCallback& shouldCancel,
+                                TrackerRoster& roster, bool& complete, std::string& warning) {
+    const std::string baseSearchUrl =
+        smatchet::jira::BuildJiraSearchUrl(base, UrlEncode(jqlRaw), pageSize, "updated", false);
     const std::vector<std::string> selectedFields = {"updated"};
     auto noComments = [](const std::string&, nlohmann::json&) -> bool { return true; };
-    TrackerRoster roster;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         for (std::size_t i = 0; i < batch.size(); ++i) {
             if (!batch[i].id.empty()) {
@@ -830,19 +821,100 @@ Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerCon
         }
     };
     TrackerIssueFetchSummary summary;
-    const JiraPageLoopResult loop =
-        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary,
-                              smatchet::search_guards::kJiraMaxRosterPages);
-
+    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch,
+                                                          shouldCancel, summary, maxPages);
     if (shouldCancel && shouldCancel()) {
-        return RosterResult::Err(TrackerErrorCancelled());
+        return TrackerErrorCancelled();
     }
     if (!summary.FetchError.empty()) {
-        return RosterResult::Err(
-            summary.Error.Kind != TrackerErrorKind::None ? summary.Error : TrackerErrorUnknown(summary.FetchError));
+        return summary.Error.Kind != TrackerErrorKind::None ? summary.Error : TrackerErrorUnknown(summary.FetchError);
     }
-    roster.Warning = summary.Warning;
-    roster.Complete = loop.endedCleanly && !loop.tokenLeftover && loop.fetchedPages > 0 && roster.Warning.empty();
+    warning = summary.Warning;
+    complete = loop.endedCleanly && !loop.tokenLeftover && loop.fetchedPages > 0 && warning.empty();
+    return TrackerError::Ok();
+}
+
+constexpr std::size_t kJiraRosterKeysPerRequest = 40;
+} // namespace
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& /*views*/,
+                                                                const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    // The view's full JQL with `fields=updated`: each issue rides back as its key and last-updated stamp
+    // only. No expand, no comments - a page is a few dozen bytes per row, which is what lets a reload
+    // learn which tickets changed without downloading any of them.
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
+    TrackerRoster roster;
+    bool complete = false;
+    const TrackerError err = RunJiraRosterQuery(
+        NormalizeBaseUrl(cfg.Domain), BuildTrackerHeaders(cfg), jqlRaw, smatchet::search_guards::kJiraRosterPageSize,
+        smatchet::search_guards::kJiraMaxRosterPages, shouldCancel, roster, complete, roster.Warning);
+    if (!err.IsOk()) {
+        return RosterResult::Err(err);
+    }
+    roster.Complete = complete;
+    return RosterResult::Ok(std::move(roster));
+}
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchRosterForKeys(const TrackerConfig& cfg,
+                                                                   const std::vector<std::string>& keys,
+                                                                   const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::vector<std::string> deduped = DedupeIssueKeys(keys);
+    TrackerRoster roster;
+    roster.Complete = true;
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    for (std::size_t offset = 0; offset < deduped.size(); offset += kJiraRosterKeysPerRequest) {
+        const std::size_t n = (std::min)(kJiraRosterKeysPerRequest, deduped.size() - offset);
+        bool complete = false;
+        std::string warning;
+        const TrackerError err = RunJiraRosterQuery(base, headers, BuildKeyInJql(deduped, offset, n),
+                                                    static_cast<int>(n), 1, shouldCancel, roster, complete, warning);
+        if (!err.IsOk()) {
+            return RosterResult::Err(err);
+        }
+        roster.Complete = roster.Complete && complete;
+        roster.AppendWarningText(warning);
+    }
+    return RosterResult::Ok(std::move(roster));
+}
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchChildRosterOfKeys(const TrackerConfig& cfg,
+                                                                       const std::vector<std::string>& parentKeys,
+                                                                       const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::vector<std::string> deduped = DedupeIssueKeys(parentKeys);
+    TrackerRoster roster;
+    roster.Complete = true;
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    for (std::size_t offset = 0; offset < deduped.size(); offset += kJiraRosterKeysPerRequest) {
+        const std::size_t n = (std::min)(kJiraRosterKeysPerRequest, deduped.size() - offset);
+        bool complete = false;
+        std::string warning;
+        const TrackerError err = RunJiraRosterQuery(
+            base, headers, BuildParentInJql(deduped, offset, n), smatchet::search_guards::kJiraRosterPageSize,
+            smatchet::search_guards::kJiraMaxRosterPages, shouldCancel, roster, complete, warning);
+        if (!err.IsOk()) {
+            return RosterResult::Err(err);
+        }
+        roster.Complete = roster.Complete && complete;
+        roster.AppendWarningText(warning);
+    }
     return RosterResult::Ok(std::move(roster));
 }
 
