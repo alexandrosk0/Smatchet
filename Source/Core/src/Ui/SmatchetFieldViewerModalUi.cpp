@@ -4,6 +4,7 @@
 #include "SmatchetCommentsModalUi.h"
 #include "Ui/SmatchetActivityLogViewerUi.h"
 #include "Ui/SmatchetFieldViewerKindPure.h"
+#include "Ui/SmatchetModalPopupOpen.h"
 #include "SmatchetLocalization.h"
 
 #include "imgui.h"
@@ -85,16 +86,10 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
         return;
     }
 
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (s_Viewer.JustOpened) {
         // OpenPopup must be called at the same window-depth as BeginPopupModal — both here, outside
         // the table, so ImGui can anchor the popup to this stable top-level window.
-        ImGui::OpenPopup(kFieldViewerPopupId);
-        const ImVec2 modalSize(viewport->Size.x * 0.5f, viewport->Size.y * 0.6f);
-        ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(
-            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
-            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        smatchet::ui::OpenCenteredModalPopup(kFieldViewerPopupId, 0.5f, 0.6f);
         s_Viewer.JustOpened = false;
     }
 
