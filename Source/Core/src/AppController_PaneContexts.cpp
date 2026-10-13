@@ -844,7 +844,16 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         LaunchBackgroundTask([cacheSnapshot, backendKey, paneId, rows]() {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one batched SQLite transaction - off the UI thread
             try {
-                cacheSnapshot->SaveTickets(backendKey, *rows);
+                const std::int64_t nowSec =
+                    static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                                  std::chrono::system_clock::now().time_since_epoch())
+                                                  .count());
+                std::vector<TicketSyncMeta> metas;
+                metas.reserve(rows->size());
+                for (std::size_t i = 0; i < rows->size(); ++i) {
+                    metas.push_back(smatchet::sync::BuildSyncMeta((*rows)[i], nowSec));
+                }
+                cacheSnapshot->SaveTicketsWithSyncMeta(backendKey, *rows, metas);
             } catch (const std::exception& ex) {
                 LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' "
                           "rows=%zu: %s",

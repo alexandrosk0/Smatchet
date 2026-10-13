@@ -1522,3 +1522,40 @@ TEST_CASE("TicketSyncService records what a finished session cost") {
 
     svc.CancelAndJoinActiveStreamingSync();
 }
+
+// --- delta-sync Phase 2: every path that saves a synced row also saves the tracker version ---
+
+TEST_CASE("TicketSyncService stores the tracker version beside each streamed and applied row") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    CachedTicket streamed = MakeTicket("ABC-1");
+    streamed.fieldValues["updated"] = "2024-05-01T10:00:00.000+0000";
+    CachedTicket unstamped = MakeTicket("ABC-2"); // no `updated`: stored without meta
+    fake->SetFetchIssuesResult({streamed, unstamped}, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 2; }));
+
+    auto meta = deps.CacheImpl->GetTicketSyncMeta("Jira");
+    REQUIRE(meta.count("ABC-1") == 1u);
+    CHECK(meta.at("ABC-1").RemoteUpdated == "2024-05-01T10:00:00.000+0000");
+    CHECK(meta.at("ABC-1").SyncedAtEpochSec > 0);
+    CHECK(meta.at("ABC-1").Fields == std::vector<std::string>{"status", "summary", "updated"});
+    CHECK(meta.count("ABC-2") == 0u);
+
+    // ApplyIssueFetchPack (the inline-fetch path) stamps too.
+    TrackerIssueFetchPack pack;
+    CachedTicket applied = MakeTicket("ABC-3");
+    applied.fieldValues["updated"] = "2024-06-01T10:00:00.000+0000";
+    pack.Tickets.push_back(applied);
+    pack.FullSyncCompleted = false;
+    svc.ApplyIssueFetchPack(pack);
+    meta = deps.CacheImpl->GetTicketSyncMeta("Jira");
+    CHECK(meta.count("ABC-3") == 1u);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}

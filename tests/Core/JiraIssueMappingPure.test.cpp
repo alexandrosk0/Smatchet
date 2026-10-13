@@ -828,3 +828,61 @@ TEST_CASE("ParseAvailableTransitionTargets — skips transitions with missing to
     CHECK(result[0].Id == "5");
     CHECK(result[0].Value == "Done");
 }
+
+// --- delta-sync Phase 2: updated is always fetched; the changelog is expanded only for `history` ---
+
+TEST_CASE("BuildFetchFieldListsFromView always requests and maps updated, and never lists the fake changelog field") {
+    const auto has = [](const std::vector<std::string>& v, const std::string& s) {
+        for (const auto& x : v)
+            if (x == s)
+                return true;
+        return false;
+    };
+    {
+        ViewsStore empty; // no active view: the defaults path
+        std::vector<std::string> fieldsList;
+        std::vector<std::string> selectedFields;
+        BuildFetchFieldListsFromView(empty, fieldsList, selectedFields);
+        CHECK(has(fieldsList, "updated"));
+        CHECK(has(selectedFields, "updated"));
+        CHECK_FALSE(has(fieldsList, "changelog"));
+    }
+    {
+        ViewsStore store; // a view that does not list updated as a column
+        ViewDefinition view;
+        view.Id = "v1";
+        view.Fields = {"summary", "assignee"};
+        store.Views.push_back(view);
+        store.ActiveViewId = "v1";
+        std::vector<std::string> fieldsList;
+        std::vector<std::string> selectedFields;
+        BuildFetchFieldListsFromView(store, fieldsList, selectedFields);
+        CHECK(has(fieldsList, "updated"));
+        CHECK(has(selectedFields, "updated"));
+        int count = 0;
+        for (const auto& f : fieldsList)
+            if (f == "updated")
+                ++count;
+        CHECK(count == 1);
+    }
+}
+
+TEST_CASE("NeedsChangelogExpand is true only when the history column is selected") {
+    using smatchet::jira::NeedsChangelogExpand;
+    CHECK_FALSE(NeedsChangelogExpand({"summary", "status", "updated"}));
+    CHECK(NeedsChangelogExpand({"summary", "history"}));
+    CHECK_FALSE(NeedsChangelogExpand({}));
+}
+
+TEST_CASE("BuildJiraSearchUrl and BuildJiraIssueUrl add expand=changelog only on request") {
+    using smatchet::jira::BuildJiraIssueUrl;
+    using smatchet::jira::BuildJiraSearchUrl;
+    CHECK(BuildJiraSearchUrl("https://x.example", "project%3DA", 100, "summary,updated", false) ==
+          "https://x.example/rest/api/3/search/jql?jql=project%3DA&maxResults=100&fields=summary,updated");
+    CHECK(BuildJiraSearchUrl("https://x.example", "project%3DA", 40, "summary", true) ==
+          "https://x.example/rest/api/3/search/jql?jql=project%3DA&maxResults=40&fields=summary&expand=changelog");
+    CHECK(BuildJiraIssueUrl("https://x.example", "A-1", "summary", false) ==
+          "https://x.example/rest/api/3/issue/A-1?fields=summary");
+    CHECK(BuildJiraIssueUrl("https://x.example", "A-1", "summary", true) ==
+          "https://x.example/rest/api/3/issue/A-1?fields=summary&expand=changelog");
+}

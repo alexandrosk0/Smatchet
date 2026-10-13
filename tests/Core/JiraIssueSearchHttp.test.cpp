@@ -246,3 +246,71 @@ TEST_CASE("JiraClient::FetchIssueKeysForView — hitting the page cap with a tok
     CHECK(res.error().Detail.find("partial page walk") != std::string::npos);
     CHECK(fx.RequestCount(kSearchPath) == 50);
 }
+
+// --- delta-sync Phase 2: the request carries updated, and expand=changelog only for the history column ---
+
+namespace {
+// Streams one empty terminal page and returns the (fields, expand) query params the search sent.
+void CaptureSearchParams(const ViewsStore& views, std::string& outFields, std::string& outExpand, bool& outHasExpand) {
+    JiraCatalogHttpFixture fx;
+    std::string fields;
+    std::string expand;
+    bool hasExpand = false;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        fields = req.get_param_value("fields");
+        hasExpand = req.has_param("expand");
+        expand = req.get_param_value("expand");
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    client.FetchIssuesStreamed([](std::vector<CachedTicket>&&) {}, []() { return false; }, &cfg, &views);
+    outFields = fields;
+    outExpand = expand;
+    outHasExpand = hasExpand;
+}
+
+ViewsStore ViewWithFields(const std::vector<std::string>& fields) {
+    ViewsStore store;
+    ViewDefinition view;
+    view.Id = "v1";
+    view.Fields = fields;
+    store.Views.push_back(view);
+    store.ActiveViewId = "v1";
+    return store;
+}
+} // namespace
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — no expand without the history column; updated is always requested") {
+    std::string fields;
+    std::string expand;
+    bool hasExpand = true;
+    CaptureSearchParams(ViewWithFields({"summary", "status"}), fields, expand, hasExpand);
+    CHECK_FALSE(hasExpand);
+    CHECK(fields.find("updated") != std::string::npos);
+    CHECK(fields.find("changelog") == std::string::npos);
+}
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — the history column asks Jira to expand the changelog") {
+    std::string fields;
+    std::string expand;
+    bool hasExpand = false;
+    CaptureSearchParams(ViewWithFields({"summary", "history"}), fields, expand, hasExpand);
+    CHECK(hasExpand);
+    CHECK(expand == "changelog");
+}
+
+TEST_CASE("JiraClient::FetchIssuesForKeys — the keyed fetch follows the same expand rule") {
+    JiraCatalogHttpFixture fx;
+    bool hasExpand = true;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        hasExpand = req.has_param("expand");
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    const ViewsStore views = ViewWithFields({"summary"});
+    const auto res = client.FetchIssuesForKeys(fx.Config(), {"SMT-1", "SMT-2"}, views);
+    REQUIRE(res.has_value());
+    CHECK_FALSE(hasExpand);
+}

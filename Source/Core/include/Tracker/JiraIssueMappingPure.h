@@ -63,6 +63,20 @@ std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,
                                   std::vector<std::string>& outSelectedFields);
 
+/// True when the `history` column is selected, i.e. the search must ask Jira to expand the
+/// changelog. `history` is the only consumer of it, and the expansion makes every issue body much
+/// larger - so it is requested only then.
+bool NeedsChangelogExpand(const std::vector<std::string>& selectedFields);
+
+/// `<base>/rest/api/3/search/jql?jql=<jqlEncoded>&maxResults=<n>&fields=<fieldsCsv>[&expand=changelog]`.
+/// The ONE place a Jira search URL is assembled; `jqlEncoded` is already URL-encoded by the caller.
+std::string BuildJiraSearchUrl(const std::string& base, const std::string& jqlEncoded, int maxResults,
+                               const std::string& fieldsCsv, bool expandChangelog);
+
+/// `<base>/rest/api/3/issue/<keyEncoded>?fields=<fieldsCsv>[&expand=changelog]`.
+std::string BuildJiraIssueUrl(const std::string& base, const std::string& keyEncoded, const std::string& fieldsCsv,
+                              bool expandChangelog);
+
 /// Maps one Jira search-result issue JSON object to a CachedTicket appended onto
 /// `results`. Returns false (without appending) when the JSON is malformed.
 /// `fetchIssueComments` is called lazily when the inline comment array is empty but

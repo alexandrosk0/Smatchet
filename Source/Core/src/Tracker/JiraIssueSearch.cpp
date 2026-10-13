@@ -490,7 +490,8 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
 
     // Use the new Jira Cloud search endpoint as per Atlassian migration guidance.
     std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, fields,
+                                           smatchet::jira::NeedsChangelogExpand(selectedFields));
 
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
@@ -549,8 +550,8 @@ JiraClient::FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::v
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
         const std::string jql = BuildKeyInJql(keys, offset, n);
         const std::string jqlEncoded = UrlEncode(jql);
-        const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-                                    "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
+        const std::string pageUrl = smatchet::jira::BuildJiraSearchUrl(
+            base, jqlEncoded, static_cast<int>(n), fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
         if (response.status_code != 200) {
@@ -593,8 +594,8 @@ JiraClient::FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::v
             if (n == 1) {
                 const std::string& requestedKey = keys[offset];
                 if (!requestedKey.empty() && fetchedKeys.count(requestedKey) == 0) {
-                    const std::string issueUrl = base + "/rest/api/3/issue/" + UrlEncode(requestedKey) +
-                                                 "?fields=" + fields + "&expand=changelog";
+                    const std::string issueUrl = smatchet::jira::BuildJiraIssueUrl(
+                        base, UrlEncode(requestedKey), fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
                     auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers, shouldCancel);
                     if (shouldCancel && shouldCancel()) {
                         return FetchResult::Err(TrackerErrorCancelled());
@@ -677,9 +678,8 @@ JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::
 
         std::string nextPageToken;
         for (int page = 0; page < kMaxPagesPerBatch; ++page) {
-            std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-                                  "&maxResults=" + std::to_string(kPageSize) + "&fields=" + fields +
-                                  "&expand=changelog";
+            std::string pageUrl = smatchet::jira::BuildJiraSearchUrl(
+                base, jqlEncoded, kPageSize, fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
             if (!nextPageToken.empty()) {
                 pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
             }
@@ -770,7 +770,8 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
     const std::string fields = JoinStrings(fieldsList, ",");
 
     const std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, fields,
+                                           smatchet::jira::NeedsChangelogExpand(selectedFields));
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
@@ -815,7 +816,7 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
         TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
     const std::string jqlEncoded = UrlEncode(jqlRaw);
     const std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=*none";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, "*none", false);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     // fields=*none ⇒ no per-field mapping; the ticket carries only its key (its `id`), which we

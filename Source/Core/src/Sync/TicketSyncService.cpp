@@ -9,6 +9,7 @@
 #include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
+#include "TicketSyncMeta.h"                      // BuildSyncMeta: the tracker version stored beside each saved row
 #include "Sync/LazyEnrichmentCarryForwardPure.h" // keeps a lazily fetched comment thread across syncs
 #include "Sync/TicketRosterFilterPure.h"         // shared keep-set roster filter (also used by the local-data refresh)
 #include "Tracker/ParentHierarchyPure.h"         // ParentKeyOf — the one parent-field contract
@@ -61,6 +62,19 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
             smatchet::sync::CarryForwardLazyCommentFields(it->second, t);
         }
     }
+}
+
+// Saves `rows` and, beside each, the tracker version it was fetched at (delta-sync meta), in one
+// transaction. A row without an `updated` stamp is saved with no meta (it will always be refetched).
+void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows) {
+    const std::int64_t nowSec = static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    std::vector<TicketSyncMeta> metas;
+    metas.reserve(rows.size());
+    for (const CachedTicket& row : rows) {
+        metas.push_back(smatchet::sync::BuildSyncMeta(row, nowSec));
+    }
+    cache.SaveTicketsWithSyncMeta(backendKey, rows, metas);
 }
 
 } // namespace
@@ -206,11 +220,8 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // happens on this (UI) thread between sessions (multi-grid Slice 1b).
     const std::string backendKey = deps_.CacheBackendKey();
     CarryForwardLazyComments(deps_, pack.Tickets);
-    size_t saved = 0;
-    for (const auto& t : freshTickets) {
-        deps_.Cache()->SaveTicket(backendKey, t);
-        ++saved;
-    }
+    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets);
+    const size_t saved = freshTickets.size();
 
     size_t deleted = 0;
     // Empty-fetch guard: a full-sync that returns zero tickets cannot prove the cache is
@@ -457,7 +468,7 @@ void TicketSyncService::DrainPendingStreamingBatches() {
         // per-frame counter stay a separate cheap loop.
         CarryForwardLazyComments(deps_, batchToProcess);
         if (deps_.Cache()) {
-            deps_.Cache()->SaveTickets(deps_.CacheBackendKey(), batchToProcess);
+            SaveRowsWithMeta(*deps_.Cache(), deps_.CacheBackendKey(), batchToProcess);
         }
         for (const auto& t : batchToProcess) {
             if (!t.id.empty()) {

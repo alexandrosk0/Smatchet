@@ -1612,6 +1612,10 @@ add_executable(SmatchetTests
     # delta-sync Phase 1 — "updated" stamp parser/comparator (Sync/RemoteVersionPure.h, header-only):
     # a change-probe row provably older than the resident row never replaces it.
     Core/RemoteVersionPure.test.cpp
+    # delta-sync Phase 2 - the pure rules stored beside each cached row (TicketSyncMeta.h, header-only)
+    # and the ticket_sync_meta table's SQLite specifics (reopen, delete-with-row, site re-key).
+    Core/TicketSyncMeta.test.cpp
+    Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's

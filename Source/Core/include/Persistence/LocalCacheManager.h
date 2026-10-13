@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,13 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
      *  (not on ISyncCache — no seam consumer uses it). */
     void ForEachTicket(const std::string& backendKey, const std::function<void(CachedTicket&&)>& fn);
     std::vector<std::string> GetAllTicketIds(const std::string& backendKey) override;
+    // Delta-sync metadata (ISyncCache): the `ticket_sync_meta` table, one row per (backend_key, ticket).
+    std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) override;
+    void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
+                                 const std::vector<TicketSyncMeta>& metas) override;
+    std::vector<CachedTicket> GetTicketsByIds(const std::string& backendKey,
+                                              const std::vector<std::string>& ids) override;
+    void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) override;
 
     /** One-time copy migration of the legacy un-namespaced ticket tables (`tickets`,
      * `ticket_field_values`, `ticket_field_rich_values`) into the `*_v2` family, stamping
@@ -190,6 +198,14 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /// Write one ticket's rows via the cached prepared statements. Caller holds `stmtMutex_`
     /// and owns the enclosing SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
     void writeTicketRows_(const std::string& backendKey, const CachedTicket& ticket);
+    /// Read one ticket's rows (false when absent). Caller holds `stmtMutex_`; no transaction needed.
+    bool readTicketRows_(const std::string& backendKey, const std::string& ticketId, CachedTicket& out);
+    /// `ticket_sync_meta` helpers; all assume the caller holds `stmtMutex_` (they use cached statements).
+    void deleteSyncMeta_(const std::string& backendKey, const std::string& ticketId);
+    bool readSyncMeta_(const std::string& backendKey, const std::string& ticketId, TicketSyncMeta& out);
+    void writeSyncMeta_(const std::string& backendKey, const std::string& ticketId, const TicketSyncMeta& meta);
+    /// Delete one ticket's rows + meta inside the caller's transaction.
+    void deleteTicketRows_(const std::string& backendKey, const std::string& ticketId);
 
     /// Apply WAL + synchronous pragmas + busy-timeout (best-effort; logs on failure).
     /// Re-runnable: called for the initial open and again after a corrupt-file rebuild.
@@ -235,4 +251,7 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::unique_ptr<SQLite::Statement> stmt_get_exists_;
     std::unique_ptr<SQLite::Statement> stmt_get_fields_;
     std::unique_ptr<SQLite::Statement> stmt_get_rich_;
+    std::unique_ptr<SQLite::Statement> stmt_meta_read_;
+    std::unique_ptr<SQLite::Statement> stmt_meta_write_;
+    std::unique_ptr<SQLite::Statement> stmt_meta_delete_;
 };

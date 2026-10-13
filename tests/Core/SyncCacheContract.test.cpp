@@ -379,3 +379,98 @@ TEST_CASE_TEMPLATE("ISyncCache: archiving a missing pending action throws", M, R
     CHECK_THROWS(c->ArchivePendingAction(12345, "replay_rejected", "x"));
     CHECK(c->LoadDeadPendingActions().empty());
 }
+
+// --- Delta-sync metadata: the tracker version each cached row was fetched at ---
+namespace {
+CachedTicket MetaRow(const std::string& id, const std::string& updated, const std::string& field,
+                     const std::string& value) {
+    CachedTicket t;
+    t.id = id;
+    t.fieldValues["updated"] = updated;
+    t.fieldValues[field] = value;
+    return t;
+}
+TicketSyncMeta MetaOf(const std::string& updated, std::vector<std::string> fields) {
+    TicketSyncMeta m;
+    m.RemoteUpdated = updated;
+    m.Fields = std::move(fields);
+    m.SyncedAtEpochSec = 77;
+    return m;
+}
+} // namespace
+
+TEST_CASE_TEMPLATE("ISyncCache: sync meta is stored per backend key and goes with its ticket", M, RealCacheMaker,
+                   FakeCacheMaker) {
+    auto c = M::Make();
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "summary", "a"), MetaRow("A-2", "T1", "summary", "b")},
+                               {MetaOf("T1", {"summary", "updated"}), MetaOf("T2", {"summary", "updated"})});
+    c->SaveTicketsWithSyncMeta("GitHub", {MetaRow("A-1", "G1", "summary", "g")}, {MetaOf("G1", {"summary"})});
+
+    const auto jira = c->GetTicketSyncMeta("Jira");
+    REQUIRE(jira.size() == 2u);
+    CHECK(jira.at("A-1").RemoteUpdated == "T1");
+    CHECK(jira.at("A-2").RemoteUpdated == "T2");
+    CHECK(jira.at("A-1").Fields == std::vector<std::string>{"summary", "updated"});
+    CHECK(jira.at("A-1").SyncedAtEpochSec == 77);
+    CHECK(c->GetTicketSyncMeta("GitHub").size() == 1u);
+    CHECK(c->GetTicketSyncMeta("Plane").empty());
+
+    // The rows themselves were saved by the same call.
+    CachedTicket out;
+    REQUIRE(c->TryGetTicket("Jira", "A-2", out));
+    CHECK(out.GetFieldValue("summary") == "b");
+
+    // Deleting a ticket takes its meta with it; the batch delete does the same.
+    c->DeleteTicket("Jira", "A-1");
+    CHECK(c->GetTicketSyncMeta("Jira").count("A-1") == 0u);
+    c->DeleteTickets("Jira", {"A-2"});
+    CHECK(c->GetTicketSyncMeta("Jira").empty());
+    CHECK(c->GetTicketSyncMeta("GitHub").size() == 1u); // another namespace is untouched
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: a plain save or a save without a stamp drops the stored meta", M, RealCacheMaker,
+                   FakeCacheMaker) {
+    auto c = M::Make();
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "summary", "a")}, {MetaOf("T1", {"summary"})});
+    // A plain save rewrites the row without knowing its version: the stored meta no longer vouches for it.
+    c->SaveTickets("Jira", {MetaRow("A-1", "T1", "summary", "edited")});
+    CHECK(c->GetTicketSyncMeta("Jira").empty());
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "summary", "a")}, {MetaOf("T1", {"summary"})});
+    c->SaveTicket("Jira", MetaRow("A-1", "T1", "summary", "edited again"));
+    CHECK(c->GetTicketSyncMeta("Jira").empty());
+    // A save with an unknown version drops it too.
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "summary", "a")}, {MetaOf("T1", {"summary"})});
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "", "summary", "x")}, {TicketSyncMeta()});
+    CHECK(c->GetTicketSyncMeta("Jira").empty());
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: saving at the same version merges the columns; a newer version replaces them", M,
+                   RealCacheMaker, FakeCacheMaker) {
+    auto c = M::Make();
+    // Pane A fetched {summary, updated}; pane B then fetches {labels, updated} of the SAME version.
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "summary", "s")}, {MetaOf("T1", {"summary", "updated"})});
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T1", "labels", "l")}, {MetaOf("T1", {"labels", "updated"})});
+
+    CachedTicket out;
+    REQUIRE(c->TryGetTicket("Jira", "A-1", out));
+    CHECK(out.GetFieldValue("summary") == "s"); // kept: pane A's column survives pane B's save
+    CHECK(out.GetFieldValue("labels") == "l");
+    CHECK(c->GetTicketSyncMeta("Jira").at("A-1").Fields == std::vector<std::string>{"labels", "summary", "updated"});
+
+    // A newer version replaces the row outright (no stale columns carried over).
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", "T2", "labels", "l2")}, {MetaOf("T2", {"labels", "updated"})});
+    REQUIRE(c->TryGetTicket("Jira", "A-1", out));
+    CHECK(out.GetFieldValue("summary").empty());
+    CHECK(out.GetFieldValue("labels") == "l2");
+    CHECK(c->GetTicketSyncMeta("Jira").at("A-1").Fields == std::vector<std::string>{"labels", "updated"});
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: GetTicketsByIds returns the existing rows and skips the rest", M, RealCacheMaker,
+                   FakeCacheMaker) {
+    auto c = M::Make();
+    c->SaveTickets("Jira", {MakeTicket("A-1", "a"), MakeTicket("A-2", "b"), MakeTicket("A-3", "c")});
+    c->SaveTicket("GitHub", MakeTicket("A-9", "other namespace"));
+    const std::vector<CachedTicket> rows = c->GetTicketsByIds("Jira", {"A-3", "A-1", "A-9", "NOPE-1"});
+    CHECK(SortedIds(rows) == std::vector<std::string>{"A-1", "A-3"});
+    CHECK(c->GetTicketsByIds("Jira", {}).empty());
+}

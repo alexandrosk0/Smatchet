@@ -150,6 +150,17 @@ void InitTicketsV2Schema(SQLite::Database& db) {
             "field_key TEXT NOT NULL, "
             "field_value TEXT, "
             "PRIMARY KEY(backend_key, ticket_id, field_key))");
+    // Delta-sync version metadata (docs/plans/active/delta-sync.md § Phase 2). A SEPARATE table, not a
+    // column on tickets_v2: ticket saves are INSERT OR REPLACE, which would reset an added column on every
+    // save. A missing row means "unknown version" - the ticket is simply refetched - so no migration flag.
+    // `fields` is the newline-joined sorted list of field ids the row was fetched with.
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_sync_meta ("
+            "backend_key TEXT NOT NULL, "
+            "ticket_id TEXT NOT NULL, "
+            "remote_updated TEXT NOT NULL, "
+            "fields TEXT NOT NULL, "
+            "synced_at INTEGER NOT NULL, "
+            "PRIMARY KEY(backend_key, ticket_id))");
 }
 
 // Run a write transaction with the SAME bounded backoff-and-retry the ctor uses for schema-init
@@ -179,6 +190,35 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 // would make THEM throw BUSY sooner — a Pillar-3 regression traded for a Pillar-2 win. The
 // residual worst case is therefore one busy_timeout wall, not five plus sleeps.
 constexpr long long kWriteRetryBudgetMs = 500;
+
+// `ticket_sync_meta.fields` stores the sorted field ids newline-joined (ids never contain a newline).
+std::string JoinFieldList(const std::vector<std::string>& fields) {
+    std::string joined;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (i != 0) {
+            joined += '\n';
+        }
+        joined += fields[i];
+    }
+    return joined;
+}
+
+std::vector<std::string> SplitFieldList(const std::string& text) {
+    std::vector<std::string> fields;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = text.find('\n', start);
+        const std::size_t stop = end == std::string::npos ? text.size() : end;
+        if (stop > start) {
+            fields.push_back(text.substr(start, stop - start));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return fields;
+}
 
 template <typename WriteFn>
 void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const char* opName, WriteFn&& writeRows) {
@@ -429,7 +469,13 @@ void LocalCacheManager::writeTicketRows_(const std::string& backendKey, const Ca
 void LocalCacheManager::SaveTicket(const std::string& backendKey, const CachedTicket& ticket) {
     // stmtMutex_ (cached-prepared-statement slots) is taken per-attempt INSIDE the retry helper so it
     // is not held across the backoff sleep.
-    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicket", [&] { writeTicketRows_(backendKey, ticket); });
+    // A plain save rewrites the row without knowing which tracker version it holds, so the stored version no
+    // longer vouches for it: drop the meta (the next delta sync refetches the ticket). SaveTicketsWithSyncMeta
+    // is the writer that keeps it.
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicket", [&] {
+        writeTicketRows_(backendKey, ticket);
+        deleteSyncMeta_(backendKey, ticket.id);
+    });
 }
 
 // Phase 3(a) of docs/plans/shipped/memory-budget-and-lifetime-hardening.md: persist a whole slice
@@ -444,68 +490,197 @@ void LocalCacheManager::SaveTickets(const std::string& backendKey, const std::ve
     RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTickets", [&] {
         for (const auto& ticket : tickets) {
             writeTicketRows_(backendKey, ticket);
+            deleteSyncMeta_(backendKey, ticket.id); // see SaveTicket
         }
     });
 }
 
-bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
-    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
+bool LocalCacheManager::readTicketRows_(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
     out = CachedTicket{};
     out.id = ticketId;
+    auto& exists = stmt(stmt_get_exists_, "SELECT 1 FROM tickets_v2 WHERE backend_key = ? AND id = ? LIMIT 1");
+    exists.bind(1, backendKey);
+    exists.bind(2, ticketId);
+    const bool present = exists.executeStep();
+    exists.reset(); // never leave a read cursor open across the caller's writes
+    if (!present) {
+        return false;
+    }
+    auto& fieldQuery = stmt(stmt_get_fields_, "SELECT field_key, field_value FROM ticket_field_values_v2 "
+                                              "WHERE backend_key = ? AND ticket_id = ?");
+    fieldQuery.bind(1, backendKey);
+    fieldQuery.bind(2, ticketId);
+    while (fieldQuery.executeStep()) {
+        const std::string fieldKey = fieldQuery.getColumn(0).getText();
+        out.fieldValues[fieldKey] =
+            fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
+    }
+    auto& richQuery = stmt(stmt_get_rich_, "SELECT field_key, field_value FROM ticket_field_rich_values_v2 "
+                                           "WHERE backend_key = ? AND ticket_id = ?");
+    richQuery.bind(1, backendKey);
+    richQuery.bind(2, ticketId);
+    while (richQuery.executeStep()) {
+        const std::string fieldKey = richQuery.getColumn(0).getText();
+        out.fieldRichValues[fieldKey] =
+            richQuery.getColumn(1).isNull() ? std::string() : std::string(richQuery.getColumn(1).getText());
+    }
+    return true;
+}
+
+bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
+    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     try {
-        auto& exists = stmt(stmt_get_exists_, "SELECT 1 FROM tickets_v2 WHERE backend_key = ? AND id = ? LIMIT 1");
-        exists.bind(1, backendKey);
-        exists.bind(2, ticketId);
-        if (!exists.executeStep()) {
-            return false;
-        }
-        auto& fieldQuery = stmt(stmt_get_fields_, "SELECT field_key, field_value FROM ticket_field_values_v2 "
-                                                  "WHERE backend_key = ? AND ticket_id = ?");
-        fieldQuery.bind(1, backendKey);
-        fieldQuery.bind(2, ticketId);
-        while (fieldQuery.executeStep()) {
-            const std::string fieldKey = fieldQuery.getColumn(0).getText();
-            out.fieldValues[fieldKey] =
-                fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
-        }
-        auto& richQuery = stmt(stmt_get_rich_, "SELECT field_key, field_value FROM ticket_field_rich_values_v2 "
-                                               "WHERE backend_key = ? AND ticket_id = ?");
-        richQuery.bind(1, backendKey);
-        richQuery.bind(2, ticketId);
-        while (richQuery.executeStep()) {
-            const std::string fieldKey = richQuery.getColumn(0).getText();
-            out.fieldRichValues[fieldKey] =
-                richQuery.getColumn(1).isNull() ? std::string() : std::string(richQuery.getColumn(1).getText());
-        }
-        return true;
+        return readTicketRows_(backendKey, ticketId, out);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::TryGetTicket failed ticket=%s err=%s", ticketId.c_str(), ex.what());
         throw;
     }
 }
 
+void LocalCacheManager::deleteTicketRows_(const std::string& backendKey, const std::string& ticketId) {
+    // The four deletes of one ticket; the caller owns the enclosing transaction.
+    const char* const kSql[] = {"DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?",
+                                "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?",
+                                "DELETE FROM ticket_sync_meta WHERE backend_key = ? AND ticket_id = ?",
+                                "DELETE FROM tickets_v2 WHERE backend_key = ? AND id = ?"};
+    for (const char* sql : kSql) {
+        SQLite::Statement del(db, sql);
+        del.bind(1, backendKey);
+        del.bind(2, ticketId);
+        del.exec();
+    }
+}
+
 void LocalCacheManager::DeleteTicket(const std::string& backendKey, const std::string& ticketId) {
     try {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement deleteFields(db,
-                                       "DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?");
-        deleteFields.bind(1, backendKey);
-        deleteFields.bind(2, ticketId);
-        deleteFields.exec();
-        SQLite::Statement deleteRichFields(
-            db, "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?");
-        deleteRichFields.bind(1, backendKey);
-        deleteRichFields.bind(2, ticketId);
-        deleteRichFields.exec();
-        SQLite::Statement deleteTicket(db, "DELETE FROM tickets_v2 WHERE backend_key = ? AND id = ?");
-        deleteTicket.bind(1, backendKey);
-        deleteTicket.bind(2, ticketId);
-        deleteTicket.exec();
-        transaction.commit();
+        RunWriteTxnWithBusyRetry(db, stmtMutex_, "DeleteTicket", [&] { deleteTicketRows_(backendKey, ticketId); });
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::DeleteTicket failed ticket=%s err=%s", ticketId.c_str(), ex.what());
         throw;
     }
+}
+
+void LocalCacheManager::DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) {
+    if (ids.empty()) {
+        return;
+    }
+    try {
+        RunWriteTxnWithBusyRetry(db, stmtMutex_, "DeleteTickets", [&] {
+            for (const std::string& id : ids) {
+                deleteTicketRows_(backendKey, id);
+            }
+        });
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::DeleteTickets failed rows=%zu err=%s", ids.size(), ex.what());
+        throw;
+    }
+}
+
+std::vector<CachedTicket> LocalCacheManager::GetTicketsByIds(const std::string& backendKey,
+                                                             const std::vector<std::string>& ids) {
+    std::vector<CachedTicket> rows;
+    rows.reserve(ids.size());
+    std::lock_guard<std::mutex> lock(stmtMutex_);
+    try {
+        for (const std::string& id : ids) {
+            CachedTicket row;
+            if (readTicketRows_(backendKey, id, row)) {
+                rows.push_back(std::move(row));
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::GetTicketsByIds failed rows=%zu err=%s", ids.size(), ex.what());
+        throw;
+    }
+    return rows;
+}
+
+bool LocalCacheManager::readSyncMeta_(const std::string& backendKey, const std::string& ticketId, TicketSyncMeta& out) {
+    auto& q = stmt(stmt_meta_read_, "SELECT remote_updated, fields, synced_at FROM ticket_sync_meta "
+                                    "WHERE backend_key = ? AND ticket_id = ?");
+    q.bind(1, backendKey);
+    q.bind(2, ticketId);
+    const bool found = q.executeStep();
+    if (found) {
+        out.RemoteUpdated = q.getColumn(0).getText();
+        out.Fields = SplitFieldList(q.getColumn(1).getText());
+        out.SyncedAtEpochSec = q.getColumn(2).getInt64();
+    }
+    q.reset();
+    return found;
+}
+
+void LocalCacheManager::writeSyncMeta_(const std::string& backendKey, const std::string& ticketId,
+                                       const TicketSyncMeta& meta) {
+    auto& up = stmt(stmt_meta_write_, "INSERT OR REPLACE INTO ticket_sync_meta (backend_key, ticket_id, "
+                                      "remote_updated, fields, synced_at) VALUES (?, ?, ?, ?, ?)");
+    up.bind(1, backendKey);
+    up.bind(2, ticketId);
+    up.bind(3, meta.RemoteUpdated);
+    up.bind(4, JoinFieldList(meta.Fields));
+    up.bind(5, static_cast<std::int64_t>(meta.SyncedAtEpochSec));
+    up.exec();
+    up.reset();
+    up.clearBindings();
+}
+
+void LocalCacheManager::deleteSyncMeta_(const std::string& backendKey, const std::string& ticketId) {
+    auto& del = stmt(stmt_meta_delete_, "DELETE FROM ticket_sync_meta WHERE backend_key = ? AND ticket_id = ?");
+    del.bind(1, backendKey);
+    del.bind(2, ticketId);
+    del.exec();
+    del.reset();
+    del.clearBindings();
+}
+
+std::unordered_map<std::string, TicketSyncMeta> LocalCacheManager::GetTicketSyncMeta(const std::string& backendKey) {
+    try {
+        std::unordered_map<std::string, TicketSyncMeta> out;
+        SQLite::Statement q(db, "SELECT ticket_id, remote_updated, fields, synced_at FROM ticket_sync_meta "
+                                "WHERE backend_key = ?");
+        q.bind(1, backendKey);
+        while (q.executeStep()) {
+            TicketSyncMeta meta;
+            meta.RemoteUpdated = q.getColumn(1).getText();
+            meta.Fields = SplitFieldList(q.getColumn(2).getText());
+            meta.SyncedAtEpochSec = q.getColumn(3).getInt64();
+            out[q.getColumn(0).getText()] = std::move(meta);
+        }
+        return out;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::GetTicketSyncMeta failed err=%s", ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
+                                                const std::vector<TicketSyncMeta>& metas) {
+    if (tickets.empty()) {
+        return;
+    }
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicketsWithSyncMeta", [&] {
+        for (std::size_t i = 0; i < tickets.size(); ++i) {
+            const CachedTicket& ticket = tickets[i];
+            TicketSyncMeta meta = i < metas.size() ? metas[i] : TicketSyncMeta();
+            if (meta.RemoteUpdated.empty()) {
+                writeTicketRows_(backendKey, ticket); // unknown version: no meta, and drop a stale one
+                deleteSyncMeta_(backendKey, ticket.id);
+                continue;
+            }
+            TicketSyncMeta existingMeta;
+            CachedTicket existingRow;
+            if (readSyncMeta_(backendKey, ticket.id, existingMeta) &&
+                smatchet::sync::IsSameVersion(existingMeta, meta) &&
+                readTicketRows_(backendKey, ticket.id, existingRow)) {
+                // Same tracker version fetched with other columns: keep both sets of values.
+                writeTicketRows_(backendKey, smatchet::sync::MergeSameVersionRow(existingRow, ticket));
+                meta.Fields = smatchet::sync::UnionFields(existingMeta.Fields, meta.Fields);
+            } else {
+                writeTicketRows_(backendKey, ticket);
+            }
+            writeSyncMeta_(backendKey, ticket.id, meta);
+        }
+    });
 }
 
 std::vector<CachedTicket> LocalCacheManager::GetAllTickets(const std::string& backendKey) {
