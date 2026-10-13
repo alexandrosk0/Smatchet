@@ -46,6 +46,10 @@ class IAppSync {
     /// cannot be resolved.
     virtual std::string GetResolvedLocalCacheDbPath() const = 0;
     virtual void RefreshLocalData() = 0;
+    /// RefreshLocalData whose SQLite read runs on a background task: call on the UI thread, which
+    /// resolves the focused context and latches its backend generation; the swap-in is generation
+    /// gated. Non-pure; the default falls back to the synchronous refresh (facet fakes).
+    virtual void RefreshLocalDataAsync() { RefreshLocalData(); }
     virtual TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                            const ViewsStore* viewsOverride = nullptr) = 0;
     virtual TrackerConnectivityState GetLastTrackerConnectivityState() const = 0;

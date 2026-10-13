@@ -692,6 +692,7 @@ class AppController : public IAppThreading,
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData() override;
+    void RefreshLocalDataAsync() override;
     // Generation-checked refreshes (issue #1081) go through RefreshLocalDataCheckedImpl_,
     // private on purpose: every checked caller must pass the GridLiveContext it latched the
     // generation from (UpdateTicket's queued save; replay workers via the friend

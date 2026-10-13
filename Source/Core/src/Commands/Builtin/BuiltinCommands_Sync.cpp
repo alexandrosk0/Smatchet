@@ -79,7 +79,8 @@ void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThre
     {
         Command c = MakeCommand("cache.recreate",
                                 "Wipe the local cache database (cached tickets AND queued offline edits) and "
-                                "re-fetch the active view from the tracker.",
+                                "re-fetch the active view from the tracker. Runs on the UI thread and waits for "
+                                "every pane's in-flight sync to stop, so the UI may pause briefly.",
                                 [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
                                     if (ctx.DryRun) {
                                         return CommandResult::Success(
@@ -108,10 +109,13 @@ void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThre
 void RegisterSyncRefreshLocalCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     {
         Command c =
-            MakeCommand("sync.refresh_local", "Rebuild in-memory ticket list from the local SQLite cache (no network).",
+            MakeCommand("sync.refresh_local",
+                        "Rebuild in-memory ticket list from the local SQLite cache (no network). Fire-and-forget: "
+                        "returns once the read is started; the grid updates when it lands.",
                         [&app, &poster](const nlohmann::json&, const CommandContext&) {
                             return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                app.RefreshLocalData();
+                                // Resolves the focused pane here; the SQLite read runs on a worker.
+                                app.RefreshLocalDataAsync();
                                 return CommandResult::Success({{"triggered", true}});
                             });
                         });

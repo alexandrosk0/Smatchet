@@ -15,6 +15,7 @@
 #include "LocalCacheManager.h" // direct: AppController.h fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 #include "Logger.h"
 #include "OfflineFirstPure.h" // kLookupRetryAfterSeconds — the failed-prefetch backoff
+#include "TicketSyncMeta.h"   // BuildSyncMeta: the version stored beside each prefetched row
 
 #include <atomic>
 #include <chrono>
@@ -191,9 +192,18 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
         return;
     }
 
-    for (const auto& t : tickets) {
-
-        Cache->SaveTicket(cacheBackendKey, t);
+    // Fetched from the tracker just now: store each row with the version it carries (a plain SaveTicket would
+    // drop the sync meta and make the next delta sync refetch the ticket).
+    {
+        const std::int64_t nowSec = static_cast<std::int64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        std::vector<TicketSyncMeta> metas;
+        metas.reserve(tickets.size());
+        for (const auto& t : tickets) {
+            metas.push_back(smatchet::sync::BuildSyncMeta(t, nowSec));
+        }
+        Cache->SaveTicketsWithSyncMeta(cacheBackendKey, tickets, metas);
     }
 
     RefreshLocalData();

@@ -127,6 +127,7 @@ struct FakeSync : IAppSync {
     int SyncCalls = 0;
     int RecreateCalls = 0;
     int RefreshCalls = 0;
+    int RefreshAsyncCalls = 0;
     std::string RecreateError;
     TrackerConnectivityState State = TrackerConnectivityState::AuthenticatedReachable;
     std::string SyncWarning = "stale view";
@@ -147,6 +148,7 @@ struct FakeSync : IAppSync {
     }
     std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
     void RefreshLocalData() override { ++RefreshCalls; }
+    void RefreshLocalDataAsync() override { ++RefreshAsyncCalls; }
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig*, const ViewsStore*) override { return Pack; }
     TrackerConnectivityState GetLastTrackerConnectivityState() const override { return State; }
     const std::string& GetLastTicketSyncWarning() const override { return SyncWarning; }
@@ -537,7 +539,9 @@ TEST_CASE(
     {
         const CommandResult r = reg.Dispatch("sync.refresh_local", {}, AutomationCtx());
         REQUIRE(r.Ok);
-        CHECK(sync.RefreshCalls == 1);
+        // The UI-thread hop only resolves the pane; the SQLite read must not run inline.
+        CHECK(sync.RefreshCalls == 0);
+        CHECK(sync.RefreshAsyncCalls == 1);
         CHECK(poster.Posts == 4);
     }
     {

@@ -349,6 +349,19 @@ bool ResolvePaneFetchConfig(const std::string& paneKey, const TrackerConfig& cfg
 
 void AppController::RefreshLocalData() { RefreshLocalDataCheckedImpl_(focusedContext(), nullptr); }
 
+void AppController::RefreshLocalDataAsync() {
+    // UI thread: resolve the focused context and latch its generation here; the full-table SQLite
+    // read then runs on a worker (Pillar 2). A retired context stays valid as a husk until ~AppController.
+    GridLiveContext& ctx = focusedContext();
+    GridLiveContext* const ctxPtr = &ctx;
+    const std::uint64_t generation = ctx.backendGeneration_.load();
+    try {
+        LaunchBackgroundTask([this, ctxPtr, generation]() { RefreshLocalDataCheckedImpl_(*ctxPtr, &generation); });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: background local-data refresh did not start: %s", ex.what());
+    }
+}
+
 void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
                                                  const std::string& admitId) {
     // Latched once: worker callers (offline replay, UpdateTicket's queued saves) must not race the UI
@@ -499,7 +512,9 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
     // expect a stale cache row. (Log-only: this domain TU cannot reach the grid's error state, which
     // lives in Ui/.)
     try {
-        cache->SaveTicket(capturedKey, ticket);
+        // The edit does not change which tracker version the row stands for: keep its sync meta, or the next
+        // delta sync would refetch a ticket it already holds.
+        cache->SaveTicketKeepingSyncMeta(capturedKey, ticket);
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::UpdateTicket local cache write failed key='%s' ticket='%s' err=%s",
                   capturedKey.c_str(), ticket.id.c_str(), ex.what());

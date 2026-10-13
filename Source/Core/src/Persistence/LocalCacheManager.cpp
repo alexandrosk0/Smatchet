@@ -690,6 +690,11 @@ void LocalCacheManager::SaveTicketsWithSyncMeta(const std::string& backendKey, c
     });
 }
 
+void LocalCacheManager::SaveTicketKeepingSyncMeta(const std::string& backendKey, const CachedTicket& ticket) {
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicketKeepingSyncMeta",
+                             [&] { writeTicketRows_(backendKey, ticket); });
+}
+
 std::vector<CachedTicket> LocalCacheManager::GetAllTickets(const std::string& backendKey) {
     try {
         std::vector<CachedTicket> results;

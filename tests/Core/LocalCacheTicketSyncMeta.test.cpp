@@ -72,6 +72,21 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         CHECK(cache.GetTicketSyncMeta("K").count("A-1") == 1u);
     }
 
+    TEST_CASE("SaveTicketKeepingSyncMeta rewrites the row and keeps its meta") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", "T1")}, {Meta("T1", {"summary", "updated"}, 777)});
+        cache.SaveTicketKeepingSyncMeta("K", Row("A-1", "T1", "edited locally"));
+
+        CachedTicket got;
+        REQUIRE(cache.TryGetTicket("K", "A-1", got));
+        CHECK(got.fieldValues["summary"] == "edited locally");
+        const auto meta = cache.GetTicketSyncMeta("K");
+        REQUIRE(meta.count("A-1") == 1u);
+        CHECK(meta.at("A-1").RemoteUpdated == "T1");
+        CHECK(meta.at("A-1").SyncedAtEpochSec == 777);
+    }
+
     TEST_CASE("DeleteTicket and DeleteTickets remove the meta with the row") {
         SqliteMemFixture fx;
         LocalCacheManager& cache = fx.Ref();
