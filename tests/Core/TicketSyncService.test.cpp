@@ -1854,3 +1854,86 @@ TEST_CASE("Delta reload: a roster key that comes back with no row is kept but ma
     CachedTicket got;
     CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-9", got));
 }
+
+// --- delta-sync Phase 4: SQLite stays off the UI thread ----------------------------------------------
+
+TEST_CASE("A fetched batch is persisted by the worker before the UI thread applies it") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "one"), Stamped("ABC-2", "T1", "two")}, true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    // Wait for the rows to reach the cache WITHOUT ticking the UI-thread apply.
+    bool persisted = false;
+    for (int i = 0; i < 500 && !persisted; ++i) {
+        persisted = deps.CacheImpl->GetAllTicketIds("Jira").size() == 2;
+        if (!persisted) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    REQUIRE(persisted);
+    CHECK(deps.ActiveTicketsImpl.empty()); // nothing applied yet: the drain has not run
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").count("ABC-1") == 1u);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 2; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("A fetched row older than the cached version never replaces the cached row") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    const CachedTicket newer = Stamped("ABC-1", "2024-05-01T10:00:00.000+0000", "newer");
+    deps.CacheImpl->SaveTicketsWithSyncMeta(
+        "Jira", {newer}, {smatchet::sync::BuildSyncMeta(newer, static_cast<std::int64_t>(std::time(nullptr)))});
+    fake->SetFetchIssuesResult({Stamped("ABC-1", "2024-05-01T09:00:00.000+0000", "older"),
+                                Stamped("ABC-2", "2024-05-01T09:00:00.000+0000", "two")},
+                               true);
+
+    deps.ActiveTicketsImpl.push_back(newer); // the newer copy is already on screen
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.LastSessionStats().Valid; }));
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "newer");
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-01T10:00:00.000+0000");
+    // The dropped row is still part of the view: the resident newer copy survives the roster convergence.
+    bool residentKept = false;
+    for (const CachedTicket& t : deps.ActiveTicketsImpl) {
+        residentKept = residentKept || (t.id == "ABC-1" && t.fieldValues.at("summary") == "newer");
+    }
+    CHECK(residentKept);
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got)); // the other row still lands
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("The stale sweep is one worker-side batch delete plus one in-memory pass") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    for (int i = 1; i <= 25; ++i) {
+        deps.CacheImpl->SaveTicket("Jira", MakeTicket("OLD-" + std::to_string(i)));
+    }
+    fake->SetFetchIssuesResult({MakeTicket("NEW-1")}, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.CacheImpl->GetAllTicketIds("Jira").size() == 1; }));
+
+    CHECK(deps.CacheImpl->DeleteTicketsCallCount() == 1); // 25 rows, ONE transaction
+    CHECK(deps.BackgroundTasksLaunched == 1);             // and it ran as a background task
+    REQUIRE(deps.ActiveTicketsImpl.size() == 1);
+    CHECK(deps.ActiveTicketsImpl[0].id == "NEW-1");
+    svc.CancelAndJoinActiveStreamingSync();
+}

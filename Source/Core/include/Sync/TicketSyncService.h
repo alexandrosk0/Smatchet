@@ -13,9 +13,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -23,6 +25,7 @@
 #include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
+#include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
@@ -131,6 +134,9 @@ class TicketSyncService {
     struct SyncBatch {
         std::vector<CachedTicket> Rows;
         bool CachedUnchanged = false;
+        /// Ids the session keeps WITHOUT queueing a row (a fetched row dropped because the cache holds a newer
+        /// copy): the apply adds them to KeepIds so the roster convergence and the "N kept" count see them.
+        std::vector<std::string> KeepOnlyIds;
     };
     /// Result of the delta attempt: `Finished` = the session's result was published (or the session was
     /// cancelled) and no full fetch is needed; otherwise `FallbackReason` says why Full must run.
@@ -207,6 +213,9 @@ class TicketSyncService {
                              const smatchet::sync::SyncSessionStats& partialStats);
 
     /// Appends rows to the apply queue; false when the session was superseded / cancelled meanwhile.
+    /// A freshly fetched batch (`cachedUnchanged` false) is persisted HERE, on the worker, before it is
+    /// queued - carried-forward comments, rows older than the cached version dropped, one SQLite transaction
+    /// for the rest - so the UI-thread drain only touches memory (Pillar 2).
     bool QueueBatch(std::uint64_t reqId, std::vector<CachedTicket>&& rows, bool cachedUnchanged);
 
     /// Worker-side parent top-up (parent-issue-hierarchy plan): fetch every parent key the
@@ -289,6 +298,9 @@ class TicketSyncService {
 
     bool hasPendingSyncRequest_ = false;
     smatchet::sync::SyncMode pendingMode_ = smatchet::sync::SyncMode::Delta;
+    /// Versions of the cached rows as of the session start; worker-thread only (written before the first
+    /// batch is queued, read while persisting the batches of the same session).
+    std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
 
@@ -296,6 +308,9 @@ class TicketSyncService {
     // from `AppController::IsStreamingSyncActive()` which is callable from any thread. The
     // rest are UI-thread-only by contract.
     std::atomic<bool> isDeletingStale_{false};
+    /// True while the background stale-row DELETE is running. Shared so the task can clear it without touching
+    /// the service; it counts as busy, so no new session starts (and re-saves a row) before the delete lands.
+    std::shared_ptr<std::atomic<bool>> deleteInFlight_ = std::make_shared<std::atomic<bool>>(false);
     std::vector<std::string> staleIdsToDelete_;
     std::size_t totalStaleToDelete_ = 0;
     std::size_t staleDeletedSoFar_ = 0;

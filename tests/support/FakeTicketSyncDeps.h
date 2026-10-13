@@ -20,6 +20,7 @@
 #include "ISyncCache.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -97,6 +98,16 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         sample.Requests = static_cast<std::uint64_t>(++TrafficSampleCalls) * 5u;
         sample.DownloadBytes = sample.Requests * 100u;
         return sample;
+    }
+
+    /// Background tasks the service launched (the stale-row delete); each runs inline on the caller so the
+    /// single-threaded tests see its effect immediately.
+    int BackgroundTasksLaunched = 0;
+    void LaunchBackgroundTask(std::function<void()> task) override {
+        ++BackgroundTasksLaunched;
+        if (task) {
+            task();
+        }
     }
 
     ISyncCache* Cache() override { return CacheImpl.get(); }

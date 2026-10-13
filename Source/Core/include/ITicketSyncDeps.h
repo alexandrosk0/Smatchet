@@ -16,6 +16,7 @@
 // unit tests can exercise TicketSyncService without constructing an AppController.
 
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -104,6 +105,16 @@ class ITicketSyncDeps {
     /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no
     /// stub; the production adapter reads `NetworkUsageTracker`. Any thread.
     virtual smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const { return {}; }
+
+    /// Run `task` on a background worker (the production adapter forwards to `AppController::LaunchBackgroundTask`,
+    /// which tracks the worker so `RecreateLocalCacheDatabase` can join it before swapping the cache). The sync
+    /// service uses it for SQLite work that must not run on the UI thread (the stale-row delete). Defaulted to
+    /// running inline so single-threaded test fakes need no stub.
+    virtual void LaunchBackgroundTask(std::function<void()> task) {
+        if (task) {
+            task();
+        }
+    }
 
     // ---- Connectivity + sync-warning banner -------------------------------------------
     /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /

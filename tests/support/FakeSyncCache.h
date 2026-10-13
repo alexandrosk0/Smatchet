@@ -81,7 +81,16 @@ class FakeSyncCache : public ISyncCache {
             metaNs->second.erase(ticketId); // the meta row goes with its ticket, as in the real cache
         }
     }
+    /// Batch deletes seen (tests assert the stale sweep is ONE transaction, not one delete per row).
+    int DeleteTicketsCallCount() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return deleteTicketsCalls_;
+    }
     void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) override {
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            ++deleteTicketsCalls_;
+        }
         for (const std::string& id : ids) {
             DeleteTicket(backendKey, id);
         }
@@ -603,6 +612,7 @@ class FakeSyncCache : public ISyncCache {
     mutable std::mutex m_;
     std::map<std::string, std::map<std::string, CachedTicket>> tickets_;
     std::map<std::string, std::map<std::string, TicketSyncMeta>> meta_;
+    int deleteTicketsCalls_ = 0;
     std::vector<PendingCreate> creates_;
     std::vector<PendingFieldEditRecord> edits_;
     std::vector<DeadPendingCreate> deadCreates_;
