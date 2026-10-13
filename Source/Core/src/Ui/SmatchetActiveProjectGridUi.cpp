@@ -12,7 +12,6 @@
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
-#include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
@@ -23,6 +22,7 @@
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
+#include "Ui/SmatchetFieldViewerModalUi.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
@@ -279,10 +279,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     // render once, from the focused pane.
     if (pane.focused) {
         TicketFieldEditor::RenderLongTextModal(pendingEdits);
-        // issue-comments PR-A — backend-agnostic comments read/post modal. Top-level so it survives
-        // the originating cell scrolling out of view; the popup stack is global, so render once from
-        // the focused pane. readOnlyMode disables the post box.
-        RenderCommentsModal(app, readOnlyMode);
+        // Generic field-viewer modal (Comments read/post, History). Top-level so it survives the
+        // originating cell scrolling out of view; the popup stack is global, so render once from the
+        // focused pane. readOnlyMode disables the Comments post box.
+        RenderFieldViewerModal(app, readOnlyMode);
     }
 
     // Enqueue only — the pane-window host runs the dispatch pump + chip decay ONCE per

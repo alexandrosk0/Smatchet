@@ -913,6 +913,7 @@ add_executable(SmatchetTests
     # Gap map Tier 1 #6 — merge-watch notify endpoint request-validation core.
     Core/MergeWatchNotifyPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
+    Core/SmatchetFieldViewerKindPure.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
     Core/TicketSyncService.test.cpp

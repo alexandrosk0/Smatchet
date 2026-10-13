@@ -803,6 +803,8 @@ const TranslationEntry kEntries[] = {
     {"comments.title", "Comments", u8"Commentaires"},
     {"comments.loading", "Loading comments...", u8"Chargement des commentaires..."},
     {"comments.none", "No comments yet.", u8"Aucun commentaire pour l'instant."},
+    {"history.title", "History", u8"Historique"},
+    {"history.none", "No history recorded.", u8"Aucun historique enregistré."},
     {"comments.fetch_failed", "Failed to load comments.", u8"Impossible de charger les commentaires."},
     {"freshness.refreshing", "Refreshing\xE2\x80\xA6", u8"Actualisation…"},
     {"freshness.cached_offline", "Offline \xE2\x80\x94 showing saved data",

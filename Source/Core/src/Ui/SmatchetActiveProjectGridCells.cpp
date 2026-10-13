@@ -12,7 +12,6 @@
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "ITrackerCollaboration.h" // TrackerIssueComment — comments-cell lazy tooltip fetch
-#include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
@@ -22,6 +21,8 @@
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
+#include "Ui/SmatchetFieldViewerKindPure.h"
+#include "Ui/SmatchetFieldViewerModalUi.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
@@ -167,6 +168,44 @@ void RenderCommentsCellTooltip(const std::string& commentBlob) {
         RenderPlainActivityTooltip(commentBlob);
     } else {
         RenderMarkdownTooltip(commentBlob);
+    }
+}
+
+/// Which viewer cell the current left press started on, and that press's time (it identifies the
+/// press: io.MouseClickedTime changes on every new press). A release opens the viewer only when this
+/// press began on the same cell with no Ctrl/Shift held — so a click that merely closes a popup (the
+/// press frame is blocked by it) or a press that started elsewhere never opens one.
+struct ViewerCellPress {
+    std::string CellKey;
+    double PressTime = -1.0;
+};
+ViewerCellPress s_viewerCellPress;
+
+/// Click handling for a field with a viewer window (History). The hit area is the whole cell width,
+/// like the comments cell's Selectable, not only the drawn text. Call right after the cell's group.
+void HandleViewerCellClick(AppController& app, const CachedTicket& ticket, const std::string& fieldId,
+                           const std::string& cellKey, float cellWidth) {
+    const ImVec2 groupMin = ImGui::GetItemRectMin();
+    const ImVec2 groupMax = ImGui::GetItemRectMax();
+    const bool hovered =
+        ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(groupMin, ImVec2(groupMin.x + cellWidth, groupMax.y));
+    if (!hovered) {
+        return;
+    }
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (!ImGuiEffectiveKeyCtrl() && !ImGuiEffectiveKeyShift()) {
+            s_viewerCellPress.CellKey = cellKey;
+            s_viewerCellPress.PressTime = io.MouseClickedTime[ImGuiMouseButton_Left];
+        }
+        return;
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && s_viewerCellPress.CellKey == cellKey &&
+        s_viewerCellPress.PressTime == io.MouseClickedTime[ImGuiMouseButton_Left] &&
+        !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left)) {
+        s_viewerCellPress = ViewerCellPress{};
+        OpenFieldViewerForField(app, ticket, fieldId);
     }
 }
 
@@ -326,7 +365,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         }
         ImGui::PushID(ticket.id.c_str());
         if (ImGui::Selectable(label, false, ImGuiSelectableFlags_None, ImVec2(valueAvailWidth, 0.0f))) {
-            OpenCommentsModal(app, ticket.id);
+            OpenFieldViewerForField(app, ticket, column.FieldId);
         }
         ImGui::PopID();
         if (ImGui::IsItemHovered()) {
@@ -372,6 +411,11 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                            pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
                                            d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells);
         ImGui::EndGroup();
+        // Fields with a viewer window (History) open it on a plain left click: the release must not end
+        // a drag (rect-selection) and Ctrl/Shift stay multi-select. The hover tooltip is unchanged.
+        if (SmatchetFieldViewer::HasFieldViewer(column.FieldId)) {
+            HandleViewerCellClick(app, ticket, column.FieldId, cellKey, valueAvailWidth);
+        }
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
         DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
