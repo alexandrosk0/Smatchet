@@ -28,6 +28,7 @@
 #endif
 
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -225,10 +226,16 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (ImGui::MenuItem("Copy raw")) {
             ImGui::SetClipboardText(rawForCopy.c_str());
         }
-        // Key cell only (fieldId empty). The URL is built only while the popup is open; trackers
-        // without a browse URL (Linear/GitHub can return "") get the item drawn disabled.
+        // Key cell only (fieldId empty). The URL is built only while the popup is open. The row's
+        // own cached url (only Linear writes fieldValues["url"]; its BuildBrowseUrl returns "" by
+        // design) wins first: it is bound to the clicked row, while BuildIssueBrowseUrl uses the
+        // focused pane's backend, which can differ in split view. With neither, the item is
+        // drawn disabled.
         if (app && ui && fieldId.empty() && !issueKey.empty()) {
-            const std::string url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
+            std::string url = rowForAnnotateMenu ? rowForAnnotateMenu->GetFieldValue("url") : std::string();
+            if (url.empty()) {
+                url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
+            }
             if (ImGui::MenuItem("Copy link", nullptr, false, !url.empty())) {
                 ImGui::SetClipboardText(url.c_str());
             }
@@ -453,9 +460,8 @@ std::string BuildGridRowsCsv(const std::vector<CachedTicket>& tickets, const std
                              const std::set<int>& rows) {
     std::vector<std::string> cells;
     cells.reserve(columns.size());
-    for (const TicketGridColumn& col : columns) {
-        cells.push_back(col.Label);
-    }
+    std::transform(columns.begin(), columns.end(), std::back_inserter(cells),
+                   [](const TicketGridColumn& col) { return col.Label; });
     std::string out = BuildCsvLine(cells);
     for (size_t ticketIdx : ResolveGridRowsToTicketIndices(rows, sortedIdx, tickets.size())) {
         const CachedTicket& t = tickets[ticketIdx];
