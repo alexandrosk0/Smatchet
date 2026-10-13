@@ -157,7 +157,7 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
   - `2b2e535`: the CodeRabbit gate's bats stub runs the action's own jq over two pages of statuses, covering the context filter, the oldest pick and pagination.
 - **Merge of Historical-review Batch 26 host** — `790721c` merges origin/develop (#2330, #2331). `fieldCatalogRestored_` from #2331 is cleared with the rest of the catalog state in one `ClearCatalogInMemoryInto` helper shared by `SetFieldCatalog`'s explicit clear (users kept) and `ClearFieldCatalogInMemory` (users cleared), and by the no-catalog error banner. In `cr-finding-gate`, #2330's ask-state check and this PR's are combined: an ask counts only if it was posted after CodeRabbit's first status on the head.
 - **Merges** — `4d12153` merges origin/develop (#2300–#2320); `70f488b` merges #2321 (the agent-layer move): every layer-side path left this repo, `4b905ad` / `4c6162a` reach layer scripts through `agent-layer/`, `1266a1d` repairs the applied ledgers after the union merge.
-- **Agent-layer half** — ported to alexandrosk0/the-unwilling-agentic-bunch as its own PR; this PR carries the `agent-layer` pointer bump once that PR merges (after the Historical-review Batch 26 layer PR, by agreement between the two sessions).
+- **Agent-layer half** — ported to alexandrosk0/the-unwilling-agentic-bunch as #6, merged there as `33f2fa2` after the Historical-review Batch 26 layer PR (#5); this PR bumps `agent-layer` to it, on top of a develop merge that brings #2291 and develop's own bump to `313f557` (#2333). With the bump, `scripts/dev/test-all.sh --ci` passes 2650/0.
 
 ## Deviations from plan
 
