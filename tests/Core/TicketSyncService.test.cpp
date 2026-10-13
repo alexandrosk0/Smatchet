@@ -482,6 +482,70 @@ TEST_CASE("TicketSyncService destroyed right after its session finalizes joins t
     svc.reset();
 }
 
+TEST_CASE("TicketSyncService::CancelAndJoinAll flags every busy pane before joining any" *
+          doctest::test_suite("[high-risk]")) {
+    // Shutdown-latency regression: ~AppController used to cancel+join only the focused pane; every
+    // other busy pane was then joined by ~TicketSyncService during gridContexts_ destruction, one
+    // after another. A worker that is not yet flagged keeps paging while an earlier pane's join
+    // waits, so each pane added up to one in-flight request timeout. CancelAndJoinAll must flag ALL
+    // services before joining ANY, so every worker stops at its current page boundary.
+    //
+    // The primary assertion is the page count, not wall-clock: with the two-pass cancel neither
+    // worker may start another page after CancelAndJoinAll begins. (A one-pass loop leaves the
+    // second worker unflagged across its in-flight page boundary, where it starts one more.)
+    // Counts are snapshotted just before the cancel, so worker start-up skew cannot fail the case.
+    // The elapsed-time bound is a loose sanity check only.
+    constexpr std::chrono::milliseconds kPageDelay(300);
+    constexpr int kPages = 50; // ~15 s if never cancelled
+
+    FakeTicketSyncDeps depsA;
+    FakeTicketSyncDeps depsB;
+    auto* fakeA = static_cast<FakeTrackerClient*>(depsA.BackendImpl.get());
+    auto* fakeB = static_cast<FakeTrackerClient*>(depsB.BackendImpl.get());
+    fakeA->SetSlowStreamedPages(kPages, kPageDelay);
+    fakeB->SetSlowStreamedPages(kPages, kPageDelay);
+
+    TicketSyncService svcA(depsA);
+    TicketSyncService svcB(depsB);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svcA.SyncWithBackend(&cfg, &views);
+    svcB.SyncWithBackend(&cfg, &views);
+
+    // Wait until both workers have their first request in flight.
+    bool bothInFlight = false;
+    for (int i = 0; i < 1000 && !bothInFlight; ++i) {
+        bothInFlight = fakeA->SlowStreamedPagesStarted() >= 1 && fakeB->SlowStreamedPagesStarted() >= 1;
+        if (!bothInFlight) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(bothInFlight);
+    REQUIRE(svcA.IsActive());
+    REQUIRE(svcB.IsActive());
+
+    std::vector<TicketSyncService*> services;
+    services.push_back(&svcA);
+    services.push_back(&svcB);
+    services.push_back(&svcA); // duplicate (focused pane is also a live entry) is tolerated
+    services.push_back(nullptr);
+    const int pagesBeforeA = fakeA->SlowStreamedPagesStarted();
+    const int pagesBeforeB = fakeB->SlowStreamedPagesStarted();
+    const auto start = std::chrono::steady_clock::now();
+    TicketSyncService::CancelAndJoinAll(services);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    CHECK(fakeA->SlowStreamedPagesStarted() == pagesBeforeA);
+    CHECK(fakeB->SlowStreamedPagesStarted() == pagesBeforeB);
+    CHECK_FALSE(svcA.IsActive());
+    CHECK_FALSE(svcB.IsActive());
+    // Both in-flight pages drain concurrently: about one page delay in total. Serial joins would
+    // cost about two; a never-cancelled worker would cost kPages. Generous slack for CI.
+    CHECK(elapsed < kPageDelay * 4);
+}
+
 TEST_CASE("TicketSyncService streamed seam prefers the backend's structured kind over the text sniff" *
           doctest::test_suite("[high-risk]")) {
     // N12 item 12: the fake scripts a fetch failure whose TEXT the heuristic would NOT call

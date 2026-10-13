@@ -51,6 +51,19 @@ class TicketSyncService {
     /// `RecreateLocalCacheDatabase`, and the start path of every new sync.
     void CancelAndJoinActiveStreamingSync();
 
+    /// Flag the in-flight streaming sync (if any) Cancelled + Superseded WITHOUT joining. The
+    /// worker observes the flags at its next page / phase boundary, so a request already on the
+    /// wire still runs to completion or timeout. Non-blocking, idempotent, any thread.
+    void RequestCancel();
+
+    /// Cancel then join every service in `services` in two passes: flag ALL first, then join
+    /// each. A one-pass loop leaves the later workers un-cancelled while it waits on the earlier
+    /// ones, so they start further requests and teardown costs up to one HTTP timeout PER pane;
+    /// two passes let every worker unwind concurrently, bounding the total to about one timeout.
+    /// Null entries and duplicates are skipped. Used by `~AppController` and
+    /// `RecreateLocalCacheDatabase`.
+    static void CancelAndJoinAll(const std::vector<TicketSyncService*>& services);
+
     /// Apply a single tracker-fetch result on the UI thread: persist fetched tickets to SQLite,
     /// classify any fetch error / soft warning, and prune cache rows that vanished from the
     /// remote when `FullSyncCompleted` is set.
