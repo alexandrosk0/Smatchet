@@ -94,7 +94,7 @@ void SmatchetToolbarUi::Draw(AppController& app, TrackerConfig& cfg) {
     RenderEditor(app, cfg);
 }
 
-void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, const ToolbarButton& b) {
+void SmatchetToolbarUi::DispatchButton(AppController& app, const ToolbarButton& b) {
     if (b.Kind == ToolbarButtonKind::Separator) {
         return;
     }
@@ -121,7 +121,11 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         return;
     }
     if (b.CommandId == "ui.settings") {
-        cfg.ShowPreferencesWindow = true;
+        // Drive the live session flag, not cfg.ShowPreferencesWindow: PersistWindowOpenPreferences
+        // copies g_ui.showPreferences over the cfg field at end of frame, so a cfg-only write was
+        // reverted before the window ever drew (button appeared to do nothing).
+        g_ui.showPreferences = true;
+        g_ui.requestPreferencesFocus = true;
         return;
     }
 
@@ -266,7 +270,7 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 ImGui::BeginDisabled();
             }
             if (ImGui::Button(label.c_str())) {
-                DispatchButton(app, cfg, b);
+                DispatchButton(app, b);
             }
             if (!enabled) {
                 ImGui::EndDisabled();

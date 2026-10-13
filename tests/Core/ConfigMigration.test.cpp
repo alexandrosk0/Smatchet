@@ -515,6 +515,50 @@ TEST_CASE("ConfigMigration menu shortcuts: both views_dashboard arg variants see
     CHECK(CountCommand(second.Keybindings, "view.toggle.views_dashboard") == 2);
 }
 
+// --- Toolbar "Views" button: legacy view.list → Views Dashboard reveal ---
+//
+// Configs saved by older builds persist the toolbar's button list verbatim (from_json REPLACES the
+// default), so fixing ToolbarConfig::Default() alone never reached an upgrading user: their Views
+// icon kept dispatching the data-only view.list and clicking it did nothing visible.
+
+TEST_CASE("ConfigMigration toolbar: legacy Views button (view.list) is rebound on Load, idempotent on reload") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","toolbar":{"visible":true,"buttons":[
+        {"kind":0,"icon_name":"list","tooltip":"Views","command_id":"view.list","args_json":"{}"},
+        {"kind":0,"icon_name":"gear","tooltip":"Settings","command_id":"ui.settings","args_json":"{}"}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig first = ConfigManager::Load();
+    REQUIRE(first.Toolbar.Buttons.size() == 2);
+    CHECK(first.Toolbar.Buttons[0].CommandId == "view.toggle.views_dashboard");
+    CHECK(first.Toolbar.Buttons[0].ArgsJson == "{\"action\":\"show\"}");
+    CHECK(first.Toolbar.Buttons[1].CommandId == "ui.settings"); // neighbours untouched
+
+    ConfigManager::Save(first);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig second = ConfigManager::Load();
+    REQUIRE(second.Toolbar.Buttons.size() == 2);
+    CHECK(second.Toolbar.Buttons[0].CommandId == "view.toggle.views_dashboard");
+    CHECK(second.Toolbar.Buttons[0].ArgsJson == "{\"action\":\"show\"}");
+}
+
+TEST_CASE("ConfigMigration toolbar: fresh config seeds the Views Dashboard button, never view.list") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira"})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    bool sawViews = false;
+    for (const ToolbarButton& b : cfg.Toolbar.Buttons) {
+        CHECK(b.CommandId != "view.list");
+        if (b.Tooltip == "Views") {
+            sawViews = true;
+            CHECK(b.CommandId == "view.toggle.views_dashboard");
+        }
+    }
+    CHECK(sawViews);
+}
+
 // --- Quick-create issue keybinding — one-shot seed migration (migrated_quick_create_hotkey_v1) ---
 //
 // Same replace-not-merge failure class as the menu-shortcut seed above: a config saved before the

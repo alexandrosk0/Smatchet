@@ -48,6 +48,16 @@ struct ToolbarConfig {
     friend void from_json(const nlohmann::json& j, ToolbarConfig& c);
 };
 
+/** Command + args the default "Views" toolbar button dispatches (opens the Views Dashboard).
+ *  Same (command, args) identity as the Ctrl+Shift+E keybinding, so the tooltip shows the hotkey. */
+constexpr const char* kViewsDashboardCommandId = "view.toggle.views_dashboard";
+constexpr const char* kViewsDashboardArgsJson = "{\"action\":\"show\"}";
+
+/** Rewrites buttons persisted by older builds that bound the default "Views" icon to `view.list`
+ *  (a data-only command that opens nothing) onto the Views Dashboard reveal. Idempotent; returns
+ *  the number of buttons rewritten. Pure — no IO. */
+int MigrateLegacyViewsToolbarButton(ToolbarConfig& cfg);
+
 // Pure effective-toolbar resolution: the global button list, plus — when the current
 // tracker has appended buttons — a separator followed by that append list. Adjacent
 // separators are collapsed and any leading/trailing separator is trimmed, so the bar
