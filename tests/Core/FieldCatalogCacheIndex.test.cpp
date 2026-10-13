@@ -279,6 +279,22 @@ TEST_CASE("FieldCatalogCache: an older build's ambiguous Jira snapshot is not li
     CHECK(Listed("octo/repo"));
 }
 
+TEST_CASE("FieldCatalogCache: a snapshot that cannot load is not listed as a recent project") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"k-empty\",\"projectKey\":\"EMPTY\",\"backend\":\"Jira\","
+                         "\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":5},"
+                         "{\"cacheKey\":\"k-good\",\"projectKey\":\"GOOD\",\"backend\":\"Jira\","
+                         "\"endpoint\":\"https://acme.atlassian.net\",\"lastUsedUnix\":4}],"
+                         "\"k-empty\":{\"fields\":[]},\"k-good\":" +
+                             Blob("customfield_good") + "}");
+    CHECK_FALSE(Loads("k-empty"));
+    CHECK_FALSE(Listed("EMPTY"));
+    CHECK(Loads("k-good"));
+    CHECK(Listed("GOOD"));
+}
+
 TEST_CASE("FieldCatalogCache: a damaged schema version 2 with an object index keeps the snapshots at root") {
     smatchet_tests::TestEnvGuard env;
     CacheFileCleanup file(env);

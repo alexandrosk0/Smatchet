@@ -583,6 +583,20 @@ bool IsUnclaimedLegacyJiraSnapshot(const nlohmann::json& root, const nlohmann::j
     return blob == root.end() || !blob->is_object() || !JsonBoolOr(*blob, "kindKeyed");
 }
 
+// Whether a load of this blob would succeed: a damaged blob (no fields, a non-object) is not listed as a
+// recent project, since picking it would only fail.
+bool SnapshotBlobLoads(const nlohmann::json& root, const std::string& cacheKey) {
+    const auto blob = root.find(cacheKey);
+    if (blob == root.end() || !blob->is_object()) {
+        return false;
+    }
+    std::vector<TrackerField> fields;
+    std::vector<TrackerComponent> components;
+    std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
+    std::string error;
+    return ParseCatalogEntryObject(*blob, fields, components, issueTypeMeta, error);
+}
+
 } // namespace
 
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
@@ -656,7 +670,10 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
             return out;
         }
         for (const auto& e : root["entries"]) {
-            if (!e.is_object() || IsUnclaimedLegacyJiraSnapshot(root, e, JsonStringFieldOr(e, "cacheKey")))
+            if (!e.is_object())
+                continue;
+            const std::string cacheKey = JsonStringFieldOr(e, "cacheKey");
+            if (IsUnclaimedLegacyJiraSnapshot(root, e, cacheKey) || !SnapshotBlobLoads(root, cacheKey))
                 continue;
             CachedProjectEntry cpe;
             cpe.projectKey = e.value("projectKey", std::string());
