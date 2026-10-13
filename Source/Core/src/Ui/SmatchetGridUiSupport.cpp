@@ -163,6 +163,36 @@ static void DrawUserInfoMenuItemIfUserField(AppController* app, UiDrawSession* u
     SmatchetUserInfoUi::Open(*ui, ui->pane().id, displayName, email, accountId);
 }
 
+// Key-cell-only items of the "cell_copy_quick" popup: "Copy link" and, when the clicked row is
+// part of a multi-row whole-row selection, "Copy N selected rows as CSV".
+void DrawKeyCellCopyMenuItems(AppController* app, UiDrawSession* ui, const std::string& issueKey,
+                              const CachedTicket* row, const GridKeyCellMenuCtx* keyMenu) {
+    // The URL is built only while the popup is open. The row's own cached url (only Linear writes
+    // fieldValues["url"]; its BuildBrowseUrl returns "" by design) wins first: it is bound to the
+    // clicked row, while BuildIssueBrowseUrl uses the focused pane's backend, which can differ in
+    // split view. With neither, the item is drawn disabled.
+    if (app && ui && !issueKey.empty()) {
+        std::string url = row ? row->GetFieldValue("url") : std::string();
+        if (url.empty()) {
+            url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
+        }
+        if (ImGui::MenuItem("Copy link", nullptr, false, !url.empty())) {
+            ImGui::SetClipboardText(url.c_str());
+        }
+    }
+    if (!keyMenu || !keyMenu->sel || !keyMenu->sel->RowSelected(keyMenu->clickedRow) || keyMenu->sel->Rows.size() < 2) {
+        return;
+    }
+    // Keyed Format: a pre-formatted label never matches the source-text catalog lookup.
+    const std::string csvLabel = SmatchetLocalization::Format("grid.key.copy_rows_csv", "Copy %d selected rows as CSV",
+                                                              static_cast<int>(keyMenu->sel->Rows.size()));
+    if (ImGui::MenuItem(csvLabel.c_str())) {
+        ImGui::SetClipboardText(BuildGridRowsCsv(*keyMenu->tickets, *keyMenu->sortedIdx, *keyMenu->columns,
+                                                 *keyMenu->catalog, keyMenu->sel->Rows)
+                                    .c_str());
+    }
+}
+
 } // namespace
 
 /**
@@ -226,31 +256,8 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (ImGui::MenuItem("Copy raw")) {
             ImGui::SetClipboardText(rawForCopy.c_str());
         }
-        // Key cell only (fieldId empty). The URL is built only while the popup is open. The row's
-        // own cached url (only Linear writes fieldValues["url"]; its BuildBrowseUrl returns "" by
-        // design) wins first: it is bound to the clicked row, while BuildIssueBrowseUrl uses the
-        // focused pane's backend, which can differ in split view. With neither, the item is
-        // drawn disabled.
-        if (app && ui && fieldId.empty() && !issueKey.empty()) {
-            std::string url = rowForAnnotateMenu ? rowForAnnotateMenu->GetFieldValue("url") : std::string();
-            if (url.empty()) {
-                url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
-            }
-            if (ImGui::MenuItem("Copy link", nullptr, false, !url.empty())) {
-                ImGui::SetClipboardText(url.c_str());
-            }
-        }
-        // Only when the clicked row is part of a multi-row whole-row selection.
-        if (keyMenu && keyMenu->sel && keyMenu->sel->RowSelected(keyMenu->clickedRow) &&
-            keyMenu->sel->Rows.size() > 1) {
-            // Keyed Format: a pre-formatted label never matches the source-text catalog lookup.
-            const std::string csvLabel = SmatchetLocalization::Format(
-                "grid.key.copy_rows_csv", "Copy %d selected rows as CSV", static_cast<int>(keyMenu->sel->Rows.size()));
-            if (ImGui::MenuItem(csvLabel.c_str())) {
-                ImGui::SetClipboardText(BuildGridRowsCsv(*keyMenu->tickets, *keyMenu->sortedIdx, *keyMenu->columns,
-                                                         *keyMenu->catalog, keyMenu->sel->Rows)
-                                            .c_str());
-            }
+        if (fieldId.empty()) {
+            DrawKeyCellCopyMenuItems(app, ui, issueKey, rowForAnnotateMenu, keyMenu);
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
         DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);
