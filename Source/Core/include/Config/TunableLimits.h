@@ -7,8 +7,8 @@
 // without linking ConfigManager.
 //
 // Access: `smatchet::limits::Get().JiraSearchMaxPages` returns a by-value snapshot (thread-safe;
-// ~70 ints, cheap). ConfigManager::Load() publishes the loaded values via `Set()`, so a changed
-// config.json takes effect on the next Load. Safety bounds that are NOT preferences (recursion
+// ~70 ints, cheap). ConfigManager::Load() publishes the loaded values via `Set()` on a cache miss,
+// so a hand-edited config.json takes effect on the next launch. Safety bounds that are NOT preferences (recursion
 // depth guards, parser buffer ceilings, wire-protocol sizes) intentionally stay `constexpr`.
 //
 // Unit conventions: `*Ms` milliseconds, `*MiB` mebibytes (use `limits::MiB()` for bytes), the

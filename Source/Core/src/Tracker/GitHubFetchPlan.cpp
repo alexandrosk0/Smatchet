@@ -65,7 +65,7 @@ GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::stri
         if (includeIssuesOrPullRequests) {
             plan.effectiveQuery = "is:issue is:open";
             std::string extra = "No GitHub Owner/Repo and no view JQL — fetching newest open "
-                                "issues globally (capped at " +
+                                "issues globally (stops after roughly " +
                                 std::to_string(EffectiveSearchCap()) +
                                 "). Set Owner+Repo in Preferences or add a view JQL filter "
                                 "for relevant results.";

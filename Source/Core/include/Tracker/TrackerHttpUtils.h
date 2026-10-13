@@ -11,17 +11,8 @@
 #include <functional>
 #include <string>
 
-// User-tunable (TunableLimits.h, config "limits" object); defaults 5 s connect / 30 s overall.
-inline long TrackerConnectTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerConnectTimeoutMs); }
-inline long TrackerOverallTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerOverallTimeoutMs); }
-/** Short timeouts for periodic connectivity probes (avoid blocking state updates on stalled TCP); defaults 2 s / 5 s.
- */
-inline long TrackerProbeConnectTimeoutMs() {
-    return static_cast<long>(smatchet::limits::Get().TrackerProbeConnectTimeoutMs);
-}
-inline long TrackerProbeOverallTimeoutMs() {
-    return static_cast<long>(smatchet::limits::Get().TrackerProbeOverallTimeoutMs);
-}
+// TrackerConnectTimeoutMs() / TrackerOverallTimeoutMs() / TrackerProbe*TimeoutMs() live in
+// TrackerHttpClient.h (included above) beside the retry accessors.
 
 std::string UrlEncode(const std::string& value);
 std::string NormalizeBaseUrl(const std::string& domain);

@@ -111,12 +111,15 @@ static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int 
 // within both the entry-count and aggregate-byte caps. Pass the simulated post-insert figures
 // to the pure policy so the loop also makes room when the *new* entry is what tips a cap. The
 // `!g_lru.empty()` guard stops a single oversized entry from looping against an empty cache.
-static void EvictToFitUnlocked(std::size_t incomingBytes) {
+static bool WouldExceedCapsUnlocked(std::size_t incomingBytes) {
     const smatchet::limits::LimitsConfig lim = smatchet::limits::Get();
-    const std::size_t maxEntries = static_cast<std::size_t>(lim.ImageTextureCacheMaxEntries);
-    const std::size_t maxBytes = smatchet::limits::MiB(lim.ImageTextureCacheMaxMiB);
-    while (!g_lru.empty() &&
-           smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes, maxEntries, maxBytes)) {
+    return smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes,
+                                  static_cast<std::size_t>(lim.ImageTextureCacheMaxEntries),
+                                  smatchet::limits::MiB(lim.ImageTextureCacheMaxMiB));
+}
+
+static void EvictToFitUnlocked(std::size_t incomingBytes) {
+    while (!g_lru.empty() && WouldExceedCapsUnlocked(incomingBytes)) {
         const std::string victim = g_lru.back();
         g_lru.pop_back();
         const auto it = g_map.find(victim);

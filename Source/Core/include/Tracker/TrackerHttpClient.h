@@ -21,6 +21,17 @@
 #include <string>
 
 // User-tunable (TunableLimits.h, config "limits" object); read per call so a reloaded config applies.
+// Timeouts: defaults 5 s connect / 30 s overall; the probe pair (2 s / 5 s) is for periodic connectivity
+// probes, which must not block state updates on a stalled TCP connection.
+inline long TrackerConnectTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerConnectTimeoutMs); }
+inline long TrackerOverallTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerOverallTimeoutMs); }
+inline long TrackerProbeConnectTimeoutMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerProbeConnectTimeoutMs);
+}
+inline long TrackerProbeOverallTimeoutMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerProbeOverallTimeoutMs);
+}
+// Retry.
 inline int TrackerHttpDefaultMaxAttempts() { return smatchet::limits::Get().TrackerHttpMaxAttempts; }
 inline long TrackerHttpBaseRetryDelayMs() {
     return static_cast<long>(smatchet::limits::Get().TrackerHttpBaseRetryDelayMs);
