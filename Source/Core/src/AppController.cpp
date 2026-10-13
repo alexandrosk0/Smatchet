@@ -599,6 +599,13 @@ void AppController::SyncWithBackend(const TrackerConfig* configOverride, const V
     }
 }
 
+smatchet::sync::SyncSessionStats AppController::GetLastSyncSessionStats() const {
+    if (focusedContext().ticketSync_) {
+        return focusedContext().ticketSync_->LastSessionStats();
+    }
+    return smatchet::sync::SyncSessionStats();
+}
+
 bool AppController::IsStreamingSyncActive() const {
     return focusedContext().ticketSync_ && focusedContext().ticketSync_->IsActive();
 }

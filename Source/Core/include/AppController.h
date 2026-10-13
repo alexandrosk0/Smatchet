@@ -745,6 +745,7 @@ class AppController : public IAppThreading,
      *  Returns a const reference (callers bind a reference); delegates to ConnectivityMonitorService.
      *  De-inlined (Phase 3) — the body lives in AppController.cpp where the service is a complete type. */
     const std::string& GetLastTicketSyncWarning() const override;
+    smatchet::sync::SyncSessionStats GetLastSyncSessionStats() const override;
 
     /**
      * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
@@ -1488,11 +1489,14 @@ class AppController : public IAppThreading,
     /// (DiffChangedTickets over the resolved salient roster), fold in the membership `verdicts`
     /// (ClassifyMembershipRemovals → erase resident rows from ActiveTickets, drop the shared cache
     /// row on each 404, republish + bump revision), notify on any salient delta, then advance
-    /// changeSinceAnchor and re-stamp nextChangePollAt. UI thread.
+    /// changeSinceAnchor and re-stamp nextChangePollAt. UI thread. The result is also dropped when
+    /// the pane's sync session epoch moved past `capturedSyncEpoch` or a sync is active (its rows are
+    /// newer than the probe's), and a probe row whose `updated` is older than the resident row's
+    /// never replaces it (Sync/RemoteVersionPure.h).
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
-                                       std::chrono::system_clock::time_point polledAt,
-                                       std::uint64_t capturedGeneration);
+                                       std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
+                                       std::uint64_t capturedSyncEpoch);
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};

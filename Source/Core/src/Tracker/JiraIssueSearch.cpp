@@ -512,6 +512,12 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                const ViewsStore& viewStore) {
+    return FetchIssuesForKeysCancellable(cfg, issueKeys, viewStore, CancelCallback());
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                          const ViewsStore& viewStore, const CancelCallback& shouldCancel) {
     using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
     std::vector<CachedTicket> outTickets;
     std::string outError;
@@ -546,8 +552,11 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
                                     "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
 
-        auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
         if (response.status_code != 200) {
+            if (shouldCancel && shouldCancel()) {
+                return FetchResult::Err(TrackerErrorCancelled());
+            }
             outError =
                 "Fetch by key failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
@@ -586,7 +595,10 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
                 if (!requestedKey.empty() && fetchedKeys.count(requestedKey) == 0) {
                     const std::string issueUrl = base + "/rest/api/3/issue/" + UrlEncode(requestedKey) +
                                                  "?fields=" + fields + "&expand=changelog";
-                    auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers);
+                    auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers, shouldCancel);
+                    if (shouldCancel && shouldCancel()) {
+                        return FetchResult::Err(TrackerErrorCancelled());
+                    }
                     if (issueResp.status_code == 200) {
                         std::string issueParseErr;
                         auto issueJson = smatchet::json_safe::ParseBounded(issueResp.text, issueParseErr);
@@ -616,6 +628,12 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                 const ViewsStore& viewStore) {
+    return FetchChildrenOfKeysCancellable(cfg, parentKeys, viewStore, CancelCallback());
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                           const ViewsStore& viewStore, const CancelCallback& shouldCancel) {
     using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
     std::vector<CachedTicket> outTickets;
     std::string outError;
@@ -666,8 +684,11 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
                 pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
             }
 
-            auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+            auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
             if (response.status_code != 200) {
+                if (shouldCancel && shouldCancel()) {
+                    return FetchResult::Err(TrackerErrorCancelled());
+                }
                 outError = "Fetch children failed: " +
                            smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
                 LOG_WARN("JiraClient::FetchChildrenOfKeys: %s", outError.c_str());

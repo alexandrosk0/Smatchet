@@ -22,7 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "CachedTicketTypes.h" // for CachedTicket (in vector & shared_ptr returns)
+#include "CachedTicketTypes.h"     // for CachedTicket (in vector & shared_ptr returns)
+#include "Sync/SyncSessionStats.h" // TrackerTrafficSample (per-session request/byte accounting)
 
 class ISyncCache;
 class ITrackerBackend;
@@ -98,6 +99,11 @@ class ITicketSyncDeps {
     /// LRU evicts a pane whose cache rows survive — the recorded set outlives the eviction and is
     /// dropped only on 30 s retirement. Defaulted no-op so the test fakes need no stub.
     virtual void PublishOwnedTicketIds(const std::vector<std::string>& /*ids*/) {}
+
+    /// Tracker HTTP traffic counters right now (monotonic). A session reads it at its start and end
+    /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no
+    /// stub; the production adapter reads `NetworkUsageTracker`. Any thread.
+    virtual smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const { return {}; }
 
     // ---- Connectivity + sync-warning banner -------------------------------------------
     /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /

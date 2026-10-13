@@ -568,6 +568,7 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     const std::size_t keptThisSession = activeStreamingSync_.KeepIds.size();
     NoteFullSyncEmptiness(fullSyncCompleted, keptThisSession == 0);
 
+    RecordSessionStats(fetchError, fullSyncCompleted);
     SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
     ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
 
@@ -586,6 +587,49 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         deps_.NotifyLuaTicketDataChanged();
         deps_.SetPendingLuaWindowBump(false);
     }
+}
+
+smatchet::sync::SyncSessionStats TicketSyncService::LastSessionStats() const {
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    return lastStats_;
+}
+
+void TicketSyncService::RecordSessionStats(const std::string& fetchError, bool fullSyncCompleted) {
+    smatchet::sync::SyncSessionStats stats;
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        stats = activeStreamingSync_.WorkerStats;
+    }
+    const smatchet::sync::TrackerTrafficSample end = deps_.SampleTrackerTraffic();
+    const smatchet::sync::TrackerTrafficSample& start = activeStreamingSync_.TrafficAtStart;
+    stats.Valid = true;
+    if (stats.RequestId == 0) {
+        stats.RequestId = activeStreamingSync_.RequestId.load();
+    }
+    std::string recordedError = fetchError;
+    if (stats.Mode.empty()) {
+        stats.Mode = "full"; // the worker never reached its result seam (exception / early return)
+        if (recordedError.empty()) {
+            recordedError = "cancelled or superseded before a result";
+        }
+    }
+    stats.Requests = end.Requests >= start.Requests ? end.Requests - start.Requests : 0;
+    stats.UploadBytes = end.UploadBytes >= start.UploadBytes ? end.UploadBytes - start.UploadBytes : 0;
+    stats.DownloadBytes = end.DownloadBytes >= start.DownloadBytes ? end.DownloadBytes - start.DownloadBytes : 0;
+    stats.DurationMs =
+        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - activeStreamingSync_.SessionStartedAt)
+                                   .count());
+    stats.Completed = fullSyncCompleted;
+    stats.Error = recordedError;
+    LOG_INFO("TicketSyncService: sync stats req=%llu mode=%s roster=%zu bodies=%zu unchanged=%zu requests=%llu "
+             "down=%llu up=%llu durationMs=%lld completed=%d fallback='%s' err='%s'",
+             static_cast<unsigned long long>(stats.RequestId), stats.Mode.c_str(), stats.RosterSize,
+             stats.BodiesFetched, stats.Unchanged, static_cast<unsigned long long>(stats.Requests),
+             static_cast<unsigned long long>(stats.DownloadBytes), static_cast<unsigned long long>(stats.UploadBytes),
+             stats.DurationMs, stats.Completed ? 1 : 0, stats.FallbackReason.c_str(), stats.Error.c_str());
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    lastStats_ = std::move(stats);
 }
 
 void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession) {
@@ -817,6 +861,9 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     SwapBackendIfTrackerChanged(cfgCopy);
 
     const std::uint64_t reqId = ++currentFetchRequestId_;
+    ++sessionEpoch_;
+    activeStreamingSync_.SessionStartedAt = std::chrono::steady_clock::now();
+    activeStreamingSync_.TrafficAtStart = deps_.SampleTrackerTraffic();
     activeStreamingSync_.RequestId = reqId;
     activeStreamingSync_.Cancelled = false;
     activeStreamingSync_.Superseded = false;
@@ -834,6 +881,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         activeStreamingSync_.Warning.clear();
         activeStreamingSync_.PendingBatches.clear();
         activeStreamingSync_.BackgroundStaleIds.clear();
+        activeStreamingSync_.WorkerStats = smatchet::sync::SyncSessionStats();
     }
 
     LOG_INFO("TicketSyncService: Spawning background worker for async streaming fetch request ID=%llu",
@@ -902,6 +950,9 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
             activeStreamingSync_.FetchErrorTransient = !summary.FetchError.empty() && summary.Error.IsRetryable();
             activeStreamingSync_.Warning = summary.Warning;
             activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
+            activeStreamingSync_.WorkerStats.RequestId = reqId;
+            activeStreamingSync_.WorkerStats.Mode = "full";
+            activeStreamingSync_.WorkerStats.BodiesFetched = summary.FetchedCount;
             if (summary.FullSyncCompleted && deps_.Cache()) {
                 activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
             }
@@ -1089,13 +1140,17 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
                  hop, static_cast<unsigned long long>(reqId));
         std::vector<std::string> refused;
         int splitBudget = RefusalSplitBudget(missing.size());
+        // One token for the whole hop: the keyed fetch polls it inside the HTTP retry/backoff window
+        // too, so a superseded sync stops mid-request rather than at the request's timeout.
+        const std::function<bool()> cancelled = [this, reqId]() {
+            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+        };
         Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
             [&](const std::vector<std::string>& keys) {
-                return deps_.Backend()->FetchIssuesForKeys(cfgCopy, keys, viewsCopy);
+                return deps_.Backend()->FetchIssuesForKeysCancellable(cfgCopy, keys, viewsCopy, cancelled);
             },
-            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; },
-            missing, splitBudget, refused);
-        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            cancelled, missing, splitBudget, refused);
+        if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
         if (!fetched.has_value()) {
@@ -1185,13 +1240,15 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
                  static_cast<unsigned long long>(reqId));
         std::vector<std::string> refused;
         int splitBudget = RefusalSplitBudget(keys.size());
+        const std::function<bool()> cancelled = [this, reqId]() {
+            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+        };
         Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
             [&](const std::vector<std::string>& parentKeys) {
-                return deps_.Backend()->FetchChildrenOfKeys(cfgCopy, parentKeys, viewsCopy);
+                return deps_.Backend()->FetchChildrenOfKeysCancellable(cfgCopy, parentKeys, viewsCopy, cancelled);
             },
-            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; }, keys,
-            splitBudget, refused);
-        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+            cancelled, keys, splitBudget, refused);
+        if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
         if (!fetched.has_value()) {

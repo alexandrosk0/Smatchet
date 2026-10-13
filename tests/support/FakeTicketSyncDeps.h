@@ -89,6 +89,16 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     /// assert stale-deletion never removes a row another live pane still holds.
     std::vector<std::string> RetainedByOtherContextsImpl;
 
+    /// Each SampleTrackerTraffic call reports 5 more requests than the previous one, so a session's
+    /// request delta (start sample vs end sample) is a known 5 and the stats record can be asserted.
+    mutable int TrafficSampleCalls = 0;
+    smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const override {
+        smatchet::sync::TrackerTrafficSample sample;
+        sample.Requests = static_cast<std::uint64_t>(++TrafficSampleCalls) * 5u;
+        sample.DownloadBytes = sample.Requests * 100u;
+        return sample;
+    }
+
     ISyncCache* Cache() override { return CacheImpl.get(); }
     /// DR6: CacheImpl is a unique_ptr owned by the fixture for its whole lifetime, so hand back a
     /// non-owning aliasing shared_ptr (no-op deleter) over the same cache — safe for tests.
@@ -103,9 +113,7 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     void SetCacheBackendKey(const std::string& key) override { CacheBackendKeyImpl = key; }
-    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override {
-        return RetainedByOtherContextsImpl;
-    }
+    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override { return RetainedByOtherContextsImpl; }
 
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override {
         LastTrackerTicketSyncWarning = message;

@@ -18,6 +18,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/IMainThreadPoster.h"
+#include "Sync/SyncSessionStats.h"
 
 #include "ConfigManager.h"
 #include "ITrackerCollaboration.h" // TrackerIssueVotes — FakeUsers::FetchIssueVotes returns Result<TrackerIssueVotes>
@@ -143,6 +144,9 @@ struct FakeSync : IAppSync {
     TrackerConnectivityState GetLastTrackerConnectivityState() const override { return State; }
     const std::string& GetLastTicketSyncWarning() const override { return SyncWarning; }
     const std::string& GetFieldCatalogError() const override { return CatalogError; }
+    smatchet::sync::SyncSessionStats GetLastSyncSessionStats() const override { return Stats; }
+
+    smatchet::sync::SyncSessionStats Stats;
 };
 
 struct FakeOfflineQueue : IAppOfflineQueue {
@@ -369,6 +373,19 @@ struct InlinePoster : IMainThreadPoster {
     void PostToMainThread(std::function<void()> fn) override { fn(); }
 };
 
+// A poster whose "am I the UI thread" answer can be flipped. The sync.* handlers hop through it
+// (RunOnUiThread posts and waits, so running the closure inline satisfies the wait), and
+// sync.fetch_active_view refuses to run when the caller IS the UI thread.
+struct TogglePoster : IMainThreadPoster {
+    bool OnUi = false;
+    int Posts = 0;
+    bool IsOnUiThread() const override { return OnUi; }
+    void PostToMainThread(std::function<void()> fn) override {
+        ++Posts;
+        fn();
+    }
+};
+
 CommandContext AutomationCtx(bool confirmed = false, bool dryRun = false) {
     CommandContext ctx;
     ctx.Source = CommandSource::Cli; // automation source — the destructive gate is armed
@@ -458,14 +475,16 @@ TEST_CASE("users.* — backend results propagate; a failed fetch is BackendError
 
 TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status mapping, fetch pack") {
     FakeSync sync;
+    TogglePoster poster;
     CommandRegistry reg;
-    smatchet::cmd::RegisterSyncCommands(reg, sync);
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
 
     {
         const CommandResult r = reg.Dispatch("sync.incremental", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK((*r.Data)["triggered"] == true);
         CHECK(sync.SyncCalls == 1);
+        CHECK(poster.Posts == 1); // hopped to the UI thread instead of running on the caller's thread
     }
     {
         // Unconfirmed automation source is stopped by the registry BEFORE the handler runs.
@@ -487,11 +506,13 @@ TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status ma
         CHECK((*r.Data)["warning"] == "cache locked");
         CHECK(sync.RecreateCalls == 1);
         CHECK(sync.SyncCalls == 2);
+        CHECK(poster.Posts == 2);
     }
     {
         const CommandResult r = reg.Dispatch("sync.refresh_local", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK(sync.RefreshCalls == 1);
+        CHECK(poster.Posts == 3);
     }
     {
         const CommandResult r = reg.Dispatch("sync.tracker_status", {}, AutomationCtx());
@@ -509,10 +530,33 @@ TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status ma
         t.fieldValues["summary"] = "fetched";
         sync.Pack.Tickets.push_back(t);
         sync.Pack.FetchError = "partial page";
+        // On the UI thread the blocking fetch is refused (Pillar 2) ...
+        poster.OnUi = true;
+        const CommandResult refused = reg.Dispatch("sync.fetch_active_view", {}, AutomationCtx());
+        REQUIRE_FALSE(refused.Ok);
+        CHECK(refused.Error.Code == ErrorCode::HandlerError);
+        // ... and runs normally from a CLI / MCP thread.
+        poster.OnUi = false;
         const CommandResult r = reg.Dispatch("sync.fetch_active_view", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK((*r.Data)["tickets"][0]["summary"] == "fetched");
         CHECK((*r.Data)["error"] == "partial page");
+    }
+    {
+        sync.Stats.Valid = true;
+        sync.Stats.Mode = "delta";
+        sync.Stats.RosterSize = 120;
+        sync.Stats.BodiesFetched = 3;
+        sync.Stats.Unchanged = 117;
+        sync.Stats.FallbackReason = "roster error";
+        const CommandResult r = reg.Dispatch("sync.stats", {}, AutomationCtx());
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["valid"] == true);
+        CHECK((*r.Data)["mode"] == "delta");
+        CHECK((*r.Data)["rosterSize"] == 120);
+        CHECK((*r.Data)["bodiesFetched"] == 3);
+        CHECK((*r.Data)["unchanged"] == 117);
+        CHECK((*r.Data)["fallbackReason"] == "roster error");
     }
 }
 

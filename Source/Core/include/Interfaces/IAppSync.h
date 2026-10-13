@@ -17,6 +17,7 @@
 
 #include "OfflineFirstPure.h"        // IsOfflineState (rank-0)
 #include "SmatchetResult.h"          // VoidResult (RecreateLocalCacheDatabase)
+#include "Sync/SyncSessionStats.h"   // SyncSessionStats (rank-0)
 #include "Sync/SyncTypes.h"          // TrackerIssueFetchPack (rank-0)
 #include "Types/ConnectivityTypes.h" // TrackerConnectivityState (rank-0)
 
@@ -41,6 +42,10 @@ class IAppSync {
     virtual TrackerConnectivityState GetLastTrackerConnectivityState() const = 0;
     virtual const std::string& GetLastTicketSyncWarning() const = 0;
     virtual const std::string& GetFieldCatalogError() const = 0;
+    /// What the focused pane's most recently finished sync session cost (mode, bodies fetched,
+    /// requests, bytes, fallback reason). `Valid` is false until a session has finished. Non-pure
+    /// so facet fakes need no stub; AppController answers from the focused pane's TicketSyncService.
+    virtual smatchet::sync::SyncSessionStats GetLastSyncSessionStats() const { return {}; }
 
     /// Pillar 6: true while the last probe says the tracker is unreachable. Non-virtual on purpose.
     bool IsTrackerOffline() const { return smatchet::offline::IsOfflineState(GetLastTrackerConnectivityState()); }

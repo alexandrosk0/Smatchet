@@ -29,6 +29,7 @@
 
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
 #include "Sync/MembershipDiffPure.h"
+#include "Sync/RemoteVersionPure.h"
 #include "Sync/TicketChangeDiffPure.h"
 #include "SmatchetTicketChangeNotifications.h"
 
@@ -604,6 +605,9 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             continue;
         }
         const std::uint64_t capturedGeneration = ctx.backendGeneration_.load();
+        // Sync epoch at issue time: a streaming sync that starts while the probe is in flight writes
+        // rows newer than the probe saw, so the apply drops the probe when this moved.
+        const std::uint64_t capturedSyncEpoch = ctx.ticketSync_ ? ctx.ticketSync_->SessionEpoch() : 0;
         const std::chrono::system_clock::time_point sinceAnchor = ctx.changeSinceAnchor;
         // polledAt = the instant we ISSUE this poll; the next poll's anchor advances to it so a
         // change landing DURING the fetch is caught next round (no gap).
@@ -630,7 +634,7 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             }
         }
         LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, window, polledAt,
-                              capturedGeneration]() mutable {
+                              capturedGeneration, capturedSyncEpoch]() mutable {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
             ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
             if (!paneJql.empty()) {
@@ -650,10 +654,10 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             std::vector<smatchet::MembershipRemovalVerdict> verdicts =
                 computeMembershipRemovals_(backend->Reader(), cfgCopy, views, cachedKeys, paneId);
             mainThreadDispatcher.PostToMainThread([this, paneId, fetched = std::move(fetched),
-                                                   verdicts = std::move(verdicts), polledAt,
-                                                   capturedGeneration]() mutable {
+                                                   verdicts = std::move(verdicts), polledAt, capturedGeneration,
+                                                   capturedSyncEpoch]() mutable {
                 applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
-                                              capturedGeneration);
+                                              capturedGeneration, capturedSyncEpoch);
             });
         });
     }
@@ -696,14 +700,19 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
-                                                  std::uint64_t capturedGeneration) {
+                                                  std::uint64_t capturedGeneration, std::uint64_t capturedSyncEpoch) {
     // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
     // generation (swapped mid-flight → drop): a stale apply would diff new-backend rows against
-    // the old baseline (capture-then-check, issue #1081).
+    // the old baseline (capture-then-check, issue #1081). Also drop when a streaming sync started
+    // since the probe was issued or is running now: its batches carry newer rows, and merging the
+    // probe's older copies over them would roll the grid and the cache back.
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
-    if (!smatchet::PaneSyncKickStillCurrent(ctxIt != gridContexts_.end(), capturedGeneration,
-                                            ctxIt != gridContexts_.end() ? ctxIt->second->backendGeneration_.load()
-                                                                         : 0)) {
+    const bool ctxAlive = ctxIt != gridContexts_.end();
+    const bool hasSync = ctxAlive && ctxIt->second->ticketSync_;
+    if (!smatchet::ChangeProbeStillApplicable(
+            ctxAlive, capturedGeneration, ctxAlive ? ctxIt->second->backendGeneration_.load() : 0, capturedSyncEpoch,
+            hasSync ? ctxIt->second->ticketSync_->SessionEpoch() : 0,
+            hasSync && ctxIt->second->ticketSync_->IsActive())) {
         return;
     }
     GridLiveContext& ctx = *ctxIt->second;
@@ -740,6 +749,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     if (Cache && !plan.cacheDeleteKeys.empty()) {
         const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
         const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
+        std::vector<std::string> keysToDrop;
         for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
             const std::string& key = plan.cacheDeleteKeys[i];
             if (retained.find(key) != retained.end()) {
@@ -747,12 +757,22 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
                           key.c_str());
                 continue;
             }
-            try {
-                Cache->DeleteTicket(backendKey, key); // 404, nobody else holds it → drop the shared cache row
-            } catch (const std::exception& ex) {
-                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s", key.c_str(),
-                          ex.what());
-            }
+            keysToDrop.push_back(key); // 404, nobody else holds it → drop the shared cache row
+        }
+        if (!keysToDrop.empty()) {
+            // SQLite stays off the UI thread (Pillar 2): the deletes run on a worker with a latched handle.
+            const std::shared_ptr<LocalCacheManager> deleteCache = std::atomic_load(&Cache);
+            LaunchBackgroundTask([deleteCache, backendKey, keysToDrop]() {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: <=25 small transactions - off the UI thread
+                for (std::size_t i = 0; i < keysToDrop.size(); ++i) {
+                    try {
+                        deleteCache->DeleteTicket(backendKey, keysToDrop[i]);
+                    } catch (const std::exception& ex) {
+                        LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s",
+                                  keysToDrop[i].c_str(), ex.what());
+                    }
+                }
+            });
         }
         // This pane's recorded owned-id set must lose the purged ids too, or the next
         // RefreshLocalData would keep whitelisting rows that no longer exist and, worse, keep
@@ -783,6 +803,11 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
             if (it == ctx.ActiveTickets.end()) {
                 continue;
             }
+            // Never replace a resident row with one the tracker stamped OLDER (a late or reordered
+            // probe). An unparsable or missing stamp does not block - the pre-delta behaviour.
+            if (smatchet::sync::IsIncomingRowStale(t.GetFieldValueRef("updated"), it->GetFieldValueRef("updated"))) {
+                continue;
+            }
             // A poll row carries no lazily fetched comment thread / tooltip blob; keep the resident
             // ones (as both sync apply paths do) so the merge neither drops them nor counts their
             // absence as a change.
@@ -809,14 +834,23 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // since the fresh field values were never written to tickets_v2. Use SaveTickets (batch) instead of
     // per-ticket SaveTicket calls to avoid N synchronous SQLite writes on the UI thread.
     if (Cache && !updatedTickets.empty()) {
-        // A failed write must not escape this main-thread post-back (it would end the app): the merge
-        // is already published, and the stale cache rows converge on the next sync.
-        try {
-            Cache->SaveTickets(backendKey, updatedTickets);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' rows=%zu: %s",
-                      paneId.c_str(), backendKey.c_str(), updatedTickets.size(), ex.what());
-        }
+        // SQLite never runs on the UI thread (Pillar 2): the write goes to a worker holding a latched
+        // strong handle on the cache (the UI thread may swap it in RecreateLocalCacheDatabase). A failed
+        // write must not escape the worker (it would end the app): the merge is already published, and
+        // the stale cache rows converge on the next sync.
+        const std::shared_ptr<LocalCacheManager> cacheSnapshot = std::atomic_load(&Cache);
+        const std::shared_ptr<const std::vector<CachedTicket>> rows =
+            std::make_shared<const std::vector<CachedTicket>>(std::move(updatedTickets));
+        LaunchBackgroundTask([cacheSnapshot, backendKey, paneId, rows]() {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: one batched SQLite transaction - off the UI thread
+            try {
+                cacheSnapshot->SaveTickets(backendKey, *rows);
+            } catch (const std::exception& ex) {
+                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' "
+                          "rows=%zu: %s",
+                          paneId.c_str(), backendKey.c_str(), rows->size(), ex.what());
+            }
+        });
     }
 
     if (!plan.residentRemovals.empty()) {

@@ -1609,6 +1609,9 @@ add_executable(SmatchetTests
     # header-only) + the tickets.monitor decision helper and its config interval clamp (the
     # latter round-trips through ConfigManager, already linked in this pure block).
     Core/ShouldPollForChanges.test.cpp
+    # delta-sync Phase 1 — "updated" stamp parser/comparator (Sync/RemoteVersionPure.h, header-only):
+    # a change-probe row provably older than the resident row never replaces it.
+    Core/RemoteVersionPure.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's

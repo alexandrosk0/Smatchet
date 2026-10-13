@@ -78,6 +78,17 @@ class ITrackerIssueReader {
     FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                        const ViewsStore& views) = 0;
 
+    /// FetchIssuesForKeys that honours `shouldCancel` inside the request itself (the retry/backoff
+    /// window of the HTTP layer), not just between calls - the parent walk of a superseded sync
+    /// otherwise runs a whole request to its timeout. The default forwards to FetchIssuesForKeys
+    /// (a backend without a cancellable transport loses nothing); a cancelled call returns a
+    /// `Cancelled` error when the backend can tell.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                  const ViewsStore& views, const CancelCallback& /*shouldCancel*/) {
+        return FetchIssuesForKeys(cfg, issueKeys, views);
+    }
+
     /// Issues whose `parent` is one of `parentKeys` — the downward mirror of FetchIssuesForKeys.
     /// Used to pull a visible ticket's children into the cache when the active view's own
     /// filter doesn't independently return them (e.g. a `key = EPIC-1` view showing just the
@@ -88,6 +99,13 @@ class ITrackerIssueReader {
     FetchChildrenOfKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*parentKeys*/,
                         const ViewsStore& /*views*/) {
         return Result<std::vector<CachedTicket>, TrackerError>::Ok({});
+    }
+
+    /// FetchChildrenOfKeys with the same in-request cancellation as FetchIssuesForKeysCancellable.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                   const ViewsStore& views, const CancelCallback& /*shouldCancel*/) {
+        return FetchChildrenOfKeys(cfg, parentKeys, views);
     }
 
     // ---- ticket-change-monitor reader surface (ticket-change-monitor plan, S1b) ----

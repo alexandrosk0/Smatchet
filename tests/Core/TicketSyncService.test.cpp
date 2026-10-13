@@ -1409,3 +1409,116 @@ TEST_CASE("TicketSyncService skips the parent fetch when LoadParentIssues is off
 
     svc.CancelAndJoinActiveStreamingSync();
 }
+
+// --- delta-sync Phase 1: cancellation reaches the hierarchy walks, epoch + session stats ---------
+
+TEST_CASE("TicketSyncService parent walk passes its cancel token into the keyed fetch and stops when it fires") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("SUBTASK-1", "TASK-1"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> ancestors;
+    ancestors.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    ancestors.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    ancestors.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesForKeysResult(true, ancestors);
+
+    TicketSyncService svc(deps);
+    // The user supersedes the sync while the first hop's request is "on the wire".
+    fake->SetOnKeyedFetch([&svc]() { svc.RequestCancel(); });
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && fake->FetchIssuesForKeysCancellableCallCount() >= 1; }));
+    // The walk used the cancellable entry point, the token it handed over reported the cancel, and
+    // the later hops (STORY-1, EPIC-1) were never requested.
+    CHECK(fake->FetchIssuesForKeysCancellableCallCount() == 1);
+    CHECK(fake->KeyedFetchTokenReportedCancelled());
+    CHECK(fake->FetchIssuesForKeysCallCount() == 1);
+    // A cancelled walk is not a failed one: nothing is reported to the user.
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService child walk passes its cancel token into the keyed fetch and stops when it fires") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> descendants;
+    descendants.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    descendants.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    fake->SetFetchChildrenOfKeysResult(true, descendants);
+
+    TicketSyncService svc(deps);
+    fake->SetOnKeyedFetch([&svc]() { svc.RequestCancel(); });
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && fake->FetchChildrenOfKeysCancellableCallCount() >= 1; }));
+    CHECK(fake->FetchChildrenOfKeysCancellableCallCount() == 1);
+    CHECK(fake->KeyedFetchTokenReportedCancelled());
+    CHECK(fake->FetchChildrenOfKeysCallCount() == 1);
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService::SessionEpoch moves once per started streaming session") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({MakeTicket("ABC-1")}, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    CHECK(svc.SessionEpoch() == 0);
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(svc.SessionEpoch() == 1);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK(svc.SessionEpoch() == 1); // finishing a session does not move it
+
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(svc.SessionEpoch() == 2);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService records what a finished session cost") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({MakeTicket("ABC-1"), MakeTicket("ABC-2")}, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    CHECK_FALSE(svc.LastSessionStats().Valid); // nothing has finished yet
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.LastSessionStats().Valid; }));
+
+    const smatchet::sync::SyncSessionStats stats = svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.BodiesFetched == 2);
+    CHECK(stats.Completed);
+    CHECK(stats.Error.empty());
+    CHECK(stats.FallbackReason.empty());
+    CHECK(stats.Requests == 5); // the fake samples +5 requests per call: start vs end
+    CHECK(stats.DownloadBytes == 500);
+    CHECK(stats.RequestId != 0);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}

@@ -12,6 +12,7 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
+#include "NetworkUsageTracker.h"
 #include "SmatchetToast.h"
 
 #include <chrono>
@@ -146,6 +147,15 @@ void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx().
 
 std::vector<std::string> GridContextDepsAdapter::TicketIdsRetainedByOtherContexts() const {
     return app_.CollectTicketIdsRetainedByOtherContexts(ctx());
+}
+
+smatchet::sync::TrackerTrafficSample GridContextDepsAdapter::SampleTrackerTraffic() const {
+    const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
+    smatchet::sync::TrackerTrafficSample sample;
+    sample.Requests = snap.trackerRequests;
+    sample.UploadBytes = snap.trackerUploadBytes;
+    sample.DownloadBytes = snap.trackerDownloadBytes;
+    return sample;
 }
 
 void GridContextDepsAdapter::PublishOwnedTicketIds(const std::vector<std::string>& ids) {

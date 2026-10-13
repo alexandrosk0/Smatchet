@@ -296,6 +296,31 @@ class FakeTrackerClient : public ITrackerBackend,
         return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(matched));
     }
 
+    /// Cancellable twins: forward to the plain call, then let a test hook run (typically to cancel the
+    /// sync "mid-request") and record whether the token the service handed in reports cancelled.
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                  const ViewsStore& views, const CancelCallback& shouldCancel) override {
+        ++fetchIssuesForKeysCancellableCalls_;
+        Result<std::vector<CachedTicket>, TrackerError> result = FetchIssuesForKeys(cfg, issueKeys, views);
+        if (onKeyedFetch_) {
+            onKeyedFetch_();
+        }
+        keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        return result;
+    }
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                   const ViewsStore& views, const CancelCallback& shouldCancel) override {
+        ++fetchChildrenOfKeysCancellableCalls_;
+        Result<std::vector<CachedTicket>, TrackerError> result = FetchChildrenOfKeys(cfg, parentKeys, views);
+        if (onKeyedFetch_) {
+            onKeyedFetch_();
+        }
+        keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        return result;
+    }
+
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {
         if (NetworkDown()) {
             return network_->MakeError();
@@ -635,6 +660,15 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t ProbeReachabilityCallCount() const { return probeReachabilityCalls_; }
     std::size_t FetchIssuesCallCount() const { return fetchIssuesCalls_; }
     std::size_t FetchIssuesForKeysCallCount() const { return fetchIssuesForKeysCalls_; }
+    /// Calls that arrived through the cancellable entry points (the service must use these so the
+    /// sync's cancel token reaches the HTTP layer), and whether the token handed to the most recent
+    /// one reported cancelled once `SetOnKeyedFetch`'s hook had run.
+    std::size_t FetchIssuesForKeysCancellableCallCount() const { return fetchIssuesForKeysCancellableCalls_; }
+    std::size_t FetchChildrenOfKeysCancellableCallCount() const { return fetchChildrenOfKeysCancellableCalls_; }
+    bool KeyedFetchTokenReportedCancelled() const { return keyedFetchTokenReportedCancelled_; }
+    /// Hook run inside every cancellable keyed fetch, after the scripted result was computed and before
+    /// the token is sampled - lets a test cancel the sync "while the request is in flight".
+    void SetOnKeyedFetch(std::function<void()> hook) { onKeyedFetch_ = std::move(hook); }
     std::size_t FetchChildrenOfKeysCallCount() const { return fetchChildrenOfKeysCalls_; }
     std::size_t BuildCreatePayloadCallCount() const { return buildCreatePayloadCalls_; }
     std::size_t BuildUpdatePayloadCallCount() const { return buildUpdatePayloadCalls_; }
@@ -1028,6 +1062,10 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError fetchChildrenOfKeysStructuredError_;
     std::vector<std::string> fetchChildrenOfKeysLastParentKeys_;
     std::size_t fetchChildrenOfKeysCalls_ = 0;
+    std::atomic<std::size_t> fetchIssuesForKeysCancellableCalls_{0};
+    std::atomic<std::size_t> fetchChildrenOfKeysCancellableCalls_{0};
+    std::atomic<bool> keyedFetchTokenReportedCancelled_{false};
+    std::function<void()> onKeyedFetch_;
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;

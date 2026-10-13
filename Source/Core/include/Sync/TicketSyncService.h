@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
@@ -79,6 +80,14 @@ class TicketSyncService {
     /// session is superseded. Otherwise transitions straight to `StartStreamingSync`.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride);
 
+    /// Count of streaming sessions started by this service. A change-monitor probe captures it when it
+    /// is issued and drops its result when it moved: a sync that began in between writes newer rows
+    /// than the probe saw. Any thread.
+    std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
+
+    /// What the most recently finished session cost (`Valid` is false until one finishes). Any thread.
+    smatchet::sync::SyncSessionStats LastSessionStats() const;
+
     /// True when any of (worker active, session running, stale-deletion in progress). Used by
     /// `AppController::IsStreamingSyncActive()` which de-inlines into a delegate.
     bool IsActive() const;
@@ -133,6 +142,13 @@ class TicketSyncService {
         std::vector<std::vector<CachedTicket>> PendingBatches;
         std::unordered_set<std::string> KeepIds;
         std::vector<std::string> BackgroundStaleIds;
+
+        /// Worker-filled part of the session cost record (mode, bodies, ...), guarded by QueueMutex.
+        smatchet::sync::SyncSessionStats WorkerStats;
+        /// Session clock + traffic baseline, written in StartStreamingSync before the worker is
+        /// spawned and read on the UI thread at finalize.
+        std::chrono::steady_clock::time_point SessionStartedAt{};
+        smatchet::sync::TrackerTrafficSample TrafficAtStart;
     };
 
     void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
@@ -207,6 +223,10 @@ class TicketSyncService {
     /// (a partial fetch cannot prove any row is gone). UI thread, once per session.
     void SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession);
 
+    /// Phase 4a: fold the worker's record, the session clock and the traffic delta into
+    /// `lastStats_` and log it once. UI thread, once per session, before the stale-delete seeding.
+    void RecordSessionStats(const std::string& fetchError, bool fullSyncCompleted);
+
     /// Phase 4c: converge this pane's in-memory roster onto exactly the ids its OWN query returned
     /// this session, then publish that set through `ITicketSyncDeps::PublishOwnedTicketIds` so a
     /// sibling pane's stale sweep can subtract it. The batch apply reads a cache namespace shared
@@ -217,6 +237,9 @@ class TicketSyncService {
 
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
+    std::atomic<std::uint64_t> sessionEpoch_{0};
+    mutable std::mutex statsMutex_;
+    smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;
 
     bool hasPendingSyncRequest_ = false;
