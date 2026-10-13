@@ -74,17 +74,20 @@ bool WindowIsLive(const char* title) {
     return win != nullptr && win->Active;
 }
 
-bool FixtureEnvSet() {
+// SMATCHET_TEST_JIRA_BACKEND_FIXTURE, or nullptr when unset.
+const char* FixtureEnv() {
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
 #endif
-    const bool set = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE") != nullptr;
+    const char* value = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    return set;
+    return value;
 }
+
+bool FixtureEnvSet() { return FixtureEnv() != nullptr; }
 
 // Primary grid-pane window title (the app's active-project window).
 const char* kPrimary = "Smatchet - Active Project";
@@ -260,7 +263,7 @@ static void RegisterDeepChainDepthsAndOrderMatchAncestry(ImGuiTestEngine* engine
         if (epicIdx < 0 || storyIdx < 0 || taskIdx < 0 || subtaskIdx < 0 || leafIdx < 0) {
             // Run against the deep-chain fixture (the CI step does), a missing key is a failure, not a
             // skip: otherwise a broken fixture or boot would pass silently.
-            const char* fixtureEnv = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+            const char* fixtureEnv = FixtureEnv();
             const bool deepChainFixture =
                 fixtureEnv != nullptr &&
                 std::string(fixtureEnv).find("parent-hierarchy-grid.json") != std::string::npos;

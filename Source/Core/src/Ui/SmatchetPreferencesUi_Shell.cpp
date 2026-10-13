@@ -210,14 +210,17 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn, current->Dirty ? " *" : "");
         // Leave room for the Save & Sync button beside the combo in narrow-width mode. The button is
         // sized from its own (translated, icon-led) label, so it never clips at a large font or on a
-        // HiDPI phone; the combo takes the rest of the row, kept above a minimum.
+        // HiDPI phone; the combo takes the rest of the row. When the row cannot hold both with the combo
+        // at its minimum width, the button goes on its own row instead of overflowing the panel.
         const ImGuiStyle& style = ImGui::GetStyle();
         const std::string saveLabel = SmatchetIconLeadingLabel(SmatchetAreFaIconsLoaded(), ICON_FA_ARROWS_ROTATE,
                                                                SmatchetLocalization::TranslateSource("Save & Sync"));
         const float saveButtonWidth = ImGui::CalcTextSize(saveLabel.c_str()).x + 2.0f * style.FramePadding.x;
         const float buttonSpaceNeeded = saveButtonWidth + style.ItemSpacing.x;
-        const float comboWidth =
-            std::max(ImGui::GetContentRegionAvail().x - buttonSpaceNeeded, 4.0f * ImGui::GetFontSize());
+        const float rowWidth = ImGui::GetContentRegionAvail().x;
+        const float minComboWidth = 4.0f * ImGui::GetFontSize();
+        const bool buttonOnOwnRow = rowWidth - buttonSpaceNeeded < minComboWidth;
+        const float comboWidth = buttonOnOwnRow ? rowWidth : rowWidth - buttonSpaceNeeded;
         ImGui::SetNextItemWidth(comboWidth);
         if (ImGui::BeginCombo("###prefsNavCombo", preview)) {
             for (const PrefsNavEntry& e : entries) {
@@ -238,9 +241,13 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
             }
             ImGui::EndCombo();
         }
-        // In narrow-width combo mode, place the Save & Sync button to the right of the combo
-        ImGui::SameLine();
-        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(saveButtonWidth, 0.0f))) {
+        // In narrow-width combo mode, place the Save & Sync button to the right of the combo, or
+        // below it when the row is too narrow for both.
+        if (!buttonOnOwnRow) {
+            ImGui::SameLine();
+        }
+        const float buttonWidth = buttonOnOwnRow ? std::min(saveButtonWidth, rowWidth) : saveButtonWidth;
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(buttonWidth, 0.0f))) {
             ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
         return;

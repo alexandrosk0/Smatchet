@@ -47,8 +47,9 @@ void DrawGridSectionBody(UiDrawSession& d) {
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.grid.load_parent_issues.help",
                                    "After each sync, parent issues referenced by the fetched rows but missing "
-                                   "from the result are fetched, following the chain up to 16 levels (one "
-                                   "request per level), and the children of the view's own rows are fetched "
+                                   "from the result are fetched, following the chain up to 16 levels (a "
+                                   "request at each level, more if the tracker refuses some keys), and the "
+                                   "children of the view's own rows are fetched "
                                    "too, so the Parent group tree is complete. Turn off to skip both: children "
                                    "of a missing parent then show as top-level rows, and descendants the query "
                                    "did not match are not loaded.");
