@@ -46,7 +46,7 @@ Invariants taken from the scoped rules: `SupportsVersionedRoster()` is a capabil
 | Roster error | Full |
 | Roster incomplete (cap hit or warning) | Delta for the rows seen; no stale purge |
 | More than 50% changed and more than 100 rows | Full |
-| A body batch is refused | Isolate the key; treat it as gone |
+| A delta body request for a roster-listed key is refused (400/404/408/410/413/414/422) | Never authoritative: the view falls back to Full and records the reason; in a hierarchy hop the walk becomes non-authoritative (no purge) and names the keys |
 | Other body error | Full |
 | Cached row missing | Fetch it |
 | Hierarchy roster error | Today's full-body hop |
@@ -113,6 +113,20 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 - **Phase 0 (open item)** — a spike against a live Jira instance: measure the page size for `fields=updated&maxResults=5000` versus `fields=key`; whether `updated` changes on comment edit and delete; read-after-write consistency. Its results set the roster page cap and the max row age. Until then: roster `maxResults=100`, named constant `kJiraMaxRosterPages`, `DeltaSyncMaxRowAgeSec` 21600.
 - Plane / GitHub / Linear roster implementations — follow-up per backend.
+
+## Review follow-ups (open)
+
+Found in the Phase 3-5 review; none block the phases above.
+
+- **Local edits on the old path.** The old full fetch overwrote a locally edited row on every reload. `UpdateTicket` now keeps the row's sync meta (so a local edit does not force a refetch), which means a delta sync serves a still-queued or dead-lettered edit as "unchanged" until the remote `updated` moves or `DeltaSyncMaxRowAgeSec` expires. Deliberate divergence; revisit by dropping the meta while an edit is unconfirmed. Related: `RefreshLocalDataAsync` has no ordering gate between concurrent refreshes (add a revision gate), and a persistently refused roster-listed key makes every delta attempt fall back to Full (remember poisoned keys per session).
+- `HaveAnyCachedMeta` is a namespace-wide test: one pane's cached versions let a sibling pane's first delta attempt run (it then falls back or fetches everything as new). Scope it to the pane's own ids.
+- `updated` is compared as a raw string. Two renderings of the same instant in different time zones count as a change (one wasted body fetch, never a missed one). Normalise to epoch in `IsSameVersion`.
+- `RequiredFieldsOfView` does not trim ids, so a hand-edited view with padded ids is never "covered" and always refetches.
+- The apply drain rebuilds its id map for every slice; build it once per session.
+- The session stats counters are sampled from a shared tracker traffic counter, so two panes syncing at once can cross-count; treat them as indicative.
+- The change-monitor probe's save happens after its epoch check but before the UI-thread drain, so a sync that starts in between can race it. The version guard in `SaveTicketsWithSyncMeta` narrows this.
+- `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
+- `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
 
 ## Implementation log
 *(populated post-ship)*

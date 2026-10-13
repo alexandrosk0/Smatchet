@@ -103,8 +103,26 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     /// Background tasks the service launched (the stale-row delete); each runs inline on the caller so the
     /// single-threaded tests see its effect immediately.
     int BackgroundTasksLaunched = 0;
+    /// When set, launched tasks are parked in `DeferredTasks` instead of running inline, so a test can hold a
+    /// background task "in flight" and run it (RunDeferredTasks) when it chooses.
+    bool DeferBackgroundTasks = false;
+    std::vector<std::function<void()>> DeferredTasks;
+    void RunDeferredTasks() {
+        std::vector<std::function<void()>> tasks;
+        tasks.swap(DeferredTasks);
+        for (auto& t : tasks) {
+            try {
+                t();
+            } catch (...) { // the real LaunchBackgroundTask firewalls every exception
+            }
+        }
+    }
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++BackgroundTasksLaunched;
+        if (DeferBackgroundTasks) {
+            DeferredTasks.push_back(std::move(task));
+            return;
+        }
         if (task) {
             task();
         }

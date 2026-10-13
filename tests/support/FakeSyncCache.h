@@ -86,10 +86,23 @@ class FakeSyncCache : public ISyncCache {
         std::lock_guard<std::mutex> lk(m_);
         return deleteTicketsCalls_;
     }
+    /// Test switch: the next batch delete throws something that is not a std::exception.
+    void ThrowNonStdOnDelete(bool on) {
+        std::lock_guard<std::mutex> lk(m_);
+        throwNonStdOnDelete_ = on;
+    }
+    /// Test switch: the Nth SaveTicketsWithSyncMeta call from now throws std::runtime_error (0 = never).
+    void FailSaveWithMetaOnCall(int nthFromNow) {
+        std::lock_guard<std::mutex> lk(m_);
+        failSaveCountdown_ = nthFromNow;
+    }
     void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) override {
         {
             std::lock_guard<std::mutex> lk(m_);
             ++deleteTicketsCalls_;
+            if (throwNonStdOnDelete_) {
+                throw 42;
+            }
         }
         for (const std::string& id : ids) {
             DeleteTicket(backendKey, id);
@@ -111,6 +124,9 @@ class FakeSyncCache : public ISyncCache {
     void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& batch,
                                  const std::vector<TicketSyncMeta>& metas) override {
         std::lock_guard<std::mutex> lk(m_);
+        if (failSaveCountdown_ > 0 && --failSaveCountdown_ == 0) {
+            throw std::runtime_error("scripted save failure");
+        }
         for (size_t i = 0; i < batch.size(); ++i) {
             const CachedTicket& ticket = batch[i];
             TicketSyncMeta meta = i < metas.size() ? metas[i] : TicketSyncMeta();
@@ -613,6 +629,8 @@ class FakeSyncCache : public ISyncCache {
     std::map<std::string, std::map<std::string, CachedTicket>> tickets_;
     std::map<std::string, std::map<std::string, TicketSyncMeta>> meta_;
     int deleteTicketsCalls_ = 0;
+    bool throwNonStdOnDelete_ = false;
+    int failSaveCountdown_ = 0;
     std::vector<PendingCreate> creates_;
     std::vector<PendingFieldEditRecord> edits_;
     std::vector<DeadPendingCreate> deadCreates_;

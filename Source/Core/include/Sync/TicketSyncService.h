@@ -221,6 +221,8 @@ class TicketSyncService {
     /// Delta attempt: roster -> fetch set -> cached rows for the unchanged -> bodies for the changed ->
     /// queue + top-ups + publish. Never throws past the caller's fallback; see DeltaOutcome.
     DeltaOutcome RunDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    /// Ends the session with a (non-transient) error and no purge, for a failure after rows were queued.
+    void FailDeltaSession(std::uint64_t reqId, const std::string& message);
 
     /// Queues the delta rows, runs the hierarchy top-ups and publishes the session result.
     void FinishDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
@@ -328,6 +330,9 @@ class TicketSyncService {
 
     bool hasPendingSyncRequest_ = false;
     smatchet::sync::SyncMode pendingMode_ = smatchet::sync::SyncMode::Delta;
+    /// Mode of the session started last (UI thread only); a later Delta request must not downgrade it while
+    /// its fetch is still running.
+    smatchet::sync::SyncMode activeMode_ = smatchet::sync::SyncMode::Delta;
     /// Versions of the cached rows as of the session start; worker-thread only (written before the first
     /// batch is queued, read while persisting the batches of the same session).
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;

@@ -27,6 +27,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <memory>
@@ -2022,4 +2023,157 @@ TEST_CASE("A forced Full sync keeps the hierarchy walks on full bodies") {
     CHECK(rig.fake->FetchRosterForKeysCallCount() == 0);
     CHECK(rig.fake->FetchChildRosterCallCount() == 0);
     CHECK(rig.fake->FetchIssuesForKeysCallCount() == 1);
+}
+
+// --- delta-sync review fixes ---------------------------------------------------------------------------
+
+TEST_CASE("Delta reload: every body refused while the roster is fine never purges; it falls back to a full fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T2"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-1", "ABC-2"});
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T2", "from full"), Stamped("ABC-2", "T2", "from full")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("refused") != std::string::npos);
+    CHECK(rig.CachedCount() == 2); // nothing was purged on the strength of the refusals
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);
+}
+
+TEST_CASE("Delta reload: one refused body is not treated as gone; the full fetch decides") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1"), Stamped("ABC-3", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}, {"ABC-3", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-3", "T2", "fresh")});
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesResult(
+        {Stamped("ABC-1", "T1"), Stamped("ABC-2", "T2", "from full"), Stamped("ABC-3", "T2", "fresh")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("ABC-2") != std::string::npos);
+    CachedTicket got;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got));
+    CHECK(got.fieldValues["summary"] == "from full");
+    CHECK(rig.CachedCount() == 3);
+}
+
+TEST_CASE("Delta reload: a refused roster-listed ancestor keeps the cache and makes the walk non-authoritative") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1"), Stamped("EPIC-1", "T1", "old epic"), Stamped("OTHER-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T2", "new epic")});
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"EPIC-1"});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 0); // the rows were queued already: no second full queue
+    CachedTicket got;
+    CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "EPIC-1", got));
+    CHECK(rig.deps.CacheImpl->TryGetTicket("Jira", "OTHER-1", got)); // no purge on a non-authoritative walk
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.find("EPIC-1") != std::string::npos);
+}
+
+TEST_CASE("Delta reload: a failing save of the changed rows neither falls back nor purges") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    rig.deps.CacheImpl->FailSaveWithMetaOnCall(1); // the changed batch's save
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesCallCount() == 0); // no second full queue on top of the unchanged rows
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.CachedCount() == 2);
+    CHECK(rig.deps.ActiveTicketsImpl.size() >= 1);
+}
+
+TEST_CASE("A queued Full survives a later Delta request") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.svc.IsActive());
+    rig.Sync(smatchet::sync::SyncMode::Full);  // queued behind the running session
+    rig.Sync(smatchet::sync::SyncMode::Delta); // must not downgrade it
+    REQUIRE(rig.Settle());
+
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.empty()); // requested, not a fallback
+    CHECK(rig.fake->FetchIssuesCallCount() >= 1);
+}
+
+TEST_CASE("A running Full is not downgraded by a Delta request while its fetch is still running") {
+    DeltaRig rig;
+    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+    std::atomic<bool> inFetch{false};
+    std::atomic<bool> release{false};
+    rig.fake->SetOnKeyedFetch([&]() {
+        inFetch.store(true);
+        for (int i = 0; i < 2000 && !release.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    for (int i = 0; i < 2000 && !inFetch.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(inFetch.load()); // the Full fetch is on the wire
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    release.store(true);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.fake->FetchRosterCallCount() == 0);
+}
+
+TEST_CASE("A superseding request waits for the stale-row delete instead of starting over it") {
+    DeltaRig rig;
+    rig.deps.DeferBackgroundTasks = true;
+    rig.Seed({Stamped("OLD-1", "T1"), Stamped("OLD-2", "T1")});
+    rig.fake->SetFetchIssuesResult({Stamped("NEW-1", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.deps.DeferredTasks.empty(); })); // delete parked "in flight"
+    const std::uint64_t epoch = rig.svc.SessionEpoch();
+    rig.Sync(smatchet::sync::SyncMode::Full); // supersedes; the delete is still running
+    for (int i = 0; i < 20; ++i) {
+        rig.svc.TickStreamingApply();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(rig.svc.SessionEpoch() == epoch); // not started over the pending delete
+
+    rig.deps.RunDeferredTasks();
+    REQUIRE(SpinUntil(rig.svc, [&]() { return rig.svc.SessionEpoch() > epoch && !rig.svc.IsActive(); }));
+}
+
+TEST_CASE("A stale-row delete that throws a non-std exception still releases the busy flag") {
+    DeltaRig rig;
+    rig.deps.DeferBackgroundTasks = true;
+    rig.Seed({Stamped("OLD-1", "T1")});
+    rig.fake->SetFetchIssuesResult({Stamped("NEW-1", "T1")}, true);
+    rig.deps.CacheImpl->ThrowNonStdOnDelete(true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.deps.DeferredTasks.empty(); }));
+    CHECK(rig.svc.IsActive());
+    rig.deps.RunDeferredTasks();
+    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.svc.IsActive(); }));
 }
