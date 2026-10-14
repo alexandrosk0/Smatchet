@@ -1608,9 +1608,15 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         const std::int64_t savedUnix = app.StartupCatalogSnapshotSavedUnix();
         // The snapshot is only a stand-in for the fetch the view would make: same project scope, or it is
         // missing the project-scoped data (component options) that fetch brings.
+        // UI thread: only the pure query parse is allowed here. Plane's resolver may list projects over the
+        // network when the query names none, so a Plane startup never skips (the worker fetch resolves it).
+        const bool pureResolve = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType);
         const std::string viewProjectKey =
-            ResolveCatalogProjectKey(app.BackendShared(), d.cfg, skipView ? skipView->Jql : d.cfg.JqlQuery);
-        if (smatchet::sync::CanSkipCatalogFetch(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec,
+            pureResolve
+                ? ResolveCatalogProjectKey(app.BackendShared(), d.cfg, skipView ? skipView->Jql : d.cfg.JqlQuery)
+                : std::string();
+        if (pureResolve &&
+            smatchet::sync::CanSkipCatalogFetch(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec,
                                                 skipView ? skipView->Fields : std::vector<std::string>(), catalogIds,
                                                 app.StartupCatalogSnapshotProjectKey(), viewProjectKey)) {
             d.fieldCatalogFetchStarted = true;
