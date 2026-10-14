@@ -6,6 +6,10 @@
 
 #include "../support/TestEnvGuard.h"
 
+#include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -117,4 +121,80 @@ TEST_CASE("FieldCatalogCache: the save time is stored on save and a read does no
     std::vector<TrackerIssueTypeCreateMeta> outMeta;
     REQUIRE(FieldCatalogCache::TryLoadFieldCatalogSnapshot(key, outFields, outComponents, outMeta, err));
     CHECK(FieldCatalogCache::FieldCatalogSnapshotSavedUnix(key) == savedAt); // reading is not refreshing
+}
+
+namespace {
+std::string ReadWholeFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+} // namespace
+
+TEST_CASE("FieldCatalogCache: a load reports the save time and never writes the cache file") {
+    smatchet_tests::TestEnvGuard env;
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://example.atlassian.net";
+    const std::string key = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "NOWRITE");
+    std::vector<TrackerField> fields;
+    fields.push_back(MakeComponentsField(/*withOptions=*/false));
+    std::string err;
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(key, "Jira", cfg.Domain, "NOWRITE", 16, fields, {}, {}, err));
+    const std::string path = ConfigManager::GetUserDataDirectory() + "smatchet_field_catalog_cache.json";
+    const std::string before = ReadWholeFile(path);
+    REQUIRE_FALSE(before.empty());
+
+    std::vector<TrackerField> outFields;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::int64_t savedUnix = -1;
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(
+            FieldCatalogCache::TryLoadFieldCatalogSnapshot(key, outFields, outComponents, outMeta, err, &savedUnix));
+    }
+
+    CHECK(savedUnix == FieldCatalogCache::FieldCatalogSnapshotSavedUnix(key));
+    CHECK(savedUnix > 0);
+    CHECK(ReadWholeFile(path) == before); // byte-identical: the LRU touch stays in memory
+    // The touch is not lost: the next save carries it and the listing already shows it.
+    CHECK(FieldCatalogCache::ListCachedProjects().size() == 1);
+}
+
+TEST_CASE("FieldCatalogCache: one malformed index entry is skipped, not the whole file") {
+    smatchet_tests::TestEnvGuard env;
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://example.atlassian.net";
+    const std::string good = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "GOOD");
+    std::vector<TrackerField> fields;
+    fields.push_back(MakeComponentsField(/*withOptions=*/false));
+    std::string err;
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(good, "Jira", cfg.Domain, "GOOD", 16, fields, {}, {}, err));
+
+    // Damage a sibling index entry: wrong types for the timestamps and the key.
+    const std::string path = ConfigManager::GetUserDataDirectory() + "smatchet_field_catalog_cache.json";
+    nlohmann::json root = nlohmann::json::parse(ReadWholeFile(path));
+    nlohmann::json bad = nlohmann::json::object();
+    bad["cacheKey"] = 7;
+    bad["projectKey"] = "BAD";
+    bad["lastUsedUnix"] = "yesterday";
+    bad["savedUnix"] = nlohmann::json::array();
+    root["entries"].push_back(bad);
+    nlohmann::json badTimes = nlohmann::json::object();
+    badTimes["cacheKey"] = "Jira|other|X";
+    badTimes["lastUsedUnix"] = "soon";
+    root["entries"].push_back(badTimes);
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << root.dump();
+    }
+
+    std::vector<TrackerField> outFields;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::int64_t savedUnix = 0;
+    CHECK(FieldCatalogCache::TryLoadFieldCatalogSnapshot(good, outFields, outComponents, outMeta, err, &savedUnix));
+    CHECK(savedUnix > 0);
+    CHECK(FieldCatalogCache::FieldCatalogSnapshotSavedUnix(good) == savedUnix);
+    CHECK(FieldCatalogCache::ListCachedProjects().size() >= 2); // the good entry and the readable-enough ones
 }

@@ -290,6 +290,18 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     ImGui::EndPopup();
 }
 
+/// The project the field catalog is scoped to for a view's JQL: the one value both the catalog fetch and the
+/// startup-skip decision (a saved snapshot must have been saved for the same project) must agree on.
+static std::string ResolveCatalogProjectKey(const std::shared_ptr<ITrackerBackend>& backend,
+                                            const TrackerConfig& fetchCfg, const std::string& activeViewJql) {
+    // Plane keeps its own resolver (its project is a UUID read from the view or the config query).
+    if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
+        return smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
+    }
+    return smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql, std::string(),
+                                            std::string());
+}
+
 // The grid's catalog fetch, run on a worker: fills `result`, which the UI thread applies.
 static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const TrackerConfig& fetchCfg,
                                       const std::string& activeViewJql,
@@ -297,16 +309,8 @@ static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const Tra
                                       const std::string& cacheBackendKey) {
     result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
     result.CacheBackendKey = cacheBackendKey;
-    std::string projectKey;
     const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
-    // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
-    // exactly here meant "plane" got a Plane BackendKey but skipped the Plane resolver.
-    if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
-        projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
-    } else {
-        projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
-                                                      std::string(), std::string());
-    }
+    const std::string projectKey = ResolveCatalogProjectKey(backend, fetchCfg, activeViewJql);
     result.ProjectKey = projectKey;
     std::string error;
     TrackerFieldCatalogResult catalog;
@@ -1602,8 +1606,13 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         const std::int64_t nowUnix = TimeNowPure::NowUnixSeconds();
         const std::int64_t savedUnix = app.StartupCatalogSnapshotSavedUnix();
+        // The snapshot is only a stand-in for the fetch the view would make: same project scope, or it is
+        // missing the project-scoped data (component options) that fetch brings.
+        const std::string viewProjectKey =
+            ResolveCatalogProjectKey(app.BackendShared(), d.cfg, skipView ? skipView->Jql : d.cfg.JqlQuery);
         if (smatchet::sync::CanSkipCatalogFetch(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec,
-                                                skipView ? skipView->Fields : std::vector<std::string>(), catalogIds)) {
+                                                skipView ? skipView->Fields : std::vector<std::string>(), catalogIds,
+                                                app.StartupCatalogSnapshotProjectKey(), viewProjectKey)) {
             d.fieldCatalogFetchStarted = true;
             d.catalogServedFromSnapshot = true;
             d.catalogSnapshotRefreshAtUnix =

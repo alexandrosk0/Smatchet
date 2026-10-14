@@ -270,9 +270,14 @@ class AppController : public IAppThreading,
     /// Returns the resolved project key (empty when none resolves).
     std::string ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const;
 
+    /// When the catalog snapshot restored at startup was saved from a live fetch (epoch seconds; 0 = none or
+    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written once by
+    /// InitFieldCatalog before the first frame; read by the grid's startup-skip decision.
+    std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
+    std::string startupCatalogProjectKey_;
+
     /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
     /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
-    std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
     void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
@@ -744,6 +749,9 @@ class AppController : public IAppThreading,
     /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
     /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
     std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }
+    /// The project scope that startup snapshot was restored under ("" = the unscoped fallback). The startup fetch
+    /// may only be skipped for a view that resolves to the same project.
+    const std::string& StartupCatalogSnapshotProjectKey() const { return startupCatalogProjectKey_; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return fieldCatalog().AvailableComponents; }
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.

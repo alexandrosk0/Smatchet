@@ -1,5 +1,4 @@
-#ifndef SMATCHET_SYNC_LOOKUP_FRESHNESS_PURE_H
-#define SMATCHET_SYNC_LOOKUP_FRESHNESS_PURE_H
+#pragma once
 
 // Pure freshness rules for saved lookups (docs/plans/active/delta-sync.md § Phase 7): the saved project list,
 // the saved field catalog and other rows keep a save time, and a row younger than its lifetime is served
@@ -34,12 +33,17 @@ inline std::int64_t SecondsUntilLookupStale(std::int64_t savedAtEpochSec, std::i
 }
 
 /// True when the grid may skip the startup field-catalog fetch: the saved snapshot is within its lifetime AND
-/// every column of the active view resolves against it (a column the snapshot lacks needs a live catalog).
+/// every column of the active view resolves against it (a column the snapshot lacks needs a live catalog), AND
+/// the snapshot was saved for the project the active view resolves to. A fresh UNSCOPED snapshot (the startup
+/// fallback when no project-scoped one existed) carries no project-scoped data such as component options, so it
+/// never stands in for the project-scoped fetch: `snapshotProjectKey` and `viewProjectKey` must be equal.
 /// Blank ids and the synthetic "id" column are ignored.
 inline bool CanSkipCatalogFetch(std::int64_t savedAtEpochSec, std::int64_t nowEpochSec, std::int64_t ttlSec,
                                 const std::vector<std::string>& viewFieldIds,
-                                const std::vector<std::string>& catalogFieldIds) {
-    if (catalogFieldIds.empty() || !IsLookupRowFresh(savedAtEpochSec, nowEpochSec, ttlSec)) {
+                                const std::vector<std::string>& catalogFieldIds, const std::string& snapshotProjectKey,
+                                const std::string& viewProjectKey) {
+    if (catalogFieldIds.empty() || snapshotProjectKey != viewProjectKey ||
+        !IsLookupRowFresh(savedAtEpochSec, nowEpochSec, ttlSec)) {
         return false;
     }
     const std::unordered_set<std::string> known(catalogFieldIds.begin(), catalogFieldIds.end());
@@ -56,5 +60,3 @@ inline bool CanSkipCatalogFetch(std::int64_t savedAtEpochSec, std::int64_t nowEp
 
 } // namespace sync
 } // namespace smatchet
-
-#endif // SMATCHET_SYNC_LOOKUP_FRESHNESS_PURE_H

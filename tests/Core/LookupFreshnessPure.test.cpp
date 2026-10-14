@@ -35,9 +35,16 @@ TEST_CASE("SecondsUntilLookupStale counts down and is zero once stale") {
 
 TEST_CASE("CanSkipCatalogFetch: a fresh snapshot that resolves every view column skips the fetch") {
     const std::vector<std::string> catalog = {"summary", "status", "assignee"};
-    CHECK(CanSkipCatalogFetch(1000, 1100, 600, {"summary", "", "id", "status"}, catalog));
-    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary", "customfield_10001"}, catalog)); // unknown column
-    CHECK_FALSE(CanSkipCatalogFetch(1000, 2000, 600, {"summary"}, catalog));                      // expired
-    CHECK_FALSE(CanSkipCatalogFetch(0, 1100, 600, {"summary"}, catalog));                         // age unknown
-    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, {}));                           // empty snapshot
+    CHECK(CanSkipCatalogFetch(1000, 1100, 600, {"summary", "", "id", "status"}, catalog, "PROJ", "PROJ"));
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary", "customfield_10001"}, catalog, "PROJ",
+                                    "PROJ"));                                                // unknown column
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 2000, 600, {"summary"}, catalog, "PROJ", "PROJ")); // expired
+    CHECK_FALSE(CanSkipCatalogFetch(0, 1100, 600, {"summary"}, catalog, "PROJ", "PROJ"));    // age unknown
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, {}, "PROJ", "PROJ"));      // empty snapshot
+    // The snapshot's project scope must be the one the view resolves to: a fresh UNSCOPED snapshot (the startup
+    // fallback) never stands in for the project-scoped fetch, and a snapshot of another project never does.
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, catalog, "", "PROJ"));
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, catalog, "OTHER", "PROJ"));
+    CHECK_FALSE(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, catalog, "PROJ", ""));
+    CHECK(CanSkipCatalogFetch(1000, 1100, 600, {"summary"}, catalog, "", "")); // view resolves no project either
 }
