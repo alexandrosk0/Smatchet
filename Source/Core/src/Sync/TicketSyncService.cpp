@@ -11,6 +11,7 @@
 #include "StringUtil.h"
 #include "Sync/RemoteVersionPure.h"              // never persist a row older than the cached version
 #include "TicketSyncMeta.h"                      // BuildSyncMeta: the tracker version stored beside each saved row
+#include "Sync/RefusalIsolatingFetchPure.h"      // refusal-isolating key-batch download (shared with the monitor)
 #include "Sync/DeltaSyncPure.h"                  // strategy, fetch set, full-fetch threshold
 #include "Sync/LazyEnrichmentCarryForwardPure.h" // keeps a lazily fetched comment thread across syncs
 #include "Sync/TicketRosterFilterPure.h"         // shared keep-set roster filter (also used by the local-data refresh)
@@ -1186,68 +1187,8 @@ void MarkHierarchyWalkIncomplete(TrackerIssueFetchSummary& summary, const std::s
     LOG_WARN("TicketSyncService: %s", warning.c_str());
 }
 
-using KeyBatchFetch = std::function<Result<std::vector<CachedTicket>, TrackerError>(const std::vector<std::string>&)>;
-
-/// Refused keys one hop may isolate before it gives up and keeps the cached rows (see
-/// FetchKeysIsolatingRefusals).
-constexpr int kMaxIsolatedRefusalsPerHop = 4;
-
-/// Extra requests a hop over `keyCount` keys may spend isolating refusals. Each split costs two requests,
-/// and isolating k refused keys among n takes at most k * ceil(log2 n) splits, so this covers
-/// kMaxIsolatedRefusalsPerHop refused keys wherever they sit in the batch.
-int RefusalSplitBudget(std::size_t keyCount) {
-    int depth = 0;
-    for (std::size_t span = 1; span < keyCount; span *= 2) {
-        ++depth;
-    }
-    return 2 * depth * kMaxIsolatedRefusalsPerHop;
-}
-
-bool IsTrackerRefusal(const TrackerError& error) {
-    return error.Kind == TrackerErrorKind::InvalidRequest || error.Kind == TrackerErrorKind::NotFound;
-}
-
-/// Fetches `keys`. A refusal of a multi-key request says nothing about the individual keys: Jira rejects
-/// a whole `key in (...)` batch with a 400 when ONE key does not exist or cannot be browsed. So the halves
-/// are retried until the refused keys are isolated; a single refused key is a definitive answer about that
-/// ticket and goes into `refusedKeys`, and the rest load normally. Any other failure, or a refusal once
-/// `budget` extra requests are spent, is returned as an error (the caller then keeps the cached rows).
-/// Once `cancelled` reports true no further request is sent and a Cancelled error is returned.
-Result<std::vector<CachedTicket>, TrackerError>
-FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
-                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
-    if (cancelled()) {
-        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorCancelled());
-    }
-    Result<std::vector<CachedTicket>, TrackerError> fetched = fetch(keys);
-    if (fetched.has_value() || !IsTrackerRefusal(fetched.error())) {
-        return fetched;
-    }
-    if (keys.size() == 1) {
-        refusedKeys.push_back(keys.front());
-        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::vector<CachedTicket>());
-    }
-    if (budget < 2) {
-        return fetched;
-    }
-    budget -= 2;
-    const auto mid = keys.begin() + static_cast<std::ptrdiff_t>(keys.size() / 2);
-    Result<std::vector<CachedTicket>, TrackerError> first =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
-    if (!first.has_value()) {
-        return first;
-    }
-    Result<std::vector<CachedTicket>, TrackerError> second =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
-    if (!second.has_value()) {
-        return second;
-    }
-    std::vector<CachedTicket> merged = std::move(first.value());
-    for (CachedTicket& ticket : second.value()) {
-        merged.push_back(std::move(ticket));
-    }
-    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(merged));
-}
+using smatchet::sync::FetchKeysIsolatingRefusals;
+using smatchet::sync::RefusalSplitBudget;
 
 /// The tracker refused these keys one by one: a definitive answer that repeats on every sync, so the
 /// walk stays authoritative (a refused ticket's cached row may be purged) and the keys are named.

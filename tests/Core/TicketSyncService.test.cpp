@@ -2280,3 +2280,83 @@ TEST_CASE("Change monitor roster probe: vanished-key probes are capped per cycle
     CHECK(fake.Probes == 25);
     CHECK(verdicts.size() == 25);
 }
+
+TEST_CASE(
+    "Change monitor roster probe: one refused key among 40 changed keys is skipped and every other body applies") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    std::vector<std::pair<std::string, std::string>> entries;
+    std::vector<CachedTicket> bodies;
+    std::unordered_map<std::string, std::string> resident;
+    for (int i = 0; i < 40; ++i) {
+        const std::string id = "K-" + std::to_string(i);
+        entries.emplace_back(id, "T2");
+        bodies.push_back(Stamped(id, "T2"));
+        resident[id] = "T1";
+    }
+    fake.SetRoster(MakeRoster(entries));
+    fake.SetFetchIssuesForKeysResult(true, bodies);
+    fake.SetFetchIssuesForKeysRefusedKeys({"K-27"});
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+
+    CHECK(fetched.size() == 39);
+    for (const CachedTicket& t : fetched) {
+        CHECK(t.id != "K-27");
+    }
+}
+
+TEST_CASE("Change monitor roster probe: a key the tracker answers NotFound for is skipped, not a failed cycle") {
+    struct NotFoundClient : ProbeCountingClient {
+        Result<std::vector<CachedTicket>, TrackerError>
+        FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& keys,
+                                      const ViewsStore& views, const CancelCallback& cancel) override {
+            for (const std::string& k : keys) {
+                if (k == "A-2") {
+                    return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorNotFound("gone", 404));
+                }
+            }
+            return ProbeCountingClient::FetchIssuesForKeysCancellable(cfg, keys, views, cancel);
+        }
+    };
+    NotFoundClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T2"}, {"A-2", "T2"}}));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-1", "T2"), Stamped("A-2", "T2")});
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    REQUIRE(
+        smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched, verdicts));
+    REQUIRE(fetched.size() == 1);
+    CHECK(fetched[0].id == "A-1");
+}
+
+TEST_CASE("Change monitor roster probe: rows the server returns beyond the requested keys are dropped") {
+    struct HostileClient : ProbeCountingClient {
+        Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeysCancellable(const TrackerConfig&,
+                                                                                      const std::vector<std::string>&,
+                                                                                      const ViewsStore&,
+                                                                                      const CancelCallback&) override {
+            // Asked for A-2 only; answers with extra rows and a duplicate.
+            return Result<std::vector<CachedTicket>, TrackerError>::Ok(
+                {Stamped("A-2", "T2"), Stamped("EVIL-1", "T9"), Stamped("A-1", "T9"), Stamped("A-2", "T2", "dup")});
+        }
+    };
+    HostileClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}, {"A-2", "T2"}}));
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    REQUIRE(
+        smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched, verdicts));
+    REQUIRE(fetched.size() == 1);
+    CHECK(fetched[0].id == "A-2");
+}

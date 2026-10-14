@@ -628,19 +628,28 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // baseline (item 10). The worker diffs these against the view's full key list to find rows
         // that vanished; ctx must not be touched off-thread, so it is captured by value.
         std::vector<std::string> cachedKeys;
-        std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path)
+        // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query
+        // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
+        bool useRoster = cfg.DeltaSyncEnabled && backend->Reader().SupportsVersionedRoster();
+        std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path only)
         {
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
             cachedKeys.reserve(ctx.ActiveTickets.size());
-            residentUpdated.reserve(ctx.ActiveTickets.size());
+            if (useRoster) {
+                residentUpdated.reserve(ctx.ActiveTickets.size());
+            }
             for (std::size_t i = 0; i < ctx.ActiveTickets.size(); ++i) {
                 cachedKeys.push_back(ctx.ActiveTickets[i].id);
-                residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
+                if (useRoster) {
+                    residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
+                }
+            }
+            // An empty baseline before the pane's first sync would read the whole view as "new" and download every
+            // body: let the initial sync fill the pane first (the old path's changed-since window is cheap).
+            if (useRoster && ctx.ActiveTickets.empty() && !ctx.initialSyncKicked) {
+                useRoster = false;
             }
         }
-        // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query
-        // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
-        const bool useRoster = cfg.DeltaSyncEnabled && backend->Reader().SupportsVersionedRoster();
         LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, residentUpdated,
                               useRoster, window, polledAt, capturedGeneration, capturedSyncEpoch]() mutable {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
