@@ -80,7 +80,7 @@ struct EdgePanelSpec {
     const char* revealTipFallback;
     const char* gripWindowName; // bottom panel only (side strips are draw-list overlays)
     const char* logName;
-    bool mirrorsShowPanel; // keep cfg.ShowPanel in step (bottom panel only)
+    bool TrackerConfig::* cfgFlag; // persisted visibility flag kept in step (null: none)
     EdgePanelDragState UiDrawSession::* state;
 };
 
@@ -93,7 +93,7 @@ const EdgePanelSpec kBottomSpec = {SmatchetDockNodeIds::kBottomPanel,
                                    "Drag up to open the panel",
                                    "##BottomPanelRevealGrip",
                                    "BottomPanel",
-                                   true,
+                                   &TrackerConfig::ShowPanel,
                                    &UiDrawSession::bottomPanelDrag};
 
 // The right-hand columns. Whichever of them holds the tabbed Views/Assistant set, the
@@ -108,7 +108,7 @@ const EdgePanelSpec kViewsSpec = {SmatchetDockNodeIds::kViewsColumn,
                                   "Drag left to open the side panel",
                                   nullptr,
                                   "ViewsColumn",
-                                  false,
+                                  &TrackerConfig::ShowPrimarySideBar,
                                   &UiDrawSession::viewsColumnDrag};
 
 const EdgePanelSpec kPrimarySideSpec = {SmatchetDockNodeIds::kPrimarySideBar,
@@ -120,7 +120,7 @@ const EdgePanelSpec kPrimarySideSpec = {SmatchetDockNodeIds::kPrimarySideBar,
                                         "Drag left to open the side panel",
                                         nullptr,
                                         "PrimarySideBar",
-                                        false,
+                                        &TrackerConfig::ShowPrimarySideBar,
                                         &UiDrawSession::primarySideBarDrag};
 
 const EdgePanelSpec kSecondarySideSpec = {SmatchetDockNodeIds::kSecondarySideBar,
@@ -132,12 +132,12 @@ const EdgePanelSpec kSecondarySideSpec = {SmatchetDockNodeIds::kSecondarySideBar
                                           "Drag left to open the side panel",
                                           nullptr,
                                           "SecondarySideBar",
-                                          false,
+                                          &TrackerConfig::ShowSecondarySideBar,
                                           &UiDrawSession::secondarySideBarDrag};
 
 const EdgePanelSpec* const kSideSpecs[] = {&kViewsSpec, &kPrimarySideSpec, &kSecondarySideSpec};
 
-void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec);
+bool CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec);
 void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredExtentPx);
 
 ImGuiDockNode* EdgePanelNode(const EdgePanelSpec& spec) {
@@ -526,9 +526,10 @@ void ApplyPendingExtent(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNo
     ::ImGui::MarkIniSettingsDirty();
 }
 
-void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
+// Returns whether tabs outside the registry (leftovers) keep the panel visible.
+bool CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
     if (::ImGui::GetCurrentContext() == nullptr) {
-        return; // no context, no dock tree — nothing to hide (and GetStyle would crash)
+        return false; // no context, no dock tree — nothing to hide (and GetStyle would crash)
     }
     EdgePanelDragState& st = d.*(spec.state);
     ImGuiDockNode* node = EdgePanelNode(spec);
@@ -576,8 +577,19 @@ void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
             }
         }
     }
-    if (spec.mirrorsShowPanel) {
-        d.cfg.ShowPanel = leftovers;
+    if (spec.cfgFlag != nullptr) {
+        // A flag shared by several columns (Primary: Views + primary side bar) stays true
+        // while ANY sibling column still shows content; CollapseSideBar overrides this with
+        // the exact group verdict when it hides the whole group.
+        bool anyVisible = leftovers;
+        for (const EdgePanelSpec* sibling : kSideSpecs) {
+            const ImGuiDockNode* sibNode = EdgePanelNode(*sibling);
+            if (sibling != &spec && sibling->cfgFlag == spec.cfgFlag && sibNode != nullptr &&
+                NodeShowsContent(sibNode)) {
+                anyVisible = true;
+            }
+        }
+        d.cfg.*(spec.cfgFlag) = anyVisible;
     }
     st.revealDragActive = false;
     st.applyFrames = 0;
@@ -590,6 +602,7 @@ void CollapseEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
     }
     LOG_DEBUG("%s: collapse closed %d tab(s) (leftovers=%d, restore extent %.0f)", spec.logName,
               static_cast<int>(captured.size()), leftovers ? 1 : 0, st.restoreExtent);
+    return leftovers;
 }
 
 void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredExtentPx) {
@@ -613,8 +626,8 @@ void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredE
         }
     }
     st.restoreKeys.clear();
-    if (spec.mirrorsShowPanel) {
-        d.cfg.ShowPanel = true;
+    if (spec.cfgFlag != nullptr) {
+        d.cfg.*(spec.cfgFlag) = true;
     }
     const ImGuiViewport* vp = ::ImGui::GetMainViewport();
     const float workExtent = vp != nullptr ? vp->WorkSize[spec.axis] : 0.0f;
@@ -625,7 +638,25 @@ void ExpandEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec, float desiredE
     LOG_DEBUG("%s: expanded (extent %.0f)", spec.logName, st.pendingExtent);
 }
 
+// Drop remembered tabs whose window has been reopened some other way (see
+// pure::ShouldKeepRestoreKey). Expand clears the set itself, so a reveal in progress and the
+// leftovers case (windows still closed) are unaffected.
+void PruneRestoreKeys(UiDrawSession& d, const EdgePanelSpec& spec) {
+    std::vector<std::string>& keys = (d.*(spec.state)).restoreKeys;
+    keys.erase(std::remove_if(keys.begin(), keys.end(),
+                              [&d](const std::string& key) {
+                                  for (const ClosableWindowEntry& entry : kClosableWindows) {
+                                      if (key == entry.layoutKey) {
+                                          return !pure::ShouldKeepRestoreKey(d.*(entry.showFlag));
+                                      }
+                                  }
+                                  return false;
+                              }),
+               keys.end());
+}
+
 void TickEdgePanel(UiDrawSession& d, const EdgePanelSpec& spec) {
+    PruneRestoreKeys(d, spec);
     const EdgePanelDragState& st = d.*(spec.state);
     ImGuiDockNode* node = EdgePanelNode(spec);
     TickRevealFollow(d, spec, node);
@@ -652,6 +683,103 @@ bool IsPanelVisible() {
 void Collapse(UiDrawSession& d) { CollapseEdgePanel(d, kBottomSpec); }
 
 void Expand(UiDrawSession& d, float desiredHeightPx) { ExpandEdgePanel(d, kBottomSpec, desiredHeightPx); }
+
+namespace {
+
+// The columns each View > Appearance side bar covers.
+const EdgePanelSpec* const kPrimaryBarSpecs[] = {&kViewsSpec, &kPrimarySideSpec};
+const EdgePanelSpec* const kSecondaryBarSpecs[] = {&kSecondarySideSpec};
+
+bool BarSpecs(SmatchetBottomPanelDrag::SideBar bar, const EdgePanelSpec* const*& specs, size_t& count) {
+    if (bar == SmatchetBottomPanelDrag::SideBar::Primary) {
+        specs = kPrimaryBarSpecs;
+        count = sizeof(kPrimaryBarSpecs) / sizeof(kPrimaryBarSpecs[0]);
+        return true;
+    }
+    specs = kSecondaryBarSpecs;
+    count = sizeof(kSecondaryBarSpecs) / sizeof(kSecondaryBarSpecs[0]);
+    return false;
+}
+
+} // namespace
+
+bool IsSideBarVisible(SideBar bar) {
+    const EdgePanelSpec* const* specs = nullptr;
+    size_t count = 0;
+    BarSpecs(bar, specs, count);
+    for (size_t i = 0; i < count; ++i) {
+        const ImGuiDockNode* node = EdgePanelNode(*specs[i]);
+        if (node != nullptr && NodeShowsContent(node)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void CollapseSideBar(UiDrawSession& d, SideBar bar) {
+    if (::ImGui::GetCurrentContext() == nullptr) {
+        return;
+    }
+    const EdgePanelSpec* const* specs = nullptr;
+    size_t count = 0;
+    BarSpecs(bar, specs, count);
+    bool anyLeftovers = false;
+    for (size_t i = 0; i < count; ++i) {
+        const ImGuiDockNode* node = EdgePanelNode(*specs[i]);
+        if (node != nullptr && NodeShowsContent(node)) {
+            anyLeftovers = CollapseEdgePanel(d, *specs[i]) || anyLeftovers;
+        }
+    }
+    d.cfg.*(specs[0]->cfgFlag) = pure::SideBarFlagAfterCollapse(anyLeftovers);
+}
+
+namespace {
+
+bool AnyRemembered(const UiDrawSession& d, const EdgePanelSpec* const* specs, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        if (!(d.*(specs[i]->state)).restoreKeys.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+bool CanExpandSideBar(const UiDrawSession& d, SideBar bar) {
+    const EdgePanelSpec* const* specs = nullptr;
+    size_t count = 0;
+    const bool primary = BarSpecs(bar, specs, count);
+    return pure::PlanSideBarShow(AnyRemembered(d, specs, count), primary && !d.showViewsDashboard) !=
+           pure::SideBarShowPlan::Nothing;
+}
+
+bool ExpandSideBar(UiDrawSession& d, SideBar bar) {
+    if (::ImGui::GetCurrentContext() == nullptr) {
+        return false; // no dock tree: nothing can open, and the command must not claim it did
+    }
+    const EdgePanelSpec* const* specs = nullptr;
+    size_t count = 0;
+    BarSpecs(bar, specs, count);
+    // The Views fallback only helps when the dashboard is closed; if it is already open
+    // (floating / docked elsewhere) there is nothing to open, so report that honestly.
+    const pure::SideBarShowPlan plan =
+        pure::PlanSideBarShow(AnyRemembered(d, specs, count), bar == SideBar::Primary && !d.showViewsDashboard);
+    if (plan == pure::SideBarShowPlan::Nothing) {
+        return false;
+    }
+    if (plan == pure::SideBarShowPlan::FallbackToViews) {
+        (d.*(kViewsSpec.state)).restoreKeys.push_back("views");
+        ExpandEdgePanel(d, kViewsSpec, 0.0f);
+        return true;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!(d.*(specs[i]->state)).restoreKeys.empty()) {
+            ExpandEdgePanel(d, *specs[i], 0.0f);
+        }
+    }
+    return true;
+}
 
 void Tick(UiDrawSession& d) {
     if (::ImGui::GetCurrentContext() == nullptr) {

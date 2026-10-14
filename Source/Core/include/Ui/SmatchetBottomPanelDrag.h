@@ -37,4 +37,21 @@ void Collapse(UiDrawSession& d);
 // wins over both. Flips cfg.ShowPanel on.
 void Expand(UiDrawSession& d, float desiredHeightPx);
 
+// View > Appearance side bars. Primary is the whole right side (the Views column 0x08 AND
+// the primary side bar 0x04, whatever tabs they hold); Secondary is the secondary side bar
+// 0x10. Visible = the live dock node shows content. Collapse hides every registered tab in
+// each visible column (remembering the set) and keeps cfg.ShowPrimarySideBar /
+// ShowSecondarySideBar in step with what remains visible. Expand reopens the remembered
+// sets and returns whether anything was opened: Primary falls back to the Views dashboard
+// when nothing was remembered; Secondary is a no-op (returns false) in that case.
+enum class SideBar { Primary, Secondary };
+
+bool IsSideBarVisible(SideBar bar);
+void CollapseSideBar(UiDrawSession& d, SideBar bar);
+bool ExpandSideBar(UiDrawSession& d, SideBar bar);
+
+// Whether ExpandSideBar would open something (remembered tabs, or the Views fallback when
+// the Views dashboard is not already open elsewhere). The menu disables a hidden item when not.
+bool CanExpandSideBar(const UiDrawSession& d, SideBar bar);
+
 } // namespace SmatchetBottomPanelDrag

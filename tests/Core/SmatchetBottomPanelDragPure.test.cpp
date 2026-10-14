@@ -170,3 +170,23 @@ TEST_CASE("SideStripReachable needs the mouse over dockspace content with nothin
     CHECK_FALSE(pure::SideStripReachable(false, false, false, false)); // floating window / status bar above
     CHECK_FALSE(pure::SideStripReachable(false, false, true, true));   // drag and drop in flight
 }
+
+TEST_CASE("PlanSideBarShow reopens remembered tabs, else falls back only where a fallback exists") {
+    using Plan = pure::SideBarShowPlan;
+    // Primary side bar (has the Views fallback).
+    CHECK(pure::PlanSideBarShow(true, true) == Plan::ExpandRemembered);
+    CHECK(pure::PlanSideBarShow(false, true) == Plan::FallbackToViews);
+    // Secondary side bar (no fallback): nothing remembered means a no-op.
+    CHECK(pure::PlanSideBarShow(true, false) == Plan::ExpandRemembered);
+    CHECK(pure::PlanSideBarShow(false, false) == Plan::Nothing);
+}
+
+TEST_CASE("SideBarFlagAfterCollapse stays true only while leftovers keep a column visible") {
+    CHECK_FALSE(pure::SideBarFlagAfterCollapse(false));
+    CHECK(pure::SideBarFlagAfterCollapse(true));
+}
+
+TEST_CASE("ShouldKeepRestoreKey drops a remembered tab once its window is open again") {
+    CHECK(pure::ShouldKeepRestoreKey(false));
+    CHECK_FALSE(pure::ShouldKeepRestoreKey(true));
+}

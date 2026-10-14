@@ -11,7 +11,7 @@
 #include "Config/ConfigManager.h"
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetBottomPanelDrag.h"
-#include "Ui/SmatchetViewVisibility.h"
+#include "Ui/SmatchetViewVisibility.h" // ViewSlot
 
 #include <string>
 #include <utility>
@@ -41,9 +41,10 @@ bool ResolveTarget(const std::string& action, bool current) {
     return !current; // default "toggle"
 }
 
-// Side-bar / bottom-panel visibility — persisted cfg slots (was: handlePanelVisibilityShortcuts).
-CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig::*cfgFlag, const std::string& action) {
-    return RunOnUiThreadAsCommandResult(app, [slot, cfgFlag, action]() {
+// Side-bar / bottom-panel visibility (was: handlePanelVisibilityShortcuts). All three go through
+// SmatchetBottomPanelDrag, which also keeps the persisted cfg flags in step.
+CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, const std::string& action) {
+    return RunOnUiThreadAsCommandResult(app, [slot, action]() {
         bool target;
         if (slot == ViewSlot::BottomPanel) {
             // The bottom panel is hidden/shown by closing/restoring the windows docked
@@ -64,8 +65,22 @@ CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig
                 }
             }
         } else {
-            target = ResolveTarget(action, g_ui.cfg.*cfgFlag);
-            SetViewVisible(g_ui.cfg, slot, target);
+            // The side bars route through the same collapse/expand helpers (live dock
+            // visibility, not the cfg flag - the flag is mirrored by the helpers). Primary
+            // is the whole right side (Views column + primary side bar); Secondary has no
+            // fallback, so a "show" with nothing remembered reports open:false.
+            const SmatchetBottomPanelDrag::SideBar bar = slot == ViewSlot::PrimarySideBar
+                                                             ? SmatchetBottomPanelDrag::SideBar::Primary
+                                                             : SmatchetBottomPanelDrag::SideBar::Secondary;
+            const bool visible = SmatchetBottomPanelDrag::IsSideBarVisible(bar);
+            target = ResolveTarget(action, visible);
+            if (target != visible) {
+                if (target) {
+                    target = SmatchetBottomPanelDrag::ExpandSideBar(g_ui, bar);
+                } else {
+                    SmatchetBottomPanelDrag::CollapseSideBar(g_ui, bar);
+                }
+            }
         }
         ConfigManager::Save(g_ui.cfg);
         nlohmann::json out;
@@ -75,7 +90,7 @@ CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig
 }
 
 void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label, const char* title,
-                   const char* alias, ViewSlot slot, bool TrackerConfig::*cfgFlag) {
+                   const char* alias, ViewSlot slot) {
     // clang-format off
     // SMATCHET_DEVIATION(rule=duplication; reason=RegisterPanel and ViewToggleCommands.cpp's RegisterToggle share the Command boilerplate (Name/Category/Summary/Title/alias) by construction — the two registrars bind different handler shapes (cfg-slot panel vs session-flag window) and merging them would couple the AppView and ViewToggle command families; owner=commands; revisit=when a shared command-builder helper lands)
     // clang-format on
@@ -92,8 +107,8 @@ void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* nam
     c.Destructive = false;
     c.Idempotent = false; // default action toggles
     c.AsyncSafe = true;
-    c.Handler = [&app, slot, cfgFlag](const nlohmann::json& args, const CommandContext& /*ctx*/) {
-        return SetPanel(app, slot, cfgFlag, ReadAction(args));
+    c.Handler = [&app, slot](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+        return SetPanel(app, slot, ReadAction(args));
     };
     reg.Register(std::move(c));
 }
@@ -140,11 +155,10 @@ void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     }
 
     RegisterPanel(reg, app, "view.sidebar.primary", "primary side bar", "Primary Side Bar",
-                  "view.toggle.primary_side_bar", ViewSlot::PrimarySideBar, &TrackerConfig::ShowPrimarySideBar);
+                  "view.toggle.primary_side_bar", ViewSlot::PrimarySideBar);
     RegisterPanel(reg, app, "view.sidebar.secondary", "secondary side bar", "Secondary Side Bar",
-                  "view.toggle.secondary_side_bar", ViewSlot::SecondarySideBar, &TrackerConfig::ShowSecondarySideBar);
-    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", "Panel", "view.toggle.panel", ViewSlot::BottomPanel,
-                  &TrackerConfig::ShowPanel);
+                  "view.toggle.secondary_side_bar", ViewSlot::SecondarySideBar);
+    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", "Panel", "view.toggle.panel", ViewSlot::BottomPanel);
 
 #if defined(SMATCHET_WITH_AI)
     {

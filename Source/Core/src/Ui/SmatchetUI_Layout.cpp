@@ -312,6 +312,7 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     d.primarySideBarDrag = EdgePanelDragState();
     d.secondarySideBarDrag = EdgePanelDragState();
     d.cfg.ShowPanel = false;
+    d.cfg.ShowPrimarySideBar = true; // the reset reopens Views in its home column
 
     // Immediate-effect reset (no restart). Three coordinated steps:
     //  1. Rebuild the dock-node tree LIVE from the canonical default. ImGui parses the

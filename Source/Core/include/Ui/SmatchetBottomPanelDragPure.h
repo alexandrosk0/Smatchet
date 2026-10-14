@@ -103,4 +103,24 @@ inline bool SideStripReachable(bool modalOpen, bool windowMoving, bool overDockC
     return !modalOpen && !windowMoving && overDockContent && !dragDropActive;
 }
 
+// View > Appearance side-bar "show": reopen what the hidden columns remembered; when nothing
+// is remembered, fall back to the Views dashboard (Primary only) so the toggle always shows
+// something, else do nothing (Secondary has no fallback).
+enum class SideBarShowPlan { ExpandRemembered, FallbackToViews, Nothing };
+
+inline SideBarShowPlan PlanSideBarShow(bool anyRemembered, bool hasViewsFallback) {
+    if (anyRemembered) {
+        return SideBarShowPlan::ExpandRemembered;
+    }
+    return hasViewsFallback ? SideBarShowPlan::FallbackToViews : SideBarShowPlan::Nothing;
+}
+
+// A remembered tab is spent once its window is open again by any other route (menu, command,
+// toggle): keeping it would let a later "show" reopen a window the user closed since.
+inline bool ShouldKeepRestoreKey(bool windowAlreadyOpen) { return !windowAlreadyOpen; }
+
+// A side-bar config flag mirrors "anything visible afterwards": leftover tabs that survived
+// the collapse in ANY column of the group keep it true.
+inline bool SideBarFlagAfterCollapse(bool anyColumnHadLeftovers) { return anyColumnHadLeftovers; }
+
 } // namespace SmatchetBottomPanelDragPure
