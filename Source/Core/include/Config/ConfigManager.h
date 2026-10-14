@@ -175,7 +175,8 @@ struct TrackerConfig {
     // at load. Default 12 hours.
     int FieldCatalogRefreshTtlSec = 43200;
     // A saved lookup row (project list, project components) younger than this many seconds is served without a
-    // live fetch. Clamped to [60, 2592000] at load. Default 1 day.
+    // live fetch. Default 0 = off: the project list and components always go live when the tracker is reachable
+    // (the offline-first contract). 60..2592000 opts in; any other non-zero value is clamped into that range.
     int LookupCacheTtlSec = 0;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.

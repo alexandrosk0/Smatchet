@@ -51,7 +51,6 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
                                                 RedactUrlForLog(url) + "):\n" + body + suffix);
 }
 
-// Simple URL-encoder that is C++14 friendly.
 // Base64 for the Authorization header comes from StringUtil.h's Base64Encode — sending it
 // exactly like PowerShell/curl. This TU used to carry its own byte-identical encoder.
 
