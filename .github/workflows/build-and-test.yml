@@ -401,7 +401,7 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: |
@@ -411,7 +411,7 @@ jobs:
 
       - name: Upload Smatchet.exe on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Smatchet-failure-${{ github.run_id }}
           path: build/ninja-iter-msvc/Smatchet.exe
@@ -664,7 +664,7 @@ jobs:
 
       - name: Upload ARM64 perf baselines (for human bootstrap commit)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-arm64-baselines-${{ github.run_id }}
           path: docs/perf/baselines/*.ci-windows-arm64.json
@@ -806,7 +806,7 @@ jobs:
 
       - name: Upload ARM64 installer (for inspection)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smatchet-arm64-installer-${{ github.run_id }}
           path: out/arm64-installer/assets/*windows-arm64-setup.exe
@@ -949,7 +949,7 @@ jobs:
 
       - name: Upload x64 installer (for inspection)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smatchet-x64-installer-${{ github.run_id }}
           path: out/x64-installer/assets/*windows-setup.exe
@@ -1059,7 +1059,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Download Smatchet.exe artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
@@ -1217,7 +1217,7 @@ jobs:
         # storage 5xx) would still red this advisory lane after lane-integrity
         # already passed. continue-on-error keeps the artefact best-effort.
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bucket-c-golden-report-${{ github.run_id }}
           path: build/tmp/bucket-c-golden-report.tsv
@@ -1268,7 +1268,7 @@ jobs:
         # Same rule as the verdict-report upload: a pure-reporting step in this
         # advisory lane must not be able to red it on a transient upload error.
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bucket-c-captures-${{ github.run_id }}
           path: |
@@ -1281,7 +1281,7 @@ jobs:
         # Same rule as the verdict-report upload: a pure-reporting step in this
         # advisory lane must not be able to red it on a transient upload error.
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bucket-c-childlog-${{ github.run_id }}
           path: build/tmp/bucket-c-childlog/spawn-child.log
@@ -1342,7 +1342,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Download Smatchet.exe artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
@@ -1414,7 +1414,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 
       - name: Upload CI-native goldens for review
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-native-goldens-${{ github.run_id }}
           path: |
@@ -1664,7 +1664,7 @@ jobs:
 
       - name: Upload bucket-E exe on failure
         if: ${{ steps.run-bucket-e.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bucket-e-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
@@ -1677,7 +1677,7 @@ jobs:
       # the job — the whole point is post-mortem visibility on a broken lane.
       - name: Upload bucket-E spawned-child log
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bucket-e-childlog-${{ github.run_id }}
           path: build/tmp/bucket-e-childlog/spawn-child.log
@@ -1807,7 +1807,7 @@ jobs:
 
       - name: Upload jira-fixture per-test log
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jira-fixture-outlog-${{ github.run_id }}
           path: build/tmp/jira-fixture-outlog.txt
@@ -1898,7 +1898,7 @@ jobs:
 
       - name: Upload offline-first per-test log
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: offline-first-outlog-${{ github.run_id }}
           path: build/tmp/offline-first-outlog.txt
@@ -2028,7 +2028,7 @@ jobs:
         # (continue-on-error) so a hang/fail leaves the job green — `always() &&
         # outcome == 'failure'` still captures the exe for the hang investigation.
         if: ${{ always() && steps.run-texture-guard.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-texture-guard-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
@@ -2079,7 +2079,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Download Smatchet.exe artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
@@ -2889,7 +2889,7 @@ jobs:
 
       - name: Upload JVM unit-test report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smatchet-mobile-jvm-unit-test-report
           path: Source/Mobile/AndroidApp/app/build/reports/tests/testDebugUnitTest
@@ -2921,7 +2921,7 @@ jobs:
           echo "SMATCHET_APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload debug APK artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smatchet-mobile-debug-apk-arm64-v8a
           path: ${{ env.SMATCHET_APK_PATH }}
