@@ -177,7 +177,7 @@ Smatchet.exe cmd commands.search --query=sync
 | Command | Params | Notes |
 |---|---|---|
 | `sync.incremental` | — | Delta reload: lists the view's tickets with their last-updated times and downloads only the ones that changed (the rest come from the cache); any failure falls back to a full fetch. Async. Dry-run supported. |
-| `sync.full` | — | Forces a full re-download of the active view. Keeps the local cache and the offline queue. Async. Dry-run supported. |
+| `sync.full` | — | Forces a full re-download of the active view without deleting anything: the local cache and the offline queue (queued edits and creates) are kept. **Behaviour change:** `sync.full` used to wipe the cache first; callers that relied on the wipe must now call `cache.recreate` (destructive, asks for confirmation). Async. Dry-run supported. |
 | `sync.stats` | — | What the last finished sync session cost: `{valid, requestId, mode (full/delta), rosterSize, bodiesFetched, unchanged, requests, downloadBytes, uploadBytes, durationMs, fallbackReason, completed, error}`. |
 | `cache.recreate` | — | Destructive (`--yes`). Wipes the local cache database **including queued offline edits**, then re-fetches the active view in full. Runs on the UI thread and waits for every pane's in-flight sync to stop, so the UI can pause until the slowest running request ends. Dry-run supported. |
 | `sync.refresh_local` | — | Rebuild in-memory list from SQLite; no network. Fire-and-forget: returns `{triggered: true}` once the read is started, before the list is rebuilt; the grid updates when it lands. |
