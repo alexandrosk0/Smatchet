@@ -194,17 +194,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     // Fetched from the tracker just now: store each row with the version it carries (a plain SaveTicket would
     // drop the sync meta and make the next delta sync refetch the ticket).
-    {
-        const std::int64_t nowSec = static_cast<std::int64_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count());
-        std::vector<TicketSyncMeta> metas;
-        metas.reserve(tickets.size());
-        for (const auto& t : tickets) {
-            metas.push_back(smatchet::sync::BuildSyncMeta(t, nowSec));
-        }
-        Cache->SaveTicketsWithSyncMeta(cacheBackendKey, tickets, metas);
-    }
+    smatchet::sync::SaveFetchedRows(*Cache, cacheBackendKey, tickets);
 
     RefreshLocalData();
 }

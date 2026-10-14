@@ -199,21 +199,19 @@ void RegisterSyncFetchActiveViewCommand(CommandRegistry& reg, IAppSync& app, IMa
 }
 
 nlohmann::json SyncStatsToJson(const smatchet::sync::SyncSessionStats& stats) {
-    nlohmann::json out;
-    out["valid"] = stats.Valid;
-    out["requestId"] = stats.RequestId;
-    out["mode"] = stats.Mode;
-    out["rosterSize"] = stats.RosterSize;
-    out["bodiesFetched"] = stats.BodiesFetched;
-    out["unchanged"] = stats.Unchanged;
-    out["requests"] = stats.Requests;
-    out["downloadBytes"] = stats.DownloadBytes;
-    out["uploadBytes"] = stats.UploadBytes;
-    out["durationMs"] = stats.DurationMs;
-    out["fallbackReason"] = stats.FallbackReason;
-    out["completed"] = stats.Completed;
-    out["error"] = stats.Error;
-    return out;
+    return nlohmann::json{{"valid", stats.Valid},
+                          {"requestId", stats.RequestId},
+                          {"mode", stats.Mode},
+                          {"rosterSize", stats.RosterSize},
+                          {"bodiesFetched", stats.BodiesFetched},
+                          {"unchanged", stats.Unchanged},
+                          {"requests", stats.Requests},
+                          {"downloadBytes", stats.DownloadBytes},
+                          {"uploadBytes", stats.UploadBytes},
+                          {"durationMs", stats.DurationMs},
+                          {"fallbackReason", stats.FallbackReason},
+                          {"completed", stats.Completed},
+                          {"error", stats.Error}};
 }
 
 void RegisterSyncStatsCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {

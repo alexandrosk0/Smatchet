@@ -50,6 +50,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -69,6 +70,135 @@ std::string ResolvePaneCacheKey(const std::string& paneBackendKey) {
     TrackerConfig cfg = ConfigManager::Load();
     cfg.TrackerType = paneBackendKey;
     return smatchet::cache_keys::TrackerCacheBackendKey(cfg);
+}
+
+// Salient field ids of the pane's catalog (UI thread, catalog mutex); empty while the catalog is not loaded.
+std::vector<std::string> ResolveSalientFieldIds(GridLiveContext& ctx) {
+    std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
+    const std::vector<smatchet::SalientFieldRole> roster =
+        smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
+    std::vector<std::string> ids;
+    ids.reserve(roster.size());
+    for (std::size_t i = 0; i < roster.size(); ++i) {
+        ids.push_back(roster[i].fieldId);
+    }
+    return ids;
+}
+
+// UI-thread snapshot of the pane's resident rows for a change probe: their ids (the membership reconcile's
+// baseline) and, on the roster path, id -> held "updated" stamp. `useRoster` is cleared when the pane is still
+// empty before its first sync (an empty baseline would read the whole view as "new" and download every body).
+void SnapshotResidentForProbe(GridLiveContext& ctx, bool& useRoster, std::vector<std::string>& cachedKeys,
+                              std::unordered_map<std::string, std::string>& residentUpdated) {
+    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+    cachedKeys.reserve(ctx.ActiveTickets.size());
+    if (useRoster) {
+        residentUpdated.reserve(ctx.ActiveTickets.size());
+    }
+    for (std::size_t i = 0; i < ctx.ActiveTickets.size(); ++i) {
+        cachedKeys.push_back(ctx.ActiveTickets[i].id);
+        if (useRoster) {
+            residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
+        }
+    }
+    if (useRoster && ctx.ActiveTickets.empty() && !ctx.initialSyncKicked) {
+        useRoster = false;
+    }
+}
+
+// Window for the backend-native "updated >=" filter: time since the anchor plus a margin to absorb
+// minute-granularity timestamps and clock skew.
+std::chrono::seconds ProbeWindow(std::chrono::system_clock::time_point polledAt,
+                                 std::chrono::system_clock::time_point sinceAnchor) {
+    return std::chrono::duration_cast<std::chrono::seconds>(polledAt - sinceAnchor) + std::chrono::seconds(60);
+}
+
+// What merging a change probe's rows into the pane's resident rows changed.
+struct ProbeMergeResult {
+    bool anyFieldUpdated = false;
+    std::vector<CachedTicket> updatedTickets; // rows to persist
+    std::vector<std::string> movedKeys;       // resident rows whose tracker version moved
+    std::vector<std::string> addedKeys;       // rows the roster path added to the grid
+};
+
+// Merges one fetched row over its resident twin. Never replaces a resident row with one the tracker stamped OLDER
+// (a late or reordered probe); an unparsable or missing stamp does not block - the pre-delta behaviour.
+void MergeProbeRow(const CachedTicket& t, CachedTicket& resident, ProbeMergeResult& out) {
+    if (smatchet::sync::IsIncomingRowStale(t.GetFieldValueRef("updated"), resident.GetFieldValueRef("updated"))) {
+        return;
+    }
+    // A poll row carries no lazily fetched comment thread / tooltip blob; keep the resident
+    // ones (as both sync apply paths do) so the merge neither drops them nor counts their
+    // absence as a change.
+    CachedTicket incoming = t;
+    smatchet::sync::LazyCommentFields lazy;
+    if (smatchet::sync::SnapshotLazyCommentFields(resident, lazy)) {
+        smatchet::sync::CarryForwardLazyCommentFields(lazy, incoming);
+    }
+    if (!incoming.GetFieldValueRef("updated").empty() && !resident.GetFieldValueRef("updated").empty() &&
+        incoming.GetFieldValueRef("updated") != resident.GetFieldValueRef("updated")) {
+        out.movedKeys.push_back(t.id); // its tracker version moved: transitions and edit permissions are stale
+    }
+    if (resident.fieldValues != incoming.fieldValues || resident.fieldRichValues != incoming.fieldRichValues) {
+        resident = incoming;                    // Update in place with fully-populated fetched data
+        out.updatedTickets.push_back(resident); // Track for cache persistence
+        out.anyFieldUpdated = true;
+    }
+}
+
+// Applies a change probe to ctx.ActiveTickets under its mutex: membership removals first (so removed ids cannot
+// be found and re-added by the merge loop - prevents orphan cache entries), then the fetched rows, then ONE
+// republish + revision bump when anything changed. Mirrors TicketSyncService::DrainPendingStreamingBatches.
+ProbeMergeResult MergeProbeIntoActiveTickets(GridLiveContext& ctx, const std::vector<CachedTicket>& fetched,
+                                             const smatchet::MembershipReconcilePlan& plan, bool addNewRows) {
+    ProbeMergeResult out;
+    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+    for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+        const std::string& key = plan.residentRemovals[i].issueKey;
+        ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                               [&key](const CachedTicket& t) { return t.id == key; }),
+                                ctx.ActiveTickets.end());
+    }
+    for (const auto& t : fetched) {
+        auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                               [&](const CachedTicket& existing) { return existing.id == t.id; });
+        if (it == ctx.ActiveTickets.end()) {
+            if (addNewRows && !t.id.empty()) {
+                // The roster path found a ticket that entered the view: it joins the grid (and the cache).
+                ctx.ActiveTickets.push_back(t);
+                out.updatedTickets.push_back(t);
+                out.addedKeys.push_back(t.id);
+                out.anyFieldUpdated = true;
+            }
+            continue;
+        }
+        MergeProbeRow(t, *it, out);
+    }
+    // Readers see atomically consistent state: fire once per invocation when anything changed.
+    if (out.anyFieldUpdated || !plan.residentRemovals.empty()) {
+        ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+        ctx.ActiveTicketsRevision.fetch_add(1);
+    }
+    return out;
+}
+
+// Appends the Added (roster path) and LeftView / Deleted (membership reconcile) notifications.
+void AppendMembershipChangeSummaries(std::vector<smatchet::TicketChangeSummary>& changes,
+                                     const std::vector<std::string>& addedKeys,
+                                     const smatchet::MembershipReconcilePlan& plan) {
+    for (std::size_t i = 0; i < addedKeys.size(); ++i) {
+        smatchet::TicketChangeSummary s;
+        s.kind = smatchet::TicketChangeKind::Added;
+        s.issueId = addedKeys[i];
+        changes.push_back(s);
+    }
+    for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+        const smatchet::MembershipRemovalVerdict& v = plan.residentRemovals[i];
+        smatchet::TicketChangeSummary s;
+        s.kind = v.stillExists ? smatchet::TicketChangeKind::LeftView : smatchet::TicketChangeKind::Deleted;
+        s.issueId = v.issueKey;
+        changes.push_back(s);
+    }
 }
 } // namespace
 
@@ -586,16 +716,7 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // Resolve the salient roster from THIS pane's field catalog (UI thread, catalog mutex).
         // No salient fields yet (catalog not loaded) → nothing to diff: push the next poll out
         // and skip WITHOUT disturbing the anchor so the window is retried once the catalog lands.
-        std::vector<std::string> salientFieldIds;
-        {
-            std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
-            const std::vector<smatchet::SalientFieldRole> roster =
-                smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
-            salientFieldIds.reserve(roster.size());
-            for (std::size_t i = 0; i < roster.size(); ++i) {
-                salientFieldIds.push_back(roster[i].fieldId);
-            }
-        }
+        const std::vector<std::string> salientFieldIds = ResolveSalientFieldIds(ctx);
         if (salientFieldIds.empty()) {
             ctx.nextChangePollAt = now + interval;
             continue;
@@ -615,10 +736,7 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // polledAt = the instant we ISSUE this poll; the next poll's anchor advances to it so a
         // change landing DURING the fetch is caught next round (no gap).
         const std::chrono::system_clock::time_point polledAt = std::chrono::system_clock::now();
-        // Window for the backend-native "updated >=" filter: time since the anchor plus a margin
-        // to absorb minute-granularity timestamps and clock skew.
-        const std::chrono::seconds window =
-            std::chrono::duration_cast<std::chrono::seconds>(polledAt - sinceAnchor) + std::chrono::seconds(60);
+        const std::chrono::seconds window = ProbeWindow(polledAt, sinceAnchor);
         // In-flight guard: push nextChangePollAt out NOW so the per-frame tick does not
         // re-dispatch while this probe runs.
         ctx.nextChangePollAt = now + interval;
@@ -633,24 +751,7 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
         bool useRoster = cfg.DeltaSyncEnabled && backend->Reader().SupportsVersionedRoster();
         std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path only)
-        {
-            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-            cachedKeys.reserve(ctx.ActiveTickets.size());
-            if (useRoster) {
-                residentUpdated.reserve(ctx.ActiveTickets.size());
-            }
-            for (std::size_t i = 0; i < ctx.ActiveTickets.size(); ++i) {
-                cachedKeys.push_back(ctx.ActiveTickets[i].id);
-                if (useRoster) {
-                    residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
-                }
-            }
-            // An empty baseline before the pane's first sync would read the whole view as "new" and download every
-            // body: let the initial sync fill the pane first (the old path's changed-since window is cheap).
-            if (useRoster && ctx.ActiveTickets.empty() && !ctx.initialSyncKicked) {
-                useRoster = false;
-            }
-        }
+        SnapshotResidentForProbe(ctx, useRoster, cachedKeys, residentUpdated);
         LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, residentUpdated,
                               useRoster, window, polledAt, capturedGeneration, capturedSyncEpoch]() mutable {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
@@ -717,7 +818,71 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
     return smatchet::sync::ProbeVanishedKeys(reader, cfg, removed, paneId);
 }
 
-// SMATCHET_DEVIATION(rule=function-too-long; reason=Grid visibility fix: merged fetched tickets into ActiveTickets for grid visibility (critical data flow) + durable cache persistence + Lua notification dispatch; all mutations under single mutex for thread-safety; revisit=2027-12-31; owner=claude)
+// Drops the shared per-backend cache row of each key the tracker answered 404 for, UNLESS a sibling pane still
+// retains that id (the cache spans panes, ADR-0018 decision 4 - an unconditional purge yanked a row out from
+// under a pane that is still displaying it, and that pane has no way to notice). The sibling reaches the same
+// 404 on its own change poll and purges then, so the row still converges away.
+void AppController::dropUnheldCacheRows_(GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
+                                         const smatchet::MembershipReconcilePlan& plan) {
+    if (Cache && !plan.cacheDeleteKeys.empty()) {
+        const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
+        const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
+        std::vector<std::string> keysToDrop;
+        for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
+            const std::string& key = plan.cacheDeleteKeys[i];
+            if (retained.find(key) != retained.end()) {
+                LOG_DEBUG("AppController::TickChangeMonitors kept cache row '%s' — a sibling pane still holds it.",
+                          key.c_str());
+                continue;
+            }
+            keysToDrop.push_back(key); // 404, nobody else holds it → drop the shared cache row
+        }
+        if (!keysToDrop.empty()) {
+            // SQLite stays off the UI thread (Pillar 2): the deletes run on a worker with a latched handle.
+            const std::shared_ptr<LocalCacheManager> deleteCache = std::atomic_load(&Cache);
+            LaunchBackgroundTask([deleteCache, backendKey, keysToDrop]() {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: <=25 small transactions - off the UI thread
+                for (std::size_t i = 0; i < keysToDrop.size(); ++i) {
+                    try {
+                        deleteCache->DeleteTicket(backendKey, keysToDrop[i]);
+                    } catch (const std::exception& ex) {
+                        LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s",
+                                  keysToDrop[i].c_str(), ex.what());
+                    }
+                }
+            });
+        }
+        // This pane's recorded owned-id set must lose the purged ids too, or the next
+        // RefreshLocalData would keep whitelisting rows that no longer exist and, worse, keep
+        // pinning them against a sibling's stale sweep.
+        DropPaneOwnedTicketIds(backendKey, paneId, plan.cacheDeleteKeys);
+    }
+}
+
+// Persists the rows a change probe updated to the durable cache.
+void AppController::persistProbeRows_(const std::string& paneId, const std::string& backendKey,
+                                      std::vector<CachedTicket> updatedTickets) {
+    if (Cache && !updatedTickets.empty()) {
+        // SQLite never runs on the UI thread (Pillar 2): the write goes to a worker holding a latched
+        // strong handle on the cache (the UI thread may swap it in RecreateLocalCacheDatabase). A failed
+        // write must not escape the worker (it would end the app): the merge is already published, and
+        // the stale cache rows converge on the next sync.
+        const std::shared_ptr<LocalCacheManager> cacheSnapshot = std::atomic_load(&Cache);
+        const std::shared_ptr<const std::vector<CachedTicket>> rows =
+            std::make_shared<const std::vector<CachedTicket>>(std::move(updatedTickets));
+        LaunchBackgroundTask([cacheSnapshot, backendKey, paneId, rows]() {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: one batched SQLite transaction - off the UI thread
+            try {
+                smatchet::sync::SaveFetchedRows(*cacheSnapshot, backendKey, *rows);
+            } catch (const std::exception& ex) {
+                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' "
+                          "rows=%zu: %s",
+                          paneId.c_str(), backendKey.c_str(), rows->size(), ex.what());
+            }
+        });
+    }
+}
+
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
@@ -768,134 +933,19 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     }
     const smatchet::MembershipReconcilePlan plan = smatchet::ClassifyMembershipRemovals(residentIds, verdicts);
     const std::string backendKey = ctx.CacheBackendKeyCopy();
-    if (Cache && !plan.cacheDeleteKeys.empty()) {
-        const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
-        const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
-        std::vector<std::string> keysToDrop;
-        for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
-            const std::string& key = plan.cacheDeleteKeys[i];
-            if (retained.find(key) != retained.end()) {
-                LOG_DEBUG("AppController::TickChangeMonitors kept cache row '%s' — a sibling pane still holds it.",
-                          key.c_str());
-                continue;
-            }
-            keysToDrop.push_back(key); // 404, nobody else holds it → drop the shared cache row
-        }
-        if (!keysToDrop.empty()) {
-            // SQLite stays off the UI thread (Pillar 2): the deletes run on a worker with a latched handle.
-            const std::shared_ptr<LocalCacheManager> deleteCache = std::atomic_load(&Cache);
-            LaunchBackgroundTask([deleteCache, backendKey, keysToDrop]() {
-                /* PILLAR2_WORKER_ONLY */ // est-latency: <=25 small transactions - off the UI thread
-                for (std::size_t i = 0; i < keysToDrop.size(); ++i) {
-                    try {
-                        deleteCache->DeleteTicket(backendKey, keysToDrop[i]);
-                    } catch (const std::exception& ex) {
-                        LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s",
-                                  keysToDrop[i].c_str(), ex.what());
-                    }
-                }
-            });
-        }
-        // This pane's recorded owned-id set must lose the purged ids too, or the next
-        // RefreshLocalData would keep whitelisting rows that no longer exist and, worse, keep
-        // pinning them against a sibling's stale sweep.
-        DropPaneOwnedTicketIds(backendKey, paneId, plan.cacheDeleteKeys);
-    }
+    dropUnheldCacheRows_(ctx, paneId, backendKey, plan);
 
-    // Merge fetched ticket data into ctx.ActiveTickets for tickets that still exist (Modified case).
-    // Pattern mirrors TicketSyncService::DrainPendingStreamingBatches: update-in-place for matching
-    // ids, then republish + bump revision once if any field changed.
-    bool anyFieldUpdated = false;
-    std::vector<CachedTicket> updatedTickets; // Track updated tickets for cache persistence
-    std::vector<std::string> movedKeys;       // resident rows whose tracker version moved
-    std::vector<std::string> addedKeys;       // tickets the roster path added to the grid (Added notifications)
-    {
-        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-        // Handle membership removals first (within the same lock) before merge, so removed IDs
-        // cannot be found and re-added during the merge loop. Prevents orphan cache entries.
-        if (!plan.residentRemovals.empty()) {
-            for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
-                const std::string& key = plan.residentRemovals[i].issueKey;
-                ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
-                                                       [&key](const CachedTicket& t) { return t.id == key; }),
-                                        ctx.ActiveTickets.end());
-            }
-        }
-        for (const auto& t : fetched) {
-            auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
-                                   [&](const CachedTicket& existing) { return existing.id == t.id; });
-            if (it == ctx.ActiveTickets.end()) {
-                if (addNewRows && !t.id.empty()) {
-                    // The roster path found a ticket that entered the view: it joins the grid (and the cache).
-                    ctx.ActiveTickets.push_back(t);
-                    updatedTickets.push_back(t);
-                    addedKeys.push_back(t.id);
-                    anyFieldUpdated = true;
-                }
-                continue;
-            }
-            // Never replace a resident row with one the tracker stamped OLDER (a late or reordered
-            // probe). An unparsable or missing stamp does not block - the pre-delta behaviour.
-            if (smatchet::sync::IsIncomingRowStale(t.GetFieldValueRef("updated"), it->GetFieldValueRef("updated"))) {
-                continue;
-            }
-            // A poll row carries no lazily fetched comment thread / tooltip blob; keep the resident
-            // ones (as both sync apply paths do) so the merge neither drops them nor counts their
-            // absence as a change.
-            CachedTicket incoming = t;
-            smatchet::sync::LazyCommentFields lazy;
-            if (smatchet::sync::SnapshotLazyCommentFields(*it, lazy)) {
-                smatchet::sync::CarryForwardLazyCommentFields(lazy, incoming);
-            }
-            if (!incoming.GetFieldValueRef("updated").empty() && !it->GetFieldValueRef("updated").empty() &&
-                incoming.GetFieldValueRef("updated") != it->GetFieldValueRef("updated")) {
-                movedKeys.push_back(t.id); // its tracker version moved: transitions and edit permissions are stale
-            }
-            if (it->fieldValues != incoming.fieldValues || it->fieldRichValues != incoming.fieldRichValues) {
-                *it = incoming;                // Update in place with fully-populated fetched data
-                updatedTickets.push_back(*it); // Track for cache persistence
-                anyFieldUpdated = true;
-            }
-        }
-        // Consolidate republish + revision bump: fire once per invocation when anything changed
-        // (membership removals OR field updates). Readers see atomically consistent state.
-        if (anyFieldUpdated || !plan.residentRemovals.empty()) {
-            ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
-            ctx.ActiveTicketsRevision.fetch_add(1);
-        }
-    }
+    // Merge fetched ticket data into ctx.ActiveTickets for tickets that still exist (Modified case) and, on the
+    // roster path, add the ones that entered the view.
+    ProbeMergeResult merged = MergeProbeIntoActiveTickets(ctx, fetched, plan, addNewRows);
+    const bool anyFieldUpdated = merged.anyFieldUpdated;
+    const std::vector<std::string>& movedKeys = merged.movedKeys;
+    const std::vector<std::string>& addedKeys = merged.addedKeys;
     // Persist updated tickets to durable cache (outside the mutex, mirrors ApplyIssueFetchPack pattern).
     // Without this, later cache reloads (RefreshLocalData, hidden-pane re-seed) would revert the updates
     // since the fresh field values were never written to tickets_v2. Use SaveTickets (batch) instead of
     // per-ticket SaveTicket calls to avoid N synchronous SQLite writes on the UI thread.
-    if (Cache && !updatedTickets.empty()) {
-        // SQLite never runs on the UI thread (Pillar 2): the write goes to a worker holding a latched
-        // strong handle on the cache (the UI thread may swap it in RecreateLocalCacheDatabase). A failed
-        // write must not escape the worker (it would end the app): the merge is already published, and
-        // the stale cache rows converge on the next sync.
-        const std::shared_ptr<LocalCacheManager> cacheSnapshot = std::atomic_load(&Cache);
-        const std::shared_ptr<const std::vector<CachedTicket>> rows =
-            std::make_shared<const std::vector<CachedTicket>>(std::move(updatedTickets));
-        LaunchBackgroundTask([cacheSnapshot, backendKey, paneId, rows]() {
-            /* PILLAR2_WORKER_ONLY */ // est-latency: one batched SQLite transaction - off the UI thread
-            try {
-                const std::int64_t nowSec =
-                    static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                                                  std::chrono::system_clock::now().time_since_epoch())
-                                                  .count());
-                std::vector<TicketSyncMeta> metas;
-                metas.reserve(rows->size());
-                for (std::size_t i = 0; i < rows->size(); ++i) {
-                    metas.push_back(smatchet::sync::BuildSyncMeta((*rows)[i], nowSec));
-                }
-                cacheSnapshot->SaveTicketsWithSyncMeta(backendKey, *rows, metas);
-            } catch (const std::exception& ex) {
-                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' "
-                          "rows=%zu: %s",
-                          paneId.c_str(), backendKey.c_str(), rows->size(), ex.what());
-            }
-        });
-    }
+    persistProbeRows_(paneId, backendKey, std::move(merged.updatedTickets));
 
     // The pane's own tracker namespace, not the focused pane's.
     smatchet::sync::InvalidateRemotelyChangedTickets(
@@ -907,21 +957,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     for (std::size_t i = 0; i < addedKeys.size(); ++i) {
         AddPaneOwnedTicketId(backendKey, paneId, addedKeys[i]);
     }
-    for (std::size_t i = 0; i < addedKeys.size(); ++i) {
-        smatchet::TicketChangeSummary s;
-        s.kind = smatchet::TicketChangeKind::Added;
-        s.issueId = addedKeys[i];
-        changes.push_back(s);
-    }
-    if (!plan.residentRemovals.empty()) {
-        for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
-            const smatchet::MembershipRemovalVerdict& v = plan.residentRemovals[i];
-            smatchet::TicketChangeSummary s;
-            s.kind = v.stillExists ? smatchet::TicketChangeKind::LeftView : smatchet::TicketChangeKind::Deleted;
-            s.issueId = v.issueKey;
-            changes.push_back(s);
-        }
-    }
+    AppendMembershipChangeSummaries(changes, addedKeys, plan);
     // Mark Lua cells for re-record whenever ActiveTickets mutates (field updates OR removals).
     // This matches the convention used in TicketSyncService paths: every mutation of ActiveTickets
     // fires the Lua notify signal. UI thread, cheap.

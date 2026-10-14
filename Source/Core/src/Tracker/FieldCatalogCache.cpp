@@ -254,6 +254,7 @@ std::int64_t IntOr(const nlohmann::json& obj, const char* key, std::int64_t fall
     return (it != obj.end() && it->is_number_integer()) ? it->get<std::int64_t>() : fallback;
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=file-local twin of LookupPayloadsPure StringMember (also JsonGetStringIfString); this TU is linked alone into its own test target with no TrackerFieldValueParser dependency, so a shared helper would widen that rig; owner=tracker-backend; revisit=2027-10-14)
 std::string StrOr(const nlohmann::json& obj, const char* key) {
     const auto it = obj.find(key);
     return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string();

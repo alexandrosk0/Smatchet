@@ -1521,6 +1521,12 @@ class AppController : public IAppThreading,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
                                        std::uint64_t capturedSyncEpoch, bool addNewRows);
+    /// applyChangeProbeOnMainThread_ halves: drop the shared cache rows of 404'd keys no sibling pane retains,
+    /// and persist the rows a probe updated (worker write, latched cache handle). UI thread.
+    void dropUnheldCacheRows_(GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
+                              const smatchet::MembershipReconcilePlan& plan);
+    void persistProbeRows_(const std::string& paneId, const std::string& backendKey,
+                           std::vector<CachedTicket> updatedTickets);
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};

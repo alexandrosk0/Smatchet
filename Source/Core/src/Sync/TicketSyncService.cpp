@@ -145,14 +145,7 @@ std::size_t DropRowsOlderThanCached(std::vector<CachedTicket>& rows,
 // Saves `rows` and, beside each, the tracker version it was fetched at (delta-sync meta), in one
 // transaction. A row without an `updated` stamp is saved with no meta (it will always be refetched).
 void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows) {
-    const std::int64_t nowSec = static_cast<std::int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    std::vector<TicketSyncMeta> metas;
-    metas.reserve(rows.size());
-    for (const CachedTicket& row : rows) {
-        metas.push_back(smatchet::sync::BuildSyncMeta(row, nowSec));
-    }
-    cache.SaveTicketsWithSyncMeta(backendKey, rows, metas);
+    smatchet::sync::SaveFetchedRows(cache, backendKey, rows);
 }
 
 } // namespace
@@ -1519,7 +1512,9 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         return out;
     }
     const std::string backendKey = deps_.CacheBackendKey();
-    const std::unordered_map<std::string, TicketSyncMeta> meta = cache->GetTicketSyncMeta(backendKey);
+    // The cached versions this session's worker already loaded (RunStreamingWorkerBody, same thread): one read of
+    // the table per session. A failed read left it empty, which plans a full fetch.
+    const std::unordered_map<std::string, TicketSyncMeta>& meta = sessionMeta_;
 
     smatchet::sync::SyncStrategyInput input;
     input.Requested = smatchet::sync::SyncMode::Delta;
