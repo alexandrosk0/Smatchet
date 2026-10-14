@@ -1,7 +1,8 @@
 // LocalCacheManager's ticket_sync_meta table (docs/plans/active/delta-sync.md § Phase 2) - the SQLite
 // specifics the dual-impl SyncCacheContract cannot see: the table is a separate additive table that
-// survives a reopen, a ticket save does not reset it (tickets_v2 is INSERT OR REPLACE), a delete takes
-// the meta with it in the same transaction, and the one-time site re-key carries it along.
+// survives a reopen (the one file-backed case here: a reopen needs the same bytes, which :memory: cannot give), a
+// ticket save does not reset it (tickets_v2 is INSERT OR REPLACE), a delete takes the meta with it in the same
+// transaction, and the one-time site re-key carries it along.
 
 #include "../support/SqliteMemFixture.h"
 #include "../support/TempDbFile.h"
@@ -9,8 +10,6 @@
 #include "LocalCacheManager.h"
 
 #include <doctest/doctest.h>
-
-#include <SQLiteCpp/SQLiteCpp.h>
 
 #include <string>
 #include <utility>
@@ -56,18 +55,14 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         CHECK(m.SyncedAtEpochSec == 4242);
     }
 
-    TEST_CASE("the meta lives in its own table; a plain ticket save invalidates it") {
-        TempDbFile file;
-        LocalCacheManager cache(file.Path());
+    TEST_CASE("a plain ticket save invalidates the meta") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
         cache.SaveTicketsWithSyncMeta("K", {Row("A-1", "T1")}, {Meta("T1", {"summary", "updated"})});
+        REQUIRE(cache.GetTicketSyncMeta("K").count("A-1") == 1u);
         cache.SaveTicket("K", Row("A-1", "T1", "edited locally")); // INSERT OR REPLACE on tickets_v2
 
-        SQLite::Database raw(file.Path(), SQLite::OPEN_READONLY);
-        CHECK(raw.tableExists("ticket_sync_meta"));
-        SQLite::Statement q(raw, "SELECT COUNT(*) FROM ticket_sync_meta WHERE backend_key = 'K'");
-        REQUIRE(q.executeStep());
-        CHECK(q.getColumn(0).getInt() == 0); // SaveTicket rewrote the row without a version: meta dropped
-        CHECK(cache.GetTicketSyncMeta("K").empty());
+        CHECK(cache.GetTicketSyncMeta("K").empty()); // SaveTicket rewrote the row without a version: meta dropped
         cache.SaveTicketsWithSyncMeta("K", {Row("A-1", "T2")}, {Meta("T2", {"summary", "updated"})});
         CHECK(cache.GetTicketSyncMeta("K").count("A-1") == 1u);
     }
