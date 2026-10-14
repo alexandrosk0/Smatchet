@@ -701,11 +701,13 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
             }
             if (IntOr(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
                 (*indexIt)["lastUsedUnix"] = now;
-                ApplyPendingTouches(root, /*consume=*/true);
+                ApplyPendingTouches(root, /*consume=*/false); // dropped only once the write lands
                 std::string writeErr;
-                if (!PersistRootLocked(root, writeErr)) {
+                if (PersistRootLocked(root, writeErr)) {
+                    PendingTouches().clear();
+                } else {
                     // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
-                    // of truth.
+                    // of truth. The touches stay queued for the next write.
                     LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
                              writeErr.c_str());
                 }

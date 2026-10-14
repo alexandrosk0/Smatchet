@@ -14,6 +14,13 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 // The snapshot cache's `entries` index: Preferences' "Recently used projects" list and its Forget button
 // read it, and the LRU cap evicts through it. It must survive a reload.
 
@@ -383,4 +390,46 @@ TEST_CASE("FieldCatalogCache: an empty GitHub or Linear base URL keys and lists 
     CHECK(FieldCatalogCache::BuildFieldCatalogCacheKey(linear, "") ==
           FieldCatalogCache::BuildFieldCatalogCacheKey(linearDefault, ""));
     CHECK(FieldCatalogCache::BuildFieldCatalogIndexIdentity(linear).endpoint == "https://api.linear.app/graphql|team");
+}
+
+TEST_CASE("FieldCatalogCache: a failed touch write keeps the queued touches for the next write") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::int64_t recentUnix = TimeNowPure::NowUnixSeconds() - 60;
+    const std::string recent = std::to_string(recentUnix);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"k-recent\",\"projectKey\":\"R\",\"lastUsedUnix\":" +
+                             recent +
+                             "},"
+                             "{\"cacheKey\":\"k-old\",\"projectKey\":\"O\",\"lastUsedUnix\":100}],"
+                             "\"k-recent\":" +
+                             Blob("r") + ",\"k-old\":" + Blob("o") + "}");
+
+    REQUIRE(Loads("k-recent")); // used within the day: the touch waits in memory
+
+    // A directory where the temp file goes makes the atomic write fail on every platform.
+    const std::string blocker = file.Path() + ".tmp";
+#if defined(_WIN32)
+    REQUIRE(::_mkdir(blocker.c_str()) == 0);
+#else
+    REQUIRE(::mkdir(blocker.c_str(), 0755) == 0);
+#endif
+    CHECK(Loads("k-old")); // stale: tries to write, fails, still loads
+    const auto touchedAfterFailure = [&]() {
+        for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
+            if (e.projectKey == "R") {
+                return e.lastUsedUnix > recentUnix;
+            }
+        }
+        return false;
+    };
+    CHECK(touchedAfterFailure()); // the queued touch survived the failed write
+#if defined(_WIN32)
+    ::_rmdir(blocker.c_str());
+#else
+    ::rmdir(blocker.c_str());
+#endif
+
+    REQUIRE(Loads("k-old")); // the write works now and carries the touch to disk
+    CHECK(ReadCacheFile(file).find("\"lastUsedUnix\":" + recent) == std::string::npos);
 }

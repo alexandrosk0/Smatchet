@@ -138,7 +138,6 @@ Found in the Phase 3-5 review; none block the phases above.
   - A fetched row dropped because the cache holds a newer copy (`DropRowsOlderThanCached`, `QueueBatch`) is kept by id but never added to the pane's in-memory rows. A pane that does not already hold that row (a fresh pane, or one that evicted it) shows the view without it until the next sync. Read the cached copies of the dropped ids on the worker and queue them as an unchanged batch.
 - Found in the post-rebase review (deferred; none block the merge):
   - Field-catalog snapshot restore and save still touch the file on the UI thread: `TryLoadFieldCatalogSnapshot` reads the whole file (and, once a day per snapshot, rewrites it) from startup and the render-path error handler, and a successful catalog apply saves the snapshot synchronously (`AppController_CatalogAndFieldEdit.cpp`, already on develop). Move restore and save to a worker (Pillar 2).
-  - `TryLoadFieldCatalogSnapshot` consumes the pending touches before the write, so a failed write drops them and a stale key retries the write on every load (develop behaves the same on retry). Consume only after a successful persist.
   - `PendingTouches()` is a process-global keyed only by cache key, so a touch left over from one test can fold into the next test's file after a `TestEnvGuard` data-dir swap. Key it by cache path or add a test-only reset.
 
 ## Phase 7 notes (lookups)
