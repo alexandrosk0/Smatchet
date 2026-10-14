@@ -886,3 +886,16 @@ TEST_CASE("BuildJiraSearchUrl and BuildJiraIssueUrl add expand=changelog only on
     CHECK(BuildJiraIssueUrl("https://x.example", "A-1", "summary", true) ==
           "https://x.example/rest/api/3/issue/A-1?fields=summary&expand=changelog");
 }
+
+TEST_CASE("BuildJiraSearchUrl and BuildJiraIssueUrl URL-encode each field id and keep the comma separators") {
+    using smatchet::jira::BuildJiraIssueUrl;
+    using smatchet::jira::BuildJiraSearchUrl;
+    // A field id from the view config must not be able to start a new query parameter.
+    CHECK(BuildJiraSearchUrl("https://x.example", "j", 10, "summary,evil&maxResults=9999,customfield_1", false) ==
+          "https://x.example/rest/api/3/search/jql?jql=j&maxResults=10&fields=summary,evil%26maxResults%3D9999,"
+          "customfield_1");
+    CHECK(BuildJiraIssueUrl("https://x.example", "A-1", "a#b,c d", true) ==
+          "https://x.example/rest/api/3/issue/A-1?fields=a%23b,c%20d&expand=changelog");
+    CHECK(BuildJiraSearchUrl("https://x.example", "j", 10, "*none", false) ==
+          "https://x.example/rest/api/3/search/jql?jql=j&maxResults=10&fields=%2Anone");
+}
