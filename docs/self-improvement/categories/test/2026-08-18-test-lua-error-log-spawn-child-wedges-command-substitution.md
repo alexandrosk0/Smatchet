@@ -35,3 +35,5 @@
   Tooth 2 is the real fix; tooth 1 keeps the harness honest either way. The same inheritance
   applies to every `--spawn` caller, so the audit is worth running past
   `grep -rn -- '--spawn' scripts/ tests/`.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): the script-side fix landed for test-lua-error-log.sh and the three timeout-wrapped drivers (backlog-sweep PR #2296: timeout + capture to a file with stdin from /dev/null; a timeout is a FAILED row). Remaining: the other --spawn callers (the remaining test-ui-*.sh RAW_OUTPUT=$(...) captures, test-screenshot-diff.sh, perf-run.sh, and test-all.sh's own $(bash "$script")) still capture through a pipe, and the product-side fix (CliSpawn.cpp not inheriting stdout/stderr into the ephemeral child) is Windows C++.

@@ -306,41 +306,48 @@ static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
 // snippet through ExecuteLuaConsoleSnippet, returns captured lines + the
 // scriptingWindowOpenRequested_ flag state. Sinks persist after the call —
 // intended for ephemeral --spawn instances which exit between assertions.
-static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, IAppDebug& app) {
-    Command c =
-        MakeCommand("debug.lua_log_test",
-                    "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, "
-                    "window_requested} for automated validation.",
-                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+// The main Lua state is UI-thread-owned, while this command is dispatched from MCP /
+// automation workers too — so the whole body runs on the UI thread via
+// RunOnUiThreadAsCommandResult (inline when the caller already is the UI thread).
+static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster) {
+    Command c = MakeCommand(
+        "debug.lua_log_test",
+        "Run a Lua snippet on the UI thread, capturing the automation log + error sinks. Returns JSON {log_lines, "
+        "err_lines, "
+        "window_requested} for automated validation.",
+        [&app, &poster](const nlohmann::json& args, const CommandContext& /*ctx*/) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                        const std::string code = args.value("code", std::string());
-                        if (code.empty()) {
-                            return CommandResult::Failure(ErrorCode::ValidationError, "code required");
-                        }
-                        auto logCaptured = std::make_shared<std::vector<std::string>>();
-                        auto errCaptured = std::make_shared<std::vector<std::string>>();
-                        app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
-                        app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
-                        // Consume any prior request so we observe only this snippet's effect.
-                        (void)app.ConsumeScriptingWindowRequest();
-                        std::string outError;
-                        std::string outResult;
-                        const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
-                        const bool windowReq = app.ConsumeScriptingWindowRequest();
-                        nlohmann::json out;
-                        out["ok_snippet"] = ok;
-                        out["snippet_error"] = outError;
-                        out["snippet_result"] = outResult;
-                        out["log_lines"] = *logCaptured;
-                        out["err_lines"] = *errCaptured;
-                        out["window_requested"] = windowReq;
-                        return CommandResult::Success(std::move(out));
+            const std::string code = args.value("code", std::string());
+            if (code.empty()) {
+                return CommandResult::Failure(ErrorCode::ValidationError, "code required");
+            }
+            return RunOnUiThreadAsCommandResult(poster, [&app, code]() {
+                auto logCaptured = std::make_shared<std::vector<std::string>>();
+                auto errCaptured = std::make_shared<std::vector<std::string>>();
+                app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
+                app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
+                // Consume any prior request so we observe only this snippet's effect.
+                (void)app.ConsumeScriptingWindowRequest();
+                std::string outError;
+                std::string outResult;
+                const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
+                const bool windowReq = app.ConsumeScriptingWindowRequest();
+                nlohmann::json out;
+                out["ok_snippet"] = ok;
+                out["snippet_error"] = outError;
+                out["snippet_result"] = outResult;
+                out["log_lines"] = *logCaptured;
+                out["err_lines"] = *errCaptured;
+                out["window_requested"] = windowReq;
+                return CommandResult::Success(std::move(out));
+            });
 #else
             (void)app;
+            (void)poster;
             (void)args;
             return CommandResult::Failure(ErrorCode::HandlerError, "Lua automation is not enabled in this build.");
 #endif
-                    });
+        });
     c.Destructive = true;
     c.Idempotent = false;
     c.Params = {PString("code", "Lua code to evaluate (snippet form, sandboxed).", true)};
@@ -348,25 +355,29 @@ static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, IAppDebug& app)
 }
 
 // --- debug.lua_eval ---------------------------------------------------------
-static void RegisterDebugLuaEvalCommand(CommandRegistry& reg, IAppDebug& app) {
+// Same UI-thread ownership as debug.lua_log_test above: the snippet runs on the main Lua
+// state, so it is marshalled onto the UI thread rather than run on the dispatching worker.
+static void RegisterDebugLuaEvalCommand(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster) {
     Command c =
-        MakeCommand("debug.lua_eval", "Evaluate a Lua code snippet and return the result summary.",
-                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        MakeCommand("debug.lua_eval", "Evaluate a Lua code snippet on the UI thread and return the result summary.",
+                    [&app, &poster](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                         const std::string code = args.value("code", std::string());
-                        std::string outError;
-                        std::string outResult;
-                        const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
-                        if (!ok) {
-                            return CommandResult::Failure(ErrorCode::HandlerError, "Lua eval failed: " + outError);
-                        }
-                        return CommandResult::Success({{"result", outResult}});
+                        return RunOnUiThreadAsCommandResult(poster, [&app, code]() {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                            std::string outError;
+                            std::string outResult;
+                            const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
+                            if (!ok) {
+                                return CommandResult::Failure(ErrorCode::HandlerError, "Lua eval failed: " + outError);
+                            }
+                            return CommandResult::Success({{"result", outResult}});
 #else
-                        (void)app;
-                        (void)args;
-                        return CommandResult::Failure(ErrorCode::HandlerError,
-                                                      "Lua automation is not enabled in this build.");
+                            (void)app;
+                            (void)code;
+                            return CommandResult::Failure(ErrorCode::HandlerError,
+                                                          "Lua automation is not enabled in this build.");
 #endif
+                        });
                     });
     c.Destructive = true;
     c.Idempotent = false;
@@ -591,8 +602,8 @@ void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPost
     RegisterDebugMcpStatusCommand(reg, app);
     RegisterDebugThreadDumpCommand(reg);
     RegisterDebugDumpSelfCommand(reg);
-    RegisterDebugLuaLogTestCommand(reg, app);
-    RegisterDebugLuaEvalCommand(reg, app);
+    RegisterDebugLuaLogTestCommand(reg, app, poster);
+    RegisterDebugLuaEvalCommand(reg, app, poster);
     RegisterDebugDockDumpCommand(reg, poster);
     RegisterDebugDockResetCommand(reg, poster);
     RegisterDebugWindowResizeCommand(reg, poster);

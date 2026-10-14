@@ -38,7 +38,7 @@
     user-authored trigger inside the *same* window (`17:30:31Z`) still drew an
     ack. If that asymmetry is real, identity changes how loudly CR *declines*,
     not whether it honours a trigger. Separately, the sibling entry
-    [`2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md`](2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md)
+    [`2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop.md`](../applied.md)
     records 31 min of silence on a `claude[bot]`-authored trigger with no such
     confound; that is a *different app identity* and stays an open observation.
     Its § (a) has been corrected in the same change to stop asserting the
@@ -54,5 +54,6 @@
     entry's action item (1) is on hold for exactly this reason. (3) Independent
     of the outcome, make the gate's PENDING check description name the required
     action, so a parked PR is self-explanatory whoever has to unpark it.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): item 3 landed (backlog-sweep PR #2296: the window-exhausted and fallback PENDING descriptions name the human next step, ASCII ≤140 chars). Remaining: action 1, the clean experiment (let the gate's nudge fire with no human trigger in the same hour and record whether a review lands) — needs a live parked PR; action 2 stays in force — merge-gates.md now states the bot/human asymmetry as an observation, not a policy.
   Status: open
-  Last-reviewed: 2026-08-16
+  Last-reviewed: 2026-10-04

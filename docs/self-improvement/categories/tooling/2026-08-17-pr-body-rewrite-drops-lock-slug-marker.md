@@ -31,7 +31,7 @@ gated on `steps.parse.outputs.slug != ''`, reported **skipped**. Green run, no r
 
 ## Why this is not the entry already on file
 
-[`2026-08-16-commented-lock-slug-marker-silently-skips-release.md`](2026-08-16-commented-lock-slug-marker-silently-skips-release.md)
+[`2026-08-16-commented-lock-slug-marker-silently-skips-release.md`](../applied.md)
 covers the *commented-out* marker (`<!-- lock-slug: … -->` — present but unanchored),
 and its proposed guard is explicitly keyed on that shape: *"when the body contains
 `lock-slug:` but the anchored regex matched nothing"*. **That guard cannot fire here** —
@@ -70,3 +70,5 @@ so an unreleased lock blocks work on files nobody holds. And the signal shape is
 available: the gate whose entire job is releasing the lock reports **success** while
 skipping the release — the "gate, don't trust" failure mode this repo files postmortems
 over.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): fixes 1 and 2 landed (backlog-sweep PR #2296: branch-keyed release at close; agents/scripts/core/lib/pr-body-edit.sh refuses a body that drops a lock-slug:/holds-lock: line, and ship-loops.md routes body rewrites through it). Remaining: fix 3, a closeout-sweep assertion that no refs/locks/* names the merged branch.

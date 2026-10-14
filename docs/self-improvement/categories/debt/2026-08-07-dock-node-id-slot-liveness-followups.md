@@ -57,3 +57,5 @@
   Context on why an existence check alone is insufficient:
   the 2026-08-07 id-existence-checks-need-containment entry, archived in
   [`categories/applied.md`](../applied.md).
+
+Re-scoped 2026-10-06 (backlog-sweep-2026-10): a build-free gate (tests/bats/dock_node_ids.bats via scripts/dev/test-dock-node-ids-bats.sh) now fails when a dock-slot constant is not cut by the default layout, and Ui/AGENTS.md documents it (PR #2296). Remaining: (1) widen the helper for the five sites that hand-roll the Always/FirstUseEver guard (four are Smatchet*Ui*.cpp, visual-validation files); (2) the kSecondarySideBar product decision — cut a real node or delete the constant and its feature; it is allow-listed in dock_node_ids.bats, and that entry turns the gate red once the default ini cuts the node.

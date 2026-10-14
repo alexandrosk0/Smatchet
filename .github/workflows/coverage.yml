@@ -196,8 +196,17 @@ jobs:
         run: |
           oob=$(printf '%s' "${PR_LABELS:-[]}" | python -c "import json,sys; d=json.load(sys.stdin) or []; print(int(any(l.get('name')=='coverage-out-of-band' for l in d)))")
           if [ "$oob" = "1" ]; then
-            if ! bash scripts/dev/coverage.sh --xml-only --threshold 70; then
+            # The label waives ONLY a threshold miss (coverage.sh exit 4). A test
+            # failure (1), a missing binary (2) or a coverage infra crash (3)
+            # stays red: downgrading those would also fail the per-file gate open
+            # on the coverage.xml that was never written.
+            rc=0
+            bash scripts/dev/coverage.sh --xml-only --threshold 70 || rc=$?
+            if [ "$rc" -eq 4 ]; then
               echo "::warning::line coverage below threshold — downgraded to WARN by the coverage-out-of-band label. Queue the coverage-recovery follow-up before removing the label."
+            elif [ "$rc" -ne 0 ]; then
+              echo "::error::coverage.sh exited $rc — not a threshold miss, so coverage-out-of-band does not downgrade it (only exit 4 is waivable)."
+              exit "$rc"
             fi
           else
             bash scripts/dev/coverage.sh --xml-only --threshold 70

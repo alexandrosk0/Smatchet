@@ -23,7 +23,7 @@ nlohmann::json AnthropicBuildChatBodyJson(const AiChatRequest& req);
 nlohmann::json OllamaNativeBuildChatBodyJson(const AiChatRequest& req);
 
 // Fully-resolved chat endpoint URL for each provider (base-URL fallback + suffix
-// handling included, via the client's own ResolveBaseUrl/JoinUrl).
+// handling included, via the client's own ResolveBaseUrl + AiWirePure.h JoinUrl).
 std::string OpenAiResolveChatUrl(const AiClientConfig& cfg);
 std::string AnthropicResolveChatUrl(const AiClientConfig& cfg);
 std::string OllamaNativeResolveChatUrl(const AiClientConfig& cfg);

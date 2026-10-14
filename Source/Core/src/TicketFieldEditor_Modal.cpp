@@ -15,6 +15,7 @@
 
 #include "Json/BoundedJsonParse.h"
 
+#include "Ui/SmatchetModalPopupOpen.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetUiSession.h"
 
@@ -688,16 +689,10 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         return;
     }
 
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (s_ActiveLongTextState.JustOpened) {
         // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
         // outside the table, so ImGui can correctly anchor the popup to this window.
-        ImGui::OpenPopup(kLongTextModalPopupId);
-        const ImVec2 modalSize(viewport->Size.x * 0.6f, viewport->Size.y * 0.65f);
-        ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(
-            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
-            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        smatchet::ui::OpenCenteredModalPopup(kLongTextModalPopupId, 0.6f, 0.65f);
     }
 
     // The title-bar close (X) is driven by p_open, the same affordance as every other window. When

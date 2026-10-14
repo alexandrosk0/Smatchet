@@ -64,3 +64,5 @@ run from the repo top against a diff touching only `agents/scripts/core/**` (the
 nothing itself; the echo shows its result) — today this always prints
 `rc=1 reason=0 C++ lines, no strict-zone touch` regardless of how large or behavior-changing the
 script diff is.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): step 1 landed (backlog-sweep PR #2296: lib/review-ack.sh RA_ENFORCEMENT_GLOBS + ra_touches_enforcement_surface / ra_enforcement_fingerprint; pre-ship --ack-review records an enforcement line and the gate WARNs — never blocks — when a gate-script diff has none; RA_CPP_GLOBS and the pre-commit hook unchanged). Remaining: steps 2-3 after a calibration window (WARN-first since 2026-10-05): promote to an ra_is_substantive trigger feeding the .review-findings.json contract, then update ship-loops.md item 5 and the scripts' C++-only scope comments.

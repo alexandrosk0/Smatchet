@@ -43,11 +43,24 @@ ImVec4 ColFromRgba(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
 // A shown failure is asked again after the describe cache's own failure backoff, so the retry runs p4.
 constexpr std::chrono::seconds kRetryShownFailureAfter{smatchet::offline::kLookupRetryAfterSeconds};
 
-// Describe `cl` off the UI thread into HoverFut (the describe cache answers repeats without p4).
-void StartDescribe(const AnnotateAnalysisConfig& cfg, const std::string& cl) {
-    AnnotateAnalysisConfig cfgCopy = cfg;
-    S().HoverFut =
-        std::async(std::launch::async, [cfgCopy, cl]() { return S().Cache.GetOrFetch(cfgCopy, cl); }).share();
+// Describe `cl` off the UI thread into HoverFut (the describe cache answers repeats without p4). When no
+// worker can be started (std::async throws std::system_error once threads run out), the failure becomes
+// the tooltip's error and is retried after the usual backoff, instead of escaping the frame or leaving a
+// "Loading" that never ends.
+void StartDescribe(const AnnotateAnalysisConfig& cfg, const std::string& cl,
+                   std::chrono::steady_clock::time_point now) {
+    try {
+        AnnotateAnalysisConfig cfgCopy = cfg;
+        S().HoverFut =
+            std::async(std::launch::async, [cfgCopy, cl]() { return S().Cache.GetOrFetch(cfgCopy, cl); }).share();
+    } catch (const std::exception& ex) {
+        LOG_WARN("P4ClPreview: could not start the changelist describe for CL %s: %s", cl.c_str(), ex.what());
+        S().HoverFut = std::shared_future<P4ChangelistDetails>();
+        S().HoverResult = P4ChangelistDetails();
+        S().HoverResult.Error = std::string("Could not load CL info: ") + ex.what();
+        S().HoverResultReady = true;
+        S().HoverResultAt = now;
+    }
 }
 
 // The finished describe in `fut`. A worker that threw becomes an error to show (never a load that looks as
@@ -110,13 +123,13 @@ void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg
         S().HoverCl = cl;
         S().HoverResult = P4ChangelistDetails();
         S().HoverResultReady = false;
-        StartDescribe(cfg, cl);
+        StartDescribe(cfg, cl, now);
     } else if (S().HoverResultReady && !S().HoverResult.Error.empty() && !S().HoverFut.valid() &&
                now - S().HoverResultAt >= kRetryShownFailureAfter) {
         // Still hovering a CL whose describe failed: ask again once the describe cache's backoff has
         // passed (a server that was unreachable may be back). The error stays up until the answer lands.
         S().HoverResultAt = now;
-        StartDescribe(cfg, cl);
+        StartDescribe(cfg, cl, now);
     }
     ImGui::BeginTooltip();
     ImGui::TextDisabled("Left-click this changelist cell to open it in p4vc.");

@@ -59,3 +59,5 @@ operator is pushed into for a one-markdown-file delta trains the reflex of apply
 unreviewed delta really is a `Source/Core` change gets the same reflexive waiver. The gate
 spends its credibility on a case it did not need to block, and has none left for the case
 it did.
+
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): the #2070 shape is pinned green (backlog-sweep PR #2296: prior-commit clean review → STALE_CLEAN; the code-PR pause is gated on cr_state==NONE). Remaining: the unreviewed-delta classifier and printing the delta in the BLOCK line — and the inverse: a STALE_CLEAN head currently passes whatever the unreviewed delta contains, code included.

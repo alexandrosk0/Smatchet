@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+struct TrackerConfig;
+
 // AboutInfo — the pure data layer behind Help > About. Assembles the version /
 // build / git / runtime / third-party facts into plain structs, and renders the
 // copy-to-clipboard report text. ImGui-free and headlessly testable, so the UI
@@ -104,6 +106,12 @@ std::string FormatAboutGitLine(const AboutGitInfo& git);
 /// Reads ConfigManager (disk-backed config) — call once on dialog open and
 /// cache, never per frame.
 AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& githubRepo);
+
+/// The same with the tracker config supplied rather than loaded: `cfg.TrackerType`
+/// names the active backend. The form above forwards ConfigManager::Load() here;
+/// tests pass a synthetic config so no on-disk config reaches them. The data-dir
+/// and config-path fields are still the resolved paths, read but not opened.
+AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& githubRepo, const TrackerConfig& cfg);
 
 /// Render the clipboard / bug-thread report. Plain `\n` line endings, terminated
 /// by exactly one `\n`. Caller is responsible for running it through

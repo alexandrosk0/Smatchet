@@ -127,6 +127,15 @@ TEST_CASE("GitHub UpdateField labels — pre-fetch + diff issues one batch POST 
         CHECK(err.Kind == TrackerErrorKind::ServerError);
         CHECK(err.IsRetryable());
     }
+    SUBCASE("a commit row is read-only: UpdateField refuses it before building a payload") {
+        // `resolution` has no GitHub payload, so the read-only error can only win if the
+        // commit-key guard runs before BuildFieldPayload (UpdateIssueFields never sees it).
+        const TrackerError err = client.UpdateField("o/r@0123abcd", FieldWithId("resolution"), {"Done"});
+        CHECK(err.Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(err.Detail.find("immutable history") != std::string::npos);
+        CHECK(fx.RequestCount(kIssuePath) == 0);
+        CHECK(fx.RequestCount(kLabelsPath) == 0);
+    }
 }
 
 TEST_CASE("GitHub UpdateIssueFields — milestone title resolves to its number before the PATCH") {

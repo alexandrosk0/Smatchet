@@ -8,10 +8,15 @@ name: TSan Linux nightly
 # the portable threading TUs (LocalCacheManager SQLite cache + Pure units today;
 # expansion tracked in docs/plans/active/build-quality-velocity-hardening.md).
 #
-# ADVISORY / non-required: NOT on the develop merge-gate critical path and NOT in
-# project.config.json required_contexts. The pull_request trigger (paths-scoped)
-# runs it on PRs that touch the build/sanitizer/threading surface so a race
-# regression surfaces at review time; the nightly cron is the develop backstop.
+# Non-required, but NOT advisory: it is not in project.config.json
+# required_contexts, so GitHub branch protection does not wait on it — yet its
+# check name carries no `advisory` token, so under merge-gates.sh's
+# block-on-any-red a red `TSan Linux subset (Clang)` BLOCKS the merge whenever it
+# runs on a PR. That is deliberate (the lane has been reliably green; infra
+# 2026-08-16 tsan-lane-advisory-label-drift, option b). The pull_request trigger
+# is paths-scoped, so it lands only on PRs that touch the build/sanitizer/
+# threading surface and a race regression surfaces at review time; the nightly
+# cron is the develop backstop.
 #
 # SMATCHET_BUILD_APP=OFF (set by the ninja-tsan-linux preset) skips GLFW / Dear
 # ImGui / Lua / whisper / Standalone / DX12, so no X11 / OpenGL -dev packages are

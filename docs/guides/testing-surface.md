@@ -60,6 +60,37 @@ infrastructure**, never "manual forever."
 | **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan/UBSan; exit code = assertion | required (Slice C) |
 | **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness and on per-test failures (llvmpipe-only tests self-skip) |
 
+### 2.1 Bucket-E traps — docked Preferences + modals
+
+Two harness traps that each read as a product defect ("the widget does not exist")
+and each cost hours to re-derive:
+
+- **The docked Preferences body stops being submitted.** Preferences is a docked
+  tab; `beginPreferencesWindow` ([`SmatchetPreferencesUi.cpp`](../../Source/Core/src/Ui/SmatchetPreferencesUi.cpp))
+  selects it only while `g_ui.requestPreferencesFocus` is armed and clears the latch
+  once the tab resolves. On any later frame where a sibling tab holds the dock node,
+  `Begin()` returns false and no body widget is drawn. Arming from the test coroutine is not enough —
+  `ItemExists` / `ItemClick` / `ItemInfo` yield frames internally, and those run
+  un-armed. Re-arm from **`GuiFunc`**, which runs every frame while the test is
+  active (`ArmPreferencesFrame` in [`prefs_search_filter.test.cpp`](../../tests/ui/prefs_search_filter.test.cpp)
+  also clears persisted collapsed sections, whose bodies never run).
+- **An open `Update Available###AppUpdateAvailable` modal inhibits everything
+  beneath it** — it owns `g.NavWindow` and nulls the hovered window, including over
+  a test's own replica windows. One cause, three symptoms: an `ItemClick` that never
+  lands, `"Unable to set NavId"` on `ItemNavActivate`, items that never register.
+  Drivers that call `ui_test_isolate_home` from the shared preamble
+  ([`scripts/dev/lib/ui-test-driver.sh`](../../scripts/dev/lib/ui-test-driver.sh))
+  export `SMATCHET_UPDATE_CHECK=0`, so the startup check never opens it. A test that
+  must run without that clears `g_ui.appUpdateModalOpen` every frame from `GuiFunc`
+  — `ctx->PopupCloseAll()` closes it once but does not stop it reopening.
+
+The same preamble boots each driver against a throwaway profile (`--seed` for a
+configured one; pin it with `SMATCHET_UI_TEST_HOME`), hard-fails a stale exe
+(`SMATCHET_ALLOW_STALE_EXE=1` to override), and captures a spawn through a file so
+an orphaned `--spawn` child cannot wedge the run;
+[`ui_driver_filters.bats`](../../tests/bats/ui_driver_filters.bats) holds every
+`test-ui-*.sh` to it and to a default filter that names a registered test.
+
 ---
 
 ## 3. CI gating map — required vs advisory (the asymmetry)

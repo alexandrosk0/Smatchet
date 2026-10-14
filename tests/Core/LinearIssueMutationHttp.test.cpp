@@ -112,6 +112,29 @@ TEST_CASE("Linear update — resolve hop + issueUpdate wire shape and error taxo
         CHECK(update["variables"]["id"].get<std::string>() == kIssueUuid);
         CHECK(update["variables"]["input"] == input);
     }
+    SUBCASE("UpdateField (interface default): the one-field IssueUpdateInput reaches issueUpdate") {
+        LinearGraphQlScript script;
+        script.MutationResponse = MutationOk("issueUpdate");
+        script.Install(fx);
+        TrackerField summary;
+        summary.Id = "summary";
+        const TrackerError err = client.UpdateField("ENG-123", summary, {"renamed"});
+        CHECK(err.IsOk());
+        CHECK(fx.RequestCount(kGraphQlPath) == 2); // resolve + mutation, in that order
+        const std::vector<std::string> bodies = script.Capture.Snapshot();
+        REQUIRE(bodies.size() == 2);
+        CHECK(nlohmann::json::parse(bodies[0])["variables"]["id"].get<std::string>() == "ENG-123");
+        const nlohmann::json update = nlohmann::json::parse(bodies[1]);
+        CHECK(update["variables"]["id"].get<std::string>() == kIssueUuid);
+        CHECK(update["variables"]["input"] == nlohmann::json{{"title", "renamed"}});
+    }
+    SUBCASE("UpdateField on a field Linear cannot edit fails before any HTTP") {
+        TrackerField resolution;
+        resolution.Id = "resolution";
+        const TrackerError err = client.UpdateField("ENG-123", resolution, {"Done"});
+        CHECK(err.Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(fx.RequestCount(kGraphQlPath) == 0);
+    }
     SUBCASE("unknown identifier: resolve returns no issue → InvalidRequest naming it") {
         LinearGraphQlScript script;
         script.ResolveResponse = nlohmann::json{{"data", {{"issue", nullptr}}}};

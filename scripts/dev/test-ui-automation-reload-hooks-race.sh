@@ -34,6 +34,10 @@
 
 set -euo pipefail
 
+# Shared bucket-E preamble (exe staleness guard, throwaway profile, wedge-proof capture).
+# shellcheck source=scripts/dev/lib/ui-test-driver.sh
+. "$(dirname "$0")/lib/ui-test-driver.sh"
+
 # Default to the MSVC ASan UI-test build (this is the preset most reliably
 # available on a Windows dev box without a Clang toolchain); override with
 # SMATCHET_EXE for the Clang ASan build or a plain ninja-ui-test-msvc exe
@@ -49,8 +53,8 @@ FILTER="${UI_TEST_FILTER:-ConcurrentReloadHooks}"
 # never wedges CI — the test's own bounded frame loop cannot force a stuck
 # std::thread::join() to return (no-detach is an absolute rule here), so the
 # process-level timeout is the actual backstop. Same convention as
-# test-ui-ai-assistant-model-change.sh; guarded on `timeout` being present
-# (git-bash on Windows may lack it).
+# test-ui-ai-assistant-model-change.sh; ui_test_capture guards on `timeout` being
+# present (git-bash on Windows may lack it).
 RUN_TIMEOUT_SECS="${SMATCHET_RUN_TIMEOUT_SECS:-180}"
 
 if [ ! -f "$EXE" ]; then
@@ -60,24 +64,31 @@ if [ ! -f "$EXE" ]; then
     exit 2
 fi
 
+ui_test_require_fresh_exe "$EXE" || exit 2
+
+# ui-test-home: opt-out — the race drives RunLuaSetupScript, whose script-consent gate reads the profile; an empty one can refuse the hook script before the main lua_State is touched, hollowing the ASan oracle.
+
 echo "[test-ui-automation-reload-hooks-race] launching ephemeral Smatchet (exe=$EXE port=$TEST_PORT)..."
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:halt_on_error=1:symbolize=1}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 
-if command -v timeout >/dev/null 2>&1; then
-    RAW_OUTPUT="$(timeout "$RUN_TIMEOUT_SECS" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-        --mcp-port="$TEST_PORT" 2>&1 || true)"
-else
-    echo "[test-ui-automation-reload-hooks-race] warning: 'timeout' not found — running without wall-clock guard." >&2
-    RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-        --mcp-port="$TEST_PORT" 2>&1 || true)"
-fi
+# Captured through a FILE, not `$(...)`: a --spawn grandchild that outlives the
+# CLI would hold a command-substitution pipe open forever.
+ui_test_capture "$RUN_TIMEOUT_SECS" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    --mcp-port="$TEST_PORT"
+RAW_OUTPUT="$UI_TEST_OUTPUT"
 
 echo "$RAW_OUTPUT" | tail -60
 
 if echo "$RAW_OUTPUT" | grep -qE "(==ERROR: AddressSanitizer:|runtime error:|UndefinedBehaviorSanitizer:|LeakSanitizer:)"; then
     echo >&2
     echo "FAIL: sanitizer report detected — the automation.reload-hooks race regression has re-opened." >&2
+    echo "Passed: 0  Failed: 1"
+    exit 1
+fi
+
+if ui_test_timed_out; then
+    echo "FAIL: ui_test.run exceeded ${RUN_TIMEOUT_SECS}s hard timeout (hung worker join / UI-thread hop?) — aborted." >&2
     echo "Passed: 0  Failed: 1"
     exit 1
 fi

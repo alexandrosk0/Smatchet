@@ -145,6 +145,10 @@ std::string FormatAboutGitLine(const AboutGitInfo& git) {
 }
 
 AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& githubRepo) {
+    return GatherAboutInfo(appVersion, githubRepo, ConfigManager::Load());
+}
+
+AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& githubRepo, const TrackerConfig& cfg) {
     AboutInfo info;
     info.AppName = "Smatchet";
     info.Version = appVersion.empty() ? std::string(kUnknown) : appVersion;
@@ -189,7 +193,6 @@ AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& gith
     info.Git.Dirty = SMATCHET_GIT_DIRTY != 0;
     info.Git.Shallow = SMATCHET_GIT_SHALLOW != 0;
 
-    const TrackerConfig cfg = ConfigManager::Load();
     info.Runtime.Os = HostOsName();
     info.Runtime.Arch = HostArchName();
     const HostMachineInfo machine = DetectHostMachine();

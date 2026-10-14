@@ -245,15 +245,6 @@ Result<nlohmann::json, TrackerError> PlaneClient::BuildFieldPayload(const Tracke
     return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
-TrackerError PlaneClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                                      const std::vector<std::string>& values) {
-    auto payloadResult = BuildFieldPayload(field, values);
-    if (!payloadResult) {
-        return payloadResult.error();
-    }
-    return UpdateIssueFields(issueId, payloadResult.value());
-}
-
 std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                              const std::string& value) const {
     std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);

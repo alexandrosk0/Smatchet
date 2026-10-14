@@ -136,3 +136,25 @@ TEST_CASE("RequeueDeferredFront: empty inputs and exact-fit are no-op-safe") {
     CHECK(out[0] == 1);
     CHECK(out[3] == 4);
 }
+
+TEST_CASE("TrimDispatcherQueue: drops the oldest droppable entries first, completions only past their cap") {
+    // Negative values stand in for completions, non-negative for droppable tasks.
+    auto isCompletion = [](int v) { return v < 0; };
+    std::vector<int> q = {-1, 0, 1, -2, 2, 3};
+    smatchet::DispatcherQueueTrim trim = smatchet::TrimDispatcherQueue(q, 2, 10, isCompletion);
+    CHECK(trim.DroppedDroppable == 2);
+    CHECK(trim.DroppedCompletions == 0);
+    CHECK(trim.CompletionsLeft == 2);
+    CHECK(q == std::vector<int>({-1, -2, 2, 3})); // survivors keep their order
+
+    std::vector<int> completions = {-1, -2, -3, 0};
+    trim = smatchet::TrimDispatcherQueue(completions, 10, 2, isCompletion);
+    CHECK(trim.DroppedCompletions == 1);
+    CHECK(trim.CompletionsLeft == 2);
+    CHECK(completions == std::vector<int>({-2, -3, 0}));
+
+    std::vector<int> underCaps = {-1, 0};
+    trim = smatchet::TrimDispatcherQueue(underCaps, 1, 1, isCompletion);
+    CHECK(trim.DroppedDroppable + trim.DroppedCompletions == 0);
+    CHECK(underCaps.size() == 2);
+}

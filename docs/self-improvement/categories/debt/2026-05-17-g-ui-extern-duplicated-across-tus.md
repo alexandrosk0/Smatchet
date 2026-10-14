@@ -1,0 +1,7 @@
+- 2026-05-17 · code-review · [debt] · P3 — PR #146 `Source/Core/src/Commands/Scenarios/*.cpp` manual `extern UiDrawSession g_ui;` duplicated across files
+  Details: Duplicated across `CommandPaletteFuzzyScenario.cpp` + `DockGapSentinelScenario.cpp` + `BuiltinCommands_Debug.cpp`.
+  Concrete next action: promote to an unconditional `extern` in `SmatchetUiSession.h`. Surfaced by retrospective code-review sweep on PR #146.
+  Re-filed 2026-10-04 (backlog-sweep-2026-10): moved from process.md — this is product tech-debt, not workflow friction.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): the header half is done — SmatchetUiSession.h declares an unconditional global-scope extern UiDrawSession g_ui (no #if). What remains is mechanical: ~49 TUs (Commands/, Commands/Scenarios/, Commands/Builtin/, Source/Standalone/, tests/ui/) still re-declare it, several with stale 'header-side extern is gated' comments. Deleting them is safe by construction (every one includes the header) but only the Source/Core half compiles on Linux; do it in a PR that can watch the MSVC + UI-test lanes.
+  Status: partially applied (2026-06-20 trap-sweep — shipped: central extern (SmatchetUiSession.h:938 `extern UiDrawSession g_ui;`); remaining: the per-file duplicate extern declarations are NOT removed (still in CommandPaletteFuzzyScenario.cpp, DockGapSentinelScenario.cpp, AiChatHistoryRenderScenario.cpp, +6 more) — the dedup goal is unmet)
+  Last-reviewed: 2026-10-04

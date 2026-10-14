@@ -21,5 +21,6 @@ Concrete next action:
 Cover both with the existing GitHub and Linear HTTP-fixture tests, then delete the five exemptions
 (`revisit=2027-06-30`).
 
+Re-scoped 2026-10-06 (backlog-sweep-2026-10): part (2) is done: ITrackerIssueMutations::UpdateField has a default body that routes through UpdateIssueFields, and the GitHub/Linear/Jira/Plane copies are gone (PR #2296). Remaining part (1): extract the streamed-page emitter and summary fill shared by the GitHub and Linear FetchIssuesStreamed, plus the constructor auth-logging and degrade-to-warning twins; four plumbing-twins markers remain in GitHubClient.cpp.
 Status: open
-Last-reviewed: 2026-10-03
+Last-reviewed: 2026-10-06
