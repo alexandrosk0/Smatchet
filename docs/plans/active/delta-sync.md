@@ -143,8 +143,8 @@ Found in the Phase 3-5 review; none block the phases above.
 
 ## Phase 7 notes (lookups)
 
-- `FieldCatalogRefreshTtlSec` (default 43200) and `LookupCacheTtlSec` (default 86400) are `config.set` keys only; no Preferences control yet.
-- The saved project list and the saved project components skip the live fetch while younger than `LookupCacheTtlSec`; the per-issue-type edit permissions (`kEditMetaTypeKind`) still refresh on every warm and are a follow-up.
+- `FieldCatalogRefreshTtlSec` (default 43200) and `LookupCacheTtlSec` (default 0 = off; opt in with 60..2592000) are `config.set` keys only; no Preferences control yet.
+- The saved project list and the saved project components skip the live fetch while younger than `LookupCacheTtlSec` (only when it is set above 0: the default 0 keeps the offline-first contract that a picker opened online, or reopened after an outage, reloads live); the per-issue-type edit permissions (`kEditMetaTypeKind`) still refresh on every warm and are a follow-up.
 - The startup catalog fetch is skipped once per run when the restored snapshot is inside its lifetime and covers every column of the active view; the grid shows it with a "saved" cue and refetches when it expires. `FieldCatalogCache` now keeps `savedUnix` in the index (the v3 load also used to drop the whole `entries` index on every read; fixed).
 - `ITicketSyncDeps::OnTicketsRemotelyChanged` fires for resident rows whose `updated` moved (sync drain and change-monitor apply) and invalidates their transitions and per-issue editmeta.
 - The comments modal shows the saved thread instantly as a seed and always runs the live fetch (the Phase 7 refetch skip and its `comment_thread_at` stamp were removed in the pre-merge review: a stamp from the same cached row says nothing about the tracker).

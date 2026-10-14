@@ -176,7 +176,7 @@ struct TrackerConfig {
     int FieldCatalogRefreshTtlSec = 43200;
     // A saved lookup row (project list, project components) younger than this many seconds is served without a
     // live fetch. Clamped to [60, 2592000] at load. Default 1 day.
-    int LookupCacheTtlSec = 86400;
+    int LookupCacheTtlSec = 0;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.

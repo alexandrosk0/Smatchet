@@ -11,7 +11,7 @@
 #include "TrackerFieldValueParser.h"
 #include "Tracker/CommentBlobFormatPure.h"
 #include "Tracker/TrackerFieldSchema.h"
-#include "Tracker/TrackerHttpUtils.h"
+#include "Tracker/TrackerHttpPure.h"
 
 #include <algorithm>
 #include <cctype>

@@ -101,7 +101,7 @@ TEST_CASE("lookup lifetime config: defaults, round-trip, clamps on Load") {
     smatchet_tests::TestEnvGuard env;
     const TrackerConfig def;
     CHECK(def.FieldCatalogRefreshTtlSec == 43200);
-    CHECK(def.LookupCacheTtlSec == 86400);
+    CHECK(def.LookupCacheTtlSec == 0);
 
     TrackerConfig tooLow;
     tooLow.FieldCatalogRefreshTtlSec = 1;
@@ -127,4 +127,10 @@ TEST_CASE("lookup lifetime config: defaults, round-trip, clamps on Load") {
     const TrackerConfig loaded = ConfigManager::Load();
     CHECK(loaded.FieldCatalogRefreshTtlSec == 3600);
     CHECK(loaded.LookupCacheTtlSec == 7200);
+
+    TrackerConfig off;
+    off.LookupCacheTtlSec = 0;
+    ConfigManager::Save(off);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().LookupCacheTtlSec == 0);
 }

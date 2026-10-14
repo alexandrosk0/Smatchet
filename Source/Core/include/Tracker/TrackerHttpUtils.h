@@ -16,7 +16,7 @@ constexpr long kTrackerOverallTimeoutMs = 30000;
 constexpr long kTrackerProbeConnectTimeoutMs = 2000;
 constexpr long kTrackerProbeOverallTimeoutMs = 5000;
 
-std::string UrlEncode(const std::string& value);
+// UrlEncode lives in TrackerHttpPure.h (cpr-free, inline) so pure URL builders can use it.
 std::string NormalizeBaseUrl(const std::string& domain);
 // RedactHttpBodyForLog moved to TrackerHttpPure.h (cpr-free) so cpr-free targets
 // (TSan rig, ConnectivityMonitorService) can link it — still visible via the include above.

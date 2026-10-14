@@ -132,7 +132,11 @@ void ClampScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // Lookup lifetimes: below 5 minutes (catalog) / 1 minute (lookups) the cache saves nothing; above 30 days a
     // renamed field, project or component would stay wrong for too long.
     ClampInPlace(cfg.FieldCatalogRefreshTtlSec, 300, 2592000);
-    ClampInPlace(cfg.LookupCacheTtlSec, 60, 2592000);
+    // LookupCacheTtlSec 0 (the default) turns the lifetime off: the project list and components go live on every
+    // open, which the offline-first contract (back online -> a live reload) expects.
+    if (cfg.LookupCacheTtlSec != 0) {
+        ClampInPlace(cfg.LookupCacheTtlSec, 60, 2592000);
+    }
     // Quick-create engine-context log tail — zero/negative would silently drop the log
     // section; past 300 lines the description prefill stops being a summary.
     ClampInPlace(cfg.QuickCreateCtxLogLines, 1, 300);

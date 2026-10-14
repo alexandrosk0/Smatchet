@@ -6,8 +6,10 @@
 #include "../support/FakeEditMetaDeps.h"
 #include "../support/FakeLookupCache.h"
 #include "../support/FakeTrackerClient.h"
+#include "../support/TestEnvGuard.h"
 
 #include "CachedTicketTypes.h"
+#include "ConfigManager.h"
 #include "ComponentOptionsPickPure.h"
 #include "FieldOptionsJsonPure.h"
 #include "LookupPayloadsPure.h"
@@ -91,6 +93,16 @@ class ThrowingWriteLookupCache : public FakeLookupCache {
 } // namespace
 
 TEST_SUITE("ProjectComponentsCacheService") {
+    // LookupCacheTtlSec defaults to 0 (off). The lifetime tests opt in for their scope, with a throwaway data dir.
+    struct LookupLifetimeOn {
+        smatchet_tests::TestEnvGuard env;
+        LookupLifetimeOn() {
+            TrackerConfig cfg;
+            cfg.LookupCacheTtlSec = 86400;
+            ConfigManager::Save(cfg);
+            ConfigManager::InvalidateCache();
+        }
+    };
 
     TEST_CASE("offline: no fetch, and the saved list is offered with an offline cue") {
         FakeEditMetaDeps deps;
@@ -149,6 +161,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     }
 
     TEST_CASE("a saved list served inside its lifetime is not refetched until Refresh, which asks the tracker now") {
+        const LookupLifetimeOn lifetime;
         FakeEditMetaDeps deps;
         const auto store = std::make_shared<FakeLookupCache>();
         SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
@@ -200,6 +213,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     }
 
     TEST_CASE("a saved list younger than the lifetime stands in for the live fetch; an old one is refetched") {
+        const LookupLifetimeOn lifetime;
         {
             FakeEditMetaDeps deps;
             const auto store = std::make_shared<FakeLookupCache>();

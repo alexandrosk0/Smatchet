@@ -29,6 +29,29 @@
  */
 std::string RedactHttpBodyForLog(const std::string& body);
 
+/**
+ * Percent-encodes everything outside RFC 3986's unreserved set (A-Z a-z 0-9 - _ . ~), with upper-case hex.
+ * Inline and cpr-free so pure URL builders (JiraIssueMappingPure, linked into the TSan and fuzz rigs without
+ * cpr) can encode query values; still visible to HTTP code through TrackerHttpUtils.h.
+ */
+inline std::string UrlEncode(const std::string& value) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+    for (const char ch : value) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += kHex[c >> 4];
+            out += kHex[c & 0x0F];
+        }
+    }
+    return out;
+}
+
 namespace TrackerHttpPure {
 
 // Resolved SSL trust decision. When attach is false, leave libcurl's default CAINFO

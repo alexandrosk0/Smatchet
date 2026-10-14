@@ -154,7 +154,8 @@ const CfgKey* ConfigSetKeyTable() {
         // Lookup lifetimes (docs/plans/active/delta-sync.md § Phase 7).
         {"fieldCatalogRefreshTtlSec", "field_catalog_refresh_ttl_sec",
          "integer 300..2592000; clamped on load; applies on next start"},
-        {"lookupCacheTtlSec", "lookup_cache_ttl_sec", "integer 60..2592000; clamped on load; applies on next load"},
+        {"lookupCacheTtlSec", "lookup_cache_ttl_sec",
+         "integer 0 (off, default) or 60..2592000; clamped on load; applies on next load"},
         {nullptr, nullptr, nullptr},
     };
     return kKeys;
