@@ -180,7 +180,7 @@ Smatchet.exe cmd commands.search --query=sync
 | `sync.full` | — | Forces a full re-download of the active view. Keeps the local cache and the offline queue. Async. Dry-run supported. |
 | `sync.stats` | — | What the last finished sync session cost: `{valid, requestId, mode (full/delta), rosterSize, bodiesFetched, unchanged, requests, downloadBytes, uploadBytes, durationMs, fallbackReason, completed, error}`. |
 | `cache.recreate` | — | Destructive (`--yes`). Wipes the local cache database **including queued offline edits**, then re-fetches the active view in full. Runs on the UI thread and waits for every pane's in-flight sync to stop, so the UI can pause until the slowest running request ends. Dry-run supported. |
-| `sync.refresh_local` | — | Rebuild in-memory list from SQLite; no network. |
+| `sync.refresh_local` | — | Rebuild in-memory list from SQLite; no network. Fire-and-forget: returns `{triggered: true}` once the read is started, before the list is rebuilt; the grid updates when it lands. |
 | `sync.fetch_active_view` | — | Fetch active view inline (no cache write). Returns tickets directly. |
 | `sync.tracker_status` | — | `{state, syncWarning, fieldCatalogError}` |
 

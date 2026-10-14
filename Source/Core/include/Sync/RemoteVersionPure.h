@@ -115,7 +115,6 @@ inline bool ReadZoneOffsetMinutes(const std::string& s, std::size_t& pos, int& o
 /// Parses an ISO 8601 tracker timestamp to milliseconds since the Unix epoch (UTC). False (and
 /// `outMs` untouched) when `text` is not one of the accepted shapes or a field is out of range.
 inline bool ParseRemoteUpdatedMs(const std::string& text, std::int64_t& outMs) {
-    using namespace remote_version_detail;
     std::size_t pos = 0;
     int year = 0;
     int month = 0;
@@ -123,25 +122,28 @@ inline bool ParseRemoteUpdatedMs(const std::string& text, std::int64_t& outMs) {
     int hour = 0;
     int minute = 0;
     int second = 0;
-    if (!ReadDigits(text, pos, 4, year) || !Expect(text, pos, '-') || !ReadDigits(text, pos, 2, month) ||
-        !Expect(text, pos, '-') || !ReadDigits(text, pos, 2, day)) {
+    if (!remote_version_detail::ReadDigits(text, pos, 4, year) || !remote_version_detail::Expect(text, pos, '-') ||
+        !remote_version_detail::ReadDigits(text, pos, 2, month) || !remote_version_detail::Expect(text, pos, '-') ||
+        !remote_version_detail::ReadDigits(text, pos, 2, day)) {
         return false;
     }
-    if (!(Expect(text, pos, 'T') || Expect(text, pos, ' ')) || !ReadDigits(text, pos, 2, hour) ||
-        !Expect(text, pos, ':') || !ReadDigits(text, pos, 2, minute) || !Expect(text, pos, ':') ||
-        !ReadDigits(text, pos, 2, second)) {
+    if (!(remote_version_detail::Expect(text, pos, 'T') || remote_version_detail::Expect(text, pos, ' ')) ||
+        !remote_version_detail::ReadDigits(text, pos, 2, hour) || !remote_version_detail::Expect(text, pos, ':') ||
+        !remote_version_detail::ReadDigits(text, pos, 2, minute) || !remote_version_detail::Expect(text, pos, ':') ||
+        !remote_version_detail::ReadDigits(text, pos, 2, second)) {
         return false;
     }
     int fractionMs = 0;
-    ReadFractionMs(text, pos, fractionMs);
+    remote_version_detail::ReadFractionMs(text, pos, fractionMs);
     int offsetMinutes = 0;
-    if (!ReadZoneOffsetMinutes(text, pos, offsetMinutes)) {
+    if (!remote_version_detail::ReadZoneOffsetMinutes(text, pos, offsetMinutes)) {
         return false;
     }
     if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60) {
         return false;
     }
-    const std::int64_t days = DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+    const std::int64_t days =
+        remote_version_detail::DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
     const std::int64_t seconds = days * 86400 + hour * 3600 + minute * 60 + second - offsetMinutes * 60;
     outMs = seconds * 1000 + fractionMs;
     return true;

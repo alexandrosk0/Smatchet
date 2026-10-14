@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <mutex>
@@ -395,6 +396,40 @@ void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config) {
     }
 }
 
+// Reads a JSON number as an int. Integers must fit an int; a float is accepted only when it is integral and in
+// range (a hand-edited `60.0` keeps working, `3.5` is refused). False leaves `out` untouched.
+bool JsonToInt(const nlohmann::json& v, int& out) {
+    constexpr int kMin = (std::numeric_limits<int>::min)();
+    constexpr int kMax = (std::numeric_limits<int>::max)();
+    if (v.is_number_unsigned()) {
+        // An unsigned value past INT_MAX must not wrap through int64: compare it as unsigned.
+        const std::uint64_t u = v.get<std::uint64_t>();
+        if (u > static_cast<std::uint64_t>(kMax)) {
+            return false;
+        }
+        out = static_cast<int>(u);
+        return true;
+    }
+    if (v.is_number_integer()) {
+        const std::int64_t n = v.get<std::int64_t>();
+        if (n < kMin || n > kMax) {
+            return false;
+        }
+        out = static_cast<int>(n);
+        return true;
+    }
+    if (v.is_number_float()) {
+        const double d = v.get<double>();
+        // Range first (also rejects NaN / inf), then integrality.
+        if (!(d >= static_cast<double>(kMin) && d <= static_cast<double>(kMax)) || d != std::floor(d)) {
+            return false;
+        }
+        out = static_cast<int>(d);
+        return true;
+    }
+    return false;
+}
+
 // Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
 // table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -429,20 +464,9 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // (it keeps its default), never abort the reads of every field after it.
     for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
         const auto it = j.find(kIntFields[i].key);
-        if (it == j.end() || !it->is_number_integer()) {
-            continue;
-        }
-        // An unsigned value past INT_MAX must not wrap through int64: compare it as unsigned.
-        if (it->is_number_unsigned()) {
-            const std::uint64_t value = it->get<std::uint64_t>();
-            if (value <= static_cast<std::uint64_t>((std::numeric_limits<int>::max)())) {
-                cfg.*(kIntFields[i].member) = static_cast<int>(value);
-            }
-            continue;
-        }
-        const std::int64_t value = it->get<std::int64_t>();
-        if (value >= (std::numeric_limits<int>::min)() && value <= (std::numeric_limits<int>::max)()) {
-            cfg.*(kIntFields[i].member) = static_cast<int>(value);
+        int value = 0;
+        if (it != j.end() && JsonToInt(*it, value)) {
+            cfg.*(kIntFields[i].member) = value;
         }
     }
     for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {

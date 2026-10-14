@@ -1108,6 +1108,22 @@ TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged in
     CHECK(damaged.LookupCacheTtlSec == ttlBefore);
 }
 
+TEST_CASE("a hand-edited integral float for an integer key still loads; a fractional or out-of-range one is ignored") {
+    smatchet_tests::TestEnvGuard env;
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["mcp_port"] = 8123.0;      // integral float: accepted as 8123
+        j["max_user_changes"] = 3.5; // fractional: keeps its default
+        j["window_x"] = 1e30;        // far out of int range: keeps its default
+        j["window_y"] = -250.0;      // negative integral float
+    });
+    const TrackerConfig defaults = TrackerConfig();
+    const TrackerConfig loaded = ConfigManager::Load();
+    CHECK(loaded.McpPort == 8123);
+    CHECK(loaded.MaxUserChanges == defaults.MaxUserChanges);
+    CHECK(loaded.WindowX == defaults.WindowX);
+    CHECK(loaded.WindowY == -250);
+}
+
 TEST_CASE("fields.* — catalog listing/pagination, get lookup, refresh plumbing, icon resolution") {
     smatchet_tests::TestEnvGuard env; // fields.refresh_catalog reads ConfigManager::Load()
     FakeFields fields;
