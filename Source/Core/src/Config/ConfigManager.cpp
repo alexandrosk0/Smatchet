@@ -484,6 +484,8 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
 
 const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
 
+bool ConfigManager::JsonToInt(const nlohmann::json& v, int& out) { return smatchet::config_detail::JsonToInt(v, out); }
+
 bool ConfigManager::IsIntConfigKey(const std::string& jsonKey) {
     for (const auto& field : kIntFields) {
         if (jsonKey == field.key) {

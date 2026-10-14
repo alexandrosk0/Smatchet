@@ -1108,6 +1108,25 @@ TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged in
     CHECK(damaged.LookupCacheTtlSec == ttlBefore);
 }
 
+TEST_CASE("config.set takes an integral float like the load does (60.0) and still refuses a fraction (3.5)") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "8123"}}, ctx).Ok);
+
+    const CommandResult accepted = reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "60.0"}}, ctx);
+    REQUIRE(accepted.Ok);
+    CHECK(ConfigManager::Load().McpPort == 60);
+    // Stored as the integer 60, not the float: the file stays in the shape the int table writes.
+    CHECK(ConfigManager::LoadMergedConfigJson().at("mcp_port").is_number_integer());
+
+    const CommandResult refused = reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "3.5"}}, ctx);
+    REQUIRE_FALSE(refused.Ok);
+    CHECK(refused.Error.Code == ErrorCode::ValidationError);
+    CHECK(ConfigManager::Load().McpPort == 60); // the refused write changed nothing
+}
+
 TEST_CASE("a hand-edited integral float for an integer key still loads; a fractional or out-of-range one is ignored") {
     smatchet_tests::TestEnvGuard env;
     ConfigManager::UpdateConfigJson([](nlohmann::json& j) {

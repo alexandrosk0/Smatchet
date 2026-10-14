@@ -942,6 +942,10 @@ class ConfigManager {
     /// True when `jsonKey` is a plain integer setting (read through the int field table on load). config.set
     /// uses it to reject a value that is not an integer, instead of writing a string the load would trip over.
     static bool IsIntConfigKey(const std::string& jsonKey);
+    /// Reads a JSON number as an int: an integer must fit an int; a float is accepted only when it is integral and
+    /// in range (a hand-edited `60.0` works, `3.5` is refused). False leaves `out` untouched. The one range rule
+    /// shared by the config load and config.set.
+    static bool JsonToInt(const nlohmann::json& v, int& out);
 
     static const char* GetDefaultImGuiDockLayoutIni();
     static bool WriteDefaultImGuiSettingsFile();

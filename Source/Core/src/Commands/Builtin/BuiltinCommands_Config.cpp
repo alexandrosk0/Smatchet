@@ -17,7 +17,6 @@
 
 #include "Json/BoundedJsonParse.h"
 #include <cstdint>
-#include <limits>
 
 namespace smatchet {
 namespace cmd {
@@ -217,17 +216,15 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     // An integer setting takes an integer: a string or fraction written here would make every later load of
     // that key fall back to its default (and, before the load was guarded, abort the fields after it).
     if (ConfigManager::IsIntConfigKey(found->json)) {
-        const bool inRange =
-            val.is_number_integer() &&
-            (val.is_number_unsigned()
-                 ? val.get<std::uint64_t>() <= static_cast<std::uint64_t>((std::numeric_limits<int>::max)())
-                 : (val.get<std::int64_t>() >= (std::numeric_limits<int>::min)() &&
-                    val.get<std::int64_t>() <= (std::numeric_limits<int>::max)()));
-        if (!inRange) {
+        // The same rule the load applies: an integral float such as 60.0 is accepted (stored as the integer 60),
+        // a fraction such as 3.5 or an out-of-range value is refused.
+        int intValue = 0;
+        if (!ConfigManager::JsonToInt(val, intValue)) {
             return CommandResult::Failure(ErrorCode::ValidationError, "Value for '" + key + "' must be an integer.",
                                           found->hint && found->hint[0] ? std::string(found->hint)
                                                                         : std::string("Use a whole number."));
         }
+        val = intValue;
     }
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
