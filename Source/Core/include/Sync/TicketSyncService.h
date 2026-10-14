@@ -27,9 +27,10 @@
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "SmatchetResult.h"       // Result<>
-#include "TrackerError.h"         // TrackerError (hierarchy hop result)
-#include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
-#include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
+// SMATCHET_DEVIATION(rule=include-cycle; reason=TrackerError is the plain error value the hierarchy-hop result carries; relocating it to a lower-layer leaf is a repo-wide layering change owned by the core-include-dag plan; owner=offline-sync; revisit=2027-10-14)
+#include "TrackerError.h"      // TrackerError (hierarchy hop result)
+#include "TicketSyncMeta.h"    // TicketSyncMeta (the per-session version snapshot)
+#include "CachedTicketTypes.h" // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
 

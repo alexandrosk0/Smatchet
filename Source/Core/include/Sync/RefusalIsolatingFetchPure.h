@@ -6,6 +6,7 @@
 
 #include "CachedTicketTypes.h"
 #include "SmatchetResult.h"
+// SMATCHET_DEVIATION(rule=include-cycle; reason=TrackerError is the plain error value the pure fetch helper returns inside Result<>; relocating it to a lower-layer leaf is a repo-wide layering change owned by the core-include-dag plan; owner=offline-sync; revisit=2027-10-14)
 #include "TrackerError.h"
 
 #include <cstddef>
