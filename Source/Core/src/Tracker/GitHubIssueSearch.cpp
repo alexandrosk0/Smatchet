@@ -333,10 +333,10 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
 
         // Guard result count to prevent memory exhaustion from massive result sets. Only a
         // truncation when more pages remain; the final page is never reported as cut short.
-        if (hasNext && accum.size() + pageTickets.size() > kGitHubMaxResultCount) {
-            AppendOutWarning(outWarning, std::string("GitHub result count exceeds ") +
+        if (hasNext && accum.size() + pageTickets.size() >= kGitHubMaxResultCount) {
+            AppendOutWarning(outWarning, std::string("GitHub result count reached ") +
                                              std::to_string(kGitHubMaxResultCount) + " items; stopped.");
-            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: result count (%zu total) exceeds limit (%zu)",
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: result count (%zu total) reached limit (%zu)",
                      accum.size() + pageTickets.size(), kGitHubMaxResultCount);
             isLastPage = true;
             stopLoop = true;

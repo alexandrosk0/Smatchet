@@ -28,10 +28,11 @@ and audio sample rates are safety bounds or protocol facts, not preferences, and
 ## Behaviour notes
 
 - Search result-count caps (`jira_search_max_results`, `plane_search_max_results`, `github_search_max_results`)
-  default to **500** (previously 10000 / 10000 / 5000). The cap is a soft bound rounded up to a whole page
-  (100 rows): a search with more rows stops after the page that crosses the cap and the fetch summary carries
-  the truncation warning, while a walk that finishes its last page is never reported as truncated. Raise the
-  key to fetch more.
+  default to **500** (previously 10000 / 10000 / 5000). The walk stops as soon as a page brings the total to
+  the cap and more pages remain, and the fetch summary carries the truncation warning; with 100-row pages a
+  500 cap returns exactly 500 rows. A cap that is not a multiple of 100 rounds up to a whole page. A walk that
+  ends on its last page is never reported as truncated, even when it holds exactly the cap. Raise the key to
+  fetch more.
 - `github_search_max_pages` is clamped to 10: GitHub's search API returns at most 1000 results.
 
 ## Guards against a mistakenly huge query

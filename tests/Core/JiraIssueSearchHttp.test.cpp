@@ -15,6 +15,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -162,6 +164,88 @@ TEST_CASE("JiraClient::FetchIssuesStreamed — a result cut short by the page ca
     CHECK(summary.FetchError.empty());
     CHECK_FALSE(summary.FullSyncCompleted);
     CHECK(summary.Warning.find("page cap") != std::string::npos);
+}
+
+namespace {
+// Scripts /search/jql as `totalRows` issues in 100-row pages chained by nextPageToken "pN" (the last page
+// is isLast with no token). Returns the number of pages served via `pagesServed`.
+void ScriptPagedSearch(JiraCatalogHttpFixture& fx, int totalRows, std::shared_ptr<int> pagesServed) {
+    fx.ScriptHandler(
+        kSearchPath,
+        [totalRows, pagesServed](const httplib::Request& req) -> nlohmann::json {
+            const std::string token = req.get_param_value("nextPageToken");
+            const int page = token.empty() ? 1 : std::stoi(token.substr(1));
+            ++*pagesServed;
+            const int first = (page - 1) * 100;
+            const int last = std::min(totalRows, first + 100);
+            nlohmann::json issues = nlohmann::json::array();
+            for (int i = first; i < last; ++i) {
+                issues.push_back(
+                    nlohmann::json{{"key", "SMT-" + std::to_string(i + 1)}, {"fields", nlohmann::json::object()}});
+            }
+            nlohmann::json body = nlohmann::json::object();
+            body["issues"] = std::move(issues);
+            const bool isLast = last >= totalRows;
+            body["isLast"] = isLast;
+            if (!isLast) {
+                body["nextPageToken"] = "p" + std::to_string(page + 1);
+            }
+            return body;
+        },
+        "GET");
+}
+
+TrackerIssueFetchSummary RunPagedSearch(JiraCatalogHttpFixture& fx) {
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    auto onBatch = [](std::vector<CachedTicket>&&) {};
+    auto noCancel = []() { return false; };
+    return client.FetchIssuesStreamed(onBatch, noCancel, &cfg, &views);
+}
+} // namespace
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — a view of exactly the result cap completes without a warning") {
+    // 500 rows on the last page (default cap 500): nothing was left behind, so it is NOT truncated.
+    JiraCatalogHttpFixture fx;
+    auto pages = std::make_shared<int>(0);
+    ScriptPagedSearch(fx, 500, pages);
+    const TrackerIssueFetchSummary summary = RunPagedSearch(fx);
+    CHECK(summary.FetchError.empty());
+    CHECK(summary.FetchedCount == 500);
+    CHECK(summary.FullSyncCompleted);
+    CHECK(summary.Warning.empty());
+    CHECK(*pages == 5);
+}
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — a view larger than the result cap stops at the cap with a warning") {
+    // 700 rows, default cap 500: the walk stops once page 5 brings the total to 500 with more pages pending.
+    JiraCatalogHttpFixture fx;
+    auto pages = std::make_shared<int>(0);
+    ScriptPagedSearch(fx, 700, pages);
+    const TrackerIssueFetchSummary summary = RunPagedSearch(fx);
+    CHECK(summary.FetchError.empty());
+    CHECK(summary.FetchedCount == 500);
+    CHECK_FALSE(summary.FullSyncCompleted);
+    CHECK(summary.Warning.find("result count reached 500") != std::string::npos);
+    CHECK(*pages == 5);
+}
+
+TEST_CASE("JiraClient::FetchIssueKeysForView — a view over the interactive cap still reconciles (probe caps)") {
+    // 700 keys exceeds the 500-row interactive cap but is inside the membership-probe cap (5000), so the
+    // keys-only walk is complete and the disappearance reconcile can run.
+    JiraCatalogHttpFixture fx;
+    auto pages = std::make_shared<int>(0);
+    ScriptPagedSearch(fx, 700, pages);
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    const auto res = client.FetchIssueKeysForView(cfg, views);
+    REQUIRE(res.has_value());
+    CHECK(res.value().size() == 700);
+    CHECK(*pages == 7);
 }
 
 TEST_CASE("JiraClient::FetchIssuesStreamed — missing credentials is skipped with an InvalidRequest summary") {

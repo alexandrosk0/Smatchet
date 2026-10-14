@@ -401,8 +401,8 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
         // Guard result count to prevent memory exhaustion from massive result sets. The cap is a soft
         // bound rounded up to a whole page, and it only counts as truncation when more pages remain:
         // a walk that just finished its last page is complete however many rows it held.
-        if (summary.FetchedCount > kMaxResultCount && !outcome.Stop && !outcome.NextToken.empty()) {
-            AppendJiraTruncationWarning(summary, "Jira result count exceeded " + std::to_string(kMaxResultCount) +
+        if (summary.FetchedCount >= kMaxResultCount && !outcome.Stop && !outcome.NextToken.empty()) {
+            AppendJiraTruncationWarning(summary, "Jira result count reached " + std::to_string(kMaxResultCount) +
                                                      " issues; remaining issues not fetched. Narrow the view's JQL.");
             result.endedCleanly = false;
             break;
