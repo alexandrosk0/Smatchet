@@ -130,7 +130,7 @@ std::string ReadWholeFile(const std::string& path) {
 }
 } // namespace
 
-TEST_CASE("FieldCatalogCache: a load reports the save time and never writes the cache file") {
+TEST_CASE("FieldCatalogCache: a load reports the save time and never writes the cache file for a fresh entry") {
     smatchet_tests::TestEnvGuard env;
     TrackerConfig cfg;
     cfg.TrackerType = "Jira";

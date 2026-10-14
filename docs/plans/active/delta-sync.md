@@ -134,6 +134,10 @@ Found in the Phase 3-5 review; none block the phases above.
   - The change monitor spends `RefusalSplitBudget` extra requests per cycle to isolate refused keys. A refused key stays in the roster diff, so it is re-isolated every cycle (about `2 * log2(n)` extra requests), and more than `kMaxIsolatedRefusalsPerHop` refused keys in one batch still fail the cycle. Remember refused keys per pane for the session and drop them from `ToFetch`.
   - `config.set` validates integer keys only. A bool or string key written with the wrong type still makes the load fall back for that key (the int reads are per key and guarded now; bool, string and float reads in `LoadScalarFields` are not).
   - `AppController` startup parses the field-catalog file once per candidate key (project-scoped, then the unscoped fallback); a scoped miss still costs a second parse.
+- Found in the post-rebase review (deferred; none block the merge):
+  - Field-catalog snapshot restore and save still touch the file on the UI thread: `TryLoadFieldCatalogSnapshot` reads the whole file (and, once a day per snapshot, rewrites it) from startup and the render-path error handler, and a successful catalog apply saves the snapshot synchronously (`AppController_CatalogAndFieldEdit.cpp`, already on develop). Move restore and save to a worker (Pillar 2).
+  - `TryLoadFieldCatalogSnapshot` consumes the pending touches before the write, so a failed write drops them and a stale key retries the write on every load (develop behaves the same on retry). Consume only after a successful persist.
+  - `PendingTouches()` is a process-global keyed only by cache key, so a touch left over from one test can fold into the next test's file after a `TestEnvGuard` data-dir swap. Key it by cache path or add a test-only reset.
 
 ## Phase 7 notes (lookups)
 
@@ -141,7 +145,7 @@ Found in the Phase 3-5 review; none block the phases above.
 - The saved project list and the saved project components skip the live fetch while younger than `LookupCacheTtlSec`; the per-issue-type edit permissions (`kEditMetaTypeKind`) still refresh on every warm and are a follow-up.
 - The startup catalog fetch is skipped once per run when the restored snapshot is inside its lifetime and covers every column of the active view; the grid shows it with a "saved" cue and refetches when it expires. `FieldCatalogCache` now keeps `savedUnix` in the index (the v3 load also used to drop the whole `entries` index on every read; fixed).
 - `ITicketSyncDeps::OnTicketsRemotelyChanged` fires for resident rows whose `updated` moved (sync drain and change-monitor apply) and invalidates their transitions and per-issue editmeta.
-- The comments modal opens from the saved thread without a refetch when the thread is complete (saved count matches) and was read at the ticket's current `updated` (`comment_thread_at`). Posting, Retry and reloads always go live.
+- The comments modal shows the saved thread instantly as a seed and always runs the live fetch (the Phase 7 refetch skip and its `comment_thread_at` stamp were removed in the pre-merge review: a stamp from the same cached row says nothing about the tracker).
 
 ## Implementation log
 *(populated post-ship)*
