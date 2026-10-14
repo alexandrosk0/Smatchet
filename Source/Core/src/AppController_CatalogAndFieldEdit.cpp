@@ -872,6 +872,10 @@ bool AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
     return components_ && components_->EnsureComponentsLoaded(projectKey);
 }
 
+bool AppController::RefreshProjectComponents(const std::string& projectKey) {
+    return components_ && components_->RefreshComponents(projectKey);
+}
+
 bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
     if (projectKey.empty()) {
         return false;

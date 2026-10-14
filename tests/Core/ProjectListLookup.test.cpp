@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+using smatchet::projects::IsSavedProjectCopy;
 using smatchet::projects::LoadProjectList;
 using smatchet::projects::ProjectListOutcome;
 
@@ -203,5 +204,32 @@ TEST_SUITE("ProjectListLookup") {
         noTtl.Projects = {Project("NEW", "New")};
         LoadProjectList(noTtl, store, "Jira", false, /*ttlSec=*/0, 1500);
         CHECK(noTtl.Calls == 1); // no lifetime: always live
+    }
+
+    TEST_CASE("a list served inside its lifetime is still a saved copy; an empty saved list is never served") {
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        SaveList(*store, "Jira", {Project("OFF", "Offline First")});
+        ScriptedConnectivity conn;
+        const ProjectListOutcome served = LoadProjectList(conn, store, "Jira", false, 600, 1500);
+        REQUIRE(served.ServedFresh);
+        CHECK(IsSavedProjectCopy(served));
+
+        ProjectListOutcome offlineFallback;
+        offlineFallback.FromSaved = true;
+        CHECK(IsSavedProjectCopy(offlineFallback));
+        CHECK_FALSE(IsSavedProjectCopy(ProjectListOutcome()));
+
+        // A saved EMPTY list must not answer "No projects found": the tracker does.
+        auto emptyStore = std::make_shared<FakeLookupCache>();
+        emptyStore->StampEpochSec = 1000;
+        SaveList(*emptyStore, "Jira", {});
+        ScriptedConnectivity live;
+        live.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome outcome = LoadProjectList(live, emptyStore, "Jira", false, 600, 1500);
+        CHECK(live.Calls == 1);
+        CHECK_FALSE(outcome.ServedFresh);
+        CHECK_FALSE(IsSavedProjectCopy(outcome));
+        REQUIRE(outcome.Projects.size() == 1u);
     }
 }

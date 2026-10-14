@@ -834,7 +834,8 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
                                 std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
                                 const std::vector<TrackerFieldOption>* opts, smatchet::offline::DataFreshness freshness,
                                 const std::string& freshnessDetail, std::unordered_set<std::string>& selectedSet,
-                                bool catalogUnscoped) {
+                                bool catalogUnscoped, AppController* refreshApp = nullptr,
+                                const std::string& refreshProjectKey = std::string()) {
     if (state.MultiSelectActiveKey != editorKey) {
         state.MultiSelectActiveKey = editorKey;
         state.MultiSelectSearchBuf[0] = '\0';
@@ -842,6 +843,15 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
     // Pillar 6: say when the list is saved, refreshing or not available yet instead of spinning.
     if (freshness != smatchet::offline::DataFreshness::Fresh) {
         DataFreshnessCue::Draw(freshness, freshnessDetail.empty() ? nullptr : freshnessDetail.c_str());
+        // A saved list served inside its lifetime looks complete but may be out of date; a failed fetch is
+        // retried at once. Not while offline (nothing to ask) or while the fetch runs.
+        if (refreshApp != nullptr && !refreshProjectKey.empty() &&
+            freshness == smatchet::offline::DataFreshness::CachedStale) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(SmatchetLocalization::T("common.refresh", "Refresh"))) {
+                refreshApp->RefreshProjectComponents(refreshProjectKey);
+            }
+        }
         ImGui::Separator();
     }
 
@@ -961,8 +971,10 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
         // Components have their own per-project lazy path, so the unscoped-catalog hint would
         // mislead there; every other project-scoped multi-select (versions, custom options) gets it.
         const bool catalogUnscoped = field.Id != "components" && opts->empty() && app.FieldCatalogLacksProjectScope();
-        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, optionsFreshness,
-                                   rowComponents.lastError, selectedSet, catalogUnscoped);
+        RenderMultiSelectComboBody(
+            ticket, field, state, pendingEdits, editorKey, opts, optionsFreshness, rowComponents.lastError, selectedSet,
+            catalogUnscoped, field.Id == "components" ? &app : nullptr,
+            field.Id == "components" ? smatchet::ExtractIssueKeyPrefix(ticket.id) : std::string());
         ImGui::EndCombo();
     }
     DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);

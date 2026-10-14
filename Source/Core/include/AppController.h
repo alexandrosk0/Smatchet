@@ -1046,6 +1046,9 @@ class AppController : public IAppThreading,
      *  when this call changed the project's entry (a fetch started, or failed to start), so the caller
      *  re-reads it. */
     bool EnsureProjectComponentsLoaded(const std::string& projectKey);
+    /** The components editor's Refresh: asks the tracker for `projectKey`'s components now, even while a saved
+     *  list is still inside its lifetime or a failure backoff is pending. True when a fetch started. */
+    bool RefreshProjectComponents(const std::string& projectKey);
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.

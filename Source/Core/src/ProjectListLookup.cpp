@@ -71,7 +71,8 @@ ProjectListOutcome LoadProjectList(ITrackerConnectivity& connectivity, const std
         }
         std::int64_t savedAt = 0;
         std::vector<RemoteProject> saved;
-        if (LoadSavedProjects(store, backendKey, saved, &savedAt) &&
+        // An empty saved list never stands in: "No projects found" must come from the tracker, not from a copy.
+        if (LoadSavedProjects(store, backendKey, saved, &savedAt) && !saved.empty() &&
             smatchet::sync::IsLookupRowFresh(savedAt, nowEpochSec, ttlSec)) {
             outcome.Projects = std::move(saved);
             outcome.Failed = false;

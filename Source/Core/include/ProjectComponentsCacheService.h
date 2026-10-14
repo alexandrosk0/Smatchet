@@ -36,6 +36,11 @@ class ProjectComponentsCacheService {
     /// safe every frame.
     ProjectComponentsLookup GetComponentOptions(const std::string& projectKey) const;
 
+    /// A user's Refresh: like EnsureComponentsLoaded, but it also clears the failure backoff and ignores a saved
+    /// list that is still inside its lifetime, so the tracker is asked now. Not while offline, in flight or live.
+    /// True when a fetch started. Non-blocking.
+    bool RefreshComponents(const std::string& projectKey);
+
     /// Start a background fetch for `projectKey` when one is allowed (not live, not in flight, not
     /// offline, not inside the failure backoff) and load the saved rows once per backend. Non-blocking.
     /// True when this call changed the entry: a fetch started, or failed to start and was recorded as
@@ -55,10 +60,12 @@ class ProjectComponentsCacheService {
 
     void EnsureSavedLoaded(const std::string& backendKey);
     /// Worker body: fetch one project for a ticket taken with TryBeginFetch, record the outcome, and
-    /// save a success. `cfgSnapshot` null → ConfigManager::Load() on the worker.
+    /// save a success. `cfgSnapshot` null → ConfigManager::Load() on the worker. `bypassSaved` skips the
+    /// saved-list-inside-its-lifetime shortcut (a user's Refresh).
     void FetchOne(const std::shared_ptr<ITrackerBackend>& backend, const OptionsCache::Ticket& ticket,
                   const std::string& backendKey, const std::string& projectKey, const TrackerConfig* cfgSnapshot,
-                  const std::shared_ptr<ILookupCache>& store);
+                  const std::shared_ptr<ILookupCache>& store, bool bypassSaved = false);
+    bool BeginFetch(const std::string& projectKey, bool bypassSaved);
 
     IEditMetaDeps& deps_;
     OptionsCache cache_;

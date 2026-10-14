@@ -306,3 +306,34 @@ TEST_SUITE("StoreLoadLatch") {
         CHECK(latch.TryClaim("Jira", Clock::now()));
     }
 } // TEST_SUITE
+
+TEST_CASE("KeyedLookupCache: CompleteFromSaved holds a saved copy, defers the refetch to its expiry, and ClearBackoff "
+          "reopens it") {
+    KeyedLookupCache<int> cache;
+    const auto t0 = Clock::now();
+    KeyedLookupCache<int>::Ticket ticket;
+    REQUIRE(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable, t0, ticket));
+
+    cache.CompleteFromSaved(ticket, 7, t0 + std::chrono::seconds(100));
+    cache.CompleteSuccess(ticket, 99); // the spent ticket: a normal success afterwards must not make it live
+
+    const KeyedLookupCache<int>::Entry e = cache.Get("k");
+    CHECK(e.HasValue);
+    CHECK(e.Payload == 7);
+    CHECK_FALSE(e.Live);
+    CHECK_FALSE(e.InFlight);
+    CHECK(cache.Freshness("k", TrackerConnectivityState::AuthenticatedReachable) == DataFreshness::CachedStale);
+
+    KeyedLookupCache<int>::Ticket again;
+    CHECK_FALSE(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable,
+                                    t0 + std::chrono::seconds(50), again));
+    CHECK(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable, t0 + std::chrono::seconds(100),
+                              again));
+
+    cache.CompleteFromSaved(again, 7, t0 + std::chrono::seconds(500));
+    CHECK_FALSE(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable,
+                                    t0 + std::chrono::seconds(200), again));
+    cache.ClearBackoff("k"); // a user's Refresh
+    CHECK(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable, t0 + std::chrono::seconds(200),
+                              again));
+}
