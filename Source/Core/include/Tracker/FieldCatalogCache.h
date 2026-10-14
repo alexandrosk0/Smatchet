@@ -44,8 +44,9 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError);
 
 /** Loads the snapshot under `cacheKey`. Refuses a Jira snapshot an older build saved with no project or an
- *  "owner/repo" one: those builds saved a GitHub pane's catalog under the Jira site's key. A load never writes the
- *  cache file (the LRU "last used" touch is kept in memory and reaches disk with the next save). `outSavedUnix`,
+ *  "owner/repo" one: those builds saved a GitHub pane's catalog under the Jira site's key. A load rewrites the cache
+ *  file at most once a day per snapshot (the LRU "last used" touch is otherwise kept in memory and reaches disk
+ *  with the next save). `outSavedUnix`,
  *  when given, receives when the catalog was last saved from a live fetch (see FieldCatalogSnapshotSavedUnix), so a
  *  caller needs no second parse of the file. */
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,

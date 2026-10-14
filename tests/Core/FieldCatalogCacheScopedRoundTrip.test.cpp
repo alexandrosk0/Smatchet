@@ -184,6 +184,7 @@ TEST_CASE("FieldCatalogCache: one malformed index entry is skipped, not the whol
     badTimes["cacheKey"] = "Jira|other|X";
     badTimes["lastUsedUnix"] = "soon";
     root["entries"].push_back(badTimes);
+    root["Jira|other|X"] = root[good]; // an index entry that names no snapshot is dropped, so give it one
     {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << root.dump();

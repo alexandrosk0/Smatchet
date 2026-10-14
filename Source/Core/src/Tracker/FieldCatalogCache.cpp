@@ -30,6 +30,9 @@ std::mutex& FieldCatalogCacheFileMutex() {
 
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
 constexpr int kDefaultMaxCachedProjects = 16;
+// A restore moves its snapshot up the LRU order on disk at most this often: each move rewrites the whole
+// cache file, and a restore can run on the UI thread. Between those writes the touch stays in memory.
+constexpr std::int64_t kLruTouchIntervalSeconds = 24 * 60 * 60;
 // The base URLs Preferences fills in, and the clients use, when the configured one is empty.
 constexpr const char* kGitHubDefaultBaseUrl = "https://api.github.com";
 constexpr const char* kLinearDefaultBaseUrl = "https://api.linear.app/graphql";
@@ -687,11 +690,25 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
         }
 
         // Record the read for the LRU order and report the save time, both from this one parse. The touch stays in
-        // memory (PendingTouches): rewriting the whole file on every load put a disk write on the UI thread.
+        // memory (PendingTouches) and reaches disk with the next save; only an entry unused for a whole interval
+        // (or re-indexed with no time) is rewritten here, so the file is not rewritten on every load.
         if (indexIt != indexArr.end()) {
-            PendingTouches()[resolvedKey] = TimeNowPure::NowUnixSeconds();
+            const std::int64_t now = TimeNowPure::NowUnixSeconds();
             if (outSavedUnix != nullptr) {
                 *outSavedUnix = IntOr(*indexIt, "savedUnix", 0); // 0 for an entry saved before the stamp existed
+            }
+            if (IntOr(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
+                (*indexIt)["lastUsedUnix"] = now;
+                ApplyPendingTouches(root, /*consume=*/true);
+                std::string writeErr;
+                if (!PersistRootLocked(root, writeErr)) {
+                    // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
+                    // of truth.
+                    LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
+                             writeErr.c_str());
+                }
+            } else {
+                PendingTouches()[resolvedKey] = now;
             }
         }
         return true;
