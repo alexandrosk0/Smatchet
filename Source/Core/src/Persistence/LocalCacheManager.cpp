@@ -541,16 +541,20 @@ bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::s
 }
 
 void LocalCacheManager::deleteTicketRows_(const std::string& backendKey, const std::string& ticketId) {
-    // The four deletes of one ticket; the caller owns the enclosing transaction.
-    const char* const kSql[] = {"DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?",
-                                "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?",
-                                "DELETE FROM ticket_sync_meta WHERE backend_key = ? AND ticket_id = ?",
-                                "DELETE FROM tickets_v2 WHERE backend_key = ? AND id = ?"};
-    for (const char* sql : kSql) {
-        SQLite::Statement del(db, sql);
+    // The four deletes of one ticket, on the cached statements (writeTicketRows_ and deleteSyncMeta_ prepare the
+    // same SQL into the same slots); the caller owns the enclosing transaction and holds stmtMutex_.
+    const std::pair<std::unique_ptr<SQLite::Statement>*, const char*> kDeletes[] = {
+        {&stmt_save_delete_fields_, "DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?"},
+        {&stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?"},
+        {&stmt_meta_delete_, "DELETE FROM ticket_sync_meta WHERE backend_key = ? AND ticket_id = ?"},
+        {&stmt_delete_ticket_, "DELETE FROM tickets_v2 WHERE backend_key = ? AND id = ?"}};
+    for (const auto& d : kDeletes) {
+        SQLite::Statement& del = stmt(*d.first, d.second);
         del.bind(1, backendKey);
         del.bind(2, ticketId);
         del.exec();
+        del.reset();
+        del.clearBindings();
     }
 }
 

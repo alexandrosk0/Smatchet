@@ -258,4 +258,5 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::unique_ptr<SQLite::Statement> stmt_meta_read_;
     std::unique_ptr<SQLite::Statement> stmt_meta_write_;
     std::unique_ptr<SQLite::Statement> stmt_meta_delete_;
+    std::unique_ptr<SQLite::Statement> stmt_delete_ticket_;
 };
