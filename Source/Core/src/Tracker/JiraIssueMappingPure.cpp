@@ -486,11 +486,6 @@ bool AppendCachedTicketFromJiraSearchIssue(
                 [](const std::string&, nlohmann::json&) { return false; };
             MapJiraPresentField("comment", issueFields["comment"], ticket.id, noFetch, ticket);
         }
-        // The thread above was read at this stamp (see kCommentThreadAtRichKey).
-        if (ticket.fieldRichValues.find(kCommentThreadRichKey) != ticket.fieldRichValues.end() &&
-            issueFields.contains("updated") && issueFields["updated"].is_string()) {
-            ticket.fieldRichValues[kCommentThreadAtRichKey] = issueFields["updated"].get<std::string>();
-        }
         if (issueFields.contains("issuetype")) {
             ticket.fieldValues["issuetype"] = NormalizeTrackerFieldValue(issueFields["issuetype"]);
         }

@@ -65,19 +65,3 @@ TEST_CASE("PickCommentsSeed — nothing saved yields false and an empty list") {
     CHECK(out.empty());
     CHECK_FALSE(partial);
 }
-
-TEST_CASE("CanServeSavedCommentsWithoutFetch - only a complete thread read at the ticket's current stamp") {
-    using SmatchetCommentsModalSeed::CanServeSavedCommentsWithoutFetch;
-    const std::string thread = smatchet::tracker::SerializeCommentThread(OneComment("A"));
-    CHECK(CanServeSavedCommentsWithoutFetch(thread, "2026-01-01T10:00", "2026-01-01T10:00", "1"));
-    // The ticket moved since the thread was read: a comment may have been added or edited.
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch(thread, "2026-01-01T10:00", "2026-01-02T10:00", "1"));
-    // The saved count says there are more comments than the saved thread holds (capped or partial).
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch(thread, "2026-01-01T10:00", "2026-01-01T10:00", "3"));
-    // Unknown stamps, no thread, or an unreadable thread never serve.
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch(thread, "", "2026-01-01T10:00", "1"));
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch(thread, "2026-01-01T10:00", "", "1"));
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch("", "x", "x", "1"));
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch("not json", "x", "x", "1"));
-    CHECK_FALSE(CanServeSavedCommentsWithoutFetch(thread, "x", "x", ""));
-}

@@ -1124,14 +1124,8 @@ void AppController::UpdateCachedCommentsFromThread(const std::string& issueId,
         const auto threadIt = ticket.fieldRichValues.find(kCommentThreadRichKey);
         const bool threadSame =
             threadIt == ticket.fieldRichValues.end() ? newThread.empty() : threadIt->second == newThread;
-        // The thread was just read from the tracker: stamp it with the ticket's own version, so the modal can
-        // open from it without a refetch until that version moves.
-        const std::string& stampNow = ticket.GetFieldValueRef("updated");
-        const auto atIt = ticket.fieldRichValues.find(kCommentThreadAtRichKey);
-        const bool stampSame =
-            newThread.empty() || stampNow.empty() || (atIt != ticket.fieldRichValues.end() && atIt->second == stampNow);
         if (ticket.GetFieldValueRef("comments") == newCount && ticket.GetFieldValueRef("comment") == newBlob &&
-            threadSame && stampSame) {
+            threadSame) {
             return; // no change (avoid a needless grid refresh)
         }
         CachedTicket updated = ticket;
@@ -1141,9 +1135,6 @@ void AppController::UpdateCachedCommentsFromThread(const std::string& issueId,
             updated.fieldRichValues.erase(kCommentThreadRichKey);
         } else {
             updated.fieldRichValues[kCommentThreadRichKey] = newThread;
-            if (!stampNow.empty()) {
-                updated.fieldRichValues[kCommentThreadAtRichKey] = stampNow;
-            }
         }
         UpdateTicket(updated);
         return;

@@ -109,9 +109,6 @@ struct CommentsLoadRequest {
     std::string SeedThread;
     std::string SeedBlob;
     bool ForceNetwork = false;
-    /// The saved thread is complete and was read at the ticket's current `updated` stamp: it is shown as the
-    /// loaded list and no request goes out (an explicit reload or a post always goes live).
-    bool SkipLiveFetch = false;
 };
 
 /// One post-back from the load worker. `Seed` shows the saved copy while the load continues;
@@ -203,13 +200,6 @@ void RunCommentsLoad(AppController* appPtr, const CommentsLoadRequest& req) {
     });
     CommentsLoadUpdate seed;
     if (SmatchetCommentsModalSeed::PickCommentsSeed(req.SeedThread, req.SeedBlob, seed.Comments, seed.SeedPartial)) {
-        if (req.SkipLiveFetch && !req.ForceNetwork && !seed.SeedPartial) {
-            // Nothing changed remotely since this thread was read: it IS the loaded list.
-            seed.What = CommentsLoadUpdate::Kind::Loaded;
-            PostCommentsLoadUpdate(appPtr, req.Gen, req.IssueId, std::move(seed));
-            finalPosted = true;
-            return;
-        }
         seed.What = CommentsLoadUpdate::Kind::Seed;
         PostCommentsLoadUpdate(appPtr, req.Gen, req.IssueId, std::move(seed));
     }
@@ -645,9 +635,6 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
         if (it != tickets->end()) {
             req.SeedThread = it->GetFieldRichValue(kCommentThreadRichKey);
             req.SeedBlob = it->GetFieldValue("comment");
-            req.SkipLiveFetch = SmatchetCommentsModalSeed::CanServeSavedCommentsWithoutFetch(
-                req.SeedThread, it->GetFieldRichValue(kCommentThreadAtRichKey), it->GetFieldValueRef("updated"),
-                it->GetFieldValueRef("comments"));
             // A saved count of 0 already proves the thread is empty, online or not.
             s_CommentsState.Seeded =
                 req.SeedThread.empty() && req.SeedBlob.empty() && it->GetFieldValueRef("comments") == "0";
