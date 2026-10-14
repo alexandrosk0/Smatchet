@@ -25,7 +25,9 @@
 
 #include "CachedTicketTypes.h"
 #include "ISyncCache.h"
-#include "IssueDraft.h" // IssueDraftHelpers::ScrubFreshCreatePayload (shared with production restore)
+#include "IssueDraft.h"             // IssueDraftHelpers::ScrubFreshCreatePayload (shared with production restore)
+#include "Sync/RemoteVersionPure.h" // IsIncomingRowStale: the same stale-row guard as LocalCacheManager
+#include "TimeNowPure.h"
 
 #include <algorithm>
 #include <chrono>
@@ -131,7 +133,6 @@ class FakeSyncCache : public ISyncCache {
     }
     void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& batch,
                                  const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) override {
-        (void)overwriteOlder; // the fake keeps no version guard: the service-side drop is what the tests observe
         std::lock_guard<std::mutex> lk(m_);
         if (failSaveCountdown_ > 0 && --failSaveCountdown_ == 0) {
             throw std::runtime_error("scripted save failure");
@@ -146,6 +147,11 @@ class FakeSyncCache : public ISyncCache {
             }
             const auto existingMeta = meta_[backendKey].find(ticket.id);
             const auto existingRow = tickets_[backendKey].find(ticket.id);
+            if (existingMeta != meta_[backendKey].end() && !overwriteOlder &&
+                smatchet::sync::IsIncomingRowStale(meta.RemoteUpdated, existingMeta->second.RemoteUpdated,
+                                                   TimeNowPure::NowUnixMs())) {
+                continue; // provably older than the stored row: never roll it back (as LocalCacheManager)
+            }
             if (existingMeta != meta_[backendKey].end() && existingRow != tickets_[backendKey].end() &&
                 smatchet::sync::IsSameVersion(existingMeta->second, meta)) {
                 tickets_[backendKey][ticket.id] = smatchet::sync::MergeSameVersionRow(existingRow->second, ticket);

@@ -465,6 +465,48 @@ TEST_CASE_TEMPLATE("ISyncCache: saving at the same version merges the columns; a
     CHECK(c->GetTicketSyncMeta("Jira").at("A-1").Fields == std::vector<std::string>{"labels", "updated"});
 }
 
+TEST_CASE_TEMPLATE("ISyncCache: an older version never overwrites a stored row unless overwriteOlder", M,
+                   RealCacheMaker, FakeCacheMaker) {
+    const std::string newer = "2024-05-02T10:00:00.000+0000";
+    const std::string older = "2024-05-01T10:00:00.000+0000";
+    auto c = M::Make();
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", newer, "summary", "new")}, {MetaOf(newer, {"summary"})});
+
+    // A late save of an older version is skipped: row and meta stay.
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", older, "summary", "old")}, {MetaOf(older, {"summary"})});
+    CachedTicket out;
+    REQUIRE(c->TryGetTicket("Jira", "A-1", out));
+    CHECK(out.GetFieldValue("summary") == "new");
+    CHECK(c->GetTicketSyncMeta("Jira").at("A-1").RemoteUpdated == newer);
+
+    // The Full-sync bypass replaces it anyway.
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", older, "summary", "old")}, {MetaOf(older, {"summary"})},
+                               /*overwriteOlder=*/true);
+    REQUIRE(c->TryGetTicket("Jira", "A-1", out));
+    CHECK(out.GetFieldValue("summary") == "old");
+    CHECK(c->GetTicketSyncMeta("Jira").at("A-1").RemoteUpdated == older);
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: an equal version merges and a far-future stored stamp does not block", M,
+                   RealCacheMaker, FakeCacheMaker) {
+    const std::string stamp = "2024-05-01T10:00:00.000+0000";
+    auto c = M::Make();
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", stamp, "summary", "s")}, {MetaOf(stamp, {"summary"})});
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-1", stamp, "labels", "l")}, {MetaOf(stamp, {"labels"})});
+    CachedTicket out;
+    REQUIRE(c->TryGetTicket("Jira", "A-1", out));
+    CHECK(out.GetFieldValue("summary") == "s");
+    CHECK(out.GetFieldValue("labels") == "l");
+
+    // A stored stamp more than a day ahead of the clock is unknown, so an older-looking row still lands.
+    const std::string future = "2999-01-01T00:00:00.000+0000";
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-2", future, "summary", "wedged")}, {MetaOf(future, {"summary"})});
+    c->SaveTicketsWithSyncMeta("Jira", {MetaRow("A-2", stamp, "summary", "real")}, {MetaOf(stamp, {"summary"})});
+    REQUIRE(c->TryGetTicket("Jira", "A-2", out));
+    CHECK(out.GetFieldValue("summary") == "real");
+    CHECK(c->GetTicketSyncMeta("Jira").at("A-2").RemoteUpdated == stamp);
+}
+
 TEST_CASE_TEMPLATE("ISyncCache: GetTicketsByIds returns the existing rows and skips the rest", M, RealCacheMaker,
                    FakeCacheMaker) {
     auto c = M::Make();
