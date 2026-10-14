@@ -939,6 +939,9 @@ class ConfigManager {
     /// present in the list, guarantee >=1 visible page. Called on load + after the
     /// Preferences Mobile-group edits. Pure logic — unit-tested (Bucket A).
     static void SanitizeMobileNav(TrackerConfig& cfg);
+    /// True when `jsonKey` is a plain integer setting (read through the int field table on load). config.set
+    /// uses it to reject a value that is not an integer, instead of writing a string the load would trip over.
+    static bool IsIntConfigKey(const std::string& jsonKey);
 
     static const char* GetDefaultImGuiDockLayoutIni();
     static bool WriteDefaultImGuiSettingsFile();

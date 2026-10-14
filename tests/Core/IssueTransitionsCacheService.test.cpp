@@ -428,6 +428,20 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 2);
     }
 
+    TEST_CASE("invalidating another tracker namespace leaves this one alone; the named namespace is dropped") {
+        FakeEditMetaDeps deps; // the focused pane's namespace is "Jira"
+        SetUpJiraLike(deps);
+        IssueTransitionsCacheService svc(deps);
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+        REQUIRE(deps.Fake()->FetchIssueTransitionsCalls() == 1);
+
+        svc.InvalidateIssueTransitions("Plane", "PROJ-1"); // a pane on another tracker saw a remote change
+        CHECK(svc.GetAvailableTransitions(Query("PROJ-1")).freshness == DataFreshness::Fresh);
+
+        svc.InvalidateIssueTransitions("Jira", "PROJ-1");
+        CHECK_FALSE(svc.GetAvailableTransitions(Query("PROJ-1")).freshness == DataFreshness::Fresh);
+    }
+
     TEST_CASE("without a local store the live path still works") {
         FakeEditMetaDeps deps;
         SetUpJiraLike(deps);

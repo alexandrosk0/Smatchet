@@ -20,10 +20,12 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <string>
 
@@ -423,8 +425,25 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
             cfg.AiAllowCustomEndpointAnthropic = true;
         }
     }
+    // Per key and type-guarded: a hand-edited or config.set-written non-integer must cost only its own field
+    // (it keeps its default), never abort the reads of every field after it.
     for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
-        cfg.*(kIntFields[i].member) = j.value(kIntFields[i].key, cfg.*(kIntFields[i].member));
+        const auto it = j.find(kIntFields[i].key);
+        if (it == j.end() || !it->is_number_integer()) {
+            continue;
+        }
+        // An unsigned value past INT_MAX must not wrap through int64: compare it as unsigned.
+        if (it->is_number_unsigned()) {
+            const std::uint64_t value = it->get<std::uint64_t>();
+            if (value <= static_cast<std::uint64_t>((std::numeric_limits<int>::max)())) {
+                cfg.*(kIntFields[i].member) = static_cast<int>(value);
+            }
+            continue;
+        }
+        const std::int64_t value = it->get<std::int64_t>();
+        if (value >= (std::numeric_limits<int>::min)() && value <= (std::numeric_limits<int>::max)()) {
+            cfg.*(kIntFields[i].member) = static_cast<int>(value);
+        }
     }
     for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {
         cfg.*(kFloatFields[i].member) =
@@ -440,6 +459,15 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
 } // namespace smatchet
 
 const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
+
+bool ConfigManager::IsIntConfigKey(const std::string& jsonKey) {
+    for (const auto& field : kIntFields) {
+        if (jsonKey == field.key) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // ConfigManager — Save(TrackerConfig).
 

@@ -1081,6 +1081,33 @@ TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-tri
     }
 }
 
+TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged int never resets the fields after it") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "8123"}}, ctx).Ok);
+    REQUIRE(reg.Dispatch("config.set", {{"key", "maxUserChanges"}, {"value", "77"}}, ctx).Ok);
+    const int ttlBefore = ConfigManager::Load().LookupCacheTtlSec;
+
+    for (const char* bad : {"abc", "3.5", "\"7\"", "true", "99999999999", "18446744073709551615"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "lookupCacheTtlSec"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    const TrackerConfig unchanged = ConfigManager::Load();
+    CHECK(unchanged.LookupCacheTtlSec == ttlBefore);
+    CHECK(unchanged.McpPort == 8123);
+    CHECK(unchanged.MaxUserChanges == 77);
+
+    // A damaged file (hand-edited): one bad integer costs only itself, whatever its position in the table.
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) { j["window_x"] = "abc"; });
+    const TrackerConfig damaged = ConfigManager::Load();
+    CHECK(damaged.McpPort == 8123);
+    CHECK(damaged.MaxUserChanges == 77);
+    CHECK(damaged.LookupCacheTtlSec == ttlBefore);
+}
+
 TEST_CASE("fields.* — catalog listing/pagination, get lookup, refresh plumbing, icon resolution") {
     smatchet_tests::TestEnvGuard env; // fields.refresh_catalog reads ConfigManager::Load()
     FakeFields fields;

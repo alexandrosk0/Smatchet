@@ -5,6 +5,7 @@
 #include "GridLiveContext.h"
 #include "Sync/OfflineQueueService.h"
 #include "Sync/PendingActionQueueService.h"
+#include "Sync/RemoteChangeInvalidationPure.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
@@ -250,10 +251,12 @@ void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRe
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
 void GridContextDepsAdapter::OnTicketsRemotelyChanged(const std::vector<std::string>& ids) {
-    for (const std::string& id : ids) {
-        app_.InvalidateIssueTransitions(id);
-        app_.InvalidateIssueEditMeta(id);
-    }
+    // This adapter's own pane, not the focused one: its tickets' cached transitions and permissions live under
+    // its tracker namespace.
+    smatchet::sync::InvalidateRemotelyChangedTickets(
+        ctx().CacheBackendKeyCopy(), ids,
+        [this](const std::string& key, const std::string& id) { app_.InvalidateIssueTransitions(key, id); },
+        [this](const std::string& key, const std::string& id) { app_.InvalidateIssueEditMeta(key, id); });
 }
 
 void GridContextDepsAdapter::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) {

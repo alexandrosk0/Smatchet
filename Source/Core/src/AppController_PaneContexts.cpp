@@ -31,6 +31,7 @@
 #include "Sync/ChangeMonitorRosterProbe.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/MembershipDiffPure.h"
+#include "Sync/RemoteChangeInvalidationPure.h"
 #include "Sync/RemoteVersionPure.h"
 #include "Sync/TicketChangeDiffPure.h"
 #include "SmatchetTicketChangeNotifications.h"
@@ -896,10 +897,11 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         });
     }
 
-    for (std::size_t i = 0; i < movedKeys.size(); ++i) {
-        InvalidateIssueTransitions(movedKeys[i]);
-        InvalidateIssueEditMeta(movedKeys[i]);
-    }
+    // The pane's own tracker namespace, not the focused pane's.
+    smatchet::sync::InvalidateRemotelyChangedTickets(
+        backendKey, movedKeys,
+        [this](const std::string& key, const std::string& id) { InvalidateIssueTransitions(key, id); },
+        [this](const std::string& key, const std::string& id) { InvalidateIssueEditMeta(key, id); });
     // The added rows now belong to this pane for good; record them, or the next RefreshLocalData (which
     // scopes the namespace read to the pane's recorded ids) would filter them back out.
     for (std::size_t i = 0; i < addedKeys.size(); ++i) {

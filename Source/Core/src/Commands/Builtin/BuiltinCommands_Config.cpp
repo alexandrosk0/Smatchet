@@ -16,6 +16,8 @@
 #include <nlohmann/json.hpp>
 
 #include "Json/BoundedJsonParse.h"
+#include <cstdint>
+#include <limits>
 
 namespace smatchet {
 namespace cmd {
@@ -209,6 +211,21 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
         if (!val.is_boolean()) {
             return CommandResult::Failure(ErrorCode::ValidationError, "Value for 'vsync' must be a boolean.",
                                           "Use: on, off, true, false, 1, 0");
+        }
+    }
+    // An integer setting takes an integer: a string or fraction written here would make every later load of
+    // that key fall back to its default (and, before the load was guarded, abort the fields after it).
+    if (ConfigManager::IsIntConfigKey(found->json)) {
+        const bool inRange =
+            val.is_number_integer() &&
+            (val.is_number_unsigned()
+                 ? val.get<std::uint64_t>() <= static_cast<std::uint64_t>((std::numeric_limits<int>::max)())
+                 : (val.get<std::int64_t>() >= (std::numeric_limits<int>::min)() &&
+                    val.get<std::int64_t>() <= (std::numeric_limits<int>::max)()));
+        if (!inRange) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "Value for '" + key + "' must be an integer.",
+                                          found->hint && found->hint[0] ? std::string(found->hint)
+                                                                        : std::string("Use a whole number."));
         }
     }
     if (ctx.DryRun) {

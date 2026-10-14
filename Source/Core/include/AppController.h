@@ -1095,6 +1095,9 @@ class AppController : public IAppThreading,
                                          const TrackerConfig* configSnapshot = nullptr);
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
+    /// Same, for the tracker namespace `backendKey`: a pane's remote-change invalidation must not land in the
+    /// focused pane's namespace.
+    void InvalidateIssueEditMeta(const std::string& backendKey, const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     /** Post-sync warm: per-issue-type edit permissions (EditMetaCacheService) and each active project's
      * component options (ProjectComponentsCacheService); both load their saved copies first.
@@ -1106,6 +1109,7 @@ class AppController : public IAppThreading,
     struct TransitionsLookup GetAvailableTransitionsForIssue(const TransitionsQuery& query) const;
     void EnsureIssueTransitionsLoaded(const TransitionsQuery& query) const;
     void InvalidateIssueTransitions(const std::string& issueId);
+    void InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
     /// FetchIssueWatchers with the error kind kept (Transport when the tracker is unreachable), so the

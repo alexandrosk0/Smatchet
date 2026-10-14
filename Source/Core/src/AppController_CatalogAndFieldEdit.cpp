@@ -920,6 +920,10 @@ VoidResult AppController::RefreshIssueEditMeta(const std::string& issueId, const
 
 void AppController::InvalidateIssueEditMeta(const std::string& issueId) { editMeta_->InvalidateIssueEditMeta(issueId); }
 
+void AppController::InvalidateIssueEditMeta(const std::string& backendKey, const std::string& issueId) {
+    editMeta_->InvalidateIssueEditMeta(backendKey, issueId);
+}
+
 void AppController::PruneEditMetaCacheToActiveTickets() { editMeta_->PruneEditMetaCacheToActiveTickets(); }
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
@@ -946,6 +950,10 @@ void AppController::EnsureIssueTransitionsLoaded(const TransitionsQuery& query) 
 
 void AppController::InvalidateIssueTransitions(const std::string& issueId) {
     transitions_->InvalidateIssueTransitions(issueId);
+}
+
+void AppController::InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId) {
+    transitions_->InvalidateIssueTransitions(backendKey, issueId);
 }
 
 // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object

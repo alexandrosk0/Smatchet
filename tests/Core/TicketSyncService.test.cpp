@@ -24,6 +24,7 @@
 #include "TicketSyncService.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
 #include "Sync/DeltaSyncPure.h"
+#include "Sync/RemoteChangeInvalidationPure.h"
 
 #include <doctest/doctest.h>
 
@@ -2387,4 +2388,17 @@ TEST_CASE("An unchanged view reports nothing as remotely changed") {
     REQUIRE(rig.Settle());
 
     CHECK(rig.deps.RemotelyChanged.empty());
+}
+
+TEST_CASE(
+    "A remote change invalidates under the pane's own tracker namespace for both transitions and edit permissions") {
+    std::vector<std::pair<std::string, std::string>> transitions;
+    std::vector<std::pair<std::string, std::string>> editMeta;
+    smatchet::sync::InvalidateRemotelyChangedTickets(
+        "Plane|ws", {"ABC-1", "ABC-2"},
+        [&](const std::string& key, const std::string& id) { transitions.emplace_back(key, id); },
+        [&](const std::string& key, const std::string& id) { editMeta.emplace_back(key, id); });
+    const std::vector<std::pair<std::string, std::string>> expected = {{"Plane|ws", "ABC-1"}, {"Plane|ws", "ABC-2"}};
+    CHECK(transitions == expected);
+    CHECK(editMeta == expected);
 }
