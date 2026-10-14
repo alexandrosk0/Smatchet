@@ -25,6 +25,7 @@
 #include "PaneSyncKickPolicy.h"
 #include "SalientRosterResolve.h"
 #include "TicketSyncService.h"
+#include "TimeNowPure.h"
 #include "Views.h"
 
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
@@ -124,7 +125,8 @@ struct ProbeMergeResult {
 // Merges one fetched row over its resident twin. Never replaces a resident row with one the tracker stamped OLDER
 // (a late or reordered probe); an unparsable or missing stamp does not block - the pre-delta behaviour.
 void MergeProbeRow(const CachedTicket& t, CachedTicket& resident, ProbeMergeResult& out) {
-    if (smatchet::sync::IsIncomingRowStale(t.GetFieldValueRef("updated"), resident.GetFieldValueRef("updated"))) {
+    if (smatchet::sync::IsIncomingRowStale(t.GetFieldValueRef("updated"), resident.GetFieldValueRef("updated"),
+                                           TimeNowPure::NowUnixMs())) {
         return;
     }
     // A poll row carries no lazily fetched comment thread / tooltip blob; keep the resident
@@ -810,7 +812,7 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
     auto keysRes = reader.FetchIssueKeysForView(cfg, views);
     if (!static_cast<bool>(keysRes)) {
-        LOG_INFO("AppController::TickChangeMonitors keys-fetch skipped pane='%s': %s", paneId.c_str(),
+        LOG_INFO("AppController::computeMembershipRemovals_ keys-fetch skipped pane='%s': %s", paneId.c_str(),
                  keysRes.error().Detail.c_str());
         return verdicts;
     }
@@ -822,8 +824,8 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
 // retains that id (the cache spans panes, ADR-0018 decision 4 - an unconditional purge yanked a row out from
 // under a pane that is still displaying it, and that pane has no way to notice). The sibling reaches the same
 // 404 on its own change poll and purges then, so the row still converges away.
-void AppController::dropUnheldCacheRows_(GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
-                                         const smatchet::MembershipReconcilePlan& plan) {
+void AppController::dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId,
+                                         const std::string& backendKey, const smatchet::MembershipReconcilePlan& plan) {
     if (Cache && !plan.cacheDeleteKeys.empty()) {
         const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
         const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
@@ -831,7 +833,7 @@ void AppController::dropUnheldCacheRows_(GridLiveContext& ctx, const std::string
         for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
             const std::string& key = plan.cacheDeleteKeys[i];
             if (retained.find(key) != retained.end()) {
-                LOG_DEBUG("AppController::TickChangeMonitors kept cache row '%s' — a sibling pane still holds it.",
+                LOG_DEBUG("AppController::dropUnheldCacheRows_ kept cache row '%s' — a sibling pane still holds it.",
                           key.c_str());
                 continue;
             }
@@ -846,7 +848,7 @@ void AppController::dropUnheldCacheRows_(GridLiveContext& ctx, const std::string
                     try {
                         deleteCache->DeleteTicket(backendKey, keysToDrop[i]);
                     } catch (const std::exception& ex) {
-                        LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache delete of '%s' failed: %s",
+                        LOG_ERROR("AppController::dropUnheldCacheRows_ cache delete of '%s' failed: %s",
                                   keysToDrop[i].c_str(), ex.what());
                     }
                 }
@@ -875,7 +877,7 @@ void AppController::persistProbeRows_(const std::string& paneId, const std::stri
             try {
                 smatchet::sync::SaveFetchedRows(*cacheSnapshot, backendKey, *rows);
             } catch (const std::exception& ex) {
-                LOG_ERROR("AppController::applyChangeProbeOnMainThread_ cache write failed pane='%s' key='%s' "
+                LOG_ERROR("AppController::persistProbeRows_ cache write failed pane='%s' key='%s' "
                           "rows=%zu: %s",
                           paneId.c_str(), backendKey.c_str(), rows->size(), ex.what());
             }
@@ -943,8 +945,8 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     const std::vector<std::string>& addedKeys = merged.addedKeys;
     // Persist updated tickets to durable cache (outside the mutex, mirrors ApplyIssueFetchPack pattern).
     // Without this, later cache reloads (RefreshLocalData, hidden-pane re-seed) would revert the updates
-    // since the fresh field values were never written to tickets_v2. Use SaveTickets (batch) instead of
-    // per-ticket SaveTicket calls to avoid N synchronous SQLite writes on the UI thread.
+    // since the fresh field values were never written to tickets_v2. persistProbeRows_ hands the whole batch
+    // to a worker thread (one transaction), so no SQLite write runs on the UI thread.
     persistProbeRows_(paneId, backendKey, std::move(merged.updatedTickets));
 
     // The pane's own tracker namespace, not the focused pane's.
