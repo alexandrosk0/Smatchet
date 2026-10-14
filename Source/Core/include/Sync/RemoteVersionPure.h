@@ -177,5 +177,22 @@ inline bool IsIncomingRowStale(const std::string& incomingUpdated, const std::st
     return CompareRemoteUpdated(incomingUpdated, residentUpdated) == RemoteVersionOrder::Older;
 }
 
+/// A stored stamp later than `nowMs` by more than this is not a real tracker stamp (tracker clock corrected,
+/// restore, import): it is treated as unknown and never blocks a write.
+constexpr std::int64_t kImplausibleFutureMs = 24LL * 60 * 60 * 1000;
+
+/// True when `residentUpdated` parses to an instant more than a day past `nowMs`.
+inline bool IsStampImplausiblyInFuture(const std::string& residentUpdated, std::int64_t nowMs) {
+    std::int64_t residentMs = 0;
+    return ParseRemoteUpdatedMs(residentUpdated, residentMs) && residentMs > nowMs + kImplausibleFutureMs;
+}
+
+/// IsIncomingRowStale, except a resident stamp far in the future (IsStampImplausiblyInFuture) is unknown
+/// and so never blocks: a wedged future stamp cannot make every later refetch of the row look stale.
+inline bool IsIncomingRowStale(const std::string& incomingUpdated, const std::string& residentUpdated,
+                               std::int64_t nowMs) {
+    return !IsStampImplausiblyInFuture(residentUpdated, nowMs) && IsIncomingRowStale(incomingUpdated, residentUpdated);
+}
+
 } // namespace sync
 } // namespace smatchet

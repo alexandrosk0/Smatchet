@@ -96,6 +96,11 @@ class FakeSyncCache : public ISyncCache {
         std::lock_guard<std::mutex> lk(m_);
         failSaveCountdown_ = nthFromNow;
     }
+    /// Test switch: GetTicketSyncMeta throws std::runtime_error("scripted meta read failure").
+    void FailGetSyncMeta(bool on) {
+        std::lock_guard<std::mutex> lk(m_);
+        failGetSyncMeta_ = on;
+    }
     void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) override {
         {
             std::lock_guard<std::mutex> lk(m_);
@@ -112,6 +117,9 @@ class FakeSyncCache : public ISyncCache {
     // --- Delta-sync metadata (mirrors LocalCacheManager's ticket_sync_meta table) ---------
     std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) override {
         std::lock_guard<std::mutex> lk(m_);
+        if (failGetSyncMeta_) {
+            throw std::runtime_error("scripted meta read failure");
+        }
         std::unordered_map<std::string, TicketSyncMeta> out;
         const auto ns = meta_.find(backendKey);
         if (ns != meta_.end()) {
@@ -122,7 +130,8 @@ class FakeSyncCache : public ISyncCache {
         return out;
     }
     void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& batch,
-                                 const std::vector<TicketSyncMeta>& metas) override {
+                                 const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) override {
+        (void)overwriteOlder; // the fake keeps no version guard: the service-side drop is what the tests observe
         std::lock_guard<std::mutex> lk(m_);
         if (failSaveCountdown_ > 0 && --failSaveCountdown_ == 0) {
             throw std::runtime_error("scripted save failure");
@@ -631,6 +640,7 @@ class FakeSyncCache : public ISyncCache {
     int deleteTicketsCalls_ = 0;
     bool throwNonStdOnDelete_ = false;
     int failSaveCountdown_ = 0;
+    bool failGetSyncMeta_ = false;
     std::vector<PendingCreate> creates_;
     std::vector<PendingFieldEditRecord> edits_;
     std::vector<DeadPendingCreate> deadCreates_;

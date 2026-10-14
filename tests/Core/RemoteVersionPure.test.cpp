@@ -77,3 +77,14 @@ TEST_CASE("IsIncomingRowStale blocks only a provably older row") {
     CHECK_FALSE(IsIncomingRowStale("", "2024-05-01T10:00:00Z"));
     CHECK_FALSE(IsIncomingRowStale("2024-05-01T10:00:00Z", ""));
 }
+
+TEST_CASE("IsIncomingRowStale with a clock treats a resident stamp more than a day ahead as unknown") {
+    constexpr std::int64_t nowMs = 1777627200000LL; // 2026-05-01T09:00:00Z
+    // A resident stamp a few hours ahead is within the one-day tolerance: it still blocks an older row.
+    CHECK(IsIncomingRowStale("2026-05-01T09:00:00Z", "2026-05-01T12:00:00Z", nowMs));
+    // Far in the future: not a real tracker stamp, so it never blocks.
+    CHECK_FALSE(IsIncomingRowStale("2026-05-01T09:00:00Z", "2999-01-01T00:00:00Z", nowMs));
+    CHECK(smatchet::sync::IsStampImplausiblyInFuture("2999-01-01T00:00:00Z", nowMs));
+    CHECK_FALSE(smatchet::sync::IsStampImplausiblyInFuture("garbage", nowMs));
+    CHECK_FALSE(smatchet::sync::IsStampImplausiblyInFuture("2026-05-01T12:00:00Z", nowMs));
+}

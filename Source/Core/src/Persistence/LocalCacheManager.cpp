@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "Persistence/SqliteOpenRecoveryPure.h"
 #include "Sync/RemoteVersionPure.h" // IsIncomingRowStale: SaveTicketsWithSyncMeta never rolls a row back
+#include "TimeNowPure.h"
 
 #include <ghc/filesystem.hpp>
 #include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
@@ -662,10 +663,11 @@ std::unordered_map<std::string, TicketSyncMeta> LocalCacheManager::GetTicketSync
 }
 
 void LocalCacheManager::SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
-                                                const std::vector<TicketSyncMeta>& metas) {
+                                                const std::vector<TicketSyncMeta>& metas, bool overwriteOlder) {
     if (tickets.empty()) {
         return;
     }
+    const std::int64_t nowMs = TimeNowPure::NowUnixMs();
     RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicketsWithSyncMeta", [&] {
         for (std::size_t i = 0; i < tickets.size(); ++i) {
             const CachedTicket& ticket = tickets[i];
@@ -678,8 +680,12 @@ void LocalCacheManager::SaveTicketsWithSyncMeta(const std::string& backendKey, c
             TicketSyncMeta existingMeta;
             CachedTicket existingRow;
             const bool hadMeta = readSyncMeta_(backendKey, ticket.id, existingMeta);
-            if (hadMeta && smatchet::sync::IsIncomingRowStale(meta.RemoteUpdated, existingMeta.RemoteUpdated)) {
-                continue; // provably older than the stored row (a late or reordered save): never roll it back
+            if (hadMeta && !overwriteOlder &&
+                smatchet::sync::IsIncomingRowStale(meta.RemoteUpdated, existingMeta.RemoteUpdated, nowMs)) {
+                // Provably older than the stored row (a late or reordered save): never roll it back.
+                LOG_DEBUG("LocalCacheManager::SaveTicketsWithSyncMeta skipped stale row id=%s incoming=%s stored=%s",
+                          ticket.id.c_str(), meta.RemoteUpdated.c_str(), existingMeta.RemoteUpdated.c_str());
+                continue;
             }
             if (hadMeta && smatchet::sync::IsSameVersion(existingMeta, meta) &&
                 readTicketRows_(backendKey, ticket.id, existingRow)) {

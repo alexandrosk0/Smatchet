@@ -27,11 +27,10 @@
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "SmatchetResult.h"       // Result<>
-// SMATCHET_DEVIATION(rule=include-cycle; reason=TrackerError is the plain error value the hierarchy-hop result carries; relocating it to a lower-layer leaf is a repo-wide layering change owned by the core-include-dag plan; owner=offline-sync; revisit=2027-10-14)
-#include "TrackerError.h"      // TrackerError (hierarchy hop result)
-#include "TicketSyncMeta.h"    // TicketSyncMeta (the per-session version snapshot)
-#include "CachedTicketTypes.h" // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
+#include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
+#include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
+struct TrackerError;             // Tracker/TrackerError.h — only named in the FetchHierarchyHop declaration
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
 
 class ITicketSyncDeps;
@@ -337,6 +336,9 @@ class TicketSyncService {
     /// Versions of the cached rows as of the session start; worker-thread only (written before the first
     /// batch is queued, read while persisting the batches of the same session).
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
+    /// Fills `sessionMeta_` from the cache (worker thread). Returns the error text when the read failed (the
+    /// snapshot is then empty), empty on success.
+    std::string LoadSessionMeta();
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
 

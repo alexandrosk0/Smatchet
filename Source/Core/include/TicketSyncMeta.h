@@ -12,6 +12,7 @@
 // would make two panes refetch each other's rows forever.
 
 #include "CachedTicketTypes.h"
+#include "TimeNowPure.h"
 
 #include <algorithm>
 #include <chrono>
@@ -83,12 +84,6 @@ inline TicketSyncMeta BuildSyncMeta(const CachedTicket& ticket, std::int64_t now
     return meta;
 }
 
-/// Current wall clock in epoch seconds (the `SyncedAtEpochSec` a fresh save stamps).
-inline std::int64_t NowEpochSec() {
-    return static_cast<std::int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-}
-
 /// One meta per row, index-aligned with `rows` (the shape SaveTicketsWithSyncMeta takes).
 inline std::vector<TicketSyncMeta> BuildSyncMetas(const std::vector<CachedTicket>& rows, std::int64_t nowEpochSec) {
     std::vector<TicketSyncMeta> metas;
@@ -102,9 +97,13 @@ inline std::vector<TicketSyncMeta> BuildSyncMetas(const std::vector<CachedTicket
 /// Saves freshly fetched `rows`, each beside the tracker version it carries (a plain SaveTickets would
 /// drop the meta and make the next delta sync refetch every row). `Cache` is any ISyncCache-shaped
 /// type (a template keeps this header a leaf that does not include the persistence layer).
+/// `overwriteOlder`: a Full sync's rows are authoritative and replace a stored row even when it carries a later
+/// stamp (see ISyncCache::SaveTicketsWithSyncMeta).
 template <typename Cache>
-void SaveFetchedRows(Cache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows) {
-    cache.SaveTicketsWithSyncMeta(backendKey, rows, BuildSyncMetas(rows, NowEpochSec()));
+void SaveFetchedRows(Cache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows,
+                     bool overwriteOlder = false) {
+    cache.SaveTicketsWithSyncMeta(backendKey, rows, BuildSyncMetas(rows, TimeNowPure::NowUnixSeconds()),
+                                  overwriteOlder);
 }
 
 /// Saving `incoming` over a cached row that was fetched at the SAME tracker version: the two differ

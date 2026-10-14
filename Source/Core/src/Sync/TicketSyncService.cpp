@@ -9,6 +9,8 @@
 #include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
+#include "TimeNowPure.h"
+#include "Tracker/TrackerError.h"                // TrackerError is only forward-declared by TicketSyncService.h
 #include "Sync/RemoteVersionPure.h"              // never persist a row older than the cached version
 #include "TicketSyncMeta.h"                      // BuildSyncMeta: the tracker version stored beside each saved row
 #include "Sync/RefusalIsolatingFetchPure.h"      // refusal-isolating key-batch download (shared with the monitor)
@@ -121,31 +123,39 @@ bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedT
 }
 
 // Drops the rows whose `updated` is provably OLDER than the version already cached for them (a late or
-// reordered fetch must not roll a newer cached row back) and returns how many were dropped. An unknown order
-// (no stamp on either side) keeps the row, exactly as before versions were stored.
+// reordered fetch must not roll a newer cached row back) and returns how many were dropped. A cached stamp more
+// than a day in the future is unknown and never blocks. A Full sync is authoritative and does not call this. An
+// unknown order (no stamp on either side) keeps the row, exactly as before versions were stored.
 std::size_t DropRowsOlderThanCached(std::vector<CachedTicket>& rows,
                                     const std::unordered_map<std::string, TicketSyncMeta>& cachedMeta,
                                     std::vector<std::string>& droppedIds) {
     const std::size_t before = rows.size();
-    rows.erase(std::remove_if(rows.begin(), rows.end(),
-                              [&cachedMeta, &droppedIds](const CachedTicket& row) {
-                                  const auto it = cachedMeta.find(row.id);
-                                  const bool stale = it != cachedMeta.end() &&
-                                                     smatchet::sync::IsIncomingRowStale(row.GetFieldValueRef("updated"),
-                                                                                        it->second.RemoteUpdated);
-                                  if (stale) {
-                                      droppedIds.push_back(row.id); // still part of the view: kept, not queued
-                                  }
-                                  return stale;
-                              }),
-               rows.end());
+    const std::int64_t nowMs = TimeNowPure::NowUnixMs();
+    rows.erase(
+        std::remove_if(rows.begin(), rows.end(),
+                       [&cachedMeta, &droppedIds, nowMs](const CachedTicket& row) {
+                           const auto it = cachedMeta.find(row.id);
+                           const bool stale = it != cachedMeta.end() &&
+                                              smatchet::sync::IsIncomingRowStale(row.GetFieldValueRef("updated"),
+                                                                                 it->second.RemoteUpdated, nowMs);
+                           if (stale) {
+                               LOG_DEBUG("TicketSyncService: dropped stale fetched row id=%s fetched=%s cached=%s",
+                                         row.id.c_str(), row.GetFieldValueRef("updated").c_str(),
+                                         it->second.RemoteUpdated.c_str());
+                               droppedIds.push_back(row.id); // still part of the view: kept, not queued
+                           }
+                           return stale;
+                       }),
+        rows.end());
     return before - rows.size();
 }
 
 // Saves `rows` and, beside each, the tracker version it was fetched at (delta-sync meta), in one
 // transaction. A row without an `updated` stamp is saved with no meta (it will always be refetched).
-void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows) {
-    smatchet::sync::SaveFetchedRows(cache, backendKey, rows);
+// `overwriteOlder` is a Full sync's authority over the version guard.
+void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows,
+                      bool overwriteOlder) {
+    smatchet::sync::SaveFetchedRows(cache, backendKey, rows, overwriteOlder);
 }
 
 } // namespace
@@ -291,7 +301,8 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // happens on this (UI) thread between sessions (multi-grid Slice 1b).
     const std::string backendKey = deps_.CacheBackendKey();
     CarryForwardLazyComments(deps_, pack.Tickets);
-    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets);
+    // A Full sync is authoritative: it may overwrite a row whose stored stamp is later than the fetched one.
+    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets, activeMode_ == smatchet::sync::SyncMode::Full);
     const size_t saved = freshTickets.size();
 
     size_t deleted = 0;
@@ -994,29 +1005,45 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         [this, reqId, cfgCopy, viewsCopy, mode]() { RunStreamingWorkerBody(reqId, cfgCopy, viewsCopy, mode); });
 }
 
+std::string TicketSyncService::LoadSessionMeta() {
+    sessionMeta_.clear();
+    if (!deps_.Cache()) {
+        return std::string();
+    }
+    try {
+        sessionMeta_ = deps_.Cache()->GetTicketSyncMeta(deps_.CacheBackendKey());
+    } catch (const std::exception& ex) {
+        // The snapshot only guards against rolling a row back; a sync must not fail over it.
+        LOG_WARN("TicketSyncService: could not read cached ticket versions: %s", ex.what());
+        sessionMeta_.clear();
+        return ex.what();
+    } catch (...) {
+        LOG_WARN("TicketSyncService: could not read cached ticket versions (unknown exception)");
+        sessionMeta_.clear();
+        return "unknown exception";
+    }
+    return std::string();
+}
+
 void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy,
                                                const ViewsStore& viewsCopy, smatchet::sync::SyncMode mode) {
     try {
         // Versions of the rows already cached, so a fetched row older than its cached copy is never persisted.
-        sessionMeta_.clear();
-        if (deps_.Cache()) {
-            try {
-                sessionMeta_ = deps_.Cache()->GetTicketSyncMeta(deps_.CacheBackendKey());
-            } catch (const std::exception& ex) {
-                // The snapshot only guards against rolling a row back; a sync must not fail over it.
-                LOG_WARN("TicketSyncService: could not read cached ticket versions: %s", ex.what());
-                sessionMeta_.clear();
-            }
-        }
+        const std::string metaReadError = LoadSessionMeta();
         std::string fallbackReason;
         if (mode == smatchet::sync::SyncMode::Delta) {
             DeltaOutcome outcome;
-            try {
-                outcome = RunDeltaFetch(reqId, cfgCopy, viewsCopy);
-            } catch (const std::exception& ex) {
-                // Any failure on the delta path falls back to today's full fetch.
-                outcome.Finished = false;
-                outcome.FallbackReason = std::string("delta attempt threw: ") + ex.what();
+            if (!metaReadError.empty()) {
+                // An unreadable version table is not the expected "no cached ticket versions yet": say so.
+                outcome.FallbackReason = "could not read cached ticket versions: " + metaReadError;
+            } else {
+                try {
+                    outcome = RunDeltaFetch(reqId, cfgCopy, viewsCopy);
+                } catch (const std::exception& ex) {
+                    // Any failure on the delta path falls back to today's full fetch.
+                    outcome.Finished = false;
+                    outcome.FallbackReason = std::string("delta attempt threw: ") + ex.what();
+                }
             }
             if (outcome.Finished) {
                 sessionMeta_.clear(); // worker-only; released before the UI thread may start the next session
@@ -1035,6 +1062,7 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
         RunFullFetch(reqId, cfgCopy, viewsCopy, fallbackReason);
         sessionMeta_.clear();
     } catch (const std::exception& ex) {
+        sessionMeta_.clear();
         LOG_ERROR("TicketSyncService: Worker thread caught exception: %s", ex.what());
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
@@ -1046,6 +1074,7 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
             activeStreamingSync_.FullSyncCompleted = false;
         }
     } catch (...) {
+        sessionMeta_.clear();
         LOG_ERROR("TicketSyncService: Worker thread caught unknown exception.");
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
@@ -1141,12 +1170,14 @@ bool TicketSyncService::QueueBatch(std::uint64_t reqId, std::vector<CachedTicket
         // Worker thread, no lock held: carry the comment thread forward (takes ActiveTicketsMutex alone),
         // drop rows older than the cached version, then persist rows + versions in one transaction.
         CarryForwardLazyComments(deps_, rows);
-        const std::size_t dropped = DropRowsOlderThanCached(rows, sessionMeta_, keepOnlyIds);
+        // A Full sync is authoritative: it neither drops nor refuses a row for being older than the cached copy.
+        const bool fullSync = activeMode_ == smatchet::sync::SyncMode::Full;
+        const std::size_t dropped = fullSync ? 0 : DropRowsOlderThanCached(rows, sessionMeta_, keepOnlyIds);
         if (dropped > 0) {
             LOG_INFO("TicketSyncService: kept %zu cached row(s) newer than the fetched copy.", dropped);
         }
         if (deps_.Cache() && !rows.empty()) {
-            SaveRowsWithMeta(*deps_.Cache(), deps_.CacheBackendKey(), rows);
+            SaveRowsWithMeta(*deps_.Cache(), deps_.CacheBackendKey(), rows, fullSync);
         }
         if (rows.empty() && keepOnlyIds.empty()) {
             return true;
@@ -1483,10 +1514,6 @@ std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
     return std::string();
 }
 
-std::int64_t NowEpochSeconds() {
-    return static_cast<std::int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-}
 } // namespace
 
 void TicketSyncService::FailDeltaSession(std::uint64_t reqId, const std::string& message) {
@@ -1513,7 +1540,7 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
     }
     const std::string backendKey = deps_.CacheBackendKey();
     // The cached versions this session's worker already loaded (RunStreamingWorkerBody, same thread): one read of
-    // the table per session. A failed read left it empty, which plans a full fetch.
+    // the table per session. A failed read never reaches here (the worker body reports it as its own fallback).
     const std::unordered_map<std::string, TicketSyncMeta>& meta = sessionMeta_;
 
     smatchet::sync::SyncStrategyInput input;
@@ -1541,7 +1568,7 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
     DeltaWork work;
     work.Roster = std::move(roster.value());
     work.Meta = meta;
-    work.NowSec = NowEpochSeconds();
+    work.NowSec = TimeNowPure::NowUnixSeconds();
     const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
     work.RequiredFields =
         smatchet::sync::RequiredFieldsOfView(activeView != nullptr ? activeView->Fields : std::vector<std::string>());

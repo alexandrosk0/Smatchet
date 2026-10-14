@@ -191,6 +191,50 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == newer);
     }
 
+    // Wedge repair (docs/plans/active/delta-sync.md § Review follow-ups): a stored stamp ahead of the tracker's
+    // later real stamps must not block every refetch of the row forever.
+    TEST_CASE("a Full sync (overwriteOlder) replaces a row whose stored stamp is later") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string ahead = "2026-05-02T10:00:00.000+0000";
+        const std::string real = "2026-05-01T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", ahead, "wedged")}, {Meta(ahead, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", real, "repaired")}, {Meta(real, {"summary", "updated"}, 555)},
+                                      /*overwriteOlder=*/true);
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "repaired");
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == real);
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").SyncedAtEpochSec == 555);
+    }
+
+    TEST_CASE("a Delta save (the default) still refuses an older row") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string ahead = "2026-05-02T10:00:00.000+0000";
+        const std::string real = "2026-05-01T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", ahead, "kept")}, {Meta(ahead, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", real, "refused")}, {Meta(real, {"summary", "updated"})},
+                                      /*overwriteOlder=*/false);
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "kept");
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == ahead);
+    }
+
+    TEST_CASE("a stored stamp far in the future does not block a write") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string future = "2999-01-01T00:00:00.000+0000";
+        const std::string real = "2026-05-01T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", future, "wedged")}, {Meta(future, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", real, "real")}, {Meta(real, {"summary", "updated"})});
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "real");
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == real);
+    }
+
     TEST_CASE("an unknown or unparsable stamp still writes, so no data is dropped") {
         SqliteMemFixture fx;
         LocalCacheManager& cache = fx.Ref();

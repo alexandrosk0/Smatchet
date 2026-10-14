@@ -49,10 +49,14 @@ class ISyncCache {
     /// SaveTickets plus the meta of each row in one transaction. `metas` is parallel to `tickets`
     /// (a missing or empty-`RemoteUpdated` entry stores no meta and clears any old one). When a row is
     /// saved over a cached row at the SAME `RemoteUpdated`, the two are merged (MergeSameVersionRow) and
-    /// the stored field list becomes the union. Default: saves the rows and drops the meta.
+    /// the stored field list becomes the union. A row provably OLDER than the stored one is skipped (a late or
+    /// reordered save never rolls it back) unless `overwriteOlder` is set - a Full sync is authoritative and
+    /// repairs a stored stamp that is ahead of the tracker. A stored stamp more than a day in the future is
+    /// unknown and never blocks. Default: saves the rows and drops the meta.
     virtual void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
-                                         const std::vector<TicketSyncMeta>& metas) {
+                                         const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) {
         (void)metas;
+        (void)overwriteOlder;
         SaveTickets(backendKey, tickets);
     }
     /// The rows for `ids` that exist under `backendKey` (missing ids are skipped; order unspecified).

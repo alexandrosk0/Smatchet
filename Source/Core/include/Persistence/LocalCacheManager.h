@@ -57,7 +57,7 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     // Delta-sync metadata (ISyncCache): the `ticket_sync_meta` table, one row per (backend_key, ticket).
     std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) override;
     void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
-                                 const std::vector<TicketSyncMeta>& metas) override;
+                                 const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) override;
     /** Rewrites a row WITHOUT touching its sync meta. For a save that does not change which tracker version the
      *  row stands for (a local field edit or enrichment of the same remote copy); `SaveTicket` would drop the
      *  meta and force the next delta sync to refetch the ticket. Off-interface, like ForEachTicket. */

@@ -1786,6 +1786,24 @@ TEST_CASE("Delta reload: a backend that cannot list versions keeps the old full 
     CHECK_FALSE(rig.svc.LastSessionStats().FallbackReason.empty());
 }
 
+TEST_CASE("Delta reload: an unreadable version table is reported as its own fallback, not as 'no cached versions'") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.deps.CacheImpl->FailGetSyncMeta(true);
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchRosterCallCount() == 0); // the delta attempt was not made
+    CHECK(rig.fake->FetchIssuesCallCount() == 1); // the full fetch ran and the sync did not fail
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("could not read cached ticket versions") != std::string::npos);
+    CHECK(stats.FallbackReason.find("scripted meta read failure") != std::string::npos);
+    CHECK(stats.FallbackReason.find("no cached ticket versions yet") == std::string::npos);
+}
+
 TEST_CASE("Delta reload: the config kill switch and an empty version table both mean a full fetch") {
     {
         DeltaRig rig;
@@ -1918,6 +1936,56 @@ TEST_CASE("A fetched row older than the cached version never replaces the cached
     CHECK(residentKept);
     CHECK(deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got)); // the other row still lands
     svc.CancelAndJoinActiveStreamingSync();
+}
+
+namespace {
+
+// Caches ABC-1 at `storedStamp` ("stored"), then runs one `mode` sync whose fetch returns ABC-1 stamped
+// 2024-05-01T09:00Z ("fetched"). The caller inspects the cache afterwards.
+void SyncFetchedRowOverStored(FakeTicketSyncDeps& deps, const std::string& storedStamp, smatchet::sync::SyncMode mode) {
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    const CachedTicket stored = Stamped("ABC-1", storedStamp, "stored");
+    deps.CacheImpl->SaveTicketsWithSyncMeta(
+        "Jira", {stored}, {smatchet::sync::BuildSyncMeta(stored, static_cast<std::int64_t>(std::time(nullptr)))});
+    fake->SetFetchIssuesResult({Stamped("ABC-1", "2024-05-01T09:00:00.000+0000", "fetched")}, true);
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views, mode);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.LastSessionStats().Valid; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+} // namespace
+
+// Version-guard wedge repair (docs/plans/active/delta-sync.md § Review follow-ups): a stored stamp ahead of the
+// tracker's real ones must not drop every refetch of the row forever.
+TEST_CASE("A Full sync overwrites a row whose stored stamp is later than the fetched one") {
+    FakeTicketSyncDeps deps;
+    SyncFetchedRowOverStored(deps, "2024-05-02T10:00:00.000+0000", smatchet::sync::SyncMode::Full);
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "fetched");
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-01T09:00:00.000+0000");
+}
+
+TEST_CASE("A Delta sync still refuses a fetched row older than the stored stamp") {
+    FakeTicketSyncDeps deps;
+    SyncFetchedRowOverStored(deps, "2024-05-02T10:00:00.000+0000", smatchet::sync::SyncMode::Delta);
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "stored");
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-02T10:00:00.000+0000");
+}
+
+TEST_CASE("A stored stamp far in the future does not block a Delta sync write") {
+    FakeTicketSyncDeps deps;
+    SyncFetchedRowOverStored(deps, "2999-01-01T00:00:00.000+0000", smatchet::sync::SyncMode::Delta);
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "fetched");
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-01T09:00:00.000+0000");
 }
 
 TEST_CASE("The stale sweep is one worker-side batch delete plus one in-memory pass") {
