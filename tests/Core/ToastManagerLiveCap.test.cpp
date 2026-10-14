@@ -8,11 +8,17 @@
 #include <doctest/doctest.h>
 
 #include "SmatchetToast.h"
+#include "../support/ScopedLimits.h"
 
 #include <cstddef>
 #include <string>
 
 TEST_CASE("SmatchetToastManager: live stack bounded at MaxLiveToasts(); history + unread errors keep the trail") {
+    // Pin the two limits this test's arithmetic depends on (live cap 6, history 200); restored on exit.
+    const smatchet_tests::ScopedLimits pinnedLimits([](smatchet::limits::LimitsConfig& l) {
+        l.ToastMaxLive = 6;
+        l.ToastHistoryMax = 200;
+    });
     SmatchetToastManager& mgr = SmatchetToastManager::Instance();
     // Shared singleton — start from a clean slate and restore one at the end.
     mgr.DismissAllLive();

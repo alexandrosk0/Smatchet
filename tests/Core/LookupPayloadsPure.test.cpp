@@ -2,6 +2,7 @@
 // lookup rows (Quality Pillar 6). Pure: no I/O.
 
 #include "LookupPayloadsPure.h"
+#include "../support/ScopedLimits.h"
 
 #include <doctest/doctest.h>
 
@@ -134,5 +135,26 @@ TEST_SUITE("LookupPayloadsPure") {
         CHECK(parsed.size() == 1u);
         CHECK_FALSE(smatchet::lookup::ParseEditPermissions("[]", parsed));
         CHECK(parsed.empty());
+    }
+
+    TEST_CASE("lowering the stored-item cap keeps a usable prefix of a row saved under a higher cap") {
+        smatchet_tests::ScopedLimits limits;
+
+        // Save 150 rows under a generous cap.
+        limits.Update([](smatchet::limits::LimitsConfig& l) { l.LookupMaxStoredUsers = 1000; });
+        std::vector<TrackerUser> roster;
+        for (int i = 0; i < 150; ++i) {
+            roster.push_back(User("acc-" + std::to_string(i), "User" + std::to_string(i)));
+        }
+        const std::string json = smatchet::lookup::SerializeUsers(roster);
+        REQUIRE_FALSE(json.empty());
+
+        // Read it back under the minimum cap (100): the row must not be rejected as over-budget.
+        limits.Update([](smatchet::limits::LimitsConfig& l) { l.LookupMaxStoredUsers = 100; });
+        std::vector<TrackerUser> parsed;
+        REQUIRE(smatchet::lookup::ParseUsers(json, parsed));
+        REQUIRE(parsed.size() == 100u); // truncated to the current cap, not dropped
+        CHECK(parsed.front().AccountId == "acc-0");
+        CHECK(parsed.back().AccountId == "acc-99");
     }
 }
