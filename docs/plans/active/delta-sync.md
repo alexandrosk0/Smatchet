@@ -128,6 +128,12 @@ Found in the Phase 3-5 review; none block the phases above.
 - `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
 - The roster change probe reports every resident row the view roster no longer lists (including parents/children the hierarchy walk added) as vanished and probes the same first 25 (sorted) each cycle; with more than 25 such rows a truly deleted ticket past the cap is never probed. Rotate the probe window or exclude rows the walk owns.
 - `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
+- Found in the Phase 6-7 pre-merge review (deferred; none block the phases):
+  - The Fields tab shows the "saved" cue for a catalog served from its lifetime (`SmatchetViewsDashboardUi.cpp`, `DrawFieldsTabCatalogState`) but offers no Refresh action; the next fetch only happens on expiry. Add a Refresh next to the cue (it should set `triggerCatalogRefetch`).
+  - Cache-served ("unchanged") rows never report a remote change (`MergeRowsIntoActiveTickets`, `onlyIfDifferent` branch): a row the sync serves from the cache after a remote edit keeps its cached transitions and edit permissions until they expire. Report a version move for those rows as well, or invalidate on the roster diff instead of the merge.
+  - The change monitor spends `RefusalSplitBudget` extra requests per cycle to isolate refused keys. A refused key stays in the roster diff, so it is re-isolated every cycle (about `2 * log2(n)` extra requests), and more than `kMaxIsolatedRefusalsPerHop` refused keys in one batch still fail the cycle. Remember refused keys per pane for the session and drop them from `ToFetch`.
+  - `config.set` validates integer keys only. A bool or string key written with the wrong type still makes the load fall back for that key (the int reads are per key and guarded now; bool, string and float reads in `LoadScalarFields` are not).
+  - `AppController` startup parses the field-catalog file once per candidate key (project-scoped, then the unscoped fallback); a scoped miss still costs a second parse.
 
 ## Phase 7 notes (lookups)
 
