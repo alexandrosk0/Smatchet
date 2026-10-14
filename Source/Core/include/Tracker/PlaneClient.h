@@ -75,9 +75,6 @@ class PlaneClient : public ITrackerBackend,
     // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
 
-    TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
-                             const std::vector<std::string>& values) override;
-
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,

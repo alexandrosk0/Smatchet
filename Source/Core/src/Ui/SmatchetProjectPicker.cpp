@@ -12,7 +12,6 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "SmatchetProjectPicker_detail.h"
-#include "Tracker/TrackerBackendKind.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -32,18 +31,10 @@
 namespace SmatchetProjectPicker {
 
 void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBackendKind, std::string& outEndpoint) {
-    if (smatchet::tracker::IsPlaneBackendType(cfg.TrackerType)) {
-        outBackendKind = "Plane";
-        outEndpoint = cfg.PlaneUrl + "|" + cfg.PlaneWorkspaceSlug;
-        return;
-    }
-    if (smatchet::tracker::BackendIndexFromType(cfg.TrackerType) == smatchet::tracker::kBackendLinear) {
-        outBackendKind = "Linear";
-        outEndpoint = cfg.LinearBaseUrl + "|" + cfg.LinearTeamId;
-        return;
-    }
-    outBackendKind = "Jira";
-    outEndpoint = cfg.Domain;
+    // The pair the snapshot cache indexes each catalog under, so the list shows this tracker's projects.
+    FieldCatalogCache::FieldCatalogIndexIdentity id = FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfg);
+    outBackendKind = std::move(id.backend);
+    outEndpoint = std::move(id.endpoint);
 }
 
 namespace {

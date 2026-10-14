@@ -686,15 +686,6 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     return true;
 }
 
-TrackerError JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                                     const std::vector<std::string>& values) {
-    auto payloadResult = BuildFieldPayload(field, values);
-    if (!payloadResult) {
-        return payloadResult.error();
-    }
-    return UpdateIssueFields(issueId, payloadResult.value());
-}
-
 Result<nlohmann::json, TrackerError> JiraClient::BuildFieldPayload(const TrackerField& field,
                                                                    const std::vector<std::string>& values) {
     nlohmann::json builtValue;

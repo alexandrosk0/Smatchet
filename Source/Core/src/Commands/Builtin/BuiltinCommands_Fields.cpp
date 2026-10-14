@@ -74,8 +74,17 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
                                     nlohmann::json out;
                                     out["ok"] = ok;
                                     out["fieldCount"] = static_cast<int>(app.GetAvailableFields().size());
-                                    if (!ok)
-                                        out["error"] = app.GetFieldCatalogError();
+                                    if (!ok) {
+                                        std::string error = app.GetFieldCatalogError();
+                                        if (error.empty()) {
+                                            // A dropped or skipped refresh records no pane error.
+                                            error = "The catalog refresh was not applied: the focused pane runs "
+                                                    "a tracker site the configuration does not name, or it "
+                                                    "switched tracker, was closed, had its catalog cleared or "
+                                                    "started a newer refresh while it ran.";
+                                        }
+                                        out["error"] = error;
+                                    }
                                     return CommandResult::Success(std::move(out));
                                 });
         c.Idempotent = false;

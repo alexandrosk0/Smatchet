@@ -11,6 +11,19 @@ worktrees render icons out of the box. Sourced from the official Font Awesome
 6 Free release at
 [github.com/FortAwesome/Font-Awesome/tree/6.x/webfonts](https://github.com/FortAwesome/Font-Awesome/tree/6.x/webfonts) — file `fa-solid-900.ttf`.
 
+### Integrity pin (CI)
+
+CI never downloads the font. The composite action
+[`.github/actions/fetch-fontawesome`](../../.github/actions/fetch-fontawesome/action.yml)
+(the name is historical) checks the committed file against a pinned upstream
+tag (`FA_TAG`) and sha256 (`FA_SHA256`) via
+[`scripts/dev/verify-fontawesome.sh`](../../scripts/dev/verify-fontawesome.sh).
+It reads no network and fails closed if the file is missing or its bytes
+differ. To bump the font, replace the TTF with the upstream file at the new tag
+and update `FA_TAG` + `FA_SHA256` in that action in the same commit.
+`.gitattributes` marks `*.ttf` binary so a Windows checkout never rewrites the
+bytes.
+
 ### License
 
 SIL Open Font License 1.1 — redistribution is permitted with the license

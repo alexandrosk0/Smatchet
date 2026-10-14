@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -20,6 +21,7 @@ class InlineThreading : public IAppThreading {
     bool FailLaunch = false;
     bool FailPost = false;
     int TasksThatThrew = 0;
+    int CompletionPosts = 0; ///< posts that asked for the dispatcher's non-evictable completion path
 
     bool IsOnUiThread() const override { return true; }
     void PostToMainThread(std::function<void()> fn) override {
@@ -27,6 +29,10 @@ class InlineThreading : public IAppThreading {
             throw std::runtime_error("post failed");
         }
         posted_.push_back(std::move(fn));
+    }
+    void PostCompletionToMainThread(std::function<void()> fn) override {
+        ++CompletionPosts;
+        PostToMainThread(std::move(fn));
     }
     void LaunchBackgroundTask(std::function<void()> task) override {
         if (FailLaunch) {
@@ -65,7 +71,8 @@ TEST_CASE("SubmitPendingActionAsync posts the submit's result to the UI thread o
     smatchet::ui::SubmitPendingActionAsync(
         threading, []() { return QueuedResult(); },
         [&applied](const PendingActionSubmitResult& r) { applied.push_back(r); });
-    CHECK(applied.empty()); // applied on the UI thread, not inside the worker
+    CHECK(applied.empty());                // applied on the UI thread, not inside the worker
+    CHECK(threading.CompletionPosts == 1); // the latch-releasing post is a completion, never evicted
     threading.Drain();
     REQUIRE(applied.size() == 1);
     CHECK(applied[0].K == PendingActionSubmitResult::Kind::Queued);
@@ -79,6 +86,7 @@ TEST_CASE("SubmitPendingActionAsync reports a throwing submit as Failed so the l
         threading, []() -> PendingActionSubmitResult { throw std::runtime_error("submit threw"); },
         [&applied](const PendingActionSubmitResult& r) { applied.push_back(r); });
     CHECK(threading.TasksThatThrew == 1);
+    CHECK(threading.CompletionPosts == 1); // the Failed report is a completion too
     threading.Drain();
     REQUIRE(applied.size() == 1);
     CHECK(applied[0].K == PendingActionSubmitResult::Kind::Failed);

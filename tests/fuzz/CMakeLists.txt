@@ -203,6 +203,82 @@ smatchet_add_fuzz_target(fuzz_linear_map
         nlohmann_json::nlohmann_json
     CORPUS linear_map)
 
+# --- Jira mapper + field catalog --------------------------------------------
+# The two Jira consuming-layer targets the E2c batch deferred (backlog test entry
+# 2026-07-05-fuzz-surfaces-next-batch): unlike the three mappers above, both reach
+# the field-value parser (TrackerFieldValueParser.cpp -> TrackerFieldValueUtils.cpp),
+# which loads its duration / comment templates through ConfigManager. So they link
+# the same cpr/ImGui/GL-free closure the ninja-test-linux subset links for
+# JiraIssueMappingPure (tests/CMakeLists.txt, SmatchetTsanTests): the ConfigManager
+# split TUs + their Keybindings/Toolbar/FileIo/UiThreadAffinity deps, the Comments
+# pipeline (JiraCommentMappingPure -> GitHubClientHelpers / CommentBlobFormatPure /
+# the MarkdownConvert engines + md4c), and the shared logger srcs.
+set(_fuzz_jira_closure
+    "${_fuzz_core}/src/Tracker/TrackerFieldValueParser.cpp"
+    "${_fuzz_core}/src/Tracker/TrackerFieldValueUtils.cpp"
+    "${_fuzz_core}/src/Tracker/JiraIssueMappingPure.cpp"
+    "${_fuzz_core}/src/Tracker/JiraCommentMappingPure.cpp"
+    "${_fuzz_core}/src/Tracker/GitHubClientHelpers.cpp"
+    "${_fuzz_core}/src/Tracker/CommentBlobFormatPure.cpp"
+    "${_fuzz_core}/src/Ui/MarkdownConvert.cpp"
+    "${_fuzz_core}/src/Ui/MarkdownToAdf.cpp"
+    "${_fuzz_core}/src/Ui/MarkdownToHtml.cpp"
+    "${_fuzz_core}/src/Ui/AdfToMarkdown.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager_Save.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager_Load.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager_Secrets.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager_PathUtils.cpp"
+    "${_fuzz_core}/src/Config/ConfigManager_Views.cpp"
+    "${_fuzz_core}/src/Config/JiraBackendInstancesPure.cpp"
+    "${_fuzz_core}/src/Config/CacheBackendKeyPure.cpp"
+    "${_fuzz_core}/src/Config/ToolbarConfig.cpp"
+    "${_fuzz_core}/src/Config/KeybindingsConfig.cpp"
+    "${_fuzz_core}/src/FileIo.cpp"
+    "${_fuzz_core}/src/UiThreadAffinity.cpp"
+    ${_fuzz_logger_srcs})
+set(_fuzz_jira_includes
+    "${_fuzz_core}/include"
+    "${_fuzz_core}/include/Tracker"
+    "${_fuzz_core}/include/Config"
+    "${_fuzz_core}/include/Ui"
+    "${_fuzz_core}/include/Privacy"
+    "${_fuzz_core}/src/Tracker"
+    "${_fuzz_core}/src/Config")
+set(_fuzz_jira_libs
+    md4c
+    nlohmann_json::nlohmann_json
+    ghc_filesystem)
+
+# smatchet::jira::AppendCachedTicketFromJiraSearchIssue + the /transitions parsers
+# (FindJiraTransitionId / ParseAvailableTransitionTargets) over untrusted Jira
+# /search and /transitions bodies: per-field scalar/object/array/ADF values, the
+# inline comment thread vs its total, the changelog history column, durations.
+smatchet_add_fuzz_target(fuzz_jira_map
+    SOURCES
+        fuzz_jira_map.cpp
+        ${_fuzz_jira_closure}
+    INCLUDES
+        ${_fuzz_jira_includes}
+    LIBS
+        ${_fuzz_jira_libs}
+    CORPUS jira_map)
+
+# TrackerFieldCatalogPure — ParseFieldDefinition, ApplyCreateMetaToCatalog (the
+# deepest nesting in the tracker layer), issue-type / simple-catalog option lists,
+# component beans, agile board + sprint pages. Closure: TrackerFieldCatalogPure.cpp
+# + the Jira closure above (it calls the field-value parser's option helpers).
+smatchet_add_fuzz_target(fuzz_jira_field_catalog
+    SOURCES
+        fuzz_jira_field_catalog.cpp
+        "${_fuzz_core}/src/Tracker/TrackerFieldCatalogPure.cpp"
+        ${_fuzz_jira_closure}
+    INCLUDES
+        ${_fuzz_jira_includes}
+    LIBS
+        ${_fuzz_jira_libs}
+    CORPUS jira_field_catalog)
+
 # --- nightly-monkey-tester Layer 3 ------------------------------------------
 # Three security-sensitive pure string parsers with clean single-.cpp closures (no
 # Logger / nlohmann / cpr) — the raw-string trust-boundary functions that scripted

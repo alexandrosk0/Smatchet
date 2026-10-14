@@ -43,11 +43,11 @@ class CommandRegistry {
     /// result: it never hands back a pointer a concurrent Register could invalidate.
     bool Contains(const std::string& name) const;
 
-    /// Resolve a name (alias-aware) to the canonical command. Returns `nullptr` if
-    /// not found. **The returned pointer is invalidated by any concurrent
-    /// `Register` call**, so callers must either hold the registry lock or copy
-    /// the data they need immediately. For a pure existence test off the lock, use
-    /// `Contains` instead.
+    /// Resolve a name (alias-aware) to the canonical command, under the registry lock, so it is
+    /// safe from any thread while another thread registers. Returns `nullptr` if not found. The
+    /// pointer stays valid for the registry's lifetime: commands are never removed or modified
+    /// once registered, and the node-based map keeps their addresses across inserts. For a pure
+    /// existence test, `Contains` is enough.
     const Command* FindLocked(const std::string& name) const;
 
     /// Thread-safe copy of all registered commands (alphabetical by name).
@@ -77,6 +77,9 @@ class CommandRegistry {
 
   private:
     static constexpr size_t kRecentsMax = 16;
+
+    /// FindLocked's lookup for a caller that already holds `mutex_` (it is not recursive).
+    const Command* FindHoldingLock(const std::string& name) const;
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Command> byName_;

@@ -1,42 +1,32 @@
-name: Fetch Font Awesome 6 Solid TTF
+name: Verify Font Awesome 6 Solid TTF (committed, pinned)
 description: >-
-  Download + checksum-verify assets/fonts/fa-solid-900.ttf from a pinned,
-  immutable Font Awesome tag. Single source of the fetch step that the UI-test /
-  bucket / installer build jobs all share, so the tag + sha256 pin live in
-  exactly one place (bump them here, in lockstep) instead of being copy-pasted
-  across five jobs.
+  Network-free sha256 check of the COMMITTED assets/fonts/fa-solid-900.ttf
+  against a pinned, immutable Font Awesome tag. Single source of the font step
+  that the UI-test / bucket / installer / release build jobs all share, so the
+  tag + sha256 pin live in exactly one place (bump them here, in lockstep with
+  the committed file). The directory keeps its historical `fetch-fontawesome`
+  name so every `uses:` call site stays unchanged; the action takes no inputs
+  and sets no outputs.
 
 runs:
   using: composite
   steps:
-    - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+    - name: Verify committed Font Awesome 6 Solid TTF (pinned sha256, no network)
       shell: bash
       env:
-        # Pin to an immutable tag, not the mutable `6.x` branch — protects
-        # against silent upstream changes / branch hijack.
+        # Pin to an immutable tag, not the mutable `6.x` branch — the bytes
+        # committed under assets/fonts/ are the upstream file at this tag.
         FA_TAG: "6.7.2"
-        # sha256 of fa-solid-900.ttf at tag 6.7.2. Bump in lockstep with FA_TAG.
+        # sha256 of fa-solid-900.ttf at tag 6.7.2. Bump in lockstep with FA_TAG
+        # AND the committed assets/fonts/fa-solid-900.ttf.
         FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-      run: |
-        set -euo pipefail
-        # `-f` flips curl to fail on HTTP error (so a 404 HTML page doesn't
-        # land in the font path). `-L` follows redirects.
-        # `--retry*` rides out transient 429/5xx on the raw fetch — a parallel
-        # PR burst rate-limited this exact URL for ~2h on 2026-07-09, redding
-        # otherwise-green jobs post-build. curl honors Retry-After on 429.
-        #
-        # Host: raw.githubusercontent.com, NOT github.com/<org>/<repo>/raw/…
-        # The github.com `/raw/` path is a redirect shim, and it began serving
-        # a hard 404 for this still-present blob on 2026-08-17, redding every
-        # job that fetches the font. `-f` turns that 404 into a transfer error
-        # and `--retry-all-errors` retries transfer errors, so each job spent
-        # the whole retry budget (~5 min) re-asking a permanently-missing URL
-        # before failing — the retries cost time and changed nothing, since a
-        # 404 here is permanent, not transient. The blob is unchanged at the
-        # same pinned tag on the canonical asset host, and the sha256 check
-        # below — not the hostname — is what guards content.
-        curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-             "https://raw.githubusercontent.com/FortAwesome/Font-Awesome/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-             -o assets/fonts/fa-solid-900.ttf
-        echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
-        ls -l assets/fonts/fa-solid-900.ttf
+      # No download: the TTF is committed, so this step reads only the checkout.
+      # It used to curl the file from a single third-party host on every job
+      # (six call sites, several on required checks); a 429 rate-limit window
+      # (2026-07-09, 2026-08-17) and a transient upstream 404 (2026-08-18) each
+      # redded otherwise-green required jobs, and `--retry-all-errors` burned
+      # ~5 min per job re-asking a permanent 404. Verifying the committed bytes
+      # against the same pin keeps the supply-chain guarantee with no network
+      # dependency. Logic + messages: scripts/dev/verify-fontawesome.sh
+      # (tests/bats/verify_fontawesome.bats).
+      run: bash scripts/dev/verify-fontawesome.sh

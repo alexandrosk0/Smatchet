@@ -6,8 +6,11 @@
 //
 // Pillar 2 (UI never freezes) is enforced upstream by the AssistantViewModel
 // worker thread joining on cancel; this test guarantees the stub used to
-// exercise that path doesn't itself burn 100+ ms after cancel before the
-// worker can return.
+// exercise that path stops streaming once cancelled. The cancel-ack latency
+// budgets are advisory (doctest WARN_*): wall-clock time is not deterministic
+// on a loaded CI runner, so an overrun is reported but never fails the case.
+// The cancel behaviour itself is pinned by a case that cancels from inside
+// onDelta, which needs no clock at all.
 //
 // Pure C++14 — std::thread + std::chrono + AiCancelToken (= shared_ptr<atomic<bool>>).
 // No HTTP, no cpr, no production AI client.
@@ -17,6 +20,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -74,33 +78,74 @@ TEST_CASE("StubAiClient: cancel mid-stream stops onDelta within 100 ms") {
     const auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(returnedAt - startedAt).count();
     const auto postCancelMs = std::chrono::duration_cast<std::chrono::milliseconds>(returnedAt - cancelSetAt).count();
 
-    // Cancel ack within the configured budget (100 ms). Generous slack for CI
-    // wall-clock jitter, but emphatically not the full 500 ms uninterrupted run.
+    // Cancel ack within the configured budget (100 ms), not the full 500 ms
+    // uninterrupted run. Advisory only (WARN_*): a contended runner (a cold full
+    // compile beside ctest) has overrun it on token-identical code, so a budget
+    // miss is reported without failing a required check (backlog test entry
+    // 2026-08-17-stubaiclient-cancel-100ms-budget-is-flaky-on-ci).
 #if defined(__SANITIZE_ADDRESS__)
-    CHECK(postCancelMs < 2000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
-    CHECK(totalMs < 4000);
+    WARN_LT(postCancelMs, 2000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
+    WARN_LT(totalMs, 4000);
 #elif defined(SMATCHET_COVERAGE)
     // OpenCppCoverage (coverage.yml) runs the binary instrumented (~10x slower)
-    // and defines NO __SANITIZE_ADDRESS__, so these wall-clock budgets flake on
-    // the Coverage lane purely from instrumentation overhead. Scale x8 — same
-    // ratio the CallstackParser ReDoS-timing guard uses for SMATCHET_COVERAGE,
-    // and matching the stub's internal ack budget (#1280). Behaviour assertions
-    // (CancelObserved, partial stream, error path) below stay intact.
-    CHECK(postCancelMs < 1600);
-    CHECK(totalMs < 3200);
+    // and defines NO __SANITIZE_ADDRESS__. Scale x8 — same ratio the
+    // CallstackParser ReDoS-timing guard uses for SMATCHET_COVERAGE, and matching
+    // the stub's internal ack budget (#1280).
+    WARN_LT(postCancelMs, 1600);
+    WARN_LT(totalMs, 3200);
 #else
-    CHECK(postCancelMs < 200);
-    CHECK(totalMs < 400);
+    WARN_LT(postCancelMs, 200);
+    WARN_LT(totalMs, 400);
 #endif
+    WARN_FALSE(stub.CancelBudgetExceeded);
 
-    // Stub fired the cancellation error path.
+    // The cancel lands mid-stream only if this thread woke from its 50 ms sleep before the ~500 ms
+    // stream ended, which a stalled runner cannot promise, so these are advisory too. The case below
+    // pins the same behaviour deterministically.
+    WARN(stub.CancelObserved);
+    WARN(errorFired);
+    WARN(finalError.WasCancelled);
+    WARN(deltas.size() < 100u);
+    WARN(std::none_of(deltas.begin(), deltas.end(), [](const AiStreamDelta& d) { return d.IsFinal; }));
+    CHECK(deltas.size() == stub.DeltasEmitted); // every delta the stub emitted reached the callback
+}
+
+TEST_CASE("StubAiClient: a cancel observed between deltas ends the stream with the cancel error") {
+    // Deterministic: the cancel is set from inside onDelta (on the streaming thread) after the 5th
+    // delta, and the stub checks the token before each delta, so exactly 5 deltas are delivered.
+    smatchet_tests::StubAiClientScript script;
+    script.ProviderName = "stub-cancel-deterministic";
+    script.DeltaSequence.assign(100, std::string("tok"));
+    script.PerDeltaSleepMs = 0;
+
+    smatchet_tests::StubAiClient stub(script);
+    AiCancelToken cancel = makeCancelToken();
+    std::vector<AiStreamDelta> deltas;
+    AiStreamError finalError;
+    bool errorFired = false;
+
+    AiClientConfig cfg;
+    AiChatRequest req;
+    stub.SendStreaming(
+        cfg, req,
+        [&](const AiStreamDelta& d) {
+            deltas.push_back(d);
+            if (deltas.size() == 5u) {
+                cancel->store(true);
+            }
+        },
+        [&](const AiStreamError& e) {
+            finalError = e;
+            errorFired = true;
+        },
+        cancel);
+
     CHECK(stub.CancelObserved);
-    CHECK_FALSE(stub.CancelBudgetExceeded);
     CHECK(errorFired);
     CHECK(finalError.WasCancelled);
-
-    // Far fewer than the full 100 deltas — partial stream by construction.
-    CHECK(deltas.size() < 100u);
+    CHECK(deltas.size() == 5u);
+    CHECK(deltas.size() == stub.DeltasEmitted);
+    CHECK(std::none_of(deltas.begin(), deltas.end(), [](const AiStreamDelta& d) { return d.IsFinal; }));
 }
 
 TEST_CASE("StubAiClient: completes full stream when never cancelled and emits final IsFinal delta") {

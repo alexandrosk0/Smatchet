@@ -36,5 +36,6 @@
     (`DismissAppUpdateModal()` in tests E/F); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:185-204`
     (the focus latch); `Source/Core/src/Ui/SmatchetUI.cpp:164,174` (modal open sites);
     `docs/plans/shipped/preferences-ia-resegmentation-and-search.md` § Verification.
+  Re-scoped 2026-10-04 (backlog-sweep-2026-10): part (c) landed (backlog-sweep PR #2296: the shared driver helper exports SMATCHET_UPDATE_CHECK=0) and docs/guides/testing-surface.md § 2.1 documents both traps. Remaining: promote the duplicated ArmPreferencesFrame / DismissAppUpdateModal blocks (prefs_search_filter, prefs_schema_coverage, keybindings_editor_rebind test TUs) into a shared tests/ui/prefs_test_fixture.h — bucket-E C++ that only a Windows UI-test build can validate.
   Status: open
-  Last-reviewed: 2026-08-06
+  Last-reviewed: 2026-10-04

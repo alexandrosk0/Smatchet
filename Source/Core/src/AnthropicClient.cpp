@@ -3,6 +3,7 @@
 #include "AiErrorRedact.h"
 #include "AiSseParser.h"
 #include "AiWireIntrospect.h"
+#include "AiWirePure.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -15,25 +16,16 @@
 #include <exception>
 #include <string>
 
+using smatchet::ai::pure::JoinUrl;
+using smatchet::ai::pure::ResolveBaseUrlOr;
+
 namespace {
 
 constexpr const char* kDefaultBaseUrl = "https://api.anthropic.com";
 constexpr const char* kAnthropicApiVersion = "2023-06-01";
 constexpr int kDefaultMaxTokens = 4096;
 
-std::string ResolveBaseUrl(const AiClientConfig& cfg) {
-    if (!cfg.BaseUrl.empty())
-        return cfg.BaseUrl;
-    return kDefaultBaseUrl;
-}
-
-std::string JoinUrl(const std::string& base, const char* path) {
-    if (base.empty())
-        return std::string(path);
-    if (base.back() == '/')
-        return base.substr(0, base.size() - 1) + path;
-    return base + path;
-}
+std::string ResolveBaseUrl(const AiClientConfig& cfg) { return ResolveBaseUrlOr(cfg.BaseUrl, kDefaultBaseUrl); }
 
 nlohmann::json BuildChatBody(const AiChatRequest& req) {
     nlohmann::json body;
@@ -47,14 +39,7 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
 
     // Anthropic Messages API: `messages` is user/assistant only — system text lives at top level.
     // Roles are passed through as-is; AppController is responsible for emitting "user" / "assistant".
-    nlohmann::json messages = nlohmann::json::array();
-    for (const auto& h : req.History) {
-        nlohmann::json m;
-        m["role"] = h.Role;
-        m["content"] = h.Content;
-        messages.push_back(std::move(m));
-    }
-    body["messages"] = std::move(messages);
+    body["messages"] = smatchet::ai::pure::BuildHistoryMessages(req.History);
     return body;
 }
 

@@ -1054,6 +1054,13 @@ TEST_CASE("fields.* — catalog listing/pagination, get lookup, refresh plumbing
         REQUIRE(bad.Ok); // the command succeeds; the failure rides in the payload
         CHECK((*bad.Data)["ok"] == false);
         CHECK((*bad.Data)["error"] == "backend unreachable");
+
+        // A refresh dropped because the pane moved on records no catalog error; the payload still says why.
+        fields.CatalogError.clear();
+        const CommandResult dropped = reg.Dispatch("fields.refresh_catalog", {}, ctx);
+        REQUIRE(dropped.Ok);
+        CHECK((*dropped.Data)["ok"] == false);
+        CHECK_FALSE((*dropped.Data)["error"].get<std::string>().empty());
     }
     {
         // icon_for passes the field+value pair through and echoes the resolved target.
