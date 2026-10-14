@@ -16,6 +16,8 @@
 #include "Tracker/CommentBlobFormatPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetCommentsModalSeedPure.h"
+#include "Ui/SmatchetFieldViewerModalUi.h"
+#include "Ui/SmatchetHeightCulledList.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -42,9 +44,10 @@ struct PendingCommentView {
 };
 
 /// Singleton state for the comments read/post modal. Decoupled from the grid cell so the modal
-/// survives the originating cell scrolling out of view: the cell triggers `JustOpened`, then the
-/// top-level `RenderCommentsModal` owns the lifecycle. Mirrors the long-text modal's file-static
-/// state choice (`ActiveLongTextEditorState`).
+/// survives the originating cell scrolling out of view: the cell opens the field-viewer shell
+/// (`OpenFieldViewer`), whose top-level render owns the popup lifecycle and draws
+/// `CommentsViewerContent`. Mirrors the long-text modal's file-static state choice
+/// (`ActiveLongTextEditorState`).
 struct CommentsModalState {
     std::string IssueId;
     std::vector<TrackerIssueComment> Comments;
@@ -70,7 +73,6 @@ struct CommentsModalState {
     /// Detail of the last failed load, shown as the freshness cue's tooltip.
     std::string Error;
     bool Active = false;
-    bool JustOpened = false;
     /// Generation token of the in-flight dispatch. Workers compare against the current Gen on
     /// post-back and discard on mismatch (re-open / issue-switch / a newer re-fetch). Sourced from
     /// the file-static `s_genCounter` (NOT reset with this struct) so it is genuinely monotonic
@@ -96,8 +98,6 @@ CommentsModalState s_CommentsState;
 /// `s_CommentsState = CommentsModalState{}` reset on every open/close — the reset is exactly what
 /// pinned Gen to 1 and made the stale-guard inert (#1713). Each dispatch takes the next value.
 int s_genCounter = 0;
-
-constexpr const char* kCommentsModalPopupId = "IssueCommentsModal";
 
 void CloseCommentsModal() { s_CommentsState = CommentsModalState{}; }
 
@@ -389,22 +389,12 @@ void DrawCommentsThread() {
     const float width = ImGui::GetContentRegionAvail().x;
     EnsureCommentBodyPlans(ImGui::GetFontSize(), width);
     const MarkdownPreviewRender::Options bodyOpts = CommentBodyRenderOptions();
-    const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const std::int64_t nowMs = smatchet::ai::NowUnixMs();
-    for (size_t i = 0; i < s_CommentsState.Comments.size(); ++i) {
-        float& height = s_CommentsState.BodyHeights[i];
-        if (height > itemSpacingY && !ImGui::IsRectVisible(ImVec2(width, height))) {
-            ImGui::Dummy(ImVec2(width, height - itemSpacingY)); // Dummy re-adds the trailing spacing
-            continue;
-        }
-        const float startY = ImGui::GetCursorPosY();
-        ImGui::PushID(static_cast<int>(i));
+    smatchet::ui::DrawHeightCulledItems(s_CommentsState.BodyHeights, width, [&](size_t i) {
         DrawCommentHeader(s_CommentsState.Comments[i], nowMs);
         MarkdownPreviewRender::RenderPlan(*s_CommentsState.BodyPlans[i], bodyOpts);
         ImGui::Separator();
-        ImGui::PopID();
-        height = ImGui::GetCursorPosY() - startY;
-    }
+    });
     DrawPendingComments();
 }
 
@@ -580,13 +570,50 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     }
 }
 
+/// The Comments body inside the generic field-viewer shell: freshness cue, thread, post box. The shell
+/// owns the popup, header, Close row, Esc / X handling and the discard confirm. State stays in
+/// `s_CommentsState` (the load / post-back workers address it), so the shell's static-destruction
+/// order is irrelevant — cleanup runs from OnClose, never a destructor.
+class CommentsViewerContent final : public IFieldViewerContent {
+  public:
+    std::string Title() const override { return SmatchetLocalization::T("comments.title", "Comments"); }
+
+    void DrawBody(AppController& app, bool readOnlyMode) override {
+        SyncPendingComments(app);
+        const smatchet::offline::DataFreshness freshness = CurrentCommentsFreshness(app);
+        DrawCommentsStatusLine(app, freshness);
+
+        // Reserve room for the footer (post box + button + status line).
+        const float footerH = 80.0f + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
+                              ImGui::GetStyle().ItemSpacing.y * 3.0f;
+        const float threadH = ImGui::GetContentRegionAvail().y - footerH;
+        ImGui::BeginChild("##CommentsThread", ImVec2(-FLT_MIN, threadH > 0.0f ? threadH : 0.0f), true);
+        DrawCommentsThreadPane(app, freshness);
+        ImGui::EndChild();
+
+        DrawCommentsPostBox(app, readOnlyMode);
+    }
+
+    bool HasUnsavedInput() const override { return s_CommentsState.PostBuf.data()[0] != '\0'; }
+    const char* DiscardConfirmTitle() const override { return "Discard comment?"; }
+    const char* DiscardConfirmText() const override {
+        return SmatchetLocalization::T("comments.discard_confirm", "Discard the comment you're writing?");
+    }
+    const char* DiscardButtonLabel() const override { return "Discard comment"; }
+    const char* KeepButtonLabel() const override { return "Keep writing"; }
+    // Resets s_CommentsState, so Active=false drops any late load / post post-back.
+    void OnClose() override { CloseCommentsModal(); }
+};
+
 } // namespace
 
 void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody) {
+    // First: replacing a viewer runs its OnClose, which (for a previous Comments open) resets
+    // s_CommentsState — that must happen before this open seeds the state below.
+    OpenFieldViewer(std::make_unique<CommentsViewerContent>(), issueId, "comments");
     s_CommentsState = CommentsModalState{};
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
-    s_CommentsState.JustOpened = true;
     // Take the next monotonic token from the file-static counter (survives the reset above) so this
     // open is distinguishable from a prior open's still-in-flight fetch (#1713).
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
@@ -615,90 +642,6 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     }
     KickCommentsLoad(app, req);
     SyncPendingComments(app); // this issue's queued comments show from the first frame
-}
-
-void RenderCommentsModal(AppController& app, bool readOnlyMode) {
-    if (!s_CommentsState.Active) {
-        return;
-    }
-
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    if (s_CommentsState.JustOpened) {
-        // OpenPopup must be called at the same window-depth as BeginPopupModal — both here, outside
-        // the table, so ImGui can anchor the popup to this stable top-level window.
-        ImGui::OpenPopup(kCommentsModalPopupId);
-        const ImVec2 modalSize(viewport->Size.x * 0.5f, viewport->Size.y * 0.6f);
-        ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(
-            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
-            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        s_CommentsState.JustOpened = false;
-    }
-
-    bool modalOpen = true;
-    if (ImGui::BeginPopupModal(kCommentsModalPopupId, &modalOpen,
-                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::Text("%s — %s", SmatchetLocalization::T("comments.title", "Comments"), s_CommentsState.IssueId.c_str());
-        ImGui::Separator();
-
-        SyncPendingComments(app);
-        const smatchet::offline::DataFreshness freshness = CurrentCommentsFreshness(app);
-        DrawCommentsStatusLine(app, freshness);
-
-        // Reserve room for the footer (post box + button + status line).
-        const float footerH = 80.0f + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
-                              ImGui::GetStyle().ItemSpacing.y * 3.0f;
-        const float threadH = ImGui::GetContentRegionAvail().y - footerH;
-        ImGui::BeginChild("##CommentsThread", ImVec2(-FLT_MIN, threadH > 0.0f ? threadH : 0.0f), true);
-        DrawCommentsThreadPane(app, freshness);
-        ImGui::EndChild();
-
-        DrawCommentsPostBox(app, readOnlyMode);
-
-        ImGui::Separator();
-        bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
-        // P2-M3: Esc while the post box (or any input) is being edited only defocuses it
-        // (ImGui's own revert-and-deactivate) — it must not also tear down the modal
-        // around the draft. Only a second, unfocused Esc reaches the close path.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput) {
-            wantClose = true;
-        }
-        if (!modalOpen) { // title-bar X — same guard as Close/Esc (the local resets next frame)
-            wantClose = true;
-        }
-        if (wantClose) {
-            if (s_CommentsState.PostBuf.data()[0] != '\0') {
-                ImGui::OpenPopup("Discard comment?###CommentsDiscardConfirm");
-            } else {
-                ImGui::CloseCurrentPopup();
-                CloseCommentsModal();
-            }
-        }
-        bool discardConfirmed = false;
-        if (ImGui::BeginPopupModal("Discard comment?###CommentsDiscardConfirm", nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted(
-                SmatchetLocalization::T("comments.discard_confirm", "Discard the comment you're writing?"));
-            if (ImGui::Button("Discard comment")) {
-                discardConfirmed = true;
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Keep writing")) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
-        if (discardConfirmed) {
-            ImGui::CloseCurrentPopup();
-            CloseCommentsModal();
-        }
-
-        ImGui::EndPopup();
-    } else {
-        // Modal dismissed without our intervention (title-bar X) — stay self-consistent.
-        CloseCommentsModal();
-    }
 }
 
 CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
