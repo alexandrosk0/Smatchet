@@ -3,6 +3,7 @@
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "Persistence/SqliteOpenRecoveryPure.h"
+#include "Sync/RemoteVersionPure.h" // IsIncomingRowStale: SaveTicketsWithSyncMeta never rolls a row back
 
 #include <ghc/filesystem.hpp>
 #include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
@@ -676,8 +677,11 @@ void LocalCacheManager::SaveTicketsWithSyncMeta(const std::string& backendKey, c
             }
             TicketSyncMeta existingMeta;
             CachedTicket existingRow;
-            if (readSyncMeta_(backendKey, ticket.id, existingMeta) &&
-                smatchet::sync::IsSameVersion(existingMeta, meta) &&
+            const bool hadMeta = readSyncMeta_(backendKey, ticket.id, existingMeta);
+            if (hadMeta && smatchet::sync::IsIncomingRowStale(meta.RemoteUpdated, existingMeta.RemoteUpdated)) {
+                continue; // provably older than the stored row (a late or reordered save): never roll it back
+            }
+            if (hadMeta && smatchet::sync::IsSameVersion(existingMeta, meta) &&
                 readTicketRows_(backendKey, ticket.id, existingRow)) {
                 // Same tracker version fetched with other columns: keep both sets of values.
                 writeTicketRows_(backendKey, smatchet::sync::MergeSameVersionRow(existingRow, ticket));

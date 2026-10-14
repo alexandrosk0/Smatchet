@@ -125,4 +125,92 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-2", "A-9", "A-1"});
         CHECK(rows.size() == 2u);
     }
+
+    // SaveTicketsWithSyncMeta's version guard (docs/plans/active/delta-sync.md § Review follow-ups): a late or
+    // reordered save must never roll a stored row back to an older tracker version.
+    TEST_CASE("an older row does not overwrite a newer stored one") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string newer = "2026-05-02T10:00:00.000+0000";
+        const std::string older = "2026-05-01T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", newer, "new")}, {Meta(newer, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", older, "old")}, {Meta(older, {"summary", "updated"}, 999)});
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "new");
+        CHECK(rows[0].GetFieldValue("updated") == newer);
+        const auto meta = cache.GetTicketSyncMeta("K");
+        CHECK(meta.at("A-1").RemoteUpdated == newer);
+        CHECK(meta.at("A-1").SyncedAtEpochSec == 100); // the skipped save left the stored meta alone
+    }
+
+    TEST_CASE("an older row in a batch is skipped without dropping the rest of the batch") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string newer = "2026-05-02T10:00:00.000+0000";
+        const std::string older = "2026-05-01T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", newer, "new")}, {Meta(newer, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", older, "old"), Row("A-2", older, "fresh")},
+                                      {Meta(older, {"summary", "updated"}), Meta(older, {"summary", "updated"})});
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1", "A-2"});
+        REQUIRE(rows.size() == 2u);
+        for (const CachedTicket& r : rows) {
+            CHECK(r.GetFieldValue("summary") == (r.id == "A-1" ? "new" : "fresh"));
+        }
+    }
+
+    TEST_CASE("a row at the same version still merges with the stored one") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string v = "2026-05-02T10:00:00.000+0000";
+        CachedTicket first = Row("A-1", v, "s1");
+        first.fieldValues["status"] = "Open";
+        cache.SaveTicketsWithSyncMeta("K", {first}, {Meta(v, {"status", "summary", "updated"})});
+        CachedTicket second = Row("A-1", v, "s2");
+        second.fieldValues["priority"] = "High";
+        cache.SaveTicketsWithSyncMeta("K", {second}, {Meta(v, {"priority", "summary", "updated"})});
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "s2");  // incoming wins where it has a value
+        CHECK(rows[0].GetFieldValue("status") == "Open"); // the other fetch's column survives
+        CHECK(rows[0].GetFieldValue("priority") == "High");
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").Fields ==
+              std::vector<std::string>{"priority", "status", "summary", "updated"});
+    }
+
+    TEST_CASE("a newer row overwrites the stored one") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string older = "2026-05-01T10:00:00.000+0000";
+        const std::string newer = "2026-05-02T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", older, "old")}, {Meta(older, {"summary", "updated"})});
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", newer, "new")}, {Meta(newer, {"summary", "updated"})});
+        const std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "new");
+        CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == newer);
+    }
+
+    TEST_CASE("an unknown or unparsable stamp still writes, so no data is dropped") {
+        SqliteMemFixture fx;
+        LocalCacheManager& cache = fx.Ref();
+        const std::string stored = "2026-05-02T10:00:00.000+0000";
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", stored, "stored")}, {Meta(stored, {"summary", "updated"})});
+        // Incoming stamp unparsable: the order is unknown, so the incoming row wins.
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", "garbage", "incoming")}, {Meta("garbage", {"summary"})});
+        std::vector<CachedTicket> rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "incoming");
+        // Stored stamp unparsable: same.
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", stored, "again")}, {Meta(stored, {"summary"})});
+        rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "again");
+        // Incoming with no stamp at all: written, meta dropped.
+        cache.SaveTicketsWithSyncMeta("K", {Row("A-1", "", "nostamp")}, {TicketSyncMeta()});
+        rows = cache.GetTicketsByIds("K", {"A-1"});
+        REQUIRE(rows.size() == 1u);
+        CHECK(rows[0].GetFieldValue("summary") == "nostamp");
+        CHECK(cache.GetTicketSyncMeta("K").empty());
+    }
 }
