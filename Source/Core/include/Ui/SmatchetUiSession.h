@@ -656,6 +656,12 @@ struct UiDrawSession {
     bool fieldCatalogLoading = false;
     std::future<FieldCatalogFetchResult> fieldCatalogFuture;
     bool triggerCatalogRefetch = false;
+    /// The startup fetch may be skipped once per process (the restored snapshot belongs to the startup tracker).
+    bool catalogStartupSkipTried = false;
+    /// Epoch second a skipped startup fetch must run after (the snapshot expires); 0 = none scheduled.
+    std::int64_t catalogSnapshotRefreshAtUnix = 0;
+    /// The catalog on screen is a saved snapshot still inside its lifetime (drawn with a "saved" cue).
+    bool catalogServedFromSnapshot = false;
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;

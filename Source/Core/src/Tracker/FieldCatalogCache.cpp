@@ -266,7 +266,7 @@ bool JsonBoolOr(const nlohmann::json& object, const char* key) {
 // in the LRU order for good: it counts as used now.
 void AppendIndexEntry(nlohmann::json& indexArr, std::int64_t now, const std::string& cacheKey,
                       const std::string& projectKey, const std::string& backend, const std::string& endpoint,
-                      std::int64_t lastUsed, bool kindKeyed) {
+                      std::int64_t lastUsed, bool kindKeyed, std::int64_t savedUnix = 0) {
     nlohmann::json e = nlohmann::json::object();
     e["cacheKey"] = cacheKey;
     e["projectKey"] = projectKey;
@@ -274,6 +274,9 @@ void AppendIndexEntry(nlohmann::json& indexArr, std::int64_t now, const std::str
     e["endpoint"] = endpoint;
     e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
     e["kindKeyed"] = kindKeyed;
+    if (savedUnix > 0) {
+        e["savedUnix"] = savedUnix > now ? now : savedUnix;
+    }
     indexArr.push_back(std::move(e));
 }
 
@@ -294,7 +297,8 @@ std::unordered_set<std::string> CarryV3Index(const nlohmann::json& rootOnDisk, n
             continue;
         AppendIndexEntry(indexArr, now, cacheKey, JsonStringFieldOr(idx, "projectKey"),
                          JsonStringFieldOr(idx, "backend"), JsonStringFieldOr(idx, "endpoint"),
-                         ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now), JsonBoolOr(idx, "kindKeyed"));
+                         ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now), JsonBoolOr(idx, "kindKeyed"),
+                         ParseJsonInt64FieldLoose(idx, "savedUnix", 0));
     }
     return indexed;
 }
@@ -535,6 +539,7 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             e["endpoint"] = endpoint;
             e["lastUsedUnix"] = now;
             e["kindKeyed"] = true;
+            e["savedUnix"] = now; // when the catalog was fetched; lastUsedUnix also moves on a read
             indexArr.push_back(std::move(e));
         } else {
             (*it)["projectKey"] = projectKey;
@@ -542,6 +547,7 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             (*it)["endpoint"] = endpoint;
             (*it)["lastUsedUnix"] = now;
             (*it)["kindKeyed"] = true;
+            (*it)["savedUnix"] = now;
         }
 
         const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
@@ -659,6 +665,26 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: unknown exception");
         return false;
     }
+}
+
+std::int64_t FieldCatalogSnapshotSavedUnix(const std::string& cacheKey) {
+    try {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        const nlohmann::json root = LoadAndMigrateRootLocked();
+        if (!root.contains("entries") || !root["entries"].is_array()) {
+            return 0;
+        }
+        for (const auto& e : root["entries"]) {
+            if (e.is_object() && e.value("cacheKey", std::string()) == cacheKey) {
+                return e.value("savedUnix", std::int64_t{0}); // 0 for an entry saved before the stamp existed
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldCatalogCache::FieldCatalogSnapshotSavedUnix failed: %s", ex.what());
+    } catch (...) { // catch-all-ok: logged; an unknown age means the caller fetches live
+        LOG_WARN("FieldCatalogCache::FieldCatalogSnapshotSavedUnix failed: unknown exception");
+    }
+    return 0;
 }
 
 std::vector<CachedProjectEntry> ListCachedProjects() {

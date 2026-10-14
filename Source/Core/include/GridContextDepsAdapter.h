@@ -132,6 +132,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) override;
     void BumpActiveTicketsRevision() override;
     void PruneEditMetaCacheToActiveTickets() override;
+    void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override;
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) override;
     void NotifyLuaTicketDataChanged() override;
     bool GetPendingLuaWindowBump() const override;

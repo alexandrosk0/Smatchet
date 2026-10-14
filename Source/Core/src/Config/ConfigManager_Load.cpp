@@ -113,6 +113,20 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     if (cfg.DeltaSyncMaxRowAgeSec > 604800) {
         cfg.DeltaSyncMaxRowAgeSec = 604800;
     }
+    // Lookup lifetimes: below 5 minutes (catalog) / 1 minute (lookups) the cache saves nothing; above 30 days a
+    // renamed field, project or component would stay wrong for too long.
+    if (cfg.FieldCatalogRefreshTtlSec < 300) {
+        cfg.FieldCatalogRefreshTtlSec = 300;
+    }
+    if (cfg.FieldCatalogRefreshTtlSec > 2592000) {
+        cfg.FieldCatalogRefreshTtlSec = 2592000;
+    }
+    if (cfg.LookupCacheTtlSec < 60) {
+        cfg.LookupCacheTtlSec = 60;
+    }
+    if (cfg.LookupCacheTtlSec > 2592000) {
+        cfg.LookupCacheTtlSec = 2592000;
+    }
     // Quick-create engine-context log tail — zero/negative would silently drop the log
     // section; past 300 lines the description prefill stops being a summary.
     if (cfg.QuickCreateCtxLogLines < 1) {

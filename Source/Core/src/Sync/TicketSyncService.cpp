@@ -75,7 +75,7 @@ constexpr std::size_t kUnchangedRowsPerFrame = 500; // cache-served rows: memory
 // missing or differs, so a reload that changed nothing republishes nothing. Returns whether anything changed
 // (the snapshot is republished under the same lock then).
 bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedTicket>& fetched,
-                                const std::vector<CachedTicket>& unchanged) {
+                                const std::vector<CachedTicket>& unchanged, std::vector<std::string>& movedIds) {
     std::lock_guard<std::mutex> lock(deps.ActiveTicketsMutex());
     std::vector<CachedTicket>& active = deps.ActiveTickets();
     std::unordered_map<std::string, std::size_t> index;
@@ -93,6 +93,14 @@ bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedT
             return;
         }
         CachedTicket& current = active[it->second];
+        if (!onlyIfDifferent) {
+            // A resident row whose tracker version moved: what hangs off the old version is stale.
+            const std::string& was = current.GetFieldValueRef("updated");
+            const std::string& now = row.GetFieldValueRef("updated");
+            if (!was.empty() && !now.empty() && was != now) {
+                movedIds.push_back(row.id);
+            }
+        }
         if (onlyIfDifferent && current.fieldValues == row.fieldValues &&
             current.fieldRichValues == row.fieldRichValues) {
             return;
@@ -577,7 +585,11 @@ void TicketSyncService::DrainPendingStreamingBatches() {
     if (fetchedThisFrame.empty() && unchangedThisFrame.empty()) {
         return;
     }
-    const bool changed = MergeRowsIntoActiveTickets(deps_, fetchedThisFrame, unchangedThisFrame);
+    std::vector<std::string> movedIds;
+    const bool changed = MergeRowsIntoActiveTickets(deps_, fetchedThisFrame, unchangedThisFrame, movedIds);
+    if (!movedIds.empty()) {
+        deps_.OnTicketsRemotelyChanged(movedIds);
+    }
     if (changed || !fetchedThisFrame.empty()) {
         deps_.PruneEditMetaCacheToActiveTickets();
         deps_.BumpActiveTicketsRevision();

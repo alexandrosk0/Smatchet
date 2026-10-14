@@ -129,6 +129,14 @@ Found in the Phase 3-5 review; none block the phases above.
 - The roster change probe reports every resident row the view roster no longer lists (including parents/children the hierarchy walk added) as vanished and probes the same first 25 (sorted) each cycle; with more than 25 such rows a truly deleted ticket past the cap is never probed. Rotate the probe window or exclude rows the walk owns.
 - `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
 
+## Phase 7 notes (lookups)
+
+- `FieldCatalogRefreshTtlSec` (default 43200) and `LookupCacheTtlSec` (default 86400) are `config.set` keys only; no Preferences control yet.
+- The saved project list and the saved project components skip the live fetch while younger than `LookupCacheTtlSec`; the per-issue-type edit permissions (`kEditMetaTypeKind`) still refresh on every warm and are a follow-up.
+- The startup catalog fetch is skipped once per run when the restored snapshot is inside its lifetime and covers every column of the active view; the grid shows it with a "saved" cue and refetches when it expires. `FieldCatalogCache` now keeps `savedUnix` in the index (the v3 load also used to drop the whole `entries` index on every read; fixed).
+- `ITicketSyncDeps::OnTicketsRemotelyChanged` fires for resident rows whose `updated` moved (sync drain and change-monitor apply) and invalidates their transitions and per-issue editmeta.
+- The comments modal opens from the saved thread without a refetch when the thread is complete (saved count matches) and was read at the ticket's current `updated` (`comment_thread_at`). Posting, Retry and reloads always go live.
+
 ## Implementation log
 *(populated post-ship)*
 

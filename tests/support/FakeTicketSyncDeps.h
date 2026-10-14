@@ -105,6 +105,11 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     int BackgroundTasksLaunched = 0;
     /// When set, launched tasks are parked in `DeferredTasks` instead of running inline, so a test can hold a
     /// background task "in flight" and run it (RunDeferredTasks) when it chooses.
+    /// Ids reported through OnTicketsRemotelyChanged (a resident row whose tracker version moved).
+    std::vector<std::string> RemotelyChanged;
+    void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override {
+        RemotelyChanged.insert(RemotelyChanged.end(), ids.begin(), ids.end());
+    }
     bool DeferBackgroundTasks = false;
     std::vector<std::function<void()>> DeferredTasks;
     void RunDeferredTasks() {

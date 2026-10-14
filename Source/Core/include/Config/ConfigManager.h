@@ -170,6 +170,13 @@ struct TrackerConfig {
     // values copied from OTHER issues (parent summary, link status, sprint, display names) change without
     // moving the ticket's own stamp. Clamped to [300, 604800] at load. Default 6 hours.
     int DeltaSyncMaxRowAgeSec = 21600;
+    // The saved field catalog is used as is, with no live fetch at startup, while it is younger than this many
+    // seconds (the grid shows it with a "saved" cue and refetches when it expires). Clamped to [300, 2592000]
+    // at load. Default 12 hours.
+    int FieldCatalogRefreshTtlSec = 43200;
+    // A saved lookup row (project list, project components) younger than this many seconds is served without a
+    // live fetch. Clamped to [60, 2592000] at load. Default 1 day.
+    int LookupCacheTtlSec = 86400;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.

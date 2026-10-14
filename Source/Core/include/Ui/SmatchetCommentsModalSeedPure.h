@@ -27,4 +27,20 @@ inline bool PickCommentsSeed(const std::string& threadJson, const std::string& b
     return outPartial;
 }
 
+/// True when the saved structured thread may stand in for a live refetch: it parses, holds the number of
+/// comments the ticket's saved count claims (so the saved copy is not a capped or partial one), and was read at
+/// the ticket's current `updated` stamp (`threadAt` == `updated`, both known), i.e. nothing changed remotely
+/// since. A comment added or edited remotely moves `updated`, so it always fails this and the modal goes live.
+inline bool CanServeSavedCommentsWithoutFetch(const std::string& threadJson, const std::string& threadAt,
+                                              const std::string& updated, const std::string& savedCount) {
+    if (threadJson.empty() || threadAt.empty() || updated.empty() || threadAt != updated || savedCount.empty()) {
+        return false;
+    }
+    std::vector<TrackerIssueComment> comments;
+    if (!smatchet::tracker::ParseCommentThread(threadJson, comments) || comments.empty()) {
+        return false;
+    }
+    return savedCount == std::to_string(comments.size());
+}
+
 } // namespace SmatchetCommentsModalSeed

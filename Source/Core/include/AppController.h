@@ -272,10 +272,12 @@ class AppController : public IAppThreading,
 
     /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
     /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
+    std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
     void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
-                                          const std::string& activeTrackerType, const std::string& projectKey);
+                                          const std::string& activeTrackerType, const std::string& projectKey,
+                                          bool snapshotFresh);
 
     /// Phase 4 — initialise Lua, start the merge-watch notify endpoint, run the Lua
     /// setup script + automation worker, and warm the Jira issue-type edit-meta.
@@ -739,6 +741,9 @@ class AppController : public IAppThreading,
     static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
     const std::vector<TrackerField>& GetAvailableFields() const override { return fieldCatalog().AvailableFields; }
+    /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
+    /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
+    std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return fieldCatalog().AvailableComponents; }
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.

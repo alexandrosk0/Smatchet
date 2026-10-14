@@ -9,6 +9,7 @@
 #include "Tracker/TrackerError.h"
 #include "Tracker/TrackerFieldSchema.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,16 +22,20 @@ namespace projects {
 
 struct ProjectListOutcome {
     std::vector<RemoteProject> Projects;
-    bool FromSaved = false; ///< Projects is the list an earlier successful listing saved
-    bool Failed = false;    ///< the live listing failed, or was skipped because the tracker is offline
-    TrackerError Error;     ///< why it failed (Transport when it was skipped offline)
+    bool FromSaved = false;   ///< Projects is the list an earlier successful listing saved
+    bool Failed = false;      ///< the live listing failed, or was skipped because the tracker is offline
+    TrackerError Error;       ///< why it failed (Transport when it was skipped offline)
+    bool ServedFresh = false; ///< the saved list was younger than the lifetime: no live request was sent
 };
 
 /// Offline: the saved list, with no request. Online: the live list, saved on success; on a failure the
 /// saved list (when there is one) plus the error. A null `store` or an empty `backendKey` saves and
 /// restores nothing. Never throws.
+/// Online with `ttlSec` > 0: a saved list younger than `ttlSec` (at `nowEpochSec`, 0 = the real clock) is
+/// returned as is, without a request (`ServedFresh`; not `FromSaved`, since it is current, and not `Failed`).
 ProjectListOutcome LoadProjectList(ITrackerConnectivity& connectivity, const std::shared_ptr<ILookupCache>& store,
-                                   const std::string& backendKey, bool offline);
+                                   const std::string& backendKey, bool offline, std::int64_t ttlSec = 0,
+                                   std::int64_t nowEpochSec = 0);
 
 } // namespace projects
 } // namespace smatchet

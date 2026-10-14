@@ -47,6 +47,8 @@
 #include "Commands/Scenarios/SmatchetScenarioRegistry.h"
 
 #include "FieldCatalogCache.h"
+#include "Sync/LookupFreshnessPure.h"
+#include "TimeNowPure.h"
 #include "JqlProjectScope.h"
 
 #include "DefaultTrackerBackendFactory.h"
@@ -624,8 +626,15 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
 
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
                                                            snapErr)) {
+            const std::int64_t savedUnix = FieldCatalogCache::FieldCatalogSnapshotSavedUnix(cacheKey);
+            startupCatalogSavedUnix_.store(savedUnix);
+            // A snapshot inside its lifetime is current, not an offline stand-in: the grid may skip the live
+            // fetch, so no "working offline" notice either.
+            const bool snapshotFresh = smatchet::sync::IsLookupRowFresh(savedUnix, TimeNowPure::NowUnixSeconds(),
+                                                                        cfg.FieldCatalogRefreshTtlSec);
             ApplyStartupFieldCatalogSnapshot(std::move(snapFields), std::move(snapComponents),
-                                             std::move(snapIssueTypeMeta), activeTrackerType, projectKeyForCache);
+                                             std::move(snapIssueTypeMeta), activeTrackerType, projectKeyForCache,
+                                             snapshotFresh);
         }
     }
 }
@@ -661,7 +670,7 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                                      const std::string& activeTrackerType,
-                                                     const std::string& projectKey) {
+                                                     const std::string& projectKey, bool snapshotFresh) {
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would split this compound write across two contexts (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
@@ -675,7 +684,9 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
     cat.LastTrackerFieldCatalogError.clear();
     cat.LastTrackerFieldCatalogErrorTransient = false;
 
-    if (activeTrackerType == "Plane") {
+    if (snapshotFresh) {
+        cat.LastTrackerFieldCatalogWarning.clear();
+    } else if (activeTrackerType == "Plane") {
         cat.LastTrackerFieldCatalogWarning =
             "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
     } else {

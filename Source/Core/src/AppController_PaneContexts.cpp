@@ -806,6 +806,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // ids, then republish + bump revision once if any field changed.
     bool anyFieldUpdated = false;
     std::vector<CachedTicket> updatedTickets; // Track updated tickets for cache persistence
+    std::vector<std::string> movedKeys;       // resident rows whose tracker version moved
     std::vector<std::string> addedKeys;       // tickets the roster path added to the grid (Added notifications)
     {
         std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
@@ -844,6 +845,10 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
             smatchet::sync::LazyCommentFields lazy;
             if (smatchet::sync::SnapshotLazyCommentFields(*it, lazy)) {
                 smatchet::sync::CarryForwardLazyCommentFields(lazy, incoming);
+            }
+            if (!incoming.GetFieldValueRef("updated").empty() && !it->GetFieldValueRef("updated").empty() &&
+                incoming.GetFieldValueRef("updated") != it->GetFieldValueRef("updated")) {
+                movedKeys.push_back(t.id); // its tracker version moved: transitions and edit permissions are stale
             }
             if (it->fieldValues != incoming.fieldValues || it->fieldRichValues != incoming.fieldRichValues) {
                 *it = incoming;                // Update in place with fully-populated fetched data
@@ -891,6 +896,10 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         });
     }
 
+    for (std::size_t i = 0; i < movedKeys.size(); ++i) {
+        InvalidateIssueTransitions(movedKeys[i]);
+        InvalidateIssueEditMeta(movedKeys[i]);
+    }
     // The added rows now belong to this pane for good; record them, or the next RefreshLocalData (which
     // scopes the namespace read to the pane's recorded ids) would filter them back out.
     for (std::size_t i = 0; i < addedKeys.size(); ++i) {

@@ -10,9 +10,11 @@
 #include "Logger.h"
 #include "LookupPayloadsPure.h"
 #include "OfflineFirstPure.h"
+#include "Sync/LookupFreshnessPure.h"
 #include "Tracker/ProjectResolver.h"
 #include "Tracker/TrackerError.h"
 
+#include <chrono>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -151,6 +153,7 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
                                              const std::shared_ptr<ILookupCache>& store) {
     using FetchResult = Result<OptionsPtr, TrackerError>;
     OptionsPtr fetched;
+    bool servedFromSaved = false;
     // Everything that can throw, the config load included, runs inside RunKeyedFetch: its guard records
     // a failure on every exit, so a throw can never leave the ticket in flight.
     smatchet::offline::RunKeyedFetch(cache_, ticket, [&]() {
@@ -162,6 +165,28 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
             return FetchResult::Err(TrackerErrorInvalidRequest("The tracker has no field catalog."));
         }
         const TrackerConfig cfg = cfgSnapshot ? *cfgSnapshot : ConfigManager::Load();
+        // A saved list younger than its lifetime stands in for the live fetch (and keeps its save time, so it
+        // does expire).
+        if (store && cfg.LookupCacheTtlSec > 0) {
+            try {
+                LookupCacheRow row;
+                std::vector<TrackerFieldOption> saved;
+                const std::int64_t nowSec =
+                    static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                                  std::chrono::system_clock::now().time_since_epoch())
+                                                  .count());
+                if (store->TryGetLookup(backendKey, smatchet::lookup::kProjectComponentsKind, projectKey, row) &&
+                    smatchet::sync::IsLookupRowFresh(row.UpdatedAtEpochSec, nowSec, cfg.LookupCacheTtlSec) &&
+                    smatchet::fieldoptions::ParseFieldOptions(row.PayloadJson, saved)) {
+                    fetched = std::make_shared<const OptionsList>(std::move(saved));
+                    servedFromSaved = true;
+                    return FetchResult::Ok(fetched);
+                }
+            } catch (const std::exception& ex) {
+                LOG_WARN("ProjectComponentsCacheService: reading saved components for %s failed: %s",
+                         projectKey.c_str(), ex.what());
+            }
+        }
         auto result = catalog->FetchProjectComponents(cfg, projectKey);
         if (!result) {
             LOG_DEBUG("ProjectComponentsCacheService: component fetch failed project=%s kind=%s err=%s",
@@ -172,7 +197,7 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
         fetched = std::make_shared<const OptionsList>(std::move(result.value().Options));
         return FetchResult::Ok(fetched);
     });
-    if (!fetched || !store) {
+    if (!fetched || !store || servedFromSaved) {
         return;
     }
     // Save after the live value is recorded, so a store failure can never cost the user the live list.

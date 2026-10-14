@@ -96,3 +96,25 @@ TEST_CASE("FieldCatalogCache: scoped components catalog round-trips under the pr
             FieldCatalogCache::TryLoadFieldCatalogSnapshot(unscopedKey, outFields, outComponents, outMeta, loadErr));
     }
 }
+
+TEST_CASE("FieldCatalogCache: the save time is stored on save and a read does not move it") {
+    smatchet_tests::TestEnvGuard env;
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://example.atlassian.net";
+    const std::string key = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "SAVED");
+    CHECK(FieldCatalogCache::FieldCatalogSnapshotSavedUnix(key) == 0); // nothing saved yet
+
+    std::vector<TrackerField> fields;
+    fields.push_back(MakeComponentsField(/*withOptions=*/false));
+    std::string err;
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(key, "Jira", cfg.Domain, "SAVED", 16, fields, {}, {}, err));
+    const std::int64_t savedAt = FieldCatalogCache::FieldCatalogSnapshotSavedUnix(key);
+    CHECK(savedAt > 0);
+
+    std::vector<TrackerField> outFields;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    REQUIRE(FieldCatalogCache::TryLoadFieldCatalogSnapshot(key, outFields, outComponents, outMeta, err));
+    CHECK(FieldCatalogCache::FieldCatalogSnapshotSavedUnix(key) == savedAt); // reading is not refreshing
+}

@@ -249,6 +249,13 @@ void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRe
 
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
+void GridContextDepsAdapter::OnTicketsRemotelyChanged(const std::vector<std::string>& ids) {
+    for (const std::string& id : ids) {
+        app_.InvalidateIssueTransitions(id);
+        app_.InvalidateIssueEditMeta(id);
+    }
+}
+
 void GridContextDepsAdapter::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) {
     app_.WarmIssueTypeEditMetaAtStartAsync(std::move(cfg));
 }

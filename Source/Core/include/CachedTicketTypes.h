@@ -16,6 +16,10 @@
 /// smatchet::tracker::SerializeCommentThread (Tracker/CommentBlobFormatPure.h). The comments modal
 /// shows it while the tracker is unreachable (Quality Pillar 6).
 constexpr const char* kCommentThreadRichKey = "comment_thread";
+/// The ticket's own `updated` stamp at the moment its saved comment thread was read from the tracker. A thread
+/// whose stamp equals the ticket's current `updated` has not been touched remotely since (the comments modal then
+/// opens from it without a live refetch). Absent on a thread carried forward from an older row.
+constexpr const char* kCommentThreadAtRichKey = "comment_thread_at";
 
 struct CachedTicket {
     std::string id;

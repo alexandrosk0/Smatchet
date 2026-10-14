@@ -148,6 +148,42 @@ TEST_SUITE("ProjectComponentsCacheService") {
         CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
     }
 
+    TEST_CASE("a saved list younger than the lifetime stands in for the live fetch; an old one is refetched") {
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+            deps.LookupCacheImpl = store;
+            deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+            ProjectComponentsCacheService svc(deps);
+
+            svc.EnsureComponentsLoaded("ABC");
+
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
+            const ProjectComponentsLookup lookup = svc.GetComponentOptions("ABC");
+            REQUIRE(lookup.options != nullptr);
+            REQUIRE(lookup.options->size() == 1u);
+            CHECK(lookup.options->at(0).Value == "Backend");
+            CHECK(lookup.freshness == DataFreshness::Fresh);
+            CHECK(store->UpsertCalls.load() == 1); // serving the saved list does not renew its save time
+        }
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            store->StampEpochSec = 5; // saved long ago
+            SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+            deps.LookupCacheImpl = store;
+            deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+            ProjectComponentsCacheService svc(deps);
+
+            svc.EnsureComponentsLoaded("ABC");
+
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+            REQUIRE(svc.GetComponentOptions("ABC").options != nullptr);
+            CHECK(svc.GetComponentOptions("ABC").options->at(0).Value == "Live");
+        }
+    }
+
     TEST_CASE("a project with no components settles to an empty live list, not a spinner") {
         FakeEditMetaDeps deps;
         deps.Fake()->SetProjectComponentsSuccess("ABC", {});
@@ -165,6 +201,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     TEST_CASE("a failed fetch keeps the saved list, backs off, and retries after reconnect") {
         FakeEditMetaDeps deps;
         const auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 5; // saved long ago: older than the lookup lifetime, so the live fetch runs
         SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
         deps.LookupCacheImpl = store;
         deps.Fake()->SetProjectComponentsFailure("ABC", "HTTP 503");
@@ -268,6 +305,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     TEST_CASE("the saved list never overrides a list fetched live meanwhile") {
         DeferredLaunchDeps deps;
         const auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 5; // older than the lookup lifetime: the live fetch runs
         SaveComponents(*store, "Jira", "ABC", {Component("100", "Old name")});
         deps.LookupCacheImpl = store;
         deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});

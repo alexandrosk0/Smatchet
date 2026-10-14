@@ -25,6 +25,8 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Logger.h"
+#include "Sync/LookupFreshnessPure.h"
+#include "TimeNowPure.h"
 #include "LookupPayloadsPure.h"
 #include "NavigationHistory.h"
 #include "ProjectResolver.h"
@@ -1578,6 +1580,8 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
+        d.catalogServedFromSnapshot = false;
+        d.catalogSnapshotRefreshAtUnix = 0;
         // Pillar 6: a pane with no users yet shows the roster saved by an earlier session until (or
         // unless) this fetch brings a live one.
         app.SeedAvailableUsersFromStoreAsync();
@@ -1585,6 +1589,33 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
     };
+
+    // A saved catalog still inside its lifetime that covers every column of the active view stands in for the
+    // startup fetch (offline-first: it is what the grid draws, with a "saved" cue); one refresh is scheduled for
+    // when it expires. Only the first start may skip: later requests are explicit (tracker or preference change).
+    if (!d.fieldCatalogFetchStarted && !d.catalogStartupSkipTried && !d.fieldCatalogLoading) {
+        d.catalogStartupSkipTried = true;
+        const ViewDefinition* skipView = ViewState.GetActiveView();
+        std::vector<std::string> catalogIds;
+        for (const TrackerField& f : app.GetAvailableFields()) {
+            catalogIds.push_back(f.Id);
+        }
+        const std::int64_t nowUnix = TimeNowPure::NowUnixSeconds();
+        const std::int64_t savedUnix = app.StartupCatalogSnapshotSavedUnix();
+        if (smatchet::sync::CanSkipCatalogFetch(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec,
+                                                skipView ? skipView->Fields : std::vector<std::string>(), catalogIds)) {
+            d.fieldCatalogFetchStarted = true;
+            d.catalogServedFromSnapshot = true;
+            d.catalogSnapshotRefreshAtUnix =
+                nowUnix + smatchet::sync::SecondsUntilLookupStale(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec);
+            app.SeedAvailableUsersFromStoreAsync(); // the roster the skipped fetch would have brought
+            LOG_INFO("SmatchetUI: saved field catalog is fresh; skipping the startup catalog fetch.");
+        }
+    }
+    if (d.catalogSnapshotRefreshAtUnix != 0 && TimeNowPure::NowUnixSeconds() >= d.catalogSnapshotRefreshAtUnix) {
+        d.catalogSnapshotRefreshAtUnix = 0;
+        d.triggerCatalogRefetch = true; // the snapshot expired: refresh it
+    }
 
     if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
         d.triggerCatalogRefetch = false;

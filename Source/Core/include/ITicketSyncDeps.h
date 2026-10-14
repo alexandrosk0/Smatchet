@@ -122,6 +122,10 @@ class ITicketSyncDeps {
     /// connectivity monitor's degraded-probe-interval check) branch on the flag instead of
     /// re-classifying the composed message text.
     virtual void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) = 0;
+    /// Tickets already on the grid whose tracker version moved in a sync: anything derived from the old
+    /// version (the available transitions, the per-issue edit permissions) is stale. UI thread. Defaulted to
+    /// nothing so test fakes need no stub.
+    virtual void OnTicketsRemotelyChanged(const std::vector<std::string>& /*ids*/) {}
     virtual void SetLastTrackerConnectivityState(ConnectivityState state) = 0;
     virtual void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) = 0;
     /// Forward to `OfflineQueueService::PushReplayTimersForward`. AppController routes this so

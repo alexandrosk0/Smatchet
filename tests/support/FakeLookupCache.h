@@ -7,6 +7,8 @@
 #include "ILookupCache.h"
 
 #include <atomic>
+#include <cstdint>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <string>
@@ -20,6 +22,8 @@ class FakeLookupCache : public ILookupCache {
         LookupCacheRow row;
         row.CacheKey = cacheKey;
         row.PayloadJson = payloadJson;
+        row.UpdatedAtEpochSec =
+            StampEpochSec.load() != 0 ? StampEpochSec.load() : static_cast<std::int64_t>(std::time(nullptr));
         data_[RowKey(backendKey, kind, cacheKey)] = row;
         ++UpsertCalls;
         return true;
@@ -55,6 +59,8 @@ class FakeLookupCache : public ILookupCache {
     }
 
     std::atomic<int> UpsertCalls{0};
+    /// Save time given to the rows upserted from now on (0 = the real clock).
+    std::atomic<std::int64_t> StampEpochSec{0};
 
   private:
     static std::string RowKey(const std::string& backendKey, const std::string& kind, const std::string& cacheKey) {

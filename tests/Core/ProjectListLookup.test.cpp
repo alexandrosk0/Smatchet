@@ -175,4 +175,33 @@ TEST_SUITE("ProjectListLookup") {
         LoadProjectList(conn, store, "", false);
         CHECK(store->UpsertCalls.load() == 0);
     }
+
+    TEST_CASE("a saved list younger than the lifetime is served without a request; an older one is refetched") {
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        SaveList(*store, "Jira", {Project("OFF", "Offline First")});
+
+        ScriptedConnectivity fresh;
+        fresh.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome served = LoadProjectList(fresh, store, "Jira", false, /*ttlSec=*/600, /*now=*/1500);
+        CHECK(fresh.Calls == 0);
+        CHECK(served.ServedFresh);
+        CHECK_FALSE(served.Failed);
+        CHECK_FALSE(served.FromSaved);
+        REQUIRE(served.Projects.size() == 1u);
+        CHECK(served.Projects[0].key == "OFF");
+
+        ScriptedConnectivity stale;
+        stale.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome live = LoadProjectList(stale, store, "Jira", false, 600, /*now=*/1600);
+        CHECK(stale.Calls == 1);
+        CHECK_FALSE(live.ServedFresh);
+        REQUIRE(live.Projects.size() == 1u);
+        CHECK(live.Projects[0].key == "NEW");
+
+        ScriptedConnectivity noTtl;
+        noTtl.Projects = {Project("NEW", "New")};
+        LoadProjectList(noTtl, store, "Jira", false, /*ttlSec=*/0, 1500);
+        CHECK(noTtl.Calls == 1); // no lifetime: always live
+    }
 }

@@ -319,6 +319,8 @@ const FieldDesc<int> kIntFields[] = {
     {"max_user_changes", &TrackerConfig::MaxUserChanges},
     {"ticket_change_monitor_interval_sec", &TrackerConfig::TicketChangeMonitorIntervalSec},
     {"delta_sync_max_row_age_sec", &TrackerConfig::DeltaSyncMaxRowAgeSec},
+    {"field_catalog_refresh_ttl_sec", &TrackerConfig::FieldCatalogRefreshTtlSec},
+    {"lookup_cache_ttl_sec", &TrackerConfig::LookupCacheTtlSec},
     {"quick_create_ctx_log_lines", &TrackerConfig::QuickCreateCtxLogLines},
 };
 

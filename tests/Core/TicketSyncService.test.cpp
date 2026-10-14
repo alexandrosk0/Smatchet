@@ -2360,3 +2360,31 @@ TEST_CASE("Change monitor roster probe: rows the server returns beyond the reque
     REQUIRE(fetched.size() == 1);
     CHECK(fetched[0].id == "A-2");
 }
+
+// --- delta-sync Phase 7: a remote change invalidates what hangs off the old version ---------------------------
+
+TEST_CASE("A resident ticket whose tracker version moved is reported as remotely changed; others are not") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1"), Stamped("ABC-3", "T1")});
+    rig.deps.ActiveTicketsImpl = {Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1"), Stamped("ABC-3", "T1")};
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}, {"ABC-3", "T1"}, {"ABC-4", "T1"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh"), Stamped("ABC-4", "T1", "new")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    // Only ABC-2 was on the grid with an older version: ABC-4 is new, ABC-1 and ABC-3 are unchanged.
+    CHECK(rig.deps.RemotelyChanged == std::vector<std::string>{"ABC-2"});
+}
+
+TEST_CASE("An unchanged view reports nothing as remotely changed") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.deps.ActiveTicketsImpl = {Stamped("ABC-1", "T1")};
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.RemotelyChanged.empty());
+}

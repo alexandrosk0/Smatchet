@@ -899,3 +899,33 @@ TEST_CASE("BuildJiraSearchUrl and BuildJiraIssueUrl URL-encode each field id and
     CHECK(BuildJiraSearchUrl("https://x.example", "j", 10, "*none", false) ==
           "https://x.example/rest/api/3/search/jql?jql=j&maxResults=10&fields=%2Anone");
 }
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — the saved comment thread is stamped with the issue's updated") {
+    nlohmann::json commentBody;
+    commentBody["body"] = "A comment";
+    commentBody["author"]["displayName"] = "Alice";
+    commentBody["created"] = "2024-01-15T12:34:56.000Z";
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array({commentBody});
+    commentObj["total"] = 1;
+
+    nlohmann::json fields;
+    fields["summary"] = "s";
+    fields["comment"] = commentObj;
+    fields["updated"] = "2024-02-01T10:00:00.000+0000";
+    const nlohmann::json issue = MakeIssue("SMAT-41", fields);
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, {"summary"}, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].GetFieldRichValue(kCommentThreadAtRichKey) == "2024-02-01T10:00:00.000+0000");
+
+    // No thread, no stamp.
+    nlohmann::json bare;
+    bare["summary"] = "s";
+    bare["updated"] = "2024-02-01T10:00:00.000+0000";
+    std::vector<CachedTicket> none;
+    AppendCachedTicketFromJiraSearchIssue(MakeIssue("SMAT-42", bare), {"summary"}, NoCommentFetch(), none);
+    REQUIRE(none.size() == 1);
+    CHECK(none[0].GetFieldRichValue(kCommentThreadAtRichKey).empty());
+}

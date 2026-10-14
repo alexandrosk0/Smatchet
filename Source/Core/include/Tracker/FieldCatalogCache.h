@@ -49,6 +49,10 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
                                  std::vector<TrackerComponent>& outComponents,
                                  std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
 
+/** When the catalog under `cacheKey` was last saved from a live fetch (epoch seconds); 0 when unknown (no entry,
+ *  or an entry saved before the stamp existed). A read does not move it. */
+std::int64_t FieldCatalogSnapshotSavedUnix(const std::string& cacheKey);
+
 /** Sorted by lastUsedUnix descending (most-recent first). Used by the Preferences readout. */
 std::vector<CachedProjectEntry> ListCachedProjects();
 

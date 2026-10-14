@@ -225,8 +225,8 @@ void StartAllProjectsFetch(State& state, AppController& app) {
                     statePtr->fetchInFlight.store(false);
                 }
             });
-            smatchet::projects::ProjectListOutcome outcome =
-                smatchet::projects::LoadProjectList(backend->Connectivity(), store, backendKey, offline);
+            smatchet::projects::ProjectListOutcome outcome = smatchet::projects::LoadProjectList(
+                backend->Connectivity(), store, backendKey, offline, ConfigManager::Load().LookupCacheTtlSec);
             std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
             if (statePtr->fetchGeneration != generation) {
                 return; // superseded (the focused tracker changed): another tracker's list, dropped
