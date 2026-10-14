@@ -12,6 +12,7 @@
 //     JiraIssueSearch so retry on 429/5xx becomes uniform across the codebase.
 
 #include "ITrackerConnectivity.h" // TrackerReachabilityProbeResult / Kind
+#include "TunableLimits.h"
 #include "TrackerError.h"
 
 #include <cpr/cpr.h>
@@ -19,14 +20,32 @@
 #include <functional>
 #include <string>
 
-constexpr int kTrackerHttpDefaultMaxAttempts = 3;
-constexpr long kTrackerHttpBaseRetryDelayMs = 250;
-constexpr long kTrackerHttpMaxRetryDelayMs = 4000;
+// User-tunable (TunableLimits.h, config "limits" object); read per call so a reloaded config applies.
+// Timeouts: defaults 5 s connect / 30 s overall; the probe pair (2 s / 5 s) is for periodic connectivity
+// probes, which must not block state updates on a stalled TCP connection.
+inline long TrackerConnectTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerConnectTimeoutMs); }
+inline long TrackerOverallTimeoutMs() { return static_cast<long>(smatchet::limits::Get().TrackerOverallTimeoutMs); }
+inline long TrackerProbeConnectTimeoutMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerProbeConnectTimeoutMs);
+}
+inline long TrackerProbeOverallTimeoutMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerProbeOverallTimeoutMs);
+}
+// Retry.
+inline int TrackerHttpDefaultMaxAttempts() { return smatchet::limits::Get().TrackerHttpMaxAttempts; }
+inline long TrackerHttpBaseRetryDelayMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerHttpBaseRetryDelayMs);
+}
+inline long TrackerHttpMaxRetryDelayMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerHttpMaxRetryDelayMs);
+}
 /// Ceiling on honouring a server-sent `Retry-After` between attempts. GitHub's secondary
 /// rate limits routinely ask for ~60 s — waiting that long on a sync worker is worse than
-/// failing over to the offline queue, so the honored delay is capped here; the backoff
+/// failing over to the offline queue, so the honored delay is capped here (default 30 s); the backoff
 /// sleep polls the cancel token throughout either way.
-constexpr long kTrackerHttpMaxRetryAfterHonorMs = 30000;
+inline long TrackerHttpMaxRetryAfterHonorMs() {
+    return static_cast<long>(smatchet::limits::Get().TrackerHttpMaxRetryAfterHonorMs);
+}
 
 /// Paired result: typed classification + the raw cpr::Response so callers can still parse the
 /// body. `Response.text` is always populated (empty on transport failure). On success,
@@ -66,8 +85,8 @@ std::string DescribeRejectedResponse(const std::string& what, const cpr::Respons
 TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response);
 
 /// Retry loop wrapping a request function. Invokes `requestFn` up to `maxAttempts` times,
-/// backing off `kTrackerHttpBaseRetryDelayMs * 2^(attempt-1)` (capped at
-/// `kTrackerHttpMaxRetryDelayMs`) between attempts when the result should be retried.
+/// backing off `TrackerHttpBaseRetryDelayMs() * 2^(attempt-1)` (capped at
+/// `TrackerHttpMaxRetryDelayMs()`) between attempts when the result should be retried.
 /// `cancelled` (optional) is polled before each attempt and after each backoff; when it returns
 /// true, the loop exits with a `Cancelled` TrackerError on whatever the latest response was.
 /// `shouldRetry` (optional) decides retryability per error: when null, the default is
@@ -75,6 +94,6 @@ TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& re
 /// non-idempotent verb (POST) pass a Transport-only predicate so a landed-then-5xx mutation is
 /// never re-sent (would double-fire); idempotent verbs keep the default.
 TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpResult()>& requestFn,
-                                              int maxAttempts = kTrackerHttpDefaultMaxAttempts,
+                                              int maxAttempts = TrackerHttpDefaultMaxAttempts(),
                                               const std::function<bool()>& cancelled = nullptr,
                                               const std::function<bool(const TrackerError&)>& shouldRetry = nullptr);

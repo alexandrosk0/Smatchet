@@ -3,6 +3,7 @@
 #include "LinearClientHelpers.h"
 #include "LinearIssueMappingPure.h"
 #include "LinearQueryFromJql.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
 #include "Json/BoundedJsonParse.h"
@@ -28,10 +29,9 @@ namespace linear {
 namespace {
 
 // Linear's default `issues` page is 50; the API caps `first` well above that.
-// We page 50/request up to ~20 pages = 1000 issues, then soft-warn (matches the
+// We page 50/request up to limits::Get().LinearMaxPages pages, then soft-warn (matches the
 // GitHub/Plane convention of capping + warning rather than failing).
 constexpr int kLinearPerPage = 50;
-constexpr int kLinearMaxPages = 20;
 
 // The `issues(filter,first,after)` document — every CachedTicket-relevant field
 // the pure mapper reads (LinearIssueMappingPure.cpp), plus the cursor pageInfo.
@@ -256,6 +256,7 @@ FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, cons
 
     bool reachedShortPage = false;
     std::string cursor; // empty → page 1; subsequent pages use endCursor.
+    const int kLinearMaxPages = smatchet::limits::Get().LinearMaxPages;
     for (int page = 1; page <= kLinearMaxPages; ++page) {
         const nlohmann::json variables = BuildIssuesVariables(filter, cursor);
         const std::string body = BuildGraphQLBody(kIssuesQuery, variables);

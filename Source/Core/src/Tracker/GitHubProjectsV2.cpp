@@ -3,6 +3,7 @@
 #include "GitHubClientHelpers.h" // ExtractGitHubErrorMessage
 #include "GitHubIssueSearch.h"   // BuildGitHubHeaders / ResolveGraphQlEndpoint / ExtractGraphQlErrors
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
 
@@ -80,7 +81,8 @@ FetchProjectV2ItemValues(const std::string& baseUrl, const std::string& pat, con
                          const std::vector<TrackerField>& catalogFields, std::string* outWarning) {
     using ValuesResult = Result<std::map<std::string, std::vector<std::pair<std::string, std::string>>>, TrackerError>;
     constexpr int kPerPage = 100;
-    constexpr int kMaxPages = 5; // ~500 items; boards past that get a truncation warning
+    const int kMaxPages =
+        smatchet::limits::Get().GitHubProjectsV2MaxPages; // boards past the cap get a truncation warning
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> out;
     std::string cursor;
     for (int page = 1; page <= kMaxPages; ++page) {

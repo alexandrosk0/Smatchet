@@ -1661,7 +1661,7 @@ class AppController : public IAppThreading,
     /// from `LuaDrawList::Replay`. Both base directories (`luaScriptsDirectory_`,
     /// `ConfigManager::GetRuntimeAssetDirectory`) are set once at startup and never re-assigned,
     /// so the function is pure w.r.t. its input string for the process lifetime. UI-thread only.
-    static constexpr std::size_t kFieldIconAssetPathCacheCap = 256;
+    /// Size cap: `limits::Get().FieldIconPathCacheMax` (cleared wholesale when reached).
     mutable std::unordered_map<std::string, std::string> fieldIconAssetPathCache_;
 
     // The IssueEditMetaCache struct + editMetaMutex_ + its three containers + the editmeta
@@ -1760,7 +1760,7 @@ class AppController : public IAppThreading,
     PluginHost* runtimePluginHost_ = nullptr;
 
 #if defined(SMATCHET_WITH_MCP)
-    // `kMcpActivityLogMax` + `mcpActivityMutex_` + `mcpActivityLog_` moved into
+    // `limits::Get().McpActivityLogMax` + `mcpActivityMutex_` + `mcpActivityLog_` moved into
     // AppController::Impl (pImpl #19b). The HTTP-traffic tracking atomics below stay (hot,
     // lock-free, read on the UI thread; not part of the activity-log storage).
     /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */

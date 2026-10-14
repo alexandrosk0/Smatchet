@@ -1,5 +1,6 @@
 #include "JqlSuggestEnginePure.h"
 
+#include "TunableLimits.h"
 #include "StringUtil.h"
 #include "Tracker/JqlEscape.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"
@@ -146,7 +147,8 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
         return;
     }
     const std::string pre = ToLowerAsciiCopy(prefix);
-    constexpr int kMaxUsers = 50;
+    // User-tunable cap (limits::Get().JqlSuggestMaxUsers, default 50), read once per call.
+    const int maxUsers = smatchet::limits::Get().JqlSuggestMaxUsers;
     int added = 0;
     // Mid-name matches are held back rather than walked in a second pass: this runs on every
     // omnibox keystroke over the whole catalog (Pillar 1), so each user is case-folded at
@@ -157,7 +159,7 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
         // Both buckets full: nothing later in the catalog can reach the list, so stop before
         // case-folding the rest of it (a 10k-user tenant would otherwise fold ~9,900 names
         // per keystroke on the UI thread).
-        if (added >= kMaxUsers && static_cast<int>(midMatches.size()) >= kMaxUsers) {
+        if (added >= maxUsers && static_cast<int>(midMatches.size()) >= maxUsers) {
             break;
         }
         if (!IsNonSystemTrackerUser(user)) {
@@ -178,12 +180,12 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
         }
         const bool startsWith = namePos == 0 || emailPos == 0;
         if (!startsWith) {
-            // Hold at most kMaxUsers mid-name matches — prefix matches only ever take slots
+            // Hold at most maxUsers mid-name matches — prefix matches only ever take slots
             // away from them, so a hot substring like "a" can't grow this vector unbounded.
             // Only entries AddSuggestionUnique could actually emit are held: an empty insert,
             // one already in `out`, or a duplicate of another held entry would be dropped at
             // drain time and would otherwise burn held capacity a later match could use.
-            if (static_cast<int>(midMatches.size()) >= kMaxUsers) {
+            if (static_cast<int>(midMatches.size()) >= maxUsers) {
                 continue;
             }
             std::string insert = BuildJqlUserInsert(user);
@@ -193,7 +195,7 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
             midMatches.push_back(QuerySuggestion{std::move(label), std::move(insert)});
             continue;
         }
-        if (added >= kMaxUsers) {
+        if (added >= maxUsers) {
             continue;
         }
         const size_t before = out.size();
@@ -207,7 +209,7 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
     // A held entry can still collide with a prefix match emitted after it was held, so the
     // drain re-checks through AddSuggestionUnique rather than trusting the hold-time filter.
     for (auto& mid : midMatches) {
-        if (added >= kMaxUsers) {
+        if (added >= maxUsers) {
             break;
         }
         const size_t before = out.size();

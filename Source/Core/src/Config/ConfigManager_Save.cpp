@@ -269,6 +269,17 @@ void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
     j.erase("show_ai_assistant_window");
     j["ai_provider_kind"] = config.AiProviderKind;
     j["assistant_history_max_rows"] = config.AssistantHistoryMaxRows;
+    {
+        // Tunable caps / timeouts (Config/TunableLimits.h). Written in full so every key is discoverable
+        // in config.json; unknown keys already on disk are dropped by the rebuild.
+        nlohmann::json limits = nlohmann::json::object();
+        std::size_t n = 0;
+        const smatchet::limits::LimitDescriptor* rows = smatchet::limits::Descriptors(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            limits[rows[i].key] = config.Limits.*(rows[i].member);
+        }
+        j["limits"] = std::move(limits);
+    }
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write here; WhisperApiKey
     // is DPAPI-encrypted in SaveSecretsAndPurgeLegacy.

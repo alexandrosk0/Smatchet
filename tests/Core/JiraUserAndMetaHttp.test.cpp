@@ -9,6 +9,7 @@
 
 #include "JiraCatalogHttpFixture.h"
 #include "Tracker/JiraClient.h"
+#include "../support/ScopedLimits.h"
 
 #include <doctest/doctest.h>
 
@@ -66,6 +67,45 @@ TEST_CASE("JiraClient::FetchUsers — success dedups, drops inactive, and append
     }
     CHECK(sawSuffix);
     CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
+}
+
+TEST_CASE("JiraClient::FetchUsers — a roster that fits the page cap exactly still reaches its end") {
+    // jira_users_max_pages = 1 (the clamp minimum) with one non-empty page: the walk must still issue the
+    // terminating empty-page request, or a perfectly complete roster is rejected as "never reached the end".
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraUsersMaxPages = 1; });
+
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        if (req.get_param_value("startAt") == "0") {
+            return nlohmann::json::array(
+                {nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}}});
+        }
+        return nlohmann::json::array();
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    CHECK(client.FetchUsers(fx.Config(), out, err));
+    CHECK(err.empty());
+    CHECK(out.size() == 1);
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
+}
+
+TEST_CASE("JiraClient::FetchUsers — a roster longer than the page cap is rejected, not returned partial") {
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraUsersMaxPages = 1; });
+
+    JiraCatalogHttpFixture fx;
+    // Every page is non-empty (distinct accounts per startAt), so the end is never reached.
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        const std::string id = "a" + req.get_param_value("startAt");
+        return nlohmann::json::array({nlohmann::json{{"accountId", id}, {"displayName", id}, {"active", true}}});
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    CHECK_FALSE(client.FetchUsers(fx.Config(), out, err));
+    CHECK(out.empty()); // never hand back a partial roster
+    CHECK(err.find("exceeded 1 pages") != std::string::npos);
 }
 
 TEST_CASE("JiraClient::FetchUsers — non-200 sets an HTTP error and returns false") {
@@ -188,8 +228,9 @@ TEST_CASE("JiraClient::FetchUsers — exhausting the page-count safety bound is 
     // The accumulated 50,000-row partial roster must be discarded on failure, not left for a
     // caller that only checks the bool to silently publish a truncated catalog (#2226 CR finding).
     CHECK(out.empty());
-    // 50 pages (kMaxPages) of 1000 rows each, all unique accountIds.
-    CHECK(fx.RequestCount("/rest/api/3/users/search") == 50);
+    // 50 data pages (jira_users_max_pages) of 1000 rows each, plus the one terminating request that
+    // proves the roster did not end (it also returns a full page, so the walk is rejected).
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 51);
 }
 
 TEST_CASE("JiraClient::FetchUsers — a page that fails after earlier pages leaves no partial roster") {

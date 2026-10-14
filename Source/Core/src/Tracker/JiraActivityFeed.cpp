@@ -2,6 +2,7 @@
 
 #include "JiraClient.h"
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "Tracker/JqlEscape.h"
@@ -202,7 +203,8 @@ JiraClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& accou
         base + "/rest/api/3/search/jql?jql=" + UrlEncode(jql) + "&maxResults=100&fields=summary&expand=changelog";
 
     std::string nextPageToken;
-    const int kMaxPages = 20; // activity window — bounded scan, not a full sync
+    const int kMaxPages =
+        smatchet::limits::Get().JiraActivityMaxPages; // activity window — bounded scan, not a full sync
     for (int page = 1; page <= kMaxPages; ++page) {
         if (activityCancel_.load()) {
             break; // window closed — return what we have

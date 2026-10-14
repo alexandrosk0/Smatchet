@@ -1,6 +1,7 @@
 #include "TrackerGridFieldDisplayPure.h"
 
 #include "JsonParseUtil.h"
+#include "TunableLimits.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
 
@@ -377,10 +378,11 @@ WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
         }
         model.tooltip += "\n";
     }
-    const int kMaxTipEntries = 12;
+    // User-tunable cap (limits::Get().GridTooltipMaxEntries, default 12).
+    const int maxTipEntries = smatchet::limits::Get().GridTooltipMaxEntries;
     int shown = 0;
     for (const auto& e : s.Entries) {
-        if (shown >= kMaxTipEntries) {
+        if (shown >= maxTipEntries) {
             const int rest = static_cast<int>(s.Entries.size()) - shown;
             model.tooltip += "\n... +" + std::to_string(rest) + " on this page";
             break;

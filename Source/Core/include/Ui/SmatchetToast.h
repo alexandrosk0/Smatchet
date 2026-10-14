@@ -33,13 +33,15 @@ class SmatchetToastManager {
     const std::vector<ToastHistoryEntry>& History() const { return m_history; }
     void ClearHistory() { m_history.clear(); }
 
-    // Live (on-screen) toast count. Bounded by kMaxLiveToasts — a burst of failures (one
+    // Live (on-screen) toast count. Bounded by MaxLiveToasts() — a burst of failures (one
     // sticky error toast each) must not stack past the top of the viewport; the oldest
     // live toast is dropped instead (its history entry + the unread-error badge persist).
     std::size_t LiveCount() const { return m_toasts.size(); }
     // Dismiss every live toast at once (history untouched).
     void DismissAllLive() { m_toasts.clear(); }
-    static const std::size_t kMaxLiveToasts = 6;
+    // Live-stack cap: limits::Get().ToastMaxLive (default 6). A function, not a constant, so a
+    // changed config takes effect on the next Push.
+    static std::size_t MaxLiveToasts();
 
     // Open-center request: set when a transient toast is clicked; the UI polls + consumes it
     // once per open. Kept on the manager (not a global) so every Push surface shares it.
@@ -57,5 +59,6 @@ class SmatchetToastManager {
     std::vector<ToastHistoryEntry> m_history;
     bool m_openCenterRequested = false;
     int m_unreadErrorCount = 0;
-    static const std::size_t kHistoryCap = 200;
+    // History cap: limits::Get().ToastHistoryMax (default 200).
+    static std::size_t HistoryCap();
 };

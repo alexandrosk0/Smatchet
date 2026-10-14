@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 
 #include "DataFreshnessCue.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetLocalization.h"
@@ -46,8 +47,6 @@ using TrackerGridFieldDisplayPure::WorklogCellModel;
 
 namespace {
 
-constexpr std::size_t kMaxRenderCacheEntries = 256;
-
 template <typename TValue, typename TBuilder>
 TValue& GetOrBuildCachedValue(std::unordered_map<std::string, TValue>& cache, const std::string& key,
                               TBuilder&& build) {
@@ -55,7 +54,9 @@ TValue& GetOrBuildCachedValue(std::unordered_map<std::string, TValue>& cache, co
     if (it != cache.end()) {
         return it->second;
     }
-    if (cache.size() >= kMaxRenderCacheEntries) {
+    // Miss path only (the hot hit path above returns first): the cap is user-tunable via
+    // limits::Get().GridRenderCacheMax (default 256).
+    if (cache.size() >= static_cast<std::size_t>(smatchet::limits::Get().GridRenderCacheMax)) {
         cache.clear();
     }
     return cache.emplace(key, build()).first->second;

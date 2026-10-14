@@ -3,6 +3,7 @@
 #include "Commands/FuzzyMatch.h"
 #include "Commands/ParamBoundsPure.h"
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
@@ -381,7 +382,8 @@ void CommandRegistry::RecordRecent(const std::string& name) {
         }
     }
     recents_.push_front(name);
-    while (recents_.size() > kRecentsMax) {
+    const size_t recentsMax = static_cast<size_t>(limits::Get().CommandRecentsMax);
+    while (recents_.size() > recentsMax) {
         recents_.pop_back();
     }
 }
@@ -426,7 +428,7 @@ void CommandRegistry::LoadRecents() {
     std::string content;
     char buf[512];
     size_t n;
-    // The recents list is a short array of strings (capped at kRecentsMax). Bound
+    // The recents list is a short array of strings (capped at CommandRecentsMax). Bound
     // the read at 64 KiB so a corrupt/hostile file can't balloon the heap before
     // the bounded parse — well above any legitimate recents document.
     constexpr size_t kRecentsReadCap = 64 * 1024;
@@ -447,8 +449,9 @@ void CommandRegistry::LoadRecents() {
             return;
         std::lock_guard<std::mutex> lk(mutex_);
         recents_.clear();
+        const size_t recentsMax = static_cast<size_t>(limits::Get().CommandRecentsMax);
         for (const auto& item : j) {
-            if (item.is_string() && recents_.size() < kRecentsMax) {
+            if (item.is_string() && recents_.size() < recentsMax) {
                 recents_.push_back(item.get<std::string>());
             }
         }

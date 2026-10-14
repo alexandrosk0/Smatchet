@@ -76,7 +76,7 @@ class CommandRegistry {
     void LoadRecents();
 
   private:
-    static constexpr size_t kRecentsMax = 16;
+    // Recents cap: limits::Get().CommandRecentsMax (default 16), read where recents_ is mutated.
 
     /// FindLocked's lookup for a caller that already holds `mutex_` (it is not recursive).
     const Command* FindHoldingLock(const std::string& name) const;

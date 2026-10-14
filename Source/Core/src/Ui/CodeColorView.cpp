@@ -1,6 +1,7 @@
 #include "CodeColorView.h"
 
 #include "CppSyntaxHighlight.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "SmatchetTheme.h"
 
@@ -465,8 +466,7 @@ struct CacheKeyHasher {
     }
 };
 
-constexpr std::size_t kCacheCap = 256;
-
+// FIFO cap: limits::Get().CodeColorCacheMax (default 256), read on the insert path only.
 std::mutex g_cacheMutex;
 std::unordered_map<CacheKey, std::shared_ptr<const std::vector<Token>>, CacheKeyHasher> g_cache;
 std::vector<CacheKey> g_cacheInsertionOrder;
@@ -496,7 +496,8 @@ std::shared_ptr<const std::vector<Token>> TokenizeCached(const char* data, std::
     auto inserted = g_cache.emplace(key, std::move(fresh));
     g_cacheInsertionOrder.push_back(key);
     ++g_cacheRebuildCount;
-    while (g_cacheInsertionOrder.size() > kCacheCap) {
+    const std::size_t cacheCap = static_cast<std::size_t>(smatchet::limits::Get().CodeColorCacheMax);
+    while (g_cacheInsertionOrder.size() > cacheCap) {
         const CacheKey evict = g_cacheInsertionOrder.front();
         g_cacheInsertionOrder.erase(g_cacheInsertionOrder.begin());
         if (!(evict == key)) {

@@ -11,6 +11,7 @@
 // clang-format on
 
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "StringUtil.h"
 
 #include <ghc/filesystem.hpp>
@@ -108,6 +109,8 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
     }
 
     const std::string t = TrimCopyAsciiWhitespace(pathOrUrl);
+    // User-tunable cap (limits::Get().FieldIconPathCacheMax, default 256), read once per call.
+    const std::size_t pathCacheCap = static_cast<std::size_t>(smatchet::limits::Get().FieldIconPathCacheMax);
 
     if (t.empty()) {
 
@@ -116,7 +119,7 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
 
     if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
 
-        if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+        if (fieldIconAssetPathCache_.size() >= pathCacheCap) {
             fieldIconAssetPathCache_.clear();
         }
         fieldIconAssetPathCache_.emplace(pathOrUrl, t);
@@ -153,7 +156,7 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
         if (!ec && isAllowedPath(absRel)) {
             out = absRel.string();
         }
-        if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+        if (fieldIconAssetPathCache_.size() >= pathCacheCap) {
             fieldIconAssetPathCache_.clear();
         }
         fieldIconAssetPathCache_.emplace(pathOrUrl, out);
@@ -166,7 +169,7 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
     if (!ec && isAllowedPath(abs)) {
         out = abs.string();
     }
-    if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+    if (fieldIconAssetPathCache_.size() >= pathCacheCap) {
         fieldIconAssetPathCache_.clear();
     }
     fieldIconAssetPathCache_.emplace(pathOrUrl, out);

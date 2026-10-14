@@ -24,6 +24,7 @@
 #include "ConfigManager.h"
 #include "EnvUtil.h"
 #include "FileIo.h"
+#include "TunableLimits.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SemanticVersionPure.h"
@@ -136,10 +137,11 @@ Result<smatchet::attachments::FetchedAttachment, TrackerError> FetchAllowlistedA
     const cpr::Header headers{{"Accept", "*/*"},
                               {"Authorization", BuildTrackerBasicAuthHeader(cfg)},
                               {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
-    constexpr std::size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
-    constexpr long kAttachmentDownloadTimeoutMs = 120000;
+    const smatchet::limits::LimitsConfig lim = smatchet::limits::Get();
+    const std::size_t maxAttachmentDownloadBytes = smatchet::limits::MiB(lim.AttachmentDownloadMaxMiB);
+    const long attachmentDownloadTimeoutMs = static_cast<long>(lim.AttachmentDownloadTimeoutMs);
     TrackerDownloadResult download =
-        TrackerDownloadLogged("Attachment", url, headers, kMaxAttachmentDownloadBytes, kAttachmentDownloadTimeoutMs);
+        TrackerDownloadLogged("Attachment", url, headers, maxAttachmentDownloadBytes, attachmentDownloadTimeoutMs);
     if (download.SizeExceeded) {
         return FetchResult::Err(TrackerErrorInvalidRequest("Attachment exceeds max allowed size."));
     }

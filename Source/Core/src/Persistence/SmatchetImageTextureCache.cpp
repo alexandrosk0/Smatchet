@@ -1,6 +1,7 @@
 #include "SmatchetImageTextureCache.h"
 
 #include "CacheEvictionPolicy.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "Persistence/IconDimensionsPolicy.h"
 #include "imgui_internal.h"
@@ -26,7 +27,7 @@ namespace {
 // with the old cap, scrolling caused constant eviction → priority/status memo entries became
 // stale → slow-path re-resolution every frame. Each entry holds an `ImTextureData*` whose
 // pixel storage is ~16-64 KB; 384 × 64 KB ≈ 24 MB worst-case GPU memory — negligible.
-constexpr size_t kMaxCacheEntries = 384;
+// The entry cap is user-tunable (limits::Get().ImageTextureCacheMaxEntries, default 384).
 constexpr int kMaxIconDimension = 512;
 // Aggregate-pixel guard for the pre-decode dimension check: RGBA32 byte estimate at the
 // dimension ceiling (512 x 512 x 4 = 1 MiB). With both side caps already at kMaxIconDimension
@@ -34,11 +35,11 @@ constexpr int kMaxIconDimension = 512;
 // than intended and guards against a pathological aspect ratio.
 constexpr size_t kMaxIconPixelBytes =
     static_cast<size_t>(kMaxIconDimension) * static_cast<size_t>(kMaxIconDimension) * 4u;
-// Aggregate gauge-byte cap (Phase 4). The 384-entry cap alone bounds memory only if every
-// entry is small; 384 entries at the 512×512 dimension ceiling would be ~384 MB. This caps the
-// summed Width·Height·4 estimate so a run of large-but-under-dimension icons can't balloon the
-// resident set. Eviction stays LRU-tail; this just adds a second condition to the evict loop.
-constexpr size_t kMaxCacheBytes = 96u * 1024u * 1024u;
+// Aggregate gauge-byte cap (Phase 4; limits::Get().ImageTextureCacheMaxMiB, default 96 MiB).
+// The entry cap alone bounds memory only if every entry is small; 384 entries at the 512×512
+// dimension ceiling would be ~384 MB. This caps the summed Width·Height·4 estimate so a run of
+// large-but-under-dimension icons can't balloon the resident set. Eviction stays LRU-tail; this
+// just adds a second condition to the evict loop.
 
 struct CacheValue {
     ImTextureData* Texture = nullptr;
@@ -110,9 +111,15 @@ static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int 
 // within both the entry-count and aggregate-byte caps. Pass the simulated post-insert figures
 // to the pure policy so the loop also makes room when the *new* entry is what tips a cap. The
 // `!g_lru.empty()` guard stops a single oversized entry from looping against an empty cache.
+static bool WouldExceedCapsUnlocked(std::size_t incomingBytes) {
+    const smatchet::limits::LimitsConfig lim = smatchet::limits::Get();
+    return smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes,
+                                  static_cast<std::size_t>(lim.ImageTextureCacheMaxEntries),
+                                  smatchet::limits::MiB(lim.ImageTextureCacheMaxMiB));
+}
+
 static void EvictToFitUnlocked(std::size_t incomingBytes) {
-    while (!g_lru.empty() &&
-           smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes, kMaxCacheEntries, kMaxCacheBytes)) {
+    while (!g_lru.empty() && WouldExceedCapsUnlocked(incomingBytes)) {
         const std::string victim = g_lru.back();
         g_lru.pop_back();
         const auto it = g_map.find(victim);

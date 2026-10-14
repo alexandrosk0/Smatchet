@@ -24,10 +24,10 @@ struct ViewDefinition;
 /// the entry so the caller can inspect by `AiContextBlockKind` if needed.
 namespace AiContextBuilder {
 
-/// Selection / VisibleRows cap. Plan-locked at N=50.
-constexpr std::size_t kRowsCap = 50u;
-/// AuditTrail cap. Plan-locked at N=20.
-constexpr std::size_t kAuditCap = 20u;
+/// Selection / VisibleRows cap. Default N=50 (limits::Get().AiContextRowsMax).
+std::size_t RowsCap();
+/// AuditTrail cap. Default N=20 (limits::Get().AiContextAuditMax).
+std::size_t AuditCap();
 
 /// Sentinel body inserted into the AuditTrail block when the UI-thread caller
 /// asks BuildAll to defer the actual SQLite + filesystem read to a worker
@@ -63,7 +63,7 @@ struct Inputs {
     const ViewDefinition* ActiveView = nullptr;
     /// First N rows of the visible-rows cap mapped to the same sort-order indices.
     /// Pass `SortedIndices` again if you want all sorted rows; the builder caps
-    /// internally at `kRowsCap` rows.
+    /// internally at `RowsCap()` rows.
     const std::vector<std::size_t>* VisibleRows = nullptr;
     /// Per-block enable flags (mirrors the 5 `cfg.AssistantContextBlock*` bools).
     bool EnableSelection = true;
@@ -95,7 +95,7 @@ std::string MergeEnabled(const Inputs& in);
 
 // ---- Pure helpers exposed for tests (no AppController coupling) ----------
 
-/// Render a single block's body for the Selection block: at most `kRowsCap` rows,
+/// Render a single block's body for the Selection block: at most `RowsCap()` rows,
 /// dereferenced via the provided tickets list + sort-order indices.
 std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const std::vector<std::size_t>& sortedIndices,
                                const std::set<int>& selectedRows);

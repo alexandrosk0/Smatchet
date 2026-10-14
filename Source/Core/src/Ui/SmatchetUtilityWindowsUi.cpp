@@ -1,6 +1,7 @@
 #include "SmatchetUI.h"
 
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -78,8 +79,9 @@ void DrawLogScrollRegion(UiDrawSession& d) {
     ImGui::PushTextWrapPos(FLT_MAX);
 
     const int lineCount = static_cast<int>(d.logViewLines.size());
-    const int kMaxLogLinesDrawn = 8000;
-    const int skipLines = (lineCount > kMaxLogLinesDrawn) ? (lineCount - kMaxLogLinesDrawn) : 0;
+    // User-tunable cap (limits::Get().LogLinesDrawnMax, default 8000).
+    const int maxLogLinesDrawn = smatchet::limits::Get().LogLinesDrawnMax;
+    const int skipLines = (lineCount > maxLogLinesDrawn) ? (lineCount - maxLogLinesDrawn) : 0;
     if (skipLines > 0) {
         ImGui::TextDisabled("(… %d older lines omitted …)", skipLines);
     }

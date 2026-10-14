@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "SmatchetFieldIconRender_detail.h"
 #include "SmatchetImageTextureCache.h"
 #include "SmatchetResult.h" // Result<std::vector<unsigned char>> / UnpackResult (HttpGetBinary)
@@ -141,9 +142,9 @@ void ClearIconUrlFetchInFlight(const std::string& url) {
 // records the steady-clock time of failure here; LoadOrFetchUrlImage consults it before deferring
 // another (up to 3s) cpr GET so an unresolvable icon URL backs off instead of re-fetching (and the
 // grid cell re-parsing JSON + re-stat'ing disk) every single frame for the whole session. Keyed by
-// URL; capped so a tracker returning many distinct bad URLs cannot grow it without bound.
+// URL; capped (limits::Get().FieldIconFetchNegativeMax, default 256) so a tracker returning many
+// distinct bad URLs cannot grow it without bound.
 constexpr auto kIconFetchNegativeBackoff = std::chrono::minutes(5);
-constexpr size_t kIconFetchNegativeCap = 256;
 
 std::mutex& IconUrlFetchNegativeMutex() {
     static std::mutex m;
@@ -178,7 +179,7 @@ void RecordIconUrlFetchFailure(const std::string& url) {
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
     auto& m = IconUrlFetchNegativeMap();
-    if (m.size() >= kIconFetchNegativeCap) {
+    if (m.size() >= static_cast<size_t>(smatchet::limits::Get().FieldIconFetchNegativeMax)) {
         m.clear();
     }
     m[url] = now;
@@ -404,9 +405,10 @@ bool LoadTextureForResolvedPath(const AppController& app, const std::string& res
  * Per-frame fast path: maps a raw priority value (Jira priority JSON blob) to the texture-cache key
  * that resolved successfully on a prior frame. Lets the grid hot path skip JSON parse, slug
  * normalization, candidate building and disk stat — collapses to one hashmap lookup + the locked
- * cache lookup. Capped to bound memory if a customer has many distinct values.
+ * cache lookup. Capped (limits::Get().PriorityResolveMemoMax, default 256) to bound memory if a
+ * customer has many distinct values.
  */
-constexpr size_t kPriorityResolveMemoCap = 256;
+size_t PriorityResolveMemoCap() { return static_cast<size_t>(smatchet::limits::Get().PriorityResolveMemoMax); }
 struct PriorityResolveMemo {
     std::string CacheKey;  ///< Texture-cache key (empty iff Negative).
     std::string Label;     ///< Parsed friendly name; preserves tooltip text on the fast path.
@@ -422,7 +424,7 @@ void RememberPriorityResolution(const std::string& rawValue, const std::string& 
         return;
     }
     auto& m = PriorityRawValueToCacheKey();
-    if (m.size() >= kPriorityResolveMemoCap) {
+    if (m.size() >= PriorityResolveMemoCap()) {
         m.clear();
     }
     PriorityResolveMemo entry;
@@ -440,7 +442,7 @@ void RememberNegativePriorityResolution(const std::string& rawValue, const std::
     if (rawValue.empty())
         return;
     auto& m = PriorityRawValueToCacheKey();
-    if (m.size() >= kPriorityResolveMemoCap) {
+    if (m.size() >= PriorityResolveMemoCap()) {
         m.clear();
     }
     PriorityResolveMemo entry;

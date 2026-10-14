@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 
 #include "Commands/BuiltinCommands.h"
@@ -133,7 +134,8 @@ void AppController::AppendMcpActivity(const std::string& line) {
 
     impl_->mcpActivityLog_.push_back(PrefixMcpActivityLine(line));
 
-    while (impl_->mcpActivityLog_.size() > impl_->kMcpActivityLogMax) {
+    const size_t activityLogMax = static_cast<size_t>(smatchet::limits::Get().McpActivityLogMax);
+    while (impl_->mcpActivityLog_.size() > activityLogMax) {
 
         impl_->mcpActivityLog_.pop_front();
     }

@@ -1,5 +1,7 @@
 #include "GitHubFetchPlan.h"
 
+#include "Tracker/SearchFetchGuards.h"
+
 #include <string>
 
 namespace smatchet {
@@ -7,11 +9,14 @@ namespace github {
 
 namespace {
 
-// Mirrors the pagination cap in GitHubIssueSearch.cpp. Kept private here so
-// the warning message can quote the numeric bound without coupling the test
-// rig to the HTTP-side constants.
-constexpr int kPlanPerPage = 100;
-constexpr int kPlanMaxPages = 10;
+// The warning quotes the effective bound of the GitHub search loop: whichever of the page cap
+// and the result-count cap (search_guards, user-tunable) bites first.
+std::size_t EffectiveSearchCap() {
+    const std::size_t byPages =
+        static_cast<std::size_t>(search_guards::GitHubMaxPages()) * static_cast<std::size_t>(search_guards::kPageSize);
+    const std::size_t byCount = search_guards::GitHubMaxResultCount();
+    return byPages < byCount ? byPages : byCount;
+}
 
 } // namespace
 
@@ -60,8 +65,8 @@ GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::stri
         if (includeIssuesOrPullRequests) {
             plan.effectiveQuery = "is:issue is:open";
             std::string extra = "No GitHub Owner/Repo and no view JQL — fetching newest open "
-                                "issues globally (capped at " +
-                                std::to_string(kPlanMaxPages * kPlanPerPage) +
+                                "issues globally (stops after roughly " +
+                                std::to_string(EffectiveSearchCap()) +
                                 "). Set Owner+Repo in Preferences or add a view JQL filter "
                                 "for relevant results.";
             if (plan.warning.empty()) {

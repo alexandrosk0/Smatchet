@@ -137,14 +137,14 @@ TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpRes
             return result;
         }
 
-        // Exponential backoff (250, 500, 1000, … capped at 4000 ms), raised to the
+        // Exponential backoff (default 250, 500, 1000, … capped at 4000 ms), raised to the
         // server-requested `Retry-After` when the response carried one — itself capped
-        // (kTrackerHttpMaxRetryAfterHonorMs) so a hostile value can't pin the worker; the
+        // (TrackerHttpMaxRetryAfterHonorMs()) so a hostile value can't pin the worker; the
         // sleep below polls the cancel token throughout, so a longer honored delay stays
         // shutdown-safe.
         const long delayMs = TrackerHttpPure::ComputeTrackerRetryDelayMs(
-            attempt, kTrackerHttpBaseRetryDelayMs, kTrackerHttpMaxRetryDelayMs, RetryAfterSecondsFrom(result.Response),
-            kTrackerHttpMaxRetryAfterHonorMs);
+            attempt, TrackerHttpBaseRetryDelayMs(), TrackerHttpMaxRetryDelayMs(),
+            RetryAfterSecondsFrom(result.Response), TrackerHttpMaxRetryAfterHonorMs());
 
         LOG_DEBUG("TrackerHttpClient: %s on attempt %d/%d (status %d); retrying after %ld ms",
                   ToString(result.Error.Kind), attempt, maxAttempts, result.Status(), delayMs);

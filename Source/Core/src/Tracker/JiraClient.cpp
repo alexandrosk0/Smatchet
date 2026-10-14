@@ -39,7 +39,7 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig
     const std::string url = base + "/rest/api/3/myself";
     const cpr::Header headers = BuildTrackerHeaders(cfg, false);
     const cpr::Response resp =
-        TrackerGetLogged("JiraClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+        TrackerGetLogged("JiraClient", url, headers, TrackerProbeConnectTimeoutMs(), TrackerProbeOverallTimeoutMs());
 
     // BACKLOG_CODE_REVIEW.md §B2 (item 15): route through the shared reachability-probe classifier
     // (also used by PlaneClient) so the HTTP-status → probe-kind matrix lives in one place instead

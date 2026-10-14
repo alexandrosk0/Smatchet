@@ -28,16 +28,18 @@ constexpr const char* kEditMetaTypeKind = "editmeta_type";
 constexpr const char* kProjectsKind = "projects";
 constexpr const char* kProjectsKey = "all";
 
-/// Most users one roster row holds: the Jira roster fetch stops at the same bound.
-constexpr std::size_t kMaxStoredUsers = 50000;
+/// Most users one roster row holds: the Jira roster fetch stops at the same bound. User-tunable
+/// (limits::Get().LookupMaxStoredUsers, default 50000), so a function rather than a constant.
+std::size_t MaxStoredUsers();
 /// A roster payload above this size is not stored, so every stored row stays parseable.
 constexpr std::size_t kMaxUsersPayloadBytes = 16u * 1024u * 1024u;
-/// Most projects one row holds: Plane's paginated listing stops at 100 pages of 100.
-constexpr std::size_t kMaxStoredProjects = 10000;
+/// Most projects one row holds: Plane's paginated listing stops at 100 pages of 100. User-tunable
+/// (limits::Get().LookupMaxStoredProjects, default 10000).
+std::size_t MaxStoredProjects();
 /// A project-list payload above this size is not stored.
 constexpr std::size_t kMaxProjectsPayloadBytes = 4u * 1024u * 1024u;
 
-/// A JSON array of {accountId, displayName, email, accountType, active}, at most kMaxStoredUsers
+/// A JSON array of {accountId, displayName, email, accountType, active}, at most MaxStoredUsers()
 /// entries. "" when the result would exceed kMaxUsersPayloadBytes (the caller then stores nothing).
 std::string SerializeUsers(const std::vector<TrackerUser>& users);
 
@@ -52,7 +54,7 @@ std::string SerializeEditPermissions(const std::unordered_map<std::string, bool>
 /// whose value is not a bool are skipped.
 bool ParseEditPermissions(const std::string& json, std::unordered_map<std::string, bool>& out);
 
-/// A JSON array of {id, key, name}, at most kMaxStoredProjects entries. "" when the result would exceed
+/// A JSON array of {id, key, name}, at most MaxStoredProjects() entries. "" when the result would exceed
 /// kMaxProjectsPayloadBytes (the caller then stores nothing).
 std::string SerializeProjects(const std::vector<RemoteProject>& projects);
 

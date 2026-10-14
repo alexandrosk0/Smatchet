@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConfigManager.h"
+#include "TunableLimits.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpPure.h"
 
@@ -10,11 +11,8 @@
 #include <functional>
 #include <string>
 
-constexpr long kTrackerConnectTimeoutMs = 5000;
-constexpr long kTrackerOverallTimeoutMs = 30000;
-/** Short timeouts for periodic connectivity probes (avoid blocking state updates on stalled TCP). */
-constexpr long kTrackerProbeConnectTimeoutMs = 2000;
-constexpr long kTrackerProbeOverallTimeoutMs = 5000;
+// TrackerConnectTimeoutMs() / TrackerOverallTimeoutMs() / TrackerProbe*TimeoutMs() live in
+// TrackerHttpClient.h (included above) beside the retry accessors.
 
 std::string UrlEncode(const std::string& value);
 std::string NormalizeBaseUrl(const std::string& domain);

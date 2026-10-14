@@ -243,7 +243,7 @@ AppController::~AppController() {
     // TrackerPut/Patch/PostLogged). The retry/backoff loop polls this token before each attempt and at
     // 50 ms granularity during backoff (#1529), so a job blocked in synchronous tracker glue — which
     // executes no Lua and so never fires the count-hook — stops retrying immediately and unwinds. A
-    // single already-issued HTTP request still runs to its own kTrackerOverallTimeoutMs, but the
+    // single already-issued HTTP request still runs to its own TrackerOverallTimeoutMs(), but the
     // pathological case (up to maxAttempts × timeout of serial retries) is gone, so the unconditional
     // join() below completes within one request timeout at most — not the multi-retry worst case — and
     // still without .detach (the worker returns from the cancelled call and breaks its loop).

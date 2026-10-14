@@ -574,9 +574,10 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
         // Single attempt by design: a non-idempotent attachment POST that landed then 5xx'd must not
         // re-send (would duplicate the attachment), so it deliberately skips the retry wrapper.
         cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-        cpr::Response response =
-            cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                      cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+        const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+        const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
+        cpr::Response response = cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{connectMs},
+                                           cpr::Timeout{overallMs}, MakeTrackerSslOptions());
         std::uint64_t approxBytes = 0;
         try {
             approxBytes = static_cast<std::uint64_t>(ghc::filesystem::file_size(path, ec));

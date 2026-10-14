@@ -182,7 +182,7 @@ struct AppController::Impl {
 #endif
 
 #if defined(SMATCHET_WITH_MCP)
-    static constexpr size_t kMcpActivityLogMax = 100;
+    // Activity-log cap: limits::Get().McpActivityLogMax (default 100), read in AppendMcpActivity.
     mutable std::mutex mcpActivityMutex_;
     std::deque<std::string> mcpActivityLog_;
 #endif
