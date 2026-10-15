@@ -601,6 +601,9 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     } else {
         cfg.Toolbar = ToolbarConfig::Default();
     }
+    if (MigrateLegacyViewsToolbarButton(cfg.Toolbar) > 0) {
+        LOG_INFO("ConfigManager: rebound legacy toolbar Views button from view.list to the Views Dashboard");
+    }
 
     if (j.contains("keybindings") && j["keybindings"].is_object()) {
         try {
