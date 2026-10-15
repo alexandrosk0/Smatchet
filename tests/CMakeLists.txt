@@ -1628,6 +1628,8 @@ add_executable(SmatchetTests
     Core/CacheRecreateReportPure.test.cpp
     # delta-sync follow-up - the pending-edit overlay of the grid, built from the queue snapshots (Sync/PendingOverlayPure.h).
     Core/PendingOverlayPure.test.cpp
+    # delta-sync follow-up - the bounded, expiring memory of the keys a tracker refused on a delta attempt.
+    Core/RefusedKeysPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):

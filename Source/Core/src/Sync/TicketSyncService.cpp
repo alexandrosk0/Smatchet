@@ -880,6 +880,8 @@ bool TicketSyncService::IsActive() const {
            isDeletingStale_.load() || deleteInFlight_->load();
 }
 
+bool TicketSyncService::HasPendingWork() const { return IsActive() || viewsLoadsInFlight_->load() > 0; }
+
 void TicketSyncService::ResetStaleDeletionState() {
     {
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
@@ -944,17 +946,29 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
 void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode) {
     ITicketSyncDeps* const deps = &deps_;
     const std::shared_ptr<std::atomic<bool>> alive = alive_;
+    const std::shared_ptr<std::atomic<int>> inFlight = viewsLoadsInFlight_;
     TicketSyncService* const self = this;
-    deps_.LaunchBackgroundTask([self, deps, alive, cfg, mode]() {
-        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - smatchet_views.json read and parse, off the UI thread
-        ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
-        deps->PostToMainThread([self, alive, cfg, views, mode]() {
-            if (!alive->load()) {
-                return; // the pane's service was destroyed while the file was read
+    // Counted while it runs: the pane does not retire (HasPendingWork), so `deps`, which the pane's context owns,
+    // outlives this task. Raised before the launch, lowered by the task itself (or here when it never starts).
+    inFlight->fetch_add(1);
+    try {
+        deps_.LaunchBackgroundTask([self, deps, alive, inFlight, cfg, mode]() {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - smatchet_views.json read and parse, off the UI thread
+            ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+            if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
+                deps->PostToMainThread([self, alive, cfg, views, mode]() {
+                    if (!alive->load()) {
+                        return; // the pane's service was destroyed while the file was read
+                    }
+                    self->SyncWithBackend(&cfg, &views, mode);
+                });
             }
-            self->SyncWithBackend(&cfg, &views, mode);
+            inFlight->fetch_sub(1);
         });
-    });
+    } catch (...) {
+        inFlight->fetch_sub(1); // the task never started
+        throw;
+    }
 }
 
 void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {
@@ -1019,7 +1033,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     // under their own key — switching back later re-populates ActiveTickets via the cache
     // hydrate path.
     if (backendSwapped) {
-        refusedKeys_.clear(); // another tracker or site: what the old one refused says nothing about this one
+        refusedKeys_.Clear(); // another tracker or site: what the old one refused says nothing about this one
         {
             // Clear + publish under ONE ActiveTicketsMutex scope (issue #1081). Publishing
             // outside the lock raced worker-thread writers (offline-replay RefreshLocalData,
@@ -1056,7 +1070,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     activeMode_ = mode;
     mergeIndex_.Release(); // a new session builds its map once, from the roster as it is then
     if (mode == smatchet::sync::SyncMode::Full) {
-        refusedKeys_.clear(); // an explicit full sync asks again about every key (the worker is joined above)
+        refusedKeys_.Clear(); // an explicit full sync asks again about every key (the worker is joined above)
     }
     activeStreamingSync_.SessionStartedAt = std::chrono::steady_clock::now();
     activeStreamingSync_.TrafficAtStart = deps_.SampleTrackerTraffic();
@@ -1263,6 +1277,13 @@ bool TicketSyncService::QueueBatch(std::uint64_t reqId, std::vector<CachedTicket
         }
         if (deps_.Cache() && !rows.empty()) {
             SaveRowsWithMeta(*deps_.Cache(), deps_.CacheBackendKey(), rows, fullSync);
+        }
+        // A fetch (the fallback full fetch included) served these bodies: a key remembered as refused is forgotten
+        // when its body arrives at the version it was refused for or a newer one. Worker thread, like refusedKeys_.
+        if (!refusedKeys_.Empty()) {
+            for (const CachedTicket& row : rows) {
+                (void)refusedKeys_.NoteServed(row.id, row.GetFieldValueRef("updated"));
+            }
         }
         if (rows.empty() && keepOnlyIds.empty()) {
             return true;
@@ -1611,15 +1632,15 @@ std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
 /// body is unreadable anyway). The key then counts as returned, so the session stays authoritative and raises no
 /// caveat on every sync for a ticket that stays refused.
 void ServeRememberedRefusals(ISyncCache& cache, const std::string& backendKey,
-                             const std::unordered_set<std::string>& refusedKeys, smatchet::sync::DeltaFetchSet& set,
+                             const smatchet::sync::RefusedKeySet& refusedKeys, smatchet::sync::DeltaFetchSet& set,
                              std::vector<CachedTicket>& unchangedRows) {
-    if (refusedKeys.empty()) {
+    if (refusedKeys.Empty()) {
         return;
     }
     std::vector<std::string> kept;
     std::vector<std::string> skipped;
     for (std::string& key : set.ToFetch) {
-        (refusedKeys.find(key) != refusedKeys.end() ? skipped : kept).push_back(std::move(key));
+        (refusedKeys.Contains(key) ? skipped : kept).push_back(std::move(key));
     }
     set.ToFetch.swap(kept);
     if (skipped.empty()) {
@@ -1706,7 +1727,9 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         return out;
     }
 
-    // Keys the tracker already refused on an earlier attempt are not asked for again.
+    // Keys the tracker already refused on an earlier attempt are not asked for again, until the refusal is old
+    // enough to be worth retrying.
+    refusedKeys_.ExpireOlderThan(work.NowSec, cfgCopy.DeltaSyncMaxRowAgeSec);
     ServeRememberedRefusals(*cache, backendKey, refusedKeys_, work.Set, work.Unchanged);
     std::vector<std::string> refused;
     Result<std::vector<CachedTicket>, TrackerError> downloaded =
@@ -1724,7 +1747,14 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         // ticket is gone (a proxy limit, a transient permission error, an oversized request all look like this).
         // Nothing may be purged on its strength: the full fetch decides what the view holds. The keys are
         // remembered, so a key that stays refused does not send every later delta attempt down this path.
-        refusedKeys_.insert(refused.begin(), refused.end());
+        std::unordered_map<std::string, std::string> listedVersion;
+        for (const TrackerRosterEntry& entry : work.Roster.Entries) {
+            listedVersion.emplace(entry.Key, entry.Updated);
+        }
+        for (const std::string& key : refused) {
+            const auto listed = listedVersion.find(key);
+            refusedKeys_.Insert(key, listed != listedVersion.end() ? listed->second : std::string(), work.NowSec);
+        }
         out.FallbackReason = std::to_string(refused.size()) + " roster-listed issue(s) refused on download (" +
                              refused.front() + (refused.size() > 1 ? ", ..." : "") + ")";
         return out;

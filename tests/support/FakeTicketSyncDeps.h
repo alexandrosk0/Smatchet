@@ -129,6 +129,14 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
             }
         }
     }
+    /// How many times the service posted work to the UI thread (it runs inline, as the interface default does).
+    int PostsToMainThread = 0;
+    void PostToMainThread(std::function<void()> fn) override {
+        ++PostsToMainThread;
+        if (fn) {
+            fn();
+        }
+    }
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++BackgroundTasksLaunched;
         if (DeferBackgroundTasks) {

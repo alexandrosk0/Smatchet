@@ -3047,6 +3047,96 @@ TEST_CASE("Delta reload: a key the tracker refused is remembered, so later attem
     CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedCallsAfterFirst);
 }
 
+TEST_CASE("Delta reload: a remembered refusal is forgotten once the fallback full fetch serves the key's body") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    // The streamed fetch serves the key's body at the version the roster listed (the one it was refused for).
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T2", "from full")}, true);
+
+    rig.Sync(); // refused, falls back to the full fetch, which serves the body
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("ABC-2") != std::string::npos);
+
+    // The keyed endpoint works again and the ticket moves on: the key must be asked for, not skipped as refused.
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T3", "newest")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T3"}}));
+    const std::size_t keyedBefore = rig.fake->FetchIssuesForKeysCallCount();
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedBefore + 1);
+    CHECK(rig.fake->FetchIssuesForKeysLastKeys() == std::vector<std::string>{"ABC-2"});
+}
+
+TEST_CASE("Delta reload: a remembered refusal expires after DeltaSyncMaxRowAgeSec and is tried again") {
+    DeltaRig rig;
+    rig.cfg.DeltaSyncMaxRowAgeSec = 2;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    // The streamed fetch lags the roster (T1 < T2), so the refusal stays remembered after the fallback.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1", "from full")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    const std::size_t keyedAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+    rig.Sync(); // within the window: skipped, no keyed call
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedAfterFirst);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(3100)); // past DeltaSyncMaxRowAgeSec
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedAfterFirst); // the refusal was retried
+    std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
+    CHECK(std::find(asked.begin(), asked.end(), "ABC-2") != asked.end());
+}
+
+TEST_CASE("TicketSyncService: a saved-views read in flight keeps the pane from retiring") {
+    // The read's worker posts through the deps the pane's context owns; retiring the pane frees them, so
+    // AppController::retireExpiredHiddenContexts_ postpones while HasPendingWork() is true.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({MakeTicket("LATE-1", "late")}, /*fullSyncCompleted=*/true);
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    CHECK_FALSE(svc.HasPendingWork());
+
+    svc.SyncWithBackend(&cfg, nullptr);
+    CHECK(svc.HasPendingWork());
+    CHECK_FALSE(svc.IsActive()); // no sync is running: the status line must not claim one
+
+    deps.RunDeferredTasks(); // the read finishes and posts the start
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK_FALSE(svc.HasPendingWork());
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a saved-views read that outlives its service never touches the deps") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    {
+        TicketSyncService svc(deps);
+        TrackerConfig cfg;
+        cfg.TrackerType = "fake";
+        svc.SyncWithBackend(&cfg, nullptr);
+        REQUIRE(svc.HasPendingWork());
+    } // retired with the read still queued
+    deps.RunDeferredTasks();
+    CHECK(deps.PostsToMainThread == 0); // the deps are the pane context's, possibly gone by now: not reached
+    CHECK(deps.ActiveTicketsImpl.empty());
+}
+
 TEST_CASE("TicketSyncService cache teardown hands the worker out, holds every start back, and lifts on End" *
           doctest::test_suite("[high-risk]")) {
     // cache.recreate runs on a worker: BeginCacheTeardown must flag the running sync cancelled, hand its thread to the

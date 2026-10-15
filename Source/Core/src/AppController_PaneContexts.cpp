@@ -1071,7 +1071,7 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
         GridLiveContext& ctx = *it->second;
         const bool retirable = it->first != kDefaultPaneId && it->first != focusedPaneId_ && ctx.everVisible &&
                                (now - ctx.lastVisibleAt) >= kHiddenContextGrace;
-        if (!retirable || (ctx.ticketSync_ && ctx.ticketSync_->IsActive())) {
+        if (!retirable || (ctx.ticketSync_ && ctx.ticketSync_->HasPendingWork())) {
             // Busy sync: postpone — the join inside ~TicketSyncService must stay instant
             // (Pillar 2: no UI-thread block). Retried next frame.
             ++it;

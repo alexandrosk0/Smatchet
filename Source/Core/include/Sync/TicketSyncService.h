@@ -30,6 +30,7 @@
 #include "SmatchetResult.h"       // Result<>
 #include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
+#include "Sync/RefusedKeysPure.h" // RefusedKeySet (the keys a tracker refused on a delta attempt)
 
 struct TrackerError;             // Tracker/TrackerError.h — only named in the FetchHierarchyHop declaration
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
@@ -132,6 +133,12 @@ class TicketSyncService {
     /// True when any of (worker active, session running, stale-deletion in progress). Used by
     /// `AppController::IsStreamingSyncActive()` which de-inlines into a delegate.
     bool IsActive() const;
+
+    /// `IsActive()`, or a saved-views read for a sync request is still running on a worker. That worker posts its
+    /// result through `ITicketSyncDeps`, which belongs to the pane's context, so the pane must not retire (and free
+    /// the service and, with it, the deps) while one is in flight. `AppController::retireExpiredHiddenContexts_`
+    /// postpones on this, not on `IsActive()` (a views read is not a "sync running" for the status line). Any thread.
+    bool HasPendingWork() const;
 
     /// Reset stale-deletion state to empty. Called from `StartRecreateLocalCacheDatabase` after the
     /// SQLite file is replaced so the service doesn't try to delete tickets from a fresh DB.
@@ -367,6 +374,9 @@ class TicketSyncService {
     std::atomic<bool> startsBlocked_{false};
     /// Cleared by the destructor; a worker's UI-thread post checks it before touching the service.
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    /// Saved-views reads (SyncWithBackendLoadingViews_) still running on a worker; shared so the worker can lower it
+    /// after the service is gone. Counted by HasPendingWork.
+    std::shared_ptr<std::atomic<int>> viewsLoadsInFlight_ = std::make_shared<std::atomic<int>>(0);
     /// SyncWithBackend without views: load them off the UI thread, then start (see SyncWithBackend).
     void SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode);
     mutable std::mutex statsMutex_;
@@ -383,9 +393,12 @@ class TicketSyncService {
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
     /// Keys the tracker refused to serve on an earlier delta attempt of this service. Each such attempt falls back
     /// to a full fetch; without this memory a key that stays refused would make every later delta attempt do the
-    /// same. They are skipped (and counted as listed but not returned: no purge) until an explicit Full sync or a
-    /// tracker switch clears the set. Worker-only during a session; cleared on the UI thread while no worker runs.
-    std::unordered_set<std::string> refusedKeys_;
+    /// same. They are skipped (and counted as listed but not returned: no purge) until the memory is cleared by an
+    /// explicit Full sync or a tracker switch, the key is served by a later fetch (the fallback full fetch
+    /// included, at the version it was refused for or a newer one), it is older than DeltaSyncMaxRowAgeSec, or
+    /// more than RefusedKeySet::MaxKeys() newer ones pushed it out. Worker-only during a session; cleared on the UI
+    /// thread while no worker runs.
+    smatchet::sync::RefusedKeySet refusedKeys_;
     /// The apply drain's id -> index map, kept for the whole session (UI thread).
     smatchet::sync::ActiveRowIndex mergeIndex_;
     /// Fills `sessionMeta_` from the cache (worker thread). Returns the error text when the read failed (the
