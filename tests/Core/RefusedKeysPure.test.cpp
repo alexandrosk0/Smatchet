@@ -74,6 +74,21 @@ TEST_CASE(
     CHECK_FALSE(set.Contains("ABC-3"));
 }
 
+TEST_CASE("RefusedKeySet::ShouldSkip: a provably newer roster version retries the key, anything else keeps skipping") {
+    const std::string refusedAt = "2026-05-01T10:00:00.000+0000";
+    const std::string newer = "2026-05-01T10:00:01.000+0000";
+    RefusedKeySet set;
+    set.Insert("ABC-1", refusedAt, 100);
+    CHECK(set.ShouldSkip("ABC-1", refusedAt));                  // the same version: still refused
+    CHECK(set.ShouldSkip("ABC-1", "2026-05-01T09:59:59.000Z")); // older
+    CHECK(set.ShouldSkip("ABC-1", "2026-05-01T10:00:00Z"));     // the same instant, another spelling
+    CHECK(set.ShouldSkip("ABC-1", ""));                         // no stamp proves nothing
+    CHECK(set.ShouldSkip("ABC-1", "not a stamp"));              // does not parse: the refusal stands
+    CHECK_FALSE(set.ShouldSkip("ABC-1", newer));                // edited since: ask again
+    CHECK_FALSE(set.ShouldSkip("ABC-2", refusedAt));            // never refused
+    CHECK(set.Contains("ABC-1"));                               // asking again does not forget it
+}
+
 TEST_CASE("RefusedKeySet::NoteServed: stamps that do not parse count as the same version only when equal") {
     RefusedKeySet set;
     set.Insert("ABC-1", "T2", 100);

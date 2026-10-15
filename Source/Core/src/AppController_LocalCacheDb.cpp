@@ -284,8 +284,13 @@ void AppController::FinishCacheRecreate_(
     const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone) {
     // The worker threads are joined and the cache is swapped: drop the cancelled sessions' batches and stale-deletion
     // state, and let syncs start again.
+    // On success with a follow-up (onDone starts the full re-fetch of the focused pane), the focused pane's held
+    // request rides on that follow-up instead of being replayed first: one session runs, not a replay the follow-up
+    // then cancels or duplicates. Every other pane replays its held request as before.
+    const bool foldFocused = outcome.Ok && static_cast<bool>(onDone);
+    const TicketSyncService* const focusedSync = focusedContext().ticketSync_.get();
     for (TicketSyncService* svc : CollectPaneSyncServices_()) {
-        svc->EndCacheTeardown();
+        svc->EndCacheTeardown(foldFocused && svc == focusedSync);
     }
     if (outcome.Ok) {
         ClearLastTrackerTicketSyncWarning();

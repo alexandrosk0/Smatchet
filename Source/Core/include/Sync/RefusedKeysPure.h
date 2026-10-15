@@ -29,6 +29,17 @@ class RefusedKeySet {
     std::size_t Size() const { return entries_.size(); }
     bool Contains(const std::string& key) const { return entries_.find(key) != entries_.end(); }
 
+    /// True when the download of `key` should be skipped: it is remembered AND the roster does not list a provably
+    /// newer version than the one it was refused for. A ticket edited since the refusal may well be servable now, so
+    /// it is asked for again (an unparseable or missing stamp proves nothing: the refusal stands).
+    bool ShouldSkip(const std::string& key, const std::string& rosterVersion) const {
+        const auto it = entries_.find(key);
+        if (it == entries_.end()) {
+            return false;
+        }
+        return CompareRemoteUpdated(rosterVersion, it->second.Version) != RemoteVersionOrder::Newer;
+    }
+
     /// Remembers that `key` was refused at tracker version `version` (the roster's stamp; may be empty) at `nowSec`.
     /// A key already held is refreshed. Past MaxKeys() the oldest keys are dropped.
     void Insert(const std::string& key, const std::string& version, std::int64_t nowSec) {

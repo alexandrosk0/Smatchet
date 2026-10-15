@@ -3090,11 +3090,41 @@ TEST_CASE("Delta reload: a remembered refusal expires after DeltaSyncMaxRowAgeSe
     REQUIRE(rig.Settle());
     CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedAfterFirst);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(3100)); // past DeltaSyncMaxRowAgeSec
+    rig.deps.ClockOffsetSec += 3; // past DeltaSyncMaxRowAgeSec: the injected clock moves, nothing sleeps
     rig.Sync();
     REQUIRE(rig.Settle());
     CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedAfterFirst); // the refusal was retried
     std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
+    CHECK(std::find(asked.begin(), asked.end(), "ABC-2") != asked.end());
+}
+
+TEST_CASE("Delta reload: a refused key whose roster version is newer than the refusal is asked for again") {
+    // Real instants: a refusal is only comparable to a roster version that parses.
+    const std::string t1 = "2026-05-01T10:00:00.000+0000";
+    const std::string t2 = "2026-05-01T11:00:00.000+0000";
+    const std::string t3 = "2026-05-01T12:00:00.000+0000";
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", t1), Stamped("ABC-2", t1)});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", t1}, {"ABC-2", t2}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", t2, "fresh")});
+    // The streamed fetch lags the roster, so the refusal (remembered at t2) stays after the fallback.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", t1), Stamped("ABC-2", t1, "from full")}, true);
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    const std::size_t keyedAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+
+    rig.Sync(); // the roster still lists t2: the refusal stands, no keyed call
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedAfterFirst);
+
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", t1}, {"ABC-2", t3}})); // ABC-2 was edited since the refusal
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", t3, "edited")});
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedAfterFirst); // asked again, not skipped
+    const std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
     CHECK(std::find(asked.begin(), asked.end(), "ABC-2") != asked.end());
 }
 
@@ -3287,6 +3317,52 @@ TEST_CASE("TicketSyncService: a views load that lands during the cache teardown 
     svc.EndCacheTeardown();
     CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
     svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a request held during the recreate rides on the follow-up sync, one Full session runs") {
+    // FinishCacheRecreate_ folds the focused pane's held request into onDone's follow-up (EndCacheTeardown(true)):
+    // replaying it first made the follow-up cancel and restart it (a double download, or a replayed Delta cancelling
+    // the Full). Both orders of the two modes end in exactly one Full session.
+    for (const bool heldIsFull : {false, true}) {
+        CAPTURE(heldIsFull);
+        DeltaRig rig;
+        rig.Seed({Stamped("ABC-1", "T1")});
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+        const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+        (void)rig.svc.BeginCacheTeardown();
+        rig.Sync(heldIsFull ? smatchet::sync::SyncMode::Full : smatchet::sync::SyncMode::Delta);
+        rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+        CHECK(rig.svc.SessionEpoch() == epochBefore); // folded: the held request did not start a session
+        CHECK_FALSE(rig.svc.IsActive());
+
+        rig.Sync(heldIsFull ? smatchet::sync::SyncMode::Delta : smatchet::sync::SyncMode::Full); // onDone's follow-up
+        REQUIRE(rig.Settle());
+        CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+        CHECK(rig.svc.LastSessionStats().Mode == "full");
+        CHECK(rig.fake->FetchIssuesCallCount() == 1); // the view was downloaded once
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+    }
+}
+
+TEST_CASE("TicketSyncService: an ordinary refresh does not cancel a Full session in progress, it queues behind it") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.svc.IsActive()); // not ticked yet: deterministically busy
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+
+    // The first session to finish is the Full one (a superseded session is discarded without stats); the Delta that
+    // queued behind it runs afterwards.
+    REQUIRE(SpinUntil(rig.svc, [&]() { return rig.svc.LastSessionStats().Valid; }));
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.svc.IsActive() && rig.svc.LastSessionStats().Mode == "delta"; }));
+    CHECK(rig.fake->FetchIssuesCallCount() == 1); // the Full was not asked for twice
+    CHECK(rig.fake->FetchRosterCallCount() == 1); // the queued Delta ran once
 }
 
 TEST_CASE("TicketSyncService: EndCacheTeardown without a raised gate replays nothing and cancels nothing") {

@@ -19,7 +19,9 @@
 #include "FakeSyncCache.h"
 #include "ISyncCache.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -54,6 +56,10 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::chrono::steady_clock::time_point LastPushOutageAt{};
     int PushOutageCalls = 0;
     int DeferredLiveNotifyCalls = 0;
+    /// Seconds added to the system clock the sync service reads (NowUnixSeconds): a test moves time forward by
+    /// bumping it instead of sleeping.
+    std::atomic<std::int64_t> ClockOffsetSec{0};
+    std::int64_t NowUnixSeconds() const override { return TimeNowPure::NowUnixSeconds() + ClockOffsetSec.load(); }
 
     /// Records every NotifySyncStatus call (the UI-free toast hook). Tests assert the
     /// title / level sequence instead of poking the real ImGui toast manager.

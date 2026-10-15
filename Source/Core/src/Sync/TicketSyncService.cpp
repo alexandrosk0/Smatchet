@@ -264,7 +264,7 @@ std::thread TicketSyncService::BeginCacheTeardown() {
     return std::move(activeStreamingSync_.WorkerThread);
 }
 
-void TicketSyncService::EndCacheTeardown() {
+void TicketSyncService::EndCacheTeardown(bool foldIntoFollowUp) {
     if (!startsBlocked_.load()) {
         return; // the gate is not up (the same service listed twice): do not cancel a session started since
     }
@@ -278,6 +278,15 @@ void TicketSyncService::EndCacheTeardown() {
     // run it now, with the mode it asked for, instead of losing it.
     BlockedSyncRequest request = std::move(blockedRequest_);
     blockedRequest_ = BlockedSyncRequest();
+    if (foldIntoFollowUp) {
+        // The caller syncs right after this returns: keep only the mode (Full stays sticky), so one session runs.
+        foldedMode_ = hasFoldedMode_ ? smatchet::sync::CombineSyncModes(foldedMode_, request.Mode) : request.Mode;
+        hasFoldedMode_ = true;
+        LOG_INFO("TicketSyncService: the sync requested during the cache recreate rides on the follow-up sync "
+                 "(mode=%s).",
+                 request.Mode == smatchet::sync::SyncMode::Full ? "full" : "delta");
+        return;
+    }
     LOG_INFO("TicketSyncService: replaying the sync requested during the cache recreate (mode=%s).",
              request.Mode == smatchet::sync::SyncMode::Full ? "full" : "delta");
     SyncWithBackend(request.HasConfig ? &request.Config : nullptr, request.HasViews ? &request.Views : nullptr,
@@ -910,6 +919,10 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
         RecordBlockedSyncRequest_(configOverride, viewsOverride, mode);
         return;
     }
+    if (hasFoldedMode_) {
+        mode = smatchet::sync::CombineSyncModes(foldedMode_, mode); // the held request rides on this one
+        hasFoldedMode_ = false;
+    }
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();
@@ -924,13 +937,20 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
                                deleteInFlight_->load();
 
     if (isSessionBusy) {
-        activeStreamingSync_.Cancelled = true;
-        activeStreamingSync_.Superseded = true;
-        // Full is sticky: neither a queued Full nor a Full whose fetch is still running is downgraded by a later
-        // ordinary refresh (once the fetch is done, the session only drains and a Delta is enough).
-        const smatchet::sync::SyncMode held = hasPendingSyncRequest_ ? pendingMode_
-                                              : isWorkerActive       ? activeMode_
-                                                                     : smatchet::sync::SyncMode::Delta;
+        // An ordinary refresh never cancels a Full session in progress (the whole view is being downloaded): it
+        // queues behind it. Every other request supersedes the running session.
+        const bool keepRunningFull = mode == smatchet::sync::SyncMode::Delta &&
+                                     activeMode_ == smatchet::sync::SyncMode::Full && !activeStreamingSync_.Cancelled;
+        if (!keepRunningFull) {
+            activeStreamingSync_.Cancelled = true;
+            activeStreamingSync_.Superseded = true;
+        }
+        // Full is sticky: neither a queued Full nor a Full whose fetch is still running (and is being replaced) is
+        // downgraded by a later ordinary refresh (once the fetch is done, the session only drains and a Delta is
+        // enough). A Full that keeps running is not asked for again.
+        const smatchet::sync::SyncMode held = hasPendingSyncRequest_                 ? pendingMode_
+                                              : (isWorkerActive && !keepRunningFull) ? activeMode_
+                                                                                     : smatchet::sync::SyncMode::Delta;
         pendingMode_ = smatchet::sync::CombineSyncModes(held, mode);
         hasPendingSyncRequest_ = true;
         pendingConfig_ = cfgCopy;
@@ -1630,17 +1650,25 @@ std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
 
 /// Keys the tracker refused on an earlier delta attempt leave the download list; their cached rows stand in (the
 /// body is unreadable anyway). The key then counts as returned, so the session stays authoritative and raises no
-/// caveat on every sync for a ticket that stays refused.
+/// caveat on every sync for a ticket that stays refused. A key whose roster version is newer than the one it was
+/// refused for is asked for again: the ticket changed since, and may be servable now.
 void ServeRememberedRefusals(ISyncCache& cache, const std::string& backendKey,
-                             const smatchet::sync::RefusedKeySet& refusedKeys, smatchet::sync::DeltaFetchSet& set,
-                             std::vector<CachedTicket>& unchangedRows) {
+                             const smatchet::sync::RefusedKeySet& refusedKeys, const TrackerRoster& roster,
+                             smatchet::sync::DeltaFetchSet& set, std::vector<CachedTicket>& unchangedRows) {
     if (refusedKeys.Empty()) {
         return;
     }
+    std::unordered_map<std::string, const std::string*> listedVersion;
+    for (const TrackerRosterEntry& entry : roster.Entries) {
+        listedVersion.emplace(entry.Key, &entry.Updated);
+    }
+    const std::string noVersion;
     std::vector<std::string> kept;
     std::vector<std::string> skipped;
     for (std::string& key : set.ToFetch) {
-        (refusedKeys.Contains(key) ? skipped : kept).push_back(std::move(key));
+        const auto listed = listedVersion.find(key);
+        const bool skip = refusedKeys.ShouldSkip(key, listed != listedVersion.end() ? *listed->second : noVersion);
+        (skip ? skipped : kept).push_back(std::move(key));
     }
     set.ToFetch.swap(kept);
     if (skipped.empty()) {
@@ -1727,7 +1755,7 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
     DeltaWork work;
     work.Roster = std::move(roster.value());
     work.Meta = meta;
-    work.NowSec = TimeNowPure::NowUnixSeconds();
+    work.NowSec = deps_.NowUnixSeconds();
     const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
     work.RequiredFields =
         smatchet::sync::RequiredFieldsOfView(activeView != nullptr ? activeView->Fields : std::vector<std::string>());
@@ -1743,7 +1771,7 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
 
     // Keys refused on an earlier attempt are not asked for again until the refusal is old enough to retry.
     refusedKeys_.ExpireOlderThan(work.NowSec, cfgCopy.DeltaSyncMaxRowAgeSec);
-    ServeRememberedRefusals(*cache, backendKey, refusedKeys_, work.Set, work.Unchanged);
+    ServeRememberedRefusals(*cache, backendKey, refusedKeys_, work.Roster, work.Set, work.Unchanged);
     std::vector<std::string> refused;
     Result<std::vector<CachedTicket>, TrackerError> downloaded =
         DownloadChangedRows(*backend, cfgCopy, viewsCopy, cancelled, work.Set.ToFetch, refused);

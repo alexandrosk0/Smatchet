@@ -72,7 +72,13 @@ class TicketSyncService {
     /// was swapped): drops the cancelled session's batches and stale-deletion state, lifts the block, and replays
     /// the sync request recorded while it was up (if any) with its mode, so a pane opened or a views load that
     /// finished during the recreate still syncs. A no-op when the gate is not up.
-    void EndCacheTeardown();
+    /// `foldIntoFollowUp` is for a caller that starts its own sync right after (the recreate's follow-up full
+    /// refresh): the recorded request is not started here, only its mode is kept, and the next `SyncWithBackend`
+    /// combines with it (Full wins) - so exactly one session runs after the recreate instead of a replay that the
+    /// follow-up then cancels or duplicates.
+    /// The caller must follow with a `SyncWithBackend`; the folded mode otherwise waits for the next one (and can only
+    /// make it Full).
+    void EndCacheTeardown(bool foldIntoFollowUp = false);
 
     /// True between `BeginCacheTeardown` and `EndCacheTeardown`. Any thread.
     bool IsCacheTeardownActive() const { return startsBlocked_.load(); }
@@ -420,6 +426,10 @@ class TicketSyncService {
         smatchet::sync::SyncMode Mode = smatchet::sync::SyncMode::Delta;
     };
     BlockedSyncRequest blockedRequest_;
+    /// The mode of a blocked request folded into the follow-up sync (`EndCacheTeardown(true)`): combined with the
+    /// mode of the next `SyncWithBackend`, then cleared. UI thread only.
+    bool hasFoldedMode_ = false;
+    smatchet::sync::SyncMode foldedMode_ = smatchet::sync::SyncMode::Delta;
     void RecordBlockedSyncRequest_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                                    smatchet::sync::SyncMode mode);
 

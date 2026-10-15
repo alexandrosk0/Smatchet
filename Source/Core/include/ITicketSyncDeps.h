@@ -25,6 +25,7 @@
 
 #include "CachedTicketTypes.h"     // for CachedTicket (in vector & shared_ptr returns)
 #include "Sync/SyncSessionStats.h" // TrackerTrafficSample (per-session request/byte accounting)
+#include "TimeNowPure.h"           // NowUnixSeconds (the default clock)
 
 class ISyncCache;
 class ITrackerBackend;
@@ -157,6 +158,10 @@ class ITicketSyncDeps {
     /// adopting the failed result forever (review MEDIUM-1). Defaulted no-op so test
     /// fixtures and future deps implementers without per-pane latches need no stub.
     virtual void OnStreamingSyncSessionFinished(bool fetchOk) { (void)fetchOk; }
+
+    /// The wall clock, in unix seconds, that a delta session ages cached rows and remembered refusals against. Any
+    /// thread. A seam so a test moves time forward instead of sleeping; production keeps the system clock.
+    virtual std::int64_t NowUnixSeconds() const { return TimeNowPure::NowUnixSeconds(); }
 
     // ---- Active-tickets cache ---------------------------------------------------------
     virtual std::mutex& ActiveTicketsMutex() = 0;
