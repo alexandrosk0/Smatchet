@@ -2273,7 +2273,8 @@ TEST_CASE("Change monitor roster probe: one roster call, only changed and new bo
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
 
-    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts) ==
+            smatchet::sync::RosterProbeOutcome::Applied);
 
     CHECK(fake.FetchRosterCallCount() == 1);
     CHECK(fake.FetchIssuesForKeysCallCount() == 1);
@@ -2295,13 +2296,14 @@ TEST_CASE("Change monitor roster probe: nothing changed means no body download")
     ViewsStore views;
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts) ==
+            smatchet::sync::RosterProbeOutcome::Applied);
     CHECK(fake.FetchIssuesForKeysCallCount() == 0);
     CHECK(fetched.empty());
     CHECK(verdicts.empty());
 }
 
-TEST_CASE("Change monitor roster probe: a roster error skips the cycle; an incomplete roster probes nothing") {
+TEST_CASE("Change monitor roster probe: a roster error skips the cycle") {
     ProbeCountingClient fake;
     fake.SetRosterSupported(true);
     TrackerConfig cfg;
@@ -2309,13 +2311,134 @@ TEST_CASE("Change monitor roster probe: a roster error skips the cycle; an incom
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
     fake.SetRosterError(TrackerErrorTransport("down"));
-    CHECK_FALSE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+    CHECK(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts) ==
+          smatchet::sync::RosterProbeOutcome::Skipped);
+}
 
-    fake.SetRoster(MakeRoster({{"A-2", "T1"}}, /*complete=*/false));
-    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-2", "T1")});
-    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts));
+TEST_CASE("Change monitor roster probe: an incomplete roster asks for the legacy path and fetches/probes nothing") {
+    ProbeCountingClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-2", "T2"}}, /*complete=*/false));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-2", "T2")});
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+    CHECK(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}}, "pane", fetched, verdicts) ==
+          smatchet::sync::RosterProbeOutcome::UseLegacy);
+    CHECK(fetched.empty());
     CHECK(verdicts.empty()); // a capped roster cannot prove A-1 left the view
     CHECK(fake.Probes == 0);
+    CHECK(fake.FetchIssuesForKeysCallCount() == 0);
+}
+
+namespace {
+/// A reader whose legacy surface (changed-since + keys-only membership) is scripted and counted, so a test can
+/// see which path a monitor cycle took.
+struct LegacyPathClient : ProbeCountingClient {
+    int ChangedSinceCalls = 0;
+    int KeysCalls = 0;
+    std::vector<CachedTicket> Changed;
+    std::vector<std::string> ViewKeys;
+    bool ChangedSinceFails = false;
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesChangedSince(const TrackerConfig&, const ViewsStore&,
+                                                                            std::chrono::seconds,
+                                                                            const std::vector<std::string>&) override {
+        ++ChangedSinceCalls;
+        if (ChangedSinceFails) {
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorTransport("down"));
+        }
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(Changed);
+    }
+    Result<std::vector<std::string>, TrackerError> FetchIssueKeysForView(const TrackerConfig&,
+                                                                         const ViewsStore&) override {
+        ++KeysCalls;
+        return Result<std::vector<std::string>, TrackerError>::Ok(ViewKeys);
+    }
+};
+
+struct CycleResult {
+    bool ok = false;
+    bool addNewRows = false;
+    std::vector<CachedTicket> fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+};
+
+CycleResult RunCycle(LegacyPathClient& fake, bool useRoster, const std::vector<std::string>& cachedKeys) {
+    TrackerConfig cfg;
+    ViewsStore views;
+    std::unordered_map<std::string, std::string> resident;
+    for (const std::string& k : cachedKeys) {
+        resident[k] = "T1";
+    }
+    CycleResult r;
+    r.ok = smatchet::sync::RunChangeProbeCycle(fake, cfg, views, useRoster, resident, cachedKeys,
+                                               std::chrono::seconds(120), {"summary"}, "pane", r.fetched, r.verdicts,
+                                               r.addNewRows);
+    return r;
+}
+} // namespace
+
+TEST_CASE("Change monitor cycle: an incomplete roster falls back to changed-since plus the keys-only reconcile") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}, /*complete=*/false)); // the view outgrew the reload's caps
+    fake.Changed = {Stamped("A-1", "T2")};
+    fake.ViewKeys = {"A-1"}; // A-9 left the view or was deleted
+    fake.Exists = false;
+
+    const CycleResult r = RunCycle(fake, /*useRoster=*/true, {"A-1", "A-9"});
+
+    REQUIRE(r.ok);
+    CHECK(fake.FetchRosterCallCount() == 1);
+    CHECK(fake.ChangedSinceCalls == 1);
+    CHECK(fake.KeysCalls == 1);
+    CHECK_FALSE(r.addNewRows); // the legacy path never grows the grid past what a reload would hold
+    REQUIRE(r.fetched.size() == 1);
+    CHECK(r.fetched[0].id == "A-1");
+    REQUIRE(r.verdicts.size() == 1);
+    CHECK(r.verdicts[0].issueKey == "A-9");
+    CHECK_FALSE(r.verdicts[0].stillExists); // the removal the capped roster could not make
+}
+
+TEST_CASE("Change monitor cycle: a complete roster never touches the legacy path and may add rows") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}));
+    const CycleResult r = RunCycle(fake, /*useRoster=*/true, {"A-1"});
+    REQUIRE(r.ok);
+    CHECK(r.addNewRows);
+    CHECK(fake.ChangedSinceCalls == 0);
+    CHECK(fake.KeysCalls == 0);
+}
+
+TEST_CASE("Change monitor cycle: a roster error skips the cycle without trying the legacy path") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRosterError(TrackerErrorTransport("down"));
+    const CycleResult r = RunCycle(fake, /*useRoster=*/true, {"A-1"});
+    CHECK_FALSE(r.ok);
+    CHECK(fake.ChangedSinceCalls == 0);
+}
+
+TEST_CASE("Change monitor cycle: without the roster path only the legacy path runs") {
+    LegacyPathClient fake;
+    fake.ViewKeys = {"A-1"};
+    const CycleResult r = RunCycle(fake, /*useRoster=*/false, {"A-1"});
+    REQUIRE(r.ok);
+    CHECK(fake.FetchRosterCallCount() == 0);
+    CHECK(fake.ChangedSinceCalls == 1);
+    CHECK_FALSE(r.addNewRows);
+}
+
+TEST_CASE("Change monitor cycle: a failed changed-since fetch after an incomplete roster skips the cycle") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}, /*complete=*/false));
+    fake.ChangedSinceFails = true;
+    const CycleResult r = RunCycle(fake, /*useRoster=*/true, {"A-1"});
+    CHECK_FALSE(r.ok);
+    CHECK(fake.KeysCalls == 0);
 }
 
 TEST_CASE("Change monitor roster probe: a refused key does not starve the other changed rows") {
@@ -2329,7 +2452,7 @@ TEST_CASE("Change monitor roster probe: a refused key does not starve the other 
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
     REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}, {"A-3", "T1"}}, "pane",
-                                           fetched, verdicts));
+                                           fetched, verdicts) == smatchet::sync::RosterProbeOutcome::Applied);
     CHECK(fetched.size() == 2);
 }
 
@@ -2345,7 +2468,8 @@ TEST_CASE("Change monitor roster probe: vanished-key probes are capped per cycle
     ViewsStore views;
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts) ==
+            smatchet::sync::RosterProbeOutcome::Applied);
     CHECK(fake.Probes == 25);
     CHECK(verdicts.size() == 25);
 }
@@ -2371,7 +2495,8 @@ TEST_CASE(
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
 
-    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, resident, "pane", fetched, verdicts) ==
+            smatchet::sync::RosterProbeOutcome::Applied);
 
     CHECK(fetched.size() == 39);
     for (const CachedTicket& t : fetched) {
@@ -2400,8 +2525,8 @@ TEST_CASE("Change monitor roster probe: a key the tracker answers NotFound for i
     ViewsStore views;
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-    REQUIRE(
-        smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched,
+                                           verdicts) == smatchet::sync::RosterProbeOutcome::Applied);
     REQUIRE(fetched.size() == 1);
     CHECK(fetched[0].id == "A-1");
 }
@@ -2424,8 +2549,8 @@ TEST_CASE("Change monitor roster probe: rows the server returns beyond the reque
     ViewsStore views;
     std::vector<CachedTicket> fetched;
     std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-    REQUIRE(
-        smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched, verdicts));
+    REQUIRE(smatchet::sync::RunRosterProbe(fake, cfg, views, {{"A-1", "T1"}, {"A-2", "T1"}}, "pane", fetched,
+                                           verdicts) == smatchet::sync::RosterProbeOutcome::Applied);
     REQUIRE(fetched.size() == 1);
     CHECK(fetched[0].id == "A-2");
 }

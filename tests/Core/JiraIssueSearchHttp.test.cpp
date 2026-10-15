@@ -7,6 +7,7 @@
 // mapping for the reconcile probes. Extends the JiraCatalogHttpFixture pattern to the search
 // paths flagged in backend-impl-coverage-recovery.
 
+#include "../support/ScopedLimits.h"
 #include "JiraCatalogHttpFixture.h"
 #include "Config/ConfigManager.h"
 #include "Tracker/JiraClient.h"
@@ -470,6 +471,42 @@ TEST_CASE("JiraClient::FetchViewRoster — hitting the roster page cap yields an
     CHECK_FALSE(res.value().Complete);
     CHECK_FALSE(res.value().Warning.empty());
     CHECK(fx.RequestCount(kSearchPath) == smatchet::search_guards::JiraMaxPages());
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — hitting the result cap yields an incomplete roster with a warning") {
+    // The roster shares the reload's row ceiling (JiraCaps), so the change monitor can never learn about more
+    // rows than a reload would hold; a view past it reports incomplete and the monitor takes its legacy path.
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraSearchMaxResults = 2; });
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{
+            {"isLast", false},
+            {"nextPageToken", "more"},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}, nlohmann::json{{"key", "SMT-2"}},
+                                              nlohmann::json{{"key", "SMT-3"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK_FALSE(res.value().Complete);
+    CHECK(res.value().Warning.find("result count") != std::string::npos);
+    CHECK(fx.RequestCount(kSearchPath) == 1); // stopped at the cap, no further page
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — a view exactly at the result cap is still complete") {
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraSearchMaxResults = 2; });
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}, nlohmann::json{{"key", "SMT-2"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(res.value().Complete);
 }
 
 TEST_CASE("JiraClient::FetchViewRoster — failures keep their kind; a cancel is Cancelled; no credentials is Auth") {

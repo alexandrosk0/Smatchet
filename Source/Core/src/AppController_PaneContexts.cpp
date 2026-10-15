@@ -761,63 +761,22 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             if (!paneJql.empty()) {
                 cfgCopy.JqlQuery = paneJql;
             }
-            if (useRoster) {
-                std::vector<CachedTicket> rosterFetched;
-                std::vector<smatchet::MembershipRemovalVerdict> rosterVerdicts;
-                if (!smatchet::sync::RunRosterProbe(backend->Reader(), cfgCopy, views, residentUpdated, paneId,
-                                                    rosterFetched, rosterVerdicts)) {
-                    return; // soft failure: logged, the next interval retries
-                }
-                mainThreadDispatcher.PostToMainThread([this, paneId, rosterFetched = std::move(rosterFetched),
-                                                       rosterVerdicts = std::move(rosterVerdicts), polledAt,
-                                                       capturedGeneration, capturedSyncEpoch]() mutable {
-                    applyChangeProbeOnMainThread_(paneId, std::move(rosterFetched), std::move(rosterVerdicts), polledAt,
-                                                  capturedGeneration, capturedSyncEpoch,
-                                                  /*addNewRows=*/true);
-                });
-                return;
+            std::vector<CachedTicket> fetched;
+            std::vector<smatchet::MembershipRemovalVerdict> verdicts;
+            bool addNewRows = false;
+            if (!smatchet::sync::RunChangeProbeCycle(backend->Reader(), cfgCopy, views, useRoster, residentUpdated,
+                                                     cachedKeys, window, salientFieldIds, paneId, fetched, verdicts,
+                                                     addNewRows)) {
+                return; // soft failure: logged, the anchor is untouched and the next interval retries
             }
-            auto res = backend->Reader().FetchIssuesChangedSince(cfgCopy, views, window, salientFieldIds);
-            if (!static_cast<bool>(res)) {
-                // Soft failure (partial/warned fetch, transport): leave the anchor untouched so
-                // the next interval retries the same window. Logged, never toasted.
-                LOG_INFO("AppController::TickChangeMonitors probe skipped pane='%s': %s", paneId.c_str(),
-                         res.error().Detail.c_str());
-                return;
-            }
-            std::vector<CachedTicket> fetched = std::move(res.value());
-            // Membership reconcile (item 10): which cached rows does the view no longer list?
-            // Off-thread, static — touches no instance state. See computeMembershipRemovals_.
-            std::vector<smatchet::MembershipRemovalVerdict> verdicts =
-                computeMembershipRemovals_(backend->Reader(), cfgCopy, views, cachedKeys, paneId);
             mainThreadDispatcher.PostToMainThread([this, paneId, fetched = std::move(fetched),
                                                    verdicts = std::move(verdicts), polledAt, capturedGeneration,
-                                                   capturedSyncEpoch]() mutable {
+                                                   capturedSyncEpoch, addNewRows]() mutable {
                 applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
-                                              capturedGeneration, capturedSyncEpoch, /*addNewRows=*/false);
+                                              capturedGeneration, capturedSyncEpoch, addNewRows);
             });
         });
     }
-}
-
-std::vector<smatchet::MembershipRemovalVerdict>
-AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const TrackerConfig& cfg,
-                                          const ViewsStore& views, const std::vector<std::string>& cachedKeys,
-                                          const std::string& paneId) {
-    // FetchIssueKeysForView is a light key-only projection; per vanished key, ProbeIssueExists
-    // separates "left the view" (200, the conservative default → keep the shared cache row, toast
-    // LeftView) from "deleted" (404 → drop the row, toast Deleted). A keys-fetch soft failure skips
-    // the reconcile this cycle (the changed-since detection toast still fires); a probe error is
-    // non-destructive. Static — touches no AppController instance state, safe on the worker thread.
-    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-    auto keysRes = reader.FetchIssueKeysForView(cfg, views);
-    if (!static_cast<bool>(keysRes)) {
-        LOG_INFO("AppController::computeMembershipRemovals_ keys-fetch skipped pane='%s': %s", paneId.c_str(),
-                 keysRes.error().Detail.c_str());
-        return verdicts;
-    }
-    const std::vector<std::string> removed = smatchet::RemovedKeys(cachedKeys, keysRes.value());
-    return smatchet::sync::ProbeVanishedKeys(reader, cfg, removed, paneId);
 }
 
 // Drops the shared per-backend cache row of each key the tracker answered 404 for, UNLESS a sibling pane still

@@ -1488,7 +1488,7 @@ class AppController : public IAppThreading,
     /// For each recently-visible live pane whose change-poll gate is open
     /// (smatchet::ShouldPollForChanges — monitor enabled, backend reachable, window focused,
     /// pane recently visible, sync idle, interval elapsed), dispatch ONE off-thread change probe
-    /// (FetchIssuesChangedSince) and stamp nextChangePollAt forward as the in-flight guard. The
+    /// (sync::RunChangeProbeCycle) and stamp nextChangePollAt forward as the in-flight guard. The
     /// first poll per context establishes a silent baseline (seeds the anchor, no fetch/toast).
     /// Results hop back to applyChangeProbeOnMainThread_. No-op when cfg disables the monitor.
     void TickChangeMonitors(const TrackerConfig& cfg);
@@ -1498,15 +1498,6 @@ class AppController : public IAppThreading,
     void SetWindowFocused(bool focused);
 
   private:
-    /// Off-thread (worker) half of the membership reconcile (S1c-3, item 10): fetch the view's
-    /// current keys, diff against `cachedKeys` (the pane's cache keys snapshotted on the UI thread
-    /// at dispatch), and ProbeIssueExists each vanished key (capped per cycle), returning one
-    /// smatchet::MembershipRemovalVerdict per probed key. Static — touches no AppController instance
-    /// state, so it is safe on the background task thread; the verdicts are applied on the UI thread
-    /// by applyChangeProbeOnMainThread_. `paneId` is for logging only.
-    static std::vector<smatchet::MembershipRemovalVerdict>
-    computeMembershipRemovals_(ITrackerIssueReader& reader, const TrackerConfig& cfg, const ViewsStore& views,
-                               const std::vector<std::string>& cachedKeys, const std::string& paneId);
     /// Main-thread completion of a change probe: re-find the pane context (dropped if retired)
     /// and re-check its backendGeneration_ against `capturedGeneration` (dropped if swapped
     /// mid-flight), diff the fetched rows against the pane's current ActiveTickets cache
