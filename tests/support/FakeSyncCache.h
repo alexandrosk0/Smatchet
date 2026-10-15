@@ -25,7 +25,9 @@
 
 #include "CachedTicketTypes.h"
 #include "ISyncCache.h"
-#include "IssueDraft.h" // IssueDraftHelpers::ScrubFreshCreatePayload (shared with production restore)
+#include "IssueDraft.h"             // IssueDraftHelpers::ScrubFreshCreatePayload (shared with production restore)
+#include "Sync/RemoteVersionPure.h" // IsIncomingRowStale: the same stale-row guard as LocalCacheManager
+#include "TimeNowPure.h"
 
 #include <algorithm>
 #include <chrono>
@@ -34,6 +36,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <unordered_map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -47,11 +50,13 @@ class FakeSyncCache : public ISyncCache {
     void SaveTicket(const std::string& backendKey, const CachedTicket& ticket) override {
         std::lock_guard<std::mutex> lk(m_);
         tickets_[backendKey][ticket.id] = ticket;
+        meta_[backendKey].erase(ticket.id); // a plain save no longer vouches for the stored version
     }
     void SaveTickets(const std::string& backendKey, const std::vector<CachedTicket>& batch) override {
         std::lock_guard<std::mutex> lk(m_);
         for (size_t i = 0; i < batch.size(); ++i) {
             tickets_[backendKey][batch[i].id] = batch[i];
+            meta_[backendKey].erase(batch[i].id);
         }
     }
     bool TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) override {
@@ -72,6 +77,89 @@ class FakeSyncCache : public ISyncCache {
         const auto ns = tickets_.find(backendKey);
         if (ns != tickets_.end()) {
             ns->second.erase(ticketId);
+        }
+        const auto metaNs = meta_.find(backendKey);
+        if (metaNs != meta_.end()) {
+            metaNs->second.erase(ticketId); // the meta row goes with its ticket, as in the real cache
+        }
+    }
+    /// Batch deletes seen (tests assert the stale sweep is ONE transaction, not one delete per row).
+    int DeleteTicketsCallCount() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return deleteTicketsCalls_;
+    }
+    /// Test switch: the next batch delete throws something that is not a std::exception.
+    void ThrowNonStdOnDelete(bool on) {
+        std::lock_guard<std::mutex> lk(m_);
+        throwNonStdOnDelete_ = on;
+    }
+    /// Test switch: the Nth SaveTicketsWithSyncMeta call from now throws std::runtime_error (0 = never).
+    void FailSaveWithMetaOnCall(int nthFromNow) {
+        std::lock_guard<std::mutex> lk(m_);
+        failSaveCountdown_ = nthFromNow;
+    }
+    /// Test switch: GetTicketSyncMeta throws std::runtime_error("scripted meta read failure").
+    void FailGetSyncMeta(bool on) {
+        std::lock_guard<std::mutex> lk(m_);
+        failGetSyncMeta_ = on;
+    }
+    void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) override {
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            ++deleteTicketsCalls_;
+            if (throwNonStdOnDelete_) {
+                throw 42;
+            }
+        }
+        for (const std::string& id : ids) {
+            DeleteTicket(backendKey, id);
+        }
+    }
+
+    // --- Delta-sync metadata (mirrors LocalCacheManager's ticket_sync_meta table) ---------
+    std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) override {
+        std::lock_guard<std::mutex> lk(m_);
+        if (failGetSyncMeta_) {
+            throw std::runtime_error("scripted meta read failure");
+        }
+        std::unordered_map<std::string, TicketSyncMeta> out;
+        const auto ns = meta_.find(backendKey);
+        if (ns != meta_.end()) {
+            for (auto it = ns->second.begin(); it != ns->second.end(); ++it) {
+                out[it->first] = it->second;
+            }
+        }
+        return out;
+    }
+    void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& batch,
+                                 const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) override {
+        std::lock_guard<std::mutex> lk(m_);
+        if (failSaveCountdown_ > 0 && --failSaveCountdown_ == 0) {
+            throw std::runtime_error("scripted save failure");
+        }
+        for (size_t i = 0; i < batch.size(); ++i) {
+            const CachedTicket& ticket = batch[i];
+            TicketSyncMeta meta = i < metas.size() ? metas[i] : TicketSyncMeta();
+            if (meta.RemoteUpdated.empty()) {
+                tickets_[backendKey][ticket.id] = ticket; // unknown version: no meta, drop a stale one
+                meta_[backendKey].erase(ticket.id);
+                continue;
+            }
+            const auto existingMeta = meta_[backendKey].find(ticket.id);
+            const auto existingRow = tickets_[backendKey].find(ticket.id);
+            if (existingMeta != meta_[backendKey].end() && !overwriteOlder &&
+                smatchet::sync::IsIncomingRowStale(meta.RemoteUpdated, existingMeta->second.RemoteUpdated,
+                                                   TimeNowPure::NowUnixMs())) {
+                continue; // provably older than the stored row: never roll it back (as LocalCacheManager)
+            }
+            if (existingMeta != meta_[backendKey].end() && existingRow != tickets_[backendKey].end() &&
+                smatchet::sync::IsSameVersion(existingMeta->second, meta)) {
+                tickets_[backendKey][ticket.id] = smatchet::sync::MergeSameVersionRow(existingRow->second, ticket);
+                meta.Fields = smatchet::sync::UnionFields(existingMeta->second.Fields, meta.Fields);
+            } else {
+                tickets_[backendKey][ticket.id] = ticket;
+            }
+            meta_[backendKey][ticket.id] = meta;
         }
     }
     std::vector<CachedTicket> GetAllTickets(const std::string& backendKey) override {
@@ -554,6 +642,11 @@ class FakeSyncCache : public ISyncCache {
 
     mutable std::mutex m_;
     std::map<std::string, std::map<std::string, CachedTicket>> tickets_;
+    std::map<std::string, std::map<std::string, TicketSyncMeta>> meta_;
+    int deleteTicketsCalls_ = 0;
+    bool throwNonStdOnDelete_ = false;
+    int failSaveCountdown_ = 0;
+    bool failGetSyncMeta_ = false;
     std::vector<PendingCreate> creates_;
     std::vector<PendingFieldEditRecord> edits_;
     std::vector<DeadPendingCreate> deadCreates_;

@@ -38,11 +38,23 @@ inline bool PaneSyncKickStillCurrent(bool contextAlive, std::uint64_t capturedGe
 /// skipped, never diffed against an empty set), no streaming sync already in flight for the
 /// pane, and the per-pane poll interval must have elapsed. Pure so the truth-table is
 /// unit-testable without instantiating AppController.
-inline bool ShouldPollForChanges(std::chrono::steady_clock::time_point now, bool monitorEnabled,
-                                 bool backendReachable, bool windowFocused, bool paneRecentlyVisible,
-                                 bool syncActive, std::chrono::steady_clock::time_point nextChangePollAt) {
+inline bool ShouldPollForChanges(std::chrono::steady_clock::time_point now, bool monitorEnabled, bool backendReachable,
+                                 bool windowFocused, bool paneRecentlyVisible, bool syncActive,
+                                 std::chrono::steady_clock::time_point nextChangePollAt) {
     return monitorEnabled && backendReachable && windowFocused && paneRecentlyVisible && !syncActive &&
            now >= nextChangePollAt;
+}
+
+/// True when a change-probe result captured at (`capturedGeneration`, `capturedEpoch`) may still be
+/// applied to its pane. On top of the context/backend checks of `PaneSyncKickStillCurrent`, the
+/// probe is dropped when the pane's sync session epoch moved (a streaming sync started after the
+/// probe was issued, so the probe's rows are older than what that sync is writing) or a sync is
+/// active right now (its batches own the roster until the session ends). The next poll re-checks.
+inline bool ChangeProbeStillApplicable(bool contextAlive, std::uint64_t capturedGeneration,
+                                       std::uint64_t currentGeneration, std::uint64_t capturedEpoch,
+                                       std::uint64_t currentEpoch, bool syncActive) {
+    return PaneSyncKickStillCurrent(contextAlive, capturedGeneration, currentGeneration) &&
+           capturedEpoch == currentEpoch && !syncActive;
 }
 
 } // namespace smatchet

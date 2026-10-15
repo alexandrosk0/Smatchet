@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Json/BoundedJsonParse.h"
+#include <cstdint>
 
 namespace smatchet {
 namespace cmd {
@@ -145,6 +146,15 @@ const CfgKey* ConfigSetKeyTable() {
         {"ticketChangeMonitorEnabled", "ticket_change_monitor_enabled", "applies on next poll"},
         {"ticketChangeMonitorIntervalSec", "ticket_change_monitor_interval_sec",
          "integer 30..3600; clamped on load; applies on next poll"},
+        // Delta reload (docs/plans/active/delta-sync.md): the kill switch and the row-age bound.
+        {"deltaSyncEnabled", "delta_sync_enabled", "applies on next sync"},
+        {"deltaSyncMaxRowAgeSec", "delta_sync_max_row_age_sec",
+         "integer 300..604800; clamped on load; applies on next sync"},
+        // Lookup lifetimes (docs/plans/active/delta-sync.md § Phase 7).
+        {"fieldCatalogRefreshTtlSec", "field_catalog_refresh_ttl_sec",
+         "integer 300..2592000; clamped on load; applies on next start"},
+        {"lookupCacheTtlSec", "lookup_cache_ttl_sec",
+         "integer 0 (off, default) or 60..2592000; clamped on load; applies on next load"},
         {nullptr, nullptr, nullptr},
     };
     return kKeys;
@@ -202,6 +212,19 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
             return CommandResult::Failure(ErrorCode::ValidationError, "Value for 'vsync' must be a boolean.",
                                           "Use: on, off, true, false, 1, 0");
         }
+    }
+    // An integer setting takes an integer: a string or fraction written here would make every later load of
+    // that key fall back to its default (and, before the load was guarded, abort the fields after it).
+    if (ConfigManager::IsIntConfigKey(found->json)) {
+        // The same rule the load applies: an integral float such as 60.0 is accepted (stored as the integer 60),
+        // a fraction such as 3.5 or an out-of-range value is refused.
+        int intValue = 0;
+        if (!ConfigManager::JsonToInt(val, intValue)) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "Value for '" + key + "' must be an integer.",
+                                          found->hint && found->hint[0] ? std::string(found->hint)
+                                                                        : std::string("Use a whole number."));
+        }
+        val = intValue;
     }
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});

@@ -20,6 +20,7 @@
 #include "ISyncCache.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -89,6 +90,49 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     /// assert stale-deletion never removes a row another live pane still holds.
     std::vector<std::string> RetainedByOtherContextsImpl;
 
+    /// Each SampleTrackerTraffic call reports 5 more requests than the previous one, so a session's
+    /// request delta (start sample vs end sample) is a known 5 and the stats record can be asserted.
+    mutable int TrafficSampleCalls = 0;
+    smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const override {
+        smatchet::sync::TrackerTrafficSample sample;
+        sample.Requests = static_cast<std::uint64_t>(++TrafficSampleCalls) * 5u;
+        sample.DownloadBytes = sample.Requests * 100u;
+        return sample;
+    }
+
+    /// Background tasks the service launched (the stale-row delete); each runs inline on the caller so the
+    /// single-threaded tests see its effect immediately.
+    int BackgroundTasksLaunched = 0;
+    /// Ids reported through OnTicketsRemotelyChanged (a resident row whose tracker version moved).
+    std::vector<std::string> RemotelyChanged;
+    void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override {
+        RemotelyChanged.insert(RemotelyChanged.end(), ids.begin(), ids.end());
+    }
+    /// When set, launched tasks are parked in `DeferredTasks` instead of running inline, so a test can hold a
+    /// background task "in flight" and run it (RunDeferredTasks) when it chooses.
+    bool DeferBackgroundTasks = false;
+    std::vector<std::function<void()>> DeferredTasks;
+    void RunDeferredTasks() {
+        std::vector<std::function<void()>> tasks;
+        tasks.swap(DeferredTasks);
+        for (auto& t : tasks) {
+            try {
+                t();
+            } catch (...) { // the real LaunchBackgroundTask firewalls every exception
+            }
+        }
+    }
+    void LaunchBackgroundTask(std::function<void()> task) override {
+        ++BackgroundTasksLaunched;
+        if (DeferBackgroundTasks) {
+            DeferredTasks.push_back(std::move(task));
+            return;
+        }
+        if (task) {
+            task();
+        }
+    }
+
     ISyncCache* Cache() override { return CacheImpl.get(); }
     /// DR6: CacheImpl is a unique_ptr owned by the fixture for its whole lifetime, so hand back a
     /// non-owning aliasing shared_ptr (no-op deleter) over the same cache — safe for tests.
@@ -103,9 +147,7 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     void SetCacheBackendKey(const std::string& key) override { CacheBackendKeyImpl = key; }
-    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override {
-        return RetainedByOtherContextsImpl;
-    }
+    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override { return RetainedByOtherContextsImpl; }
 
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override {
         LastTrackerTicketSyncWarning = message;

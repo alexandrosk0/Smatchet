@@ -7,9 +7,11 @@
 // mapping for the reconcile probes. Extends the JiraCatalogHttpFixture pattern to the search
 // paths flagged in backend-impl-coverage-recovery.
 
+#include "../support/ScopedLimits.h"
 #include "JiraCatalogHttpFixture.h"
 #include "Config/ConfigManager.h"
 #include "Tracker/JiraClient.h"
+#include "Tracker/SearchFetchGuards.h"
 
 #include <doctest/doctest.h>
 
@@ -329,4 +331,262 @@ TEST_CASE("JiraClient::FetchIssueKeysForView — hitting the page cap with a tok
     REQUIRE_FALSE(res.has_value());
     CHECK(res.error().Detail.find("partial page walk") != std::string::npos);
     CHECK(fx.RequestCount(kSearchPath) == 50);
+}
+
+// --- delta-sync Phase 2: the request carries updated, and expand=changelog only for the history column ---
+
+namespace {
+// Streams one empty terminal page and returns the (fields, expand) query params the search sent.
+void CaptureSearchParams(const ViewsStore& views, std::string& outFields, std::string& outExpand, bool& outHasExpand) {
+    JiraCatalogHttpFixture fx;
+    std::string fields;
+    std::string expand;
+    bool hasExpand = false;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        fields = req.get_param_value("fields");
+        hasExpand = req.has_param("expand");
+        expand = req.get_param_value("expand");
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    client.FetchIssuesStreamed([](std::vector<CachedTicket>&&) {}, []() { return false; }, &cfg, &views);
+    outFields = fields;
+    outExpand = expand;
+    outHasExpand = hasExpand;
+}
+
+ViewsStore ViewWithFields(const std::vector<std::string>& fields) {
+    ViewsStore store;
+    ViewDefinition view;
+    view.Id = "v1";
+    view.Fields = fields;
+    store.Views.push_back(view);
+    store.ActiveViewId = "v1";
+    return store;
+}
+} // namespace
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — no expand without the history column; updated is always requested") {
+    std::string fields;
+    std::string expand;
+    bool hasExpand = true;
+    CaptureSearchParams(ViewWithFields({"summary", "status"}), fields, expand, hasExpand);
+    CHECK_FALSE(hasExpand);
+    CHECK(fields.find("updated") != std::string::npos);
+    CHECK(fields.find("changelog") == std::string::npos);
+}
+
+TEST_CASE("JiraClient::FetchIssuesStreamed — the history column asks Jira to expand the changelog") {
+    std::string fields;
+    std::string expand;
+    bool hasExpand = false;
+    CaptureSearchParams(ViewWithFields({"summary", "history"}), fields, expand, hasExpand);
+    CHECK(hasExpand);
+    CHECK(expand == "changelog");
+}
+
+TEST_CASE("JiraClient::FetchIssuesForKeys — the keyed fetch follows the same expand rule") {
+    JiraCatalogHttpFixture fx;
+    bool hasExpand = true;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        hasExpand = req.has_param("expand");
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    const ViewsStore views = ViewWithFields({"summary"});
+    const auto res = client.FetchIssuesForKeys(fx.Config(), {"SMT-1", "SMT-2"}, views);
+    REQUIRE(res.has_value());
+    CHECK_FALSE(hasExpand);
+}
+
+// --- delta-sync Phase 3: the roster request (keys + updated only) -----------------------------------
+
+TEST_CASE("JiraClient::FetchViewRoster — asks for updated only: no bodies, no expand, 100 per page") {
+    JiraCatalogHttpFixture fx;
+    std::string fields;
+    std::string maxResults;
+    bool hasExpand = true;
+    std::string jql;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        fields = req.get_param_value("fields");
+        maxResults = req.get_param_value("maxResults");
+        hasExpand = req.has_param("expand");
+        jql = req.get_param_value("jql");
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}, {"fields", {{"updated", "T1"}}}},
+                                              nlohmann::json{{"key", "SMT-2"}, {"fields", {{"updated", "T2"}}}}})}};
+    });
+    JiraClient client;
+    TrackerConfig cfg = fx.Config();
+    cfg.JqlQuery = "project = SMT";
+    const ViewsStore views;
+    CHECK(client.SupportsVersionedRoster());
+    const auto res = client.FetchViewRoster(cfg, views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(fields == "updated");
+    CHECK(maxResults == "100");
+    CHECK_FALSE(hasExpand);
+    CHECK(jql == "project = SMT");
+    REQUIRE(res.value().Entries.size() == 2u);
+    CHECK(res.value().Entries[0].Key == "SMT-1");
+    CHECK(res.value().Entries[0].Updated == "T1");
+    CHECK(res.value().Entries[1].Updated == "T2");
+    CHECK(res.value().Complete);
+    CHECK(res.value().Warning.empty());
+    CHECK(fx.RequestCount(kSearchPath) == 1); // the whole reload costs ONE request here
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — follows the page token and is complete after the last page") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        if (req.get_param_value("nextPageToken").empty()) {
+            return nlohmann::json{{"isLast", false},
+                                  {"nextPageToken", "tok2"},
+                                  {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}})}};
+        }
+        return nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-2"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(res.value().Entries.size() == 2u);
+    CHECK(res.value().Complete);
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — hitting the roster page cap yields an incomplete roster with a warning") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{{"isLast", false},
+                              {"nextPageToken", "more"},
+                              {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK_FALSE(res.value().Complete);
+    CHECK_FALSE(res.value().Warning.empty());
+    CHECK(fx.RequestCount(kSearchPath) == smatchet::search_guards::JiraMaxPages());
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — hitting the result cap yields an incomplete roster with a warning") {
+    // The roster shares the reload's row ceiling (JiraCaps), so the change monitor can never learn about more
+    // rows than a reload would hold; a view past it reports incomplete and the monitor takes its legacy path.
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraSearchMaxResults = 2; });
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{
+            {"isLast", false},
+            {"nextPageToken", "more"},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}, nlohmann::json{{"key", "SMT-2"}},
+                                              nlohmann::json{{"key", "SMT-3"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK_FALSE(res.value().Complete);
+    CHECK(res.value().Warning.find("result count") != std::string::npos);
+    CHECK(fx.RequestCount(kSearchPath) == 1); // stopped at the cap, no further page
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — a view exactly at the result cap is still complete") {
+    const smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.JiraSearchMaxResults = 2; });
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request&) {
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}}, nlohmann::json{{"key", "SMT-2"}}})}};
+    });
+    JiraClient client;
+    const ViewsStore views;
+    const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(res.value().Complete);
+}
+
+TEST_CASE("JiraClient::FetchViewRoster — failures keep their kind; a cancel is Cancelled; no credentials is Auth") {
+    const ViewsStore views;
+    {
+        JiraCatalogHttpFixture fx;
+        fx.ScriptStatus(kSearchPath, 503, "GET");
+        JiraClient client;
+        const auto res = client.FetchViewRoster(fx.Config(), views, []() { return false; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::ServerError);
+    }
+    {
+        JiraCatalogHttpFixture fx;
+        fx.ScriptJson(kSearchPath, nlohmann::json{{"isLast", true}, {"issues", nlohmann::json::array()}});
+        JiraClient client;
+        const auto res = client.FetchViewRoster(fx.Config(), views, []() { return true; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::Cancelled);
+    }
+    {
+        TrackerConfig cfg;
+        cfg.TrackerType = "Jira";
+        JiraClient client;
+        const auto res = client.FetchViewRoster(cfg, views, []() { return false; });
+        REQUIRE_FALSE(res.has_value());
+        CHECK(res.error().Kind == TrackerErrorKind::Auth);
+    }
+}
+
+// --- delta-sync Phase 5: roster for keys / children of keys ---------------------------------------------
+
+TEST_CASE("JiraClient::FetchRosterForKeys — key-in query, updated only, 40 keys per request") {
+    JiraCatalogHttpFixture fx;
+    std::vector<std::string> jqls;
+    std::vector<std::string> fieldParams;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        jqls.push_back(req.get_param_value("jql"));
+        fieldParams.push_back(req.get_param_value("fields"));
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-1"}, {"fields", {{"updated", "T1"}}}}})}};
+    });
+    JiraClient client;
+    std::vector<std::string> keys;
+    for (int i = 1; i <= 45; ++i) {
+        keys.push_back("SMT-" + std::to_string(i));
+    }
+    const auto res = client.FetchRosterForKeys(fx.Config(), keys, []() { return false; });
+    REQUIRE(res.has_value());
+    REQUIRE(jqls.size() == 2u); // 40 + 5
+    CHECK(jqls[0].find("key in (") == 0);
+    CHECK(fieldParams[0] == "updated");
+    CHECK(res.value().Entries.size() == 2u); // one scripted row per request
+    CHECK(res.value().Complete);
+}
+
+TEST_CASE("JiraClient::FetchRosterForKeys — a refused batch is an error so the caller can isolate keys") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus(kSearchPath, 400, "GET");
+    JiraClient client;
+    const auto res = client.FetchRosterForKeys(fx.Config(), {"SMT-1"}, []() { return false; });
+    REQUIRE_FALSE(res.has_value());
+    CHECK(res.error().Kind == TrackerErrorKind::InvalidRequest);
+}
+
+TEST_CASE("JiraClient::FetchChildRosterOfKeys — parent-in query returns the children's versions") {
+    JiraCatalogHttpFixture fx;
+    std::string jql;
+    fx.ScriptHandler(kSearchPath, [&](const httplib::Request& req) {
+        jql = req.get_param_value("jql");
+        return nlohmann::json{
+            {"isLast", true},
+            {"issues", nlohmann::json::array({nlohmann::json{{"key", "SMT-2"}, {"fields", {{"updated", "T9"}}}}})}};
+    });
+    JiraClient client;
+    const auto res = client.FetchChildRosterOfKeys(fx.Config(), {"SMT-1"}, []() { return false; });
+    REQUIRE(res.has_value());
+    CHECK(jql.find("parent = ") == 0);
+    REQUIRE(res.value().Entries.size() == 1u);
+    CHECK(res.value().Entries[0].Updated == "T9");
+    CHECK(res.value().Complete);
 }

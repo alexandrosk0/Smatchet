@@ -16,13 +16,15 @@
 // unit tests can exercise TicketSyncService without constructing an AppController.
 
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
-#include "CachedTicketTypes.h" // for CachedTicket (in vector & shared_ptr returns)
+#include "CachedTicketTypes.h"     // for CachedTicket (in vector & shared_ptr returns)
+#include "Sync/SyncSessionStats.h" // TrackerTrafficSample (per-session request/byte accounting)
 
 class ISyncCache;
 class ITrackerBackend;
@@ -99,12 +101,31 @@ class ITicketSyncDeps {
     /// dropped only on 30 s retirement. Defaulted no-op so the test fakes need no stub.
     virtual void PublishOwnedTicketIds(const std::vector<std::string>& /*ids*/) {}
 
+    /// Tracker HTTP traffic counters right now (monotonic). A session reads it at its start and end
+    /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no
+    /// stub; the production adapter reads `NetworkUsageTracker`. Any thread.
+    virtual smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const { return {}; }
+
+    /// Run `task` on a background worker (the production adapter forwards to `AppController::LaunchBackgroundTask`,
+    /// which tracks the worker so `RecreateLocalCacheDatabase` can join it before swapping the cache). The sync
+    /// service uses it for SQLite work that must not run on the UI thread (the stale-row delete). Defaulted to
+    /// running inline so single-threaded test fakes need no stub.
+    virtual void LaunchBackgroundTask(std::function<void()> task) {
+        if (task) {
+            task();
+        }
+    }
+
     // ---- Connectivity + sync-warning banner -------------------------------------------
     /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /
     /// 5xx-style), classified at the fetch seam that composed it (N12 slice 1). Consumers (the
     /// connectivity monitor's degraded-probe-interval check) branch on the flag instead of
     /// re-classifying the composed message text.
     virtual void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) = 0;
+    /// Tickets already on the grid whose tracker version moved in a sync: anything derived from the old
+    /// version (the available transitions, the per-issue edit permissions) is stale. UI thread. Defaulted to
+    /// nothing so test fakes need no stub.
+    virtual void OnTicketsRemotelyChanged(const std::vector<std::string>& /*ids*/) {}
     virtual void SetLastTrackerConnectivityState(ConnectivityState state) = 0;
     virtual void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) = 0;
     /// Forward to `OfflineQueueService::PushReplayTimersForward`. AppController routes this so

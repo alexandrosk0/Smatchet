@@ -9,6 +9,12 @@
 #include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
+#include "TimeNowPure.h"
+#include "Tracker/TrackerError.h"                // TrackerError is only forward-declared by TicketSyncService.h
+#include "Sync/RemoteVersionPure.h"              // never persist a row older than the cached version
+#include "TicketSyncMeta.h"                      // BuildSyncMeta: the tracker version stored beside each saved row
+#include "Sync/RefusalIsolatingFetchPure.h"      // refusal-isolating key-batch download (shared with the monitor)
+#include "Sync/DeltaSyncPure.h"                  // strategy, fetch set, full-fetch threshold
 #include "Sync/LazyEnrichmentCarryForwardPure.h" // keeps a lazily fetched comment thread across syncs
 #include "Sync/TicketRosterFilterPure.h"         // shared keep-set roster filter (also used by the local-data refresh)
 #include "Tracker/ParentHierarchyPure.h"         // ParentKeyOf — the one parent-field contract
@@ -61,6 +67,95 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
             smatchet::sync::CarryForwardLazyCommentFields(it->second, t);
         }
     }
+}
+
+constexpr std::size_t kFetchedRowsPerFrame = 20;    // rows saved to SQLite per frame (3 ms budget)
+constexpr std::size_t kUnchangedRowsPerFrame = 500; // cache-served rows: memory-only, so a bigger slice
+
+// Merges one frame's rows into the in-memory roster through an id -> index map (one pass instead of a
+// linear scan per row). Freshly fetched rows always replace; cache-served rows replace only when the row is
+// missing or differs, so a reload that changed nothing republishes nothing. Returns whether anything changed
+// (the snapshot is republished under the same lock then).
+bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedTicket>& fetched,
+                                const std::vector<CachedTicket>& unchanged, std::vector<std::string>& movedIds) {
+    std::lock_guard<std::mutex> lock(deps.ActiveTicketsMutex());
+    std::vector<CachedTicket>& active = deps.ActiveTickets();
+    std::unordered_map<std::string, std::size_t> index;
+    index.reserve(active.size() + fetched.size() + unchanged.size());
+    for (std::size_t i = 0; i < active.size(); ++i) {
+        index.emplace(active[i].id, i);
+    }
+    bool changed = false;
+    const auto place = [&](const CachedTicket& row, bool onlyIfDifferent) {
+        const auto it = index.find(row.id);
+        if (it == index.end()) {
+            index.emplace(row.id, active.size());
+            active.push_back(row);
+            changed = true;
+            return;
+        }
+        CachedTicket& current = active[it->second];
+        if (!onlyIfDifferent) {
+            // A resident row whose tracker version moved: what hangs off the old version is stale.
+            const std::string& was = current.GetFieldValueRef("updated");
+            const std::string& now = row.GetFieldValueRef("updated");
+            if (!was.empty() && !now.empty() && was != now) {
+                movedIds.push_back(row.id);
+            }
+        }
+        if (onlyIfDifferent && current.fieldValues == row.fieldValues &&
+            current.fieldRichValues == row.fieldRichValues) {
+            return;
+        }
+        current = row;
+        changed = true;
+    };
+    for (const CachedTicket& row : fetched) {
+        place(row, false);
+    }
+    for (const CachedTicket& row : unchanged) {
+        place(row, true);
+    }
+    if (changed) {
+        deps.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(active));
+    }
+    return changed;
+}
+
+// Drops the rows whose `updated` is provably OLDER than the version already cached for them (a late or
+// reordered fetch must not roll a newer cached row back) and returns how many were dropped. A cached stamp more
+// than a day in the future is unknown and never blocks. A Full sync is authoritative and does not call this. An
+// unknown order (no stamp on either side) keeps the row, exactly as before versions were stored.
+std::size_t DropRowsOlderThanCached(std::vector<CachedTicket>& rows,
+                                    const std::unordered_map<std::string, TicketSyncMeta>& cachedMeta,
+                                    std::vector<std::string>& droppedIds) {
+    const std::size_t before = rows.size();
+    const std::int64_t nowMs = TimeNowPure::NowUnixMs();
+    rows.erase(
+        std::remove_if(rows.begin(), rows.end(),
+                       [&cachedMeta, &droppedIds, nowMs](const CachedTicket& row) {
+                           const auto it = cachedMeta.find(row.id);
+                           const bool stale = it != cachedMeta.end() &&
+                                              smatchet::sync::IsIncomingRowStale(row.GetFieldValueRef("updated"),
+                                                                                 it->second.RemoteUpdated, nowMs);
+                           if (stale) {
+                               LOG_DEBUG("TicketSyncService: dropped stale fetched row id=%s fetched=%s cached=%s",
+                                         row.id.c_str(), row.GetFieldValueRef("updated").c_str(),
+                                         it->second.RemoteUpdated.c_str());
+                               droppedIds.push_back(row.id); // still part of the view: kept, not queued
+                           }
+                           return stale;
+                       }),
+        rows.end());
+    return before - rows.size();
+}
+
+// Saves `rows` and, beside each, the tracker version it was fetched at (delta-sync meta), in one
+// transaction. A row without an `updated` stamp is saved with no meta (it will always be refetched).
+// `overwriteOlder` is a Full sync's authority over the version guard.
+void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const std::vector<CachedTicket>& rows,
+                      bool overwriteOlder) {
+    smatchet::sync::SaveFetchedRows(cache, backendKey, rows, overwriteOlder);
 }
 
 } // namespace
@@ -206,11 +301,10 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // happens on this (UI) thread between sessions (multi-grid Slice 1b).
     const std::string backendKey = deps_.CacheBackendKey();
     CarryForwardLazyComments(deps_, pack.Tickets);
-    size_t saved = 0;
-    for (const auto& t : freshTickets) {
-        deps_.Cache()->SaveTicket(backendKey, t);
-        ++saved;
-    }
+    // An inline pack is not a Full sync session (activeMode_ belongs to the last streaming session, not this
+    // pack): keep the older-version guard.
+    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets, /*overwriteOlder=*/false);
+    const size_t saved = freshTickets.size();
 
     size_t deleted = 0;
     // Empty-fetch guard: a full-sync that returns zero tickets cannot prove the cache is
@@ -273,7 +367,8 @@ void TicketSyncService::TickStreamingApply() {
     // 1. Drain a superseded session, else start a pending request once the previous session
     //    (worker + apply queue + stale cleanup) is fully drained.
     const bool isWorkerActive = activeStreamingSync_.Active.load();
-    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
+    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load() ||
+                               deleteInFlight_->load();
 
     if (activeStreamingSync_.Superseded.load()) {
         if (DiscardSupersededSessionIfNeeded()) {
@@ -340,9 +435,12 @@ bool TicketSyncService::DiscardSupersededSessionIfNeeded() {
 
     LOG_INFO("TicketSyncService::TickStreamingApply discarded superseded streaming sync session.");
 
-    if (hasPendingSyncRequest_) {
+    // Same gate as the normal path (TickStreamingApply): a stale-row DELETE still in flight would race the
+    // new session's saves, so the request stays pending until StartPendingSyncIfIdle sees the service idle.
+    if (hasPendingSyncRequest_ && !deleteInFlight_->load()) {
         hasPendingSyncRequest_ = false;
-        StartStreamingSync(pendingConfig_, pendingViews_);
+        StartStreamingSync(pendingConfig_, pendingViews_, pendingMode_);
+        pendingMode_ = smatchet::sync::SyncMode::Delta;
     }
     return true;
 }
@@ -353,147 +451,154 @@ bool TicketSyncService::StartPendingSyncIfIdle(bool /*isSessionBusy*/) {
     }
     if (hasPendingSyncRequest_) {
         hasPendingSyncRequest_ = false;
-        StartStreamingSync(pendingConfig_, pendingViews_);
+        StartStreamingSync(pendingConfig_, pendingViews_, pendingMode_);
+        pendingMode_ = smatchet::sync::SyncMode::Delta;
         return true;
     }
     return false;
 }
 
 bool TicketSyncService::DrainStaleDeletionBudget() {
-    auto start = std::chrono::high_resolution_clock::now();
-    size_t deletedThisFrame = 0;
-    bool inMemoryChanged = false;
-    const std::string backendKey = deps_.CacheBackendKey();
-
-    while (!staleIdsToDelete_.empty()) {
-        std::string id = std::move(staleIdsToDelete_.back());
-        staleIdsToDelete_.pop_back();
-
-        if (deps_.Cache()) {
-            deps_.Cache()->DeleteTicket(backendKey, id);
-        }
+    // The in-memory roster drops every stale row at once (one pass, one republish); the SQLite rows go in ONE
+    // worker-side transaction. Nothing here touches SQLite on the UI thread.
+    std::vector<std::string> ids;
+    ids.swap(staleIdsToDelete_);
+    if (!ids.empty()) {
+        const std::unordered_set<std::string> stale(ids.begin(), ids.end());
         {
             std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-            deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
-                                                       [&](const CachedTicket& t) { return t.id == id; }),
-                                        deps_.ActiveTickets().end());
+            std::vector<CachedTicket>& active = deps_.ActiveTickets();
+            active.erase(std::remove_if(active.begin(), active.end(),
+                                        [&stale](const CachedTicket& t) { return stale.find(t.id) != stale.end(); }),
+                         active.end());
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(active));
+            deps_.BumpActiveTicketsRevision();
         }
-        inMemoryChanged = true;
-        deletedThisFrame++;
-        staleDeletedSoFar_++;
-
-        auto elapsed =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
-                .count();
-        if (elapsed >= 3 || deletedThisFrame >= 10) {
-            break;
-        }
-    }
-
-    if (inMemoryChanged) {
-        std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-        deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
-        deps_.BumpActiveTicketsRevision();
-        // Stale-deletion shrinks visible state — windows that show ticket lists / counts
-        // must re-record. Coalesced via pendingLuaWindowBump_ so a 200-id prune fires one
-        // bump, not 200.
+        // Stale-deletion shrinks visible state - windows that show ticket lists / counts must re-record.
         deps_.SetPendingLuaWindowBump(true);
-    }
 
-    if (staleIdsToDelete_.empty()) {
-        isDeletingStale_.store(false);
-        LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu",
-                 totalStaleToDelete_);
-        // Trigger editmeta warmup after cleanup completes
-        deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
-        // Flush coalesced Lua window bump now that stale deletion finished. The session-
-        // end flush above can't see this because stale-deletion runs across many frames
-        // after the session-end block has already fired.
-        if (deps_.GetPendingLuaWindowBump()) {
-            deps_.NotifyLuaTicketDataChanged();
-            deps_.SetPendingLuaWindowBump(false);
+        const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+        if (cache) {
+            const std::string backendKey = deps_.CacheBackendKey();
+            const std::shared_ptr<std::atomic<bool>> inFlight = deleteInFlight_;
+            inFlight->store(true);
+            try {
+                deps_.LaunchBackgroundTask([cache, backendKey, ids, inFlight]() {
+                    /* PILLAR2_WORKER_ONLY */ // est-latency: one batched delete transaction - off the UI thread
+                    // Clears the busy flag on every exit, including a non-std exception: a flag left set would
+                    // block every later sync for good.
+                    struct ClearOnExit {
+                        std::atomic<bool>& Flag;
+                        ~ClearOnExit() { Flag.store(false); }
+                    } clearOnExit{*inFlight};
+                    try {
+                        cache->DeleteTickets(backendKey, ids);
+                    } catch (const std::exception& ex) {
+                        LOG_ERROR("TicketSyncService: stale-row delete of %zu row(s) failed: %s", ids.size(),
+                                  ex.what());
+                    } catch (...) {
+                        LOG_ERROR("TicketSyncService: stale-row delete of %zu row(s) threw a non-std exception.",
+                                  ids.size());
+                    }
+                });
+            } catch (...) {
+                inFlight->store(false); // the task never started
+                LOG_ERROR("TicketSyncService: stale-row delete of %zu row(s) could not be started.", ids.size());
+            }
         }
+    }
+    staleDeletedSoFar_ = totalStaleToDelete_;
+    isDeletingStale_.store(false);
+    LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu", totalStaleToDelete_);
+    // Trigger editmeta warmup after cleanup completes
+    deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+    // Flush coalesced Lua window bump now that stale deletion finished. The session-end flush can't see this
+    // because stale deletion runs after the session-end block has already fired.
+    if (deps_.GetPendingLuaWindowBump()) {
+        deps_.NotifyLuaTicketDataChanged();
+        deps_.SetPendingLuaWindowBump(false);
     }
     return true;
 }
 
 void TicketSyncService::DrainPendingStreamingBatches() {
     auto start = std::chrono::high_resolution_clock::now();
-    size_t ticketsProcessedInFrame = 0;
-    bool stateChanged = false;
+    std::size_t fetchedInFrame = 0;
+    std::size_t unchangedInFrame = 0;
     std::vector<CachedTicket> batchToProcess;
-    std::vector<CachedTicket> processedThisFrame;
+    std::vector<CachedTicket> fetchedThisFrame;
+    std::vector<CachedTicket> unchangedThisFrame;
 
     while (true) {
         batchToProcess.clear();
+        bool cachedUnchanged = false;
         {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             if (activeStreamingSync_.PendingBatches.empty()) {
                 break;
             }
-            auto& frontBatch = activeStreamingSync_.PendingBatches.front();
-            if (frontBatch.empty()) {
+            SyncBatch& frontBatch = activeStreamingSync_.PendingBatches.front();
+            for (const std::string& keepId : frontBatch.KeepOnlyIds) {
+                activeStreamingSync_.KeepIds.insert(keepId);
+            }
+            frontBatch.KeepOnlyIds.clear();
+            if (frontBatch.Rows.empty()) {
                 activeStreamingSync_.PendingBatches.erase(activeStreamingSync_.PendingBatches.begin());
                 continue;
             }
-
-            size_t sliceSize = (std::min)(frontBatch.size(), size_t(20 - ticketsProcessedInFrame));
+            cachedUnchanged = frontBatch.CachedUnchanged;
+            const std::size_t used = cachedUnchanged ? unchangedInFrame : fetchedInFrame;
+            const std::size_t limit = cachedUnchanged ? kUnchangedRowsPerFrame : kFetchedRowsPerFrame;
+            const std::size_t sliceSize = (std::min)(frontBatch.Rows.size(), limit - used);
             if (sliceSize == 0) {
                 break; // Frame limit
             }
 
             const std::ptrdiff_t sliceOffset = static_cast<std::ptrdiff_t>(sliceSize);
-            batchToProcess.insert(batchToProcess.end(), std::make_move_iterator(frontBatch.begin()),
-                                  std::make_move_iterator(frontBatch.begin() + sliceOffset));
-            frontBatch.erase(frontBatch.begin(), frontBatch.begin() + sliceOffset);
+            batchToProcess.insert(batchToProcess.end(), std::make_move_iterator(frontBatch.Rows.begin()),
+                                  std::make_move_iterator(frontBatch.Rows.begin() + sliceOffset));
+            frontBatch.Rows.erase(frontBatch.Rows.begin(), frontBatch.Rows.begin() + sliceOffset);
 
-            if (frontBatch.empty()) {
+            if (frontBatch.Rows.empty()) {
                 activeStreamingSync_.PendingBatches.erase(activeStreamingSync_.PendingBatches.begin());
             }
         }
 
-        // Phase 3(a): persist the whole slice in ONE transaction instead of one-per-ticket
-        // (docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3a). KeepIds + the
-        // per-frame counter stay a separate cheap loop.
+        // The worker already persisted the batch (QueueBatch), so this thread touches memory only. Both kinds
+        // keep a lazily fetched comment thread the resident row gained since the worker prepared the batch.
         CarryForwardLazyComments(deps_, batchToProcess);
-        if (deps_.Cache()) {
-            deps_.Cache()->SaveTickets(deps_.CacheBackendKey(), batchToProcess);
-        }
         for (const auto& t : batchToProcess) {
             if (!t.id.empty()) {
                 activeStreamingSync_.KeepIds.insert(t.id);
             }
-            ticketsProcessedInFrame++;
         }
-        processedThisFrame.insert(processedThisFrame.end(), std::make_move_iterator(batchToProcess.begin()),
-                                  std::make_move_iterator(batchToProcess.end()));
-        stateChanged = true;
+        std::size_t& counter = cachedUnchanged ? unchangedInFrame : fetchedInFrame;
+        counter += batchToProcess.size();
+        std::vector<CachedTicket>& frameRows = cachedUnchanged ? unchangedThisFrame : fetchedThisFrame;
+        frameRows.insert(frameRows.end(), std::make_move_iterator(batchToProcess.begin()),
+                         std::make_move_iterator(batchToProcess.end()));
 
         auto elapsed =
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
                 .count();
-        if (elapsed >= 3 || ticketsProcessedInFrame >= 20) {
+        const std::size_t limit = cachedUnchanged ? kUnchangedRowsPerFrame : kFetchedRowsPerFrame;
+        if (elapsed >= 3 || counter >= limit) {
             break;
         }
     }
 
-    if (stateChanged) {
-        {
-            std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-            for (const auto& t : processedThisFrame) {
-                auto it = std::find_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
-                                       [&](const CachedTicket& existing) { return existing.id == t.id; });
-                if (it != deps_.ActiveTickets().end()) {
-                    *it = t;
-                } else {
-                    deps_.ActiveTickets().push_back(t);
-                }
-            }
-            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
-        }
+    if (fetchedThisFrame.empty() && unchangedThisFrame.empty()) {
+        return;
+    }
+    std::vector<std::string> movedIds;
+    const bool changed = MergeRowsIntoActiveTickets(deps_, fetchedThisFrame, unchangedThisFrame, movedIds);
+    if (!movedIds.empty()) {
+        deps_.OnTicketsRemotelyChanged(movedIds);
+    }
+    if (changed || !fetchedThisFrame.empty()) {
         deps_.PruneEditMetaCacheToActiveTickets();
         deps_.BumpActiveTicketsRevision();
-        // Streaming-batch end-of-batch — flip the coalesced bump; session-end emits once.
+        // Streaming-batch end-of-batch - flip the coalesced bump; session-end emits once.
         deps_.SetPendingLuaWindowBump(true);
     }
 }
@@ -568,6 +673,7 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     const std::size_t keptThisSession = activeStreamingSync_.KeepIds.size();
     NoteFullSyncEmptiness(fullSyncCompleted, keptThisSession == 0);
 
+    RecordSessionStats(fetchError, fullSyncCompleted);
     SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
     ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
 
@@ -586,6 +692,49 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         deps_.NotifyLuaTicketDataChanged();
         deps_.SetPendingLuaWindowBump(false);
     }
+}
+
+smatchet::sync::SyncSessionStats TicketSyncService::LastSessionStats() const {
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    return lastStats_;
+}
+
+void TicketSyncService::RecordSessionStats(const std::string& fetchError, bool fullSyncCompleted) {
+    smatchet::sync::SyncSessionStats stats;
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        stats = activeStreamingSync_.WorkerStats;
+    }
+    const smatchet::sync::TrackerTrafficSample end = deps_.SampleTrackerTraffic();
+    const smatchet::sync::TrackerTrafficSample& start = activeStreamingSync_.TrafficAtStart;
+    stats.Valid = true;
+    if (stats.RequestId == 0) {
+        stats.RequestId = activeStreamingSync_.RequestId.load();
+    }
+    std::string recordedError = fetchError;
+    if (stats.Mode.empty()) {
+        stats.Mode = "full"; // the worker never reached its result seam (exception / early return)
+        if (recordedError.empty()) {
+            recordedError = "cancelled or superseded before a result";
+        }
+    }
+    stats.Requests = end.Requests >= start.Requests ? end.Requests - start.Requests : 0;
+    stats.UploadBytes = end.UploadBytes >= start.UploadBytes ? end.UploadBytes - start.UploadBytes : 0;
+    stats.DownloadBytes = end.DownloadBytes >= start.DownloadBytes ? end.DownloadBytes - start.DownloadBytes : 0;
+    stats.DurationMs =
+        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - activeStreamingSync_.SessionStartedAt)
+                                   .count());
+    stats.Completed = fullSyncCompleted;
+    stats.Error = recordedError;
+    LOG_INFO("TicketSyncService: sync stats req=%llu mode=%s roster=%zu bodies=%zu unchanged=%zu requests=%llu "
+             "down=%llu up=%llu durationMs=%lld completed=%d fallback='%s' err='%s'",
+             static_cast<unsigned long long>(stats.RequestId), stats.Mode.c_str(), stats.RosterSize,
+             stats.BodiesFetched, stats.Unchanged, static_cast<unsigned long long>(stats.Requests),
+             static_cast<unsigned long long>(stats.DownloadBytes), static_cast<unsigned long long>(stats.UploadBytes),
+             stats.DurationMs, stats.Completed ? 1 : 0, stats.FallbackReason.c_str(), stats.Error.c_str());
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    lastStats_ = std::move(stats);
 }
 
 void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession) {
@@ -678,7 +827,7 @@ void TicketSyncService::ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompl
 
 bool TicketSyncService::IsActive() const {
     return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() ||
-           isDeletingStale_.load();
+           isDeletingStale_.load() || deleteInFlight_->load();
 }
 
 void TicketSyncService::ResetStaleDeletionState() {
@@ -701,18 +850,26 @@ void TicketSyncService::ResetStaleDeletionState() {
     activeStreamingSync_.Superseded = false;
 }
 
-void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride) {
+void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                        smatchet::sync::SyncMode mode) {
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();
     ViewsStore viewsCopy = viewsOverride ? *viewsOverride : ConfigManager::LoadViewsOrBootstrap(cfgCopy);
 
     const bool isWorkerActive = activeStreamingSync_.Active.load();
-    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
+    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load() ||
+                               deleteInFlight_->load();
 
     if (isSessionBusy) {
         activeStreamingSync_.Cancelled = true;
         activeStreamingSync_.Superseded = true;
+        // Full is sticky: neither a queued Full nor a Full whose fetch is still running is downgraded by a later
+        // ordinary refresh (once the fetch is done, the session only drains and a Delta is enough).
+        const smatchet::sync::SyncMode held = hasPendingSyncRequest_ ? pendingMode_
+                                              : isWorkerActive       ? activeMode_
+                                                                     : smatchet::sync::SyncMode::Delta;
+        pendingMode_ = smatchet::sync::CombineSyncModes(held, mode);
         hasPendingSyncRequest_ = true;
         pendingConfig_ = cfgCopy;
         pendingViews_ = viewsCopy;
@@ -721,7 +878,7 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
         return;
     }
 
-    StartStreamingSync(cfgCopy, viewsCopy);
+    StartStreamingSync(cfgCopy, viewsCopy, mode);
 }
 
 void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {
@@ -806,7 +963,8 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     }
 }
 
-void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy) {
+void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                           smatchet::sync::SyncMode mode) {
     if (activeStreamingSync_.WorkerThread.joinable()) {
         activeStreamingSync_.WorkerThread.join();
     }
@@ -817,6 +975,10 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     SwapBackendIfTrackerChanged(cfgCopy);
 
     const std::uint64_t reqId = ++currentFetchRequestId_;
+    ++sessionEpoch_;
+    activeMode_ = mode;
+    activeStreamingSync_.SessionStartedAt = std::chrono::steady_clock::now();
+    activeStreamingSync_.TrafficAtStart = deps_.SampleTrackerTraffic();
     activeStreamingSync_.RequestId = reqId;
     activeStreamingSync_.Cancelled = false;
     activeStreamingSync_.Superseded = false;
@@ -834,100 +996,204 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         activeStreamingSync_.Warning.clear();
         activeStreamingSync_.PendingBatches.clear();
         activeStreamingSync_.BackgroundStaleIds.clear();
+        activeStreamingSync_.WorkerStats = smatchet::sync::SyncSessionStats();
     }
 
     LOG_INFO("TicketSyncService: Spawning background worker for async streaming fetch request ID=%llu",
              static_cast<unsigned long long>(reqId));
 
-    activeStreamingSync_.WorkerThread =
-        std::thread([this, reqId, cfgCopy, viewsCopy]() { RunStreamingWorkerBody(reqId, cfgCopy, viewsCopy); });
+    activeStreamingSync_.WorkerThread = std::thread(
+        [this, reqId, cfgCopy, viewsCopy, mode]() { RunStreamingWorkerBody(reqId, cfgCopy, viewsCopy, mode); });
+}
+
+std::string TicketSyncService::LoadSessionMeta() {
+    sessionMeta_.clear();
+    if (!deps_.Cache()) {
+        return std::string();
+    }
+    try {
+        sessionMeta_ = deps_.Cache()->GetTicketSyncMeta(deps_.CacheBackendKey());
+    } catch (const std::exception& ex) {
+        // The snapshot only guards against rolling a row back; a sync must not fail over it.
+        LOG_WARN("TicketSyncService: could not read cached ticket versions: %s", ex.what());
+        sessionMeta_.clear();
+        return ex.what();
+    } catch (...) {
+        LOG_WARN("TicketSyncService: could not read cached ticket versions (unknown exception)");
+        sessionMeta_.clear();
+        return "unknown exception";
+    }
+    return std::string();
 }
 
 void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy,
-                                               const ViewsStore& viewsCopy) {
+                                               const ViewsStore& viewsCopy, smatchet::sync::SyncMode mode) {
     try {
-        std::unordered_set<std::string> workerKeepIds;
-        std::vector<std::string> workerParentRefs;  // parent keys referenced by streamed rows (may repeat)
-        std::vector<std::string> workerStreamedIds; // ids the view's own JQL/filter actually matched
-        auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs,
-                        &workerStreamedIds](std::vector<CachedTicket>&& batch) {
-            for (const auto& ticket : batch) {
-                if (!ticket.id.empty()) {
-                    workerKeepIds.insert(ticket.id);
-                    workerStreamedIds.push_back(ticket.id);
+        // Versions of the rows already cached, so a fetched row older than its cached copy is never persisted.
+        const std::string metaReadError = LoadSessionMeta();
+        std::string fallbackReason;
+        if (mode == smatchet::sync::SyncMode::Delta) {
+            DeltaOutcome outcome;
+            if (!metaReadError.empty()) {
+                // An unreadable version table is not the expected "no cached ticket versions yet": say so.
+                outcome.FallbackReason = "could not read cached ticket versions: " + metaReadError;
+            } else {
+                try {
+                    outcome = RunDeltaFetch(reqId, cfgCopy, viewsCopy);
+                } catch (const std::exception& ex) {
+                    // Any failure on the delta path falls back to today's full fetch.
+                    outcome.Finished = false;
+                    outcome.FallbackReason = std::string("delta attempt threw: ") + ex.what();
                 }
-                std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
-                if (!parentKey.empty()) {
-                    workerParentRefs.push_back(std::move(parentKey));
-                }
             }
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-                activeStreamingSync_.PendingBatches.push_back(std::move(batch));
+            if (outcome.Finished) {
+                sessionMeta_.clear(); // worker-only; released before the UI thread may start the next session
+                activeStreamingSync_.Active = false;
+                return;
             }
-        };
-        auto shouldCancel = [this, reqId]() -> bool {
-            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
-        };
-
-        TrackerIssueFetchSummary summary =
-            deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
-
-        if (summary.FetchError.empty() && !shouldCancel()) {
-            FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, workerParentRefs, workerKeepIds, summary);
-        }
-        if (summary.FetchError.empty() && !shouldCancel()) {
-            FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, workerStreamedIds, workerKeepIds, summary);
-        }
-
-        if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-            std::vector<std::string> localStaleIds;
-            if (summary.FullSyncCompleted && deps_.Cache()) {
-                // The deps getter hands back a mutex-guarded key copy — safe from this worker
-                // thread; the key cannot change mid-session (swaps happen in StartStreamingSync,
-                // which joins the previous worker first).
-                std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds(deps_.CacheBackendKey());
-                std::copy_if(
-                    existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
-                    [&workerKeepIds](const std::string& id) { return workerKeepIds.find(id) == workerKeepIds.end(); });
-            }
-
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
-            activeStreamingSync_.FetchError = summary.FetchError;
-            // Worker-side classification seam (N12): the kind the backend classified at its own
-            // error site (summary.Error, item 12). Every backend fills it whenever FetchError is
-            // set (Plane's resolve/exception paths closed in slice 3); an unclassified error is a
-            // bug shape and lands on the safe non-transient branch.
-            activeStreamingSync_.FetchErrorTransient = !summary.FetchError.empty() && summary.Error.IsRetryable();
-            activeStreamingSync_.Warning = summary.Warning;
-            activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
-            if (summary.FullSyncCompleted && deps_.Cache()) {
-                activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
+            fallbackReason = outcome.FallbackReason;
+            if (outcome.ExpectedFallback) {
+                LOG_DEBUG("TicketSyncService: full fetch instead of delta (%s) for request ID=%llu",
+                          fallbackReason.c_str(), static_cast<unsigned long long>(reqId));
+            } else {
+                LOG_INFO("TicketSyncService: delta reload abandoned (%s); running a full fetch for request ID=%llu",
+                         fallbackReason.c_str(), static_cast<unsigned long long>(reqId));
             }
         }
+        RunFullFetch(reqId, cfgCopy, viewsCopy, fallbackReason);
+        sessionMeta_.clear();
     } catch (const std::exception& ex) {
+        sessionMeta_.clear();
         LOG_ERROR("TicketSyncService: Worker thread caught exception: %s", ex.what());
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
             // Deliberately non-transient (13a precedent): transport failures surface as classified
-            // statuses from the backends, never as throws — a thrown worker is a bug shape, and
+            // statuses from the backends, never as throws - a thrown worker is a bug shape, and
             // the non-transient branch is the safe ask-the-user path.
             activeStreamingSync_.FetchErrorTransient = false;
             activeStreamingSync_.FullSyncCompleted = false;
         }
     } catch (...) {
+        sessionMeta_.clear();
         LOG_ERROR("TicketSyncService: Worker thread caught unknown exception.");
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
-            activeStreamingSync_.FetchErrorTransient = false; // fixed text — never transport-shaped
+            activeStreamingSync_.FetchErrorTransient = false; // fixed text - never transport-shaped
             activeStreamingSync_.FullSyncCompleted = false;
         }
     }
 
     activeStreamingSync_.Active = false;
+}
+
+void TicketSyncService::RunFullFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                     const std::string& fallbackReason) {
+    std::unordered_set<std::string> workerKeepIds;
+    std::vector<std::string> workerParentRefs;  // parent keys referenced by streamed rows (may repeat)
+    std::vector<std::string> workerStreamedIds; // ids the view's own JQL/filter actually matched
+    auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs,
+                    &workerStreamedIds](std::vector<CachedTicket>&& batch) {
+        for (const auto& ticket : batch) {
+            if (!ticket.id.empty()) {
+                workerKeepIds.insert(ticket.id);
+                workerStreamedIds.push_back(ticket.id);
+            }
+            std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
+            if (!parentKey.empty()) {
+                workerParentRefs.push_back(std::move(parentKey));
+            }
+        }
+        (void)QueueBatch(reqId, std::move(batch), /*cachedUnchanged=*/false);
+    };
+    auto shouldCancel = [this, reqId]() -> bool {
+        return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+    };
+
+    TrackerIssueFetchSummary summary =
+        deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
+
+    if (summary.FetchError.empty() && !shouldCancel()) {
+        FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, workerParentRefs, workerKeepIds, summary);
+    }
+    if (summary.FetchError.empty() && !shouldCancel()) {
+        FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, workerStreamedIds, workerKeepIds, summary);
+    }
+
+    smatchet::sync::SyncSessionStats partial;
+    partial.Mode = "full";
+    partial.FallbackReason = fallbackReason;
+    PublishWorkerResult(reqId, summary, workerKeepIds, partial);
+}
+
+void TicketSyncService::PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
+                                            const std::unordered_set<std::string>& keepIds,
+                                            const smatchet::sync::SyncSessionStats& partialStats) {
+    if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
+        return;
+    }
+    std::vector<std::string> localStaleIds;
+    if (summary.FullSyncCompleted && deps_.Cache()) {
+        // The deps getter hands back a mutex-guarded key copy - safe from this worker thread; the key
+        // cannot change mid-session (swaps happen in StartStreamingSync, which joins the previous worker).
+        std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds(deps_.CacheBackendKey());
+        std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
+                     [&keepIds](const std::string& id) { return keepIds.find(id) == keepIds.end(); });
+    }
+
+    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+    activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
+    activeStreamingSync_.FetchError = summary.FetchError;
+    // Worker-side classification seam (N12): the kind the backend classified at its own error site
+    // (summary.Error, item 12). Every backend fills it whenever FetchError is set; an unclassified error is
+    // a bug shape and lands on the safe non-transient branch.
+    activeStreamingSync_.FetchErrorTransient = !summary.FetchError.empty() && summary.Error.IsRetryable();
+    activeStreamingSync_.Warning = summary.Warning;
+    activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
+    activeStreamingSync_.WorkerStats = partialStats;
+    activeStreamingSync_.WorkerStats.RequestId = reqId;
+    activeStreamingSync_.WorkerStats.BodiesFetched = summary.FetchedCount;
+    if (summary.FullSyncCompleted && deps_.Cache()) {
+        activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
+    }
+}
+
+bool TicketSyncService::QueueBatch(std::uint64_t reqId, std::vector<CachedTicket>&& rows, bool cachedUnchanged) {
+    if (rows.empty()) {
+        return true;
+    }
+    std::vector<std::string> keepOnlyIds;
+    if (!cachedUnchanged) {
+        if (activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId) {
+            return false; // superseded: do not spend a transaction on a discarded session
+        }
+        // Worker thread, no lock held: carry the comment thread forward (takes ActiveTicketsMutex alone),
+        // drop rows older than the cached version, then persist rows + versions in one transaction.
+        CarryForwardLazyComments(deps_, rows);
+        // A Full sync is authoritative: it neither drops nor refuses a row for being older than the cached copy.
+        const bool fullSync = activeMode_ == smatchet::sync::SyncMode::Full;
+        const std::size_t dropped = fullSync ? 0 : DropRowsOlderThanCached(rows, sessionMeta_, keepOnlyIds);
+        if (dropped > 0) {
+            LOG_INFO("TicketSyncService: kept %zu cached row(s) newer than the fetched copy.", dropped);
+        }
+        if (deps_.Cache() && !rows.empty()) {
+            SaveRowsWithMeta(*deps_.Cache(), deps_.CacheBackendKey(), rows, fullSync);
+        }
+        if (rows.empty() && keepOnlyIds.empty()) {
+            return true;
+        }
+    }
+    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+    if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
+        return false;
+    }
+    SyncBatch queued;
+    queued.Rows = std::move(rows);
+    queued.CachedUnchanged = cachedUnchanged;
+    queued.KeepOnlyIds = std::move(keepOnlyIds);
+    activeStreamingSync_.PendingBatches.push_back(std::move(queued));
+    return true;
 }
 
 namespace {
@@ -958,68 +1224,8 @@ void MarkHierarchyWalkIncomplete(TrackerIssueFetchSummary& summary, const std::s
     LOG_WARN("TicketSyncService: %s", warning.c_str());
 }
 
-using KeyBatchFetch = std::function<Result<std::vector<CachedTicket>, TrackerError>(const std::vector<std::string>&)>;
-
-/// Refused keys one hop may isolate before it gives up and keeps the cached rows (see
-/// FetchKeysIsolatingRefusals).
-constexpr int kMaxIsolatedRefusalsPerHop = 4;
-
-/// Extra requests a hop over `keyCount` keys may spend isolating refusals. Each split costs two requests,
-/// and isolating k refused keys among n takes at most k * ceil(log2 n) splits, so this covers
-/// kMaxIsolatedRefusalsPerHop refused keys wherever they sit in the batch.
-int RefusalSplitBudget(std::size_t keyCount) {
-    int depth = 0;
-    for (std::size_t span = 1; span < keyCount; span *= 2) {
-        ++depth;
-    }
-    return 2 * depth * kMaxIsolatedRefusalsPerHop;
-}
-
-bool IsTrackerRefusal(const TrackerError& error) {
-    return error.Kind == TrackerErrorKind::InvalidRequest || error.Kind == TrackerErrorKind::NotFound;
-}
-
-/// Fetches `keys`. A refusal of a multi-key request says nothing about the individual keys: Jira rejects
-/// a whole `key in (...)` batch with a 400 when ONE key does not exist or cannot be browsed. So the halves
-/// are retried until the refused keys are isolated; a single refused key is a definitive answer about that
-/// ticket and goes into `refusedKeys`, and the rest load normally. Any other failure, or a refusal once
-/// `budget` extra requests are spent, is returned as an error (the caller then keeps the cached rows).
-/// Once `cancelled` reports true no further request is sent and a Cancelled error is returned.
-Result<std::vector<CachedTicket>, TrackerError>
-FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
-                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
-    if (cancelled()) {
-        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorCancelled());
-    }
-    Result<std::vector<CachedTicket>, TrackerError> fetched = fetch(keys);
-    if (fetched.has_value() || !IsTrackerRefusal(fetched.error())) {
-        return fetched;
-    }
-    if (keys.size() == 1) {
-        refusedKeys.push_back(keys.front());
-        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::vector<CachedTicket>());
-    }
-    if (budget < 2) {
-        return fetched;
-    }
-    budget -= 2;
-    const auto mid = keys.begin() + static_cast<std::ptrdiff_t>(keys.size() / 2);
-    Result<std::vector<CachedTicket>, TrackerError> first =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
-    if (!first.has_value()) {
-        return first;
-    }
-    Result<std::vector<CachedTicket>, TrackerError> second =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
-    if (!second.has_value()) {
-        return second;
-    }
-    std::vector<CachedTicket> merged = std::move(first.value());
-    for (CachedTicket& ticket : second.value()) {
-        merged.push_back(std::move(ticket));
-    }
-    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(merged));
-}
+using smatchet::sync::FetchKeysIsolatingRefusals;
+using smatchet::sync::RefusalSplitBudget;
 
 /// The tracker refused these keys one by one: a definitive answer that repeats on every sync, so the
 /// walk stays authoritative (a refused ticket's cached row may be purged) and the keys are named.
@@ -1053,7 +1259,7 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
                                                      const ViewsStore& viewsCopy,
                                                      const std::vector<std::string>& parentRefs,
                                                      std::unordered_set<std::string>& workerKeepIds,
-                                                     TrackerIssueFetchSummary& summary) {
+                                                     TrackerIssueFetchSummary& summary, const HierarchyDelta* delta) {
     if (parentRefs.empty()) {
         return;
     }
@@ -1087,15 +1293,14 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 
         LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu", missing.size(),
                  hop, static_cast<unsigned long long>(reqId));
-        std::vector<std::string> refused;
-        int splitBudget = RefusalSplitBudget(missing.size());
-        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
-            [&](const std::vector<std::string>& keys) {
-                return deps_.Backend()->FetchIssuesForKeys(cfgCopy, keys, viewsCopy);
-            },
-            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; },
-            missing, splitBudget, refused);
-        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+        // One token for the whole hop: the keyed fetch polls it inside the HTTP retry/backoff window
+        // too, so a superseded sync stops mid-request rather than at the request's timeout.
+        const std::function<bool()> cancelled = [this, reqId]() {
+            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+        };
+        Result<HopRows, TrackerError> fetched =
+            FetchHierarchyHop(cfgCopy, viewsCopy, cancelled, missing, /*childrenOfKeys=*/false, delta);
+        if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
         if (!fetched.has_value()) {
@@ -1103,26 +1308,28 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
                                                      " parent issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
-        NoteRefusedKeys(summary, refused, "parent issue(s)");
+        HopRows hopRows = std::move(fetched.value());
+        NoteRefusedKeys(summary, hopRows.Refused, "parent issue(s)");
+        if (hopRows.Incomplete) {
+            MarkHierarchyWalkIncomplete(summary, "some parent issue(s) listed by the tracker were not returned");
+        }
 
-        std::vector<CachedTicket> parents = std::move(fetched.value());
         std::vector<std::string> nextRefs;
-        for (const CachedTicket& parent : parents) {
-            if (!parent.id.empty()) {
-                workerKeepIds.insert(parent.id);
-            }
-            std::string grandparentKey = ParentHierarchyPure::ParentKeyOf(parent);
-            if (!grandparentKey.empty()) {
-                nextRefs.push_back(std::move(grandparentKey));
+        for (const std::vector<CachedTicket>* rows : {&hopRows.Unchanged, &hopRows.Changed}) {
+            for (const CachedTicket& parent : *rows) {
+                if (!parent.id.empty()) {
+                    workerKeepIds.insert(parent.id);
+                }
+                std::string grandparentKey = ParentHierarchyPure::ParentKeyOf(parent);
+                if (!grandparentKey.empty()) {
+                    nextRefs.push_back(std::move(grandparentKey));
+                }
             }
         }
-        summary.FetchedCount += parents.size();
-        {
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
-                return;
-            }
-            activeStreamingSync_.PendingBatches.push_back(std::move(parents));
+        summary.FetchedCount += hopRows.Changed.size();
+        if (!QueueBatch(reqId, std::move(hopRows.Unchanged), /*cachedUnchanged=*/true) ||
+            !QueueBatch(reqId, std::move(hopRows.Changed), /*cachedUnchanged=*/false)) {
+            return;
         }
 
         if (nextRefs.empty()) {
@@ -1139,7 +1346,7 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
                                                const ViewsStore& viewsCopy, const std::vector<std::string>& streamedIds,
                                                std::unordered_set<std::string>& workerKeepIds,
-                                               TrackerIssueFetchSummary& summary) {
+                                               TrackerIssueFetchSummary& summary, const HierarchyDelta* delta) {
     if (streamedIds.empty()) {
         return;
     }
@@ -1183,15 +1390,12 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
 
         LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(), hop,
                  static_cast<unsigned long long>(reqId));
-        std::vector<std::string> refused;
-        int splitBudget = RefusalSplitBudget(keys.size());
-        Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
-            [&](const std::vector<std::string>& parentKeys) {
-                return deps_.Backend()->FetchChildrenOfKeys(cfgCopy, parentKeys, viewsCopy);
-            },
-            [this, reqId]() { return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId; }, keys,
-            splitBudget, refused);
-        if (!fetched.has_value() && fetched.error().Kind == TrackerErrorKind::Cancelled) {
+        const std::function<bool()> cancelled = [this, reqId]() {
+            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+        };
+        Result<HopRows, TrackerError> fetched =
+            FetchHierarchyHop(cfgCopy, viewsCopy, cancelled, keys, /*childrenOfKeys=*/true, delta);
+        if (!fetched.has_value() && (fetched.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
             return; // the sync's result is discarded; nothing to warn about
         }
         if (!fetched.has_value()) {
@@ -1199,32 +1403,36 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
                                                      " issue(s) could not be loaded: " + fetched.error().Detail);
             return;
         }
-        NoteRefusedKeys(summary, refused, "issue(s) whose children were");
-
-        std::vector<CachedTicket> children = std::move(fetched.value());
-        std::vector<CachedTicket> newChildren;
-        std::vector<std::string> nextParentKeys;
-        newChildren.reserve(children.size());
-        nextParentKeys.reserve(children.size());
-        for (CachedTicket& child : children) {
-            if (child.id.empty()) {
-                continue;
-            }
-            // Every fetched child is a candidate parent for the NEXT hop regardless of whether
-            // it was already cached — a ticket cached by an earlier sync may still have children
-            // this sync hasn't chased yet. Only genuinely new tickets get queued as a batch.
-            nextParentKeys.push_back(child.id);
-            if (workerKeepIds.insert(child.id).second) {
-                newChildren.push_back(std::move(child));
-            }
+        HopRows hopRows = std::move(fetched.value());
+        NoteRefusedKeys(summary, hopRows.Refused, "issue(s) in the children walk");
+        if (hopRows.Incomplete) {
+            MarkHierarchyWalkIncomplete(summary, "some child issue(s) listed by the tracker were not returned");
         }
-        if (!newChildren.empty()) {
-            summary.FetchedCount += newChildren.size();
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
-                return;
+
+        std::vector<CachedTicket> newUnchanged;
+        std::vector<CachedTicket> newChanged;
+        std::vector<std::string> nextParentKeys;
+        nextParentKeys.reserve(hopRows.Unchanged.size() + hopRows.Changed.size());
+        const auto sift = [&](std::vector<CachedTicket>& rows, std::vector<CachedTicket>& fresh) {
+            for (CachedTicket& child : rows) {
+                if (child.id.empty()) {
+                    continue;
+                }
+                // Every fetched child is a candidate parent for the NEXT hop regardless of whether
+                // it was already cached - a ticket cached by an earlier sync may still have children
+                // this sync hasn't chased yet. Only genuinely new tickets get queued as a batch.
+                nextParentKeys.push_back(child.id);
+                if (workerKeepIds.insert(child.id).second) {
+                    fresh.push_back(std::move(child));
+                }
             }
-            activeStreamingSync_.PendingBatches.push_back(std::move(newChildren));
+        };
+        sift(hopRows.Unchanged, newUnchanged);
+        sift(hopRows.Changed, newChanged);
+        summary.FetchedCount += newChanged.size();
+        if (!QueueBatch(reqId, std::move(newUnchanged), /*cachedUnchanged=*/true) ||
+            !QueueBatch(reqId, std::move(newChanged), /*cachedUnchanged=*/false)) {
+            return;
         }
 
         if (nextParentKeys.empty()) {
@@ -1237,4 +1445,318 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
         MarkHierarchyWalkIncomplete(summary, "descendant tree deeper than " + std::to_string(kMaxChildFetchHops) +
                                                  " levels; the levels below are not loaded");
     }
+}
+
+// ---- Delta reload (docs/plans/active/delta-sync.md § Phase 3) ---------------------------------------
+
+namespace {
+/// Ticket downloads of one delta attempt, in refusal-isolating batches (a key the tracker refuses is
+/// reported in `refused` instead of failing the rest).
+Result<std::vector<CachedTicket>, TrackerError> DownloadChangedRows(ITrackerIssueReader& backend,
+                                                                    const TrackerConfig& cfg, const ViewsStore& views,
+                                                                    const std::function<bool()>& cancelled,
+                                                                    const std::vector<std::string>& keys,
+                                                                    std::vector<std::string>& refused) {
+    if (keys.empty()) {
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::vector<CachedTicket>());
+    }
+    int budget = RefusalSplitBudget(keys.size());
+    return FetchKeysIsolatingRefusals(
+        [&](const std::vector<std::string>& batch) {
+            return backend.FetchIssuesForKeysCancellable(cfg, batch, views, cancelled);
+        },
+        cancelled, keys, budget, refused);
+}
+} // namespace
+
+struct TicketSyncService::DeltaWork {
+    TrackerRoster Roster;
+    smatchet::sync::DeltaFetchSet Set;
+    std::vector<CachedTicket> Unchanged;                  // served from the cache
+    std::vector<CachedTicket> Changed;                    // downloaded this session
+    std::unordered_map<std::string, TicketSyncMeta> Meta; // cached versions the attempt started from
+    std::vector<std::string> RequiredFields;              // fields the active view needs a cached row to carry
+    std::int64_t NowSec = 0;
+};
+
+namespace {
+/// Splits the roster, reads the unchanged rows back from the cache, and moves any row the cache cannot
+/// produce into the download list. The rows to use are `unchangedRows`, never set.Unchanged (which still lists
+/// the keys the cache could not serve; they are also appended to ToFetch).
+void ServeUnchangedRows(ISyncCache& cache, const std::string& backendKey,
+                        const std::unordered_map<std::string, TicketSyncMeta>& meta,
+                        const std::vector<std::string>& requiredFields, std::int64_t nowSec, std::int64_t maxRowAgeSec,
+                        const TrackerRoster& roster, smatchet::sync::DeltaFetchSet& set,
+                        std::vector<CachedTicket>& unchangedRows) {
+    set = smatchet::sync::ComputeDeltaFetchSet(roster.Entries, meta, requiredFields, nowSec, maxRowAgeSec);
+    unchangedRows = cache.GetTicketsByIds(backendKey, set.Unchanged);
+    std::unordered_set<std::string> served;
+    for (const CachedTicket& row : unchangedRows) {
+        served.insert(row.id);
+    }
+    for (const std::string& key : set.Unchanged) {
+        if (served.find(key) == served.end()) {
+            set.ToFetch.push_back(key); // the cache lost the row: download it
+        }
+    }
+}
+
+/// ServeUnchangedRows plus the view-level threshold. Returns the reason to abandon the delta attempt, or empty.
+std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
+                          const std::unordered_map<std::string, TicketSyncMeta>& meta,
+                          const std::vector<std::string>& requiredFields, std::int64_t nowSec,
+                          std::int64_t maxRowAgeSec, const TrackerRoster& roster, smatchet::sync::DeltaFetchSet& set,
+                          std::vector<CachedTicket>& unchangedRows) {
+    ServeUnchangedRows(cache, backendKey, meta, requiredFields, nowSec, maxRowAgeSec, roster, set, unchangedRows);
+    if (smatchet::sync::ShouldPreferFullFetch(roster.Entries.size(), set.ToFetch.size())) {
+        return "most of the view changed (" + std::to_string(set.ToFetch.size()) + " of " +
+               std::to_string(roster.Entries.size()) + " issues)";
+    }
+    return std::string();
+}
+
+} // namespace
+
+void TicketSyncService::FailDeltaSession(std::uint64_t reqId, const std::string& message) {
+    LOG_ERROR("TicketSyncService: %s", message.c_str());
+    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+    if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+        activeStreamingSync_.FetchError = message;
+        activeStreamingSync_.FetchErrorTransient = false; // a bug shape: the ask-the-user branch is the safe one
+        activeStreamingSync_.FullSyncCompleted = false;
+    }
+}
+
+TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy,
+                                                                 const ViewsStore& viewsCopy) {
+    DeltaOutcome out;
+    const std::function<bool()> cancelled = [this, reqId]() {
+        return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+    };
+    ISyncCache* cache = deps_.Cache();
+    ITrackerIssueReader* backend = deps_.Backend();
+    if (cache == nullptr || backend == nullptr) {
+        out.FallbackReason = "no cache or backend";
+        return out;
+    }
+    const std::string backendKey = deps_.CacheBackendKey();
+    // The cached versions this session's worker already loaded (RunStreamingWorkerBody, same thread): one read of
+    // the table per session. A failed read never reaches here (the worker body reports it as its own fallback).
+    const std::unordered_map<std::string, TicketSyncMeta>& meta = sessionMeta_;
+
+    smatchet::sync::SyncStrategyInput input;
+    input.Requested = smatchet::sync::SyncMode::Delta;
+    input.DeltaEnabled = cfgCopy.DeltaSyncEnabled;
+    input.BackendSupportsRoster = backend->SupportsVersionedRoster();
+    input.HaveAnyCachedMeta = !meta.empty();
+    const smatchet::sync::SyncStrategyChoice choice = smatchet::sync::ChooseSyncStrategy(input);
+    if (choice.Mode == smatchet::sync::SyncMode::Full) {
+        out.FallbackReason = choice.FallbackReason;
+        out.ExpectedFallback = true;
+        return out;
+    }
+
+    Result<TrackerRoster, TrackerError> roster = backend->FetchViewRoster(cfgCopy, viewsCopy, cancelled);
+    if (!roster.has_value()) {
+        if (roster.error().Kind == TrackerErrorKind::Cancelled || cancelled()) {
+            out.Finished = true; // cancelled: the session's result is discarded, no fallback
+        } else {
+            out.FallbackReason = "roster request failed: " + roster.error().Detail;
+        }
+        return out;
+    }
+
+    DeltaWork work;
+    work.Roster = std::move(roster.value());
+    work.Meta = meta;
+    work.NowSec = TimeNowPure::NowUnixSeconds();
+    const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
+    work.RequiredFields =
+        smatchet::sync::RequiredFieldsOfView(activeView != nullptr ? activeView->Fields : std::vector<std::string>());
+    out.FallbackReason = PlanDeltaRows(*cache, backendKey, meta, work.RequiredFields, work.NowSec,
+                                       cfgCopy.DeltaSyncMaxRowAgeSec, work.Roster, work.Set, work.Unchanged);
+    if (!out.FallbackReason.empty()) {
+        return out;
+    }
+    if (cancelled()) {
+        out.Finished = true;
+        return out;
+    }
+
+    std::vector<std::string> refused;
+    Result<std::vector<CachedTicket>, TrackerError> downloaded =
+        DownloadChangedRows(*backend, cfgCopy, viewsCopy, cancelled, work.Set.ToFetch, refused);
+    if (!downloaded.has_value()) {
+        if (downloaded.error().Kind == TrackerErrorKind::Cancelled || cancelled()) {
+            out.Finished = true;
+        } else {
+            out.FallbackReason = "ticket download failed: " + downloaded.error().Detail;
+        }
+        return out;
+    }
+    if (!refused.empty()) {
+        // The roster just listed these keys, so a 400/404/410-style refusal of a body request is not proof the
+        // ticket is gone (a proxy limit, a transient permission error, an oversized request all look like this).
+        // Nothing may be purged on its strength: the full fetch decides what the view holds.
+        out.FallbackReason = std::to_string(refused.size()) + " roster-listed issue(s) refused on download (" +
+                             refused.front() + (refused.size() > 1 ? ", ..." : "") + ")";
+        return out;
+    }
+    work.Changed = std::move(downloaded.value());
+    // From the first queued row on, a second full queue would double the session's rows: whatever goes wrong
+    // inside FinishDeltaFetch ends the session instead of falling back.
+    try {
+        FinishDeltaFetch(reqId, cfgCopy, viewsCopy, work);
+    } catch (const std::exception& ex) {
+        FailDeltaSession(reqId, std::string("delta reload failed while applying: ") + ex.what());
+    } catch (...) {
+        FailDeltaSession(reqId, "delta reload failed while applying (unknown exception)");
+    }
+    out.Finished = true;
+    return out;
+}
+
+void TicketSyncService::FinishDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                         DeltaWork& work) {
+    // Keep set: every row actually obtained (served from the cache or downloaded), plus roster keys that came
+    // back with neither a row nor a refusal. Those are not proven gone, so they are kept - but the walk is then
+    // not authoritative (FullSyncCompleted off), so nothing is purged on the strength of an incomplete answer.
+    std::unordered_set<std::string> obtained;
+    for (const std::vector<CachedTicket>* rows : {&work.Unchanged, &work.Changed}) {
+        for (const CachedTicket& row : *rows) {
+            obtained.insert(row.id);
+        }
+    }
+    std::unordered_set<std::string> keepIds;
+    std::vector<std::string> streamedIds;
+    std::size_t listedButMissing = 0;
+    for (const TrackerRosterEntry& entry : work.Roster.Entries) {
+        if (entry.Key.empty() || !keepIds.insert(entry.Key).second) {
+            continue;
+        }
+        streamedIds.push_back(entry.Key);
+        if (obtained.find(entry.Key) == obtained.end()) {
+            ++listedButMissing;
+        }
+    }
+    std::vector<std::string> parentRefs;
+    for (const std::vector<CachedTicket>* rows : {&work.Unchanged, &work.Changed}) {
+        for (const CachedTicket& row : *rows) {
+            std::string parentKey = ParentHierarchyPure::ParentKeyOf(row);
+            if (!parentKey.empty()) {
+                parentRefs.push_back(std::move(parentKey));
+            }
+        }
+    }
+
+    TrackerIssueFetchSummary summary;
+    summary.FetchedCount = work.Changed.size();
+    summary.FullSyncCompleted = work.Roster.Complete && listedButMissing == 0;
+    summary.AppendWarning(work.Roster.Warning);
+    if (listedButMissing > 0) {
+        summary.AppendWarning(std::to_string(listedButMissing) + " issue(s) listed by the tracker were not returned");
+    }
+
+    smatchet::sync::SyncSessionStats partial;
+    partial.Mode = "delta";
+    partial.RosterSize = work.Roster.Entries.size();
+    partial.Unchanged = work.Unchanged.size();
+
+    const auto cancelled = [this, reqId]() {
+        return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+    };
+    try {
+        if (!QueueBatch(reqId, std::move(work.Unchanged), /*cachedUnchanged=*/true) ||
+            !QueueBatch(reqId, std::move(work.Changed), /*cachedUnchanged=*/false)) {
+            return; // superseded while queueing: the result is discarded
+        }
+    } catch (const std::exception& ex) {
+        // A failed save (SQLite) of the changed rows: some rows may be queued already, so no fallback and no
+        // purge. The session publishes what it has and says so.
+        summary.FullSyncCompleted = false;
+        summary.AppendWarning(std::string("some changed issue(s) could not be saved: ") + ex.what());
+        LOG_WARN("TicketSyncService: delta queue threw: %s", ex.what());
+        PublishWorkerResult(reqId, summary, keepIds, partial);
+        return;
+    }
+    // Rows are queued: from here a failure must NOT fall back to a second full queue. A throwing top-up just
+    // makes the result non-authoritative (no purge) and the session still publishes.
+    // The parent and child top-ups are delta too: they list versions first and download only changed rows.
+    HierarchyDelta hierarchyDelta;
+    hierarchyDelta.Meta = &work.Meta;
+    hierarchyDelta.RequiredFields = work.RequiredFields;
+    hierarchyDelta.NowSec = work.NowSec;
+    hierarchyDelta.MaxAgeSec = cfgCopy.DeltaSyncMaxRowAgeSec;
+    try {
+        if (!cancelled()) {
+            FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, parentRefs, keepIds, summary, &hierarchyDelta);
+        }
+        if (!cancelled()) {
+            FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, streamedIds, keepIds, summary, &hierarchyDelta);
+        }
+    } catch (const std::exception& ex) {
+        summary.FullSyncCompleted = false;
+        summary.AppendWarning(std::string("hierarchy top-up failed: ") + ex.what());
+        LOG_WARN("TicketSyncService: delta top-up threw: %s", ex.what());
+    }
+    PublishWorkerResult(reqId, summary, keepIds, partial);
+}
+
+Result<TicketSyncService::HopRows, TrackerError>
+TicketSyncService::FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                     const std::function<bool()>& cancelled, const std::vector<std::string>& keys,
+                                     bool childrenOfKeys, const HierarchyDelta* delta) {
+    using HopResult = Result<HopRows, TrackerError>;
+    ITrackerIssueReader* backend = deps_.Backend();
+    ISyncCache* cache = deps_.Cache();
+    HopRows rows;
+
+    if (delta != nullptr && delta->Meta != nullptr && backend != nullptr && cache != nullptr) {
+        Result<TrackerRoster, TrackerError> roster = childrenOfKeys
+                                                         ? backend->FetchChildRosterOfKeys(cfgCopy, keys, cancelled)
+                                                         : backend->FetchRosterForKeys(cfgCopy, keys, cancelled);
+        if (!roster.has_value() && (roster.error().Kind == TrackerErrorKind::Cancelled || cancelled())) {
+            return HopResult::Err(TrackerErrorCancelled());
+        }
+        if (roster.has_value() && roster.value().Complete) {
+            smatchet::sync::DeltaFetchSet set;
+            ServeUnchangedRows(*cache, deps_.CacheBackendKey(), *delta->Meta, delta->RequiredFields, delta->NowSec,
+                               delta->MaxAgeSec, roster.value(), set, rows.Unchanged);
+            std::vector<std::string> refused;
+            Result<std::vector<CachedTicket>, TrackerError> downloaded =
+                DownloadChangedRows(*backend, cfgCopy, viewsCopy, cancelled, set.ToFetch, refused);
+            if (downloaded.has_value()) {
+                rows.Changed = std::move(downloaded.value());
+                rows.Refused = std::move(refused);
+                // A key the roster listed that came back with no row, or that the tracker refused, is not proven
+                // gone (a refusal of a roster-listed key is never authoritative): the walk must not purge on its
+                // strength. The refused keys are still named in the warning.
+                rows.Incomplete = !rows.Refused.empty() || set.ToFetch.size() > rows.Changed.size();
+                return HopResult::Ok(std::move(rows));
+            }
+            if (downloaded.error().Kind == TrackerErrorKind::Cancelled || cancelled()) {
+                return HopResult::Err(TrackerErrorCancelled());
+            }
+            rows = HopRows(); // fall through to the full-body hop
+        }
+        // A roster error or an incomplete roster: today's full-body hop below (it isolates refused keys).
+        LOG_INFO("TicketSyncService: %s roster for %zu key(s) unusable (%s); downloading full bodies for this hop.",
+                 childrenOfKeys ? "child" : "parent", keys.size(),
+                 roster.has_value() ? "incomplete" : roster.error().Detail.c_str());
+    }
+
+    std::vector<std::string> refused;
+    int budget = RefusalSplitBudget(keys.size());
+    Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
+        [&](const std::vector<std::string>& batch) {
+            return childrenOfKeys ? backend->FetchChildrenOfKeysCancellable(cfgCopy, batch, viewsCopy, cancelled)
+                                  : backend->FetchIssuesForKeysCancellable(cfgCopy, batch, viewsCopy, cancelled);
+        },
+        cancelled, keys, budget, refused);
+    if (!fetched.has_value()) {
+        return HopResult::Err(fetched.error());
+    }
+    rows.Changed = std::move(fetched.value());
+    rows.Refused = std::move(refused);
+    return HopResult::Ok(std::move(rows));
 }

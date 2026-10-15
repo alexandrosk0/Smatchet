@@ -10,8 +10,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <iomanip>
-#include <sstream>
 
 constexpr std::size_t kMaxTrackerHttpBodyLogBytes = 65536;
 constexpr const char* kTrackerUserAgent = "Smatchet/1.0 Jira-Client";
@@ -51,24 +49,6 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
     }
     Logger::Instance().Log(LogLevel::Trace, std::string(clientName) + ": " + method + " response body (" +
                                                 RedactUrlForLog(url) + "):\n" + body + suffix);
-}
-
-// Simple URL-encoder that is C++14 friendly.
-std::string UrlEncode(const std::string& value) {
-    std::ostringstream escaped;
-    (void)escaped.fill('0');
-    escaped << std::hex << std::uppercase;
-
-    for (unsigned char c : value) {
-        // Unreserved characters according to RFC 3986
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
-            c == '.' || c == '~') {
-            escaped << c;
-        } else {
-            escaped << '%' << std::setw(2) << int(c);
-        }
-    }
-    return escaped.str();
 }
 
 // Base64 for the Authorization header comes from StringUtil.h's Base64Encode — sending it

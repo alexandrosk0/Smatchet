@@ -54,6 +54,14 @@ void DrawGridSectionBody(UiDrawSession& d) {
                                    "of a missing parent then show as top-level rows, and descendants the query "
                                    "did not match are not loaded.");
     }
+    if (d.prefsFilter.ShowSetting("editing.grid.delta_sync")) {
+        if (ImGui::Checkbox("Reload only changed issues", &d.cfg.DeltaSyncEnabled)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Refresh lists the view's issues with their last-updated times and downloads only "
+                              "the ones that changed. Off re-downloads every issue on each refresh. Shift+click "
+                              "Refresh View always re-downloads everything. Default: on.");
+    }
     if (d.prefsFilter.ShowSetting("editing.grid.long_text_preview")) {
         if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
             MarkPrefsDirty(d);

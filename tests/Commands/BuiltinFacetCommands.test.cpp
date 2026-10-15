@@ -18,6 +18,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/IMainThreadPoster.h"
+#include "Sync/SyncSessionStats.h"
 
 #include "ConfigManager.h"
 #include "ITrackerCollaboration.h" // TrackerIssueVotes — FakeUsers::FetchIssueVotes returns Result<TrackerIssueVotes>
@@ -126,23 +127,35 @@ struct FakeSync : IAppSync {
     int SyncCalls = 0;
     int RecreateCalls = 0;
     int RefreshCalls = 0;
+    int RefreshAsyncCalls = 0;
     std::string RecreateError;
     TrackerConnectivityState State = TrackerConnectivityState::AuthenticatedReachable;
     std::string SyncWarning = "stale view";
     std::string CatalogError;
     TrackerIssueFetchPack Pack;
 
+    int FullSyncCalls = 0;
     void SyncWithBackend(const TrackerConfig*, const ViewsStore*) override { ++SyncCalls; }
+    void SyncWithBackendMode(const TrackerConfig*, const ViewsStore*, smatchet::sync::SyncMode mode) override {
+        ++SyncCalls;
+        if (mode == smatchet::sync::SyncMode::Full) {
+            ++FullSyncCalls;
+        }
+    }
     VoidResult RecreateLocalCacheDatabase() override {
         ++RecreateCalls;
         return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
     }
     std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
     void RefreshLocalData() override { ++RefreshCalls; }
+    void RefreshLocalDataAsync() override { ++RefreshAsyncCalls; }
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig*, const ViewsStore*) override { return Pack; }
     TrackerConnectivityState GetLastTrackerConnectivityState() const override { return State; }
     const std::string& GetLastTicketSyncWarning() const override { return SyncWarning; }
     const std::string& GetFieldCatalogError() const override { return CatalogError; }
+    smatchet::sync::SyncSessionStats GetLastSyncSessionStats() const override { return Stats; }
+
+    smatchet::sync::SyncSessionStats Stats;
 };
 
 struct FakeOfflineQueue : IAppOfflineQueue {
@@ -369,6 +382,19 @@ struct InlinePoster : IMainThreadPoster {
     void PostToMainThread(std::function<void()> fn) override { fn(); }
 };
 
+// A poster whose "am I the UI thread" answer can be flipped. The sync.* handlers hop through it
+// (RunOnUiThread posts and waits, so running the closure inline satisfies the wait), and
+// sync.fetch_active_view refuses to run when the caller IS the UI thread.
+struct TogglePoster : IMainThreadPoster {
+    bool OnUi = false;
+    int Posts = 0;
+    bool IsOnUiThread() const override { return OnUi; }
+    void PostToMainThread(std::function<void()> fn) override {
+        ++Posts;
+        fn();
+    }
+};
+
 CommandContext AutomationCtx(bool confirmed = false, bool dryRun = false) {
     CommandContext ctx;
     ctx.Source = CommandSource::Cli; // automation source — the destructive gate is armed
@@ -456,42 +482,79 @@ TEST_CASE("users.* — backend results propagate; a failed fetch is BackendError
     }
 }
 
-TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status mapping, fetch pack") {
+TEST_CASE(
+    "sync.* / cache.recreate — trigger plumbing, destructive gate on cache.recreate, status mapping, fetch pack") {
     FakeSync sync;
+    TogglePoster poster;
     CommandRegistry reg;
-    smatchet::cmd::RegisterSyncCommands(reg, sync);
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
 
     {
         const CommandResult r = reg.Dispatch("sync.incremental", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK((*r.Data)["triggered"] == true);
         CHECK(sync.SyncCalls == 1);
+        CHECK(poster.Posts == 1); // hopped to the UI thread instead of running on the caller's thread
     }
     {
-        // Unconfirmed automation source is stopped by the registry BEFORE the handler runs.
+        // sync.full no longer wipes anything, so it needs no confirmation: it forces a Full re-download.
         const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx());
-        REQUIRE_FALSE(r.Ok);
-        CHECK(r.Error.Code == ErrorCode::ConfirmRequired);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
         CHECK(sync.RecreateCalls == 0);
+        CHECK(sync.FullSyncCalls == 1);
+        CHECK(sync.SyncCalls == 2);
+        CHECK(poster.Posts == 2);
     }
     {
         const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx(false, /*dryRun*/ true));
         REQUIRE(r.Ok);
         CHECK((*r.Data).contains("wouldDo"));
+        CHECK(sync.FullSyncCalls == 1);
+    }
+    {
+        // cache.recreate is the destructive wipe: an unconfirmed automation source is stopped by the registry
+        // BEFORE the handler runs ...
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx());
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ConfirmRequired);
         CHECK(sync.RecreateCalls == 0);
     }
     {
-        sync.RecreateError = "cache locked";
-        const CommandResult r = reg.Dispatch("sync.full", {}, AutomationCtx(/*confirmed*/ true));
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(false, /*dryRun*/ true));
         REQUIRE(r.Ok);
-        CHECK((*r.Data)["warning"] == "cache locked");
+        CHECK((*r.Data).contains("wouldDo"));
+        CHECK(sync.RecreateCalls == 0);
+    }
+    {
+        // ... a confirmed one whose wipe fails reports the failure and starts NO sync ...
+        sync.RecreateError = "cache locked";
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::HandlerError);
+        CHECK(r.Error.Message.find("cache locked") != std::string::npos);
         CHECK(sync.RecreateCalls == 1);
+        CHECK(sync.FullSyncCalls == 1);
         CHECK(sync.SyncCalls == 2);
+    }
+    {
+        // ... and a confirmed one that wipes then re-fetches in full.
+        sync.RecreateError.clear();
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
+        CHECK_FALSE((*r.Data).contains("warning"));
+        CHECK(sync.RecreateCalls == 2);
+        CHECK(sync.FullSyncCalls == 2);
+        CHECK(sync.SyncCalls == 3);
     }
     {
         const CommandResult r = reg.Dispatch("sync.refresh_local", {}, AutomationCtx());
         REQUIRE(r.Ok);
-        CHECK(sync.RefreshCalls == 1);
+        // The UI-thread hop only resolves the pane; the SQLite read must not run inline.
+        CHECK(sync.RefreshCalls == 0);
+        CHECK(sync.RefreshAsyncCalls == 1);
+        CHECK(poster.Posts == 5);
     }
     {
         const CommandResult r = reg.Dispatch("sync.tracker_status", {}, AutomationCtx());
@@ -509,10 +572,33 @@ TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status ma
         t.fieldValues["summary"] = "fetched";
         sync.Pack.Tickets.push_back(t);
         sync.Pack.FetchError = "partial page";
+        // On the UI thread the blocking fetch is refused (Pillar 2) ...
+        poster.OnUi = true;
+        const CommandResult refused = reg.Dispatch("sync.fetch_active_view", {}, AutomationCtx());
+        REQUIRE_FALSE(refused.Ok);
+        CHECK(refused.Error.Code == ErrorCode::HandlerError);
+        // ... and runs normally from a CLI / MCP thread.
+        poster.OnUi = false;
         const CommandResult r = reg.Dispatch("sync.fetch_active_view", {}, AutomationCtx());
         REQUIRE(r.Ok);
         CHECK((*r.Data)["tickets"][0]["summary"] == "fetched");
         CHECK((*r.Data)["error"] == "partial page");
+    }
+    {
+        sync.Stats.Valid = true;
+        sync.Stats.Mode = "delta";
+        sync.Stats.RosterSize = 120;
+        sync.Stats.BodiesFetched = 3;
+        sync.Stats.Unchanged = 117;
+        sync.Stats.FallbackReason = "roster error";
+        const CommandResult r = reg.Dispatch("sync.stats", {}, AutomationCtx());
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["valid"] == true);
+        CHECK((*r.Data)["mode"] == "delta");
+        CHECK((*r.Data)["rosterSize"] == 120);
+        CHECK((*r.Data)["bodiesFetched"] == 3);
+        CHECK((*r.Data)["unchanged"] == 117);
+        CHECK((*r.Data)["fallbackReason"] == "roster error");
     }
 }
 
@@ -1005,6 +1091,68 @@ TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-tri
         CHECK(r.Data->contains("enabled"));
         CHECK(r.Data->contains("intervalSec"));
     }
+}
+
+TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged int never resets the fields after it") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "8123"}}, ctx).Ok);
+    REQUIRE(reg.Dispatch("config.set", {{"key", "maxUserChanges"}, {"value", "77"}}, ctx).Ok);
+    const int ttlBefore = ConfigManager::Load().LookupCacheTtlSec;
+
+    for (const char* bad : {"abc", "3.5", "\"7\"", "true", "99999999999", "18446744073709551615"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "lookupCacheTtlSec"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    const TrackerConfig unchanged = ConfigManager::Load();
+    CHECK(unchanged.LookupCacheTtlSec == ttlBefore);
+    CHECK(unchanged.McpPort == 8123);
+    CHECK(unchanged.MaxUserChanges == 77);
+
+    // A damaged file (hand-edited): one bad integer costs only itself, whatever its position in the table.
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) { j["window_x"] = "abc"; });
+    const TrackerConfig damaged = ConfigManager::Load();
+    CHECK(damaged.McpPort == 8123);
+    CHECK(damaged.MaxUserChanges == 77);
+    CHECK(damaged.LookupCacheTtlSec == ttlBefore);
+}
+
+TEST_CASE("config.set takes an integral float like the load does (60.0) and still refuses a fraction (3.5)") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "8123"}}, ctx).Ok);
+
+    const CommandResult accepted = reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "60.0"}}, ctx);
+    REQUIRE(accepted.Ok);
+    CHECK(ConfigManager::Load().McpPort == 60);
+    // Stored as the integer 60, not the float: the file stays in the shape the int table writes.
+    CHECK(ConfigManager::LoadMergedConfigJson().at("mcp_port").is_number_integer());
+
+    const CommandResult refused = reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "3.5"}}, ctx);
+    REQUIRE_FALSE(refused.Ok);
+    CHECK(refused.Error.Code == ErrorCode::ValidationError);
+    CHECK(ConfigManager::Load().McpPort == 60); // the refused write changed nothing
+}
+
+TEST_CASE("a hand-edited integral float for an integer key still loads; a fractional or out-of-range one is ignored") {
+    smatchet_tests::TestEnvGuard env;
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["mcp_port"] = 8123.0;      // integral float: accepted as 8123
+        j["max_user_changes"] = 3.5; // fractional: keeps its default
+        j["window_x"] = 1e30;        // far out of int range: keeps its default
+        j["window_y"] = -250.0;      // negative integral float
+    });
+    const TrackerConfig defaults = TrackerConfig();
+    const TrackerConfig loaded = ConfigManager::Load();
+    CHECK(loaded.McpPort == 8123);
+    CHECK(loaded.MaxUserChanges == defaults.MaxUserChanges);
+    CHECK(loaded.WindowX == defaults.WindowX);
+    CHECK(loaded.WindowY == -250);
 }
 
 TEST_CASE("fields.* — catalog listing/pagination, get lookup, refresh plumbing, icon resolution") {

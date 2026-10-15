@@ -296,6 +296,8 @@ const PrefsSettingDesc kSettings[] = {
      "grid rows hover highlight id tooltip"},
     {"editing.grid.load_parent_issues", "editing.grid", "Load parent issues",
      "grid hierarchy parent story epic tree sync"},
+    {"editing.grid.delta_sync", "editing.grid", "Reload only changed issues",
+     "grid refresh reload delta incremental cache sync bandwidth"},
     {"editing.grid.long_text_preview", "editing.grid", "Open long-text editor in preview mode",
      "grid editing markdown preview"},
     {"editing.grid.overflow_tooltips", "editing.grid", "Show tooltips when text overflows",

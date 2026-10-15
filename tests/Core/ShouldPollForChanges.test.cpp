@@ -10,14 +10,14 @@
 
 #include "PaneSyncKickPolicy.h"
 
+using smatchet::ChangeProbeStillApplicable;
 using smatchet::ShouldPollForChanges;
 
 namespace {
 // A poll is due when `now` has reached the scheduled next-poll time.
 const std::chrono::steady_clock::time_point kNow = std::chrono::steady_clock::time_point(std::chrono::seconds(1000));
 const std::chrono::steady_clock::time_point kDue = std::chrono::steady_clock::time_point(std::chrono::seconds(900));
-const std::chrono::steady_clock::time_point kNotDue =
-    std::chrono::steady_clock::time_point(std::chrono::seconds(1100));
+const std::chrono::steady_clock::time_point kNotDue = std::chrono::steady_clock::time_point(std::chrono::seconds(1100));
 } // namespace
 
 TEST_CASE("All gates open and interval elapsed -> poll") {
@@ -43,4 +43,17 @@ TEST_CASE("Each blocking condition independently vetoes the poll") {
 
 TEST_CASE("now exactly equal to nextChangePollAt is due (>=, not >)") {
     CHECK(ShouldPollForChanges(kNow, true, true, true, true, false, kNow) == true);
+}
+
+TEST_CASE("ChangeProbeStillApplicable: a probe applies only to a live, unswapped pane in the same sync epoch") {
+    // Same generation, same epoch, no sync running -> applies.
+    CHECK(ChangeProbeStillApplicable(true, 3, 3, 7, 7, false) == true);
+    // Context retired mid-flight.
+    CHECK(ChangeProbeStillApplicable(false, 3, 3, 7, 7, false) == false);
+    // Backend swapped mid-flight.
+    CHECK(ChangeProbeStillApplicable(true, 3, 4, 7, 7, false) == false);
+    // A streaming sync started after the probe was issued (epoch moved): its rows are newer.
+    CHECK(ChangeProbeStillApplicable(true, 3, 3, 7, 8, false) == false);
+    // A sync is running right now, even though it began before the probe was dispatched.
+    CHECK(ChangeProbeStillApplicable(true, 3, 3, 7, 7, true) == false);
 }

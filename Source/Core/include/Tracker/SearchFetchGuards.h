@@ -16,6 +16,9 @@ namespace search_guards {
 
 /// Rows asked for per page by every backend (server protocol; not user-tunable).
 constexpr int kPageSize = 100;
+/// Delta-sync roster walks (keys + `updated` only) ask for the same page size as the body fetch, pending the
+/// Phase 0 live-Jira spike (docs/plans/active/delta-sync.md) that measures what a keys-only page can carry.
+constexpr int kJiraRosterPageSize = kPageSize;
 
 // The ceilings below are user-tunable (Config/TunableLimits.h, config.json "limits"); each call reads the
 // currently published value, so callers snapshot it once before their page loop.

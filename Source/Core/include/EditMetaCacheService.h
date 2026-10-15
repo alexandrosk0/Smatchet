@@ -80,6 +80,10 @@ class EditMetaCacheService {
                                       const std::string& fieldId, const TrackerField* fieldMeta,
                                       const std::string& issueTypeKey) const;
     void InvalidateIssueEditMeta(const std::string& issueId);
+    /// Same, for the tracker namespace `backendKey` (a pane that is not the focused one).
+    void InvalidateIssueEditMeta(const std::string& backendKey, const std::string& issueId) {
+        InvalidateIssueEditMetaFor(backendKey, issueId);
+    }
     void PruneEditMetaCacheToActiveTickets();
     /** Load the saved per-type permissions once per backend, then fetch one representative issue per
      * issue type that has no live entry yet.

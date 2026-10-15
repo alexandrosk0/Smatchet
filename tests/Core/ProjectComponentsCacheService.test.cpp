@@ -6,8 +6,10 @@
 #include "../support/FakeEditMetaDeps.h"
 #include "../support/FakeLookupCache.h"
 #include "../support/FakeTrackerClient.h"
+#include "../support/TestEnvGuard.h"
 
 #include "CachedTicketTypes.h"
+#include "ConfigManager.h"
 #include "ComponentOptionsPickPure.h"
 #include "FieldOptionsJsonPure.h"
 #include "LookupPayloadsPure.h"
@@ -91,6 +93,16 @@ class ThrowingWriteLookupCache : public FakeLookupCache {
 } // namespace
 
 TEST_SUITE("ProjectComponentsCacheService") {
+    // LookupCacheTtlSec defaults to 0 (off). The lifetime tests opt in for their scope, with a throwaway data dir.
+    struct LookupLifetimeOn {
+        smatchet_tests::TestEnvGuard env;
+        LookupLifetimeOn() {
+            TrackerConfig cfg;
+            cfg.LookupCacheTtlSec = 86400;
+            ConfigManager::Save(cfg);
+            ConfigManager::InvalidateCache();
+        }
+    };
 
     TEST_CASE("offline: no fetch, and the saved list is offered with an offline cue") {
         FakeEditMetaDeps deps;
@@ -148,6 +160,96 @@ TEST_SUITE("ProjectComponentsCacheService") {
         CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
     }
 
+    TEST_CASE("a saved list served inside its lifetime is not refetched until Refresh, which asks the tracker now") {
+        const LookupLifetimeOn lifetime;
+        FakeEditMetaDeps deps;
+        const auto store = std::make_shared<FakeLookupCache>();
+        SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+        deps.LookupCacheImpl = store;
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+        ProjectComponentsCacheService svc(deps);
+
+        svc.EnsureComponentsLoaded("ABC");
+        CHECK(svc.GetComponentOptions("ABC").freshness == DataFreshness::CachedStale);
+        // The grid asks every frame: the saved copy must not start a worker each time.
+        const int launchesAfterFirst = deps.LaunchBackgroundTaskCalls;
+        for (int i = 0; i < 5; ++i) {
+            CHECK_FALSE(svc.EnsureComponentsLoaded("ABC"));
+        }
+        CHECK(deps.LaunchBackgroundTaskCalls == launchesAfterFirst);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
+
+        CHECK(svc.RefreshComponents("ABC"));
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+        const ProjectComponentsLookup refreshed = svc.GetComponentOptions("ABC");
+        CHECK(refreshed.freshness == DataFreshness::Fresh);
+        REQUIRE(refreshed.options != nullptr);
+        CHECK(refreshed.options->at(0).Value == "Live");
+        CHECK(store->UpsertCalls.load() == 2); // the live list replaces the saved one
+    }
+
+    TEST_CASE("Refresh while offline starts nothing and an empty saved list is never served as the answer") {
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+            deps.LookupCacheImpl = store;
+            deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+            ProjectComponentsCacheService svc(deps);
+            CHECK_FALSE(svc.RefreshComponents("ABC"));
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
+        }
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            SaveComponents(*store, "Jira", "ABC", {}); // saved as empty
+            deps.LookupCacheImpl = store;
+            deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+            ProjectComponentsCacheService svc(deps);
+            svc.EnsureComponentsLoaded("ABC");
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u); // the tracker, not the empty copy, answers
+            CHECK(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+        }
+    }
+
+    TEST_CASE("a saved list younger than the lifetime stands in for the live fetch; an old one is refetched") {
+        const LookupLifetimeOn lifetime;
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+            deps.LookupCacheImpl = store;
+            deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+            ProjectComponentsCacheService svc(deps);
+
+            svc.EnsureComponentsLoaded("ABC");
+
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
+            const ProjectComponentsLookup lookup = svc.GetComponentOptions("ABC");
+            REQUIRE(lookup.options != nullptr);
+            REQUIRE(lookup.options->size() == 1u);
+            CHECK(lookup.options->at(0).Value == "Backend");
+            // Served from the lookup lifetime, but still a SAVED copy: never drawn as live.
+            CHECK(lookup.freshness == DataFreshness::CachedStale);
+            CHECK(store->UpsertCalls.load() == 1); // serving the saved list does not renew its save time
+        }
+        {
+            FakeEditMetaDeps deps;
+            const auto store = std::make_shared<FakeLookupCache>();
+            store->StampEpochSec = 5; // saved long ago
+            SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
+            deps.LookupCacheImpl = store;
+            deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live")});
+            ProjectComponentsCacheService svc(deps);
+
+            svc.EnsureComponentsLoaded("ABC");
+
+            CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+            REQUIRE(svc.GetComponentOptions("ABC").options != nullptr);
+            CHECK(svc.GetComponentOptions("ABC").options->at(0).Value == "Live");
+        }
+    }
+
     TEST_CASE("a project with no components settles to an empty live list, not a spinner") {
         FakeEditMetaDeps deps;
         deps.Fake()->SetProjectComponentsSuccess("ABC", {});
@@ -165,6 +267,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     TEST_CASE("a failed fetch keeps the saved list, backs off, and retries after reconnect") {
         FakeEditMetaDeps deps;
         const auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 5; // saved long ago: older than the lookup lifetime, so the live fetch runs
         SaveComponents(*store, "Jira", "ABC", {Component("100", "Backend")});
         deps.LookupCacheImpl = store;
         deps.Fake()->SetProjectComponentsFailure("ABC", "HTTP 503");
@@ -268,6 +371,7 @@ TEST_SUITE("ProjectComponentsCacheService") {
     TEST_CASE("the saved list never overrides a list fetched live meanwhile") {
         DeferredLaunchDeps deps;
         const auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 5; // older than the lookup lifetime: the live fetch runs
         SaveComponents(*store, "Jira", "ABC", {Component("100", "Old name")});
         deps.LookupCacheImpl = store;
         deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});

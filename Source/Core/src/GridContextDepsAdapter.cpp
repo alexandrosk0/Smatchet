@@ -5,6 +5,7 @@
 #include "GridLiveContext.h"
 #include "Sync/OfflineQueueService.h"
 #include "Sync/PendingActionQueueService.h"
+#include "Sync/RemoteChangeInvalidationPure.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
@@ -12,6 +13,7 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
+#include "NetworkUsageTracker.h"
 #include "SmatchetToast.h"
 
 #include <chrono>
@@ -148,6 +150,15 @@ std::vector<std::string> GridContextDepsAdapter::TicketIdsRetainedByOtherContext
     return app_.CollectTicketIdsRetainedByOtherContexts(ctx());
 }
 
+smatchet::sync::TrackerTrafficSample GridContextDepsAdapter::SampleTrackerTraffic() const {
+    const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
+    smatchet::sync::TrackerTrafficSample sample;
+    sample.Requests = snap.trackerRequests;
+    sample.UploadBytes = snap.trackerUploadBytes;
+    sample.DownloadBytes = snap.trackerDownloadBytes;
+    return sample;
+}
+
 void GridContextDepsAdapter::PublishOwnedTicketIds(const std::vector<std::string>& ids) {
     GridLiveContext& c = ctx();
     app_.SetPaneOwnedTicketIds(c.CacheBackendKeyCopy(), c.PaneId, ids);
@@ -238,6 +249,15 @@ void GridContextDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std
 void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRevision.fetch_add(1); }
 
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
+
+void GridContextDepsAdapter::OnTicketsRemotelyChanged(const std::vector<std::string>& ids) {
+    // This adapter's own pane, not the focused one: its tickets' cached transitions and permissions live under
+    // its tracker namespace.
+    smatchet::sync::InvalidateRemotelyChangedTickets(
+        ctx().CacheBackendKeyCopy(), ids,
+        [this](const std::string& key, const std::string& id) { app_.InvalidateIssueTransitions(key, id); },
+        [this](const std::string& key, const std::string& id) { app_.InvalidateIssueEditMeta(key, id); });
+}
 
 void GridContextDepsAdapter::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) {
     app_.WarmIssueTypeEditMetaAtStartAsync(std::move(cfg));

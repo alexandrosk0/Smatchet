@@ -270,12 +270,19 @@ class AppController : public IAppThreading,
     /// Returns the resolved project key (empty when none resolves).
     std::string ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const;
 
+    /// When the catalog snapshot restored at startup was saved from a live fetch (epoch seconds; 0 = none or
+    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written once by
+    /// InitFieldCatalog before the first frame; read by the grid's startup-skip decision.
+    std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
+    std::string startupCatalogProjectKey_;
+
     /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
     /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
     void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
-                                          const std::string& activeTrackerType, const std::string& projectKey);
+                                          const std::string& activeTrackerType, const std::string& projectKey,
+                                          bool snapshotFresh);
 
     /// Phase 4 — initialise Lua, start the merge-watch notify endpoint, run the Lua
     /// setup script + automation worker, and warm the Jira issue-type edit-meta.
@@ -671,6 +678,9 @@ class AppController : public IAppThreading,
      */
     void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                          const ViewsStore* viewsOverride = nullptr) override;
+    /** SyncWithBackend with an explicit mode: Delta (default above) or a forced Full re-download. */
+    void SyncWithBackendMode(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                             smatchet::sync::SyncMode mode) override;
 
     /** Process queued streaming ticket batches on the UI thread (frame-budgeted). */
     void TickStreamingApply();
@@ -689,6 +699,7 @@ class AppController : public IAppThreading,
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData() override;
+    void RefreshLocalDataAsync() override;
     // Generation-checked refreshes (issue #1081) go through RefreshLocalDataCheckedImpl_,
     // private on purpose: every checked caller must pass the GridLiveContext it latched the
     // generation from (UpdateTicket's queued save; replay workers via the friend
@@ -735,6 +746,12 @@ class AppController : public IAppThreading,
     static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
     const std::vector<TrackerField>& GetAvailableFields() const override { return fieldCatalog().AvailableFields; }
+    /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
+    /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
+    std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }
+    /// The project scope that startup snapshot was restored under ("" = the unscoped fallback). The startup fetch
+    /// may only be skipped for a view that resolves to the same project.
+    const std::string& StartupCatalogSnapshotProjectKey() const { return startupCatalogProjectKey_; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return fieldCatalog().AvailableComponents; }
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.
@@ -745,6 +762,7 @@ class AppController : public IAppThreading,
      *  Returns a const reference (callers bind a reference); delegates to ConnectivityMonitorService.
      *  De-inlined (Phase 3) — the body lives in AppController.cpp where the service is a complete type. */
     const std::string& GetLastTicketSyncWarning() const override;
+    smatchet::sync::SyncSessionStats GetLastSyncSessionStats() const override;
 
     /**
      * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
@@ -1028,6 +1046,9 @@ class AppController : public IAppThreading,
      *  when this call changed the project's entry (a fetch started, or failed to start), so the caller
      *  re-reads it. */
     bool EnsureProjectComponentsLoaded(const std::string& projectKey);
+    /** The components editor's Refresh: asks the tracker for `projectKey`'s components now, even while a saved
+     *  list is still inside its lifetime or a failure backoff is pending. True when a fetch started. */
+    bool RefreshProjectComponents(const std::string& projectKey);
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
@@ -1074,6 +1095,9 @@ class AppController : public IAppThreading,
                                          const TrackerConfig* configSnapshot = nullptr);
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
+    /// Same, for the tracker namespace `backendKey`: a pane's remote-change invalidation must not land in the
+    /// focused pane's namespace.
+    void InvalidateIssueEditMeta(const std::string& backendKey, const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     /** Post-sync warm: per-issue-type edit permissions (EditMetaCacheService) and each active project's
      * component options (ProjectComponentsCacheService); both load their saved copies first.
@@ -1085,6 +1109,7 @@ class AppController : public IAppThreading,
     struct TransitionsLookup GetAvailableTransitionsForIssue(const TransitionsQuery& query) const;
     void EnsureIssueTransitionsLoaded(const TransitionsQuery& query) const;
     void InvalidateIssueTransitions(const std::string& issueId);
+    void InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
     /// FetchIssueWatchers with the error kind kept (Transport when the tracker is unreachable), so the
@@ -1463,7 +1488,7 @@ class AppController : public IAppThreading,
     /// For each recently-visible live pane whose change-poll gate is open
     /// (smatchet::ShouldPollForChanges — monitor enabled, backend reachable, window focused,
     /// pane recently visible, sync idle, interval elapsed), dispatch ONE off-thread change probe
-    /// (FetchIssuesChangedSince) and stamp nextChangePollAt forward as the in-flight guard. The
+    /// (sync::RunChangeProbeCycle) and stamp nextChangePollAt forward as the in-flight guard. The
     /// first poll per context establishes a silent baseline (seeds the anchor, no fetch/toast).
     /// Results hop back to applyChangeProbeOnMainThread_. No-op when cfg disables the monitor.
     void TickChangeMonitors(const TrackerConfig& cfg);
@@ -1473,26 +1498,26 @@ class AppController : public IAppThreading,
     void SetWindowFocused(bool focused);
 
   private:
-    /// Off-thread (worker) half of the membership reconcile (S1c-3, item 10): fetch the view's
-    /// current keys, diff against `cachedKeys` (the pane's cache keys snapshotted on the UI thread
-    /// at dispatch), and ProbeIssueExists each vanished key (capped per cycle), returning one
-    /// smatchet::MembershipRemovalVerdict per probed key. Static — touches no AppController instance
-    /// state, so it is safe on the background task thread; the verdicts are applied on the UI thread
-    /// by applyChangeProbeOnMainThread_. `paneId` is for logging only.
-    static std::vector<smatchet::MembershipRemovalVerdict>
-    computeMembershipRemovals_(ITrackerIssueReader& reader, const TrackerConfig& cfg, const ViewsStore& views,
-                               const std::vector<std::string>& cachedKeys, const std::string& paneId);
     /// Main-thread completion of a change probe: re-find the pane context (dropped if retired)
     /// and re-check its backendGeneration_ against `capturedGeneration` (dropped if swapped
     /// mid-flight), diff the fetched rows against the pane's current ActiveTickets cache
     /// (DiffChangedTickets over the resolved salient roster), fold in the membership `verdicts`
     /// (ClassifyMembershipRemovals → erase resident rows from ActiveTickets, drop the shared cache
     /// row on each 404, republish + bump revision), notify on any salient delta, then advance
-    /// changeSinceAnchor and re-stamp nextChangePollAt. UI thread.
+    /// changeSinceAnchor and re-stamp nextChangePollAt. UI thread. The result is also dropped when
+    /// the pane's sync session epoch moved past `capturedSyncEpoch` or a sync is active (its rows are
+    /// newer than the probe's), and a probe row whose `updated` is older than the resident row's
+    /// never replaces it (Sync/RemoteVersionPure.h).
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
-                                       std::chrono::system_clock::time_point polledAt,
-                                       std::uint64_t capturedGeneration);
+                                       std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
+                                       std::uint64_t capturedSyncEpoch, bool addNewRows);
+    /// applyChangeProbeOnMainThread_ halves: drop the shared cache rows of 404'd keys no sibling pane retains,
+    /// and persist the rows a probe updated (worker write, latched cache handle). UI thread.
+    void dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
+                              const smatchet::MembershipReconcilePlan& plan);
+    void persistProbeRows_(const std::string& paneId, const std::string& backendKey,
+                           std::vector<CachedTicket> updatedTickets);
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};

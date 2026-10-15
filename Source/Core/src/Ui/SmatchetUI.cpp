@@ -25,6 +25,8 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Logger.h"
+#include "Sync/LookupFreshnessPure.h"
+#include "TimeNowPure.h"
 #include "LookupPayloadsPure.h"
 #include "NavigationHistory.h"
 #include "ProjectResolver.h"
@@ -288,6 +290,18 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     ImGui::EndPopup();
 }
 
+/// The project the field catalog is scoped to for a view's JQL: the one value both the catalog fetch and the
+/// startup-skip decision (a saved snapshot must have been saved for the same project) must agree on.
+static std::string ResolveCatalogProjectKey(const std::shared_ptr<ITrackerBackend>& backend,
+                                            const TrackerConfig& fetchCfg, const std::string& activeViewJql) {
+    // Plane keeps its own resolver (its project is a UUID read from the view or the config query).
+    if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
+        return smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
+    }
+    return smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql, std::string(),
+                                            std::string());
+}
+
 // The grid's catalog fetch, run on a worker: fills `result`, which the UI thread applies.
 static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const TrackerConfig& fetchCfg,
                                       const std::string& activeViewJql,
@@ -295,16 +309,8 @@ static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const Tra
                                       const std::string& cacheBackendKey) {
     result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
     result.CacheBackendKey = cacheBackendKey;
-    std::string projectKey;
     const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
-    // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
-    // exactly here meant "plane" got a Plane BackendKey but skipped the Plane resolver.
-    if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
-        projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
-    } else {
-        projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
-                                                      std::string(), std::string());
-    }
+    const std::string projectKey = ResolveCatalogProjectKey(backend, fetchCfg, activeViewJql);
     result.ProjectKey = projectKey;
     std::string error;
     TrackerFieldCatalogResult catalog;
@@ -1566,31 +1572,41 @@ void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool
 }
 #endif
 
-// Fetch field catalog on first draw and trigger initial backend sync with configuration persistence.
-// Handles grid pane initialization and connectivity recovery sync attempts.
-void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d) {
-    const auto startCatalogFetch = [&](const TrackerConfig& fetchCfg) {
-        if (d.fieldCatalogLoading) {
-            return;
-        }
-        if (!app.BackendShared()) {
-            return;
-        }
-        d.fieldCatalogLoading = true;
-        d.fieldCatalogFetchStarted = true;
-        // Pillar 6: a pane with no users yet shows the roster saved by an earlier session until (or
-        // unless) this fetch brings a live one.
-        app.SeedAvailableUsersFromStoreAsync();
-        const ViewDefinition* activeView = ViewState.GetActiveView();
-        const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
-        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
-    };
-
-    if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
-        d.triggerCatalogRefetch = false;
-        startCatalogFetch(d.cfg);
+namespace {
+// A saved catalog still inside its lifetime that covers every column of the active view stands in for the
+// startup fetch (offline-first: it is what the grid draws, with a "saved" cue); one refresh is scheduled for
+// when it expires.
+void TrySkipStartupCatalogFetch(AppController& app, UiDrawSession& d, const ViewDefinition* skipView) {
+    std::vector<std::string> catalogIds;
+    for (const TrackerField& f : app.GetAvailableFields()) {
+        catalogIds.push_back(f.Id);
     }
+    const std::int64_t nowUnix = TimeNowPure::NowUnixSeconds();
+    const std::int64_t savedUnix = app.StartupCatalogSnapshotSavedUnix();
+    // The snapshot is only a stand-in for the fetch the view would make: same project scope, or it is
+    // missing the project-scoped data (component options) that fetch brings.
+    // UI thread: only the pure query parse is allowed here. Plane's resolver may list projects over the
+    // network when the query names none, so a Plane startup never skips (the worker fetch resolves it).
+    const bool pureResolve = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType);
+    const std::string viewProjectKey =
+        pureResolve ? ResolveCatalogProjectKey(app.BackendShared(), d.cfg, skipView ? skipView->Jql : d.cfg.JqlQuery)
+                    : std::string();
+    if (pureResolve &&
+        smatchet::sync::CanSkipCatalogFetch(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec,
+                                            skipView ? skipView->Fields : std::vector<std::string>(), catalogIds,
+                                            app.StartupCatalogSnapshotProjectKey(), viewProjectKey)) {
+        d.fieldCatalogFetchStarted = true;
+        d.catalogServedFromSnapshot = true;
+        d.catalogSnapshotRefreshAtUnix =
+            nowUnix + smatchet::sync::SecondsUntilLookupStale(savedUnix, nowUnix, d.cfg.FieldCatalogRefreshTtlSec);
+        app.SeedAvailableUsersFromStoreAsync(); // the roster the skipped fetch would have brought
+        LOG_INFO("SmatchetUI: saved field catalog is fresh; skipping the startup catalog fetch.");
+    }
+}
 
+// Consumes the finished catalog fetch (if any) into the AppController. Returns false when the result belonged to
+// another pane's site and was discarded (the caller ends the frame; a refetch is queued).
+bool ApplyReadyFieldCatalogFetch(AppController& app, UiDrawSession& d) {
     if (d.fieldCatalogLoading && d.fieldCatalogFuture.valid() &&
         d.fieldCatalogFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         try {
@@ -1601,7 +1617,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 result.CacheBackendKey != app.FocusedCacheBackendKey()) {
                 d.fieldCatalogLoading = false;
                 d.triggerCatalogRefetch = true;
-                return;
+                return false;
             }
             if (result.Ok) {
                 // Pin the project key the fetch was scoped to so the snapshot saves under the
@@ -1643,6 +1659,90 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         d.fieldCatalogLoading = false;
     }
+    return true;
+}
+
+// First initial-view apply: persist the config, clear the sync warning, and kick the focused pane's live sync
+// (unless a same-frame backend switch asked to suppress it).
+void StartInitialTicketSync(AppController& app, UiDrawSession& d) {
+    // Pillar 2 (#2145 audit): this block re-runs every frame until the grid panes are
+    // loaded (neither latch is set on that path), so the save is repeating, not one-shot.
+    // `d.cfg` is passed by pointer to the sync kicks below, so deferring only the disk
+    // write changes nothing they observe.
+    smatchet::config_save::EnqueueTrackerConfig(d.cfg);
+    app.ClearLastTrackerTicketSyncWarning();
+    // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
+    // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
+    d.connectivityRecoveryTicketResyncPending = false;
+    const bool suppressKeyMatches =
+        d.suppressNextBackendSwitchInitialSyncKey == ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+    const bool suppressThisKick = d.suppressNextBackendSwitchInitialSync && suppressKeyMatches;
+    // Consume-once either way — a stale latch (key mismatch, e.g. a same-frame
+    // Preferences backend switch) must not survive to swallow a later sync.
+    d.suppressNextBackendSwitchInitialSync = false;
+    d.suppressNextBackendSwitchInitialSyncKey.clear();
+    if (suppressThisKick) {
+        d.initialTicketSyncStarted = true;
+        d.appliedInitialView = true;
+    } else if (d.gridPanesLoaded && !d.gridPanes.empty()) {
+        const GridPane& focused = d.focusedPane();
+        if (!app.IsPaneSyncLive(focused.id)) {
+            TrackerConfig paneCfg = d.cfg;
+            if (!focused.backendKey.empty()) {
+                paneCfg.TrackerType = focused.backendKey;
+            }
+            app.EnsurePaneLiveSyncStarted(focused.id, paneCfg, focused.viewId);
+        }
+        d.initialTicketSyncStarted = true;
+        d.appliedInitialView = true;
+    }
+    // else: panes not loaded yet — drawGridPaneWindows kicks the focused pane same
+    // frame (EnsurePanesLoaded + SetFocusedPane) and marks initialTicketSyncStarted.
+}
+} // namespace
+
+// Fetch field catalog on first draw and trigger initial backend sync with configuration persistence.
+// Handles grid pane initialization and connectivity recovery sync attempts.
+void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d) {
+    const auto startCatalogFetch = [&](const TrackerConfig& fetchCfg) {
+        if (d.fieldCatalogLoading) {
+            return;
+        }
+        if (!app.BackendShared()) {
+            return;
+        }
+        d.fieldCatalogLoading = true;
+        d.fieldCatalogFetchStarted = true;
+        d.catalogServedFromSnapshot = false;
+        d.catalogSnapshotRefreshAtUnix = 0;
+        // Pillar 6: a pane with no users yet shows the roster saved by an earlier session until (or
+        // unless) this fetch brings a live one.
+        app.SeedAvailableUsersFromStoreAsync();
+        const ViewDefinition* activeView = ViewState.GetActiveView();
+        const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
+        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
+    };
+
+    // A saved catalog still inside its lifetime that covers every column of the active view stands in for the
+    // startup fetch (offline-first: it is what the grid draws, with a "saved" cue); one refresh is scheduled for
+    // when it expires. Only the first start may skip: later requests are explicit (tracker or preference change).
+    if (!d.fieldCatalogFetchStarted && !d.catalogStartupSkipTried && !d.fieldCatalogLoading) {
+        d.catalogStartupSkipTried = true;
+        TrySkipStartupCatalogFetch(app, d, ViewState.GetActiveView());
+    }
+    if (d.catalogSnapshotRefreshAtUnix != 0 && TimeNowPure::NowUnixSeconds() >= d.catalogSnapshotRefreshAtUnix) {
+        d.catalogSnapshotRefreshAtUnix = 0;
+        d.triggerCatalogRefetch = true; // the snapshot expired: refresh it
+    }
+
+    if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
+        d.triggerCatalogRefetch = false;
+        startCatalogFetch(d.cfg);
+    }
+
+    if (!ApplyReadyFieldCatalogFetch(app, d)) {
+        return; // focus moved to another site mid-fetch: the result was discarded and a refetch queued
+    }
 
     if (!d.appliedInitialView) {
         const ViewDefinition* activeView = ViewState.GetActiveView();
@@ -1652,39 +1752,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
         }
         if (!d.initialTicketSyncStarted) {
-            // Pillar 2 (#2145 audit): this block re-runs every frame until the grid panes are
-            // loaded (neither latch is set on that path), so the save is repeating, not one-shot.
-            // `d.cfg` is passed by pointer to the sync kicks below, so deferring only the disk
-            // write changes nothing they observe.
-            smatchet::config_save::EnqueueTrackerConfig(d.cfg);
-            app.ClearLastTrackerTicketSyncWarning();
-            // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
-            // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
-            d.connectivityRecoveryTicketResyncPending = false;
-            const bool suppressKeyMatches =
-                d.suppressNextBackendSwitchInitialSyncKey == ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-            const bool suppressThisKick = d.suppressNextBackendSwitchInitialSync && suppressKeyMatches;
-            // Consume-once either way — a stale latch (key mismatch, e.g. a same-frame
-            // Preferences backend switch) must not survive to swallow a later sync.
-            d.suppressNextBackendSwitchInitialSync = false;
-            d.suppressNextBackendSwitchInitialSyncKey.clear();
-            if (suppressThisKick) {
-                d.initialTicketSyncStarted = true;
-                d.appliedInitialView = true;
-            } else if (d.gridPanesLoaded && !d.gridPanes.empty()) {
-                const GridPane& focused = d.focusedPane();
-                if (!app.IsPaneSyncLive(focused.id)) {
-                    TrackerConfig paneCfg = d.cfg;
-                    if (!focused.backendKey.empty()) {
-                        paneCfg.TrackerType = focused.backendKey;
-                    }
-                    app.EnsurePaneLiveSyncStarted(focused.id, paneCfg, focused.viewId);
-                }
-                d.initialTicketSyncStarted = true;
-                d.appliedInitialView = true;
-            }
-            // else: panes not loaded yet — drawGridPaneWindows kicks the focused pane same
-            // frame (EnsurePanesLoaded + SetFocusedPane) and marks initialTicketSyncStarted.
+            StartInitialTicketSync(app, d);
         }
     }
 

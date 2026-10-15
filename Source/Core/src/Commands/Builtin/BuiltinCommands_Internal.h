@@ -85,7 +85,7 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app);
 void RegisterTicketsCommands(CommandRegistry& reg, IAppTicketData& app);
 void RegisterTicketMutationCommands(CommandRegistry& reg, IAppTicketMutations& app);
 void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster);
-void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app);
+void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster);
 void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app);
 void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app);
 void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);

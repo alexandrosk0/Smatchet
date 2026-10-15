@@ -12,17 +12,25 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "Sync/SyncMode.h"         // SyncMode: Delta (changed tickets only) vs Full (whole view).
+#include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
+#include "SmatchetResult.h"       // Result<>
+#include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
+struct TrackerError;             // Tracker/TrackerError.h — only named in the FetchHierarchyHop declaration
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
 
 class ITicketSyncDeps;
@@ -77,7 +85,19 @@ class TicketSyncService {
     /// Begin a tracker refresh. If a session is already busy (worker, apply queue, or
     /// stale-deletion), the request is deferred via `hasPendingSyncRequest_` and the active
     /// session is superseded. Otherwise transitions straight to `StartStreamingSync`.
-    void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride);
+    /// `mode` Delta (the default) lists the view's tickets with their versions and downloads only the changed
+    /// ones, falling back to a full fetch on any failure; Full forces the whole-view download. Requests queued
+    /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
+    void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                         smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
+
+    /// Count of streaming sessions started by this service. A change-monitor probe captures it when it
+    /// is issued and drops its result when it moved: a sync that began in between writes newer rows
+    /// than the probe saw. Any thread.
+    std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
+
+    /// What the most recently finished session cost (`Valid` is false until one finishes). Any thread.
+    smatchet::sync::SyncSessionStats LastSessionStats() const;
 
     /// True when any of (worker active, session running, stale-deletion in progress). Used by
     /// `AppController::IsStreamingSyncActive()` which de-inlines into a delegate.
@@ -111,6 +131,43 @@ class TicketSyncService {
                                                                     const std::vector<std::string>& retainedElsewhere);
 
   private:
+    /// One queued group of rows for the UI-thread apply. `CachedUnchanged` rows were read back from the cache
+    /// because the tracker reports them unchanged: the apply neither saves them nor carries comments forward,
+    /// and only touches the in-memory roster when the row is missing or differs.
+    struct SyncBatch {
+        std::vector<CachedTicket> Rows;
+        bool CachedUnchanged = false;
+        /// Ids the session keeps WITHOUT queueing a row (a fetched row dropped because the cache holds a newer
+        /// copy): the apply adds them to KeepIds so the roster convergence and the "N kept" count see them.
+        std::vector<std::string> KeepOnlyIds;
+    };
+    /// Result of the delta attempt: `Finished` = the session's result was published (or the session was
+    /// cancelled) and no full fetch is needed; otherwise `FallbackReason` says why Full must run.
+    struct DeltaOutcome {
+        bool Finished = false;
+        std::string FallbackReason;
+        /// The reason is an expected strategy choice (disabled, unsupported, nothing cached), not a failure.
+        bool ExpectedFallback = false;
+    };
+    /// What a delta-aware hierarchy hop needs from the delta attempt: the cached versions it started from,
+    /// the fields the view requires, and the age bound. Null = the hop downloads full bodies (a Full sync).
+    struct HierarchyDelta {
+        const std::unordered_map<std::string, TicketSyncMeta>* Meta = nullptr;
+        std::vector<std::string> RequiredFields;
+        std::int64_t NowSec = 0;
+        std::int64_t MaxAgeSec = 0;
+    };
+    /// One hierarchy hop's rows: served from the cache, downloaded, and the keys the tracker refused.
+    struct HopRows {
+        std::vector<CachedTicket> Unchanged;
+        std::vector<CachedTicket> Changed;
+        std::vector<std::string> Refused;
+        /// A key the roster listed as present came back with neither a row nor a refusal: the walk cannot
+        /// be authoritative (nothing may be purged on its strength).
+        bool Incomplete = false;
+    };
+    struct DeltaWork; // the roster, the fetch set and the rows of one delta attempt (defined in the .cpp)
+
     /// Streaming-sync FSM state. Moved out of AppController in Phase 1C of the item 11
     /// extraction. Worker thread + UI thread coordinate via the atomics + `QueueMutex`.
     struct StreamingSyncState {
@@ -130,12 +187,19 @@ class TicketSyncService {
         std::string Warning;
 
         mutable std::mutex QueueMutex;
-        std::vector<std::vector<CachedTicket>> PendingBatches;
+        std::vector<SyncBatch> PendingBatches;
         std::unordered_set<std::string> KeepIds;
         std::vector<std::string> BackgroundStaleIds;
+
+        /// Worker-filled part of the session cost record (mode, bodies, ...), guarded by QueueMutex.
+        smatchet::sync::SyncSessionStats WorkerStats;
+        /// Session clock + traffic baseline, written in StartStreamingSync before the worker is
+        /// spawned and read on the UI thread at finalize.
+        std::chrono::steady_clock::time_point SessionStartedAt{};
+        smatchet::sync::TrackerTrafficSample TrafficAtStart;
     };
 
-    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy, smatchet::sync::SyncMode mode);
 
     // StartStreamingSync phases. Each mutates the member FSM state in place; lock scopes match
     // the original inline body (same mutexes, same points).
@@ -146,7 +210,35 @@ class TicketSyncService {
 
     /// Background streaming-fetch worker body. Coordinates with the UI thread via FSM atomics
     /// + `QueueMutex`.
-    void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                smatchet::sync::SyncMode mode);
+
+    /// Today's whole-view streamed fetch + parent/child top-ups, then publishes the session result.
+    /// `fallbackReason` is non-empty when this run replaces an abandoned delta attempt.
+    void RunFullFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                      const std::string& fallbackReason);
+
+    /// Delta attempt: roster -> fetch set -> cached rows for the unchanged -> bodies for the changed ->
+    /// queue + top-ups + publish. Never throws past the caller's fallback; see DeltaOutcome.
+    DeltaOutcome RunDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+    /// Ends the session with a (non-transient) error and no purge, for a failure after rows were queued.
+    void FailDeltaSession(std::uint64_t reqId, const std::string& message);
+
+    /// Queues the delta rows, runs the hierarchy top-ups and publishes the session result.
+    void FinishDeltaFetch(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                          DeltaWork& work);
+
+    /// Publishes a finished worker session (result flags, stats, stale ids) under QueueMutex; a no-op when
+    /// the session was superseded or cancelled.
+    void PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
+                             const std::unordered_set<std::string>& keepIds,
+                             const smatchet::sync::SyncSessionStats& partialStats);
+
+    /// Appends rows to the apply queue; false when the session was superseded / cancelled meanwhile.
+    /// A freshly fetched batch (`cachedUnchanged` false) is persisted HERE, on the worker, before it is
+    /// queued - carried-forward comments, rows older than the cached version dropped, one SQLite transaction
+    /// for the rest - so the UI-thread drain only touches memory (Pillar 2).
+    bool QueueBatch(std::uint64_t reqId, std::vector<CachedTicket>&& rows, bool cachedUnchanged);
 
     /// Worker-side parent top-up (parent-issue-hierarchy plan): fetch every parent key the
     /// streamed batches referenced but did not contain, then chase THEIR parents too, one hop
@@ -158,8 +250,17 @@ class TicketSyncService {
     /// `summary.Warning`, not a FetchError — the tickets fetched so far still apply.
     void FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
                                       const std::vector<std::string>& parentRefs,
-                                      std::unordered_set<std::string>& workerKeepIds,
-                                      TrackerIssueFetchSummary& summary);
+                                      std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary,
+                                      const HierarchyDelta* delta = nullptr);
+
+    /// One hop's rows for `keys` (parents by key, or children of `keys`). With `delta` it lists versions first
+    /// (FetchRosterForKeys / FetchChildRosterOfKeys), serves unchanged rows from the cache and downloads only the
+    /// changed ones; a roster error or an incomplete roster runs today's full-body hop instead. Without `delta`
+    /// it is the full-body hop. A cancelled hop returns a `Cancelled` error.
+    Result<HopRows, TrackerError> FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                                    const std::function<bool()>& cancelled,
+                                                    const std::vector<std::string>& keys, bool childrenOfKeys,
+                                                    const HierarchyDelta* delta);
 
     /// Downward mirror of FetchMissingParentsIntoQueue: given the keys the view's own JQL/filter
     /// actually streamed this sync, fetch their children (and their children's children, hop by
@@ -172,7 +273,8 @@ class TicketSyncService {
     /// tickets fetched so far still apply.
     void FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
                                 const std::vector<std::string>& streamedIds,
-                                std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary);
+                                std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary,
+                                const HierarchyDelta* delta = nullptr);
 
     // --- TickStreamingApply phase helpers ------------------------------------------------
     // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the
@@ -207,6 +309,10 @@ class TicketSyncService {
     /// (a partial fetch cannot prove any row is gone). UI thread, once per session.
     void SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession);
 
+    /// Phase 4a: fold the worker's record, the session clock and the traffic delta into
+    /// `lastStats_` and log it once. UI thread, once per session, before the stale-delete seeding.
+    void RecordSessionStats(const std::string& fetchError, bool fullSyncCompleted);
+
     /// Phase 4c: converge this pane's in-memory roster onto exactly the ids its OWN query returned
     /// this session, then publish that set through `ITicketSyncDeps::PublishOwnedTicketIds` so a
     /// sibling pane's stale sweep can subtract it. The batch apply reads a cache namespace shared
@@ -217,9 +323,22 @@ class TicketSyncService {
 
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
+    std::atomic<std::uint64_t> sessionEpoch_{0};
+    mutable std::mutex statsMutex_;
+    smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;
 
     bool hasPendingSyncRequest_ = false;
+    smatchet::sync::SyncMode pendingMode_ = smatchet::sync::SyncMode::Delta;
+    /// Mode of the session started last (UI thread only); a later Delta request must not downgrade it while
+    /// its fetch is still running.
+    smatchet::sync::SyncMode activeMode_ = smatchet::sync::SyncMode::Delta;
+    /// Versions of the cached rows as of the session start; worker-thread only (written before the first
+    /// batch is queued, read while persisting the batches of the same session).
+    std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
+    /// Fills `sessionMeta_` from the cache (worker thread). Returns the error text when the read failed (the
+    /// snapshot is then empty), empty on success.
+    std::string LoadSessionMeta();
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
 
@@ -227,6 +346,9 @@ class TicketSyncService {
     // from `AppController::IsStreamingSyncActive()` which is callable from any thread. The
     // rest are UI-thread-only by contract.
     std::atomic<bool> isDeletingStale_{false};
+    /// True while the background stale-row DELETE is running. Shared so the task can clear it without touching
+    /// the service; it counts as busy, so no new session starts (and re-saves a row) before the delete lands.
+    std::shared_ptr<std::atomic<bool>> deleteInFlight_ = std::make_shared<std::atomic<bool>>(false);
     std::vector<std::string> staleIdsToDelete_;
     std::size_t totalStaleToDelete_ = 0;
     std::size_t staleDeletedSoFar_ = 0;

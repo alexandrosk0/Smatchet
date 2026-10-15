@@ -162,6 +162,23 @@ struct TrackerConfig {
     // descendants the query did not match are not loaded. Exposed in Settings -> Preferences ->
     // Editing -> Grid behaviour.
     bool LoadParentIssues = true;
+    // Delta reload (docs/plans/active/delta-sync.md): when true (default) a refresh lists the view's tickets
+    // with their last-updated stamps and downloads only the ones that changed; the rest come from the local
+    // cache. Off restores the full re-download on every refresh (the kill switch). Exposed in Settings ->
+    // Preferences -> Editing -> Grid behaviour.
+    bool DeltaSyncEnabled = true;
+    // A cached ticket older than this many seconds is downloaded again even when its stamp is unchanged:
+    // values copied from OTHER issues (parent summary, link status, sprint, display names) change without
+    // moving the ticket's own stamp. Clamped to [300, 604800] at load. Default 6 hours.
+    int DeltaSyncMaxRowAgeSec = 21600;
+    // The saved field catalog is used as is, with no live fetch at startup, while it is younger than this many
+    // seconds (the grid shows it with a "saved" cue and refetches when it expires). Clamped to [300, 2592000]
+    // at load. Default 12 hours.
+    int FieldCatalogRefreshTtlSec = 43200;
+    // A saved lookup row (project list, project components) younger than this many seconds is served without a
+    // live fetch. Default 0 = off: the project list and components always go live when the tracker is reachable
+    // (the offline-first contract). 60..2592000 opts in; any other non-zero value is clamped into that range.
+    int LookupCacheTtlSec = 0;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.
@@ -929,6 +946,13 @@ class ConfigManager {
     /// present in the list, guarantee >=1 visible page. Called on load + after the
     /// Preferences Mobile-group edits. Pure logic — unit-tested (Bucket A).
     static void SanitizeMobileNav(TrackerConfig& cfg);
+    /// True when `jsonKey` is a plain integer setting (read through the int field table on load). config.set
+    /// uses it to reject a value that is not an integer, instead of writing a string the load would trip over.
+    static bool IsIntConfigKey(const std::string& jsonKey);
+    /// Reads a JSON number as an int: an integer must fit an int; a float is accepted only when it is integral and
+    /// in range (a hand-edited `60.0` works, `3.5` is refused). False leaves `out` untouched. The one range rule
+    /// shared by the config load and config.set.
+    static bool JsonToInt(const nlohmann::json& v, int& out);
 
     static const char* GetDefaultImGuiDockLayoutIni();
     static bool WriteDefaultImGuiSettingsFile();

@@ -133,6 +133,12 @@ class JiraClient : public ITrackerBackend,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& viewStore) override;
 
+    /// FetchIssuesForKeys with `shouldCancel` threaded into every HTTP attempt (retry/backoff included),
+    /// so a superseded sync's parent walk stops inside the request instead of at its timeout.
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                  const ViewsStore& viewStore, const CancelCallback& shouldCancel) override;
+
     /**
      * Search for issues whose `parent` is one of `parentKeys` (JQL `parent in (...)`) — the
      * downward mirror of FetchIssuesForKeys, used to hydrate a visible ticket's children (e.g.
@@ -141,6 +147,25 @@ class JiraClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchChildrenOfKeys(const TrackerConfig& cfg,
                                                                         const std::vector<std::string>& parentKeys,
                                                                         const ViewsStore& viewStore) override;
+
+    /// FetchChildrenOfKeys with `shouldCancel` threaded into every page request (see above).
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                   const ViewsStore& viewStore, const CancelCallback& shouldCancel) override;
+
+    /// Delta-sync roster: the view's JQL with `fields=updated` only (no bodies, no changelog), paged like the
+    /// full fetch. Complete only when every page was read.
+    bool SupportsVersionedRoster() const override { return true; }
+    Result<TrackerRoster, TrackerError> FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& views,
+                                                        const CancelCallback& shouldCancel) override;
+
+    /// Delta parent / child walks: `key in (...)` / `parent in (...)` with fields=updated, 40 keys per request.
+    Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& cfg,
+                                                           const std::vector<std::string>& keys,
+                                                           const CancelCallback& shouldCancel) override;
+    Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& cfg,
+                                                               const std::vector<std::string>& parentKeys,
+                                                               const CancelCallback& shouldCancel) override;
 
     // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
     // Server-side change probe + keys-only membership + existence GET, replacing the heavy

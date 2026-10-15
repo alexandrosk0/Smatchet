@@ -67,6 +67,35 @@ void LoadWhisperFields(const nlohmann::json& j, TrackerConfig& cfg) {
 }
 #endif
 
+// Clamps `v` into [lo, hi] in place (a hand-edited value outside the documented band degrades to the nearest
+// bound). A lower-only clamp is a plain `if (v < lo) v = lo;` at the call site.
+template <typename T, typename Lo, typename Hi> void ClampInPlace(T& v, Lo lo, Hi hi) {
+    if (v < lo) {
+        v = lo;
+    }
+    if (v > hi) {
+        v = hi;
+    }
+}
+
+// theme string -> ThemeId. The literal "ImGuiDefaultDark" AND any unknown / future value degrade to the
+// fresh-install default.
+ThemeId ThemeFromString(const std::string& themeStr) {
+    if (themeStr == "ModernDark")
+        return ThemeId::ModernDark;
+    if (themeStr == "Vs2022Dark")
+        return ThemeId::Vs2022Dark;
+    if (themeStr == "Vs2022Light")
+        return ThemeId::Vs2022Light;
+    if (themeStr == "HighContrast")
+        return ThemeId::HighContrast;
+    if (themeStr == "NortonCommander")
+        return ThemeId::NortonCommander;
+    if (themeStr == "SmatchetDark")
+        return ThemeId::SmatchetDark;
+    return ThemeId::ImGuiDefaultDark;
+}
+
 // Top-level "limits" object (Config/TunableLimits.h table). Each key loads independently: a missing,
 // non-integer, or out-of-range value keeps its default / is clamped, never dropping the siblings.
 void LoadLimits(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -92,10 +121,11 @@ void LoadLimits(const nlohmann::json& j, TrackerConfig& cfg) {
     }
 }
 
-// Enum / clamped scalar fields that don't fit the plain-scalar table: ai_provider_kind clamp,
-// assistant_history_max_rows clamp, date-threshold clamp, layout-schema clamp, font-size clamp,
-// ui_density / panel_position / theme string<->enum, ui_language normalization.
-void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
+// Numeric clamps: ai_provider_kind, assistant_history_max_rows and the date / window / interval / TTL / log-line
+// bands. Each guards against a hand-edited or future-version value (UB on an enum cast, a hammered backend, an
+// unbounded SQLite file, a silently empty feed). It also loads the top-level "limits" object (LoadLimits), whose
+// per-key clamps follow the same rule.
+void ClampScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // Clamp `ai_provider_kind` to the known enum range; a future-version persisted int (e.g. 99)
     // on an older build degrades to OpenAi (0) rather than triggering UB on enum cast.
     {
@@ -112,10 +142,7 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
     cfg.AssistantHistoryMaxRows = (rawMaxRows < 1) ? 1 : (rawMaxRows > 100000 ? 100000 : rawMaxRows);
 
-    if (cfg.DateCompactRelativeThresholdDays < 1)
-        cfg.DateCompactRelativeThresholdDays = 1;
-    if (cfg.DateCompactRelativeThresholdDays > 365)
-        cfg.DateCompactRelativeThresholdDays = 365;
+    ClampInPlace(cfg.DateCompactRelativeThresholdDays, 1, 365);
 
     // User Info window — zero/negative would silently empty the activity feed / VCS lists.
     if (cfg.UserActivityDayWindow < 1) {
@@ -126,36 +153,26 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     // Ticket-change monitor — clamp the poll interval to a sane band. Below 30 s the
     // backend gets hammered; above 1 h the monitor is effectively off.
-    if (cfg.TicketChangeMonitorIntervalSec < 30) {
-        cfg.TicketChangeMonitorIntervalSec = 30;
-    }
-    if (cfg.TicketChangeMonitorIntervalSec > 3600) {
-        cfg.TicketChangeMonitorIntervalSec = 3600;
+    ClampInPlace(cfg.TicketChangeMonitorIntervalSec, 30, 3600);
+    // Delta reload row-age bound: below 5 minutes every refresh would redownload nearly everything; above a
+    // week the parent/link/sprint values copied from other issues are too stale to trust.
+    ClampInPlace(cfg.DeltaSyncMaxRowAgeSec, 300, 604800);
+    // Lookup lifetimes: below 5 minutes (catalog) / 1 minute (lookups) the cache saves nothing; above 30 days a
+    // renamed field, project or component would stay wrong for too long.
+    ClampInPlace(cfg.FieldCatalogRefreshTtlSec, 300, 2592000);
+    // LookupCacheTtlSec 0 (the default) turns the lifetime off: the project list and components go live on every
+    // open, which the offline-first contract (back online -> a live reload) expects.
+    if (cfg.LookupCacheTtlSec != 0) {
+        ClampInPlace(cfg.LookupCacheTtlSec, 60, 2592000);
     }
     // Quick-create engine-context log tail — zero/negative would silently drop the log
     // section; past 300 lines the description prefill stops being a summary.
-    if (cfg.QuickCreateCtxLogLines < 1) {
-        cfg.QuickCreateCtxLogLines = 1;
-    }
-    if (cfg.QuickCreateCtxLogLines > 300) {
-        cfg.QuickCreateCtxLogLines = 300;
-    }
-    // Unknown / hand-edited layout values degrade to the fresh-install default.
-    if (cfg.VcsFeedLayout != "unified" && cfg.VcsFeedLayout != "separate") {
-        cfg.VcsFeedLayout = "unified";
-    }
+    ClampInPlace(cfg.QuickCreateCtxLogLines, 1, 300);
+}
 
-    cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
-    if (cfg.LayoutSchemaVersion < 0) {
-        cfg.LayoutSchemaVersion = 0;
-    }
-    cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
-    if (cfg.FontSizePt < SmatchetDefaults::kFontSizeMinPt) {
-        cfg.FontSizePt = SmatchetDefaults::kFontSizeMinPt;
-    }
-    if (cfg.FontSizePt > SmatchetDefaults::kFontSizeMaxPt) {
-        cfg.FontSizePt = SmatchetDefaults::kFontSizeMaxPt;
-    }
+// ui_density / panel_position / theme string<->enum, the UI layout mode + mobile-shell prefs, ui_language.
+// All optional with defaults; unknown serialized values degrade to the fresh-install default.
+void LoadUiEnumFields(const nlohmann::json& j, TrackerConfig& cfg) {
     {
         const std::string densityStr = j.value("ui_density", std::string("Normal"));
         if (densityStr == "Compact")
@@ -172,25 +189,7 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     // Default-string mirrors the construct-time default in TrackerConfig::Theme — fresh installs
     // (no `theme` key) land on ImGuiDefaultDark; existing configs round-trip their persisted value.
-    const std::string themeStr = j.value("theme", std::string("ImGuiDefaultDark"));
-    if (themeStr == "ModernDark")
-        cfg.Theme = ThemeId::ModernDark;
-    else if (themeStr == "Vs2022Dark")
-        cfg.Theme = ThemeId::Vs2022Dark;
-    else if (themeStr == "Vs2022Light")
-        cfg.Theme = ThemeId::Vs2022Light;
-    else if (themeStr == "HighContrast")
-        cfg.Theme = ThemeId::HighContrast;
-    else if (themeStr == "NortonCommander")
-        cfg.Theme = ThemeId::NortonCommander;
-    else if (themeStr == "SmatchetDark")
-        cfg.Theme = ThemeId::SmatchetDark;
-    else
-        // Covers the literal "ImGuiDefaultDark" string AND any unknown / future value —
-        // unknown serialized themes degrade to the fresh-install default.
-        cfg.Theme = ThemeId::ImGuiDefaultDark;
-    // UI layout mode + mobile-shell prefs. All optional with defaults; unknown
-    // serialized values degrade to the fresh-install default via *FromString.
+    cfg.Theme = ThemeFromString(j.value("theme", std::string("ImGuiDefaultDark")));
     cfg.UiMode = uiModeFromString(j.value("uiMode", std::string("auto")));
     if (j.contains("mobileNav") && j["mobileNav"].is_array()) {
         cfg.MobileNavPages.clear();
@@ -204,6 +203,24 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MobileTouchDensity = mobileTouchDensityFromString(j.value("mobileDensity", std::string("comfortable")));
     ConfigManager::SanitizeMobileNav(cfg);
     cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
+}
+
+// Enum / clamped scalar fields that don't fit the plain-scalar table: the numeric clamps (including the "limits"
+// object, loaded by ClampScalarFields), vcs-feed layout, layout-schema clamp, font-size clamp, then the UI enums.
+void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    ClampScalarFields(j, cfg);
+    // Unknown / hand-edited layout values degrade to the fresh-install default.
+    if (cfg.VcsFeedLayout != "unified" && cfg.VcsFeedLayout != "separate") {
+        cfg.VcsFeedLayout = "unified";
+    }
+
+    cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
+    if (cfg.LayoutSchemaVersion < 0) {
+        cfg.LayoutSchemaVersion = 0;
+    }
+    cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
+    ClampInPlace(cfg.FontSizePt, SmatchetDefaults::kFontSizeMinPt, SmatchetDefaults::kFontSizeMaxPt);
+    LoadUiEnumFields(j, cfg);
 }
 
 // Trim leading/trailing ASCII space+tab in place (used by the inherit-field-id list parser).

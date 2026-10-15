@@ -155,6 +155,14 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
                 ImGui::PopStyleColor();
             }
             if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
+                state.fetchBypassSaved.store(true);
+                state.fetchDone.store(false);
+            }
+        } else if (fromSaved && !inFlight) {
+            // A saved copy served inside its lifetime looks complete but may be out of date: Refresh asks the
+            // tracker now.
+            if (ImGui::SmallButton(SmatchetLocalization::T("common.refresh", "Refresh"))) {
+                state.fetchBypassSaved.store(true);
                 state.fetchDone.store(false);
             }
         }
@@ -204,6 +212,8 @@ void StartAllProjectsFetch(State& state, AppController& app) {
         return;
     }
     const std::shared_ptr<ILookupCache> store = app.LookupCacheShared();
+    // Retry / Refresh ask the tracker even while a saved list is inside its lifetime (ttl 0 = always live).
+    const bool bypassSaved = state.fetchBypassSaved.exchange(false);
     std::uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lk(state.fetchMutex);
@@ -215,7 +225,7 @@ void StartAllProjectsFetch(State& state, AppController& app) {
     // as a raw pointer. The load runs on the app-owned joined pool (never a detached thread).
     State* statePtr = &state;
     try {
-        app.LaunchBackgroundTask([statePtr, backend, store, backendKey, offline, generation]() {
+        app.LaunchBackgroundTask([statePtr, backend, store, backendKey, offline, generation, bypassSaved]() {
             // Settle the flags on every exit, so a throw can never leave the list on "Loading". A
             // superseded load leaves them alone: they belong to the load that replaced it.
             smatchet::ScopeExit settle([statePtr, generation]() {
@@ -226,7 +236,8 @@ void StartAllProjectsFetch(State& state, AppController& app) {
                 }
             });
             smatchet::projects::ProjectListOutcome outcome =
-                smatchet::projects::LoadProjectList(backend->Connectivity(), store, backendKey, offline);
+                smatchet::projects::LoadProjectList(backend->Connectivity(), store, backendKey, offline,
+                                                    bypassSaved ? 0 : ConfigManager::Load().LookupCacheTtlSec);
             std::lock_guard<std::mutex> lk(statePtr->fetchMutex);
             if (statePtr->fetchGeneration != generation) {
                 return; // superseded (the focused tracker changed): another tracker's list, dropped
@@ -235,7 +246,8 @@ void StartAllProjectsFetch(State& state, AppController& app) {
             // a failure never wipes a list the user has.
             if (!outcome.Failed || outcome.FromSaved || statePtr->fetchedAll.empty()) {
                 statePtr->fetchedAll = std::move(outcome.Projects);
-                statePtr->fetchFromSaved = outcome.FromSaved;
+                // A list served from the lookup lifetime is a saved copy too: it never reads as live.
+                statePtr->fetchFromSaved = smatchet::projects::IsSavedProjectCopy(outcome);
             }
             statePtr->fetchFailed = outcome.Failed;
             statePtr->fetchSkippedOffline = offline;

@@ -296,6 +296,97 @@ class FakeTrackerClient : public ITrackerBackend,
         return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(matched));
     }
 
+    // --- delta-sync roster (scripted) --------------------------------------------------------
+    bool SupportsVersionedRoster() const override { return rosterSupported_; }
+    Result<TrackerRoster, TrackerError> FetchViewRoster(const TrackerConfig& /*cfg*/, const ViewsStore& /*views*/,
+                                                        const CancelCallback& /*shouldCancel*/) override {
+        ++fetchRosterCalls_;
+        if (onRoster_) {
+            onRoster_(); // lets a test cancel the sync "while the roster request is in flight"
+        }
+        if (!rosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(rosterError_);
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster_);
+    }
+    // Hierarchy rosters are derived from the scripted keyed / children tickets (key + their `updated`), so one
+    // script drives both the roster and the body download the delta walk chooses between.
+    Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& /*cfg*/,
+                                                           const std::vector<std::string>& keys,
+                                                           const CancelCallback& /*shouldCancel*/) override {
+        ++fetchRosterForKeysCalls_;
+        if (!hierarchyRosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(hierarchyRosterError_);
+        }
+        TrackerRoster roster;
+        roster.Complete = true;
+        for (const CachedTicket& t : fetchIssuesForKeysTickets_) {
+            if (std::find(keys.begin(), keys.end(), t.id) != keys.end()) {
+                TrackerRosterEntry e;
+                e.Key = t.id;
+                e.Updated = t.GetFieldValue("updated");
+                roster.Entries.push_back(e);
+            }
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster);
+    }
+    Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& /*cfg*/,
+                                                               const std::vector<std::string>& parentKeys,
+                                                               const CancelCallback& /*shouldCancel*/) override {
+        ++fetchChildRosterCalls_;
+        if (!hierarchyRosterError_.IsOk()) {
+            return Result<TrackerRoster, TrackerError>::Err(hierarchyRosterError_);
+        }
+        TrackerRoster roster;
+        roster.Complete = true;
+        for (const CachedTicket& t : fetchChildrenOfKeysTickets_) {
+            const std::string parentKey = ParentHierarchyPure::ParentKeyOf(t);
+            if (!parentKey.empty() && std::find(parentKeys.begin(), parentKeys.end(), parentKey) != parentKeys.end()) {
+                TrackerRosterEntry e;
+                e.Key = t.id;
+                e.Updated = t.GetFieldValue("updated");
+                roster.Entries.push_back(e);
+            }
+        }
+        return Result<TrackerRoster, TrackerError>::Ok(roster);
+    }
+    void SetHierarchyRosterError(TrackerError error) { hierarchyRosterError_ = std::move(error); }
+    std::size_t FetchRosterForKeysCallCount() const { return fetchRosterForKeysCalls_; }
+    std::size_t FetchChildRosterCallCount() const { return fetchChildRosterCalls_; }
+    void SetRosterSupported(bool supported) { rosterSupported_ = supported; }
+    void SetRoster(TrackerRoster roster) {
+        roster_ = std::move(roster);
+        rosterError_ = TrackerError::Ok();
+    }
+    void SetRosterError(TrackerError error) { rosterError_ = std::move(error); }
+    void SetOnRoster(std::function<void()> hook) { onRoster_ = std::move(hook); }
+    std::size_t FetchRosterCallCount() const { return fetchRosterCalls_; }
+
+    /// Cancellable twins: forward to the plain call, then let a test hook run (typically to cancel the
+    /// sync "mid-request") and record whether the token the service handed in reports cancelled.
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                  const ViewsStore& views, const CancelCallback& shouldCancel) override {
+        ++fetchIssuesForKeysCancellableCalls_;
+        Result<std::vector<CachedTicket>, TrackerError> result = FetchIssuesForKeys(cfg, issueKeys, views);
+        if (onKeyedFetch_) {
+            onKeyedFetch_();
+        }
+        keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        return result;
+    }
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                   const ViewsStore& views, const CancelCallback& shouldCancel) override {
+        ++fetchChildrenOfKeysCancellableCalls_;
+        Result<std::vector<CachedTicket>, TrackerError> result = FetchChildrenOfKeys(cfg, parentKeys, views);
+        if (onKeyedFetch_) {
+            onKeyedFetch_();
+        }
+        keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        return result;
+    }
+
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {
         if (NetworkDown()) {
             return network_->MakeError();
@@ -635,6 +726,15 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t ProbeReachabilityCallCount() const { return probeReachabilityCalls_; }
     std::size_t FetchIssuesCallCount() const { return fetchIssuesCalls_; }
     std::size_t FetchIssuesForKeysCallCount() const { return fetchIssuesForKeysCalls_; }
+    /// Calls that arrived through the cancellable entry points (the service must use these so the
+    /// sync's cancel token reaches the HTTP layer), and whether the token handed to the most recent
+    /// one reported cancelled once `SetOnKeyedFetch`'s hook had run.
+    std::size_t FetchIssuesForKeysCancellableCallCount() const { return fetchIssuesForKeysCancellableCalls_; }
+    std::size_t FetchChildrenOfKeysCancellableCallCount() const { return fetchChildrenOfKeysCancellableCalls_; }
+    bool KeyedFetchTokenReportedCancelled() const { return keyedFetchTokenReportedCancelled_; }
+    /// Hook run inside every cancellable keyed fetch, after the scripted result was computed and before
+    /// the token is sampled - lets a test cancel the sync "while the request is in flight".
+    void SetOnKeyedFetch(std::function<void()> hook) { onKeyedFetch_ = std::move(hook); }
     std::size_t FetchChildrenOfKeysCallCount() const { return fetchChildrenOfKeysCalls_; }
     std::size_t BuildCreatePayloadCallCount() const { return buildCreatePayloadCalls_; }
     std::size_t BuildUpdatePayloadCallCount() const { return buildUpdatePayloadCalls_; }
@@ -1028,6 +1128,18 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError fetchChildrenOfKeysStructuredError_;
     std::vector<std::string> fetchChildrenOfKeysLastParentKeys_;
     std::size_t fetchChildrenOfKeysCalls_ = 0;
+    std::atomic<std::size_t> fetchIssuesForKeysCancellableCalls_{0};
+    std::atomic<std::size_t> fetchChildrenOfKeysCancellableCalls_{0};
+    std::atomic<bool> keyedFetchTokenReportedCancelled_{false};
+    std::function<void()> onKeyedFetch_;
+    bool rosterSupported_ = false;
+    TrackerRoster roster_;
+    TrackerError rosterError_;
+    std::function<void()> onRoster_;
+    std::atomic<std::size_t> fetchRosterCalls_{0};
+    std::atomic<std::size_t> fetchRosterForKeysCalls_{0};
+    std::atomic<std::size_t> fetchChildRosterCalls_{0};
+    TrackerError hierarchyRosterError_;
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;

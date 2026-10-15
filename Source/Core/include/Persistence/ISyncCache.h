@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "CachedTicketTypes.h"
 #include "PendingActionTypes.h"
+#include "TicketSyncMeta.h"
 
 /** ISyncCache — the sync/replay-facing surface of the local cache (ADR-0020).
  *
@@ -33,6 +35,50 @@ class ISyncCache {
     virtual void DeleteTicket(const std::string& backendKey, const std::string& ticketId) = 0;
     virtual std::vector<CachedTicket> GetAllTickets(const std::string& backendKey) = 0;
     virtual std::vector<std::string> GetAllTicketIds(const std::string& backendKey) = 0;
+
+    // --- Delta-sync metadata (docs/plans/active/delta-sync.md § Phase 2) -------------------
+    // The tracker version each cached row was fetched at. Non-pure with conservative defaults, so an
+    // implementation that does not store it (a fake, a future backend) simply reports "unknown" and the
+    // sync falls back to a full fetch.
+
+    /// Meta of every row under `backendKey` that has one, by ticket id. Default: none (all unknown).
+    virtual std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) {
+        (void)backendKey;
+        return {};
+    }
+    /// SaveTickets plus the meta of each row in one transaction. `metas` is parallel to `tickets`
+    /// (a missing or empty-`RemoteUpdated` entry stores no meta and clears any old one). When a row is
+    /// saved over a cached row at the SAME `RemoteUpdated`, the two are merged (MergeSameVersionRow) and
+    /// the stored field list becomes the union. A row provably OLDER than the stored one is skipped (a late or
+    /// reordered save never rolls it back) unless `overwriteOlder` is set - a Full sync is authoritative and
+    /// repairs a stored stamp that is ahead of the tracker. A stored stamp more than a day in the future is
+    /// unknown and never blocks. Default: saves the rows and drops the meta.
+    virtual void SaveTicketsWithSyncMeta(const std::string& backendKey, const std::vector<CachedTicket>& tickets,
+                                         const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) {
+        (void)metas;
+        (void)overwriteOlder;
+        SaveTickets(backendKey, tickets);
+    }
+    /// The rows for `ids` that exist under `backendKey` (missing ids are skipped; order unspecified).
+    virtual std::vector<CachedTicket> GetTicketsByIds(const std::string& backendKey,
+                                                      const std::vector<std::string>& ids) {
+        std::vector<CachedTicket> rows;
+        rows.reserve(ids.size());
+        for (const std::string& id : ids) {
+            CachedTicket row;
+            if (TryGetTicket(backendKey, id, row)) {
+                rows.push_back(std::move(row));
+            }
+        }
+        return rows;
+    }
+    /// DeleteTicket for each of `ids` (rows, field values and meta), in one transaction where the
+    /// implementation can.
+    virtual void DeleteTickets(const std::string& backendKey, const std::vector<std::string>& ids) {
+        for (const std::string& id : ids) {
+            DeleteTicket(backendKey, id);
+        }
+    }
 
     // --- Pending creates ---
     virtual std::int64_t EnqueuePendingCreate(const std::string& backendKey, const std::string& payload) = 0;

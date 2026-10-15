@@ -349,6 +349,19 @@ bool ResolvePaneFetchConfig(const std::string& paneKey, const TrackerConfig& cfg
 
 void AppController::RefreshLocalData() { RefreshLocalDataCheckedImpl_(focusedContext(), nullptr); }
 
+void AppController::RefreshLocalDataAsync() {
+    // UI thread: resolve the focused context and latch its generation here; the full-table SQLite
+    // read then runs on a worker (Pillar 2). A retired context stays valid as a husk until ~AppController.
+    GridLiveContext& ctx = focusedContext();
+    GridLiveContext* const ctxPtr = &ctx;
+    const std::uint64_t generation = ctx.backendGeneration_.load();
+    try {
+        LaunchBackgroundTask([this, ctxPtr, generation]() { RefreshLocalDataCheckedImpl_(*ctxPtr, &generation); });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: background local-data refresh did not start: %s", ex.what());
+    }
+}
+
 void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
                                                  const std::string& admitId) {
     // Latched once: worker callers (offline replay, UpdateTicket's queued saves) must not race the UI
@@ -499,7 +512,9 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
     // expect a stale cache row. (Log-only: this domain TU cannot reach the grid's error state, which
     // lives in Ui/.)
     try {
-        cache->SaveTicket(capturedKey, ticket);
+        // The edit does not change which tracker version the row stands for: keep its sync meta, or the next
+        // delta sync would refetch a ticket it already holds.
+        cache->SaveTicketKeepingSyncMeta(capturedKey, ticket);
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::UpdateTicket local cache write failed key='%s' ticket='%s' err=%s",
                   capturedKey.c_str(), ticket.id.c_str(), ex.what());
@@ -857,6 +872,10 @@ bool AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
     return components_ && components_->EnsureComponentsLoaded(projectKey);
 }
 
+bool AppController::RefreshProjectComponents(const std::string& projectKey) {
+    return components_ && components_->RefreshComponents(projectKey);
+}
+
 bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
     if (projectKey.empty()) {
         return false;
@@ -901,6 +920,10 @@ VoidResult AppController::RefreshIssueEditMeta(const std::string& issueId, const
 
 void AppController::InvalidateIssueEditMeta(const std::string& issueId) { editMeta_->InvalidateIssueEditMeta(issueId); }
 
+void AppController::InvalidateIssueEditMeta(const std::string& backendKey, const std::string& issueId) {
+    editMeta_->InvalidateIssueEditMeta(backendKey, issueId);
+}
+
 void AppController::PruneEditMetaCacheToActiveTickets() { editMeta_->PruneEditMetaCacheToActiveTickets(); }
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
@@ -927,6 +950,10 @@ void AppController::EnsureIssueTransitionsLoaded(const TransitionsQuery& query) 
 
 void AppController::InvalidateIssueTransitions(const std::string& issueId) {
     transitions_->InvalidateIssueTransitions(issueId);
+}
+
+void AppController::InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId) {
+    transitions_->InvalidateIssueTransitions(backendKey, issueId);
 }
 
 // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object

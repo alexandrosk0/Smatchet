@@ -642,7 +642,8 @@ std::string SanitizeClipboardCell(const std::string& value) {
 
 // Persist the current view's JQL query to history and trigger a backend sync with deferred config write.
 // The configuration is persisted through the coalescing config-save worker to avoid blocking the UI thread.
-void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
+void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory,
+                         smatchet::sync::SyncMode mode) {
     // Pillar 2 (#2145): `ConfigManager::Save` funnels into `WriteConfigJson` (io mutex +
     // ScopedFileLock + atomic whole-file replace). This helper sits on the view/sync path and ran
     // that write inline on the frame thread every time a view was synced — the repeating half of
@@ -653,5 +654,5 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
     smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     if (pushHistory)
         d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
-    app.SyncWithBackend(&d.cfg, &store);
+    app.SyncWithBackendMode(&d.cfg, &store, mode);
 }

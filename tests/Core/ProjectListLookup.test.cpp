@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+using smatchet::projects::IsSavedProjectCopy;
 using smatchet::projects::LoadProjectList;
 using smatchet::projects::ProjectListOutcome;
 
@@ -174,5 +175,61 @@ TEST_SUITE("ProjectListLookup") {
         auto store = std::make_shared<FakeLookupCache>();
         LoadProjectList(conn, store, "", false);
         CHECK(store->UpsertCalls.load() == 0);
+    }
+
+    TEST_CASE("a saved list younger than the lifetime is served without a request; an older one is refetched") {
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        SaveList(*store, "Jira", {Project("OFF", "Offline First")});
+
+        ScriptedConnectivity fresh;
+        fresh.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome served = LoadProjectList(fresh, store, "Jira", false, /*ttlSec=*/600, /*now=*/1500);
+        CHECK(fresh.Calls == 0);
+        CHECK(served.ServedFresh);
+        CHECK_FALSE(served.Failed);
+        CHECK_FALSE(served.FromSaved);
+        REQUIRE(served.Projects.size() == 1u);
+        CHECK(served.Projects[0].key == "OFF");
+
+        ScriptedConnectivity stale;
+        stale.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome live = LoadProjectList(stale, store, "Jira", false, 600, /*now=*/1600);
+        CHECK(stale.Calls == 1);
+        CHECK_FALSE(live.ServedFresh);
+        REQUIRE(live.Projects.size() == 1u);
+        CHECK(live.Projects[0].key == "NEW");
+
+        ScriptedConnectivity noTtl;
+        noTtl.Projects = {Project("NEW", "New")};
+        LoadProjectList(noTtl, store, "Jira", false, /*ttlSec=*/0, 1500);
+        CHECK(noTtl.Calls == 1); // no lifetime: always live
+    }
+
+    TEST_CASE("a list served inside its lifetime is still a saved copy; an empty saved list is never served") {
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        SaveList(*store, "Jira", {Project("OFF", "Offline First")});
+        ScriptedConnectivity conn;
+        const ProjectListOutcome served = LoadProjectList(conn, store, "Jira", false, 600, 1500);
+        REQUIRE(served.ServedFresh);
+        CHECK(IsSavedProjectCopy(served));
+
+        ProjectListOutcome offlineFallback;
+        offlineFallback.FromSaved = true;
+        CHECK(IsSavedProjectCopy(offlineFallback));
+        CHECK_FALSE(IsSavedProjectCopy(ProjectListOutcome()));
+
+        // A saved EMPTY list must not answer "No projects found": the tracker does.
+        auto emptyStore = std::make_shared<FakeLookupCache>();
+        emptyStore->StampEpochSec = 1000;
+        SaveList(*emptyStore, "Jira", {});
+        ScriptedConnectivity live;
+        live.Projects = {Project("NEW", "New")};
+        const ProjectListOutcome outcome = LoadProjectList(live, emptyStore, "Jira", false, 600, 1500);
+        CHECK(live.Calls == 1);
+        CHECK_FALSE(outcome.ServedFresh);
+        CHECK_FALSE(IsSavedProjectCopy(outcome));
+        REQUIRE(outcome.Projects.size() == 1u);
     }
 }

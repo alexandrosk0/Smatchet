@@ -500,7 +500,8 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
 
     // Use the new Jira Cloud search endpoint as per Atlassian migration guidance.
     std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, fields,
+                                           smatchet::jira::NeedsChangelogExpand(selectedFields));
 
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
@@ -523,6 +524,12 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                const ViewsStore& viewStore) {
+    return FetchIssuesForKeysCancellable(cfg, issueKeys, viewStore, CancelCallback());
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                          const ViewsStore& viewStore, const CancelCallback& shouldCancel) {
     using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
     std::vector<CachedTicket> outTickets;
     std::string outError;
@@ -554,11 +561,14 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
         const std::string jql = BuildKeyInJql(keys, offset, n);
         const std::string jqlEncoded = UrlEncode(jql);
-        const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-                                    "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
+        const std::string pageUrl = smatchet::jira::BuildJiraSearchUrl(
+            base, jqlEncoded, static_cast<int>(n), fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
 
-        auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
         if (response.status_code != 200) {
+            if (shouldCancel && shouldCancel()) {
+                return FetchResult::Err(TrackerErrorCancelled());
+            }
             outError =
                 "Fetch by key failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
@@ -595,9 +605,12 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
             if (n == 1) {
                 const std::string& requestedKey = keys[offset];
                 if (!requestedKey.empty() && fetchedKeys.count(requestedKey) == 0) {
-                    const std::string issueUrl = base + "/rest/api/3/issue/" + UrlEncode(requestedKey) +
-                                                 "?fields=" + fields + "&expand=changelog";
-                    auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers);
+                    const std::string issueUrl = smatchet::jira::BuildJiraIssueUrl(
+                        base, UrlEncode(requestedKey), fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
+                    auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers, shouldCancel);
+                    if (shouldCancel && shouldCancel()) {
+                        return FetchResult::Err(TrackerErrorCancelled());
+                    }
                     if (issueResp.status_code == 200) {
                         std::string issueParseErr;
                         auto issueJson = smatchet::json_safe::ParseBounded(issueResp.text, issueParseErr);
@@ -627,6 +640,12 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                 const ViewsStore& viewStore) {
+    return FetchChildrenOfKeysCancellable(cfg, parentKeys, viewStore, CancelCallback());
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                           const ViewsStore& viewStore, const CancelCallback& shouldCancel) {
     using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
     std::vector<CachedTicket> outTickets;
     std::string outError;
@@ -670,15 +689,17 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
 
         std::string nextPageToken;
         for (int page = 0; page < kMaxPagesPerBatch; ++page) {
-            std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-                                  "&maxResults=" + std::to_string(kPageSize) + "&fields=" + fields +
-                                  "&expand=changelog";
+            std::string pageUrl = smatchet::jira::BuildJiraSearchUrl(
+                base, jqlEncoded, kPageSize, fields, smatchet::jira::NeedsChangelogExpand(selectedFields));
             if (!nextPageToken.empty()) {
                 pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
             }
 
-            auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+            auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
             if (response.status_code != 200) {
+                if (shouldCancel && shouldCancel()) {
+                    return FetchResult::Err(TrackerErrorCancelled());
+                }
                 outError = "Fetch children failed: " +
                            smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
                 LOG_WARN("JiraClient::FetchChildrenOfKeys: %s", outError.c_str());
@@ -760,7 +781,8 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
     const std::string fields = JoinStrings(fieldsList, ",");
 
     const std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, fields,
+                                           smatchet::jira::NeedsChangelogExpand(selectedFields));
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
@@ -789,6 +811,129 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
     return FetchResult::Ok(std::move(results));
 }
 
+namespace {
+/// Runs one roster query (`fields=updated`, no bodies) for `jqlRaw` and appends its entries to `roster`.
+/// Returns the failure (kind preserved), a Cancelled error when `shouldCancel` fired, or Ok; `complete` is
+/// false when a cap cut the walk short (the caller decides what an incomplete answer is worth).
+TrackerError RunJiraRosterQuery(const std::string& base, const cpr::Header& headers, const std::string& jqlRaw,
+                                int pageSize, const smatchet::search_guards::LoopCaps& caps,
+                                const JiraClient::CancelCallback& shouldCancel, TrackerRoster& roster, bool& complete,
+                                std::string& warning) {
+    const std::string baseSearchUrl =
+        smatchet::jira::BuildJiraSearchUrl(base, UrlEncode(jqlRaw), pageSize, "updated", false);
+    const std::vector<std::string> selectedFields = {"updated"};
+    auto noComments = [](const std::string&, nlohmann::json&) -> bool { return true; };
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        for (std::size_t i = 0; i < batch.size(); ++i) {
+            if (!batch[i].id.empty()) {
+                TrackerRosterEntry entry;
+                entry.Key = batch[i].id;
+                entry.Updated = batch[i].GetFieldValue("updated");
+                roster.Entries.push_back(std::move(entry));
+            }
+        }
+    };
+    TrackerIssueFetchSummary summary;
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary, caps);
+    if (shouldCancel && shouldCancel()) {
+        return TrackerErrorCancelled();
+    }
+    if (!summary.FetchError.empty()) {
+        return summary.Error.Kind != TrackerErrorKind::None ? summary.Error : TrackerErrorUnknown(summary.FetchError);
+    }
+    warning = summary.Warning;
+    complete = loop.endedCleanly && !loop.tokenLeftover && loop.fetchedPages > 0 && warning.empty();
+    return TrackerError::Ok();
+}
+
+constexpr std::size_t kJiraRosterKeysPerRequest = 40;
+} // namespace
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerConfig& cfg, const ViewsStore& /*views*/,
+                                                                const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    // The view's full JQL with `fields=updated`: each issue rides back as its key and last-updated stamp
+    // only. No expand, no comments - a page is a few dozen bytes per row, which is what lets a reload
+    // learn which tickets changed without downloading any of them.
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
+    TrackerRoster roster;
+    bool complete = false;
+    const TrackerError err = RunJiraRosterQuery(
+        NormalizeBaseUrl(cfg.Domain), BuildTrackerHeaders(cfg), jqlRaw, smatchet::search_guards::kJiraRosterPageSize,
+        smatchet::search_guards::JiraCaps(), shouldCancel, roster, complete, roster.Warning);
+    if (!err.IsOk()) {
+        return RosterResult::Err(err);
+    }
+    roster.Complete = complete;
+    return RosterResult::Ok(std::move(roster));
+}
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchRosterForKeys(const TrackerConfig& cfg,
+                                                                   const std::vector<std::string>& keys,
+                                                                   const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::vector<std::string> deduped = DedupeIssueKeys(keys);
+    TrackerRoster roster;
+    roster.Complete = true;
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    for (std::size_t offset = 0; offset < deduped.size(); offset += kJiraRosterKeysPerRequest) {
+        const std::size_t n = (std::min)(kJiraRosterKeysPerRequest, deduped.size() - offset);
+        bool complete = false;
+        std::string warning;
+        const TrackerError err = RunJiraRosterQuery(
+            base, headers, BuildKeyInJql(deduped, offset, n), static_cast<int>(n),
+            // One page of exactly `n` keys: never more pages or rows.
+            smatchet::search_guards::LoopCaps{1, n, smatchet::search_guards::ProbeMaxTotalFetchBytes()}, shouldCancel,
+            roster, complete, warning);
+        if (!err.IsOk()) {
+            return RosterResult::Err(err);
+        }
+        roster.Complete = roster.Complete && complete;
+        roster.AppendWarningText(warning);
+    }
+    return RosterResult::Ok(std::move(roster));
+}
+
+Result<TrackerRoster, TrackerError> JiraClient::FetchChildRosterOfKeys(const TrackerConfig& cfg,
+                                                                       const std::vector<std::string>& parentKeys,
+                                                                       const CancelCallback& shouldCancel) {
+    using RosterResult = Result<TrackerRoster, TrackerError>;
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return RosterResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::vector<std::string> deduped = DedupeIssueKeys(parentKeys);
+    TrackerRoster roster;
+    roster.Complete = true;
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    for (std::size_t offset = 0; offset < deduped.size(); offset += kJiraRosterKeysPerRequest) {
+        const std::size_t n = (std::min)(kJiraRosterKeysPerRequest, deduped.size() - offset);
+        bool complete = false;
+        std::string warning;
+        const TrackerError err = RunJiraRosterQuery(
+            base, headers, BuildParentInJql(deduped, offset, n), smatchet::search_guards::kJiraRosterPageSize,
+            smatchet::search_guards::ProbeCaps(), shouldCancel, roster, complete, warning);
+        if (!err.IsOk()) {
+            return RosterResult::Err(err);
+        }
+        roster.Complete = roster.Complete && complete;
+        roster.AppendWarningText(warning);
+    }
+    return RosterResult::Ok(std::move(roster));
+}
+
 Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView(const TrackerConfig& cfg,
                                                                                  const ViewsStore& /*views*/) {
     using KeysResult = Result<std::vector<std::string>, TrackerError>;
@@ -806,7 +951,7 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
         TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
     const std::string jqlEncoded = UrlEncode(jqlRaw);
     const std::string baseSearchUrl =
-        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=*none";
+        smatchet::jira::BuildJiraSearchUrl(base, jqlEncoded, smatchet::search_guards::kPageSize, "*none", false);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     // fields=*none ⇒ no per-field mapping; the ticket carries only its key (its `id`), which we

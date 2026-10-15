@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace {
 // FieldCatalogCache exposes free functions and reads/writes a single JSON file under the user data
@@ -28,8 +29,8 @@ std::mutex& FieldCatalogCacheFileMutex() {
 }
 
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
-// A restore moves its snapshot up the LRU order at most this often: each move rewrites the whole cache
-// file, and a restore can run on the UI thread.
+// A restore moves its snapshot up the LRU order on disk at most this often: each move rewrites the whole
+// cache file, and a restore can run on the UI thread. Between those writes the touch stays in memory.
 constexpr std::int64_t kLruTouchIntervalSeconds = 24 * 60 * 60;
 // The base URLs Preferences fills in, and the clients use, when the configured one is empty.
 constexpr const char* kGitHubDefaultBaseUrl = "https://api.github.com";
@@ -245,6 +246,50 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
 // Split parse/normalize of the on-disk root so Save/Load/List/Forget share migration logic.
 // Schema 1: flat top-level "fields"/"components"/"issue_type_meta" (Jira only, pre-multi-backend).
 // Schema 2: { "schema_version": 2, "entries": { "<cacheKey>": { fields, components, issue_type_meta } } }.
+// A hand-edited or damaged index entry must cost only itself, never the whole file: read each scalar with a
+// type guard (nlohmann `value()` throws on a mismatched type).
+std::int64_t IntOr(const nlohmann::json& obj, const char* key, std::int64_t fallback) {
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_number_integer()) ? it->get<std::int64_t>() : fallback;
+}
+
+// SMATCHET_DEVIATION(rule=duplication; reason=file-local twin of LookupPayloadsPure StringMember (also JsonGetStringIfString); this TU is linked alone into its own test target with no TrackerFieldValueParser dependency, so a shared helper would widen that rig; owner=tracker-backend; revisit=2027-10-14)
+std::string StrOr(const nlohmann::json& obj, const char* key) {
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string();
+}
+
+// "Last used" times recorded by loads. A load runs on the UI thread at startup and from the render-path error
+// handler, so it rewrites the cache file at most once per kLruTouchIntervalSeconds per snapshot (or once for an
+// entry re-indexed with no time); otherwise the touch waits here and reaches disk with the next save / forget.
+// Guarded by FieldCatalogCacheFileMutex().
+std::unordered_map<std::string, std::int64_t>& PendingTouches() {
+    static std::unordered_map<std::string, std::int64_t> touches;
+    return touches;
+}
+
+// Folds the pending touches into `root`'s index (and forgets them when `consume`).
+void ApplyPendingTouches(nlohmann::json& root, bool consume) {
+    std::unordered_map<std::string, std::int64_t>& pending = PendingTouches();
+    if (pending.empty()) {
+        return;
+    }
+    if (root.contains("entries") && root["entries"].is_array()) {
+        for (nlohmann::json& e : root["entries"]) {
+            if (!e.is_object()) {
+                continue;
+            }
+            const auto it = pending.find(StrOr(e, "cacheKey"));
+            if (it != pending.end() && it->second > IntOr(e, "lastUsedUnix", 0)) {
+                e["lastUsedUnix"] = it->second;
+            }
+        }
+    }
+    if (consume) {
+        pending.clear();
+    }
+}
+
 // Schema 3: { "schema_version": 3, "entries": [ { cacheKey, projectKey, backend, endpoint, lastUsedUnix } ... ],
 //             "<cacheKey>": <entry blob>, ... }.
 // MigrateOnDiskRootToV3 produces a v3-shaped root (entries-array index + per-cacheKey blobs at root).
@@ -265,7 +310,7 @@ bool JsonBoolOr(const nlohmann::json& object, const char* key) {
 // in the LRU order for good: it counts as used now.
 void AppendIndexEntry(nlohmann::json& indexArr, std::int64_t now, const std::string& cacheKey,
                       const std::string& projectKey, const std::string& backend, const std::string& endpoint,
-                      std::int64_t lastUsed, bool kindKeyed) {
+                      std::int64_t lastUsed, bool kindKeyed, std::int64_t savedUnix = 0) {
     nlohmann::json e = nlohmann::json::object();
     e["cacheKey"] = cacheKey;
     e["projectKey"] = projectKey;
@@ -273,6 +318,9 @@ void AppendIndexEntry(nlohmann::json& indexArr, std::int64_t now, const std::str
     e["endpoint"] = endpoint;
     e["lastUsedUnix"] = lastUsed > now ? now : lastUsed;
     e["kindKeyed"] = kindKeyed;
+    if (savedUnix > 0) {
+        e["savedUnix"] = savedUnix > now ? now : savedUnix;
+    }
     indexArr.push_back(std::move(e));
 }
 
@@ -293,7 +341,8 @@ std::unordered_set<std::string> CarryV3Index(const nlohmann::json& rootOnDisk, n
             continue;
         AppendIndexEntry(indexArr, now, cacheKey, JsonStringFieldOr(idx, "projectKey"),
                          JsonStringFieldOr(idx, "backend"), JsonStringFieldOr(idx, "endpoint"),
-                         ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now), JsonBoolOr(idx, "kindKeyed"));
+                         ParseJsonInt64FieldLoose(idx, "lastUsedUnix", now), JsonBoolOr(idx, "kindKeyed"),
+                         ParseJsonInt64FieldLoose(idx, "savedUnix", 0));
     }
     return indexed;
 }
@@ -400,7 +449,7 @@ nlohmann::json LoadAndMigrateRootLocked() {
 // Locate the index array entry for `cacheKey`. Returns end() if not found.
 nlohmann::json::iterator FindIndexEntry(nlohmann::json& indexArr, const std::string& cacheKey) {
     for (auto it = indexArr.begin(); it != indexArr.end(); ++it) {
-        if (it->is_object() && it->value("cacheKey", std::string()) == cacheKey) {
+        if (it->is_object() && StrOr(*it, "cacheKey") == cacheKey) {
             return it;
         }
     }
@@ -417,18 +466,18 @@ void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap, const std::s
         return;
     nlohmann::json& indexArr = root["entries"];
     std::stable_sort(indexArr.begin(), indexArr.end(), [&keepKey](const nlohmann::json& a, const nlohmann::json& b) {
-        const bool aKept = a.value("cacheKey", std::string()) == keepKey;
-        const bool bKept = b.value("cacheKey", std::string()) == keepKey;
+        const bool aKept = StrOr(a, "cacheKey") == keepKey;
+        const bool bKept = StrOr(b, "cacheKey") == keepKey;
         if (aKept != bKept) {
             return aKept;
         }
-        return a.value("lastUsedUnix", std::int64_t{0}) > b.value("lastUsedUnix", std::int64_t{0});
+        return IntOr(a, "lastUsedUnix", 0) > IntOr(b, "lastUsedUnix", 0);
     });
     while (static_cast<int>(indexArr.size()) > cap) {
         const nlohmann::json& victim = indexArr.back();
-        const std::string victimKey = victim.value("cacheKey", std::string());
-        const std::string victimProject = victim.value("projectKey", std::string());
-        const std::int64_t victimLast = victim.value("lastUsedUnix", std::int64_t{0});
+        const std::string victimKey = StrOr(victim, "cacheKey");
+        const std::string victimProject = StrOr(victim, "projectKey");
+        const std::int64_t victimLast = IntOr(victim, "lastUsedUnix", 0);
         if (!victimKey.empty() && root.contains(victimKey)) {
             root.erase(victimKey);
         }
@@ -534,6 +583,7 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             e["endpoint"] = endpoint;
             e["lastUsedUnix"] = now;
             e["kindKeyed"] = true;
+            e["savedUnix"] = now; // when the catalog was fetched; lastUsedUnix also moves on a read
             indexArr.push_back(std::move(e));
         } else {
             (*it)["projectKey"] = projectKey;
@@ -541,13 +591,19 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             (*it)["endpoint"] = endpoint;
             (*it)["lastUsedUnix"] = now;
             (*it)["kindKeyed"] = true;
+            (*it)["savedUnix"] = now;
         }
 
+        ApplyPendingTouches(root, /*consume=*/false); // the write is happening anyway: loads' touches ride along
         // The fallback default lives in one place: TrackerConfig.
         const int cap = maxProjects > 0 ? maxProjects : TrackerConfig().FieldCatalogCacheMaxProjects;
         EvictLeastRecentlyUsedIfOverCap(root, cap, cacheKey);
 
-        return PersistRootLocked(root, outError);
+        const bool persisted = PersistRootLocked(root, outError);
+        if (persisted) {
+            PendingTouches().clear(); // dropped only once the write lands: a failed write keeps them queued
+        }
+        return persisted;
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::SaveFieldCatalogSnapshot failed: %s", ex.what());
@@ -601,8 +657,12 @@ bool SnapshotBlobLoads(const nlohmann::json& root, const std::string& cacheKey) 
 
 bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
                                  std::vector<TrackerComponent>& outComponents,
-                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
+                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                 std::int64_t* outSavedUnix) {
     outError.clear();
+    if (outSavedUnix != nullptr) {
+        *outSavedUnix = 0;
+    }
     outFields.clear();
     outComponents.clear();
     outIssueTypeMeta.clear();
@@ -635,18 +695,29 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
             return false;
         }
 
-        // Touch lastUsedUnix on the index entry (under the resolved key, so legacy reads also bump the
-        // Jira_legacy_v1 entry's timestamp), at most once per interval. Best-effort: a write failure here
-        // is logged but the caller still gets the loaded data — the cache is a snapshot, not the source
-        // of truth.
-        const std::int64_t now = TimeNowPure::NowUnixSeconds();
-        if (indexIt != indexArr.end() &&
-            ParseJsonInt64FieldLoose(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
-            (*indexIt)["lastUsedUnix"] = now;
-            std::string writeErr;
-            if (!PersistRootLocked(root, writeErr)) {
-                LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
-                         writeErr.c_str());
+        // Record the read for the LRU order and report the save time, both from this one parse. The touch stays in
+        // memory (PendingTouches) and reaches disk with the next save; only an entry unused for a whole interval
+        // (or re-indexed with no time) is rewritten here, so the file is not rewritten on every load.
+        if (indexIt != indexArr.end()) {
+            const std::int64_t now = TimeNowPure::NowUnixSeconds();
+            if (outSavedUnix != nullptr) {
+                *outSavedUnix = IntOr(*indexIt, "savedUnix", 0); // 0 for an entry saved before the stamp existed
+            }
+            if (IntOr(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
+                (*indexIt)["lastUsedUnix"] = now;
+                ApplyPendingTouches(root, /*consume=*/false); // dropped only once the write lands
+                std::string writeErr;
+                if (PersistRootLocked(root, writeErr)) {
+                    PendingTouches().clear();
+                } else {
+                    // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
+                    // of truth. The touches stay queued for the next write, this load's own included.
+                    PendingTouches()[resolvedKey] = now;
+                    LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
+                             writeErr.c_str());
+                }
+            } else {
+                PendingTouches()[resolvedKey] = now;
             }
         }
         return true;
@@ -661,6 +732,26 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
     }
 }
 
+std::int64_t FieldCatalogSnapshotSavedUnix(const std::string& cacheKey) {
+    try {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        const nlohmann::json root = LoadAndMigrateRootLocked();
+        if (!root.contains("entries") || !root["entries"].is_array()) {
+            return 0;
+        }
+        for (const auto& e : root["entries"]) {
+            if (e.is_object() && StrOr(e, "cacheKey") == cacheKey) {
+                return IntOr(e, "savedUnix", 0); // 0 for an entry saved before the stamp existed
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldCatalogCache::FieldCatalogSnapshotSavedUnix failed: %s", ex.what());
+    } catch (...) { // catch-all-ok: logged; an unknown age means the caller fetches live
+        LOG_WARN("FieldCatalogCache::FieldCatalogSnapshotSavedUnix failed: unknown exception");
+    }
+    return 0;
+}
+
 std::vector<CachedProjectEntry> ListCachedProjects() {
     std::vector<CachedProjectEntry> out;
     try {
@@ -669,6 +760,7 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
         if (!root.contains("entries") || !root["entries"].is_array()) {
             return out;
         }
+        ApplyPendingTouches(root, /*consume=*/false); // reads since the last write count for the order shown
         for (const auto& e : root["entries"]) {
             if (!e.is_object())
                 continue;
@@ -676,10 +768,10 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
             if (IsUnclaimedLegacyJiraSnapshot(root, e, cacheKey) || !SnapshotBlobLoads(root, cacheKey))
                 continue;
             CachedProjectEntry cpe;
-            cpe.projectKey = e.value("projectKey", std::string());
-            cpe.backend = e.value("backend", std::string());
-            cpe.endpoint = e.value("endpoint", std::string());
-            cpe.lastUsedUnix = e.value("lastUsedUnix", std::int64_t{0});
+            cpe.projectKey = StrOr(e, "projectKey");
+            cpe.backend = StrOr(e, "backend");
+            cpe.endpoint = StrOr(e, "endpoint");
+            cpe.lastUsedUnix = IntOr(e, "lastUsedUnix", 0);
             out.push_back(std::move(cpe));
         }
         std::sort(out.begin(), out.end(), [](const CachedProjectEntry& a, const CachedProjectEntry& b) {
@@ -703,11 +795,10 @@ bool ForgetProject(const std::string& projectKey, const std::string& backend, co
         nlohmann::json& indexArr = root["entries"];
         bool removed = false;
         for (auto it = indexArr.begin(); it != indexArr.end();) {
-            const bool matches = it->is_object() && it->value("projectKey", std::string()) == projectKey &&
-                                 it->value("backend", std::string()) == backend &&
-                                 it->value("endpoint", std::string()) == endpoint;
+            const bool matches = it->is_object() && StrOr(*it, "projectKey") == projectKey &&
+                                 StrOr(*it, "backend") == backend && StrOr(*it, "endpoint") == endpoint;
             if (matches) {
-                const std::string victimKey = it->value("cacheKey", std::string());
+                const std::string victimKey = StrOr(*it, "cacheKey");
                 if (!victimKey.empty() && root.contains(victimKey)) {
                     root.erase(victimKey);
                 }
@@ -720,9 +811,12 @@ bool ForgetProject(const std::string& projectKey, const std::string& backend, co
         if (!removed) {
             return true; // Not-found is success — caller doesn't need to distinguish.
         }
+        ApplyPendingTouches(root, /*consume=*/false);
         std::string writeErr;
         const bool ok = PersistRootLocked(root, writeErr);
-        if (!ok) {
+        if (ok) {
+            PendingTouches().clear(); // dropped only once the write lands
+        } else {
             LOG_WARN("FieldCatalogCache::ForgetProject: persist failed: %s", writeErr.c_str());
         }
         return ok;

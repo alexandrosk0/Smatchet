@@ -68,3 +68,69 @@ TEST_CASE("poll interval is clamped to [30, 3600] s on Load") {
     ConfigManager::InvalidateCache();
     CHECK(ConfigManager::Load().TicketChangeMonitorIntervalSec == 240);
 }
+
+TEST_CASE("delta sync config: defaults, round-trip, and the row-age bound is clamped to [300, 604800] s on Load") {
+    smatchet_tests::TestEnvGuard env;
+    const TrackerConfig def;
+    CHECK(def.DeltaSyncEnabled == true);
+    CHECK(def.DeltaSyncMaxRowAgeSec == 21600);
+
+    TrackerConfig tooLow;
+    tooLow.DeltaSyncMaxRowAgeSec = 5;
+    ConfigManager::Save(tooLow);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().DeltaSyncMaxRowAgeSec == 300);
+
+    TrackerConfig tooHigh;
+    tooHigh.DeltaSyncMaxRowAgeSec = 99999999;
+    ConfigManager::Save(tooHigh);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().DeltaSyncMaxRowAgeSec == 604800);
+
+    TrackerConfig custom;
+    custom.DeltaSyncEnabled = false;
+    custom.DeltaSyncMaxRowAgeSec = 7200;
+    ConfigManager::Save(custom);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig loaded = ConfigManager::Load();
+    CHECK(loaded.DeltaSyncEnabled == false);
+    CHECK(loaded.DeltaSyncMaxRowAgeSec == 7200);
+}
+
+TEST_CASE("lookup lifetime config: defaults, round-trip, clamps on Load") {
+    smatchet_tests::TestEnvGuard env;
+    const TrackerConfig def;
+    CHECK(def.FieldCatalogRefreshTtlSec == 43200);
+    CHECK(def.LookupCacheTtlSec == 0);
+
+    TrackerConfig tooLow;
+    tooLow.FieldCatalogRefreshTtlSec = 1;
+    tooLow.LookupCacheTtlSec = 1;
+    ConfigManager::Save(tooLow);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().FieldCatalogRefreshTtlSec == 300);
+    CHECK(ConfigManager::Load().LookupCacheTtlSec == 60);
+
+    TrackerConfig tooHigh;
+    tooHigh.FieldCatalogRefreshTtlSec = 999999999;
+    tooHigh.LookupCacheTtlSec = 999999999;
+    ConfigManager::Save(tooHigh);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().FieldCatalogRefreshTtlSec == 2592000);
+    CHECK(ConfigManager::Load().LookupCacheTtlSec == 2592000);
+
+    TrackerConfig custom;
+    custom.FieldCatalogRefreshTtlSec = 3600;
+    custom.LookupCacheTtlSec = 7200;
+    ConfigManager::Save(custom);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig loaded = ConfigManager::Load();
+    CHECK(loaded.FieldCatalogRefreshTtlSec == 3600);
+    CHECK(loaded.LookupCacheTtlSec == 7200);
+
+    TrackerConfig off;
+    off.LookupCacheTtlSec = 0;
+    ConfigManager::Save(off);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().LookupCacheTtlSec == 0);
+}

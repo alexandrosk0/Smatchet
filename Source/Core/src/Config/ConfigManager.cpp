@@ -20,10 +20,13 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <cmath>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <string>
 
@@ -251,6 +254,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"single_click_to_edit_grid_cells", &TrackerConfig::SingleClickToEditGridCells},
     {"highlight_grid_row_on_hover", &TrackerConfig::HighlightGridRowOnHover},
     {"load_parent_issues", &TrackerConfig::LoadParentIssues},
+    {"delta_sync_enabled", &TrackerConfig::DeltaSyncEnabled},
     {"default_long_text_editor_preview", &TrackerConfig::DefaultLongTextEditorPreview},
     {"read_only_mode", &TrackerConfig::ReadOnlyMode},
     {"backend_has_been_reachable", &TrackerConfig::BackendHasBeenReachable},
@@ -317,6 +321,9 @@ const FieldDesc<int> kIntFields[] = {
     {"user_activity_day_window", &TrackerConfig::UserActivityDayWindow},
     {"max_user_changes", &TrackerConfig::MaxUserChanges},
     {"ticket_change_monitor_interval_sec", &TrackerConfig::TicketChangeMonitorIntervalSec},
+    {"delta_sync_max_row_age_sec", &TrackerConfig::DeltaSyncMaxRowAgeSec},
+    {"field_catalog_refresh_ttl_sec", &TrackerConfig::FieldCatalogRefreshTtlSec},
+    {"lookup_cache_ttl_sec", &TrackerConfig::LookupCacheTtlSec},
     {"quick_create_ctx_log_lines", &TrackerConfig::QuickCreateCtxLogLines},
 };
 
@@ -389,6 +396,40 @@ void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config) {
     }
 }
 
+// Reads a JSON number as an int. Integers must fit an int; a float is accepted only when it is integral and in
+// range (a hand-edited `60.0` keeps working, `3.5` is refused). False leaves `out` untouched.
+bool JsonToInt(const nlohmann::json& v, int& out) {
+    constexpr int kMin = (std::numeric_limits<int>::min)();
+    constexpr int kMax = (std::numeric_limits<int>::max)();
+    if (v.is_number_unsigned()) {
+        // An unsigned value past INT_MAX must not wrap through int64: compare it as unsigned.
+        const std::uint64_t u = v.get<std::uint64_t>();
+        if (u > static_cast<std::uint64_t>(kMax)) {
+            return false;
+        }
+        out = static_cast<int>(u);
+        return true;
+    }
+    if (v.is_number_integer()) {
+        const std::int64_t n = v.get<std::int64_t>();
+        if (n < kMin || n > kMax) {
+            return false;
+        }
+        out = static_cast<int>(n);
+        return true;
+    }
+    if (v.is_number_float()) {
+        const double d = v.get<double>();
+        // Range first (also rejects NaN / inf), then integrality.
+        if (!(d >= static_cast<double>(kMin) && d <= static_cast<double>(kMax)) || d != std::floor(d)) {
+            return false;
+        }
+        out = static_cast<int>(d);
+        return true;
+    }
+    return false;
+}
+
 // Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
 // table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -419,8 +460,14 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
             cfg.AiAllowCustomEndpointAnthropic = true;
         }
     }
+    // Per key and type-guarded: a hand-edited or config.set-written non-integer must cost only its own field
+    // (it keeps its default), never abort the reads of every field after it.
     for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
-        cfg.*(kIntFields[i].member) = j.value(kIntFields[i].key, cfg.*(kIntFields[i].member));
+        const auto it = j.find(kIntFields[i].key);
+        int value = 0;
+        if (it != j.end() && JsonToInt(*it, value)) {
+            cfg.*(kIntFields[i].member) = value;
+        }
     }
     for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {
         cfg.*(kFloatFields[i].member) =
@@ -436,6 +483,17 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
 } // namespace smatchet
 
 const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
+
+bool ConfigManager::JsonToInt(const nlohmann::json& v, int& out) { return smatchet::config_detail::JsonToInt(v, out); }
+
+bool ConfigManager::IsIntConfigKey(const std::string& jsonKey) {
+    for (const auto& field : kIntFields) {
+        if (jsonKey == field.key) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // ConfigManager — Save(TrackerConfig).
 

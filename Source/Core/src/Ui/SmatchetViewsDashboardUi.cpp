@@ -610,6 +610,11 @@ void DrawFieldsTabCatalogState(AppController& app, UiDrawSession& d, bool noFiel
                                         : smatchet::offline::DataFreshness::Refreshing);
         return;
     }
+    if (d.catalogServedFromSnapshot && !noFields) {
+        // Saved catalog inside its lifetime, no fetch running: say so instead of implying a live read.
+        DataFreshnessCue::Draw(smatchet::offline::DataFreshness::CachedStale);
+        return;
+    }
     const std::string& error = app.GetFieldCatalogError();
     if (!noFields || error.empty()) {
         return;

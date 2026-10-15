@@ -134,3 +134,13 @@ TEST_CASE("ShouldUpgradeCleartextBase: cleartext http to public host must upgrad
 // The IsTrackerTransportErrorText doctest block was deleted with the function in N12 slice 3 —
 // transport-ness travels as the structured TrackerError kind classified at each backend's error
 // site (kind mapping pinned by tests/Core/Tracker2xxErrorGuard.test.cpp).
+
+TEST_CASE("UrlEncode: RFC 3986 unreserved bytes pass through, everything else is upper-case percent-encoded") {
+    CHECK(UrlEncode("") == "");
+    CHECK(UrlEncode("AZaz09-_.~") == "AZaz09-_.~");
+    CHECK(UrlEncode("a b&c=d,e") == "a%20b%26c%3Dd%2Ce");
+    CHECK(UrlEncode("*none") == "%2Anone");
+    CHECK(UrlEncode(std::string("\x00\x7F", 2)) == "%00%7F");
+    CHECK(UrlEncode("\xC3\xA9") == "%C3%A9"); // UTF-8 bytes >= 0x80 never sign-extend
+    CHECK(UrlEncode("\xFF") == "%FF");
+}

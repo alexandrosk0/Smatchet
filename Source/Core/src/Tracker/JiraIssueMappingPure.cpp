@@ -11,6 +11,7 @@
 #include "TrackerFieldValueParser.h"
 #include "Tracker/CommentBlobFormatPure.h"
 #include "Tracker/TrackerFieldSchema.h"
+#include "Tracker/TrackerHttpPure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -149,8 +150,10 @@ std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::
 
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,
                                   std::vector<std::string>& outSelectedFields) {
+    // No fake "changelog" field: the changelog is an `expand`, requested only for the `history` column
+    // (NeedsChangelogExpand). Listing it under `fields` did nothing but widen the request.
     outFieldsList = std::vector<std::string>{"summary",   "description", "status",     "assignee", "priority",
-                                             "issuetype", "parent",      "issuelinks", "comment",  "changelog"};
+                                             "issuetype", "parent",      "issuelinks", "comment"};
     std::unordered_set<std::string> seenFields(outFieldsList.begin(), outFieldsList.end());
     outSelectedFields.clear();
     std::unordered_set<std::string> seenSelectedFields;
@@ -200,6 +203,60 @@ void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::
             }
         }
     }
+    // `updated` is the version the delta sync compares: always requested and mapped, whether or not the
+    // view shows it as a column.
+    if (seenFields.insert("updated").second) {
+        outFieldsList.push_back("updated");
+    }
+    if (seenSelectedFields.insert("updated").second) {
+        outSelectedFields.emplace_back("updated");
+    }
+}
+
+bool NeedsChangelogExpand(const std::vector<std::string>& selectedFields) {
+    return std::find(selectedFields.begin(), selectedFields.end(), "history") != selectedFields.end();
+}
+
+namespace {
+/// `fields=` value: each id is encoded on its own (a field id from the view config may carry `&`, `#` or `=`),
+/// then the ids are joined with the literal `,` Jira splits on.
+std::string EncodeFieldsCsv(const std::string& fieldsCsv) {
+    std::string out;
+    std::size_t start = 0;
+    while (start <= fieldsCsv.size()) {
+        std::size_t comma = fieldsCsv.find(',', start);
+        if (comma == std::string::npos) {
+            comma = fieldsCsv.size();
+        }
+        if (comma > start) {
+            if (!out.empty()) {
+                out += ',';
+            }
+            out += UrlEncode(fieldsCsv.substr(start, comma - start));
+        }
+        start = comma + 1;
+    }
+    return out;
+}
+} // namespace
+
+std::string BuildJiraSearchUrl(const std::string& base, const std::string& jqlEncoded, int maxResults,
+                               const std::string& fieldsCsv, bool expandChangelog) {
+    std::string url = base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=" + std::to_string(maxResults) +
+                      "&fields=" + EncodeFieldsCsv(fieldsCsv);
+    if (expandChangelog) {
+        url += "&expand=changelog";
+    }
+    return url;
+}
+
+std::string BuildJiraIssueUrl(const std::string& base, const std::string& keyEncoded, const std::string& fieldsCsv,
+                              bool expandChangelog) {
+    std::string url = base + "/rest/api/3/issue/" + keyEncoded + "?fields=" + EncodeFieldsCsv(fieldsCsv);
+    if (expandChangelog) {
+        url += "&expand=changelog";
+    }
+    return url;
 }
 
 bool IsJiraDurationSecondsFieldKey(const std::string& fieldKey) {

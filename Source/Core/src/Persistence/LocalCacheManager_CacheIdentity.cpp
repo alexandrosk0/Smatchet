@@ -20,7 +20,7 @@ constexpr const char* kCacheIdentityRekeyFlag = "cache_identity_rekey_v1";
 // Cache tables: a primary-key collision keeps the row already under the site key (UPDATE OR IGNORE), and the
 // legacy duplicate is then dropped — it is cached data the next sync refetches.
 const char* const kCacheTables[] = {"tickets_v2", "ticket_field_values_v2", "ticket_field_rich_values_v2",
-                                    "lookup_cache"};
+                                    "ticket_sync_meta", "lookup_cache"};
 // Queue tables: rows are keyed by an auto-increment id, so a plain UPDATE never collides. Queued writes are
 // never dropped here.
 const char* const kQueueTables[] = {"pending_field_edits",  "pending_field_edits_dead", "pending_creates",

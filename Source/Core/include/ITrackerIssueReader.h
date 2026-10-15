@@ -8,6 +8,7 @@
 #include "CachedTicketTypes.h"
 #include "SmatchetResult.h"
 #include "TrackerError.h"
+#include "TrackerRoster.h"
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
@@ -78,6 +79,17 @@ class ITrackerIssueReader {
     FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                        const ViewsStore& views) = 0;
 
+    /// FetchIssuesForKeys that honours `shouldCancel` inside the request itself (the retry/backoff
+    /// window of the HTTP layer), not just between calls - the parent walk of a superseded sync
+    /// otherwise runs a whole request to its timeout. The default forwards to FetchIssuesForKeys
+    /// (a backend without a cancellable transport loses nothing); a cancelled call returns a
+    /// `Cancelled` error when the backend can tell.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                  const ViewsStore& views, const CancelCallback& /*shouldCancel*/) {
+        return FetchIssuesForKeys(cfg, issueKeys, views);
+    }
+
     /// Issues whose `parent` is one of `parentKeys` — the downward mirror of FetchIssuesForKeys.
     /// Used to pull a visible ticket's children into the cache when the active view's own
     /// filter doesn't independently return them (e.g. a `key = EPIC-1` view showing just the
@@ -88,6 +100,49 @@ class ITrackerIssueReader {
     FetchChildrenOfKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*parentKeys*/,
                         const ViewsStore& /*views*/) {
         return Result<std::vector<CachedTicket>, TrackerError>::Ok({});
+    }
+
+    /// FetchChildrenOfKeys with the same in-request cancellation as FetchIssuesForKeysCancellable.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                   const ViewsStore& views, const CancelCallback& /*shouldCancel*/) {
+        return FetchChildrenOfKeys(cfg, parentKeys, views);
+    }
+
+    // ---- delta-sync roster surface (docs/plans/active/delta-sync.md § Phase 3) ----
+
+    /// True when FetchViewRoster is implemented. Callers skip the roster path (and keep today's full
+    /// fetch) on a backend that answers false - the default.
+    virtual bool SupportsVersionedRoster() const { return false; }
+
+    /// The keys currently in the view, each with the tracker's last-updated stamp, WITHOUT downloading
+    /// bodies. The roster is `Complete` only when every page was read. Failures keep their kind
+    /// (`Transport` stays retryable), and a cancelled walk returns `Cancelled`. The default reports the
+    /// capability as missing.
+    virtual Result<TrackerRoster, TrackerError>
+    FetchViewRoster(const TrackerConfig& /*cfg*/, const ViewsStore& /*views*/, const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
+    }
+
+    /// Roster (key + last-updated stamp, no bodies) of the issues named by `keys`, for the delta parent walk.
+    /// Only meaningful when SupportsVersionedRoster(). A key the tracker will not show fails the call (the
+    /// caller then runs the full-body hop, which isolates refusals); `Complete` is true when every key's
+    /// batch was read.
+    virtual Result<TrackerRoster, TrackerError> FetchRosterForKeys(const TrackerConfig& /*cfg*/,
+                                                                   const std::vector<std::string>& /*keys*/,
+                                                                   const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
+    }
+
+    /// Roster of the issues whose parent is one of `parentKeys` - the downward mirror of FetchRosterForKeys,
+    /// for the delta child walk. `Complete` is false when a page cap cut the walk short.
+    virtual Result<TrackerRoster, TrackerError> FetchChildRosterOfKeys(const TrackerConfig& /*cfg*/,
+                                                                       const std::vector<std::string>& /*parentKeys*/,
+                                                                       const CancelCallback& /*shouldCancel*/) {
+        return Result<TrackerRoster, TrackerError>::Err(
+            TrackerErrorInvalidRequest("This tracker cannot list ticket versions."));
     }
 
     // ---- ticket-change-monitor reader surface (ticket-change-monitor plan, S1b) ----

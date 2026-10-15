@@ -106,6 +106,38 @@ template <typename Value> class KeyedLookupCache {
         it->second.RetryAfter = now + std::chrono::seconds(retryAfterSeconds_);
     }
 
+    /// Ends the fetch `t` with a value served from local storage instead of the tracker (a saved copy still inside
+    /// its lifetime): the entry holds it as a SAVED copy (not Live, so the cue says "saved") and no refetch starts
+    /// before `retryAt`, when the saved copy expires. The ticket is spent: a completion recorded for it afterwards
+    /// is ignored, so a caller that still records its normal success cannot turn the copy into a live value.
+    void CompleteFromSaved(const Ticket& t, Value value, Clock::time_point retryAt) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = slots_.find(t.Key);
+        if (it == slots_.end() || it->second.Gen != t.Gen) {
+            return;
+        }
+        Entry& e = it->second.E;
+        e.Payload = std::move(value);
+        e.HasValue = true;
+        e.Live = false;
+        e.InFlight = false;
+        e.LastAttemptFailed = false;
+        e.LastErrorKind = TrackerErrorKind::None;
+        e.LastError.clear();
+        it->second.RetryAfter = retryAt;
+        it->second.Gen = 0;
+    }
+
+    /// A user's Refresh: the next TryBeginFetch for `key` may run now, whatever failure backoff or saved-copy
+    /// expiry was pending.
+    void ClearBackoff(const std::string& key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = slots_.find(key);
+        if (it != slots_.end()) {
+            it->second.RetryAfter = Clock::time_point();
+        }
+    }
+
     /// Seed a value restored from local storage. Never overrides a live value.
     void SeedFromStore(const std::string& key, Value value) {
         std::lock_guard<std::mutex> lock(mutex_);

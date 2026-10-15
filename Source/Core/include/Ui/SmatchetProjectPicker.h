@@ -52,9 +52,12 @@ struct State {
     std::atomic<bool> fetchInFlight{false};
     std::atomic<bool> fetchDone{false}; // true once a fetch returned (even if empty)
     std::string fetchError;
-    bool fetchFailed = false;          // guarded by fetchMutex: the last listing failed or was skipped offline
-    bool fetchFromSaved = false;       // guarded by fetchMutex: fetchedAll is the saved list, not a live one
-    bool fetchSkippedOffline = false;  // guarded by fetchMutex: the last load sent no request (offline)
+    bool fetchFailed = false;    // guarded by fetchMutex: the last listing failed or was skipped offline
+    bool fetchFromSaved = false; // guarded by fetchMutex: fetchedAll is a saved copy (fallback or inside its lifetime)
+    bool fetchSkippedOffline = false; // guarded by fetchMutex: the last load sent no request (offline)
+    /// Set by Retry / Refresh (UI thread): the next load asks the tracker even while a saved list is still inside
+    /// its lifetime. Consumed by StartAllProjectsFetch when it launches that load.
+    std::atomic<bool> fetchBypassSaved{false};
     std::string fetchBackendKey;       // guarded by fetchMutex: the tracker the list was requested for
     std::uint64_t fetchGeneration = 0; // guarded by fetchMutex: bumped per load; a stale load publishes nothing
     // The "Recently used" rows, read off the UI thread once per popup open by StartRecentProjectsLoad.
