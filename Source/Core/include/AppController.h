@@ -1913,6 +1913,13 @@ class AppController : public IAppThreading,
     /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
     void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
+    /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
+    /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
+    /// is waited for (RAII join) rather than left to the member destructor.
+    void DrainCatalogWorkBeforeShutdown_();
+    /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
+    /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
+    void JoinCacheRecreateWorker_();
     std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
     std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
     std::thread cacheRecreateWorker_;             ///< joined by the next Start and by ~AppController

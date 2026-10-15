@@ -222,13 +222,7 @@ AppController::~AppController() {
     smatchet::config_save::Stop();
 
     mainThreadDispatcher.BeginShutdown();
-
-    // A cache recreate still running stops waiting on the UI thread (its posts are dropped now) and is joined before
-    // any member goes: it touches `Cache`, the services and the background pool.
-    cacheRecreateAbort_.store(true);
-    if (cacheRecreateWorker_.joinable()) {
-        cacheRecreateWorker_.join();
-    }
+    JoinCacheRecreateWorker_(); // a recreate still running stops waiting on the UI thread and is joined
 
     // Every pane, not just the focused one: each TicketSyncService destructor would otherwise
     // join its busy worker during gridContexts_ member destruction, one pane after another,
@@ -291,18 +285,7 @@ AppController::~AppController() {
 
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
 
-    // A field-catalog snapshot save still queued must reach the file: once the pool is flagged, its drain would be
-    // skipped. Bounded, because a save is one small file write.
-    if (!catalogSnapshotIo_.Flush(std::chrono::seconds(5))) {
-        LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within 5 s.");
-    }
-
-    // The startup field-catalog restore reads its file on a std::async worker that owns copies only; wait for it here
-    // (RAII join) rather than leave it to the member destructor.
-    if (startupCatalogRestoreSlot_.valid()) {
-        startupCatalogRestoreSlot_.wait();
-    }
-
+    DrainCatalogWorkBeforeShutdown_(); // queued snapshot saves reach the file; the startup restore read is joined
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's

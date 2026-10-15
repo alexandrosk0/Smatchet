@@ -141,6 +141,22 @@ VoidResult AppController::StartRecreateLocalCacheDatabase(
     return VoidOk();
 }
 
+void AppController::DrainCatalogWorkBeforeShutdown_() {
+    if (!catalogSnapshotIo_.Flush(std::chrono::seconds(5))) {
+        LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within 5 s.");
+    }
+    if (startupCatalogRestoreSlot_.valid()) {
+        startupCatalogRestoreSlot_.wait();
+    }
+}
+
+void AppController::JoinCacheRecreateWorker_() {
+    cacheRecreateAbort_.store(true);
+    if (cacheRecreateWorker_.joinable()) {
+        cacheRecreateWorker_.join();
+    }
+}
+
 std::vector<TicketSyncService*> AppController::CollectPaneSyncServices_() {
     std::vector<TicketSyncService*> services;
     services.reserve(gridContexts_.size() + 1);

@@ -30,7 +30,7 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
-#include "AsyncLoadGatePure.h" // LaunchIntoSlot / TakeFromSlot for the cached-projects read
+#include "AsyncLoadGatePure.h"       // LaunchIntoSlot / TakeFromSlot for the cached-projects read
 #include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
