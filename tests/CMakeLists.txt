@@ -1617,6 +1617,9 @@ add_executable(SmatchetTests
     Core/TicketSyncMeta.test.cpp
     # delta-sync Phase 3 - the pure strategy / fetch-set / full-fetch-threshold decisions (Sync/DeltaSyncPure.h).
     Core/DeltaSyncPure.test.cpp
+    # delta-sync review follow-ups - the apply drain's per-session id -> index map and version-move report
+    # (Sync/ActiveRowMergePure.h) and the local-cache refresh ordering gate (Sync/LocalRefreshGatePure.h).
+    Core/ActiveRowMerge.test.cpp
     # delta-sync Phase 7 - when a saved lookup row may be served without a live fetch (Sync/LookupFreshnessPure.h).
     Core/LookupFreshnessPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp

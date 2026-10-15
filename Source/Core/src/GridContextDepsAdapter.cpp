@@ -257,6 +257,8 @@ void GridContextDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std
 
 void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRevision.fetch_add(1); }
 
+std::uint64_t GridContextDepsAdapter::ActiveTicketsRevisionNow() const { return ctx().ActiveTicketsRevision.load(); }
+
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
 void GridContextDepsAdapter::OnTicketsRemotelyChanged(const std::vector<std::string>& ids) {

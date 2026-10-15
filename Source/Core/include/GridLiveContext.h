@@ -20,6 +20,7 @@
 
 #include "CachedTicketTypes.h"
 #include "Sync/ChangeMonitorPaneState.h"
+#include "Sync/LocalRefreshGatePure.h"
 #include "TrackerFieldSchema.h"
 
 class ITrackerBackend;
@@ -125,6 +126,10 @@ struct GridLiveContext {
     /// that is still the latest when it lands re-reads the grid, so a burst of edits never flashes an
     /// intermediate row (Pillar 2: the saves run on a worker).
     std::atomic<std::uint64_t> ticketSaveSeq_{0};
+    /// Orders this pane's reads of the local cache: a refresh that started earlier never replaces the rows of one
+    /// that started later and landed first. The ticket is taken before the read; the claim is made under
+    /// activeTicketsMutex_ (AppController::RefreshLocalDataCheckedImpl_).
+    smatchet::sync::LocalRefreshGate localRefreshGate_;
     /// Guards ActiveTickets + activeTicketsPublished_ (same contract as the old
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;

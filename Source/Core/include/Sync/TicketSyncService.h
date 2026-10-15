@@ -22,8 +22,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Sync/SyncMode.h"         // SyncMode: Delta (changed tickets only) vs Full (whole view).
-#include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
+#include "Sync/ActiveRowMergePure.h" // ActiveRowIndex: the apply drain's id -> index map, kept per session.
+#include "Sync/SyncMode.h"           // SyncMode: Delta (changed tickets only) vs Full (whole view).
+#include "Sync/SyncSessionStats.h"   // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "SmatchetResult.h"       // Result<>
@@ -95,6 +96,10 @@ class TicketSyncService {
     /// is issued and drops its result when it moved: a sync that began in between writes newer rows
     /// than the probe saw. Any thread.
     std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
+
+    /// How many times the apply drain built its id -> index map from scratch (cumulative). A session builds it once
+    /// and rebuilds only when the roster changed behind it; diagnostics and tests. UI thread.
+    std::size_t MergeIndexBuilds() const { return mergeIndex_.Builds; }
 
     /// What the most recently finished session cost (`Valid` is false until one finishes). Any thread.
     smatchet::sync::SyncSessionStats LastSessionStats() const;
@@ -345,6 +350,13 @@ class TicketSyncService {
     /// Versions of the cached rows as of the session start; worker-thread only (written before the first
     /// batch is queued, read while persisting the batches of the same session).
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
+    /// Keys the tracker refused to serve on an earlier delta attempt of this service. Each such attempt falls back
+    /// to a full fetch; without this memory a key that stays refused would make every later delta attempt do the
+    /// same. They are skipped (and counted as listed but not returned: no purge) until an explicit Full sync or a
+    /// tracker switch clears the set. Worker-only during a session; cleared on the UI thread while no worker runs.
+    std::unordered_set<std::string> refusedKeys_;
+    /// The apply drain's id -> index map, kept for the whole session (UI thread).
+    smatchet::sync::ActiveRowIndex mergeIndex_;
     /// Fills `sessionMeta_` from the cache (worker thread). Returns the error text when the read failed (the
     /// snapshot is then empty), empty on success.
     std::string LoadSessionMeta();

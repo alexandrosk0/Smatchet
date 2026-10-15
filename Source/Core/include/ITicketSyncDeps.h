@@ -158,6 +158,9 @@ class ITicketSyncDeps {
     virtual void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) = 0;
     /// Bump `ActiveTicketsRevision.fetch_add(1)` — UI sort caches re-evaluate on bump.
     virtual void BumpActiveTicketsRevision() = 0;
+    /// The current value of that revision. Read it under `ActiveTicketsMutex` together with the roster: the apply
+    /// drain keeps its id -> index map across frames and trusts it only while this value is the one it recorded.
+    virtual std::uint64_t ActiveTicketsRevisionNow() const = 0;
 
     // ---- Edit-meta + Lua glue ---------------------------------------------------------
     virtual void PruneEditMetaCacheToActiveTickets() = 0;

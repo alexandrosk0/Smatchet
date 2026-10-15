@@ -2926,3 +2926,122 @@ TEST_CASE("Delta reload: a stamp re-rendered in another zone is not a change") {
     CHECK(stats.BodiesFetched == 0);
     CHECK(stats.Unchanged == 1);
 }
+
+// --- delta-sync review follow-ups: the apply drain, rows the cache holds newer, refused keys ------------------
+
+TEST_CASE("The apply drain builds its id map once per session, not once per slice") {
+    DeltaRig rig;
+    std::vector<CachedTicket> rows;
+    for (int i = 0; i < 100; ++i) {
+        rows.push_back(Stamped("K-" + std::to_string(i), "T1"));
+    }
+    rig.fake->SetFetchIssuesResult(rows, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 100);
+    // 100 fetched rows apply 20 per frame: five slices, one map.
+    CHECK(rig.svc.MergeIndexBuilds() == 1);
+}
+
+TEST_CASE("The apply drain rebuilds its id map when another path replaced the roster during the session") {
+    DeltaRig rig;
+    std::vector<CachedTicket> rows;
+    for (int i = 0; i < 40; ++i) {
+        rows.push_back(Stamped("K-" + std::to_string(i), "T1"));
+    }
+    rig.fake->SetFetchIssuesResult(rows, true);
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(SpinUntil(rig.svc, [&]() { return rig.svc.MergeIndexBuilds() >= 1; }));
+    const std::size_t buildsBefore = rig.svc.MergeIndexBuilds();
+
+    {
+        // A refresh from the local cache swaps the roster wholesale (and announces it with a revision bump).
+        std::lock_guard<std::mutex> lock(rig.deps.ActiveTicketsMutexImpl);
+        rig.deps.ActiveTicketsImpl.clear();
+        rig.deps.ActiveTicketsImpl.push_back(Stamped("K-39", "T1", "from the cache"));
+        rig.deps.BumpActiveTicketsRevision();
+    }
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.svc.MergeIndexBuilds() == buildsBefore + 1); // the next slice saw the announced change and rebuilt
+    // No duplicate ids whatever the interleaving.
+    std::unordered_set<std::string> seen;
+    for (const CachedTicket& row : rig.deps.ActiveTicketsImpl) {
+        CHECK(seen.insert(row.id).second);
+    }
+}
+
+TEST_CASE("A fetched row the cache holds newer reaches a pane that did not hold it") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "2024-05-02T10:00:00.000+0000", "cached newer")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "2024-05-01T10:00:00.000+0000"}})); // the roster is behind the cache
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-1", "2024-05-01T10:00:00.000+0000", "fetched older")});
+    REQUIRE(rig.deps.ActiveTicketsImpl.empty()); // a fresh pane
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    // The older fetched copy was not persisted ...
+    CachedTicket stored;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-1", stored));
+    CHECK(stored.fieldValues["summary"] == "cached newer");
+    // ... and the pane shows the cached newer copy instead of lacking the row.
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].id == "ABC-1");
+    CHECK(rig.deps.ActiveTicketsImpl[0].fieldValues["summary"] == "cached newer");
+}
+
+TEST_CASE("A row served from the cache at a newer version than the resident one reports the remote change") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T2", "cached at T2")});
+    rig.deps.ActiveTicketsImpl = {Stamped("ABC-1", "T1", "resident at T1")}; // the pane still holds the older copy
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T2"}})); // the cache is current: nothing to download
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].fieldValues["summary"] == "cached at T2");
+    CHECK(rig.deps.RemotelyChanged == std::vector<std::string>{"ABC-1"}); // transitions and edit permissions go stale
+}
+
+TEST_CASE("Delta reload: a key the tracker refused is remembered, so later attempts stay delta until a full sync") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    // The streamed fetch still serves the row, at a stamp behind the roster's: the key stays "changed" next time.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1", "from full")}, true);
+
+    rig.Sync(); // first attempt: refused, falls back to the full fetch
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("ABC-2") != std::string::npos);
+    const std::size_t keyedCallsAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+
+    rig.Sync(); // second attempt: the key is skipped, the reload stays delta
+    REQUIRE(rig.Settle());
+    smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.FallbackReason.empty());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedCallsAfterFirst); // it was not asked for again
+    CHECK(rig.CachedCount() == 2);                                          // nothing purged on the way
+    CHECK(stats.Completed); // its cached row stands in: the session is still authoritative
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.find("listed by the tracker") == std::string::npos);
+    bool paneHoldsRefused = false;
+    for (const CachedTicket& row : rig.deps.ActiveTicketsImpl) {
+        paneHoldsRefused = paneHoldsRefused || row.id == "ABC-2";
+    }
+    CHECK(paneHoldsRefused);
+
+    rig.Sync(smatchet::sync::SyncMode::Full); // an explicit full sync forgets the memory
+    REQUIRE(rig.Settle());
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full"); // asked again, refused again, fell back again
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedCallsAfterFirst);
+}

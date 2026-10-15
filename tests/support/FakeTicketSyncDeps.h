@@ -190,6 +190,9 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         ActiveTicketsPublishedImpl = std::move(snap);
     }
     void BumpActiveTicketsRevision() override { ++ActiveTicketsRevisionImpl; }
+    std::uint64_t ActiveTicketsRevisionNow() const override {
+        return static_cast<std::uint64_t>(ActiveTicketsRevisionImpl);
+    }
 
     void PruneEditMetaCacheToActiveTickets() override { ++PruneEditMetaCalls; }
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig /*cfg*/) override { ++WarmIssueTypeEditMetaCalls; }

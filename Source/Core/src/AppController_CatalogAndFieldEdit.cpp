@@ -368,6 +368,8 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
     // thread's atomic_store in RecreateLocalCacheDatabase.
     const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
     if (cache) {
+        // The ticket orders this refresh against the others in flight for the pane (taken before the read starts).
+        const std::uint64_t refreshTicket = ctx.localRefreshGate_.Begin();
         // Full-table read stays OUTSIDE activeTicketsMutex_ (SQLite I/O under the tickets
         // mutex would block the UI-thread readers, Pillar 2); the generation re-check below
         // is therefore the authoritative gate, taken immediately before the swap-in.
@@ -410,8 +412,20 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
                          static_cast<unsigned long long>(ctx.backendGeneration_.load()));
                 return;
             }
-            ctx.ActiveTickets = std::move(latestTickets);
-            ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+            if (ctx.localRefreshGate_.ClaimWholesale(refreshTicket)) {
+                ctx.ActiveTickets = std::move(latestTickets);
+                ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+                ctx.ActiveTicketsRevision.fetch_add(1); // in the lock: the apply drain's id map trusts the pair
+            } else {
+                // A refresh that started after this one has landed already, and its read is the newer: this one
+                // only owes the pane the row its caller just saved.
+                if (smatchet::sync::AdmitRowIfMissing(ctx.ActiveTickets, latestTickets, admitId)) {
+                    ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+                    ctx.ActiveTicketsRevision.fetch_add(1);
+                }
+                LOG_DEBUG("AppController::RefreshLocalData superseded by a newer refresh on pane '%s'",
+                          ctx.PaneId.c_str());
+            }
         }
         // The admitted row now belongs to this pane for good — record it, or the NEXT refresh
         // (which re-reads the recorded set) would filter the freshly-saved ticket back out.
@@ -424,7 +438,6 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
             AddPaneOwnedTicketId(cacheKey, ctx.PaneId, admitId);
         }
         PruneEditMetaCacheToActiveTickets();
-        ctx.ActiveTicketsRevision.fetch_add(1);
         // Lua window dirty-bump on ticket data change; the only other site is UpdateTicket's
         // in-memory patch (PatchActiveTicketInPlace_), whose queued save re-reads through here.
         // Stub build turns this into a no-op.

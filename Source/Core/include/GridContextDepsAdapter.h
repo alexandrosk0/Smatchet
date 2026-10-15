@@ -132,6 +132,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::vector<CachedTicket>& ActiveTickets() override;
     void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) override;
     void BumpActiveTicketsRevision() override;
+    std::uint64_t ActiveTicketsRevisionNow() const override;
     void PruneEditMetaCacheToActiveTickets() override;
     void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override;
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) override;

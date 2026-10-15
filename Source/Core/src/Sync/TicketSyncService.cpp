@@ -72,52 +72,24 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
 constexpr std::size_t kFetchedRowsPerFrame = 20;    // rows saved to SQLite per frame (3 ms budget)
 constexpr std::size_t kUnchangedRowsPerFrame = 500; // cache-served rows: memory-only, so a bigger slice
 
-// Merges one frame's rows into the in-memory roster through an id -> index map (one pass instead of a
-// linear scan per row). Freshly fetched rows always replace; cache-served rows replace only when the row is
-// missing or differs, so a reload that changed nothing republishes nothing. Returns whether anything changed
-// (the snapshot is republished under the same lock then).
-bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedTicket>& fetched,
-                                const std::vector<CachedTicket>& unchanged, std::vector<std::string>& movedIds) {
+// Merges one frame's rows into the in-memory roster (smatchet::sync::MergeRowsIntoActive: fresh rows always replace,
+// cache-served rows only when missing or different) and, when anything changed, republishes the snapshot and bumps the
+// revision under the same lock. The id -> index map in `index` lives for the whole session; recording the revision
+// the bump produced keeps it valid for the next frame. Returns whether anything changed.
+bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, smatchet::sync::ActiveRowIndex& index,
+                                const std::vector<CachedTicket>& fetched, const std::vector<CachedTicket>& unchanged,
+                                std::vector<std::string>& movedIds) {
     std::lock_guard<std::mutex> lock(deps.ActiveTicketsMutex());
     std::vector<CachedTicket>& active = deps.ActiveTickets();
-    std::unordered_map<std::string, std::size_t> index;
-    index.reserve(active.size() + fetched.size() + unchanged.size());
-    for (std::size_t i = 0; i < active.size(); ++i) {
-        index.emplace(active[i].id, i);
-    }
-    bool changed = false;
-    const auto place = [&](const CachedTicket& row, bool onlyIfDifferent) {
-        const auto it = index.find(row.id);
-        if (it == index.end()) {
-            index.emplace(row.id, active.size());
-            active.push_back(row);
-            changed = true;
-            return;
-        }
-        CachedTicket& current = active[it->second];
-        if (!onlyIfDifferent) {
-            // A resident row whose tracker version moved: what hangs off the old version is stale.
-            const std::string& was = current.GetFieldValueRef("updated");
-            const std::string& now = row.GetFieldValueRef("updated");
-            if (!was.empty() && !now.empty() && !smatchet::sync::IsSameRemoteVersion(was, now)) {
-                movedIds.push_back(row.id);
-            }
-        }
-        if (onlyIfDifferent && current.fieldValues == row.fieldValues &&
-            current.fieldRichValues == row.fieldRichValues) {
-            return;
-        }
-        current = row;
-        changed = true;
-    };
-    for (const CachedTicket& row : fetched) {
-        place(row, false);
-    }
-    for (const CachedTicket& row : unchanged) {
-        place(row, true);
-    }
+    const std::uint64_t revisionBefore = deps.ActiveTicketsRevisionNow();
+    const bool changed =
+        smatchet::sync::MergeRowsIntoActive(active, revisionBefore, index, fetched, unchanged, movedIds);
     if (changed) {
         deps.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(active));
+        deps.BumpActiveTicketsRevision();
+        // The value our own bump produced. A bump another path made in between leaves the counter ahead of this,
+        // so the next merge sees the mismatch and rebuilds instead of trusting a map that path may have outdated.
+        index.Revision = revisionBefore + 1;
     }
     return changed;
 }
@@ -148,6 +120,26 @@ std::size_t DropRowsOlderThanCached(std::vector<CachedTicket>& rows,
                        }),
         rows.end());
     return before - rows.size();
+}
+
+// The cached copies of rows a fetch lost to a newer cached version (DropRowsOlderThanCached). The fetched copy is
+// not persisted, but the pane still has to show the row: a pane that does not hold it yet (a fresh pane, or one that
+// evicted it) would otherwise lack it until the next sync. A failed read costs only that: the ids stay kept.
+std::vector<CachedTicket> ReadCachedCopies(ISyncCache* cache, const std::string& backendKey,
+                                           const std::vector<std::string>& ids) {
+    if (cache == nullptr || ids.empty()) {
+        return std::vector<CachedTicket>();
+    }
+    try {
+        return cache->GetTicketsByIds(backendKey, ids);
+    } catch (const std::exception& ex) {
+        LOG_WARN("TicketSyncService: could not read %zu cached row(s) newer than the fetched copy: %s", ids.size(),
+                 ex.what());
+    } catch (...) {
+        LOG_WARN("TicketSyncService: could not read %zu cached row(s) newer than the fetched copy (unknown exception)",
+                 ids.size());
+    }
+    return std::vector<CachedTicket>();
 }
 
 // Saves `rows` and, beside each, the tracker version it was fetched at (delta-sync meta), in one
@@ -591,13 +583,12 @@ void TicketSyncService::DrainPendingStreamingBatches() {
         return;
     }
     std::vector<std::string> movedIds;
-    const bool changed = MergeRowsIntoActiveTickets(deps_, fetchedThisFrame, unchangedThisFrame, movedIds);
+    const bool changed = MergeRowsIntoActiveTickets(deps_, mergeIndex_, fetchedThisFrame, unchangedThisFrame, movedIds);
     if (!movedIds.empty()) {
         deps_.OnTicketsRemotelyChanged(movedIds);
     }
     if (changed || !fetchedThisFrame.empty()) {
         deps_.PruneEditMetaCacheToActiveTickets();
-        deps_.BumpActiveTicketsRevision();
         // Streaming-batch end-of-batch - flip the coalesced bump; session-end emits once.
         deps_.SetPendingLuaWindowBump(true);
     }
@@ -673,6 +664,7 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     const std::size_t keptThisSession = activeStreamingSync_.KeepIds.size();
     NoteFullSyncEmptiness(fullSyncCompleted, keptThisSession == 0);
 
+    mergeIndex_.Release();
     RecordSessionStats(fetchError, fullSyncCompleted);
     SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
     ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
@@ -955,6 +947,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     // under their own key — switching back later re-populates ActiveTickets via the cache
     // hydrate path.
     if (backendSwapped) {
+        refusedKeys_.clear(); // another tracker or site: what the old one refused says nothing about this one
         {
             // Clear + publish under ONE ActiveTicketsMutex scope (issue #1081). Publishing
             // outside the lock raced worker-thread writers (offline-replay RefreshLocalData,
@@ -989,6 +982,10 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     const std::uint64_t reqId = ++currentFetchRequestId_;
     ++sessionEpoch_;
     activeMode_ = mode;
+    mergeIndex_.Release(); // a new session builds its map once, from the roster as it is then
+    if (mode == smatchet::sync::SyncMode::Full) {
+        refusedKeys_.clear(); // an explicit full sync asks again about every key (the worker is joined above)
+    }
     activeStreamingSync_.SessionStartedAt = std::chrono::steady_clock::now();
     activeStreamingSync_.TrafficAtStart = deps_.SampleTrackerTraffic();
     activeStreamingSync_.RequestId = reqId;
@@ -1199,6 +1196,8 @@ bool TicketSyncService::QueueBatch(std::uint64_t reqId, std::vector<CachedTicket
             return true;
         }
     }
+    // Worker thread, no lock held: the newer cached copies of the rows the fetch lost, queued as cache-served rows.
+    std::vector<CachedTicket> newerCached = ReadCachedCopies(deps_.Cache(), deps_.CacheBackendKey(), keepOnlyIds);
     std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
     if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
         return false;
@@ -1208,6 +1207,12 @@ bool TicketSyncService::QueueBatch(std::uint64_t reqId, std::vector<CachedTicket
     queued.CachedUnchanged = cachedUnchanged;
     queued.KeepOnlyIds = std::move(keepOnlyIds);
     activeStreamingSync_.PendingBatches.push_back(std::move(queued));
+    if (!newerCached.empty()) {
+        SyncBatch cached;
+        cached.Rows = std::move(newerCached);
+        cached.CachedUnchanged = true;
+        activeStreamingSync_.PendingBatches.push_back(std::move(cached));
+    }
     return true;
 }
 
@@ -1530,6 +1535,30 @@ std::string PlanDeltaRows(ISyncCache& cache, const std::string& backendKey,
     return std::string();
 }
 
+/// Keys the tracker refused on an earlier delta attempt leave the download list; their cached rows stand in (the
+/// body is unreadable anyway). The key then counts as returned, so the session stays authoritative and raises no
+/// caveat on every sync for a ticket that stays refused.
+void ServeRememberedRefusals(ISyncCache& cache, const std::string& backendKey,
+                             const std::unordered_set<std::string>& refusedKeys, smatchet::sync::DeltaFetchSet& set,
+                             std::vector<CachedTicket>& unchangedRows) {
+    if (refusedKeys.empty()) {
+        return;
+    }
+    std::vector<std::string> kept;
+    std::vector<std::string> skipped;
+    for (std::string& key : set.ToFetch) {
+        (refusedKeys.find(key) != refusedKeys.end() ? skipped : kept).push_back(std::move(key));
+    }
+    set.ToFetch.swap(kept);
+    if (skipped.empty()) {
+        return;
+    }
+    LOG_DEBUG("TicketSyncService: not asking again for %zu key(s) the tracker refused earlier", skipped.size());
+    for (CachedTicket& row : ReadCachedCopies(&cache, backendKey, skipped)) {
+        unchangedRows.push_back(std::move(row));
+    }
+}
+
 } // namespace
 
 void TicketSyncService::FailDeltaSession(std::uint64_t reqId, const std::string& message) {
@@ -1605,6 +1634,8 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         return out;
     }
 
+    // Keys the tracker already refused on an earlier attempt are not asked for again.
+    ServeRememberedRefusals(*cache, backendKey, refusedKeys_, work.Set, work.Unchanged);
     std::vector<std::string> refused;
     Result<std::vector<CachedTicket>, TrackerError> downloaded =
         DownloadChangedRows(*backend, cfgCopy, viewsCopy, cancelled, work.Set.ToFetch, refused);
@@ -1619,7 +1650,9 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
     if (!refused.empty()) {
         // The roster just listed these keys, so a 400/404/410-style refusal of a body request is not proof the
         // ticket is gone (a proxy limit, a transient permission error, an oversized request all look like this).
-        // Nothing may be purged on its strength: the full fetch decides what the view holds.
+        // Nothing may be purged on its strength: the full fetch decides what the view holds. The keys are
+        // remembered, so a key that stays refused does not send every later delta attempt down this path.
+        refusedKeys_.insert(refused.begin(), refused.end());
         out.FallbackReason = std::to_string(refused.size()) + " roster-listed issue(s) refused on download (" +
                              refused.front() + (refused.size() > 1 ? ", ..." : "") + ")";
         return out;
