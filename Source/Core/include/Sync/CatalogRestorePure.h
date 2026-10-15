@@ -6,6 +6,7 @@
 // applied when it lands, and whether the startup fetch decision has to wait for it. Header-only, no I/O.
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,15 @@ inline std::string RestoredSnapshotScope(const std::string& projectKey, std::siz
 /// backend the restore was read for.
 inline bool MayApplyRestoredCatalog(bool catalogEmptyNow, bool backendGenerationUnchanged) {
     return catalogEmptyNow && backendGenerationUnchanged;
+}
+
+/// True when work latched at launch for one pane (a failed refresh's snapshot restore, which is read on a worker
+/// and lands later on the UI thread) still belongs to that pane when it lands: the pane's backend generation and its
+/// cache namespace key are both what they were at launch. A tracker or site switch (generation, key) or a retired
+/// pane (generation) makes the result another tracker's, which must not be written into this pane's catalog.
+inline bool PaneLatchHolds(std::uint64_t generationNow, std::uint64_t generationLatched, const std::string& cacheKeyNow,
+                           const std::string& cacheKeyLatched) {
+    return generationNow == generationLatched && cacheKeyNow == cacheKeyLatched;
 }
 
 /// True while the startup fetch-or-skip decision has to wait: it reads the restored snapshot's age, project scope

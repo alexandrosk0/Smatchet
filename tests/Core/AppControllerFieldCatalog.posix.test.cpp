@@ -604,6 +604,88 @@ TEST_CASE("AppController::RefreshFieldCatalog drops a superseded failure without
     CHECK(app.GetFieldCatalogError().empty());
 }
 
+namespace {
+
+/// Saves a catalog with one field under project FOO's snapshot, then empties the pane: the state in which a failed
+/// refresh restores the saved catalog (on a worker, landing later on the UI thread).
+void SaveFooSnapshotAndClear(AppController& app, const TrackerConfig& cfg) {
+    app.SetCurrentCatalogProject("FOO");
+    std::vector<TrackerField> foo(1);
+    foo[0].Id = "customfield_foo";
+    foo[0].Name = "Foo field";
+    app.SetFieldCatalog(std::move(foo), std::vector<TrackerComponent>(), std::string(), false);
+    REQUIRE(SnapshotHasField(app, cfg, "FOO", "customfield_foo"));
+    app.SetFieldCatalog({}, {}, {}, std::string());
+    REQUIRE(app.GetAvailableFields().empty());
+    app.SetCurrentCatalogProject("FOO");
+}
+
+} // namespace
+
+TEST_CASE("AppController::SetFieldCatalog drops a failed refresh's restore when the pane switched tracker meanwhile") {
+    // The restore reads the saved catalog on a worker and installs it from the main-thread queue. If the pane's
+    // backend was swapped in between, the saved catalog is the OLD tracker's: it must not land in the new one's.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    SaveFooSnapshotAndClear(app, cfg);
+
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>()); // the pane switches tracker
+    const std::uint64_t revisionBefore = app.GetFieldCatalogRevision();
+    SettleCatalogRestore(app);
+
+    CHECK(app.GetAvailableFields().empty());
+    CHECK(app.GetFieldCatalogError().empty()); // no banner either: the failure was the old tracker's
+    CHECK(app.GetFieldCatalogRevision() == revisionBefore);
+}
+
+TEST_CASE("AppController::SetFieldCatalog drops a failed refresh's restore when the pane switched site meanwhile") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    SaveFooSnapshotAndClear(app, cfg);
+
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    adapter.SetCacheBackendKey("Jira@another-site.example"); // same tracker kind, another site: the key moved
+    SettleCatalogRestore(app);
+
+    CHECK(app.GetAvailableFields().empty());
+    CHECK(app.GetFieldCatalogError().empty());
+}
+
+TEST_CASE("AppController::HandleFieldCatalogError drops a restore when the pane switched tracker meanwhile") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    SaveFooSnapshotAndClear(app, cfg);
+
+    app.HandleFieldCatalogError("tracker unreachable", true, FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "FOO"),
+                                "Jira");
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    SettleCatalogRestore(app);
+
+    CHECK(app.GetAvailableFields().empty());
+    CHECK(app.GetFieldCatalogError().empty());
+}
+
+TEST_CASE("AppController::HandleFieldCatalogError still restores when the pane did not move") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    SaveFooSnapshotAndClear(app, cfg);
+
+    app.HandleFieldCatalogError("tracker unreachable", true, FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "FOO"),
+                                "Jira");
+    SettleCatalogRestore(app);
+
+    CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
+}
+
 TEST_CASE("AppController::SetFieldCatalog clear empties the pane without publishing synthetic columns") {
     smatchet_tests::OfflineQueueTestEnvGuard env;
     AppController app;

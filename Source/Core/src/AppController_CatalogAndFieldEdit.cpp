@@ -142,6 +142,12 @@ struct CatalogWriteGuard {
     std::uint64_t ExpectedEpoch = 0;
     const std::atomic<std::uint64_t>* RefreshSeq = nullptr; ///< null: unguarded
     std::uint64_t ExpectedRefreshSeq = 0;
+    /// The pane the catalog belongs to, latched with its backend generation and cache namespace key when the work was
+    /// launched (null: not pane-latched). Checked in Holds(), so an async failure restore that lands after the pane
+    /// switched tracker or site is dropped instead of writing the old tracker's snapshot into the new one's catalog.
+    const GridLiveContext* Pane = nullptr;
+    std::uint64_t PaneGeneration = 0;
+    std::string PaneCacheKey;
     const TrackerConfig* Config = nullptr; ///< null: key the snapshot by the current configuration
     /// The project the fetch was for: it keys the snapshot and is pinned with the catalog it fetched.
     bool HasProject = false;
@@ -149,7 +155,17 @@ struct CatalogWriteGuard {
     bool Holds() const {
         return (Generation == nullptr || Generation->load() == ExpectedGeneration) &&
                (Epoch == nullptr || Epoch->load() == ExpectedEpoch) &&
-               (RefreshSeq == nullptr || RefreshSeq->load() == ExpectedRefreshSeq);
+               (RefreshSeq == nullptr || RefreshSeq->load() == ExpectedRefreshSeq) &&
+               (Pane == nullptr || smatchet::sync::PaneLatchHolds(Pane->backendGeneration_.load(), PaneGeneration,
+                                                                  Pane->CacheBackendKeyCopy(), PaneCacheKey));
+    }
+    /// A guard latched to `pane` as it is now (UI thread): the form SetFieldCatalog / HandleFieldCatalogError pass.
+    static CatalogWriteGuard LatchedTo(const GridLiveContext& pane) {
+        CatalogWriteGuard guard;
+        guard.Pane = &pane;
+        guard.PaneGeneration = pane.backendGeneration_.load();
+        guard.PaneCacheKey = pane.CacheBackendKeyCopy();
+        return guard;
     }
     /// Pins the project this guarded write's catalog was fetched for. Caller holds the catalog mutex.
     void PinProjectLocked(GridContextFieldCatalog& cat) const {
@@ -934,7 +950,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                                     bool errorTransient) {
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
-    GridContextFieldCatalog& cat = fieldCatalog();
+    GridLiveContext& pane = focusedContext();
+    GridContextFieldCatalog& cat = pane.fieldCatalog;
     if (fields.empty() && components.empty() && issueTypeMeta.empty() && error.empty()) {
         smatchet::catalogops::ClearCatalogInMemoryInto(cat, /*clearUsers=*/false);
         return;
@@ -945,8 +962,10 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     io.Queue = &catalogSnapshotIo_;
     io.PostToUi = [this](std::function<void()> fn) { mainThreadDispatcher.PostCompletionToMainThread(std::move(fn)); };
     io.RestoresInFlight = &catalogErrorRestoresInFlight_;
+    // The pane's generation and cache key are latched here: a failed refresh with nothing in memory restores the
+    // saved catalog on a worker and applies it later, and by then the pane may run another tracker or site.
     if (ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
-                              errorTransient, CatalogWriteGuard(), io)) {
+                              errorTransient, CatalogWriteGuard::LatchedTo(pane), io)) {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
 }
@@ -1127,8 +1146,9 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
     io.Queue = &catalogSnapshotIo_;
     io.PostToUi = [this](std::function<void()> fn) { mainThreadDispatcher.PostCompletionToMainThread(std::move(fn)); };
     io.RestoresInFlight = &catalogErrorRestoresInFlight_;
-    HandleFieldCatalogErrorInto(fieldCatalog(), error, errorTransient, catalogCacheKey, backendKey, CatalogWriteGuard(),
-                                std::string(), io);
+    GridLiveContext& pane = focusedContext();
+    HandleFieldCatalogErrorInto(pane.fieldCatalog, error, errorTransient, catalogCacheKey, backendKey,
+                                CatalogWriteGuard::LatchedTo(pane), std::string(), io);
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {

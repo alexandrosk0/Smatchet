@@ -30,3 +30,12 @@ TEST_CASE("StartupCatalogDecisionMustWait: the skip decision waits for the resto
     CHECK(StartupCatalogDecisionMustWait(true));
     CHECK_FALSE(StartupCatalogDecisionMustWait(false));
 }
+
+TEST_CASE(
+    "PaneLatchHolds: a restore latched at launch lands only while the pane still runs the same tracker and site") {
+    CHECK(PaneLatchHolds(7, 7, "Jira@acme", "Jira@acme"));
+    CHECK_FALSE(PaneLatchHolds(8, 7, "Jira@acme", "Jira@acme"));  // the backend was swapped, or the pane retired
+    CHECK_FALSE(PaneLatchHolds(7, 7, "Jira@other", "Jira@acme")); // another site of the same tracker
+    CHECK_FALSE(PaneLatchHolds(7, 7, "Plane", "Jira@acme"));      // another tracker
+    CHECK_FALSE(PaneLatchHolds(8, 7, "Plane", "Jira@acme"));
+}
