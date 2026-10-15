@@ -527,12 +527,24 @@ TEST_CASE(
         CHECK(sync.RecreateCalls == 0);
     }
     {
-        // ... and a confirmed one wipes, then re-fetches in full.
+        // ... a confirmed one whose wipe fails reports the failure and starts NO sync ...
         sync.RecreateError = "cache locked";
         const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
-        REQUIRE(r.Ok);
-        CHECK((*r.Data)["warning"] == "cache locked");
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::HandlerError);
+        CHECK(r.Error.Message.find("cache locked") != std::string::npos);
         CHECK(sync.RecreateCalls == 1);
+        CHECK(sync.FullSyncCalls == 1);
+        CHECK(sync.SyncCalls == 2);
+    }
+    {
+        // ... and a confirmed one that wipes then re-fetches in full.
+        sync.RecreateError.clear();
+        const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
+        CHECK_FALSE((*r.Data).contains("warning"));
+        CHECK(sync.RecreateCalls == 2);
         CHECK(sync.FullSyncCalls == 2);
         CHECK(sync.SyncCalls == 3);
     }
@@ -542,7 +554,7 @@ TEST_CASE(
         // The UI-thread hop only resolves the pane; the SQLite read must not run inline.
         CHECK(sync.RefreshCalls == 0);
         CHECK(sync.RefreshAsyncCalls == 1);
-        CHECK(poster.Posts == 4);
+        CHECK(poster.Posts == 5);
     }
     {
         const CommandResult r = reg.Dispatch("sync.tracker_status", {}, AutomationCtx());

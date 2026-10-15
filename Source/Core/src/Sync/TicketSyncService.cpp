@@ -301,8 +301,9 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // happens on this (UI) thread between sessions (multi-grid Slice 1b).
     const std::string backendKey = deps_.CacheBackendKey();
     CarryForwardLazyComments(deps_, pack.Tickets);
-    // A Full sync is authoritative: it may overwrite a row whose stored stamp is later than the fetched one.
-    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets, activeMode_ == smatchet::sync::SyncMode::Full);
+    // An inline pack is not a Full sync session (activeMode_ belongs to the last streaming session, not this
+    // pack): keep the older-version guard.
+    SaveRowsWithMeta(*deps_.Cache(), backendKey, freshTickets, /*overwriteOlder=*/false);
     const size_t saved = freshTickets.size();
 
     size_t deleted = 0;

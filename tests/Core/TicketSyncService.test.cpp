@@ -1988,6 +1988,33 @@ TEST_CASE("A stored stamp far in the future does not block a Delta sync write") 
     CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-01T09:00:00.000+0000");
 }
 
+// ApplyIssueFetchPack must not borrow the authority of an earlier Full streaming session on the same service.
+TEST_CASE("After a Full session an inline fetch pack older than the stored stamp does not overwrite") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({Stamped("ABC-9", "2024-05-01T09:00:00.000+0000", "full")}, true);
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views, smatchet::sync::SyncMode::Full);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.LastSessionStats().Valid; }));
+
+    const CachedTicket newer = Stamped("ABC-1", "2024-05-02T10:00:00.000+0000", "newer");
+    deps.CacheImpl->SaveTicketsWithSyncMeta(
+        "Jira", {newer}, {smatchet::sync::BuildSyncMeta(newer, static_cast<std::int64_t>(std::time(nullptr)))});
+    TrackerIssueFetchPack pack;
+    pack.Tickets.push_back(Stamped("ABC-1", "2024-05-01T09:00:00.000+0000", "older"));
+    pack.FullSyncCompleted = false;
+    svc.ApplyIssueFetchPack(pack);
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "newer");
+    CHECK(deps.CacheImpl->GetTicketSyncMeta("Jira").at("ABC-1").RemoteUpdated == "2024-05-02T10:00:00.000+0000");
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("The stale sweep is one worker-side batch delete plus one in-memory pass") {
     FakeTicketSyncDeps deps;
     auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());

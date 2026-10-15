@@ -7,6 +7,8 @@
 
 #include "../support/TestEnvGuard.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -392,48 +394,6 @@ TEST_CASE("FieldCatalogCache: an empty GitHub or Linear base URL keys and lists 
     CHECK(FieldCatalogCache::BuildFieldCatalogIndexIdentity(linear).endpoint == "https://api.linear.app/graphql|team");
 }
 
-TEST_CASE("FieldCatalogCache: a failed touch write keeps the queued touches for the next write") {
-    smatchet_tests::TestEnvGuard env;
-    CacheFileCleanup file(env);
-    const std::int64_t recentUnix = TimeNowPure::NowUnixSeconds() - 60;
-    const std::string recent = std::to_string(recentUnix);
-    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
-                         "{\"cacheKey\":\"k-recent\",\"projectKey\":\"R\",\"lastUsedUnix\":" +
-                             recent +
-                             "},"
-                             "{\"cacheKey\":\"k-old\",\"projectKey\":\"O\",\"lastUsedUnix\":100}],"
-                             "\"k-recent\":" +
-                             Blob("r") + ",\"k-old\":" + Blob("o") + "}");
-
-    REQUIRE(Loads("k-recent")); // used within the day: the touch waits in memory
-
-    // A directory where the temp file goes makes the atomic write fail on every platform.
-    const std::string blocker = file.Path() + ".tmp";
-#if defined(_WIN32)
-    REQUIRE(::_mkdir(blocker.c_str()) == 0);
-#else
-    REQUIRE(::mkdir(blocker.c_str(), 0755) == 0);
-#endif
-    CHECK(Loads("k-old")); // stale: tries to write, fails, still loads
-    const auto touchedAfterFailure = [&]() {
-        for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
-            if (e.projectKey == "R") {
-                return e.lastUsedUnix > recentUnix;
-            }
-        }
-        return false;
-    };
-    CHECK(touchedAfterFailure()); // the queued touch survived the failed write
-#if defined(_WIN32)
-    ::_rmdir(blocker.c_str());
-#else
-    ::rmdir(blocker.c_str());
-#endif
-
-    REQUIRE(Loads("k-old")); // the write works now and carries the touch to disk
-    CHECK(ReadCacheFile(file).find("\"lastUsedUnix\":" + recent) == std::string::npos);
-}
-
 namespace {
 
 /// Makes every write of the cache file fail (a directory sits where the temp file goes) until released.
@@ -466,6 +426,59 @@ class WriteBlocker {
     bool released_ = false;
 };
 
+/// The lastUsedUnix the cache FILE holds for `project` (-1 when absent). Unlike ListCachedProjects() this ignores
+/// touches still queued in memory, so it proves what actually reached the disk.
+std::int64_t PersistedLastUsedOf(const CacheFileCleanup& file, const std::string& project) {
+    const nlohmann::json doc = nlohmann::json::parse(ReadCacheFile(file), nullptr, /*allow_exceptions=*/false);
+    if (!doc.is_object() || !doc.contains("entries") || !doc["entries"].is_array()) {
+        return -1;
+    }
+    for (const nlohmann::json& e : doc["entries"]) {
+        if (e.value("projectKey", std::string()) == project) {
+            return e.value("lastUsedUnix", static_cast<std::int64_t>(-1));
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST_CASE("FieldCatalogCache: a failed touch write keeps the queued touches for the next write") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::int64_t recentUnix = TimeNowPure::NowUnixSeconds() - 60;
+    const std::string recent = std::to_string(recentUnix);
+    WriteCacheFile(file, "{\"schema_version\":3,\"entries\":["
+                         "{\"cacheKey\":\"k-recent\",\"projectKey\":\"R\",\"lastUsedUnix\":" +
+                             recent +
+                             "},"
+                             "{\"cacheKey\":\"k-old\",\"projectKey\":\"O\",\"lastUsedUnix\":100}],"
+                             "\"k-recent\":" +
+                             Blob("r") + ",\"k-old\":" + Blob("o") + "}");
+
+    REQUIRE(Loads("k-recent")); // used within the day: the touch waits in memory
+
+    {
+        // A directory where the temp file goes makes the atomic write fail on every platform.
+        const WriteBlocker blocker(file);
+        CHECK(Loads("k-old")); // stale: tries to write, fails, still loads
+        const auto touchedAfterFailure = [&]() {
+            for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
+                if (e.projectKey == "R") {
+                    return e.lastUsedUnix > recentUnix;
+                }
+            }
+            return false;
+        };
+        CHECK(touchedAfterFailure()); // the queued touch survived the failed write
+    }
+
+    REQUIRE(Loads("k-old")); // the write works now and carries the touch to disk
+    CHECK(ReadCacheFile(file).find("\"lastUsedUnix\":" + recent) == std::string::npos);
+}
+
+namespace {
+
 /// A cache holding a fresh entry (touched a minute ago: its load only queues a touch) and a stale one.
 std::string TwoEntryCache(const std::string& freshUnix) {
     return "{\"schema_version\":3,\"entries\":["
@@ -481,15 +494,6 @@ std::string TwoEntryCache(const std::string& freshUnix) {
            Blob("r") + ",\"k-stale\":" + Blob("o") + "}";
 }
 
-std::int64_t LastUsedOf(const std::string& project) {
-    for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
-        if (e.projectKey == project) {
-            return e.lastUsedUnix;
-        }
-    }
-    return -1;
-}
-
 } // namespace
 
 TEST_CASE("FieldCatalogCache: a failed save keeps the queued touches for the next write") {
@@ -503,8 +507,8 @@ TEST_CASE("FieldCatalogCache: a failed save keeps the queued touches for the nex
         const WriteBlocker blocker(file);
         CHECK_FALSE(Save("k-new", "NEW", 16));
     }
-    REQUIRE(Save("k-other", "OTHER", 16)); // the write works now and carries the touch to disk
-    CHECK(LastUsedOf("R") > freshUnix);
+    REQUIRE(Save("k-other", "OTHER", 16));             // the write works now and carries the touch to disk
+    CHECK(PersistedLastUsedOf(file, "R") > freshUnix); // read from the file: pending in-memory touches don't count
 }
 
 TEST_CASE("FieldCatalogCache: a failed forget keeps the queued touches for the next write") {
@@ -519,7 +523,7 @@ TEST_CASE("FieldCatalogCache: a failed forget keeps the queued touches for the n
         CHECK_FALSE(FieldCatalogCache::ForgetProject("O", "Jira", "https://acme.atlassian.net"));
     }
     REQUIRE(FieldCatalogCache::ForgetProject("O", "Jira", "https://acme.atlassian.net"));
-    CHECK(LastUsedOf("R") > freshUnix);
+    CHECK(PersistedLastUsedOf(file, "R") > freshUnix);
 }
 
 TEST_CASE("FieldCatalogCache: a load whose touch write fails keeps its own touch queued") {
@@ -532,5 +536,5 @@ TEST_CASE("FieldCatalogCache: a load whose touch write fails keeps its own touch
         CHECK(Loads("k-stale")); // stale: tries to write, fails, still loads
     }
     REQUIRE(Save("k-other", "OTHER", 16));
-    CHECK(LastUsedOf("O") > 100); // this load's own touch rode along with the next write
+    CHECK(PersistedLastUsedOf(file, "O") > 100); // this load's own touch rode along with the next write
 }
