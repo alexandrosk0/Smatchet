@@ -2217,32 +2217,123 @@ TEST_CASE("A queued Full survives a later Delta request") {
     CHECK(rig.fake->FetchIssuesCallCount() >= 1);
 }
 
-TEST_CASE("A running Full is not downgraded by a Delta request while its fetch is still running") {
-    DeltaRig rig;
-    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1")});
-    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
-    rig.fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
-    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+namespace {
+/// A rig whose first Full session is parked inside its ancestor fetch (the view's rows are on the wire) until
+/// `release` is set, so a test can issue a second request "mid-Full" without relying on timing. The token the parked
+/// fetch sampled once it was released is kept in `firstFetchCancelled`: true means the request superseded the Full.
+struct ParkedFullRig : DeltaRig {
     std::atomic<bool> inFetch{false};
     std::atomic<bool> release{false};
-    rig.fake->SetOnKeyedFetch([&]() {
-        inFetch.store(true);
-        for (int i = 0; i < 2000 && !release.load(); ++i) {
+    std::atomic<bool> firstFetchCancelled{false};
+    std::atomic<int> tokenSamples{0};
+
+    ~ParkedFullRig() { release.store(true); } // a failed REQUIRE must not leave the worker parked
+
+    /// Scripts `fake` (whichever backend is current), starts a Full and waits until its fetch is on the wire.
+    /// Returns the epoch of that Full session.
+    std::uint64_t StartParkedFull() {
+        fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+        fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
+        fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+        fake->SetOnKeyedFetch([this]() {
+            inFetch.store(true);
+            for (int i = 0; i < 2000 && !release.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        fake->SetOnKeyedTokenSampled([this](bool cancelled) {
+            if (tokenSamples.fetch_add(1) == 0) {
+                firstFetchCancelled.store(cancelled);
+            }
+        });
+        Sync(smatchet::sync::SyncMode::Full);
+        for (int i = 0; i < 2000 && !inFetch.load(); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-    });
-
-    rig.Sync(smatchet::sync::SyncMode::Full);
-    for (int i = 0; i < 2000 && !inFetch.load(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return svc.SessionEpoch();
     }
-    REQUIRE(inFetch.load()); // the Full fetch is on the wire
-    rig.Sync(smatchet::sync::SyncMode::Delta);
-    release.store(true);
-    REQUIRE(rig.Settle());
 
-    CHECK(rig.svc.LastSessionStats().Mode == "full");
-    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    /// Lets the parked fetch go on and waits until the replacement session (a later epoch) has finished.
+    bool SettleReplacement(std::uint64_t parkedEpoch) {
+        release.store(true);
+        return SpinUntil(
+            svc,
+            [&]() {
+                return !svc.IsActive() && svc.SessionEpoch() > parkedEpoch &&
+                       svc.LastSessionStats().RequestId == svc.SessionEpoch();
+            },
+            /*maxTicks=*/2000);
+    }
+};
+
+/// Hands out a fresh scripted client per Create and remembers the site each was built for.
+class RecordingBackendFactory : public ITrackerBackendFactory {
+  public:
+    std::vector<std::string> Domains;
+    std::unique_ptr<ITrackerBackend> Create(const std::string& kind, const TrackerConfig& cfg) override {
+        Domains.push_back(cfg.Domain);
+        std::unique_ptr<FakeTrackerClient> client(new FakeTrackerClient(kind));
+        client->SetFetchIssuesResult({Stamped("NEW-1", "T1")}, true);
+        return std::move(client);
+    }
+};
+} // namespace
+
+TEST_CASE("A running Full is not downgraded by a Delta request: the replacement session runs as Full") {
+    ParkedFullRig rig;
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load()); // the Full fetch is on the wire
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // the running Full was superseded, not left to finish
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full"); // the queued Delta combined with the Full: sticky
+    CHECK(rig.svc.LastSessionStats().RequestId == parkedEpoch + 1);
+    CHECK(rig.fake->FetchRosterCallCount() == 0); // no Delta session ran
+    CHECK(rig.fake->FetchIssuesCallCount() == 2); // the Full, then its replacement
+}
+
+TEST_CASE("A site switch requested mid-Full supersedes it: the new site's own session starts promptly") {
+    ParkedFullRig rig;
+    RecordingBackendFactory* factory = new RecordingBackendFactory();
+    rig.deps.Factory.reset(factory);
+    rig.deps.SetBackend(std::unique_ptr<ITrackerBackend>(new FakeTrackerClient("Jira")));
+    rig.fake = static_cast<FakeTrackerClient*>(rig.deps.BackendImpl.get());
+    rig.cfg.TrackerType = "Jira";
+    rig.cfg.Domain = "a.example.com";
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load());
+    REQUIRE(factory->Domains.empty()); // site A runs on the client the deps already hold
+
+    TrackerConfig siteB = rig.cfg;
+    siteB.Domain = "b.example.com";
+    rig.svc.SyncWithBackend(&siteB, &rig.views, smatchet::sync::SyncMode::Delta); // "Save & Sync" to another site
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // site A's Full did not keep streaming
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    REQUIRE(factory->Domains.size() == 1);
+    CHECK(factory->Domains[0] == "b.example.com"); // the client was rebuilt for the new site
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].id == "NEW-1"); // and the grid shows site B's rows, not A's
+}
+
+TEST_CASE("A view switch requested mid-Full supersedes it: the new view's own session starts promptly") {
+    ParkedFullRig rig;
+    rig.views.ActiveViewId = "view-a";
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load());
+    CHECK(rig.fake->FetchIssuesLastActiveViewId() == "view-a");
+
+    ViewsStore viewB = rig.views;
+    viewB.ActiveViewId = "view-b";
+    rig.svc.SyncWithBackend(&rig.cfg, &viewB, smatchet::sync::SyncMode::Delta); // view.activate / header view switch
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // view A's Full did not keep streaming
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    CHECK(rig.fake->FetchIssuesLastActiveViewId() == "view-b"); // the replacement fetched the new view
 }
 
 TEST_CASE("A superseding request waits for the stale-row delete instead of starting over it") {
@@ -3344,25 +3435,6 @@ TEST_CASE("TicketSyncService: a request held during the recreate rides on the fo
         CHECK(rig.fake->FetchIssuesCallCount() == 1); // the view was downloaded once
         CHECK(rig.fake->FetchRosterCallCount() == 0);
     }
-}
-
-TEST_CASE("TicketSyncService: an ordinary refresh does not cancel a Full session in progress, it queues behind it") {
-    DeltaRig rig;
-    rig.Seed({Stamped("ABC-1", "T1")});
-    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
-    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
-
-    rig.Sync(smatchet::sync::SyncMode::Full);
-    REQUIRE(rig.svc.IsActive()); // not ticked yet: deterministically busy
-    rig.Sync(smatchet::sync::SyncMode::Delta);
-
-    // The first session to finish is the Full one (a superseded session is discarded without stats); the Delta that
-    // queued behind it runs afterwards.
-    REQUIRE(SpinUntil(rig.svc, [&]() { return rig.svc.LastSessionStats().Valid; }));
-    CHECK(rig.svc.LastSessionStats().Mode == "full");
-    REQUIRE(SpinUntil(rig.svc, [&]() { return !rig.svc.IsActive() && rig.svc.LastSessionStats().Mode == "delta"; }));
-    CHECK(rig.fake->FetchIssuesCallCount() == 1); // the Full was not asked for twice
-    CHECK(rig.fake->FetchRosterCallCount() == 1); // the queued Delta ran once
 }
 
 TEST_CASE("TicketSyncService: EndCacheTeardown without a raised gate replays nothing and cancels nothing") {

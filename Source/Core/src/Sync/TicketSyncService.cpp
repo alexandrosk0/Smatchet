@@ -937,20 +937,13 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
                                deleteInFlight_->load();
 
     if (isSessionBusy) {
-        // An ordinary refresh never cancels a Full session in progress (the whole view is being downloaded): it
-        // queues behind it. Every other request supersedes the running session.
-        const bool keepRunningFull = mode == smatchet::sync::SyncMode::Delta &&
-                                     activeMode_ == smatchet::sync::SyncMode::Full && !activeStreamingSync_.Cancelled;
-        if (!keepRunningFull) {
-            activeStreamingSync_.Cancelled = true;
-            activeStreamingSync_.Superseded = true;
-        }
-        // Full is sticky: neither a queued Full nor a Full whose fetch is still running (and is being replaced) is
-        // downgraded by a later ordinary refresh (once the fetch is done, the session only drains and a Delta is
-        // enough). A Full that keeps running is not asked for again.
-        const smatchet::sync::SyncMode held = hasPendingSyncRequest_                 ? pendingMode_
-                                              : (isWorkerActive && !keepRunningFull) ? activeMode_
-                                                                                     : smatchet::sync::SyncMode::Delta;
+        activeStreamingSync_.Cancelled = true;
+        activeStreamingSync_.Superseded = true;
+        // Full is sticky: neither a queued Full nor a Full whose fetch is still running is downgraded by a later
+        // ordinary refresh (once the fetch is done, the session only drains and a Delta is enough).
+        const smatchet::sync::SyncMode held = hasPendingSyncRequest_ ? pendingMode_
+                                              : isWorkerActive       ? activeMode_
+                                                                     : smatchet::sync::SyncMode::Delta;
         pendingMode_ = smatchet::sync::CombineSyncModes(held, mode);
         hasPendingSyncRequest_ = true;
         pendingConfig_ = cfgCopy;
