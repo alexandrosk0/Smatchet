@@ -605,7 +605,8 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
 
     // applied first — avoids fetching issues twice at startup.
 
-    RefreshLocalData();
+    // The full-table cache read runs on a worker (Pillar 2); the grid reads as loading until it lands.
+    RefreshLocalDataAsync();
 
     // The saved field catalog is read on a worker (Pillar 2); PollStartupCatalogRestore installs it, and the grid's
     // fetch-or-skip decision for the startup catalog waits for that.

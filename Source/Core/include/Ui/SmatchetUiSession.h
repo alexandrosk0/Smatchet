@@ -30,6 +30,7 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
+#include "AsyncLoadGatePure.h" // LaunchIntoSlot / TakeFromSlot for the cached-projects read
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -742,6 +743,12 @@ struct UiDrawSession {
     /// (these are LRU project lists — a refresh-on-reopen is fine; see plan § Risks).
     std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsSnapshot;
     bool cachedProjectsSnapshotValid = false;
+    /// The read behind the snapshot runs on a worker in a single slot (AsyncLoadGatePure.h); `Forget` clicks queue
+    /// here and run in the next read, so the file is never written on the UI thread either.
+    std::future<std::vector<FieldCatalogCache::CachedProjectEntry>> cachedProjectsFuture;
+    bool cachedProjectsReadInFlight = false;
+    bool cachedProjectsRereadPending = false;
+    std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsForgetPending;
     /// Open-edge latch for the JQL project-pill popup (#767). False while the popup is closed;
     /// the draw refreshes the snapshot on the frame it transitions to open.
     bool projectPillPopupWasOpen = false;
@@ -1329,18 +1336,79 @@ inline void MarkPrefsDirty(UiDrawSession& d) {
     }
 }
 
+/// Starts the cached-projects read on a worker (Pillar 2: the catalog cache file is parsed off the UI thread). Queued
+/// "Forget" requests run first, on the same worker, so the list that lands already lacks them. UI-thread-only.
+inline void KickCachedProjectsRead(UiDrawSession& d) {
+    std::vector<FieldCatalogCache::CachedProjectEntry> forgets;
+    forgets.swap(d.cachedProjectsForgetPending);
+    std::string launchError;
+    const bool launched = smatchet::async_load::LaunchIntoSlot(
+        d.cachedProjectsFuture, d.cachedProjectsReadInFlight,
+        [forgets]() {
+            return std::async(std::launch::async, [forgets]() {
+                for (const FieldCatalogCache::CachedProjectEntry& e : forgets) {
+                    FieldCatalogCache::ForgetProject(e.projectKey, e.backend, e.endpoint);
+                }
+                return FieldCatalogCache::ListCachedProjects(); // logs and returns empty on any failure
+            });
+        },
+        launchError);
+    if (!launched) {
+        d.cachedProjectsForgetPending = forgets; // not run: the next read tries again
+    }
+}
+
+/// Installs a finished cached-projects read and starts the next one when a reopen or a Forget arrived meanwhile.
+/// UI-thread-only; cheap when nothing is in flight.
+inline void PollCachedProjectsRead(UiDrawSession& d) {
+    if (!d.cachedProjectsReadInFlight || !d.cachedProjectsFuture.valid() ||
+        d.cachedProjectsFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    std::vector<FieldCatalogCache::CachedProjectEntry> rows;
+    std::string error;
+    // The latch clears before get(): a worker exception is rethrown by it (AsyncLoadGatePure.h).
+    if (smatchet::async_load::TakeFromSlot(d.cachedProjectsFuture, d.cachedProjectsReadInFlight, rows, error)) {
+        d.cachedProjectsSnapshot = std::move(rows);
+        d.cachedProjectsSnapshotValid = true;
+    }
+    if (d.cachedProjectsRereadPending || !d.cachedProjectsForgetPending.empty()) {
+        d.cachedProjectsRereadPending = false;
+        KickCachedProjectsRead(d);
+    }
+}
+
 /// Snapshot-on-open helper for the cached-project lists (#767/#892). Re-reads
-/// `FieldCatalogCache::ListCachedProjects()` (disk I/O) ONCE on a surface's open-edge so the
-/// per-frame draw reads `d.cachedProjectsSnapshot` instead of hitting disk every frame.
-/// `wasOpenLatch` is the caller's per-surface closed→open edge tracker: pass the latch's
+/// `FieldCatalogCache::ListCachedProjects()` (disk I/O) ONCE on a surface's open-edge, on a worker, so the
+/// per-frame draw reads `d.cachedProjectsSnapshot` instead of hitting disk every frame; the list lands a few
+/// frames after the surface opens (the previous snapshot stays on screen meanwhile).
+/// `wasOpenLatch` is the caller's per-surface closed->open edge tracker: pass the latch's
 /// previous value as `isOpenNow`'s complement so the refresh fires exactly on the transition.
 /// UI-thread-only.
 inline void RefreshCachedProjectsSnapshotOnOpen(UiDrawSession& d, bool isOpenNow, bool& wasOpenLatch) {
+    PollCachedProjectsRead(d);
     if (isOpenNow && !wasOpenLatch) {
-        d.cachedProjectsSnapshot = FieldCatalogCache::ListCachedProjects();
-        d.cachedProjectsSnapshotValid = true;
+        if (d.cachedProjectsReadInFlight) {
+            d.cachedProjectsRereadPending = true; // the running read may predate this open: read again when it lands
+        } else {
+            KickCachedProjectsRead(d);
+        }
     }
     wasOpenLatch = isOpenNow;
+}
+
+/// The Preferences "Forget" button: drops the entry from the snapshot at once and from the file on the next read.
+inline void RequestForgetCachedProject(UiDrawSession& d, const FieldCatalogCache::CachedProjectEntry& entry) {
+    d.cachedProjectsForgetPending.push_back(entry);
+    for (auto it = d.cachedProjectsSnapshot.begin(); it != d.cachedProjectsSnapshot.end(); ++it) {
+        if (it->projectKey == entry.projectKey && it->backend == entry.backend && it->endpoint == entry.endpoint) {
+            d.cachedProjectsSnapshot.erase(it);
+            break;
+        }
+    }
+    if (!d.cachedProjectsReadInFlight) {
+        KickCachedProjectsRead(d);
+    }
 }
 
 extern UiDrawSession g_ui;

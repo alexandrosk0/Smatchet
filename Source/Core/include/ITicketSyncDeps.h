@@ -120,6 +120,14 @@ class ITicketSyncDeps {
         }
     }
 
+    /// Run `fn` on the UI thread (the production adapter forwards to `AppController::PostToMainThread`). Defaulted
+    /// to running inline so single-threaded test fakes need no stub.
+    virtual void PostToMainThread(std::function<void()> fn) {
+        if (fn) {
+            fn();
+        }
+    }
+
     // ---- Connectivity + sync-warning banner -------------------------------------------
     /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /
     /// 5xx-style), classified at the fetch seam that composed it (N12 slice 1). Consumers (the

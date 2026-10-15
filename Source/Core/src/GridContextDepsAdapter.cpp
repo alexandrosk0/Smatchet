@@ -97,6 +97,8 @@ void GridContextDepsAdapter::LaunchBackgroundTask(std::function<void()> task) {
     app_.LaunchBackgroundTask(std::move(task));
 }
 
+void GridContextDepsAdapter::PostToMainThread(std::function<void()> fn) { app_.PostToMainThread(std::move(fn)); }
+
 void GridContextDepsAdapter::RefreshLocalData() { app_.RefreshLocalData(); }
 
 // Friend access: the checked impl is private on purpose — every checked caller must name the

@@ -17,6 +17,7 @@
 #include "../support/FakeTicketSyncDeps.h"
 #include "../support/FakeTrackerClient.h"
 #include "../support/ScriptedTrackerBackendFactory.h"
+#include "../support/TestEnvGuard.h"
 
 #include "AppController.h" // for TrackerIssueFetchPack
 #include "CachedTicketTypes.h"
@@ -3113,4 +3114,42 @@ TEST_CASE("TicketSyncService cache teardown with no running sync hands out nothi
     CHECK_FALSE(svc.IsActive()); // dropped, not started
     svc.EndCacheTeardown();
     CHECK_FALSE(svc.IsCacheTeardownActive());
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without views reads them on a worker, then starts the sync") {
+    // Pillar 2: the saved views file is read and parsed off the UI thread; the sync starts from the UI-thread post.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("LATE-1", "late"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    svc.SyncWithBackend(&cfg, nullptr);
+
+    CHECK(deps.BackgroundTasksLaunched == 1);
+    CHECK_FALSE(svc.IsActive()); // nothing started on the calling thread
+
+    deps.RunDeferredTasks(); // the worker reads the views, the post starts the sync
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without views drops the start when the service is gone") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    {
+        TicketSyncService svc(deps);
+        TrackerConfig cfg;
+        cfg.TrackerType = "fake";
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(deps.BackgroundTasksLaunched == 1);
+    } // a pane retired while its views were being read
+    deps.RunDeferredTasks(); // the post finds the service gone and does nothing
+    CHECK(deps.ActiveTicketsImpl.empty());
 }

@@ -154,7 +154,10 @@ void SaveRowsWithMeta(ISyncCache& cache, const std::string& backendKey, const st
 
 TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
-TicketSyncService::~TicketSyncService() { CancelAndJoinActiveStreamingSync(); }
+TicketSyncService::~TicketSyncService() {
+    alive_->store(false);
+    CancelAndJoinActiveStreamingSync();
+}
 
 bool TicketSyncService::ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
                                                               int consecutiveEmptyFullSyncs, int emptyWipeThreshold,
@@ -878,7 +881,11 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();
-    ViewsStore viewsCopy = viewsOverride ? *viewsOverride : ConfigManager::LoadViewsOrBootstrap(cfgCopy);
+    if (viewsOverride == nullptr) {
+        SyncWithBackendLoadingViews_(cfgCopy, mode); // the views file is read on a worker (Pillar 2)
+        return;
+    }
+    ViewsStore viewsCopy = *viewsOverride;
 
     const bool isWorkerActive = activeStreamingSync_.Active.load();
     const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load() ||
@@ -902,6 +909,22 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     }
 
     StartStreamingSync(cfgCopy, viewsCopy, mode);
+}
+
+void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode) {
+    ITicketSyncDeps* const deps = &deps_;
+    const std::shared_ptr<std::atomic<bool>> alive = alive_;
+    TicketSyncService* const self = this;
+    deps_.LaunchBackgroundTask([self, deps, alive, cfg, mode]() {
+        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - smatchet_views.json read and parse, off the UI thread
+        ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+        deps->PostToMainThread([self, alive, cfg, views, mode]() {
+            if (!alive->load()) {
+                return; // the pane's service was destroyed while the file was read
+            }
+            self->SyncWithBackend(&cfg, &views, mode);
+        });
+    });
 }
 
 void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {

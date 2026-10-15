@@ -83,6 +83,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                          const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
+    void PostToMainThread(std::function<void()> fn) override;
     void RefreshLocalData() override;
     /// Generation-checked variant (issue #1081): forwards THIS adapter's ctx() into
     /// AppController's checked refresh impl. On a pane-frozen adapter capture + re-check + apply

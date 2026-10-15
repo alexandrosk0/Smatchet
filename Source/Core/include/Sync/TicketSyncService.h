@@ -107,6 +107,9 @@ class TicketSyncService {
     /// `mode` Delta (the default) lists the view's tickets with their versions and downloads only the changed
     /// ones, falling back to a full fetch on any failure; Full forces the whole-view download. Requests queued
     /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
+    /// With no `viewsOverride` the saved views are read first, on a worker (the file read and parse never run on the
+    /// UI thread), and the sync then starts from a UI-thread post; the request is dropped if this service was
+    /// destroyed meanwhile.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                          smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
 
@@ -358,6 +361,10 @@ class TicketSyncService {
     std::atomic<std::uint64_t> sessionEpoch_{0};
     /// Raised by BeginCacheTeardown, lowered by EndCacheTeardown (the cache-recreate gate).
     std::atomic<bool> startsBlocked_{false};
+    /// Cleared by the destructor; a worker's UI-thread post checks it before touching the service.
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    /// SyncWithBackend without views: load them off the UI thread, then start (see SyncWithBackend).
+    void SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode);
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;
