@@ -79,6 +79,12 @@ bool SnapshotHasField(const TrackerConfig& cfg, const std::string& project, cons
            HasField(fields, id);
 }
 
+/// SnapshotHasField once the app's queued snapshot saves (they run on a worker) have reached the file.
+bool SnapshotHasField(AppController& app, const TrackerConfig& cfg, const std::string& project, const std::string& id) {
+    REQUIRE(app.FlushFieldCatalogSnapshotIo());
+    return SnapshotHasField(cfg, project, id);
+}
+
 } // namespace
 
 TEST_CASE("AppController::RefreshFieldCatalog applies a fetched catalog to the pane it fetched for") {
@@ -222,8 +228,8 @@ TEST_CASE("AppController::RefreshFieldCatalog refreshes the tracker the pane run
     // The offline snapshot is the pane's tracker's, never the configured one's.
     TrackerConfig planeCfg = cfg;
     planeCfg.TrackerType = "Plane";
-    CHECK(SnapshotHasField(planeCfg, std::string(), "customfield_10001"));
-    CHECK_FALSE(SnapshotHasField(cfg, std::string(), "customfield_10001"));
+    CHECK(SnapshotHasField(app, planeCfg, std::string(), "customfield_10001"));
+    CHECK_FALSE(SnapshotHasField(app, cfg, std::string(), "customfield_10001"));
 }
 
 TEST_CASE("AppController::RefreshFieldCatalog skips an unscoped fetch whose site is not the pane's") {
@@ -296,7 +302,7 @@ TEST_CASE("AppController::SetFieldCatalog restores a project's snapshot for a fa
     foo[0].Id = "customfield_foo";
     foo[0].Name = "Foo field";
     app.SetFieldCatalog(std::move(foo), std::vector<TrackerComponent>(), std::string(), false);
-    REQUIRE(SnapshotHasField(cfg, "FOO", "customfield_foo"));
+    REQUIRE(SnapshotHasField(app, cfg, "FOO", "customfield_foo"));
 
     app.SetFieldCatalog({}, {}, {}, std::string());
     CHECK(app.GetAvailableFields().empty());
@@ -321,8 +327,8 @@ TEST_CASE("AppController::SetFieldCatalog falls back to the unscoped snapshot wh
     any[0].Id = "customfield_any";
     any[0].Name = "Unscoped field";
     app.SetFieldCatalog(std::move(any), std::vector<TrackerComponent>(), std::string(), false);
-    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
-    REQUIRE_FALSE(SnapshotHasField(cfg, "FOO", "customfield_any"));
+    REQUIRE(SnapshotHasField(app, cfg, std::string(), "customfield_any"));
+    REQUIRE_FALSE(SnapshotHasField(app, cfg, "FOO", "customfield_any"));
 
     app.SetFieldCatalog({}, {}, {}, std::string());
     app.SetCurrentCatalogProject("FOO");
@@ -347,8 +353,8 @@ TEST_CASE("AppController::SetFieldCatalog prefers the project's snapshot to the 
     foo[0].Id = "customfield_foo";
     foo[0].Name = "Foo field";
     app.SetFieldCatalog(std::move(foo), std::vector<TrackerComponent>(), std::string(), false);
-    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
-    REQUIRE(SnapshotHasField(cfg, "FOO", "customfield_foo"));
+    REQUIRE(SnapshotHasField(app, cfg, std::string(), "customfield_any"));
+    REQUIRE(SnapshotHasField(app, cfg, "FOO", "customfield_foo"));
 
     app.SetFieldCatalog({}, {}, {}, std::string());
     app.SetCurrentCatalogProject("FOO");
@@ -368,7 +374,7 @@ TEST_CASE("AppController::RefreshFieldCatalog falls back to the unscoped snapsho
     adapter.SetBackend(std::move(backend));
     const TrackerConfig cfg = ConfigManager::Load();
     REQUIRE(app.RefreshFieldCatalog(cfg));
-    REQUIRE(SnapshotHasField(cfg, std::string(), "customfield_any"));
+    REQUIRE(SnapshotHasField(app, cfg, std::string(), "customfield_any"));
 
     app.SetFieldCatalog({}, {}, {}, std::string());
     raw->Fail = true;
@@ -496,8 +502,8 @@ TEST_CASE("AppController::SetFieldCatalog files the grid's catalog under the gri
     CHECK(HasField(app.GetAvailableFields(), "customfield_grid"));
     CHECK(app.IsFieldCatalogScopedToProject("GRID"));
     CHECK_FALSE(app.IsFieldCatalogScopedToProject("PROJB"));
-    CHECK(SnapshotHasField(cfg, "GRID", "customfield_grid"));
-    CHECK_FALSE(SnapshotHasField(cfg, "PROJB", "customfield_grid"));
+    CHECK(SnapshotHasField(app, cfg, "GRID", "customfield_grid"));
+    CHECK_FALSE(SnapshotHasField(app, cfg, "PROJB", "customfield_grid"));
 }
 
 TEST_CASE("AppController::RefreshFieldCatalog pins its project only with the catalog it fetched") {

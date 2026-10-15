@@ -184,7 +184,8 @@ void LogCatalogFailureBanner(smatchet::catalogoffline::CatalogFailureBanner bann
 void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string& error, bool errorTransient,
                                  const std::string& catalogCacheKey, const std::string& backendKey,
                                  const CatalogWriteGuard& guard = CatalogWriteGuard(),
-                                 const std::string& fallbackCacheKey = std::string()) {
+                                 const std::string& fallbackCacheKey = std::string(),
+                                 smatchet::SerialTaskQueue* snapshotIo = nullptr) {
     const bool catalogPlane = backendKey == "Plane";
     bool hasFieldsNow;
     {
@@ -212,6 +213,10 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
             candidateKeys.push_back(fallbackCacheKey);
         }
         std::size_t loadedIndex = 0;
+        if (snapshotIo != nullptr) {
+            snapshotIo->Flush(
+                std::chrono::seconds(5)); // a save still queued must reach the file before it is read back
+        }
         snapshotLoaded = FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot(candidateKeys, snapFields, snapComponents,
                                                                              snapIssueTypeMeta, snapErr, loadedIndex);
         unscopedSnapshot = snapshotLoaded && loadedIndex > 0;
@@ -253,12 +258,42 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
     }
 }
 
+// Saves the raw catalog as the offline snapshot (Pillar 2: the cache file is never written on the calling
+// thread). The save works on copies of this call's own vectors (never the shared catalog, which the UI thread
+// may be writing) and runs on `snapshotIo`'s serial worker, so two quick applies reach the file in order; the
+// sweep and fixups are re-applied on restore. With no queue it writes inline (callers that are workers).
+void SaveCatalogSnapshot(smatchet::SerialTaskQueue* snapshotIo, const TrackerConfig& cfgSnap,
+                         const std::string& catalogCacheKey, const std::string& projectKey,
+                         const std::vector<TrackerField>& fields, const std::vector<TrackerComponent>& components,
+                         const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta) {
+    const FieldCatalogCache::FieldCatalogIndexIdentity index =
+        FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfgSnap);
+    const int maxProjects = cfgSnap.FieldCatalogCacheMaxProjects;
+    const auto save = [catalogCacheKey, index, projectKey, maxProjects, fields, components, issueTypeMeta]() {
+        std::string snapErr;
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, index.backend, index.endpoint, projectKey,
+                                                         maxProjects, fields, components, issueTypeMeta, snapErr)) {
+            LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
+        }
+    };
+    if (snapshotIo == nullptr) {
+        save();
+        return;
+    }
+    const std::string launchError = snapshotIo->Post(save);
+    if (!launchError.empty()) {
+        LOG_WARN("AppController::SetFieldCatalog: snapshot save did not start (it stays queued): %s",
+                 launchError.c_str());
+    }
+}
+
 // Body of AppController::SetFieldCatalog, writing into `cat`. True when a catalog was applied (the
 // caller then raises the tracker-reachable notice); false when `error` was handled instead.
 bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerField> fields,
                            std::vector<TrackerComponent> components,
                            std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
-                           bool errorTransient, const CatalogWriteGuard& guard = CatalogWriteGuard()) {
+                           bool errorTransient, const CatalogWriteGuard& guard = CatalogWriteGuard(),
+                           smatchet::SerialTaskQueue* snapshotIo = nullptr) {
     // A guarded apply keys its snapshot by the configuration and project the fetch ran with, never by
     // whatever is configured or pinned when it lands.
     const TrackerConfig cfgSnap = guard.Config != nullptr ? *guard.Config : ConfigManager::Load();
@@ -284,25 +319,15 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
         const std::string fallbackCacheKey = projectKeyForCache.empty()
                                                  ? std::string()
                                                  : FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, std::string());
-        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, scoped, fallbackCacheKey);
+        HandleFieldCatalogErrorInto(cat, error, errorTransient, catalogCacheKey, backendKey, scoped, fallbackCacheKey,
+                                    snapshotIo);
         return false;
     }
 
     if (!scoped.Holds()) {
         return false; // already superseded: skip the snapshot write too
     }
-    {
-        // The snapshot keeps the raw catalog, saved from this call's own vectors (never from the shared
-        // catalog, which the UI thread may be writing); the sweep and fixups are re-applied on restore.
-        std::string snapErr;
-        const FieldCatalogCache::FieldCatalogIndexIdentity index =
-            FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfgSnap);
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, index.backend, index.endpoint,
-                                                         projectKeyForCache, cfgSnap.FieldCatalogCacheMaxProjects,
-                                                         fields, components, issueTypeMeta, snapErr)) {
-            LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
-        }
-    }
+    SaveCatalogSnapshot(snapshotIo, cfgSnap, catalogCacheKey, projectKeyForCache, fields, components, issueTypeMeta);
     if (!catalogPlane) {
         MarkNonEditableTimetrackingReadOnly(fields);
         AddJiraCatalogFieldFixups(fields);
@@ -629,7 +654,8 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
     if (!backend) {
         // config-class: non-transient default
-        ApplyFieldCatalogInto(cat, {}, {}, {}, "Tracker backend is not initialized.", false, guard);
+        ApplyFieldCatalogInto(cat, {}, {}, {}, "Tracker backend is not initialized.", false, guard,
+                              &catalogSnapshotIo_);
         return false;
     }
 
@@ -660,13 +686,13 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
                      ctx.PaneId.c_str());
             return false;
         }
-        ApplyFieldCatalogInto(cat, {}, {}, {}, error, errorTransient, guard);
+        ApplyFieldCatalogInto(cat, {}, {}, {}, error, errorTransient, guard, &catalogSnapshotIo_);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
         return false;
     }
 
     if (!ApplyFieldCatalogInto(cat, std::move(catalog.Fields), std::move(catalog.Components),
-                               std::move(catalog.IssueTypeMeta), std::string(), false, guard)) {
+                               std::move(catalog.IssueTypeMeta), std::string(), false, guard, &catalogSnapshotIo_)) {
         // With no error passed in, false means the guard dropped the write.
         LOG_INFO("AppController::RefreshFieldCatalog: pane '%s' switched tracker, was retired, had its catalog "
                  "cleared or started a newer refresh during the fetch; its result was dropped",
@@ -844,7 +870,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         return;
     }
     if (ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
-                              errorTransient)) {
+                              errorTransient, CatalogWriteGuard(), &catalogSnapshotIo_)) {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
 }
@@ -854,10 +880,15 @@ void AppController::ClearFieldCatalogInMemory() {
                                                    /*clearUsers=*/true); // latch once (see SetFieldCatalog)
 }
 
+bool AppController::FlushFieldCatalogSnapshotIo(std::chrono::milliseconds timeout) {
+    return catalogSnapshotIo_.Flush(timeout);
+}
+
 void AppController::HandleFieldCatalogError(const std::string& error, bool errorTransient,
                                             const std::string& catalogCacheKey, const std::string& backendKey) {
     // Latch the catalog once (Pillar 3), as SetFieldCatalog does.
-    HandleFieldCatalogErrorInto(fieldCatalog(), error, errorTransient, catalogCacheKey, backendKey);
+    HandleFieldCatalogErrorInto(fieldCatalog(), error, errorTransient, catalogCacheKey, backendKey, CatalogWriteGuard(),
+                                std::string(), &catalogSnapshotIo_);
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {

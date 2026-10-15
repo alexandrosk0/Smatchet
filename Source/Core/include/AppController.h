@@ -808,6 +808,10 @@ class AppController : public IAppThreading,
     /// snapshot — that would overwrite the site's saved catalog with an empty one (Pillar 6) — and does
     /// no disk I/O, so it is safe on the UI thread.
     void ClearFieldCatalogInMemory();
+    /// Blocks until every field-catalog snapshot save queued so far has reached the file (tests that read the snapshot
+    /// back right after SetFieldCatalog / RefreshFieldCatalog, and the destructor). Never call it per frame.
+    /// Returns false when `timeout` passed first.
+    bool FlushFieldCatalogSnapshotIo(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
     /// state. `backendKey` is the caller's NormalizeViewsBackendKey result (names the backend in
@@ -1770,6 +1774,11 @@ class AppController : public IAppThreading,
     /// UpdateTicket's cache writes, in call order, off the UI thread (Pillar 2). Drains run as background
     /// tasks, so JoinBackgroundTasks (shutdown, cache recreate) waits for every queued save.
     smatchet::SerialTaskQueue ticketSaves_{
+        [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
+    /// The field-catalog snapshot file's writes (and, once restores move here, its reads), in call order, off the
+    /// UI thread (Pillar 2). Drains are background tasks, so JoinBackgroundTasks waits for them; the destructor
+    /// also flushes the queue before shutdown flags the pool, so a save still queued reaches the file.
+    smatchet::SerialTaskQueue catalogSnapshotIo_{
         [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
 
     // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to

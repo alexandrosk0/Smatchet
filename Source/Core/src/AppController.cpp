@@ -284,6 +284,12 @@ AppController::~AppController() {
 
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
 
+    // A field-catalog snapshot save still queued must reach the file: once the pool is flagged, its drain would be
+    // skipped. Bounded, because a save is one small file write.
+    if (!catalogSnapshotIo_.Flush(std::chrono::seconds(5))) {
+        LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within 5 s.");
+    }
+
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's
