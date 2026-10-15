@@ -35,6 +35,7 @@
 #include "IssueDraft.h"
 #include "Sync/OfflineQueueTypes.h"
 #include "Tracker/TrackerFieldSchema.h"
+#include "VsyncControl.h"
 
 #include <doctest/doctest.h>
 
@@ -1342,6 +1343,37 @@ TEST_CASE("config.set refuses a non-boolean for a boolean key and keeps the text
         CHECK(ConfigManager::LoadMergedConfigJson().at("jql").get<std::string>() == text);
         CHECK(ConfigManager::Load().JqlQuery == text);
     }
+}
+
+TEST_CASE("config.set vsync takes the boolean spellings, stores a real boolean and applies it live") {
+    // vsync has no normalisation of its own: it goes through the same boolean check as every boolean key.
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    const bool before = smatchet::vsync::Enabled();
+
+    for (const char* off : {"off", "false", "0", "\"false\"", "\"off\""}) {
+        smatchet::vsync::SetEnabled(true);
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "vsync"}, {"value", off}}, ctx);
+        REQUIRE(r.Ok);
+        CHECK_FALSE(smatchet::vsync::Enabled()); // applied live
+        CHECK(ConfigManager::LoadMergedConfigJson().at("vsync_enabled").is_boolean());
+        CHECK_FALSE(ConfigManager::Load().VsyncEnabled);
+    }
+    for (const char* on : {"on", "true", "1", "\"true\""}) {
+        smatchet::vsync::SetEnabled(false);
+        REQUIRE(reg.Dispatch("config.set", {{"key", "vsync"}, {"value", on}}, ctx).Ok);
+        CHECK(smatchet::vsync::Enabled());
+        CHECK(ConfigManager::Load().VsyncEnabled);
+    }
+    for (const char* bad : {"maybe", "5", "3.5", "[]"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "vsync"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+        CHECK(r.Error.Message.find("must be a boolean") != std::string::npos);
+    }
+    smatchet::vsync::SetEnabled(before);
 }
 
 TEST_CASE("a hand-edited mistyped boolean, string or float costs only its own field, whatever its position") {

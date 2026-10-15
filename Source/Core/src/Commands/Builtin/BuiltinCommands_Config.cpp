@@ -219,28 +219,8 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
         return CommandResult::Failure(ErrorCode::ValidationError,
                                       "Key '" + key + "' is not in the config.set allowlist.", "Allowed: " + allowed);
     }
-    // vsync convenience: accept on/off (and 1/0 after the JSON parse above) in
-    // addition to true/false, normalised to a bool so the kBoolFields round-trip
-    // and the live hub both see a real boolean.
-    if (key == "vsync") {
-        if (val.is_string()) {
-            // Quoted forms too ("true"/"false"/"1"/"0" arrive as strings when the
-            // caller quotes them past the JSON parse) — the validation hint lists
-            // them all, so all of them must actually normalise (CR-953 review).
-            const std::string& s = val.get_ref<const std::string&>();
-            if (s == "on" || s == "true" || s == "1") {
-                val = true;
-            } else if (s == "off" || s == "false" || s == "0") {
-                val = false;
-            }
-        } else if (val.is_number_integer()) {
-            val = (val.get<int>() != 0);
-        }
-        if (!val.is_boolean()) {
-            return CommandResult::Failure(ErrorCode::ValidationError, "Value for 'vsync' must be a boolean.",
-                                          "Use: on, off, true, false, 1, 0");
-        }
-    }
+    // vsync takes on/off/true/false/1/0 like every boolean key: NormalizeNonIntegerValue below turns them into a real
+    // boolean, so the kBoolFields round-trip and the live hub (applied after the write) both see one.
     // An integer setting takes an integer: a string or fraction written here would make every later load of
     // that key fall back to its default (and, before the load was guarded, abort the fields after it).
     if (ConfigManager::IsIntConfigKey(found->json)) {

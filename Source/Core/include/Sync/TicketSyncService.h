@@ -393,7 +393,8 @@ class TicketSyncService {
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
     /// Keys the tracker refused to serve on an earlier delta attempt of this service. Each such attempt falls back
     /// to a full fetch; without this memory a key that stays refused would make every later delta attempt do the
-    /// same. They are skipped (and counted as listed but not returned: no purge) until the memory is cleared by an
+    /// same. They are skipped - their cached row stands in, so the session still counts the key as returned and
+    /// stays authoritative, and nothing is purged - until the memory is cleared by an
     /// explicit Full sync or a tracker switch, the key is served by a later fetch (the fallback full fetch
     /// included, at the version it was refused for or a newer one), it is older than DeltaSyncMaxRowAgeSec, or
     /// more than RefusedKeySet::MaxKeys() newer ones pushed it out. Worker-only during a session; cleared on the UI

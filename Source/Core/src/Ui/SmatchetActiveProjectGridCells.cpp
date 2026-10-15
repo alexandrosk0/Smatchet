@@ -253,16 +253,20 @@ void DrawPendingRowCue(const smatchet::sync::PendingRowCue& cue, float keyOrigin
     }
 }
 
-/// Fills the badge of a value cell whose field has an unconfirmed local edit; false when it has none (the common
-/// case: a row without a cue costs one comparison per cell).
-bool PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueKey, const std::string& fieldId,
-                      ImVec4& color, std::string& text, std::string& tooltip) {
+/// Fills the badge of a value cell whose field has an unconfirmed local edit, unless a write-state badge (saving,
+/// saved, failed) is already showing (`showBadge`), which wins. A row without a cue costs one comparison per cell.
+void PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueKey, const std::string& fieldId,
+                      bool& showBadge, ImVec4& color, std::string& text, std::string& tooltip) {
     using smatchet::sync::PendingEditStatus;
+    if (showBadge) {
+        return;
+    }
     const PendingEditStatus status = smatchet::sync::PendingCellCueFor(ctx.d.pendingOverlay, ctx.currentRowPending,
                                                                        ctx.cacheBackendKey, issueKey, fieldId);
     if (status == PendingEditStatus::None) {
-        return false;
+        return;
     }
+    showBadge = true;
     const bool attention = status == PendingEditStatus::NeedsAttention;
     color = attention ? kPendingAttentionColor : kPendingQueuedColor;
     text = smatchet::sync::PendingCellGlyph(status);
@@ -272,7 +276,6 @@ bool PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueK
                         : SmatchetLocalization::T("grid.pending.cell_queued_tip",
                                                   "This edit is waiting to be sent to the tracker; the value shown "
                                                   "is yours. See the Offline Queue panel.");
-    return true;
 }
 
 } // namespace
@@ -385,9 +388,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         badgeText = "OK";
         badgeTooltip = "Saved";
     }
-    if (!showBadge) {
-        showBadge = PendingCellBadge(ctx, ticket.id, column.FieldId, badgeColor, badgeText, badgeTooltip);
-    }
+    PendingCellBadge(ctx, ticket.id, column.FieldId, showBadge, badgeColor, badgeText, badgeTooltip);
 
     if (isSavingThisCell) {
         showBadge = true;

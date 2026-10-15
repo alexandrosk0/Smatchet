@@ -108,6 +108,22 @@ std::future<IssueCreateResult> AppController::CreateOrQueueIssueAsync(const Issu
     return LaunchIssueCreate_(draft, std::move(cancel), true);
 }
 
+namespace {
+
+// Update path: drops the draft fields whose value already matches the cached ticket being edited.
+void PruneDraftAgainstTickets(IssueDraft& draft, const std::shared_ptr<const std::vector<CachedTicket>>& snap) {
+    if (!snap) {
+        return;
+    }
+    const std::string key = draft.ExistingIssueKey;
+    const auto tIt = std::find_if(snap->begin(), snap->end(), [&](const CachedTicket& t) { return t.id == key; });
+    if (tIt != snap->end()) {
+        IssueDraftHelpers::PruneUnchangedFields(draft, *tIt);
+    }
+}
+
+} // namespace
+
 std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraft& draft,
                                                                  smatchet::ui::CancelToken cancel,
                                                                  bool queueOnNetworkFailure) {
@@ -125,21 +141,23 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();
 
-    if (ConfigManager::Load().ReadOnlyMode) {
+    // An early refusal: the future is already settled with `message` when this returns.
+    const auto refuse = [&promise, &future](const char* message) {
         IssueCreateResult err;
-        err.Error = "Read-only mode is enabled in Preferences.";
+        err.Error = message;
         promise->set_value(std::move(err));
-        return future;
+        return std::move(future);
+    };
+
+    if (ConfigManager::Load().ReadOnlyMode) {
+        return refuse("Read-only mode is enabled in Preferences.");
     }
 
     // Latch a strong handle for the worker: a live tracker swap (SetBackend) while the create
     // runs would otherwise free the backend under the `mutations` pointer below (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
     if (!backend) {
-        IssueCreateResult err;
-        err.Error = "Tracker backend is not initialized.";
-        promise->set_value(std::move(err));
-        return future;
+        return refuse("Tracker backend is not initialized.");
     }
 
     // Latched: the worker keeps the cache alive across the create even if a cache recreate withdraws it meanwhile.
@@ -151,22 +169,12 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
     // round-trip ADF descriptions (formatting loss), re-run no-op transitions for
     // status, or re-add issues to their current sprint.
     if (!draftCopy.ExistingIssueKey.empty()) {
-        const auto snap = GetActiveTicketsSnapshot();
-        if (snap) {
-            const std::string key = draftCopy.ExistingIssueKey;
-            auto tIt = std::find_if(snap->begin(), snap->end(), [&](const auto& t) { return t.id == key; });
-            if (tIt != snap->end()) {
-                IssueDraftHelpers::PruneUnchangedFields(draftCopy, *tIt);
-            }
-        }
+        PruneDraftAgainstTickets(draftCopy, GetActiveTicketsSnapshot());
     }
 
     ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
-        IssueCreateResult err;
-        err.Error = "Tracker backend does not support issue mutations.";
-        promise->set_value(std::move(err));
-        return future;
+        return refuse("Tracker backend does not support issue mutations.");
     }
 
     // Snapshot the cache namespace on the UI thread — the worker must write the new ticket

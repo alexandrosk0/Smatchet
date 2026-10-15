@@ -776,9 +776,9 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         // runs its own live sync, so a pane mid-first-fetch (sync live, no snapshot rows
         // published yet) must read as loading too — not "No issues match this view."
         const bool paneFirstFetchLoading = ctx.pane.snapshotRevision == 0 && ctx.app.IsPaneSyncLive(ctx.pane.id);
-        const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
-                                 ctx.app.IsFieldCatalogRestoring() || d.connectivityRecoveryTicketFetchLoading ||
-                                 !d.initialTicketSyncStarted || paneFirstFetchLoading;
+        const bool syncLoading =
+            d.initialTicketSyncLoading || d.fieldCatalogLoading || ctx.app.IsFieldCatalogRestoring(ctx.pane.id) ||
+            d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted || paneFirstFetchLoading;
         if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ctx.pane.filteredIndices.clear();
             ctx.pane.gridState.RectSel.ClearAll();
@@ -1057,6 +1057,10 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     }
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
+    // The pending-edit cue (offline queue) of this pane's rows: the index is rebuilt only when a queue snapshot changed
+    // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
+    RefreshPendingOverlay(app, ctx.d);
+    ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
     const size_t oldFilteredCount = pane.filteredIndices.size();
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),

@@ -1652,6 +1652,20 @@ void ServeRememberedRefusals(ISyncCache& cache, const std::string& backendKey,
     }
 }
 
+// Remembers `refused` with the version the roster listed for each key, so a later fetch that serves the body at that
+// version (or a newer one) can forget the refusal again.
+void RememberRefusals(smatchet::sync::RefusedKeySet& set, const std::vector<std::string>& refused,
+                      const TrackerRoster& roster, std::int64_t nowSec) {
+    std::unordered_map<std::string, std::string> listedVersion;
+    for (const TrackerRosterEntry& entry : roster.Entries) {
+        listedVersion.emplace(entry.Key, entry.Updated);
+    }
+    for (const std::string& key : refused) {
+        const auto listed = listedVersion.find(key);
+        set.Insert(key, listed != listedVersion.end() ? listed->second : std::string(), nowSec);
+    }
+}
+
 } // namespace
 
 void TicketSyncService::FailDeltaSession(std::uint64_t reqId, const std::string& message) {
@@ -1727,8 +1741,7 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         return out;
     }
 
-    // Keys the tracker already refused on an earlier attempt are not asked for again, until the refusal is old
-    // enough to be worth retrying.
+    // Keys refused on an earlier attempt are not asked for again until the refusal is old enough to retry.
     refusedKeys_.ExpireOlderThan(work.NowSec, cfgCopy.DeltaSyncMaxRowAgeSec);
     ServeRememberedRefusals(*cache, backendKey, refusedKeys_, work.Set, work.Unchanged);
     std::vector<std::string> refused;
@@ -1743,18 +1756,10 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         return out;
     }
     if (!refused.empty()) {
-        // The roster just listed these keys, so a 400/404/410-style refusal of a body request is not proof the
-        // ticket is gone (a proxy limit, a transient permission error, an oversized request all look like this).
-        // Nothing may be purged on its strength: the full fetch decides what the view holds. The keys are
-        // remembered, so a key that stays refused does not send every later delta attempt down this path.
-        std::unordered_map<std::string, std::string> listedVersion;
-        for (const TrackerRosterEntry& entry : work.Roster.Entries) {
-            listedVersion.emplace(entry.Key, entry.Updated);
-        }
-        for (const std::string& key : refused) {
-            const auto listed = listedVersion.find(key);
-            refusedKeys_.Insert(key, listed != listedVersion.end() ? listed->second : std::string(), work.NowSec);
-        }
+        // The roster just listed these keys, so a 400/404/410-style refusal is not proof the ticket is gone (a proxy
+        // limit, a permission blip, an oversized request look the same): nothing is purged on its strength, the full
+        // fetch decides. The keys are remembered so one that stays refused does not repeat this on every attempt.
+        RememberRefusals(refusedKeys_, refused, work.Roster, work.NowSec);
         out.FallbackReason = std::to_string(refused.size()) + " roster-listed issue(s) refused on download (" +
                              refused.front() + (refused.size() > 1 ? ", ..." : "") + ")";
         return out;
