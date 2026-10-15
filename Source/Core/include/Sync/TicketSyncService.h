@@ -190,6 +190,8 @@ class TicketSyncService {
         std::vector<SyncBatch> PendingBatches;
         std::unordered_set<std::string> KeepIds;
         std::vector<std::string> BackgroundStaleIds;
+        /// Ids the view's own query returned this session; filled by PublishWorkerResult, guarded by QueueMutex.
+        std::vector<std::string> ViewListedIds;
 
         /// Worker-filled part of the session cost record (mode, bodies, ...), guarded by QueueMutex.
         smatchet::sync::SyncSessionStats WorkerStats;
@@ -230,9 +232,12 @@ class TicketSyncService {
 
     /// Publishes a finished worker session (result flags, stats, stale ids) under QueueMutex; a no-op when
     /// the session was superseded or cancelled.
+    /// `viewListedIds` are the ids the view's own query returned (not the hierarchy walk's rows); a completed
+    /// session hands them to the deps (PublishViewListedIds) when it finalizes.
     void PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
                              const std::unordered_set<std::string>& keepIds,
-                             const smatchet::sync::SyncSessionStats& partialStats);
+                             const smatchet::sync::SyncSessionStats& partialStats,
+                             std::vector<std::string> viewListedIds);
 
     /// Appends rows to the apply queue; false when the session was superseded / cancelled meanwhile.
     /// A freshly fetched batch (`cachedUnchanged` false) is persisted HERE, on the worker, before it is
@@ -320,6 +325,10 @@ class TicketSyncService {
     /// sibling's query covers. No-op unless the session completed a full sync that kept at least
     /// one row. UI thread, once per session.
     void ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompleted, std::size_t keptThisSession);
+
+    /// Phase 4d: hand the ids the view's own query returned to the deps once a COMPLETE session finished (a
+    /// partial answer is not a listing of the view). UI thread, once per session.
+    void PublishViewListing(bool fullSyncCompleted);
 
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};

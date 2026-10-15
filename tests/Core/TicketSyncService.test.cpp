@@ -23,6 +23,7 @@
 #include "ITicketSyncDeps.h"
 #include "TicketSyncService.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/WalkOwnedKeysPure.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
 
@@ -37,6 +38,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using smatchet_tests::FakeTicketSyncDeps;
@@ -2621,4 +2623,272 @@ TEST_CASE(
     const std::vector<std::pair<std::string, std::string>> expected = {{"Plane|ws", "ABC-1"}, {"Plane|ws", "ABC-2"}};
     CHECK(transitions == expected);
     CHECK(editMeta == expected);
+}
+
+// --- delta-sync review follow-ups: the change monitor's per-pane memory ---------------------------------------
+
+namespace {
+CycleResult RunCycleWithContext(LegacyPathClient& fake, bool useRoster, const std::vector<std::string>& cachedKeys,
+                                const std::unordered_map<std::string, std::string>& resident,
+                                const smatchet::sync::RosterProbeContext& context) {
+    TrackerConfig cfg;
+    ViewsStore views;
+    CycleResult r;
+    r.ok = smatchet::sync::RunChangeProbeCycle(fake, cfg, views, useRoster, resident, cachedKeys,
+                                               std::chrono::seconds(120), {"summary"}, "pane", r.fetched, r.verdicts,
+                                               r.addNewRows, context);
+    return r;
+}
+} // namespace
+
+TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane reloads") {
+    smatchet::sync::ChangeMonitorPaneState state;
+    CHECK(state.ShouldTryRoster(true, true));
+    CHECK_FALSE(state.ShouldTryRoster(false, true)); // the feature switch still wins
+    CHECK_FALSE(state.ShouldTryRoster(true, false)); // and so does a backend that cannot list versions
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    notes.RosterIncomplete = true;
+    notes.RefusedKeys = {"A-7"};
+    state.Absorb(notes);
+    CHECK_FALSE(state.ShouldTryRoster(true, true));
+    CHECK(state.RefusedKeys.count("A-7") == 1);
+
+    state.ResetForReload();
+    CHECK(state.ShouldTryRoster(true, true));
+    CHECK(state.RefusedKeys.empty());
+}
+
+TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
+    smatchet::sync::ChangeMonitorPaneState state;
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    for (std::size_t i = 0; i < smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals + 50; ++i) {
+        notes.RefusedKeys.push_back("R-" + std::to_string(i));
+    }
+    state.Absorb(notes);
+    CHECK(state.RefusedKeys.size() == smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals);
+}
+
+TEST_CASE("Change monitor cycle: an incomplete roster is reported once, then the pane goes straight to changed-since") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}, /*complete=*/false));
+    fake.Changed = {Stamped("A-1", "T2")};
+    fake.ViewKeys = {"A-1"};
+    smatchet::sync::ChangeMonitorPaneState state;
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}};
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    CycleResult first = RunCycleWithContext(fake, state.ShouldTryRoster(true, true), {"A-1"}, resident, context);
+    REQUIRE(first.ok);
+    CHECK(notes.RosterIncomplete);
+    CHECK(fake.FetchRosterCallCount() == 1);
+    state.Absorb(notes);
+
+    // The apply hop recorded it: the next cycle skips the capped walk and still runs the legacy path.
+    smatchet::sync::ChangeProbeCycleNotes secondNotes;
+    context.Notes = &secondNotes;
+    CycleResult second = RunCycleWithContext(fake, state.ShouldTryRoster(true, true), {"A-1"}, resident, context);
+    REQUIRE(second.ok);
+    CHECK(fake.FetchRosterCallCount() == 1); // no second roster walk
+    CHECK(fake.ChangedSinceCalls == 2);
+    CHECK_FALSE(secondNotes.RosterIncomplete);
+}
+
+TEST_CASE("Change monitor cycle: a backlog larger than one cycle keeps the anchor, a drained one advances it") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    const std::size_t total = smatchet::sync::kMaxMonitorBodiesPerCycle + 25;
+    std::vector<std::pair<std::string, std::string>> listed;
+    std::vector<CachedTicket> bodies;
+    std::unordered_map<std::string, std::string> resident;
+    std::vector<std::string> keys;
+    for (std::size_t i = 0; i < total; ++i) {
+        const std::string key = "B-" + std::to_string(i);
+        listed.emplace_back(key, "T2");
+        bodies.push_back(Stamped(key, "T2"));
+        resident[key] = "T1";
+        keys.push_back(key);
+    }
+    fake.SetRoster(MakeRoster(listed));
+    fake.SetFetchIssuesForKeysResult(true, bodies);
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult capped = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(capped.ok);
+    CHECK(capped.fetched.size() == smatchet::sync::kMaxMonitorBodiesPerCycle);
+    CHECK(notes.BodiesCapped);
+    CHECK_FALSE(smatchet::sync::ChangeMonitorPaneState::AnchorMayAdvance(notes));
+
+    // The rows already merged now hold the new stamp: the remaining 25 fit in one cycle.
+    for (std::size_t i = 0; i < smatchet::sync::kMaxMonitorBodiesPerCycle; ++i) {
+        resident[keys[i]] = "T2";
+    }
+    smatchet::sync::ChangeProbeCycleNotes drainedNotes;
+    context.Notes = &drainedNotes;
+    const CycleResult drained = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(drained.ok);
+    CHECK(drained.fetched.size() == 25);
+    CHECK_FALSE(drainedNotes.BodiesCapped);
+    CHECK(smatchet::sync::ChangeMonitorPaneState::AnchorMayAdvance(drainedNotes));
+}
+
+TEST_CASE("Change monitor cycle: a refused key is remembered and not asked for again") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T2"}, {"A-2", "T2"}, {"A-3", "T2"}}));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-1", "T2"), Stamped("A-2", "T2"), Stamped("A-3", "T2")});
+    fake.SetFetchIssuesForKeysRefusedKeys({"A-2"});
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-2", "T1"}, {"A-3", "T1"}};
+    const std::vector<std::string> keys = {"A-1", "A-2", "A-3"};
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult first = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(first.ok);
+    CHECK(first.fetched.size() == 2); // the readable rows still load
+    CHECK(notes.RefusedKeys == std::vector<std::string>{"A-2"});
+    const std::size_t callsAfterFirst = fake.FetchIssuesForKeysCallCount();
+    CHECK(callsAfterFirst > 1); // isolating the refusal cost extra requests
+
+    smatchet::sync::ChangeMonitorPaneState state;
+    state.Absorb(notes);
+    smatchet::sync::ChangeProbeCycleNotes secondNotes;
+    context.Notes = &secondNotes;
+    context.RefusedKeys = &state.RefusedKeys;
+    const CycleResult second = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(second.ok);
+    CHECK(second.fetched.size() == 2);
+    CHECK(fake.FetchIssuesForKeysCallCount() == callsAfterFirst + 1); // one request: no isolation walk
+    std::vector<std::string> asked = fake.FetchIssuesForKeysLastKeys();
+    std::sort(asked.begin(), asked.end());
+    CHECK(asked == std::vector<std::string>{"A-1", "A-3"});
+    CHECK(secondNotes.RefusedKeys.empty());
+}
+
+TEST_CASE("Change monitor cycle: more refused keys than one cycle can isolate switch the pane to changed-since") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    std::vector<std::pair<std::string, std::string>> listed;
+    std::vector<CachedTicket> bodies;
+    std::unordered_map<std::string, std::string> resident;
+    std::vector<std::string> keys;
+    for (int i = 0; i < 40; ++i) {
+        const std::string key = "K-" + std::to_string(i);
+        listed.emplace_back(key, "T2");
+        bodies.push_back(Stamped(key, "T2"));
+        resident[key] = "T1";
+        keys.push_back(key);
+    }
+    fake.SetRoster(MakeRoster(listed));
+    fake.SetFetchIssuesForKeysResult(true, bodies);
+    std::vector<std::string> refusedKeys;
+    for (int i = 1; i < 40; i += 2) {
+        refusedKeys.push_back("K-" + std::to_string(i)); // every other key: far more than the isolation budget
+    }
+    fake.SetFetchIssuesForKeysRefusedKeys(refusedKeys);
+    fake.Changed = {Stamped("K-2", "T2")};
+    fake.ViewKeys = keys;
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult r = RunCycleWithContext(fake, true, keys, resident, context);
+
+    REQUIRE(r.ok);
+    CHECK(notes.RosterIncomplete); // the pane stops trying the keyed downloads until it reloads
+    CHECK(fake.ChangedSinceCalls == 1);
+    CHECK_FALSE(r.addNewRows);
+}
+
+TEST_CASE("Change monitor cycle: rows the hierarchy walk added are not probed as vanished") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}})); // the view lists A-1 only
+    fake.Exists = false;
+    // A-9 is A-1's parent (added by the walk), A-8 is a row that really left the view.
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-9", "T1"}, {"A-8", "T1"}};
+    const std::unordered_set<std::string> owned = {"A-9"};
+    smatchet::sync::RosterProbeContext context;
+    context.WalkOwned = &owned;
+
+    const CycleResult r = RunCycleWithContext(fake, true, {"A-1", "A-9", "A-8"}, resident, context);
+
+    REQUIRE(r.ok);
+    REQUIRE(r.verdicts.size() == 1);
+    CHECK(r.verdicts[0].issueKey == "A-8");
+    CHECK(fake.Probes == 1);
+}
+
+TEST_CASE("WalkOwnedKeys without a view listing names only the parents a pane holds beside their children") {
+    CachedTicket epic = MakeTicket("E-1", "epic");
+    CachedTicket story = MakeTicket("S-1", "story");
+    story.fieldValues["parent"] = "E-1 - epic";
+    CachedTicket orphan = MakeTicket("O-1", "no relatives");
+    CachedTicket away = MakeTicket("T-1", "parent not held");
+    away.fieldValues["parent"] = "X-1 - elsewhere";
+
+    const std::unordered_set<std::string> owned = smatchet::sync::WalkOwnedKeys({epic, story, orphan, away}, nullptr);
+
+    CHECK(owned == std::unordered_set<std::string>{"E-1"}); // a child may be a view row that left: it stays checkable
+}
+
+TEST_CASE("WalkOwnedKeys with a view listing also owns every row the view's query did not return") {
+    CachedTicket epic = MakeTicket("E-1", "epic");
+    CachedTicket story = MakeTicket("S-1", "story"); // listed by the view, child of the epic
+    story.fieldValues["parent"] = "E-1 - epic";
+    CachedTicket walkChild = MakeTicket("S-2", "walk child"); // loaded by the children walk
+    walkChild.fieldValues["parent"] = "S-1 - story";
+    CachedTicket gone = MakeTicket("G-1", "left the view"); // listed at the last reload, still resident
+    const std::unordered_set<std::string> listed = {"S-1", "G-1"};
+
+    const std::unordered_set<std::string> owned =
+        smatchet::sync::WalkOwnedKeys({epic, story, walkChild, gone}, &listed);
+
+    // E-1 is a parent of a resident row and unlisted; S-2 is unlisted; S-1 is also a parent. G-1 is the one row
+    // the monitor may still report as having left the view.
+    CHECK(owned == std::unordered_set<std::string>{"E-1", "S-1", "S-2"});
+}
+
+TEST_CASE("A completed delta reload publishes the view's own ids, not the hierarchy walk's") {
+    DeltaRig rig;
+    CachedTicket child = Stamped("ABC-1", "T1");
+    child.fieldValues["parent"] = "ABC-9 - epic";
+    rig.Seed({child, Stamped("ABC-9", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}})); // the view lists the child only; the epic is the walk's
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-9", "T1")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 1);
+    CHECK(rig.deps.ViewListed == std::vector<std::string>{"ABC-1"});
+}
+
+TEST_CASE("A full reload publishes the ids its query streamed") {
+    DeltaRig rig;
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 1);
+    std::vector<std::string> listed = rig.deps.ViewListed;
+    std::sort(listed.begin(), listed.end());
+    CHECK(listed == std::vector<std::string>{"ABC-1", "ABC-2"});
+}
+
+TEST_CASE("A reload that did not complete publishes no view listing") {
+    DeltaRig rig;
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, /*fullSyncCompleted=*/false);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 0);
 }

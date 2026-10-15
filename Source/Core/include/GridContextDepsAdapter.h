@@ -113,6 +113,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     /// Records THIS pane's kept ids under (cache backend key, pane id) so a sibling pane's sweep
     /// can subtract them even after the hidden-pane LRU has evicted this context's rows.
     void PublishOwnedTicketIds(const std::vector<std::string>& ids) override;
+    void PublishViewListedIds(const std::vector<std::string>& ids) override;
     /// Tracker HTTP counters from the process-wide NetworkUsageTracker (delta-sync session stats).
     smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const override;
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override;

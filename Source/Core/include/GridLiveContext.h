@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "Sync/ChangeMonitorPaneState.h"
 #include "TrackerFieldSchema.h"
 
 class ITrackerBackend;
@@ -233,6 +234,9 @@ struct GridLiveContext {
     /// without fetching or toasting), so enabling the monitor on an already-populated pane
     /// does not replay the whole view as "changes".
     bool changeBaselineEstablished = false;
+    /// What the monitor learned about this pane between cycles (roster found incomplete, keys the tracker refuses).
+    /// Cleared when the pane's next reload finishes (GridContextDepsAdapter::OnStreamingSyncSessionFinished).
+    smatchet::sync::ChangeMonitorPaneState monitorState;
 
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.

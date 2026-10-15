@@ -164,6 +164,10 @@ void GridContextDepsAdapter::PublishOwnedTicketIds(const std::vector<std::string
     app_.SetPaneOwnedTicketIds(c.CacheBackendKeyCopy(), c.PaneId, ids);
 }
 
+void GridContextDepsAdapter::PublishViewListedIds(const std::vector<std::string>& ids) {
+    ctx().monitorState.SetViewListing(ids); // UI thread, same discipline as the other monitor bookkeeping
+}
+
 // Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
 // Every per-pane adapter forwards its connectivity writes into that one instance (N writers, one
 // service). The service is constructed eagerly in Initialize before the first tick, so these
@@ -217,6 +221,11 @@ void GridContextDepsAdapter::NotifySyncStatus(const std::string& title, const st
 }
 
 void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
+    if (fetchOk) {
+        // A finished reload may have changed the view's size and the tracker's answers: the change monitor tries the
+        // roster again and forgets the keys it saw refused (UI thread, same discipline as the latches below).
+        ctx().monitorState.ResetForReload();
+    }
     if (!fetchOk) {
         // Failed session: re-arm so the next focus switch / visibility kick retries the
         // sync instead of treating the pane as sync-live forever.

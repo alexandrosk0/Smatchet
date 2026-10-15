@@ -100,6 +100,10 @@ class ITicketSyncDeps {
     /// LRU evicts a pane whose cache rows survive — the recorded set outlives the eviction and is
     /// dropped only on 30 s retirement. Defaulted no-op so the test fakes need no stub.
     virtual void PublishOwnedTicketIds(const std::vector<std::string>& /*ids*/) {}
+    /// The ids this pane's view query returned in a COMPLETE reload (a subset of the owned ids: the rest are the
+    /// parents and children the hierarchy walk added). The change monitor uses it to tell a row that left the
+    /// view from one the walk owns. UI thread, once per completed session. Defaulted no-op for the test fakes.
+    virtual void PublishViewListedIds(const std::vector<std::string>& /*ids*/) {}
 
     /// Tracker HTTP traffic counters right now (monotonic). A session reads it at its start and end
     /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no

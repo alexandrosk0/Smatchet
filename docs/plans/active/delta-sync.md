@@ -35,7 +35,7 @@ Invariants taken from the scoped rules: `SupportsVersionedRoster()` is a capabil
 | 3 | `feat/delta-sync-p3-delta` | `FetchViewRoster`; `RunDeltaFetch` / `RunFullFetch`; pure `ChooseSyncStrategy`, `ComputeDeltaFetchSet`, `ShouldPreferFullFetch`; `CachedUnchanged` batches; `sync.full` stops wiping (new destructive `cache.recreate`); config `DeltaSyncEnabled`, `DeltaSyncMaxRowAgeSec` |
 | 4 | `feat/delta-sync-p4-offui` | SQLite writes leave the UI thread: worker saves rows + meta before queueing; stale deletion is one worker-side transaction |
 | 5 | `feat/delta-sync-p5-hierarchy` | delta for the parent/child walks (`FetchRosterForKeys`, `FetchChildRosterOfKeys`) |
-| 6 | `feat/delta-sync-p6-monitor` | change monitor uses one roster call (`DiffRosterAgainstResident`); new keys join the grid |
+| 6 | `feat/delta-sync-p6-monitor` | change monitor uses one roster call (`DiffRosterAgainstResident`), or the legacy changed-since path when the roster is cut short (the pane remembers that until its next reload); new keys join the grid |
 | 7 | `feat/delta-sync-p7-lookups` | field-catalog snapshot TTL; transitions/editmeta invalidation on remote change; `lookup_cache` TTL; comments modal skips refetch for an unchanged ticket |
 
 ### Fallback matrix
@@ -126,19 +126,16 @@ Found in the Phase 3-5 review; none block the phases above.
 - The session stats counters are sampled from a shared tracker traffic counter, so two panes syncing at once can cross-count; treat them as indicative.
 - The change-monitor probe's save happens after its epoch check but before the UI-thread drain, so a sync that starts in between can race it. The version guard in `SaveTicketsWithSyncMeta` narrows this: it skips a row whose incoming `updated` is provably older than the stored one (equal versions merge, an unknown or unparsable stamp still writes), so the race can no longer roll a stored row back. A Full sync is authoritative and bypasses that guard (and `DropRowsOlderThanCached`), and a stored stamp more than a day in the future counts as unknown, so a stamp that is ahead of the tracker cannot wedge a row.
 - `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
-- The roster change probe reports every resident row the view roster no longer lists (including parents/children the hierarchy walk added) as vanished and probes the same first 25 (sorted) each cycle; with more than 25 such rows a truly deleted ticket past the cap is never probed. Rotate the probe window or exclude rows the walk owns.
 - `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
 - Found in the Phase 6-7 pre-merge review (deferred; none block the phases):
   - The Fields tab shows the "saved" cue for a catalog served from its lifetime (`SmatchetViewsDashboardUi.cpp`, `DrawFieldsTabCatalogState`) but offers no Refresh action; the next fetch only happens on expiry. Add a Refresh next to the cue (it should set `triggerCatalogRefetch`).
   - Cache-served ("unchanged") rows never report a remote change (`MergeRowsIntoActiveTickets`, `onlyIfDifferent` branch): a row the sync serves from the cache after a remote edit keeps its cached transitions and edit permissions until they expire. Report a version move for those rows as well, or invalidate on the roster diff instead of the merge.
-  - The change monitor spends `RefusalSplitBudget` extra requests per cycle to isolate refused keys. A refused key stays in the roster diff, so it is re-isolated every cycle (about `2 * log2(n)` extra requests), and more than `kMaxIsolatedRefusalsPerHop` refused keys in one batch still fail the cycle. Remember refused keys per pane for the session and drop them from `ToFetch`.
   - `config.set` validates integer keys only. A bool or string key written with the wrong type still makes the load fall back for that key (the int reads are per key and guarded now; bool, string and float reads in `LoadScalarFields` are not).
   - `AppController` startup parses the field-catalog file once per candidate key (project-scoped, then the unscoped fallback); a scoped miss still costs a second parse.
 - Found in the pre-ship review (deferred; none block the merge):
   - A fetched row dropped because the cache holds a newer copy (`DropRowsOlderThanCached`, `QueueBatch`) is kept by id but never added to the pane's in-memory rows. A pane that does not already hold that row (a fresh pane, or one that evicted it) shows the view without it until the next sync. Read the cached copies of the dropped ids on the worker and queue them as an unchanged batch.
 - Found in the post-rebase review (deferred; none block the merge):
   - Field-catalog snapshot restore and save still touch the file on the UI thread: `TryLoadFieldCatalogSnapshot` reads the whole file (and, once a day per snapshot, rewrites it) from startup and the render-path error handler, and a successful catalog apply saves the snapshot synchronously (`AppController_CatalogAndFieldEdit.cpp`, already on develop). Move restore and save to a worker (Pillar 2).
-  - `PendingTouches()` is a process-global keyed only by cache key, so a touch left over from one test can fold into the next test's file after a `TestEnvGuard` data-dir swap. Key it by cache path or add a test-only reset.
 
 ## Phase 7 notes (lookups)
 

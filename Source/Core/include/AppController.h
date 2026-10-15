@@ -1511,7 +1511,8 @@ class AppController : public IAppThreading,
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
-                                       std::uint64_t capturedSyncEpoch, bool addNewRows);
+                                       std::uint64_t capturedSyncEpoch, bool addNewRows,
+                                       const smatchet::sync::ChangeProbeCycleNotes& notes);
     /// applyChangeProbeOnMainThread_ halves: drop the shared cache rows of 404'd keys no sibling pane retains,
     /// and persist the rows a probe updated (worker write, latched cache handle). UI thread.
     void dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,

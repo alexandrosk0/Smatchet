@@ -30,6 +30,7 @@
 
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/WalkOwnedKeysPure.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
@@ -89,15 +90,22 @@ std::vector<std::string> ResolveSalientFieldIds(GridLiveContext& ctx) {
 // UI-thread snapshot of the pane's resident rows for a change probe: their ids (the membership reconcile's
 // baseline) and, on the roster path, id -> held "updated" stamp. `useRoster` is cleared when the pane is still
 // empty before its first sync (an empty baseline would read the whole view as "new" and download every body).
+// Rows the hierarchy walk owns (the parents and children of the view's rows) are left out of the membership
+// baseline - the view's key list never names them - and returned in `walkOwned` for the roster path.
 void SnapshotResidentForProbe(GridLiveContext& ctx, bool& useRoster, std::vector<std::string>& cachedKeys,
-                              std::unordered_map<std::string, std::string>& residentUpdated) {
+                              std::unordered_map<std::string, std::string>& residentUpdated,
+                              std::unordered_set<std::string>& walkOwned) {
     std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+    walkOwned = smatchet::sync::WalkOwnedKeys(
+        ctx.ActiveTickets, ctx.monitorState.ViewListedKnown ? &ctx.monitorState.ViewListed : nullptr);
     cachedKeys.reserve(ctx.ActiveTickets.size());
     if (useRoster) {
         residentUpdated.reserve(ctx.ActiveTickets.size());
     }
     for (std::size_t i = 0; i < ctx.ActiveTickets.size(); ++i) {
-        cachedKeys.push_back(ctx.ActiveTickets[i].id);
+        if (walkOwned.find(ctx.ActiveTickets[i].id) == walkOwned.end()) {
+            cachedKeys.push_back(ctx.ActiveTickets[i].id);
+        }
         if (useRoster) {
             residentUpdated[ctx.ActiveTickets[i].id] = ctx.ActiveTickets[i].GetFieldValue("updated");
         }
@@ -751,11 +759,17 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         std::vector<std::string> cachedKeys;
         // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query
         // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
-        bool useRoster = cfg.DeltaSyncEnabled && backend->Reader().SupportsVersionedRoster();
+        // A pane whose roster came back incomplete (its view is larger than the reload's caps) goes straight to
+        // the changed-since path until its next reload, instead of paying for a capped walk every cycle.
+        bool useRoster =
+            ctx.monitorState.ShouldTryRoster(cfg.DeltaSyncEnabled, backend->Reader().SupportsVersionedRoster());
         std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path only)
-        SnapshotResidentForProbe(ctx, useRoster, cachedKeys, residentUpdated);
+        std::unordered_set<std::string> walkOwned;
+        SnapshotResidentForProbe(ctx, useRoster, cachedKeys, residentUpdated, walkOwned);
+        const std::unordered_set<std::string> refusedKeys = ctx.monitorState.RefusedKeys;
         LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, residentUpdated,
-                              useRoster, window, polledAt, capturedGeneration, capturedSyncEpoch]() mutable {
+                              walkOwned, refusedKeys, useRoster, window, polledAt, capturedGeneration,
+                              capturedSyncEpoch]() mutable {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
             ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
             if (!paneJql.empty()) {
@@ -764,16 +778,21 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             std::vector<CachedTicket> fetched;
             std::vector<smatchet::MembershipRemovalVerdict> verdicts;
             bool addNewRows = false;
+            smatchet::sync::ChangeProbeCycleNotes notes;
+            smatchet::sync::RosterProbeContext probeContext;
+            probeContext.RefusedKeys = &refusedKeys;
+            probeContext.WalkOwned = &walkOwned;
+            probeContext.Notes = &notes;
             if (!smatchet::sync::RunChangeProbeCycle(backend->Reader(), cfgCopy, views, useRoster, residentUpdated,
                                                      cachedKeys, window, salientFieldIds, paneId, fetched, verdicts,
-                                                     addNewRows)) {
+                                                     addNewRows, probeContext)) {
                 return; // soft failure: logged, the anchor is untouched and the next interval retries
             }
             mainThreadDispatcher.PostToMainThread([this, paneId, fetched = std::move(fetched),
-                                                   verdicts = std::move(verdicts), polledAt, capturedGeneration,
-                                                   capturedSyncEpoch, addNewRows]() mutable {
+                                                   verdicts = std::move(verdicts), notes = std::move(notes), polledAt,
+                                                   capturedGeneration, capturedSyncEpoch, addNewRows]() mutable {
                 applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
-                                              capturedGeneration, capturedSyncEpoch, addNewRows);
+                                              capturedGeneration, capturedSyncEpoch, addNewRows, notes);
             });
         });
     }
@@ -848,7 +867,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
                                                   std::uint64_t capturedGeneration, std::uint64_t capturedSyncEpoch,
-                                                  bool addNewRows) {
+                                                  bool addNewRows, const smatchet::sync::ChangeProbeCycleNotes& notes) {
     // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
     // generation (swapped mid-flight → drop): a stale apply would diff new-backend rows against
     // the old baseline (capture-then-check, issue #1081). Also drop when a streaming sync started
@@ -918,6 +937,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     for (std::size_t i = 0; i < addedKeys.size(); ++i) {
         AddPaneOwnedTicketId(backendKey, paneId, addedKeys[i]);
     }
+    ctx.monitorState.NoteViewRowsAdded(addedKeys); // the roster listed them: they belong to the view itself
     AppendMembershipChangeSummaries(changes, addedKeys, plan);
     // Mark Lua cells for re-record whenever ActiveTickets mutates (field updates OR removals).
     // This matches the convention used in TicketSyncService paths: every mutation of ActiveTickets
@@ -928,9 +948,13 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     if (!changes.empty()) {
         NotifyTicketChanges(changes, paneId);
     }
-    // Advance the anchor to the poll-issue instant (no gap). nextChangePollAt was already pushed
+    ctx.monitorState.Absorb(notes);
+    // Advance the anchor to the poll-issue instant (no gap) - unless the cycle left changed rows undownloaded: a
+    // later fall-back to the changed-since window must still reach them. nextChangePollAt was already pushed
     // out at dispatch, so this slice does not re-stamp it here.
-    ctx.changeSinceAnchor = polledAt;
+    if (smatchet::sync::ChangeMonitorPaneState::AnchorMayAdvance(notes)) {
+        ctx.changeSinceAnchor = polledAt;
+    }
 }
 
 void AppController::evictHiddenPanesOverCap_() {

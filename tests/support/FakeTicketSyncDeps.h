@@ -108,6 +108,13 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override {
         RemotelyChanged.insert(RemotelyChanged.end(), ids.begin(), ids.end());
     }
+    /// What PublishViewListedIds received (the view query's own ids of the last completed session) and how often.
+    std::vector<std::string> ViewListed;
+    int ViewListedPublishes = 0;
+    void PublishViewListedIds(const std::vector<std::string>& ids) override {
+        ViewListed = ids;
+        ++ViewListedPublishes;
+    }
     /// When set, launched tasks are parked in `DeferredTasks` instead of running inline, so a test can hold a
     /// background task "in flight" and run it (RunDeferredTasks) when it chooses.
     bool DeferBackgroundTasks = false;

@@ -676,6 +676,7 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     RecordSessionStats(fetchError, fullSyncCompleted);
     SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
     ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
+    PublishViewListing(fullSyncCompleted);
 
     LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
              "fullSync=%d err=%s",
@@ -823,6 +824,17 @@ void TicketSyncService::ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompl
     // Published OUTSIDE the roster lock: the adapter reads the context's backend key under its own
     // mutex, and activeTicketsMutex_ must stay the innermost of that pair.
     deps_.PublishOwnedTicketIds(ownedIds);
+}
+
+void TicketSyncService::PublishViewListing(bool fullSyncCompleted) {
+    std::vector<std::string> listed;
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        listed.swap(activeStreamingSync_.ViewListedIds);
+    }
+    if (fullSyncCompleted) {
+        deps_.PublishViewListedIds(listed);
+    }
 }
 
 bool TicketSyncService::IsActive() const {
@@ -996,6 +1008,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         activeStreamingSync_.Warning.clear();
         activeStreamingSync_.PendingBatches.clear();
         activeStreamingSync_.BackgroundStaleIds.clear();
+        activeStreamingSync_.ViewListedIds.clear();
         activeStreamingSync_.WorkerStats = smatchet::sync::SyncSessionStats();
     }
 
@@ -1124,12 +1137,13 @@ void TicketSyncService::RunFullFetch(std::uint64_t reqId, const TrackerConfig& c
     smatchet::sync::SyncSessionStats partial;
     partial.Mode = "full";
     partial.FallbackReason = fallbackReason;
-    PublishWorkerResult(reqId, summary, workerKeepIds, partial);
+    PublishWorkerResult(reqId, summary, workerKeepIds, partial, std::move(workerStreamedIds));
 }
 
 void TicketSyncService::PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
                                             const std::unordered_set<std::string>& keepIds,
-                                            const smatchet::sync::SyncSessionStats& partialStats) {
+                                            const smatchet::sync::SyncSessionStats& partialStats,
+                                            std::vector<std::string> viewListedIds) {
     if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
         return;
     }
@@ -1154,6 +1168,7 @@ void TicketSyncService::PublishWorkerResult(std::uint64_t reqId, const TrackerIs
     activeStreamingSync_.WorkerStats = partialStats;
     activeStreamingSync_.WorkerStats.RequestId = reqId;
     activeStreamingSync_.WorkerStats.BodiesFetched = summary.FetchedCount;
+    activeStreamingSync_.ViewListedIds = std::move(viewListedIds);
     if (summary.FullSyncCompleted && deps_.Cache()) {
         activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
     }
@@ -1676,7 +1691,7 @@ void TicketSyncService::FinishDeltaFetch(std::uint64_t reqId, const TrackerConfi
         summary.FullSyncCompleted = false;
         summary.AppendWarning(std::string("some changed issue(s) could not be saved: ") + ex.what());
         LOG_WARN("TicketSyncService: delta queue threw: %s", ex.what());
-        PublishWorkerResult(reqId, summary, keepIds, partial);
+        PublishWorkerResult(reqId, summary, keepIds, partial, streamedIds);
         return;
     }
     // Rows are queued: from here a failure must NOT fall back to a second full queue. A throwing top-up just
@@ -1699,7 +1714,7 @@ void TicketSyncService::FinishDeltaFetch(std::uint64_t reqId, const TrackerConfi
         summary.AppendWarning(std::string("hierarchy top-up failed: ") + ex.what());
         LOG_WARN("TicketSyncService: delta top-up threw: %s", ex.what());
     }
-    PublishWorkerResult(reqId, summary, keepIds, partial);
+    PublishWorkerResult(reqId, summary, keepIds, partial, std::move(streamedIds));
 }
 
 Result<TicketSyncService::HopRows, TrackerError>

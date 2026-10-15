@@ -262,10 +262,11 @@ std::string StrOr(const nlohmann::json& obj, const char* key) {
 // "Last used" times recorded by loads. A load runs on the UI thread at startup and from the render-path error
 // handler, so it rewrites the cache file at most once per kLruTouchIntervalSeconds per snapshot (or once for an
 // entry re-indexed with no time); otherwise the touch waits here and reaches disk with the next save / forget.
-// Guarded by FieldCatalogCacheFileMutex().
+// Guarded by FieldCatalogCacheFileMutex(). Kept per cache FILE: a touch queued against one data directory
+// must never fold into another's file after the directory moves (a profile switch, a test's data-dir swap).
 std::unordered_map<std::string, std::int64_t>& PendingTouches() {
-    static std::unordered_map<std::string, std::int64_t> touches;
-    return touches;
+    static std::unordered_map<std::string, std::unordered_map<std::string, std::int64_t>> touchesByFile;
+    return touchesByFile[FieldCatalogCachePath()];
 }
 
 // Folds the pending touches into `root`'s index (and forgets them when `consume`).
