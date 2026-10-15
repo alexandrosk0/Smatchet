@@ -142,8 +142,10 @@ struct FakeSync : IAppSync {
             ++FullSyncCalls;
         }
     }
-    VoidResult RecreateLocalCacheDatabase() override {
+    bool RecreateWipes = false; // a failing recreate that already deleted the cache files
+    VoidResult RecreateLocalCacheDatabase(bool& outWiped) override {
         ++RecreateCalls;
+        outWiped = RecreateError.empty() || RecreateWipes;
         return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
     }
     std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
@@ -480,6 +482,29 @@ TEST_CASE("users.* — backend results propagate; a failed fetch is BackendError
         CHECK(r.Error.Code == ErrorCode::BackendError);
         CHECK(r.Error.Message.find("boom") != std::string::npos);
     }
+}
+
+TEST_CASE("cache.recreate words a failure by whether the cache files were already wiped") {
+    FakeSync sync;
+    TogglePoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    sync.RecreateError = "Failed to reopen database: disk full";
+    sync.RecreateWipes = false; // nothing was deleted
+    const CommandResult untouched = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(untouched.Ok);
+    CHECK(untouched.Error.Message.find("was not recreated") != std::string::npos);
+    CHECK(untouched.Error.Message.find("was wiped") == std::string::npos);
+
+    sync.RecreateWipes = true; // the files are gone, the new database could not be set up
+    const CommandResult wiped = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(wiped.Ok);
+    CHECK(wiped.Error.Code == ErrorCode::HandlerError);
+    CHECK(wiped.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(wiped.Error.Message.find("disk full") != std::string::npos);
+    CHECK(wiped.Error.Message.find("was not recreated") == std::string::npos);
+    CHECK(sync.FullSyncCalls == 0); // no sync starts after a failure either way
 }
 
 TEST_CASE(

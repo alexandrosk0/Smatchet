@@ -41,7 +41,12 @@ class IAppSync {
         (void)mode;
         SyncWithBackend(configOverride, viewsOverride);
     }
-    virtual VoidResult RecreateLocalCacheDatabase() = 0;
+    /// Wipes the local cache database and opens a fresh one. `outWiped` says whether the wipe happened: true as soon
+    /// as any cache file was deleted, so it can be true even when the call fails (a reopen failure, a sidecar
+    /// that would not delete). On a failure with `outWiped` set the cached rows are gone: the call has already
+    /// refreshed the focused pane and the queue snapshots, and the caller words the error as a partial wipe
+    /// (see DescribeCacheRecreateFailure). On a failure with `outWiped` clear nothing was deleted.
+    virtual VoidResult RecreateLocalCacheDatabase(bool& outWiped) = 0;
     /// Absolute path of the local cache database, for display; the raw configured path when it
     /// cannot be resolved.
     virtual std::string GetResolvedLocalCacheDbPath() const = 0;

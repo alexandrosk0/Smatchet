@@ -327,7 +327,7 @@ class AppController : public IAppThreading,
      * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
      * to refill from the tracker.
      */
-    VoidResult RecreateLocalCacheDatabase() override;
+    VoidResult RecreateLocalCacheDatabase(bool& outWiped) override;
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
@@ -1518,6 +1518,9 @@ class AppController : public IAppThreading,
                               const smatchet::MembershipReconcilePlan& plan);
     void persistProbeRows_(const std::string& paneId, const std::string& backendKey,
                            std::vector<CachedTicket> updatedTickets);
+    /// RecreateLocalCacheDatabase failed after it deleted the cache files: refresh the focused pane and the queue
+    /// snapshots so nothing keeps showing rows that are gone. UI thread.
+    void RefreshAfterPartialCacheWipe_();
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};

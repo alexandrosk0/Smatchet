@@ -36,6 +36,7 @@
 #include "Interfaces/IAppSync.h"
 #include "SmatchetHelpMarker.h"
 #include "Ui/SmatchetDestructiveButton.h"
+#include "Sync/CacheRecreateReportPure.h"
 #include "Ui/SmatchetStorageSnapshotPure.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
@@ -355,7 +356,8 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            const VoidResult recreated = sync.RecreateLocalCacheDatabase();
+            bool wiped = false;
+            const VoidResult recreated = sync.RecreateLocalCacheDatabase(wiped);
             if (recreated.has_value()) {
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.success", "Success")),
@@ -369,7 +371,9 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
                                                              "Could not recreate the local database.");
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
-                    recreated.error().empty() ? std::string(detail) : recreated.error(), ToastType::Error, 6000);
+                    recreated.error().empty() ? std::string(detail)
+                                              : smatchet::sync::DescribeCacheRecreateFailure(wiped, recreated.error()),
+                    ToastType::Error, 6000);
             }
         }
         ImGui::EndPopup();

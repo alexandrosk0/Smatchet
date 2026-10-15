@@ -32,7 +32,10 @@
 
 namespace {
 
-VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8) {
+// Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set as soon as one of them is gone, so a
+// caller can tell a wipe that went through partway (a sidecar would not delete) from one that never started.
+VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemoved) {
+    anyRemoved = false;
     namespace fs = ghc::filesystem;
     std::error_code ec;
     fs::path p(dbPathUtf8);
@@ -58,6 +61,7 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8) {
         if (ec) {
             return VoidResult::Err("Could not remove " + f.string() + ": " + ec.message());
         }
+        anyRemoved = true;
     }
     return VoidOk();
 }
@@ -80,7 +84,8 @@ std::string AppController::GetResolvedLocalCacheDbPath() const {
     return p.string();
 }
 
-VoidResult AppController::RecreateLocalCacheDatabase() {
+VoidResult AppController::RecreateLocalCacheDatabase(bool& outWiped) {
+    outWiped = false;
     if (localCacheDbPath_.empty()) {
         return VoidResult::Err("Local cache database path is not set.");
     }
@@ -124,21 +129,29 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     // teardown. Mirrors the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
     std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
 
-    VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_);
+    bool anyRemoved = false;
+    VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
+    outWiped = anyRemoved;
     if (!removeResult.has_value()) {
+        VoidResult failure = removeResult;
         try {
             auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
             std::atomic_store(&Cache, std::move(fresh));
         } catch (const std::exception& ex) {
-            return VoidResult::Err(removeResult.error() + " Failed to reopen database: " + ex.what());
+            failure = VoidResult::Err(removeResult.error() + " Failed to reopen database: " + ex.what());
         }
-        return removeResult;
+        if (anyRemoved) {
+            RefreshAfterPartialCacheWipe_();
+        }
+        return failure;
     }
 
+    outWiped = true; // every cache file is gone from here on, whatever happens to the new database
     try {
         auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
         std::atomic_store(&Cache, std::move(fresh));
     } catch (const std::exception& ex) {
+        RefreshAfterPartialCacheWipe_();
         return VoidResult::Err(std::string("Failed to open new database: ") + ex.what());
     }
 
@@ -168,6 +181,31 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     }
     RefreshLocalData();
     return VoidOk();
+}
+
+void AppController::RefreshAfterPartialCacheWipe_() {
+    // The cache files are gone but the recreate did not finish: the panes and the queue views must not keep
+    // showing rows that no longer exist. A reopened database re-reads empty; with no database at all the focused
+    // pane's rows are cleared directly (RefreshLocalData has nothing to read).
+    if (offlineQueue_) {
+        offlineQueue_->legacyPendingStartupBanner_.clear();
+        offlineQueue_->RequestSnapshotRefresh();
+    }
+    if (pendingActions_) {
+        pendingActions_->RequestSnapshotRefresh();
+    }
+    if (std::atomic_load(&Cache)) {
+        RefreshLocalData();
+        return;
+    }
+    GridLiveContext& ctx = focusedContext();
+    {
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        ctx.ActiveTickets.clear();
+        ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>();
+    }
+    ctx.ActiveTicketsRevision.fetch_add(1);
+    NotifyLuaTicketDataChanged();
 }
 
 bool AppController::EnsureLocalCacheForUiTest() {
