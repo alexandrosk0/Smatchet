@@ -565,6 +565,7 @@ void RefreshPendingOverlay(AppController& app, UiDrawSession& d) {
                                                          app.GetPendingActionsSnapshot());
 }
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
 namespace {
 std::map<std::string, int>& PendingRowCuesDrawn() {
     static std::map<std::string, int> drawn;
@@ -574,8 +575,12 @@ std::map<std::string, int>& PendingRowCuesDrawn() {
 
 void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention) {
     std::map<std::string, int>& drawn = PendingRowCuesDrawn();
-    if (drawn.size() < 64 || drawn.find(issueKey) != drawn.end()) {
-        drawn[issueKey] = needsAttention ? 2 : 1;
+    const int value = needsAttention ? 2 : 1;
+    const std::map<std::string, int>::iterator it = drawn.find(issueKey);
+    if (it != drawn.end()) {
+        it->second = value;
+    } else if (drawn.size() < 64) {
+        drawn.emplace(issueKey, value);
     }
 }
 
@@ -586,6 +591,7 @@ int PendingRowCueDrawnForTests(const std::string& issueKey) {
 }
 
 void ResetPendingRowCuesDrawnForTests() { PendingRowCuesDrawn().clear(); }
+#endif // SMATCHET_BUILD_UI_TESTS
 
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {

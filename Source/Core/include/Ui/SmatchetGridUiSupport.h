@@ -137,11 +137,16 @@ void RefreshPendingOverlay(AppController& app, UiDrawSession& d);
 
 /// Bucket-E probe of the grid's pending-edit cue: the key cell calls `NotePendingRowCueDrawn` when it draws the
 /// "pending" / "not sent" label of a row; a test reads which rows showed it since the last reset. Bounded (the first
-/// 64 distinct keys), UI thread only. Production never reads it.
+/// 64 distinct keys), UI thread only. Compiled only under SMATCHET_BUILD_UI_TESTS (PUBLIC on ImGuiLib): a
+/// production build has no probe state and the call is an empty inline.
+#if defined(SMATCHET_BUILD_UI_TESTS)
 void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention);
 /// 0 when the row's cue was not drawn since the last reset, 1 for "pending", 2 for "not sent".
 int PendingRowCueDrawnForTests(const std::string& issueKey);
 void ResetPendingRowCuesDrawnForTests();
+#else
+inline void NotePendingRowCueDrawn(const std::string& /*issueKey*/, bool /*needsAttention*/) {}
+#endif
 
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);
