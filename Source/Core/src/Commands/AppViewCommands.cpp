@@ -80,6 +80,11 @@ CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, const std::string&
                 } else {
                     SmatchetBottomPanelDrag::CollapseSideBar(g_ui, bar);
                 }
+            } else {
+                // A redundant show/hide skips the helpers, but the user may have emptied or
+                // refilled the side bar tab by tab since the flag was last mirrored - resync
+                // it to the live state so the Save below never persists a stale value.
+                SetViewVisible(g_ui.cfg, slot, visible);
             }
         }
         ConfigManager::Save(g_ui.cfg);
