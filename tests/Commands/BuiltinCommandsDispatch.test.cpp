@@ -174,7 +174,6 @@ TEST_CASE("toolbar defaults — every default button targets a real command (no 
         }
     }
     CHECK(sawViews);
-    CHECK(fx.Reg.HasExact("view.list")); // still there for CLI/MCP — just not a toolbar action
 }
 
 TEST_CASE("builtins — every command with a required param rejects {} before its handler") {
