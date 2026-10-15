@@ -130,7 +130,7 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
     // Make the host pane live: sync the fixture so tickets load + the docked
     // "Smatchet - Active Project" window activates (mirrors data_dependent case 8).
     app->SyncWithBackend();
-    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
     IM_CHECK_NO_RET(syncDone);
     IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
 

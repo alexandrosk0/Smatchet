@@ -184,6 +184,8 @@ Smatchet.exe cmd commands.search --query=sync
 | `sync.fetch_active_view` | — | Fetch active view inline (no cache write). Returns tickets directly. |
 | `sync.tracker_status` | — | `{state, syncWarning, fieldCatalogError}` |
 
+In the one-shot in-process CLI (`Smatchet.exe cmd ...` in a build without MCP), `sync.incremental`, `sync.full` and the `view.*` commands that sync report `triggered`, but no sync starts before the process exits: the config or views are read on a worker and the sync starts from a later UI-thread post, which a process that draws no frame never reaches.
+
 ---
 
 ### view
