@@ -120,7 +120,8 @@ CommandResult WaitForRecreateByPumping(std::future<smatchet::sync::CacheRecreate
 }
 
 // cache.recreate: the wipe runs on a worker behind AppController's "recreating" gate, so the UI thread never waits
-// for a pane's in-flight request. Its outcome arrives on the UI thread; the follow-up full sync starts there too.
+// for a pane's in-flight request. Its outcome arrives on the UI thread; on success the recreate itself starts the
+// follow-up full sync of the focused pane before this completion runs.
 // A caller on another thread (MCP / CLI / Lua) waits for the outcome HERE, off the UI thread, and returns the final
 // result including whether the wipe happened. A caller already on the UI thread with a frame loop (the command
 // palette) cannot wait, so it gets a "started" result at once; the completion toast and the log report the outcome.
@@ -132,12 +133,8 @@ CommandResult RunCacheRecreate(IAppSync& app, IMainThreadPoster& poster, const C
     const bool onUiThread = poster.IsOnUiThread();
     const CommandResult started = RunOnUiThreadAsCommandResult(poster, [&app, outcome]() {
         const VoidResult startedOk =
-            app.StartRecreateLocalCacheDatabase([&app, outcome](const smatchet::sync::CacheRecreateOutcome& done) {
-                if (done.Ok) {
-                    app.SyncWithBackendMode(nullptr, nullptr,
-                                            smatchet::sync::SyncMode::Full); // no sync after a failure
-                }
-                outcome->set_value(done);
+            app.StartRecreateLocalCacheDatabase([outcome](const smatchet::sync::CacheRecreateOutcome& done) {
+                outcome->set_value(done); // the follow-up full sync (on success) is started by the recreate itself
             });
         if (!startedOk.has_value()) {
             smatchet::sync::CacheRecreateOutcome refused; // nothing was deleted

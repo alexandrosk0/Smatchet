@@ -317,7 +317,7 @@ void DrawGeneralStorageSection(const IAppMeta& meta, UiDrawSession& d) {
 
 // Local database: intro blurb, resolved cache path, the "Recreate database..."
 // button and its confirm modal (modal stays whole with its opener).
-void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSession& d) {
+void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     if (!d.prefsFilter.ShowSetting("general.local_database.recreate")) {
         return;
     }
@@ -365,14 +365,9 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            // The wipe is asynchronous: the completion (AppController) pushes the success or failure toast, and
-            // this callback starts the follow-up full refresh once the new database is in place.
-            const VoidResult started = sync.StartRecreateLocalCacheDatabase(
-                [&sync, &d, &ui](const smatchet::sync::CacheRecreateOutcome& outcome) {
-                    if (outcome.Ok) {
-                        sync.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
-                    }
-                });
+            // The wipe is asynchronous: the completion (AppController) pushes the success or failure toast and, on
+            // success, starts the follow-up full refresh once the new database is in place.
+            const VoidResult started = sync.StartRecreateLocalCacheDatabase(nullptr);
             if (started.has_value()) {
                 ImGui::CloseCurrentPopup();
             } else {
@@ -392,11 +387,11 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
 
 } // namespace
 
-void DrawGeneralPreferencesTab(SmatchetUI& ui, const IAppMeta& meta, IAppSync& sync, UiDrawSession& d) {
+void DrawGeneralPreferencesTab(const IAppMeta& meta, IAppSync& sync, UiDrawSession& d) {
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] { DrawGeneralUpdatesSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region",
                                               [&] { DrawGeneralLanguageRegionSection(d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] { DrawGeneralStorageSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database",
-                                              [&] { DrawGeneralLocalDatabaseSection(ui, sync, d); });
+                                              [&] { DrawGeneralLocalDatabaseSection(sync, d); });
 }

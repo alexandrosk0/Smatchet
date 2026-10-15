@@ -284,10 +284,11 @@ void AppController::FinishCacheRecreate_(
     const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone) {
     // The worker threads are joined and the cache is swapped: drop the cancelled sessions' batches and stale-deletion
     // state, and let syncs start again.
-    // On success with a follow-up (onDone starts the full re-fetch of the focused pane), the focused pane's held
-    // request rides on that follow-up instead of being replayed first: one session runs, not a replay the follow-up
-    // then cancels or duplicates. Every other pane replays its held request as before.
-    const bool foldFocused = outcome.Ok && static_cast<bool>(onDone);
+    // On success this function itself starts the full re-fetch of the focused pane (below), so the focused pane's
+    // held request rides on that follow-up instead of being replayed first: one session runs, not a replay the
+    // follow-up then cancels or duplicates. Every other pane replays its held request as before.
+    const bool followUpSync = outcome.Ok;
+    const bool foldFocused = followUpSync;
     const TicketSyncService* const focusedSync = focusedContext().ticketSync_.get();
     for (TicketSyncService* svc : CollectPaneSyncServices_()) {
         svc->EndCacheTeardown(foldFocused && svc == focusedSync);
@@ -309,7 +310,7 @@ void AppController::FinishCacheRecreate_(
         RefreshOtherPanesAfterCacheWipe_(); // every pane showed rows from the file that is gone, not only the focused
                                             // one
     }
-    cacheRecreating_.store(false); // down before onDone, which may start the follow-up sync
+    cacheRecreating_.store(false); // down before the follow-up sync starts
     if (outcome.Ok) {
         LOG_INFO("AppController: local cache recreated.");
         SmatchetToastManager::Instance().Push(
@@ -323,6 +324,11 @@ void AppController::FinishCacheRecreate_(
         SmatchetToastManager::Instance().Push(
             std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")), detail,
             ToastType::Error, 6000);
+    }
+    if (followUpSync) {
+        // The fold above and this sync are one decision: the focused service holds the folded mode until this call
+        // consumes it. The configuration and the views come from disk (the recreate is not a settings save).
+        SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
     }
     if (onDone) {
         onDone(outcome);

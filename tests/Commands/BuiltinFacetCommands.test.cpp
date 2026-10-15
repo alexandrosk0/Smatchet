@@ -160,6 +160,11 @@ struct FakeSync : IAppSync {
         outcome.Wiped = RecreateError.empty() || RecreateWipes;
         outcome.Error = RecreateError;
         Recreating = false;
+        if (outcome.Ok) {
+            // The contract of IAppSync::StartRecreateLocalCacheDatabase: the recreate itself starts the follow-up full
+            // sync (AppController::FinishCacheRecreate_), so the command's completion must not.
+            SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+        }
         auto done = std::move(HeldDone);
         if (done) {
             done(outcome);

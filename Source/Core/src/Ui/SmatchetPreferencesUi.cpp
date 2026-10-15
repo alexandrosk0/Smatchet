@@ -1277,7 +1277,7 @@ void DrawPrefsSearchReadout(UiDrawSession& d) {
 void SmatchetUI::drawPreferencesCategoryBody(AppController& app, UiDrawSession& d) {
     switch (d.preferencesCategory) {
     case PreferencesCategory::General:
-        DrawGeneralPreferencesTab(*this, app, app, d);
+        DrawGeneralPreferencesTab(app, app, d);
         break;
     case PreferencesCategory::Appearance:
         DrawAppearancePreferencesTab(d);

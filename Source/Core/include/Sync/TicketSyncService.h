@@ -76,8 +76,9 @@ class TicketSyncService {
     /// refresh): the recorded request is not started here, only its mode is kept, and the next `SyncWithBackend`
     /// combines with it (Full wins) - so exactly one session runs after the recreate instead of a replay that the
     /// follow-up then cancels or duplicates.
-    /// The caller must follow with a `SyncWithBackend`; the folded mode otherwise waits for the next one (and can only
-    /// make it Full).
+    /// The caller must follow with a `SyncWithBackend` right away (AppController::FinishCacheRecreate_ does, in the
+    /// same call). A fold nobody consumed is dropped by the next `BeginCacheTeardown`, so it
+    /// cannot turn an unrelated later refresh into a Full.
     void EndCacheTeardown(bool foldIntoFollowUp = false);
 
     /// True between `BeginCacheTeardown` and `EndCacheTeardown`. Any thread.

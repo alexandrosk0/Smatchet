@@ -260,6 +260,7 @@ void TicketSyncService::CancelAndJoinActiveStreamingSync() {
 
 std::thread TicketSyncService::BeginCacheTeardown() {
     startsBlocked_.store(true);
+    hasFoldedMode_ = false; // a fold left by an earlier recreate whose follow-up never ran must not ride on this one
     RequestCancel();
     return std::move(activeStreamingSync_.WorkerThread);
 }
@@ -280,7 +281,7 @@ void TicketSyncService::EndCacheTeardown(bool foldIntoFollowUp) {
     blockedRequest_ = BlockedSyncRequest();
     if (foldIntoFollowUp) {
         // The caller syncs right after this returns: keep only the mode (Full stays sticky), so one session runs.
-        foldedMode_ = hasFoldedMode_ ? smatchet::sync::CombineSyncModes(foldedMode_, request.Mode) : request.Mode;
+        foldedMode_ = request.Mode;
         hasFoldedMode_ = true;
         LOG_INFO("TicketSyncService: the sync requested during the cache recreate rides on the follow-up sync "
                  "(mode=%s).",

@@ -3437,6 +3437,27 @@ TEST_CASE("TicketSyncService: a request held during the recreate rides on the fo
     }
 }
 
+TEST_CASE("TicketSyncService: a fold nobody consumed does not turn a later refresh into a Full") {
+    // EndCacheTeardown(true) keeps the held request's mode for the follow-up sync. If that follow-up never ran, the
+    // next recreate's BeginCacheTeardown drops the fold, so an ordinary refresh afterwards stays a Delta.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, /*fullSyncCompleted=*/true);
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync(smatchet::sync::SyncMode::Full); // held by the gate
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+    // ...and nothing syncs. A second recreate starts and ends without a held request.
+    (void)rig.svc.BeginCacheTeardown();
+    rig.svc.EndCacheTeardown();
+
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+}
+
 TEST_CASE("TicketSyncService: EndCacheTeardown without a raised gate replays nothing and cancels nothing") {
     // FinishCacheRecreate_ lists the focused service twice; the second End must not cancel a session the first one
     // replayed.

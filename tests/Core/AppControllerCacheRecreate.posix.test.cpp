@@ -215,3 +215,39 @@ TEST_CASE(
     app.SetNoFrameLoop(false);
     CHECK(app.HasFrameLoop());
 }
+
+namespace {
+/// Pumps the dispatcher and ticks the service for `ms`, so every sync the UI thread would start or finish has.
+void PumpFor(AppController& app, TicketSyncService& sync, int ms) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < until) {
+        app.mainThreadDispatcher.Drain();
+        sync.TickStreamingApply();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
+} // namespace
+
+TEST_CASE("AppController cache recreate: the focused pane's held request rides on the one follow-up sync") {
+    // FinishCacheRecreate_ itself starts the follow-up Full sync of the focused pane on success, and folds the pane's
+    // held request into it: one session runs. (Replaying the held request first made the follow-up cancel and restart
+    // it: two sessions.)
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db;
+    AppController app;
+    REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    GridLiveContext* const pane = app.EnsurePaneContextLive("focused-pane", "Jira");
+    REQUIRE(pane != nullptr);
+    app.SetFocusedPane("focused-pane");
+    TicketSyncService& sync = *pane->ticketSync_;
+    const std::uint64_t epochBefore = sync.SessionEpoch();
+
+    int doneCalls = 0;
+    REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome&) { ++doneCalls; })
+                .has_value());
+    sync.SyncWithBackend(nullptr, nullptr, smatchet::sync::SyncMode::Delta); // held by the gate
+    REQUIRE(PumpUntil(app, [&]() { return doneCalls > 0; }));
+    PumpFor(app, sync, 400); // the follow-up's views load lands, its session starts, any second one would too
+
+    CHECK(sync.SessionEpoch() == epochBefore + 1); // exactly one session after the recreate
+}
