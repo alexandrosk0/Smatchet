@@ -1,0 +1,1 @@
+{"branch":"claude/great-nightingale-b86f26","notes":"deflake DR8(b) sleep-then-assert","originating_plan":"","owner":"orchestrator","schema":"smatchet-plan-lock/1","slug":"shutdown-drain-dr8b-deflake","started":"2026-10-15T13:44:31Z","updated":"2026-10-15T13:44:31Z","write_set":["tests/Core/ShutdownFutureDrain.test.cpp"]}
