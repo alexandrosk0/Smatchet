@@ -139,8 +139,14 @@ TEST_CASE("DR8(b): joining the annotate worker before nulling the shared state p
     std::atomic<FakeAnnotateState*> instance{nullptr};
     auto ui = std::make_unique<FakeAnnotateUi>(instance);
 
-    // Let the worker spin a bit so it is genuinely in-flight at teardown.
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    // Wait until the worker has run at least once so it is genuinely in-flight at teardown.
+    // A fixed sleep is not enough on a loaded machine: the thread may not be scheduled yet.
+    // Bounded so a worker that never starts fails the CHECK below instead of hanging ctest.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (ui->state->iterations.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(ui->state->iterations.load() > 0); // worker in flight before teardown starts
 
     ui->TeardownFixed(instance);
 
