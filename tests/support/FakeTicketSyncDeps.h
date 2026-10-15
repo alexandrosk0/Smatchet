@@ -19,6 +19,7 @@
 #include "FakeSyncCache.h"
 #include "ISyncCache.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -141,8 +142,26 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     }
     /// How many times the service posted work to the UI thread (it runs inline, as the interface default does).
     int PostsToMainThread = 0;
+    /// When set, posts are parked in `DeferredPosts` instead of running inline, so a test can land them in any
+    /// order (RunDeferredPosts), the way posts from separate worker threads can.
+    bool DeferPosts = false;
+    std::vector<std::function<void()>> DeferredPosts;
+    void RunDeferredPosts(bool reverse = false) {
+        std::vector<std::function<void()>> posts;
+        posts.swap(DeferredPosts);
+        if (reverse) {
+            std::reverse(posts.begin(), posts.end());
+        }
+        for (auto& post : posts) {
+            post();
+        }
+    }
     void PostToMainThread(std::function<void()> fn) override {
         ++PostsToMainThread;
+        if (DeferPosts) {
+            DeferredPosts.push_back(std::move(fn));
+            return;
+        }
         if (fn) {
             fn();
         }

@@ -606,3 +606,7 @@ void AppController::SyncWithBackendMode(const TrackerConfig* configOverride, con
 bool AppController::IsStreamingSyncActive() const {
     return focusedContext().ticketSync_ && focusedContext().ticketSync_->IsActive();
 }
+
+bool AppController::IsSyncPendingOrActive() const {
+    return focusedContext().ticketSync_ && focusedContext().ticketSync_->HasPendingWork();
+}

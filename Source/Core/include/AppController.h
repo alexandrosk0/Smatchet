@@ -759,6 +759,11 @@ class AppController : public IAppThreading,
     /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to
     /// `ticketSync_->IsActive()`.
     bool IsStreamingSyncActive() const;
+    /// `IsStreamingSyncActive()`, or a sync the focused pane was asked for is still on its way: its config or saved
+    /// views are being read on a worker, before any session starts. A caller that waits for a requested sync to
+    /// settle waits on this one; `IsStreamingSyncActive()` is false in that window. Delegates to
+    /// `ticketSync_->HasPendingWork()`.
+    bool IsSyncPendingOrActive() const;
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetFieldCatalogRevision() const { return fieldCatalog().TrackerFieldCatalogRevision.load(); }

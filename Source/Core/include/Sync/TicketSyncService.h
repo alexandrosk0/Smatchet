@@ -66,6 +66,9 @@ class TicketSyncService {
     /// cache), the running sync is flagged
     /// cancelled, and its worker thread is handed to the caller to join OFF the UI thread (a request on the wire
     /// runs to its own timeout). The returned thread is not joinable when no worker was running.
+    /// A request queued behind the running session (`hasPendingSyncRequest_`) moves into the held slot, the one
+    /// `EndCacheTeardown` replays or folds, so it does not also start a superseded session of its own; its mode
+    /// combines with later held requests (Full wins).
     std::thread BeginCacheTeardown();
 
     /// Cache-recreate gate, step 2 (UI thread, after the thread from `BeginCacheTeardown` was joined and the cache
@@ -119,7 +122,9 @@ class TicketSyncService {
     /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
     /// With no `configOverride` or no `viewsOverride` the missing part (the config file, the saved views) is read
     /// first, on a worker (the file read and parse never run on the UI thread), and the sync then starts from a
-    /// UI-thread post; the request is dropped if this service was destroyed meanwhile.
+    /// UI-thread post; the request is dropped if this service was destroyed meanwhile, or if a newer SyncWithBackend
+    /// call (of any shape) was made while it read: the reads run on separate threads and their posts can land out of
+    /// order, and the newest request wins. A dropped Full is kept (queued or folded into the next request).
     /// While the cache-recreate gate is up (`IsCacheTeardownActive`) nothing starts: the request is recorded instead
     /// (the latest config and views, the mode combined so that Full wins) and `EndCacheTeardown` replays it.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
@@ -388,6 +393,16 @@ class TicketSyncService {
     /// SyncWithBackend).
     void SyncWithBackendLoadingViews_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                                       smatchet::sync::SyncMode mode);
+    /// The body of SyncWithBackend, without counting a new request (the UI-thread post of a finished files read is
+    /// the request it was made for).
+    void SyncWithBackendNow_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                             smatchet::sync::SyncMode mode);
+    /// A files read finished after a newer request was made: its sync is not started. A Full mode is kept (queued
+    /// behind a running session, else folded into the next request) so dropping it never downgrades to Delta.
+    void FoldDroppedRequest_(smatchet::sync::SyncMode mode);
+    /// Requests made so far, bumped by every public SyncWithBackend call (UI thread only). A files read compares it
+    /// with the value it was launched at when its post lands.
+    std::uint64_t requestSeq_ = 0;
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;

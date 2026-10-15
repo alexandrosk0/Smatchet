@@ -922,6 +922,12 @@ void TicketSyncService::ResetStaleDeletionState() {
 
 void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                                         smatchet::sync::SyncMode mode) {
+    ++requestSeq_; // every request counts, so an older one still reading its files knows it was overtaken
+    SyncWithBackendNow_(configOverride, viewsOverride, mode);
+}
+
+void TicketSyncService::SyncWithBackendNow_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                            smatchet::sync::SyncMode mode) {
     if (startsBlocked_.load()) {
         LOG_INFO("TicketSyncService::SyncWithBackend held back: the local cache is being recreated; it runs when the "
                  "recreate finishes.");
@@ -935,8 +941,8 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     if (configOverride == nullptr || viewsOverride == nullptr) {
-        // The config file and the views file are read on a worker (Pillar 2): a recreate's follow-up and a
-        // Preferences save pass no config, and parsing it here would run on the frame.
+        // The config file and the views file are read on a worker (Pillar 2): a recreate's follow-up, sync.full and
+        // the view.* commands pass no config (or no views), and parsing them here would run on the frame.
         SyncWithBackendLoadingViews_(configOverride, viewsOverride, mode);
         return;
     }
@@ -967,12 +973,26 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     StartStreamingSync(cfgCopy, viewsCopy, mode);
 }
 
+namespace {
+/// Lowers the count of saved-views reads in flight when the last copy goes (see SyncWithBackendLoadingViews_).
+struct ViewsLoadCount {
+    explicit ViewsLoadCount(std::shared_ptr<std::atomic<int>> count) : count_(std::move(count)) {}
+    ~ViewsLoadCount() { count_->fetch_sub(1); }
+    ViewsLoadCount(const ViewsLoadCount&) = delete;
+    ViewsLoadCount& operator=(const ViewsLoadCount&) = delete;
+
+  private:
+    std::shared_ptr<std::atomic<int>> count_;
+};
+} // namespace
+
 void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig* configOverride,
                                                      const ViewsStore* viewsOverride, smatchet::sync::SyncMode mode) {
     ITicketSyncDeps* const deps = &deps_;
     const std::shared_ptr<std::atomic<bool>> alive = alive_;
     const std::shared_ptr<std::atomic<int>> inFlight = viewsLoadsInFlight_;
     TicketSyncService* const self = this;
+    const std::uint64_t seq = requestSeq_; // this request's place in the order the callers made them
     // Whatever the caller supplied is copied: the worker outlives this call. A part left null is read on the worker.
     const bool haveCfg = configOverride != nullptr;
     const bool haveViews = viewsOverride != nullptr;
@@ -984,28 +1004,53 @@ void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig* config
     if (haveViews) {
         viewsGiven = *viewsOverride;
     }
-    // Counted while it runs: the pane does not retire (HasPendingWork), so `deps`, which the pane's context owns,
-    // outlives this task. Raised before the launch, lowered by the task itself (or here when it never starts).
+    // Counted from the call until the UI-thread post it ends in has run (HasPendingWork): the pane does not retire,
+    // so `deps`, which the pane's context owns, outlives the task, and a caller waiting for the sync to settle does
+    // not see a gap between the read finishing and the session starting. Raised before the launch, lowered when the
+    // post is gone (run, or never made), or here when the task never starts.
     inFlight->fetch_add(1);
     try {
-        deps_.LaunchBackgroundTask([self, deps, alive, inFlight, haveCfg, haveViews, cfgGiven, viewsGiven, mode]() {
-            /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - config + views file read and parse, off the UI thread
-            // A missing config file loads as the defaults, the same as sync.full.
-            const TrackerConfig cfg = haveCfg ? cfgGiven : ConfigManager::Load();
-            ViewsStore views = haveViews ? viewsGiven : ConfigManager::LoadViewsOrBootstrap(cfg);
-            if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
-                deps->PostToMainThread([self, alive, cfg, views, mode]() {
-                    if (!alive->load()) {
-                        return; // the pane's service was destroyed while the files were read
-                    }
-                    self->SyncWithBackend(&cfg, &views, mode);
-                });
-            }
-            inFlight->fetch_sub(1);
-        });
+        deps_.LaunchBackgroundTask(
+            [self, deps, alive, inFlight, haveCfg, haveViews, cfgGiven, viewsGiven, mode, seq]() {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - config + views file read and parse, off the UI thread
+                // A missing config file loads as the defaults, the same as sync.full.
+                const TrackerConfig cfg = haveCfg ? cfgGiven : ConfigManager::Load();
+                ViewsStore views = haveViews ? viewsGiven : ConfigManager::LoadViewsOrBootstrap(cfg);
+                // Held by the post, so the count drops after the post ran (or was dropped), not when the read ended.
+                const std::shared_ptr<ViewsLoadCount> counted = std::make_shared<ViewsLoadCount>(inFlight);
+                if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
+                    deps->PostToMainThread([self, alive, cfg, views, mode, seq, counted]() {
+                        if (!alive->load()) {
+                            return; // the pane's service was destroyed while the files were read
+                        }
+                        if (self->requestSeq_ != seq) {
+                            // The workers run on separate threads, so the posts can land in any order: a request made
+                            // after this one is already applied, or still on its way. Applying this one now would
+                            // supersede it and sync the older view.
+                            self->FoldDroppedRequest_(mode);
+                            return;
+                        }
+                        self->SyncWithBackendNow_(&cfg, &views, mode); // not a new request: it keeps its place
+                    });
+                }
+            });
     } catch (...) {
         inFlight->fetch_sub(1); // the task never started
         throw;
+    }
+}
+
+void TicketSyncService::FoldDroppedRequest_(smatchet::sync::SyncMode mode) {
+    LOG_INFO("TicketSyncService: a sync request was overtaken by a newer one before its files were read; dropped.");
+    if (mode != smatchet::sync::SyncMode::Full) {
+        return; // a Delta adds nothing to whatever the newer request runs
+    }
+    // Full stays sticky: it rides on the request queued behind a running session, else on the next request.
+    if (hasPendingSyncRequest_) {
+        pendingMode_ = smatchet::sync::CombineSyncModes(pendingMode_, mode);
+    } else {
+        foldedMode_ = hasFoldedMode_ ? smatchet::sync::CombineSyncModes(foldedMode_, mode) : mode;
+        hasFoldedMode_ = true;
     }
 }
 

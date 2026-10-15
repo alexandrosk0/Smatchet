@@ -3593,7 +3593,7 @@ TEST_CASE("TicketSyncService: a sync queued before the recreate is replayed once
 }
 
 TEST_CASE("TicketSyncService::SyncWithBackend without a config reads it on a worker, not on the calling thread") {
-    // The recreate's follow-up and Preferences pass no config: parsing the file on the UI thread cost a frame.
+    // The recreate's follow-up and sync.full pass no config: parsing the file on the UI thread cost a frame.
     smatchet_tests::TestEnvGuard env;
     FakeTicketSyncDeps deps;
     deps.DeferBackgroundTasks = true;
@@ -3616,5 +3616,170 @@ TEST_CASE("TicketSyncService::SyncWithBackend without a config reads it on a wor
     deps.RunDeferredTasks();
     REQUIRE_FALSE(factory->CreatedTypes.empty());
     CHECK(factory->CreatedTypes.front() == "Plane");
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+namespace {
+
+/// Two panes' worth of config, told apart by the tracker kind the sync builds a client for.
+TrackerConfig ConfigFor(const char* trackerType) {
+    TrackerConfig cfg;
+    cfg.TrackerType = trackerType;
+    return cfg;
+}
+
+/// Runs the parked worker tasks (each reads its files and posts the start), leaving the posts parked.
+void ReadFilesLeavePostsParked(FakeTicketSyncDeps& deps) {
+    deps.DeferPosts = true;
+    deps.RunDeferredTasks();
+}
+
+/// A cached view the tracker reports unchanged: a Delta sync runs as delta, a Full one as full.
+void SeedUnchangedView(DeltaRig& rig) {
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService: two async requests whose posts land in reverse order, the newer one wins") {
+    // The files reads run on separate threads, so the older request's post can land after the newer one's: applying it
+    // would supersede the newer session and sync the previous view.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    TicketSyncService svc(deps);
+    const TrackerConfig older = ConfigFor("GitHub");
+    const TrackerConfig newer = ConfigFor("Plane");
+    svc.SyncWithBackend(&older, nullptr);
+    svc.SyncWithBackend(&newer, nullptr);
+    ReadFilesLeavePostsParked(deps);
+    REQUIRE(deps.DeferredPosts.size() == 2);
+
+    deps.RunDeferredPosts(/*reverse=*/true); // the newer post lands first
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane"); // the older request did not supersede it with a GitHub client
+    CHECK(svc.SessionEpoch() == 1);
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: an async request followed by a synchronous one, the synchronous one wins") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    TicketSyncService svc(deps);
+    const TrackerConfig older = ConfigFor("GitHub");
+    const TrackerConfig newer = ConfigFor("Plane");
+    ViewsStore views;
+    svc.SyncWithBackend(&older, nullptr); // still reading its files
+    svc.SyncWithBackend(&newer, &views);  // starts at once
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane");
+
+    deps.RunDeferredTasks(); // the older read finishes and posts: it finds itself overtaken
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    CHECK(factory->CreatedTypes.size() == 1);
+    CHECK(svc.SessionEpoch() == 1);
+    CHECK_FALSE(svc.HasPendingWork());
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a dropped async Full is kept, so the request that overtook it runs as Full") {
+    DeltaRig rig;
+    SeedUnchangedView(rig); // a Delta would run as delta here, so the mode shows which request won
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    rig.deps.RunDeferredPosts(); // the older post lands first and is dropped; its Full rides on the newer request
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+}
+
+TEST_CASE("TicketSyncService: a Full dropped after the newer request already started is kept for the next one") {
+    DeltaRig rig;
+    SeedUnchangedView(rig);
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the Delta starts first; the Full then finds itself overtaken
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.svc.SessionEpoch() == 1);
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta); // the next request carries the Full that was dropped
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend with views but no config reads the config on a worker") {
+    // The shape view.activate, view.refresh_active and view.create pass: (nullptr, &views).
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    ConfigManager::Save(ConfigFor("Plane"));
+
+    TicketSyncService svc(deps);
+    ViewsStore views;
+    svc.SyncWithBackend(nullptr, &views);
+    CHECK(deps.BackgroundTasksLaunched == 1); // the config is read off the calling thread
+    CHECK(factory->CreatedTypes.empty());
+    CHECK(svc.HasPendingWork());
+    CHECK_FALSE(svc.IsActive());
+
+    deps.RunDeferredTasks();
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane"); // built from the file's config
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a sync that needs a new backend keeps the current one when there is no factory") {
+    // A controller that was never Initialize()d has no backend factory; the sync must not dereference null.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.Factory.reset();
+    ITrackerBackend* const before = deps.BackendImpl.get();
+    TicketSyncService svc(deps);
+    const TrackerConfig plane = ConfigFor("Plane");
+    ViewsStore views;
+    svc.SyncWithBackend(&plane, &views);
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
+    CHECK(deps.BackendImpl.get() == before);
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a requested sync counts as pending until the post that starts it has run") {
+    // Between the files read ending and the session starting, IsActive() is false: a caller waiting for the sync to
+    // settle must see HasPendingWork() instead of passing through that gap.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    TicketSyncService svc(deps);
+    const TrackerConfig cfg = ConfigFor("fake");
+    svc.SyncWithBackend(&cfg, nullptr);
+    CHECK(svc.HasPendingWork());
+
+    ReadFilesLeavePostsParked(deps); // the read is over; its post has not run
+    REQUIRE(deps.DeferredPosts.size() == 1);
+    CHECK_FALSE(svc.IsActive());
+    CHECK(svc.HasPendingWork()); // still pending: no gap for a waiter to slip through
+
+    deps.RunDeferredPosts(); // the session starts, and the pending mark drops with the post
+    CHECK(svc.IsActive());
+    CHECK(svc.HasPendingWork());
+    CHECK(SpinUntil(svc, [&]() { return !svc.HasPendingWork(); }));
     svc.CancelAndJoinActiveStreamingSync();
 }
