@@ -117,9 +117,9 @@ class TicketSyncService {
     /// `mode` Delta (the default) lists the view's tickets with their versions and downloads only the changed
     /// ones, falling back to a full fetch on any failure; Full forces the whole-view download. Requests queued
     /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
-    /// With no `viewsOverride` the saved views are read first, on a worker (the file read and parse never run on the
-    /// UI thread), and the sync then starts from a UI-thread post; the request is dropped if this service was
-    /// destroyed meanwhile.
+    /// With no `configOverride` or no `viewsOverride` the missing part (the config file, the saved views) is read
+    /// first, on a worker (the file read and parse never run on the UI thread), and the sync then starts from a
+    /// UI-thread post; the request is dropped if this service was destroyed meanwhile.
     /// While the cache-recreate gate is up (`IsCacheTeardownActive`) nothing starts: the request is recorded instead
     /// (the latest config and views, the mode combined so that Full wins) and `EndCacheTeardown` replays it.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
@@ -384,8 +384,10 @@ class TicketSyncService {
     /// Saved-views reads (SyncWithBackendLoadingViews_) still running on a worker; shared so the worker can lower it
     /// after the service is gone. Counted by HasPendingWork.
     std::shared_ptr<std::atomic<int>> viewsLoadsInFlight_ = std::make_shared<std::atomic<int>>(0);
-    /// SyncWithBackend without views: load them off the UI thread, then start (see SyncWithBackend).
-    void SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode);
+    /// SyncWithBackend without config or views: load what is missing off the UI thread, then start (see
+    /// SyncWithBackend).
+    void SyncWithBackendLoadingViews_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                      smatchet::sync::SyncMode mode);
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;

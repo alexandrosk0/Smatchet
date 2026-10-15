@@ -261,6 +261,14 @@ void TicketSyncService::CancelAndJoinActiveStreamingSync() {
 std::thread TicketSyncService::BeginCacheTeardown() {
     startsBlocked_.store(true);
     hasFoldedMode_ = false; // a fold left by an earlier recreate whose follow-up never ran must not ride on this one
+    if (hasPendingSyncRequest_) {
+        // A request queued behind the running session before the gate went up: the held slot owns it from here, so
+        // the fold or the replay in EndCacheTeardown is the only way it runs (not a superseded start of its own, or a
+        // second session after the follow-up). Full stays sticky through the combine.
+        RecordBlockedSyncRequest_(&pendingConfig_, &pendingViews_, pendingMode_);
+        hasPendingSyncRequest_ = false;
+        pendingMode_ = smatchet::sync::SyncMode::Delta;
+    }
     RequestCancel();
     return std::move(activeStreamingSync_.WorkerThread);
 }
@@ -926,11 +934,13 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     }
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
-    TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();
-    if (viewsOverride == nullptr) {
-        SyncWithBackendLoadingViews_(cfgCopy, mode); // the views file is read on a worker (Pillar 2)
+    if (configOverride == nullptr || viewsOverride == nullptr) {
+        // The config file and the views file are read on a worker (Pillar 2): a recreate's follow-up and a
+        // Preferences save pass no config, and parsing it here would run on the frame.
+        SyncWithBackendLoadingViews_(configOverride, viewsOverride, mode);
         return;
     }
+    TrackerConfig cfgCopy = *configOverride;
     ViewsStore viewsCopy = *viewsOverride;
 
     const bool isWorkerActive = activeStreamingSync_.Active.load();
@@ -957,22 +967,36 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     StartStreamingSync(cfgCopy, viewsCopy, mode);
 }
 
-void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig& cfg, smatchet::sync::SyncMode mode) {
+void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig* configOverride,
+                                                     const ViewsStore* viewsOverride, smatchet::sync::SyncMode mode) {
     ITicketSyncDeps* const deps = &deps_;
     const std::shared_ptr<std::atomic<bool>> alive = alive_;
     const std::shared_ptr<std::atomic<int>> inFlight = viewsLoadsInFlight_;
     TicketSyncService* const self = this;
+    // Whatever the caller supplied is copied: the worker outlives this call. A part left null is read on the worker.
+    const bool haveCfg = configOverride != nullptr;
+    const bool haveViews = viewsOverride != nullptr;
+    TrackerConfig cfgGiven;
+    if (haveCfg) {
+        cfgGiven = *configOverride;
+    }
+    ViewsStore viewsGiven;
+    if (haveViews) {
+        viewsGiven = *viewsOverride;
+    }
     // Counted while it runs: the pane does not retire (HasPendingWork), so `deps`, which the pane's context owns,
     // outlives this task. Raised before the launch, lowered by the task itself (or here when it never starts).
     inFlight->fetch_add(1);
     try {
-        deps_.LaunchBackgroundTask([self, deps, alive, inFlight, cfg, mode]() {
-            /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - smatchet_views.json read and parse, off the UI thread
-            ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+        deps_.LaunchBackgroundTask([self, deps, alive, inFlight, haveCfg, haveViews, cfgGiven, viewsGiven, mode]() {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - config + views file read and parse, off the UI thread
+            // A missing config file loads as the defaults, the same as sync.full.
+            const TrackerConfig cfg = haveCfg ? cfgGiven : ConfigManager::Load();
+            ViewsStore views = haveViews ? viewsGiven : ConfigManager::LoadViewsOrBootstrap(cfg);
             if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
                 deps->PostToMainThread([self, alive, cfg, views, mode]() {
                     if (!alive->load()) {
-                        return; // the pane's service was destroyed while the file was read
+                        return; // the pane's service was destroyed while the files were read
                     }
                     self->SyncWithBackend(&cfg, &views, mode);
                 });

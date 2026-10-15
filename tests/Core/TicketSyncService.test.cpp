@@ -3511,3 +3511,107 @@ TEST_CASE("TicketSyncService::SyncWithBackend without views drops the start when
     deps.RunDeferredTasks(); // the post finds the service gone and does nothing
     CHECK(deps.ActiveTicketsImpl.empty());
 }
+
+namespace {
+
+// A Full session parked inside a slow fetch, with a second request queued behind it (Full is sticky, so the queued
+// request is a Full too), as a pane that was busy when a cache recreate began. Returns once the first fetch is
+// on the wire; the epoch is read after the first session started.
+void ParkRunningFullWithQueuedDelta(DeltaRig& rig) {
+    rig.fake->SetSlowStreamedPages(/*pages=*/30, std::chrono::milliseconds(50));
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    bool onTheWire = false;
+    for (int i = 0; i < 1000 && !onTheWire; ++i) {
+        onTheWire = rig.fake->SlowStreamedPagesStarted() >= 1;
+        if (!onTheWire) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(onTheWire);
+    rig.Sync(smatchet::sync::SyncMode::Delta); // queued behind the running session
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService: a sync queued before the recreate rides on the follow-up sync, one Full session runs") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+    ParkRunningFullWithQueuedDelta(rig);
+    const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+
+    std::thread handedOut = rig.svc.BeginCacheTeardown();
+    if (handedOut.joinable()) {
+        handedOut.join();
+    }
+    rig.fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+    CHECK(rig.svc.SessionEpoch() == epochBefore); // folded: the queued request started nothing of its own
+    CHECK_FALSE(rig.svc.IsActive());
+
+    rig.Sync(smatchet::sync::SyncMode::Full); // FinishCacheRecreate_'s follow-up
+    REQUIRE(rig.Settle());
+    for (int i = 0; i < 20; ++i) { // a leftover queued request would start its own session on a later tick
+        rig.svc.TickStreamingApply();
+    }
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+}
+
+TEST_CASE("TicketSyncService: a sync queued before the recreate is replayed once on a pane with no follow-up") {
+    // A non-focused pane: EndCacheTeardown replays the request, so the pane is syncing (HasPendingWork) and
+    // RefreshOtherPanesAfterCacheWipe_ does not re-arm a second sync on top of it.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+    ParkRunningFullWithQueuedDelta(rig);
+    const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+
+    std::thread handedOut = rig.svc.BeginCacheTeardown();
+    if (handedOut.joinable()) {
+        handedOut.join();
+    }
+    rig.fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    rig.svc.EndCacheTeardown();
+    CHECK(rig.svc.HasPendingWork()); // the replay is running: the re-arm guard sees it
+
+    REQUIRE(rig.Settle());
+    for (int i = 0; i < 20; ++i) {
+        rig.svc.TickStreamingApply();
+    }
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without a config reads it on a worker, not on the calling thread") {
+    // The recreate's follow-up and Preferences pass no config: parsing the file on the UI thread cost a frame.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+
+    TrackerConfig onDiskAtCall;
+    onDiskAtCall.TrackerType = "GitHub";
+    ConfigManager::Save(onDiskAtCall);
+
+    TicketSyncService svc(deps);
+    svc.SyncWithBackend(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+    CHECK(deps.BackgroundTasksLaunched == 1);
+    CHECK(svc.HasPendingWork());
+
+    // The file changes while the worker has not run yet: only a read on the worker sees this.
+    TrackerConfig onDiskAtRun;
+    onDiskAtRun.TrackerType = "Plane";
+    ConfigManager::Save(onDiskAtRun);
+
+    deps.RunDeferredTasks();
+    REQUIRE_FALSE(factory->CreatedTypes.empty());
+    CHECK(factory->CreatedTypes.front() == "Plane");
+    svc.CancelAndJoinActiveStreamingSync();
+}
