@@ -153,7 +153,8 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
     }
     if (IsOfflineQueueableFailure(r)) {
         // The tracker provably did not create it — stage the draft in the offline queue instead.
-        if (app.QueueCreateOffline(d.quickCreateDraft) > 0) {
+        std::string queueRefusal;
+        if (app.QueueCreateOffline(d.quickCreateDraft, queueRefusal) > 0) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.quick_create", "Quick create"),
                 SmatchetLocalization::T("quickcreate.queued_offline", "Offline detected; queued for replay."),
@@ -161,7 +162,8 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
             ResetAndClose(d);
             return;
         }
-        d.quickCreateError = "Create failed (" + r.Error + ") and queue offline failed.";
+        d.quickCreateError = "Create failed (" + r.Error + ") and queue offline failed." +
+                             (queueRefusal.empty() ? std::string() : " " + queueRefusal);
         return;
     }
     // A create that may have landed is never queued: resending it could create the issue twice.

@@ -321,15 +321,19 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
         // worker thread and StartRecreateLocalCacheDatabase may swap the cache concurrently on the UI
         // thread. Mirrors the ADR-0012 Backend atomic_load reader pattern. QueueCreateOffline
         // itself takes its own snapshot via deps_.CacheShared() for the enqueue path.
+        // A recreate in its early window still has the old cache: the service refuses (nothing written) with the
+        // shared "being recreated, retry in a moment" message, checked before the cache is looked at.
+        std::string queueRefusal;
         auto cacheSnap = std::atomic_load(&app_.Cache);
-        if (!cacheSnap) {
+        if (!cacheSnap && !app_.IsLocalCacheRecreating()) {
             return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }
-        const std::int64_t qid = app_.QueueCreateOffline(draft);
+        const std::int64_t qid = app_.QueueCreateOffline(draft, queueRefusal);
         if (qid <= 0) {
             result["ok"] = false;
-            result["error"] = std::string("Failed to queue offline create (see logs)");
+            result["error"] =
+                queueRefusal.empty() ? std::string("Failed to queue offline create (see logs)") : queueRefusal;
             return {result, std::string()};
         }
         result["ok"] = true;

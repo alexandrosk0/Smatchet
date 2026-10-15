@@ -640,3 +640,17 @@ TEST_CASE("an action queued with no cache and no recreate in progress keeps the 
     CHECK(r.Error.find("unavailable") != std::string::npos);
     CHECK(r.Error.find("being recreated") == std::string::npos);
 }
+
+TEST_CASE("an action queued during the early recreate window (cache still present) fails and writes nothing") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.deps.CacheRecreatingImpl = true; // the gate is up before the cache is withdrawn; the cache is still there
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("hi"));
+    CHECK(r.K != PendingActionSubmitResult::Kind::Queued);
+    CHECK(r.QueueId == 0);
+    CHECK(r.Error.find("being recreated") != std::string::npos);
+    CHECK(r.Error.find("Retry in a moment") != std::string::npos);
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}

@@ -321,6 +321,11 @@ struct FakeMutations : IAppTicketMutations {
         return Outcome(WorklogOutcome, "worklog rejected");
     }
     std::int64_t QueueCreateOffline(const IssueDraft&) override { return QueuedId; }
+    std::int64_t QueueCreateOffline(const IssueDraft&, std::string& outError) override {
+        outError = QueueRefusal;
+        return QueuedId;
+    }
+    std::string QueueRefusal; // why a queue-offline create returned 0 (the recreating cache), empty for no reason
     std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken) override {
         std::promise<IssueCreateResult> p;
         IssueCreateResult r;
@@ -1071,6 +1076,11 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
         mut.QueuedId = 0;
         const CommandResult fail = reg.Dispatch("ticket.create", args, yes);
         CHECK(fail.Error.Code == ErrorCode::HandlerError);
+        CHECK(fail.Error.Message == "Failed to queue offline create."); // no specific reason: the generic text
+        mut.QueueRefusal = "The local database is being recreated, retry in a moment.";
+        const CommandResult recreating = reg.Dispatch("ticket.create", args, yes);
+        CHECK(recreating.Error.Code == ErrorCode::HandlerError);
+        CHECK(recreating.Error.Message == mut.QueueRefusal); // the refusal reaches the caller
     }
     {
         const nlohmann::json args = {{"projectKey", "PROJ"}, {"summary", "s"}};

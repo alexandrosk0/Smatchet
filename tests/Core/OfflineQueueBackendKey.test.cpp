@@ -187,3 +187,30 @@ TEST_CASE("a field edit queued while the cache is being recreated fails with a '
     CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) == 0);
     CHECK(err.find("unavailable") != std::string::npos);
 }
+
+TEST_CASE("an offline field edit or create during the early recreate window (cache still present) fails and writes "
+          "nothing") {
+    // The recreate raises its gate BEFORE the cache is withdrawn; an enqueue in that window used to find the old cache,
+    // write into it, and have the row wiped with the file. Every enqueue path checks the gate before taking the cache.
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    deps.CacheRecreatingImpl = true; // the cache is NOT reset: it is still there
+
+    std::string err;
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) == 0);
+    CHECK(err.find("being recreated") != std::string::npos);
+    CHECK(err.find("Retry in a moment") != std::string::npos);
+    CHECK(deps.CacheImpl->LoadPendingFieldEdits().empty());
+
+    std::string createErr;
+    CHECK(svc.QueueCreateOffline(MakeDraft("raced the recreate"), std::string(), &createErr) == 0);
+    CHECK(createErr == err); // the same message on every path
+    CHECK(deps.CacheImpl->LoadPendingCreates().empty());
+
+    deps.CacheRecreatingImpl = false; // the gate is down: both queue again
+    err.clear();
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    CHECK(svc.QueueCreateOffline(MakeDraft("after the recreate"), std::string(), &createErr) > 0);
+    CHECK(createErr.empty());
+}

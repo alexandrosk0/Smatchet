@@ -200,7 +200,11 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
         if (queueOnNetworkFailure && IsOfflineQueueableFailure(result) && !cancel.IsCancelled() && offlineQueue_) {
             // Pillar 6: unreachable tracker — queue the (pruned) draft for replay, off the UI thread,
             // under the namespace latched at submit.
-            result.QueuedOfflineId = offlineQueue_->QueueCreateOffline(draftCopy, cacheBackendKey);
+            std::string queueRefusal;
+            result.QueuedOfflineId = offlineQueue_->QueueCreateOffline(draftCopy, cacheBackendKey, &queueRefusal);
+            if (result.QueuedOfflineId <= 0 && !queueRefusal.empty()) {
+                result.Error += " " + queueRefusal; // the cache is being recreated: say so, do not just fail
+            }
         }
         // Re-check after the (long) create before the expensive refresh + hydration:
         // a cancel that landed while the create was in flight skips touching `this`
@@ -221,6 +225,11 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
 
 std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
     return offlineQueue_ ? offlineQueue_->QueueCreateOffline(draft) : 0;
+}
+
+std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft, std::string& outError) {
+    outError.clear();
+    return offlineQueue_ ? offlineQueue_->QueueCreateOffline(draft, std::string(), &outError) : 0;
 }
 
 // GetPendingCreateCount / GetDeadPendingCreateCount / GetDeadPendingCreates / GetPendingCreates:

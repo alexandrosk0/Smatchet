@@ -11,6 +11,7 @@
 #include "OfflineQueueReplayPolicy.h"
 #include "PendingActionPolicyPure.h"
 #include "ScopeExit.h"
+#include "Sync/CacheRecreatingMessage.h"
 #include "Tracker/TrackerError.h"
 
 #include <nlohmann/json.hpp>
@@ -135,13 +136,19 @@ PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& ba
         out.Error = "No tracker backend is set up, so this could not be saved offline.";
         return out;
     }
+    // Before the cache is latched: the old file is still there for the first moments of a recreate and a row queued
+    // into it would be wiped with it.
+    if (deps_.IsCacheRecreating()) {
+        out.Error = smatchet::sync::CacheRecreatingEnqueueMessage();
+        LOG_WARN("PendingActionQueueService: enqueue on %s refused: the local cache is being recreated.",
+                 issueKey.c_str());
+        return out;
+    }
     // Latched once: the UI thread may swap the cache (StartRecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        out.Error = deps_.IsCacheRecreating()
-                        ? "The local database is being recreated, so this could not be saved offline right now. "
-                          "Retry in a moment."
-                        : "The local cache is unavailable, so this could not be saved offline.";
+        out.Error = deps_.IsCacheRecreating() ? smatchet::sync::CacheRecreatingEnqueueMessage()
+                                              : "The local cache is unavailable, so this could not be saved offline.";
         return out;
     }
     const char* wire = PendingActionKindWire(kind);

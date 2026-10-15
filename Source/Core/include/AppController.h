@@ -960,6 +960,7 @@ class AppController : public IAppThreading,
      * due to connectivity errors. Replayed by `TickOfflineCreates`.
      */
     std::int64_t QueueCreateOffline(const IssueDraft& draft) override;
+    std::int64_t QueueCreateOffline(const IssueDraft& draft, std::string& outError) override;
 
     /**
      * Replay any queued offline creates. No-op when the queue is empty or the
