@@ -1630,6 +1630,8 @@ add_executable(SmatchetTests
     Core/PendingOverlayPure.test.cpp
     # delta-sync follow-up - the bounded, expiring memory of the keys a tracker refused on a delta attempt.
     Core/RefusedKeysPure.test.cpp
+    # delta-sync follow-up - a stale cached-projects read must not bring a forgotten project back.
+    Core/CachedProjectsPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):

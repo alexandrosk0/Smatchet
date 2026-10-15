@@ -424,6 +424,16 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     d.initialTicketSyncLoading = false;
     d.initialTicketSyncStarted = false;
 
+    // The cached-projects read (Preferences / JQL project pill) runs on a worker. Join it, then apply the Forget
+    // clicks still queued for the next read: a quit between the click and that read must not undo them. Shutdown, so
+    // the few small file writes are fine on this thread.
+    DrainFutureJoinQuiet(d.cachedProjectsFuture);
+    d.cachedProjectsReadInFlight = false;
+    for (const FieldCatalogCache::CachedProjectEntry& forgotten : d.cachedProjectsForgetPending) {
+        FieldCatalogCache::ForgetProject(forgotten.projectKey, forgotten.backend, forgotten.endpoint);
+    }
+    d.cachedProjectsForgetPending.clear();
+
     DrainFutureJoinQuiet(d.connectivityRecoveryTicketFetchFuture);
     d.connectivityRecoveryTicketFetchLoading = false;
     d.connectivityRecoveryTicketResyncPending = false;

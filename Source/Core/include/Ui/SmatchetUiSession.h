@@ -32,6 +32,7 @@
 #include "SmatchetProjectPicker.h"
 #include "AsyncLoadGatePure.h"       // LaunchIntoSlot / TakeFromSlot for the cached-projects read
 #include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
+#include "Ui/CachedProjectsPure.h"   // RemoveForgottenProjects (a stale read must not resurrect a Forget)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -1375,6 +1376,9 @@ inline void PollCachedProjectsRead(UiDrawSession& d) {
     std::string error;
     // The latch clears before get(): a worker exception is rethrown by it (AsyncLoadGatePure.h).
     if (smatchet::async_load::TakeFromSlot(d.cachedProjectsFuture, d.cachedProjectsReadInFlight, rows, error)) {
+        // A Forget clicked after this read started is still queued and not in the file this read parsed: drop it
+        // here, or the entry comes back until the next read.
+        (void)smatchet::ui::RemoveForgottenProjects(rows, d.cachedProjectsForgetPending);
         d.cachedProjectsSnapshot = std::move(rows);
         d.cachedProjectsSnapshotValid = true;
     }
