@@ -101,8 +101,7 @@ struct FakeAnnotateUi {
     std::thread worker;
     std::atomic<bool> sawNull{false};
 
-    explicit FakeAnnotateUi(std::atomic<FakeAnnotateState*>& instance)
-        : state(std::make_unique<FakeAnnotateState>()) {
+    explicit FakeAnnotateUi(std::atomic<FakeAnnotateState*>& instance) : state(std::make_unique<FakeAnnotateState>()) {
         instance.store(state.get(), std::memory_order_release);
         worker = std::thread([this, &instance]() {
             for (;;) {
@@ -150,7 +149,7 @@ TEST_CASE("DR8(b): joining the annotate worker before nulling the shared state p
 
     ui->TeardownFixed(instance);
 
-    CHECK_FALSE(ui->sawNull.load());              // worker never observed the nulled pointer
-    CHECK(instance.load() == nullptr);            // pointer cleared after the join
-    CHECK(ui->state->iterations.load() > 0);      // worker actually ran before being cancelled
+    CHECK_FALSE(ui->sawNull.load());         // worker never observed the nulled pointer
+    CHECK(instance.load() == nullptr);       // pointer cleared after the join
+    CHECK(ui->state->iterations.load() > 0); // worker actually ran before being cancelled
 }
