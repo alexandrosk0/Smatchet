@@ -116,16 +116,34 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 ## Review follow-ups (open)
 
-Found in the Phase 3-5 review; none block the phases above.
+What is left of the Phase 3-7 review follow-ups needs a product or design decision. Each item states the question and the options; none is implemented. Everything else the reviews found is fixed on `feat/delta-sync-followups` (the change monitor's per-pane memory, stamp comparison by instant, view-field trimming, the roster-scoped delta precondition, the per-session apply map, rows the cache holds newer, remembered refused keys, the local-refresh ordering gate, cache-served change reports, `config.set` type checks, the one-parse catalog restore, the Fields tab Refresh, `cache.recreate` wipe reporting, the per-file LRU touches). The change-monitor probe-save race was checked and is obsolete: `SaveTicketsWithSyncMeta` refuses a row whose incoming `updated` is provably older than the stored one (tests in `LocalCacheTicketSyncMeta.test.cpp`), so a probe save that lands after a sync started cannot roll a stored row back; a Full sync bypasses the guard on purpose.
 
-- **Local edits on the old path.** The old full fetch overwrote a locally edited row on every reload. `UpdateTicket` now keeps the row's sync meta (so a local edit does not force a refetch), which means a delta sync serves a still-queued or dead-lettered edit as "unchanged" until the remote `updated` moves or `DeltaSyncMaxRowAgeSec` expires. Deliberate divergence; revisit by dropping the meta while an edit is unconfirmed. Related: `RefreshLocalDataAsync` has no ordering gate between concurrent refreshes (add a revision gate), and a persistently refused roster-listed key makes every delta attempt fall back to Full (remember poisoned keys per session).
-- The session stats counters are sampled from a shared tracker traffic counter, so two panes syncing at once can cross-count; treat them as indicative.
-- The change-monitor probe's save happens after its epoch check but before the UI-thread drain, so a sync that starts in between can race it. The version guard in `SaveTicketsWithSyncMeta` narrows this: it skips a row whose incoming `updated` is provably older than the stored one (equal versions merge, an unknown or unparsable stamp still writes), so the race can no longer roll a stored row back. A Full sync is authoritative and bypasses that guard (and `DropRowsOlderThanCached`), and a stored stamp more than a day in the future counts as unknown, so a stamp that is ahead of the tracker cannot wedge a row.
-- `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
-- `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
-- Found in the Phase 6-7 pre-merge review (deferred; none block the phases):
-- Found in the post-rebase review (deferred; none block the merge):
-  - Field-catalog snapshot restore and save still touch the file on the UI thread: `TryLoadFieldCatalogSnapshot` reads the whole file (and, once a day per snapshot, rewrites it) from startup and the render-path error handler, and a successful catalog apply saves the snapshot synchronously (`AppController_CatalogAndFieldEdit.cpp`, already on develop). Move restore and save to a worker (Pillar 2).
+- **Local edits on the old path.** The old full fetch overwrote a locally edited row on every reload. `UpdateTicket` now keeps the row's sync meta (so a local edit does not force a refetch), which means a delta sync serves a still-queued or dead-lettered edit as "unchanged" until the remote `updated` moves or `DeltaSyncMaxRowAgeSec` (6 h) expires.
+  - *Question:* should a delta reload refetch a row whose local edit is not yet confirmed by the tracker?
+  - *A. Keep (today).* Cheapest; the edit stays visible. A dead-lettered edit that never lands shows as the truth for up to 6 h.
+  - *B. Drop the row's meta while its edit is unconfirmed.* The next delta refetches it (one body request per edited row). An edit that did not land is overwritten by the remote value on that reload, a visible revert, unless the queue panel makes the loss visible first.
+  - *C. Keep the meta, but show a "pending" overlay on rows with a queued or dead-lettered edit.* No extra requests and no silent revert; needs a grid cue and a link to the offline-queue panel (grid-engine work).
+- **Session stats are indicative.** `sync.stats` samples a shared tracker traffic counter, so two panes syncing at once cross-count requests and bytes.
+  - *Question:* is "indicative" good enough, or must the numbers be exact per session?
+  - *A. Accept and document it in the `sync.stats` output (today).*
+  - *B. Attribute traffic per session* with a thread-local session id set by the sync worker and read by `NetworkUsageTracker` in the HTTP layer. Exact, but touches every backend's HTTP path.
+  - *C. Serialise the stats window:* record stats only for a session that ran alone, and mark the others "shared".
+- **`ApplyIssueFetchPack` is a dead path in production** (`AppController::ApplyIssueFetchPack` has no caller; about 25 tests in `TicketSyncService.test.cpp`, `SyncEmptyFullSyncGuard.test.cpp` and others drive `TicketSyncService::ApplyIssueFetchPack`).
+  - *Question:* remove it, or keep it?
+  - *A. Remove the production method with its fixtures.* Deletes those tests; the streaming path already has equivalents for stale deletion and the empty-sync guard, but the rule "never delete tests" applies until you approve it.
+  - *B. Keep a single writer:* rebuild the streaming apply on top of `ApplyIssueFetchPack`. Large and risky; no user-visible gain.
+  - *C. Keep it as a documented test-only seam* and delete only the unused `AppController` passthrough.
+- **`cache.recreate` joins every pane worker on the UI thread** and can freeze the UI for the length of the slowest in-flight request (documented in the command description and `docs/guides/cli.md`).
+  - *Question:* is a UI pause of up to one HTTP timeout acceptable for a destructive, rare command?
+  - *A. Keep and document (today).*
+  - *B. Run the teardown on a worker behind a "recreating" gate* that blocks syncs and writes and shows a progress cue; the pane-context swap has to be redesigned around the gate.
+  - *C. Cancel without joining:* flag the workers, swap the cache, and let late workers drop their results through a generation check (the `RefreshLocalData` pattern). Fast, but every worker needs the check.
+- **Field-catalog snapshot restore and save touch the file on the UI thread.** `TryLoadFirstFieldCatalogSnapshot` (now one parse) runs at startup and in the render-path error handler, and a successful catalog apply saves synchronously (`AppController_CatalogAndFieldEdit.cpp`).
+  - *Question:* move them to a worker (Pillar 2), accepting the sequencing changes below?
+  - *A. Keep both synchronous (today).* One bounded parse (the cache keeps at most 16 projects); the grid draws cached columns on frame 1.
+  - *B. Move only the save to a serial worker queue.* Safe for the app, but `AppControllerFieldCatalog.posix.test.cpp` (Linux only) loads the snapshot right after `SetFieldCatalog` returns, so it needs a flush hook.
+  - *C. Move both.* The startup grid may draw without columns until the restore lands, so it needs a "loading saved fields" cue (Pillar 6).
+- **`LookupCacheTtlSec` default.** It stays 0 (off), so a picker opened online, or reopened after an outage, reloads live (the offline-first contract). *Question:* ship a non-zero default (for example 3600 s) or add a Preferences control? Options: keep 0, 600 s, 3600 s, 86400 s; a non-zero default saves one project-list request per picker open but can show a project list up to the TTL old.
 
 ## Phase 7 notes (lookups)
 
