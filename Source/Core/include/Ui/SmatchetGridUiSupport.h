@@ -135,6 +135,14 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vect
 /// replaced. UI thread, once per pane window per frame.
 void RefreshPendingOverlay(AppController& app, UiDrawSession& d);
 
+/// Bucket-E probe of the grid's pending-edit cue: the key cell calls `NotePendingRowCueDrawn` when it draws the
+/// "pending" / "not sent" label of a row; a test reads which rows showed it since the last reset. Bounded (the first
+/// 64 distinct keys), UI thread only. Production never reads it.
+void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention);
+/// 0 when the row's cue was not drawn since the last reset, 1 for "pending", 2 for "not sent".
+int PendingRowCueDrawnForTests(const std::string& issueKey);
+void ResetPendingRowCuesDrawnForTests();
+
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);
 

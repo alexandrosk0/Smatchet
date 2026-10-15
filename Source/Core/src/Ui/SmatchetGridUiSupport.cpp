@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -563,6 +564,28 @@ void RefreshPendingOverlay(AppController& app, UiDrawSession& d) {
                                                          d.pendingOverlayActionsSnap, app.GetOfflineQueueSnapshot(),
                                                          app.GetPendingActionsSnapshot());
 }
+
+namespace {
+std::map<std::string, int>& PendingRowCuesDrawn() {
+    static std::map<std::string, int> drawn;
+    return drawn;
+}
+} // namespace
+
+void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention) {
+    std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    if (drawn.size() < 64 || drawn.find(issueKey) != drawn.end()) {
+        drawn[issueKey] = needsAttention ? 2 : 1;
+    }
+}
+
+int PendingRowCueDrawnForTests(const std::string& issueKey) {
+    const std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    const std::map<std::string, int>::const_iterator it = drawn.find(issueKey);
+    return it == drawn.end() ? 0 : it->second;
+}
+
+void ResetPendingRowCuesDrawnForTests() { PendingRowCuesDrawn().clear(); }
 
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {

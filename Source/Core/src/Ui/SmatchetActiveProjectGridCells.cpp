@@ -236,6 +236,7 @@ void DrawPendingRowCue(const smatchet::sync::PendingRowCue& cue, float keyOrigin
     ImGui::PushStyleColor(ImGuiCol_Text, attention ? kPendingAttentionColor : kPendingQueuedColor);
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
+    NotePendingRowCueDrawn(issueKey, attention);
     // The key's Selectable spans the cell and owns the hover, so the label tests its own rect.
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())) {
         char tip[320];
