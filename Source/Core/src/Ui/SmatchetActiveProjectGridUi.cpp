@@ -253,6 +253,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
                              rectCellClickedThisFrame,
                              ticketGridLeftClickInsideTableHit,
                              gridSortSig};
+    // The pending-edit cue (offline queue) of this pane's rows: the index is rebuilt only when a queue snapshot
+    // changed (no SQLite, no per-row work), and the pane's own cache namespace keys every lookup.
+    RefreshPendingOverlay(app, d);
+    ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
 
     drawActiveProjectHeader(ctx);
 

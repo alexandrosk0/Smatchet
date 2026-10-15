@@ -209,6 +209,72 @@ void HandleViewerCellClick(AppController& app, const CachedTicket& ticket, const
     }
 }
 
+// --- Pending-edit cue (delta sync follow-up) ---------------------------------------------------------
+// A delta reload serves a row with an unconfirmed local edit as unchanged, so the grid says so: the key cell gets
+// "pending" (or red "not sent" when an edit or action will not land by itself) and the cell of a queued field edit
+// a "~" (or red "!") badge. Both come from the lookups of Sync/PendingOverlayPure.h on the index
+// RefreshPendingOverlay keeps current (built from the in-memory queue snapshots: no SQLite on the UI thread), and
+// both tooltips point at the Offline Queue panel.
+const ImVec4 kPendingQueuedColor(0.95f, 0.75f, 0.35f, 1.0f);
+const ImVec4 kPendingAttentionColor(1.0f, 0.35f, 0.35f, 1.0f);
+
+void DrawPendingRowCue(const smatchet::sync::PendingRowCue& cue, float keyOriginX, float rowY, float keyIndent,
+                       const std::string& issueKey, float cellWidth) {
+    using smatchet::sync::PendingEditStatus;
+    if (cue.Status == PendingEditStatus::None) {
+        return;
+    }
+    const bool attention = cue.Status == PendingEditStatus::NeedsAttention;
+    const char* const label = attention ? SmatchetLocalization::T("grid.pending.not_sent", "not sent")
+                                        : SmatchetLocalization::T("grid.pending.queued", "pending");
+    const ImVec2 labelSize = ImGui::CalcTextSize(label);
+    const float rightX = keyOriginX + cellWidth;
+    const float afterKeyX =
+        keyOriginX + keyIndent + ImGui::CalcTextSize(issueKey.c_str()).x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const float labelX = (std::max)(keyOriginX, (std::min)(afterKeyX, rightX - labelSize.x));
+    ImGui::SetCursorScreenPos(ImVec2(labelX, rowY));
+    ImGui::PushStyleColor(ImGuiCol_Text, attention ? kPendingAttentionColor : kPendingQueuedColor);
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+    // The key's Selectable spans the cell and owns the hover, so the label tests its own rect.
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())) {
+        char tip[320];
+        std::snprintf(tip, sizeof(tip),
+                      attention ? SmatchetLocalization::T("grid.pending.not_sent_tip",
+                                                          "%d local change(s) to this issue will not be sent by "
+                                                          "themselves (failed, held for review or in conflict). "
+                                                          "Open the Offline Queue panel to retry, resolve or discard.")
+                                : SmatchetLocalization::T("grid.pending.queued_tip",
+                                                          "%d local change(s) to this issue are waiting to be sent "
+                                                          "to the tracker. The values shown are yours. See the "
+                                                          "Offline Queue panel."),
+                      cue.Count);
+        ImGui::SetTooltip("%s", tip);
+    }
+}
+
+/// Fills the badge of a value cell whose field has an unconfirmed local edit; false when it has none (the common
+/// case: a row without a cue costs one comparison per cell).
+bool PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueKey, const std::string& fieldId,
+                      ImVec4& color, std::string& text, std::string& tooltip) {
+    using smatchet::sync::PendingEditStatus;
+    const PendingEditStatus status = smatchet::sync::PendingCellCueFor(ctx.d.pendingOverlay, ctx.currentRowPending,
+                                                                       ctx.cacheBackendKey, issueKey, fieldId);
+    if (status == PendingEditStatus::None) {
+        return false;
+    }
+    const bool attention = status == PendingEditStatus::NeedsAttention;
+    color = attention ? kPendingAttentionColor : kPendingQueuedColor;
+    text = smatchet::sync::PendingCellGlyph(status);
+    tooltip = attention ? SmatchetLocalization::T("grid.pending.cell_not_sent_tip",
+                                                  "This edit was not sent and needs attention. Open the Offline "
+                                                  "Queue panel to retry, resolve or discard it.")
+                        : SmatchetLocalization::T("grid.pending.cell_queued_tip",
+                                                  "This edit is waiting to be sent to the tracker; the value shown "
+                                                  "is yours. See the Offline Queue panel.");
+    return true;
+}
+
 } // namespace
 
 void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
@@ -252,6 +318,8 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
                 app.OpenUrl(url);
             }
         }
+        DrawPendingRowCue(ctx.currentRowPending, cellOriginForSel.x, cellOriginForSel.y, hierarchyIndent, ticket.id,
+                          cellWidthForSel);
         ImGui::EndGroup();
         if (hierarchyIndent > 0.0f) {
             ImGui::Unindent(hierarchyIndent);
@@ -316,6 +384,9 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
         badgeText = "OK";
         badgeTooltip = "Saved";
+    }
+    if (!showBadge) {
+        showBadge = PendingCellBadge(ctx, ticket.id, column.FieldId, badgeColor, badgeText, badgeTooltip);
     }
 
     if (isSavingThisCell) {

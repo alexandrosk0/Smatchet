@@ -1226,6 +1226,26 @@ const TranslationEntry kEntries[] = {
     {"views.fields.catalog_failed", "Couldn't load the field catalog: %s",
      u8"Impossible de charger le catalogue de champs : %s"},
     {"views.fields.retry", "Retry", u8"Réessayer"},
+    {"grid.pending.queued", "pending", u8"en attente"},
+    {"grid.pending.not_sent", "not sent", u8"non envoyé"},
+    {"grid.pending.queued_tip",
+     "%d local change(s) to this issue are waiting to be sent to the tracker. The values shown are yours. See the "
+     "Offline Queue panel.",
+     u8"%d modification(s) locale(s) de ce ticket attendent d'être envoyées au tracker. Les valeurs affichées "
+     u8"sont les vôtres. Voir le panneau File hors ligne."},
+    {"grid.pending.not_sent_tip",
+     "%d local change(s) to this issue will not be sent by themselves (failed, held for review or in conflict). Open "
+     "the Offline Queue panel to retry, resolve or discard.",
+     u8"%d modification(s) locale(s) de ce ticket ne partiront pas d'elles-mêmes (échec, en attente de revue ou "
+     u8"en conflit). Ouvrez le panneau File hors ligne pour réessayer, résoudre ou abandonner."},
+    {"grid.pending.cell_queued_tip",
+     "This edit is waiting to be sent to the tracker; the value shown is yours. See the Offline Queue panel.",
+     u8"Cette modification attend d'être envoyée au tracker ; la valeur affichée est la vôtre. Voir le "
+     u8"panneau File hors ligne."},
+    {"grid.pending.cell_not_sent_tip",
+     "This edit was not sent and needs attention. Open the Offline Queue panel to retry, resolve or discard it.",
+     u8"Cette modification n'a pas été envoyée et demande votre attention. Ouvrez le panneau File hors "
+     u8"ligne pour réessayer, résoudre ou abandonner."},
     {"prefs.local_db.recreating", "Recreating the database...", u8"Recréation de la base de données..."},
     {"views.fields.loading_saved", "Loading saved fields...", u8"Chargement des champs enregistrés..."},
     {"comments.discard_confirm", "Discard the comment you're writing?",

@@ -11,6 +11,7 @@
 #include "CachedTicketTypes.h"
 #include "PendingActionTypes.h"
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 
@@ -121,6 +122,69 @@ inline PendingOverlay BuildPendingOverlay(const OfflineQueueSnapshot* queue, con
         }
     }
     return overlay;
+}
+
+/// What the grid draws after the key of one row (a lookup result; `Status` None draws nothing).
+struct PendingRowCue {
+    PendingEditStatus Status = PendingEditStatus::None;
+    int Count = 0; ///< unconfirmed edits and actions of the row, for the tooltip
+};
+
+/// The row lookup of the render path: once per visible row. An empty overlay (the common case) is answered before
+/// any key string is built, so a grid with nothing queued pays one branch per row.
+inline PendingRowCue PendingRowCueFor(const PendingOverlay& overlay, const std::string& cacheBackendKey,
+                                      const std::string& issueKey) {
+    PendingRowCue cue;
+    if (overlay.Empty()) {
+        return cue;
+    }
+    cue.Status = overlay.Row(cacheBackendKey, issueKey);
+    if (cue.Status != PendingEditStatus::None) {
+        cue.Count = overlay.RowCount(cacheBackendKey, issueKey);
+    }
+    return cue;
+}
+
+/// The cell lookup of the render path: once per visible cell, but only a row that has a cue can have a cell with
+/// one, so every other row's cells are answered without building a key.
+inline PendingEditStatus PendingCellCueFor(const PendingOverlay& overlay, const PendingRowCue& row,
+                                           const std::string& cacheBackendKey, const std::string& issueKey,
+                                           const std::string& fieldId) {
+    if (row.Status == PendingEditStatus::None) {
+        return PendingEditStatus::None;
+    }
+    return overlay.Cell(cacheBackendKey, issueKey, fieldId);
+}
+
+/// The badge at the right edge of a cell with an unconfirmed field edit: "~" while queued, "!" when it needs attention.
+inline const char* PendingCellGlyph(PendingEditStatus status) {
+    switch (status) {
+    case PendingEditStatus::Queued:
+        return "~";
+    case PendingEditStatus::NeedsAttention:
+        return "!";
+    case PendingEditStatus::None:
+        break;
+    }
+    return "";
+}
+
+/// Brings `overlay` up to date with the two queue snapshots: rebuilt only when one of them is a different object
+/// from the one the overlay was built from (the queue workers publish a new snapshot on every change, and never
+/// mutate a published one). `heldQueue` / `heldActions` remember the snapshots the overlay stands for. True when it
+/// was rebuilt. UI thread; no I/O.
+inline bool RefreshPendingOverlayIfChanged(PendingOverlay& overlay,
+                                           std::shared_ptr<const OfflineQueueSnapshot>& heldQueue,
+                                           std::shared_ptr<const PendingActionsSnapshot>& heldActions,
+                                           std::shared_ptr<const OfflineQueueSnapshot> queue,
+                                           std::shared_ptr<const PendingActionsSnapshot> actions) {
+    if (queue == heldQueue && actions == heldActions) {
+        return false;
+    }
+    overlay = BuildPendingOverlay(queue.get(), actions.get());
+    heldQueue = std::move(queue);
+    heldActions = std::move(actions);
+    return true;
 }
 
 } // namespace sync

@@ -9,7 +9,10 @@
 // member type is forward-declared and the header pulls no heavy deps (notably NOT AppController.h,
 // keeping the god-header fan-in flat). Not part of the public API.
 
+#include "Sync/PendingOverlayPure.h" // PendingRowCue (the row currently drawn)
+
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class AppController;
@@ -64,6 +67,12 @@ struct ActiveProjectDrawCtx {
     // untouched column these are equal, which is the direct fix for the phantom "unsaved
     // layout" strip on every launch (column-view-save-simplification).
     std::vector<float> requestedColumnWidths{};
+    // The pane's cache namespace (AppController::PaneCacheBackendKey), resolved ONCE per window: the key every
+    // offline-queue row of this pane's tracker is stored under, and so the first part of the pending-overlay lookup.
+    std::string cacheBackendKey{};
+    // The pending-edit cue of the row currently being drawn (set per row by drawActiveProjectGridRows from
+    // d.pendingOverlay, read by the Id cell and by that row's value cells). None = nothing unconfirmed.
+    smatchet::sync::PendingRowCue currentRowPending{};
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

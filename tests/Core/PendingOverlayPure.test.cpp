@@ -120,3 +120,79 @@ TEST_CASE("PendingActionStatus: only ambiguous and needs-review rows are stuck o
     CHECK(PendingActionStatus(PendingActionState::kAmbiguous) == PendingEditStatus::NeedsAttention);
     CHECK(PendingActionStatus(PendingActionState::kNeedsReview) == PendingEditStatus::NeedsAttention);
 }
+
+// The three tests below cover the lookups the grid's render path calls (SmatchetActiveProjectGridTable.cpp row loop
+// -> PendingRowCueFor; SmatchetActiveProjectGridCells.cpp key cell -> DrawPendingRowCue, value cell ->
+// PendingCellBadge -> PendingCellCueFor / PendingCellGlyph; SmatchetGridUiSupport.cpp RefreshPendingOverlay ->
+// RefreshPendingOverlayIfChanged).
+
+TEST_CASE("PendingRowCueFor: a row with a queued edit carries its status and count, on its own tracker only") {
+    OfflineQueueSnapshot queue;
+    queue.PendingEdits.push_back(Edit("Jira@a", "PRJ-1", "summary"));
+    queue.PendingEdits.push_back(Edit("Jira@a", "PRJ-1", "labels"));
+    queue.DeadEdits.push_back(DeadEdit("Jira@a", "PRJ-2", "summary"));
+    const PendingOverlay overlay = BuildPendingOverlay(&queue, nullptr);
+
+    const PendingRowCue queued = PendingRowCueFor(overlay, "Jira@a", "PRJ-1");
+    CHECK(queued.Status == PendingEditStatus::Queued);
+    CHECK(queued.Count == 2);
+    const PendingRowCue dead = PendingRowCueFor(overlay, "Jira@a", "PRJ-2");
+    CHECK(dead.Status == PendingEditStatus::NeedsAttention);
+    CHECK(dead.Count == 1);
+    CHECK(PendingRowCueFor(overlay, "Jira@a", "PRJ-3").Status == PendingEditStatus::None);
+    CHECK(PendingRowCueFor(overlay, "Jira@b", "PRJ-1").Status == PendingEditStatus::None); // another tracker's pane
+    CHECK(PendingRowCueFor(PendingOverlay(), "Jira@a", "PRJ-1").Status == PendingEditStatus::None);
+}
+
+TEST_CASE("PendingCellCueFor: only the field that has the edit gets the badge, and a row without a cue none") {
+    OfflineQueueSnapshot queue;
+    queue.PendingEdits.push_back(Edit("Jira@a", "PRJ-1", "summary"));
+    queue.DeadEdits.push_back(DeadEdit("Jira@a", "PRJ-1", "labels"));
+    PendingActionsSnapshot actions;
+    actions.Pending.push_back(Action("Jira@a", "PRJ-5", PendingActionState::kPending));
+    const PendingOverlay overlay = BuildPendingOverlay(&queue, &actions);
+
+    const PendingRowCue row = PendingRowCueFor(overlay, "Jira@a", "PRJ-1");
+    CHECK(PendingCellCueFor(overlay, row, "Jira@a", "PRJ-1", "summary") == PendingEditStatus::Queued);
+    CHECK(PendingCellCueFor(overlay, row, "Jira@a", "PRJ-1", "labels") == PendingEditStatus::NeedsAttention);
+    CHECK(PendingCellCueFor(overlay, row, "Jira@a", "PRJ-1", "status") == PendingEditStatus::None);
+    // A queued action marks the row but no cell.
+    const PendingRowCue actionRow = PendingRowCueFor(overlay, "Jira@a", "PRJ-5");
+    CHECK(actionRow.Status == PendingEditStatus::Queued);
+    CHECK(PendingCellCueFor(overlay, actionRow, "Jira@a", "PRJ-5", "summary") == PendingEditStatus::None);
+    // The render path hands a row without a cue straight through: the cell is never looked up.
+    CHECK(PendingCellCueFor(overlay, PendingRowCue(), "Jira@a", "PRJ-1", "summary") == PendingEditStatus::None);
+}
+
+TEST_CASE("PendingCellGlyph: ~ while queued, ! when it needs attention, nothing otherwise") {
+    CHECK(std::string(PendingCellGlyph(PendingEditStatus::Queued)) == "~");
+    CHECK(std::string(PendingCellGlyph(PendingEditStatus::NeedsAttention)) == "!");
+    CHECK(std::string(PendingCellGlyph(PendingEditStatus::None)).empty());
+}
+
+TEST_CASE("RefreshPendingOverlayIfChanged: rebuilds only when a snapshot object was replaced") {
+    PendingOverlay overlay;
+    std::shared_ptr<const OfflineQueueSnapshot> heldQueue;
+    std::shared_ptr<const PendingActionsSnapshot> heldActions;
+    auto queue = std::make_shared<OfflineQueueSnapshot>();
+    queue->PendingEdits.push_back(Edit("Jira@a", "PRJ-1", "summary"));
+    const std::shared_ptr<const OfflineQueueSnapshot> queue1 = queue;
+    const std::shared_ptr<const PendingActionsSnapshot> actions1 = std::make_shared<PendingActionsSnapshot>();
+
+    CHECK(RefreshPendingOverlayIfChanged(overlay, heldQueue, heldActions, queue1, actions1)); // first call builds
+    CHECK(overlay.Row("Jira@a", "PRJ-1") == PendingEditStatus::Queued);
+    for (int frame = 0; frame < 5; ++frame) { // the same snapshots on later frames: no rebuild
+        CHECK_FALSE(RefreshPendingOverlayIfChanged(overlay, heldQueue, heldActions, queue1, actions1));
+    }
+
+    // The queue worker publishes a new snapshot (the edit was sent): the next call rebuilds and the cue is gone.
+    const std::shared_ptr<const OfflineQueueSnapshot> queue2 = std::make_shared<OfflineQueueSnapshot>();
+    CHECK(RefreshPendingOverlayIfChanged(overlay, heldQueue, heldActions, queue2, actions1));
+    CHECK(overlay.Empty());
+
+    // The action queue's snapshot is replaced on its own: also a rebuild.
+    auto actions = std::make_shared<PendingActionsSnapshot>();
+    actions->Pending.push_back(Action("Jira@a", "PRJ-7", PendingActionState::kPending));
+    CHECK(RefreshPendingOverlayIfChanged(overlay, heldQueue, heldActions, queue2, actions));
+    CHECK(overlay.Row("Jira@a", "PRJ-7") == PendingEditStatus::Queued);
+}

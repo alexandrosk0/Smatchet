@@ -556,6 +556,14 @@ bool HasNonWhitespaceChar(const char* text, std::size_t len) {
 
 } // namespace
 
+void RefreshPendingOverlay(AppController& app, UiDrawSession& d) {
+    // Two atomic shared_ptr loads of snapshots the queue workers already published (no SQLite, no lock the worker
+    // holds); the index is rebuilt only when one was replaced.
+    (void)smatchet::sync::RefreshPendingOverlayIfChanged(d.pendingOverlay, d.pendingOverlayQueueSnap,
+                                                         d.pendingOverlayActionsSnap, app.GetOfflineQueueSnapshot(),
+                                                         app.GetPendingActionsSnapshot());
+}
+
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {
         return true;

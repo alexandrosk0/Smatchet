@@ -1139,6 +1139,9 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
             // Parent-hierarchy depth for this row (Id-cell indent); 0 unless StoryGroupSort is on
             // with parents shown (HideParents flattens the indent and drops the tint).
             ctx.currentRowDepth = (ticketIndex < pane.cachedDepths.size()) ? pane.cachedDepths[ticketIndex] : 0;
+            // Unconfirmed local edit of this row (offline queue): one hash lookup, none when nothing is queued.
+            ctx.currentRowPending =
+                smatchet::sync::PendingRowCueFor(ctx.d.pendingOverlay, ctx.cacheBackendKey, ticket.id);
             if (statusColor.w > 0.0f) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                                        ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
