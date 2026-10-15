@@ -433,3 +433,104 @@ TEST_CASE("FieldCatalogCache: a failed touch write keeps the queued touches for 
     REQUIRE(Loads("k-old")); // the write works now and carries the touch to disk
     CHECK(ReadCacheFile(file).find("\"lastUsedUnix\":" + recent) == std::string::npos);
 }
+
+namespace {
+
+/// Makes every write of the cache file fail (a directory sits where the temp file goes) until released.
+class WriteBlocker {
+  public:
+    explicit WriteBlocker(const CacheFileCleanup& file) : dir_(file.Path() + ".tmp") {
+#if defined(_WIN32)
+        REQUIRE(::_mkdir(dir_.c_str()) == 0);
+#else
+        REQUIRE(::mkdir(dir_.c_str(), 0755) == 0);
+#endif
+    }
+    ~WriteBlocker() { Release(); }
+    WriteBlocker(const WriteBlocker&) = delete;
+    WriteBlocker& operator=(const WriteBlocker&) = delete;
+    void Release() {
+        if (released_) {
+            return;
+        }
+        released_ = true;
+#if defined(_WIN32)
+        ::_rmdir(dir_.c_str());
+#else
+        ::rmdir(dir_.c_str());
+#endif
+    }
+
+  private:
+    std::string dir_;
+    bool released_ = false;
+};
+
+/// A cache holding a fresh entry (touched a minute ago: its load only queues a touch) and a stale one.
+std::string TwoEntryCache(const std::string& freshUnix) {
+    return "{\"schema_version\":3,\"entries\":["
+           "{\"cacheKey\":\"k-fresh\",\"projectKey\":\"R\",\"backend\":\"Jira\",\"endpoint\":\"https://"
+           "acme.atlassian.net\","
+           "\"lastUsedUnix\":" +
+           freshUnix +
+           "},"
+           "{\"cacheKey\":\"k-stale\",\"projectKey\":\"O\",\"backend\":\"Jira\",\"endpoint\":\"https://"
+           "acme.atlassian.net\","
+           "\"lastUsedUnix\":100}],"
+           "\"k-fresh\":" +
+           Blob("r") + ",\"k-stale\":" + Blob("o") + "}";
+}
+
+std::int64_t LastUsedOf(const std::string& project) {
+    for (const FieldCatalogCache::CachedProjectEntry& e : FieldCatalogCache::ListCachedProjects()) {
+        if (e.projectKey == project) {
+            return e.lastUsedUnix;
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST_CASE("FieldCatalogCache: a failed save keeps the queued touches for the next write") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::int64_t freshUnix = TimeNowPure::NowUnixSeconds() - 60;
+    WriteCacheFile(file, TwoEntryCache(std::to_string(freshUnix)));
+    REQUIRE(Loads("k-fresh")); // used within the day: the touch waits in memory
+
+    {
+        const WriteBlocker blocker(file);
+        CHECK_FALSE(Save("k-new", "NEW", 16));
+    }
+    REQUIRE(Save("k-other", "OTHER", 16)); // the write works now and carries the touch to disk
+    CHECK(LastUsedOf("R") > freshUnix);
+}
+
+TEST_CASE("FieldCatalogCache: a failed forget keeps the queued touches for the next write") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    const std::int64_t freshUnix = TimeNowPure::NowUnixSeconds() - 60;
+    WriteCacheFile(file, TwoEntryCache(std::to_string(freshUnix)));
+    REQUIRE(Loads("k-fresh"));
+
+    {
+        const WriteBlocker blocker(file);
+        CHECK_FALSE(FieldCatalogCache::ForgetProject("O", "Jira", "https://acme.atlassian.net"));
+    }
+    REQUIRE(FieldCatalogCache::ForgetProject("O", "Jira", "https://acme.atlassian.net"));
+    CHECK(LastUsedOf("R") > freshUnix);
+}
+
+TEST_CASE("FieldCatalogCache: a load whose touch write fails keeps its own touch queued") {
+    smatchet_tests::TestEnvGuard env;
+    CacheFileCleanup file(env);
+    WriteCacheFile(file, TwoEntryCache(std::to_string(TimeNowPure::NowUnixSeconds() - 60)));
+
+    {
+        const WriteBlocker blocker(file);
+        CHECK(Loads("k-stale")); // stale: tries to write, fails, still loads
+    }
+    REQUIRE(Save("k-other", "OTHER", 16));
+    CHECK(LastUsedOf("O") > 100); // this load's own touch rode along with the next write
+}

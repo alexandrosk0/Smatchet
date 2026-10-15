@@ -123,7 +123,8 @@ void LoadLimits(const nlohmann::json& j, TrackerConfig& cfg) {
 
 // Numeric clamps: ai_provider_kind, assistant_history_max_rows and the date / window / interval / TTL / log-line
 // bands. Each guards against a hand-edited or future-version value (UB on an enum cast, a hammered backend, an
-// unbounded SQLite file, a silently empty feed).
+// unbounded SQLite file, a silently empty feed). It also loads the top-level "limits" object (LoadLimits), whose
+// per-key clamps follow the same rule.
 void ClampScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // Clamp `ai_provider_kind` to the known enum range; a future-version persisted int (e.g. 99)
     // on an older build degrades to OpenAi (0) rather than triggering UB on enum cast.
@@ -204,8 +205,8 @@ void LoadUiEnumFields(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
 }
 
-// Enum / clamped scalar fields that don't fit the plain-scalar table: the numeric clamps, vcs-feed layout,
-// layout-schema clamp, font-size clamp, then the UI enums.
+// Enum / clamped scalar fields that don't fit the plain-scalar table: the numeric clamps (including the "limits"
+// object, loaded by ClampScalarFields), vcs-feed layout, layout-schema clamp, font-size clamp, then the UI enums.
 void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     ClampScalarFields(j, cfg);
     // Unknown / hand-edited layout values degrade to the fresh-install default.

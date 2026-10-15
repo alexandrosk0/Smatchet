@@ -594,12 +594,16 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             (*it)["savedUnix"] = now;
         }
 
-        ApplyPendingTouches(root, /*consume=*/true); // the write is happening anyway: loads' touches ride along
+        ApplyPendingTouches(root, /*consume=*/false); // the write is happening anyway: loads' touches ride along
         // The fallback default lives in one place: TrackerConfig.
         const int cap = maxProjects > 0 ? maxProjects : TrackerConfig().FieldCatalogCacheMaxProjects;
         EvictLeastRecentlyUsedIfOverCap(root, cap, cacheKey);
 
-        return PersistRootLocked(root, outError);
+        const bool persisted = PersistRootLocked(root, outError);
+        if (persisted) {
+            PendingTouches().clear(); // dropped only once the write lands: a failed write keeps them queued
+        }
+        return persisted;
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::SaveFieldCatalogSnapshot failed: %s", ex.what());
@@ -707,7 +711,8 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
                     PendingTouches().clear();
                 } else {
                     // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
-                    // of truth. The touches stay queued for the next write.
+                    // of truth. The touches stay queued for the next write, this load's own included.
+                    PendingTouches()[resolvedKey] = now;
                     LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
                              writeErr.c_str());
                 }
@@ -806,10 +811,12 @@ bool ForgetProject(const std::string& projectKey, const std::string& backend, co
         if (!removed) {
             return true; // Not-found is success — caller doesn't need to distinguish.
         }
-        ApplyPendingTouches(root, /*consume=*/true);
+        ApplyPendingTouches(root, /*consume=*/false);
         std::string writeErr;
         const bool ok = PersistRootLocked(root, writeErr);
-        if (!ok) {
+        if (ok) {
+            PendingTouches().clear(); // dropped only once the write lands
+        } else {
             LOG_WARN("FieldCatalogCache::ForgetProject: persist failed: %s", writeErr.c_str());
         }
         return ok;
