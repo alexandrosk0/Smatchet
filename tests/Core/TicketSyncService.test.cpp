@@ -3077,7 +3077,8 @@ TEST_CASE("TicketSyncService cache teardown hands the worker out, holds every st
     CHECK(svc.IsCacheTeardownActive());
     const int pagesAtTeardown = fake->SlowStreamedPagesStarted();
 
-    // A start request during the teardown is dropped, and the apply tick does nothing.
+    // A start request during the teardown does not start (it is recorded and replayed at End), and the apply tick
+    // does nothing.
     svc.SyncWithBackend(&cfg, &views);
     svc.TickStreamingApply();
 
@@ -3089,6 +3090,9 @@ TEST_CASE("TicketSyncService cache teardown hands the worker out, holds every st
 
     svc.EndCacheTeardown();
     CHECK_FALSE(svc.IsCacheTeardownActive());
+    // The request made during the teardown is replayed now, not lost (it was a slow 30-page fetch: cancel it).
+    CHECK(svc.IsActive());
+    svc.CancelAndJoinActiveStreamingSync();
     CHECK_FALSE(svc.IsActive());
 
     // Syncs start again after the gate lifts.
@@ -3114,6 +3118,101 @@ TEST_CASE("TicketSyncService cache teardown with no running sync hands out nothi
     CHECK_FALSE(svc.IsActive()); // dropped, not started
     svc.EndCacheTeardown();
     CHECK_FALSE(svc.IsCacheTeardownActive());
+}
+
+TEST_CASE("TicketSyncService: a sync requested during the cache teardown runs once the teardown ends") {
+    // A pane opened mid-recreate kicks its one-shot first sync while the gate is up; dropping it left the pane
+    // empty forever (its kick latch was already set). The request is recorded and EndCacheTeardown replays it.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T1"}}));
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    CHECK_FALSE(rig.svc.IsActive()); // held back: nothing started, nothing touched the cache
+    rig.svc.TickStreamingApply();
+    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    CHECK(rig.deps.ActiveTicketsImpl.empty());
+
+    rig.svc.EndCacheTeardown();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchRosterCallCount() == 1); // the held-back request ran
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);
+}
+
+TEST_CASE("TicketSyncService: a Full sync held back during the cache teardown is still Full when it runs") {
+    // Full is sticky: a later ordinary refresh in the same window does not downgrade it, in either order.
+    for (const bool fullFirst : {true, false}) {
+        CAPTURE(fullFirst);
+        DeltaRig rig;
+        rig.Seed({Stamped("ABC-1", "T1")});
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+        (void)rig.svc.BeginCacheTeardown();
+        rig.Sync(fullFirst ? smatchet::sync::SyncMode::Full : smatchet::sync::SyncMode::Delta);
+        rig.Sync(fullFirst ? smatchet::sync::SyncMode::Delta : smatchet::sync::SyncMode::Full);
+        CHECK(rig.fake->FetchIssuesCallCount() == 0);
+
+        rig.svc.EndCacheTeardown();
+        REQUIRE(rig.Settle());
+        CHECK(rig.svc.LastSessionStats().Mode == "full");
+        CHECK(rig.fake->FetchIssuesCallCount() == 1); // the whole view was downloaded
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+    }
+}
+
+TEST_CASE("TicketSyncService: an ordinary sync held back during the cache teardown stays a delta") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    rig.Sync();
+    rig.svc.EndCacheTeardown();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+    CHECK(rig.fake->FetchRosterCallCount() == 1); // two held-back requests replay as one
+}
+
+TEST_CASE("TicketSyncService: a views load that lands during the cache teardown is replayed, not lost") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("LATE-1", "late"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    svc.SyncWithBackend(&cfg, nullptr); // the views file is being read on a worker
+    (void)svc.BeginCacheTeardown();     // the recreate starts meanwhile
+    deps.RunDeferredTasks();            // the read finishes: its post tries to start the sync while the gate is up
+    CHECK_FALSE(svc.IsActive());
+
+    svc.EndCacheTeardown();
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: EndCacheTeardown without a raised gate replays nothing and cancels nothing") {
+    // FinishCacheRecreate_ lists the focused service twice; the second End must not cancel a session the first one
+    // replayed.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    rig.svc.EndCacheTeardown();
+    const std::uint64_t epochAfterReplay = rig.svc.SessionEpoch();
+    rig.svc.EndCacheTeardown(); // the duplicate
+    CHECK(rig.svc.SessionEpoch() == epochAfterReplay);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Completed);
 }
 
 TEST_CASE("TicketSyncService::SyncWithBackend without views reads them on a worker, then starts the sync") {

@@ -67,6 +67,11 @@ class IOfflineQueueDeps {
     /// Queue-row namespacing itself is Slice 1c — this getter only scopes the ticket tables.
     virtual std::string CacheBackendKey() const = 0;
 
+    /// True while the cache-recreate gate is up (`AppController::IsLocalCacheRecreating`): the database is withdrawn
+    /// (`Cache()` is null) and a fresh one is being set up. Lets an enqueue that finds no cache say "try again in a
+    /// moment" instead of "restart Smatchet". Any thread. Defaults to false.
+    virtual bool IsCacheRecreating() const { return false; }
+
     /// Backend-generation token (issue #1081): bumped on every live backend swap and on
     /// pane-context retirement (see GridLiveContext::backendGeneration_). Replay ticks capture
     /// the value at work-capture time (alongside `CacheBackendKey`) and drop stale applies —

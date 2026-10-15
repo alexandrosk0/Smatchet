@@ -168,3 +168,22 @@ TEST_CASE("dead-letter restore via the SERVICE preserves the original backend ke
     CHECK(missSummary.Restored == 0);
     CHECK(missSummary.Failed == 1);
 }
+
+TEST_CASE("a field edit queued while the cache is being recreated fails with a 'being recreated' message") {
+    // cache.recreate withdraws the database before wiping it: an enqueue in that window finds no cache. It fails
+    // loudly (never a silent drop, never queued into the file that is about to be deleted), and says why.
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    deps.CacheImpl.reset();
+    deps.CacheRecreatingImpl = true;
+    std::string err;
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) == 0);
+    CHECK(err.find("being recreated") != std::string::npos);
+    CHECK(err.find("Restart Smatchet") == std::string::npos);
+
+    deps.CacheRecreatingImpl = false; // no recreate in progress: the old advice stands
+    err.clear();
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) == 0);
+    CHECK(err.find("unavailable") != std::string::npos);
+}

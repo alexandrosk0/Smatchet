@@ -265,9 +265,37 @@ std::thread TicketSyncService::BeginCacheTeardown() {
 }
 
 void TicketSyncService::EndCacheTeardown() {
+    if (!startsBlocked_.load()) {
+        return; // the gate is not up (the same service listed twice): do not cancel a session started since
+    }
     CancelAndJoinActiveStreamingSync(); // the worker was handed out and joined: nothing left to wait for
     ResetStaleDeletionState();
     startsBlocked_.store(false);
+    if (!blockedRequest_.Has) {
+        return;
+    }
+    // A request arrived while the gate was up (a pane opened mid-recreate, a views load that finished meanwhile):
+    // run it now, with the mode it asked for, instead of losing it.
+    BlockedSyncRequest request = std::move(blockedRequest_);
+    blockedRequest_ = BlockedSyncRequest();
+    LOG_INFO("TicketSyncService: replaying the sync requested during the cache recreate (mode=%s).",
+             request.Mode == smatchet::sync::SyncMode::Full ? "full" : "delta");
+    SyncWithBackend(request.HasConfig ? &request.Config : nullptr, request.HasViews ? &request.Views : nullptr,
+                    request.Mode);
+}
+
+void TicketSyncService::RecordBlockedSyncRequest_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                                  smatchet::sync::SyncMode mode) {
+    blockedRequest_.Mode = blockedRequest_.Has ? smatchet::sync::CombineSyncModes(blockedRequest_.Mode, mode) : mode;
+    blockedRequest_.Has = true;
+    blockedRequest_.HasConfig = configOverride != nullptr;
+    if (configOverride != nullptr) {
+        blockedRequest_.Config = *configOverride;
+    }
+    blockedRequest_.HasViews = viewsOverride != nullptr;
+    if (viewsOverride != nullptr) {
+        blockedRequest_.Views = *viewsOverride;
+    }
 }
 
 void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
@@ -875,7 +903,9 @@ void TicketSyncService::ResetStaleDeletionState() {
 void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                                         smatchet::sync::SyncMode mode) {
     if (startsBlocked_.load()) {
-        LOG_INFO("TicketSyncService::SyncWithBackend dropped: the local cache is being recreated.");
+        LOG_INFO("TicketSyncService::SyncWithBackend held back: the local cache is being recreated; it runs when the "
+                 "recreate finishes.");
+        RecordBlockedSyncRequest_(configOverride, viewsOverride, mode);
         return;
     }
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");

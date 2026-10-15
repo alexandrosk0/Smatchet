@@ -99,6 +99,8 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // like RequestDeferredLiveTrackerBackendSuccessNotify above. Forwards to the context's
     // mutex-guarded key (multi-grid Slice 1b).
     std::string CacheBackendKey() const override;
+    /// The cache-recreate gate (IOfflineQueueDeps): a queued edit that finds no cache words its failure for it.
+    bool IsCacheRecreating() const override;
     /// Capture-then-check token (issue #1081) — the context's backendGeneration_ atomic.
     std::uint64_t BackendGeneration() const override;
 

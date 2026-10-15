@@ -60,15 +60,17 @@ class TicketSyncService {
     /// and the start path of every new sync.
     void CancelAndJoinActiveStreamingSync();
 
-    /// Cache-recreate gate, step 1 (UI thread): from here no new sync starts (`SyncWithBackend` drops the request,
-    /// `TickStreamingApply` does nothing, so nothing reads or writes the cache), the running sync is flagged
+    /// Cache-recreate gate, step 1 (UI thread): from here no new sync starts (`SyncWithBackend` only records the
+    /// request, to run when the gate lifts; `TickStreamingApply` does nothing, so nothing reads or writes the
+    /// cache), the running sync is flagged
     /// cancelled, and its worker thread is handed to the caller to join OFF the UI thread (a request on the wire
     /// runs to its own timeout). The returned thread is not joinable when no worker was running.
     std::thread BeginCacheTeardown();
 
     /// Cache-recreate gate, step 2 (UI thread, after the thread from `BeginCacheTeardown` was joined and the cache
-    /// was swapped): drops the cancelled session's batches and stale-deletion state and lifts the block, so the
-    /// next `SyncWithBackend` starts normally.
+    /// was swapped): drops the cancelled session's batches and stale-deletion state, lifts the block, and replays
+    /// the sync request recorded while it was up (if any) with its mode, so a pane opened or a views load that
+    /// finished during the recreate still syncs. A no-op when the gate is not up.
     void EndCacheTeardown();
 
     /// True between `BeginCacheTeardown` and `EndCacheTeardown`. Any thread.
@@ -110,6 +112,8 @@ class TicketSyncService {
     /// With no `viewsOverride` the saved views are read first, on a worker (the file read and parse never run on the
     /// UI thread), and the sync then starts from a UI-thread post; the request is dropped if this service was
     /// destroyed meanwhile.
+    /// While the cache-recreate gate is up (`IsCacheTeardownActive`) nothing starts: the request is recorded instead
+    /// (the latest config and views, the mode combined so that Full wins) and `EndCacheTeardown` replays it.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                          smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
 
@@ -389,6 +393,21 @@ class TicketSyncService {
     std::string LoadSessionMeta();
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
+
+    /// The sync request that arrived while the cache-recreate gate was up, replayed by `EndCacheTeardown`. Latest
+    /// config and views win (a null override stays null: the saved ones are read at replay); the mode combines, so
+    /// a Full request is never downgraded by a later Delta one. UI thread only.
+    struct BlockedSyncRequest {
+        bool Has = false;
+        bool HasConfig = false;
+        TrackerConfig Config;
+        bool HasViews = false;
+        ViewsStore Views;
+        smatchet::sync::SyncMode Mode = smatchet::sync::SyncMode::Delta;
+    };
+    BlockedSyncRequest blockedRequest_;
+    void RecordBlockedSyncRequest_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                   smatchet::sync::SyncMode mode);
 
     // Stale-deletion bookkeeping. `isDeletingStale_` is atomic because `IsActive()` reads it
     // from `AppController::IsStreamingSyncActive()` which is callable from any thread. The

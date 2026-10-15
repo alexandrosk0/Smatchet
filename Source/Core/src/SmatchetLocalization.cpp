@@ -734,6 +734,10 @@ const TranslationEntry kEntries[] = {
      "-> Local data.",
      u8"Le cache local est indisponible ; cette modification ne peut pas être appliquée. Redémarrez Smatchet ou "
      u8"vérifiez Paramètres -> Préférences -> Données locales."},
+    {"offline.cache_recreating",
+     "The local database is being recreated, so this edit cannot be queued offline right now. Retry in a moment.",
+     u8"La base de données locale est en cours de recréation : cette modification ne peut pas être mise en "
+     u8"file hors ligne pour l'instant. Réessayez dans un instant."},
     {"offline.cache_unavailable",
      "Local cache is unavailable, so this edit cannot be queued offline. Restart Smatchet or check Settings -> "
      "Preferences -> Local data.",

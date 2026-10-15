@@ -119,6 +119,8 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
 // Declared in both IOfflineQueueDeps and ITicketSyncDeps; this single override satisfies both.
 std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx().CacheBackendKeyCopy(); }
 
+bool GridContextDepsAdapter::IsCacheRecreating() const { return app_.IsLocalCacheRecreating(); }
+
 std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx().backendGeneration_.load(); }
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------

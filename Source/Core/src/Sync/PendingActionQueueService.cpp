@@ -138,7 +138,10 @@ PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& ba
     // Latched once: the UI thread may swap the cache (StartRecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        out.Error = "The local cache is unavailable, so this could not be saved offline.";
+        out.Error = deps_.IsCacheRecreating()
+                        ? "The local database is being recreated, so this could not be saved offline right now. "
+                          "Retry in a moment."
+                        : "The local cache is unavailable, so this could not be saved offline.";
         return out;
     }
     const char* wire = PendingActionKindWire(kind);

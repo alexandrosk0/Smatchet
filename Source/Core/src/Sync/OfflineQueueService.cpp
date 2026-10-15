@@ -593,9 +593,14 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
     // reasoning as QueueCreateOffline: the UI thread may swap the cache mid-enqueue.
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        outError = SmatchetLocalization::T("offline.cache_unavailable",
-                                           "Local cache is unavailable, so this edit cannot be queued offline. "
-                                           "Restart Smatchet or check Settings -> Preferences -> Local data.");
+        outError = deps_.IsCacheRecreating()
+                       ? SmatchetLocalization::T("offline.cache_recreating",
+                                                 "The local database is being recreated, so this edit cannot be "
+                                                 "queued offline right now. Retry in a moment.")
+                       : SmatchetLocalization::T("offline.cache_unavailable",
+                                                 "Local cache is unavailable, so this edit cannot be queued "
+                                                 "offline. Restart Smatchet or check Settings -> Preferences -> "
+                                                 "Local data.");
         return 0;
     }
     if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {

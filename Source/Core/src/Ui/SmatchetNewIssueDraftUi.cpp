@@ -76,7 +76,10 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
     const std::int64_t qid = app.QueueCreateOffline(d.newIssueDraft);
     if (qid <= 0) {
         d.gridEditSuccess.clear();
-        d.gridEditError = "Failed to queue offline.";
+        d.gridEditError = app.IsLocalCacheRecreating()
+                              ? "The local database is being recreated, so the issue could not be queued offline "
+                                "right now. Retry in a moment."
+                              : "Failed to queue offline.";
         d.newIssueQueueFallbackVisible = false;
         d.newIssueQueueFallbackError.clear();
         return false;

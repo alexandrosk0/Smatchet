@@ -43,8 +43,14 @@ class IAppSync {
         (void)mode;
         SyncWithBackend(configOverride, viewsOverride);
     }
-    /// UI thread. Wipes the local cache database and opens a fresh one on a worker, behind a "recreating" gate: new
-    /// syncs and cache access wait, every pane's running sync is cancelled and joined off the UI thread. Returns an
+    /// UI thread. Wipes the local cache database and opens a fresh one on a worker, behind a "recreating" gate.
+    /// What the gate covers, exactly: every pane's running sync is cancelled and joined off the UI thread, and a
+    /// sync requested while the gate is up (a pane opened meanwhile, a views load that finished) is held back and
+    /// runs when the recreate finishes, with its mode (Full stays Full). What it does NOT cover: the offline queues
+    /// live in the cache database and are wiped with it (that is the purpose of the command), and while the old
+    /// database is withdrawn an enqueue (field edit, action, create) finds no cache and fails at once with a
+    /// "being recreated, retry in a moment" message; it is never silently queued into the file about to be deleted.
+    /// Other cache readers see no cache until the fresh one is published. Returns an
     /// error at once, with nothing changed, when it cannot start (no database path, shutting down, one already
     /// running). Otherwise `onDone` is called exactly once on the UI thread when the recreate has finished (never,
     /// if the application shuts down first), with whether the wipe happened: `Wiped` is true as soon as any cache
