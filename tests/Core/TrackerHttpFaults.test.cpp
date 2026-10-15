@@ -21,9 +21,7 @@
 
 namespace {
 
-std::string Url(const JiraCatalogHttpFixture& fx, const std::string& path) {
-    return fx.Config().Domain + path;
-}
+std::string Url(const JiraCatalogHttpFixture& fx, const std::string& path) { return fx.Config().Domain + path; }
 
 } // namespace
 
@@ -36,7 +34,7 @@ TEST_CASE("Idempotent GET retries to exhaustion on a forced 429") {
 
     CHECK(resp.status_code == 429);
     // Default maxAttempts == 3: original + two retries, all 429.
-    CHECK(fx.RequestCount("/probe") == kTrackerHttpDefaultMaxAttempts);
+    CHECK(fx.RequestCount("/probe") == TrackerHttpDefaultMaxAttempts());
 }
 
 TEST_CASE("Idempotent PUT retries to exhaustion on a forced 5xx") {
@@ -47,7 +45,7 @@ TEST_CASE("Idempotent PUT retries to exhaustion on a forced 5xx") {
     const cpr::Response resp = TrackerPutLogged("test", Url(fx, "/field"), BuildTrackerHeaders(cfg, true), "{}");
 
     CHECK(resp.status_code == 500);
-    CHECK(fx.RequestCount("/field") == kTrackerHttpDefaultMaxAttempts);
+    CHECK(fx.RequestCount("/field") == TrackerHttpDefaultMaxAttempts());
 }
 
 TEST_CASE("Non-idempotent POST is single-shot on a landed 5xx") {

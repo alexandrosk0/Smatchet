@@ -6,33 +6,71 @@
 // bounded by json_safe::kDefaultMaxBytes (Json/BoundedJsonParse.h). A loop that stops on any of
 // these sets a soft warning on its fetch summary, so a cut-short result never reads as complete.
 
+#include "TunableLimits.h"
+
+#include <chrono>
 #include <cstddef>
 
 namespace smatchet {
 namespace search_guards {
 
-/// Rows asked for per page by every backend.
+/// Rows asked for per page by every backend (server protocol; not user-tunable).
 constexpr int kPageSize = 100;
+/// Delta-sync roster walks (keys + `updated` only) ask for the same page size as the body fetch, pending the
+/// Phase 0 live-Jira spike (docs/plans/active/delta-sync.md) that measures what a keys-only page can carry.
+constexpr int kJiraRosterPageSize = kPageSize;
 
-constexpr int kJiraMaxPages = 50;
-/// Delta-sync roster walk (keys + `updated` only). Conservative defaults - the same page size and page cap
-/// as the full fetch, so a roster never reaches less of a view than the fetch it replaces - until the
-/// Phase 0 live-Jira spike (docs/plans/active/delta-sync.md) measures what a keys-only page can carry.
-constexpr int kJiraRosterPageSize = 100;
-constexpr int kJiraMaxRosterPages = 50;
-constexpr std::size_t kJiraMaxTotalFetchBytes = 100u * 1024u * 1024u;
-/// Reached only when the server returns more rows per page than kPageSize (the page cap bounds a
-/// well-behaved server below it).
-constexpr std::size_t kJiraMaxResultCount = 10000u;
+// The ceilings below are user-tunable (Config/TunableLimits.h, config.json "limits"); each call reads the
+// currently published value, so callers snapshot it once before their page loop.
 
-constexpr int kPlaneMaxPages = 50;
-constexpr std::size_t kPlaneMaxTotalFetchBytes = 100u * 1024u * 1024u;
-constexpr std::size_t kPlaneMaxResultCount = 10000u; ///< as kJiraMaxResultCount
+inline int JiraMaxPages() { return limits::Get().JiraSearchMaxPages; }
+inline std::size_t JiraMaxTotalFetchBytes() { return limits::MiB(limits::Get().JiraSearchMaxFetchMiB); }
+/// Soft cap on accumulated rows; a well-behaved server may reach it before the page cap, so a
+/// truncated result carries a warning.
+inline std::size_t JiraMaxResultCount() { return static_cast<std::size_t>(limits::Get().JiraSearchMaxResults); }
 
-/// GitHub search returns at most 1000 items (10 pages of 100), the REST search API's own limit.
-constexpr int kGitHubMaxPages = 10;
-constexpr std::size_t kGitHubMaxTotalFetchBytes = 50u * 1024u * 1024u;
-constexpr std::size_t kGitHubMaxResultCount = 5000u; ///< as kJiraMaxResultCount
+inline int PlaneMaxPages() { return limits::Get().PlaneSearchMaxPages; }
+inline std::size_t PlaneMaxTotalFetchBytes() { return limits::MiB(limits::Get().PlaneSearchMaxFetchMiB); }
+inline std::size_t PlaneMaxResultCount() { return static_cast<std::size_t>(limits::Get().PlaneSearchMaxResults); }
+
+/// GitHub search returns at most 1000 items (10 pages of 100), the REST search API's own limit
+/// (so the page-cap setting is clamped to 10 in TunableLimits.h).
+inline int GitHubMaxPages() { return limits::Get().GitHubSearchMaxPages; }
+inline std::size_t GitHubMaxTotalFetchBytes() { return limits::MiB(limits::Get().GitHubSearchMaxFetchMiB); }
+inline std::size_t GitHubMaxResultCount() { return static_cast<std::size_t>(limits::Get().GitHubSearchMaxResults); }
+
+/// Background membership probes (Jira keys-only reconcile, Jira/Plane changed-since) walk a whole view or
+/// update window but must never act on a truncated list, so they get a looser ceiling than the interactive
+/// search above; a probe that still hits it reports a partial walk and the reconcile is skipped.
+inline int ProbeMaxPages() { return limits::Get().MembershipProbeMaxPages; }
+inline std::size_t ProbeMaxResultCount() { return static_cast<std::size_t>(limits::Get().MembershipProbeMaxResults); }
+inline std::size_t ProbeMaxTotalFetchBytes() { return limits::MiB(limits::Get().MembershipProbeMaxFetchMiB); }
+
+/// Page, result-count and byte ceilings handed to a page loop, so one loop serves both the interactive
+/// search (per-backend caps above) and the background probes (ProbeCaps). A changed-since probe fetches
+/// full rows, so its byte ceiling is raised alongside its row ceiling.
+struct LoopCaps {
+    int maxPages;
+    std::size_t maxResultCount;
+    std::size_t maxTotalFetchBytes;
+};
+inline LoopCaps JiraCaps() { return {JiraMaxPages(), JiraMaxResultCount(), JiraMaxTotalFetchBytes()}; }
+inline LoopCaps PlaneCaps() { return {PlaneMaxPages(), PlaneMaxResultCount(), PlaneMaxTotalFetchBytes()}; }
+inline LoopCaps ProbeCaps() { return {ProbeMaxPages(), ProbeMaxResultCount(), ProbeMaxTotalFetchBytes()}; }
+
+/// Wall-clock budget for one whole paginated fetch. The per-request timeout bounds a single call; this
+/// bounds the walk, so a huge query cannot hold a sync worker for pages x request-timeout.
+class Deadline {
+  public:
+    explicit Deadline(int seconds) : end_(std::chrono::steady_clock::now() + std::chrono::seconds(seconds)) {}
+    bool Expired() const { return std::chrono::steady_clock::now() >= end_; }
+
+  private:
+    std::chrono::steady_clock::time_point end_;
+};
+
+/// A deadline of limits::Get().SearchMaxTotalSeconds starting now.
+inline Deadline StartSearchDeadline() { return Deadline(limits::Get().SearchMaxTotalSeconds); }
 
 } // namespace search_guards
 } // namespace smatchet

@@ -19,7 +19,7 @@ namespace smatchet {
 namespace ai {
 
 /// Visible-row count for the pinned-bookmarks strip, capped at maxVisibleRows.
-/// Mirrors the `(std::min)(static_cast<int>(pinnedCount), kMaxVisiblePinRows)`
+/// Mirrors the `(std::min)(static_cast<int>(pinnedCount), limits::Get().AiPinnedRowsVisibleMax)`
 /// inline computed in both DrawPinStripIfAny and DrawHistoryArea so the two
 /// layouts stay in lock-step.
 inline int AiPinStripVisibleRows(long pinnedCount, int maxVisibleRows) {

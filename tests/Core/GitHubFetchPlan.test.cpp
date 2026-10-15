@@ -5,7 +5,7 @@
 // path or the cross-repo /search/issues path, and emits a single
 // human-readable warning when the user's config + translator output are
 // likely to produce surprising results (e.g. no filter at all → globally
-// newest open issues across all 50M+ GitHub issues, capped at 1000).
+// newest open issues across all 50M+ GitHub issues, capped by the tunable GitHub search limits).
 
 #include "GitHubFetchPlan.h"
 
@@ -50,7 +50,7 @@ TEST_CASE("ComputeGitHubFetchPlan — both owner+repo empty + empty query → cr
     CHECK(plan.effectiveQuery == "is:issue is:open");
     CHECK_FALSE(plan.warning.empty());
     CHECK(Contains(plan.warning, "No GitHub Owner/Repo"));
-    CHECK(Contains(plan.warning, "1000")); // 10 pages × 100 items cap mentioned
+    CHECK(Contains(plan.warning, "500")); // effective cap: min(10 pages × 100, 500 results) mentioned
 }
 
 TEST_CASE("ComputeGitHubFetchPlan — partial config: owner set, repo empty → cross-repo + partial-config warning") {

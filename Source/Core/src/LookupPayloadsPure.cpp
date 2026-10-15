@@ -1,10 +1,12 @@
 #include "LookupPayloadsPure.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "TunableLimits.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -21,6 +23,10 @@ namespace {
 constexpr int kFlatArrayMaxDepth = 2;
 constexpr std::size_t kUserFields = 5;
 constexpr std::size_t kProjectFields = 3;
+// Node budget for a stored row. Derived from the largest value lookup_max_stored_* can be configured to
+// (TunableLimits.h), NOT the current cap: a row saved under a higher cap must still parse after the cap is
+// lowered. The byte bound (maxBytes) is what actually limits a row's size.
+constexpr std::size_t kHardMaxStoredItems = 1000000;
 
 std::string StringMember(const nlohmann::json& obj, const char* key) {
     const auto it = obj.find(key);
@@ -42,20 +48,26 @@ std::string SerializeFlatArray(const std::vector<Item>& items, std::size_t maxIt
     return out.size() > maxBytes ? std::string() : out;
 }
 
-// Inverse of SerializeFlatArray, bounded to what it can have written. `fromJson(entry, item)` returns
-// false to skip an entry.
+// Inverse of SerializeFlatArray, bounded by `maxBytes` and kHardMaxStoredItems, then truncated to the
+// current `maxItems` (so lowering the cap keeps a usable prefix instead of dropping the whole row).
+// `fromJson(entry, item)` returns false to skip an entry.
 template <typename Item, typename FromJson>
 bool ParseFlatArray(const std::string& json, std::size_t maxItems, std::size_t maxBytes, std::size_t fieldsPerItem,
                     std::vector<Item>& out, FromJson fromJson) {
     out.clear();
     std::string err;
     const nlohmann::json parsed = smatchet::json_safe::ParseBounded(json, err, maxBytes, kFlatArrayMaxDepth,
-                                                                    (fieldsPerItem + 1u) * maxItems + 1u);
+                                                                    (fieldsPerItem + 1u) * kHardMaxStoredItems + 1u);
     if (!err.empty() || !parsed.is_array()) {
         return false;
     }
-    out.reserve(parsed.size());
+    // Allocation is sized by the current cap, not by the (byte-bounded) parsed array, and the walk stops
+    // once the cap is reached, so a corrupt row cannot drive a large reserve or a build-then-erase pass.
+    out.reserve((std::min)(parsed.size(), maxItems));
     for (const nlohmann::json& entry : parsed) {
+        if (out.size() >= maxItems) {
+            break;
+        }
         Item item;
         if (entry.is_object() && fromJson(entry, item)) {
             out.push_back(std::move(item));
@@ -66,8 +78,12 @@ bool ParseFlatArray(const std::string& json, std::size_t maxItems, std::size_t m
 
 } // namespace
 
+std::size_t MaxStoredUsers() { return static_cast<std::size_t>(limits::Get().LookupMaxStoredUsers); }
+
+std::size_t MaxStoredProjects() { return static_cast<std::size_t>(limits::Get().LookupMaxStoredProjects); }
+
 std::string SerializeUsers(const std::vector<TrackerUser>& users) {
-    return SerializeFlatArray(users, kMaxStoredUsers, kMaxUsersPayloadBytes, [](const TrackerUser& user) {
+    return SerializeFlatArray(users, MaxStoredUsers(), kMaxUsersPayloadBytes, [](const TrackerUser& user) {
         return nlohmann::json::object({{"accountId", user.AccountId},
                                        {"displayName", user.DisplayName},
                                        {"email", user.EmailAddress},
@@ -77,7 +93,7 @@ std::string SerializeUsers(const std::vector<TrackerUser>& users) {
 }
 
 bool ParseUsers(const std::string& json, std::vector<TrackerUser>& out) {
-    return ParseFlatArray(json, kMaxStoredUsers, kMaxUsersPayloadBytes, kUserFields, out,
+    return ParseFlatArray(json, MaxStoredUsers(), kMaxUsersPayloadBytes, kUserFields, out,
                           [](const nlohmann::json& entry, TrackerUser& user) {
                               user.AccountId = StringMember(entry, "accountId");
                               if (user.AccountId.empty()) {
@@ -93,13 +109,13 @@ bool ParseUsers(const std::string& json, std::vector<TrackerUser>& out) {
 }
 
 std::string SerializeProjects(const std::vector<RemoteProject>& projects) {
-    return SerializeFlatArray(projects, kMaxStoredProjects, kMaxProjectsPayloadBytes, [](const RemoteProject& p) {
+    return SerializeFlatArray(projects, MaxStoredProjects(), kMaxProjectsPayloadBytes, [](const RemoteProject& p) {
         return nlohmann::json::object({{"id", p.id}, {"key", p.key}, {"name", p.displayName}});
     });
 }
 
 bool ParseProjects(const std::string& json, std::vector<RemoteProject>& out) {
-    return ParseFlatArray(json, kMaxStoredProjects, kMaxProjectsPayloadBytes, kProjectFields, out,
+    return ParseFlatArray(json, MaxStoredProjects(), kMaxProjectsPayloadBytes, kProjectFields, out,
                           [](const nlohmann::json& entry, RemoteProject& p) {
                               p.id = StringMember(entry, "id");
                               p.key = StringMember(entry, "key");

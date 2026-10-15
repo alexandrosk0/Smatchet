@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -95,6 +96,31 @@ ThemeId ThemeFromString(const std::string& themeStr) {
     return ThemeId::ImGuiDefaultDark;
 }
 
+// Top-level "limits" object (Config/TunableLimits.h table). Each key loads independently: a missing,
+// non-integer, or out-of-range value keeps its default / is clamped, never dropping the siblings.
+void LoadLimits(const nlohmann::json& j, TrackerConfig& cfg) {
+    const auto it = j.find("limits");
+    if (it == j.end() || !it->is_object()) {
+        return;
+    }
+    std::size_t n = 0;
+    const smatchet::limits::LimitDescriptor* rows = smatchet::limits::Descriptors(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto v = it->find(rows[i].key);
+        if (v == it->end() || !v->is_number_integer()) {
+            continue;
+        }
+        // An unsigned value above LLONG_MAX would wrap negative and clamp to the minimum.
+        const long long raw =
+            v->is_number_unsigned() && v->get<unsigned long long>() > static_cast<unsigned long long>(LLONG_MAX)
+                ? LLONG_MAX
+                : v->get<long long>();
+        const long long clamped = (std::max)(static_cast<long long>(rows[i].minValue),
+                                             (std::min)(static_cast<long long>(rows[i].maxValue), raw));
+        cfg.Limits.*(rows[i].member) = static_cast<int>(clamped);
+    }
+}
+
 // Numeric clamps: ai_provider_kind, assistant_history_max_rows and the date / window / interval / TTL / log-line
 // bands. Each guards against a hand-edited or future-version value (UB on an enum cast, a hammered backend, an
 // unbounded SQLite file, a silently empty feed).
@@ -109,6 +135,7 @@ void ClampScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
                                  ? static_cast<int>(AiProvider::OpenAi)
                                  : rawProvider;
     }
+    LoadLimits(j, cfg);
     // Clamp on load — negative / zero would silently disable history; a stray very-large value
     // would let the SQLite file grow without bound. Cap at 100k.
     const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
@@ -1015,6 +1042,9 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
 
     // Env-var + CLI overrides (applied post-disk-read), then the final post-override clamps.
     ApplyOverridesAndClamps(cli, cfg);
+    // Publish the tunable caps / timeouts so call sites without a config handle (pure helpers,
+    // worker threads) read the same values via smatchet::limits::Get().
+    smatchet::limits::Set(cfg.Limits);
     if (!cfg.JiraBackends.empty()) {
         cfg.JiraBackends[0].Domain = cfg.Domain;
         cfg.JiraBackends[0].Email = cfg.Email;

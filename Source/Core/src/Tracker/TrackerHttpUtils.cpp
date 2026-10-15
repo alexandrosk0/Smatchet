@@ -152,13 +152,13 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     // Idempotent GET — retry on Transport / 429 / 5xx (wrapper's default IsRetryable predicate).
     // `cancelled` is forwarded so an aborting sync worker is honoured during the retry/backoff
     // window, not only between page GETs (default nullptr = no in-loop cancellation polling).
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
-            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, nullptr,
-                                                             static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
-                                                             static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, nullptr, connectMs, overallMs));
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled);
+        TrackerHttpDefaultMaxAttempts(), cancelled);
     return std::move(result.Response);
 }
 
@@ -166,20 +166,20 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
                                const cpr::Parameters& params, const std::function<bool()>& cancelled) {
     // Idempotent GET (paged) — same retry policy as the no-params overload. `cancelled` is forwarded
     // so a paged search aborting mid-fetch is honoured during the retry/backoff window too.
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
-            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, &params,
-                                                             static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
-                                                             static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, &params, connectMs, overallMs));
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled);
+        TrackerHttpDefaultMaxAttempts(), cancelled);
     return std::move(result.Response);
 }
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs) {
     // Single attempt — NO retry. This custom-timeout overload backs periodic reachability probes
-    // (2s/5s budget, kTrackerProbe*TimeoutMs). Retrying would multiply the probe's worst-case
+    // (default 2s/5s budget, TrackerProbe*TimeoutMs()). Retrying would multiply the probe's worst-case
     // latency and defeat its fast-fail contract, so it stays single-shot by design. ExecuteTrackerGet
     // already applies MakeTrackerRedirectPolicy() + MakeTrackerSslOptions() (the host-pin / TLS
     // hardening develop added inline), so routing through it keeps that security hardening centralized.
@@ -193,18 +193,20 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
     // issue / comment). A 429 / 5xx is returned to the caller untouched, and a transport failure is
     // retried only when the request provably never left this machine (DNS / proxy / connect failure,
     // TrackerError::RequestNotSent) — never after a timeout or a lost response (finding DR16).
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-            cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                               cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                                               cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            cpr::Response response =
+                cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{connectMs},
+                          cpr::Timeout{overallMs}, MakeTrackerSslOptions());
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                    response);
             LogTrackerHttpResult(clientName, "POST", url, response);
             return ClassifyTrackerResponse(response);
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled,
+        TrackerHttpDefaultMaxAttempts(), cancelled,
         [](const TrackerError& e) { return TrackerShouldRetryPost(e.Kind, e.RequestNotSent); });
     return std::move(result.Response);
 }
@@ -212,18 +214,20 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
 cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const std::string& body, const std::function<bool()>& cancelled) {
     // PUT is idempotent — safe to retry on Transport / 429 / 5xx (wrapper's default predicate).
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-            cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                              cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                                              cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            cpr::Response response =
+                cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{connectMs},
+                         cpr::Timeout{overallMs}, MakeTrackerSslOptions());
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                    response);
             LogTrackerHttpResult(clientName, "PUT", url, response);
             return ClassifyTrackerResponse(response);
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled);
+        TrackerHttpDefaultMaxAttempts(), cancelled);
     return std::move(result.Response);
 }
 
@@ -234,47 +238,51 @@ cpr::Response TrackerDeleteLogged(const char* clientName, const std::string& url
                                   const std::function<bool()>& cancelled) {
     // DELETE on tracker resources is idempotent (deleting an already-deleted element
     // re-reports the same terminal state) — safe to retry like PUT/PATCH.
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-            cpr::Response response =
-                cpr::Delete(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                            cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            cpr::Response response = cpr::Delete(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectMs},
+                                                 cpr::Timeout{overallMs}, MakeTrackerSslOptions());
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker,
                                                    NetworkUsageTracker::kEstimatedGetUploadBytes, response);
             LogTrackerHttpResult(clientName, "DELETE", url, response);
             return ClassifyTrackerResponse(response);
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled);
+        TrackerHttpDefaultMaxAttempts(), cancelled);
     return std::move(result.Response);
 }
 
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body, const std::function<bool()>& cancelled) {
     // PATCH on tracker fields is idempotent (set-to-value, not delta) — safe to retry like PUT.
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
+    const auto overallMs = static_cast<std::int32_t>(TrackerOverallTimeoutMs());
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-            cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                                cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                                                cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            cpr::Response response =
+                cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{connectMs},
+                           cpr::Timeout{overallMs}, MakeTrackerSslOptions());
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                    response);
             LogTrackerHttpResult(clientName, "PATCH", url, response);
             return ClassifyTrackerResponse(response);
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled);
+        TrackerHttpDefaultMaxAttempts(), cancelled);
     return std::move(result.Response);
 }
 
 TrackerDownloadResult TrackerDownloadLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                             std::size_t maxBytes, long overallTimeoutMs) {
+    const auto connectMs = static_cast<std::int32_t>(TrackerConnectTimeoutMs());
     TrackerDownloadResult out;
     CappedBodyAccumulator body(maxBytes);
     cpr::WriteCallback writeCb{[&body](const std::string& data, intptr_t) { return body.Append(data); }};
     const cpr::Redirect redirect(true, false);
     const cpr::Response response =
-        cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+        cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{connectMs},
                  cpr::Timeout{std::chrono::milliseconds(overallTimeoutMs)}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response, static_cast<std::uint64_t>(body.Body().size()));

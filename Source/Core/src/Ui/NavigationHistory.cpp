@@ -1,5 +1,7 @@
 #include "NavigationHistory.h"
 
+#include "TunableLimits.h"
+
 NavigationHistory::NavigationHistory() : _entries(), _index(-1) {}
 
 void NavigationHistory::Clear() {
@@ -24,12 +26,14 @@ void NavigationHistory::Push(const NavigationEntry& entry) {
     _index = static_cast<int>(_entries.size()) - 1;
 
     // Cap history to prevent unbounded growth in long sessions.
-    constexpr int kMaxHistory = 200;
-    if (static_cast<int>(_entries.size()) > kMaxHistory) {
-        const int drop = static_cast<int>(_entries.size()) - kMaxHistory;
+    // Cap is user-tunable: limits::Get().NavigationHistoryMax (default 200).
+    const int maxHistory = smatchet::limits::Get().NavigationHistoryMax;
+    if (static_cast<int>(_entries.size()) > maxHistory) {
+        const int drop = static_cast<int>(_entries.size()) - maxHistory;
         _entries.erase(_entries.begin(), _entries.begin() + drop);
         _index -= drop;
-        if (_index < 0) _index = 0;
+        if (_index < 0)
+            _index = 0;
     }
 }
 
@@ -53,9 +57,3 @@ const NavigationEntry* NavigationHistory::Current() const {
     }
     return &_entries[_index];
 }
-
-
-
-
-
-

@@ -20,6 +20,7 @@
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "DictationInsertionRouter.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "MemoryTelemetry.h"
 #include "SmatchetChatPersistWorker.h"
@@ -225,13 +226,12 @@ void PersistOpenStateImmediate(UiDrawSession& d) {
 // each frame instead of re-running md_parse. Keyed by 64-bit content hash;
 // `contentLen` retained as a cheap collision detector (same hash + same len
 // is treated as a hit; hash collisions on different lengths fall through to
-// rebuild). FIFO cap at kMaxCachedPlans keeps memory bounded across long
-// chat sessions.
-constexpr std::size_t kMaxCachedPlans = 256;
-// Aggregate byte cap (Phase 4), alongside the entry cap. Proxies the parsed-plan AST size by the
-// cached message's source length — the AST is larger but tracks content length, and the source
-// length is free to measure. 4 MiB of summed markdown source is well past any sane chat history.
-constexpr std::size_t kMaxPlanCacheBytes = 4u * 1024u * 1024u;
+// rebuild). FIFO cap (limits::Get().AiMaxCachedPlans, default 256) keeps memory bounded across
+// long chat sessions.
+// Aggregate byte cap (Phase 4; limits::Get().AiPlanCacheMaxMiB, default 4 MiB), alongside the
+// entry cap. Proxies the parsed-plan AST size by the cached message's source length — the AST is
+// larger but tracks content length, and the source length is free to measure. 4 MiB of summed
+// markdown source is well past any sane chat history.
 struct CachedPlanEntry {
     std::size_t contentLen = 0;
     MarkdownPreviewRender::PreviewPlanPtr plan;
@@ -276,9 +276,12 @@ const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::st
     entry.contentLen = content.size();
     entry.plan = MarkdownPreviewRender::MakePlan();
     MarkdownPreviewRender::BuildPlan(content, *entry.plan);
+    const smatchet::limits::LimitsConfig lim = smatchet::limits::Get();
+    const std::size_t maxPlans = static_cast<std::size_t>(lim.AiMaxCachedPlans);
+    const std::size_t maxPlanBytes = smatchet::limits::MiB(lim.AiPlanCacheMaxMiB);
     while (!s_planCacheInsertionOrder.empty() &&
-           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1, s_planCacheBytes + content.size(),
-                                  kMaxCachedPlans, kMaxPlanCacheBytes)) {
+           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1, s_planCacheBytes + content.size(), maxPlans,
+                                  maxPlanBytes)) {
         const std::uint64_t evictKey = s_planCacheInsertionOrder.front();
         s_planCacheInsertionOrder.erase(s_planCacheInsertionOrder.begin());
         const auto victim = s_planCache.find(evictKey);
@@ -395,10 +398,11 @@ void DrawPinStripIfAny(UiDrawSession& d) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, stripBg);
     // Auto-height: rows are full-text-line + tiny vertical pad. AlwaysAutoResize-like
     // behaviour via height=0 only works for vertical layout, so we measure: each row
-    // is one TextLineHeightWithSpacing + IconSpacing. Cap visible rows at 4 so a
-    // user who pins 50 messages doesn't lose the entire history panel.
-    constexpr int kMaxVisiblePinRows = 4;
-    const int visibleRows = (std::min)(static_cast<int>(pinnedCount), kMaxVisiblePinRows);
+    // is one TextLineHeightWithSpacing + IconSpacing. Cap visible rows (default 4,
+    // limits::Get().AiPinnedRowsVisibleMax) so a user who pins 50 messages doesn't lose the
+    // entire history panel.
+    const int maxVisiblePinRows = smatchet::limits::Get().AiPinnedRowsVisibleMax;
+    const int visibleRows = (std::min)(static_cast<int>(pinnedCount), maxVisiblePinRows);
     const float rowH = ImGui::GetFrameHeightWithSpacing();
     const float stripH = rowH * static_cast<float>(visibleRows) + 4.0f;
     ImGui::BeginChild("##AiAssistantPinStrip", ImVec2(0.0f, stripH), true,
@@ -745,8 +749,8 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // a message is first pinned.
     const auto pinnedCount = std::count_if(d.assistantHistory.begin(), d.assistantHistory.end(),
                                            [](const AiMessage& m) { return m.Pinned; });
-    constexpr int kMaxVisiblePinRows = 4;
-    const int pinVisibleRows = smatchet::ai::AiPinStripVisibleRows(static_cast<long>(pinnedCount), kMaxVisiblePinRows);
+    const int maxVisiblePinRows = smatchet::limits::Get().AiPinnedRowsVisibleMax;
+    const int pinVisibleRows = smatchet::ai::AiPinStripVisibleRows(static_cast<long>(pinnedCount), maxVisiblePinRows);
     const float pinStripH = smatchet::ai::AiPinStripReservedHeight(pinVisibleRows, ImGui::GetFrameHeightWithSpacing(),
                                                                    ImGui::GetStyle().ItemSpacing.y);
     const float bodyH = smatchet::ai::AiHistoryBodyHeight(availY, headerH, inputH, errorStripH, pinStripH);
@@ -880,7 +884,7 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
     inputs.SelectedRows = &pane.gridState.RectSel.Rows;
     inputs.ActiveIssueId = pane.gridState.ActiveIssueId;
     inputs.ActiveView = activeView;
-    // VisibleRows = the same sort-order list (capped internally at kRowsCap). Phase B
+    // VisibleRows = the same sort-order list (capped internally at AiContextBuilder::RowsCap()). Phase B
     // intentionally does not yet plumb the precise top-of-viewport range — using the
     // sorted-index list gives a deterministic "top N rows" approximation matching the
     // grid's natural rendering order.

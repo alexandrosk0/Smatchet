@@ -1,9 +1,18 @@
 #include "SmatchetToast.h"
+#include "TunableLimits.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "imgui_internal.h" // BringWindowToDisplayFront — toast hit-window stays above all windows
 #include <algorithm>
 #include <cstdio>
+
+std::size_t SmatchetToastManager::MaxLiveToasts() {
+    return static_cast<std::size_t>(smatchet::limits::Get().ToastMaxLive);
+}
+
+std::size_t SmatchetToastManager::HistoryCap() {
+    return static_cast<std::size_t>(smatchet::limits::Get().ToastHistoryMax);
+}
 
 SmatchetToastManager& SmatchetToastManager::Instance() {
     static SmatchetToastManager instance;
@@ -31,7 +40,8 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     // (e.g. one toast per failed bulk edit) would otherwise pile past the viewport top
     // and demand one dismissal click each. Oldest-first eviction — the evicted toast's
     // history entry and, for errors, the unread-error badge keep the trail visible.
-    while (m_toasts.size() > kMaxLiveToasts) {
+    const std::size_t maxLive = MaxLiveToasts();
+    while (m_toasts.size() > maxLive) {
         m_toasts.erase(m_toasts.begin());
     }
     if (type == ToastType::Error) {
@@ -45,7 +55,7 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     entry.Message = message;
     entry.Type = type;
     entry.RowAction = std::move(rowAction);
-    PushBoundedHistory(m_history, std::move(entry), kHistoryCap);
+    PushBoundedHistory(m_history, std::move(entry), HistoryCap());
 }
 
 bool SmatchetToastManager::ConsumeOpenCenterRequest() {
@@ -55,7 +65,8 @@ bool SmatchetToastManager::ConsumeOpenCenterRequest() {
 }
 
 void SmatchetToastManager::Render() {
-    if (m_toasts.empty()) return;
+    if (m_toasts.empty())
+        return;
 
     auto now = std::chrono::steady_clock::now();
 
@@ -65,7 +76,8 @@ void SmatchetToastManager::Render() {
                                   [&](const ToastNotification& t) { return !t.Sticky && now >= t.Expiry; }),
                    m_toasts.end());
 
-    if (m_toasts.empty()) return;
+    if (m_toasts.empty())
+        return;
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImVec2 workPos = viewport->WorkPos;
@@ -92,7 +104,8 @@ void SmatchetToastManager::Render() {
         float wrapWidth = toastWidth - 30.0f;
         ImVec2 msgSize = ImGui::CalcTextSize(message, nullptr, false, wrapWidth);
         float toastHeight = titleSize.y + msgSize.y + 25.0f;
-        if (!message || message[0] == '\0') toastHeight = titleSize.y + 20.0f;
+        if (!message || message[0] == '\0')
+            toastHeight = titleSize.y + 20.0f;
 
         ImVec2 pos(workPos.x + workSize.x - toastWidth - padding, currentY - toastHeight);
 
@@ -167,10 +180,18 @@ void SmatchetToastManager::Render() {
 
         ImVec4 accentColor;
         switch (t.Type) {
-            case ToastType::Success: accentColor = SmatchetTheme::Colors::StatusDone; break;
-            case ToastType::Error:   accentColor = SmatchetTheme::Colors::StatusBlocked; break;
-            case ToastType::Warning: accentColor = SmatchetTheme::Colors::PriorityMedium; break;
-            default:                accentColor = SmatchetTheme::Colors::StatusInProgress; break;
+        case ToastType::Success:
+            accentColor = SmatchetTheme::Colors::StatusDone;
+            break;
+        case ToastType::Error:
+            accentColor = SmatchetTheme::Colors::StatusBlocked;
+            break;
+        case ToastType::Warning:
+            accentColor = SmatchetTheme::Colors::PriorityMedium;
+            break;
+        default:
+            accentColor = SmatchetTheme::Colors::StatusInProgress;
+            break;
         }
         ImU32 accentU32 = ImGui::GetColorU32(ImVec4(accentColor.x, accentColor.y, accentColor.z, alpha));
 
@@ -179,7 +200,8 @@ void SmatchetToastManager::Render() {
         dl->AddRect(pos, ImVec2(pos.x + toastWidth, pos.y + toastHeight), borderCol, 6.0f);
 
         // Draw accent bar on the left
-        dl->AddRectFilled(pos, ImVec2(pos.x + 4.0f, pos.y + toastHeight), accentU32, 6.0f, ImDrawFlags_RoundCornersLeft);
+        dl->AddRectFilled(pos, ImVec2(pos.x + 4.0f, pos.y + toastHeight), accentU32, 6.0f,
+                          ImDrawFlags_RoundCornersLeft);
 
         // Draw Text
         ImU32 textCol = ImGui::GetColorU32(ImVec4(themeText.x, themeText.y, themeText.z, alpha));
@@ -187,8 +209,8 @@ void SmatchetToastManager::Render() {
 
         if (message && message[0] != '\0') {
             ImU32 msgCol = ImGui::GetColorU32(ImVec4(themeText.x, themeText.y, themeText.z, 0.8f * alpha));
-            dl->AddText(nullptr, 0.0f, ImVec2(pos.x + 15.0f, pos.y + 10.0f + titleSize.y + 5.0f), msgCol,
-                        message, nullptr, wrapWidth);
+            dl->AddText(nullptr, 0.0f, ImVec2(pos.x + 15.0f, pos.y + 10.0f + titleSize.y + 5.0f), msgCol, message,
+                        nullptr, wrapWidth);
         }
 
         // Close cross, drawn as two strokes (no font dependency), revealed on hover.
@@ -209,8 +231,3 @@ void SmatchetToastManager::Render() {
         m_toasts.erase(m_toasts.begin() + dismissIndex);
     }
 }
-
-
-
-
-

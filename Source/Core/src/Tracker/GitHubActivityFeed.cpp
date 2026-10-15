@@ -2,6 +2,7 @@
 
 #include "GitHubClient.h"
 #include "GitHubIssueSearch.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
@@ -58,7 +59,7 @@ GitHubClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acc
     const std::string eventsBase = auth.BaseUrl + "/repos/" + owner + "/" + repo + "/issues/events";
 
     std::string outError;
-    const int kMaxPages = 10; // 1000 events — bounded scan, not a full sync
+    const int kMaxPages = smatchet::limits::Get().GitHubActivityMaxPages; // bounded scan, not a full sync
     for (int page = 1; page <= kMaxPages; ++page) {
         if (activityCancel_.load()) {
             break; // window closed — return what we have
@@ -141,7 +142,8 @@ Result<std::vector<std::string>, TrackerError> GitHubClient::FetchUserGroupNames
             LOG_WARN("GitHubClient: org teams: expected array, body=%s", RedactHttpBodyForLog(resp.text).c_str());
             return GroupsResult::Ok(std::move(outGroupNames));
         }
-        const int kMaxTeamChecks = 50; // one membership probe per team — sanity bound
+        const int kMaxTeamChecks =
+            smatchet::limits::Get().GitHubActivityMaxTeamChecks; // one membership probe per team — sanity bound
         int checked = 0;
         for (const auto& team : teams) {
             if (checked >= kMaxTeamChecks) {

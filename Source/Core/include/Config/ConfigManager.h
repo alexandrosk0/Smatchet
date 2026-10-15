@@ -22,6 +22,7 @@
 
 #include "AiTypes.h"
 #include "KeybindingsConfig.h"
+#include "TunableLimits.h"
 #include "LuaScriptConsent.h" // LuaScriptApproval — pure, nlohmann-free (keeps this header light)
 #include "SmatchetDefaults.h"
 #include "SmatchetResult.h" // VoidResult (SetStoragePreference)
@@ -199,6 +200,11 @@ struct TrackerConfig {
     // Max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
     // 0/negative falls back to the in-cache default (16).
     int FieldCatalogCacheMaxProjects = 16;
+    // User-tunable caps / timeouts / cache sizes (Config/TunableLimits.h is the single table of keys,
+    // defaults and clamp ranges). Persisted as the top-level "limits" object; missing keys keep
+    // their defaults, out-of-range values are clamped at load. Load() publishes the result to
+    // smatchet::limits::Get(), which the call sites read.
+    smatchet::limits::LimitsConfig Limits;
     // multi-grid-tabs Slice 5a (plan item 21): max HIDDEN grid panes that may retain an in-memory
     // ticket snapshot before the LRU cap frees the least-recently-visible one (its rows survive in
     // tickets_v2 — re-showing re-seeds). Visible/focused panes are never evicted. 0/negative falls

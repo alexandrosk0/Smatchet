@@ -43,8 +43,8 @@ P4ChangelistDescribeCache& Cache();
  * explicitly from the app's shutdown path (BEFORE static destruction) so an unfinished
  * fetch is waited on with a logged timeout instead.
  *
- * The default matches (with headroom) P4Annotate.cpp's own `kP4ProcessTimeoutMs`
- * (120000 ms) — the hard cap SubprocessCapture::Run already enforces on every
+ * The default matches (with headroom) P4Annotate.cpp's own user-tunable `p4_process_timeout_ms`
+ * (default 120000 ms) — the hard cap SubprocessCapture::Run already enforces on every
  * `p4 describe` call. That means this wait isn't just theater papering over the same
  * eventual block: in every case except SubprocessCapture itself failing to honor its
  * own timeout, the fetch WILL be ready before this returns, so the destructor at

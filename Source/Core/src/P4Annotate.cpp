@@ -1,4 +1,5 @@
 #include "P4Annotate.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "UiThreadAffinity.h"
 #include "P4AnnotateParse.h"
@@ -17,8 +18,6 @@ namespace {
 
 constexpr size_t kP4LogMaxStderr = 2048;
 constexpr size_t kP4LogMaxStdoutTrace = 8192;
-constexpr int kP4ProcessTimeoutMs = 120000;
-constexpr size_t kP4CaptureBytesMax = 4u * 1024u * 1024u;
 
 } // namespace
 
@@ -52,16 +51,17 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = exe;
     opts.args = args;
-    opts.timeoutMs = kP4ProcessTimeoutMs;
+    const smatchet::limits::LimitsConfig lim = smatchet::limits::Get();
+    opts.timeoutMs = lim.P4ProcessTimeoutMs;
     // Don't hand p4 the parent's secret-bearing env vars (GH_TOKEN, API keys,
     // tracker PATs, etc.) — p4 needs none of them (audit #15). P4PORT / P4USER
     // / P4CLIENT / P4CONFIG, PATH, locale and HOME all survive the scrub, so the
     // p4 client keeps resolving its connection and ticket exactly as before.
     opts.scrubSensitiveEnv = true;
-    // Preserve P4Annotate's historical per-stream cap (4 MB) — matches
-    // pre-lift kP4CaptureBytesMax behaviour for both stdout and stderr.
-    opts.stdoutByteCap = kP4CaptureBytesMax;
-    opts.stderrByteCap = kP4CaptureBytesMax;
+    // Per-stream cap for both stdout and stderr (historical default 4 MB, now P4CaptureMaxMiB).
+    const std::size_t captureBytesMax = smatchet::limits::MiB(lim.P4CaptureMaxMiB);
+    opts.stdoutByteCap = captureBytesMax;
+    opts.stderrByteCap = captureBytesMax;
     Result<SubprocessCapture::CaptureResult> capResult = SubprocessCapture::Run(opts);
     if (!capResult.has_value()) {
         LOG_ERROR("P4: spawn failed: %s", capResult.error().c_str());
@@ -75,7 +75,7 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
         outStderr = "p4 process timed out";
     }
     if (cap.stdoutCapped || cap.stderrCapped) {
-        LOG_WARN("P4: output capture capped at %zu bytes per stream", kP4CaptureBytesMax);
+        LOG_WARN("P4: output capture capped at %zu bytes per stream", captureBytesMax);
     }
     LOG_INFO("P4: completed exit=%d duration=%lld ms", outExitCode, static_cast<long long>(cap.durationMs));
     if (outExitCode != 0 && !outStderr.empty()) {

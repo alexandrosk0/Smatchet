@@ -29,7 +29,6 @@ std::mutex& FieldCatalogCacheFileMutex() {
 }
 
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
-constexpr int kDefaultMaxCachedProjects = 16;
 // A restore moves its snapshot up the LRU order on disk at most this often: each move rewrites the whole
 // cache file, and a restore can run on the UI thread. Between those writes the touch stays in memory.
 constexpr std::int64_t kLruTouchIntervalSeconds = 24 * 60 * 60;
@@ -596,7 +595,8 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
         }
 
         ApplyPendingTouches(root, /*consume=*/true); // the write is happening anyway: loads' touches ride along
-        const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
+        // The fallback default lives in one place: TrackerConfig.
+        const int cap = maxProjects > 0 ? maxProjects : TrackerConfig().FieldCatalogCacheMaxProjects;
         EvictLeastRecentlyUsedIfOverCap(root, cap, cacheKey);
 
         return PersistRootLocked(root, outError);

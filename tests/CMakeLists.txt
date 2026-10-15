@@ -1626,7 +1626,7 @@ add_executable(SmatchetTests
     # new history record. Pure STL (no ImGui), so it links in this pure block.
     Core/ToastHistoryPure.test.cpp
     # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
-    # oldest past kMaxLiveToasts; sticky error toasts never expire so the bound is load-
+    # oldest past MaxLiveToasts(); sticky error toasts never expire so the bound is load-
     # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.
     Core/ToastManagerLiveCap.test.cpp
     # ticket-change-monitor S3 — Notification Center row formatting (Ui/NotificationCenterPure.h,

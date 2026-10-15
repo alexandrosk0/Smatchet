@@ -1,25 +1,31 @@
 // ToastManagerLiveCap — the live (on-screen) toast stack is bounded even though error
 // toasts are sticky (never auto-expire, UX critique M2). A burst of failures — e.g. one
 // error toast per failed bulk edit — must not stack past the viewport top and demand one
-// dismissal click each: Push evicts oldest-first past kMaxLiveToasts while the bounded
+// dismissal click each: Push evicts oldest-first past MaxLiveToasts() while the bounded
 // history ring and the unread-error counter keep the full trail. Push/LiveCount/History
 // never touch ImGui, so this links in the pure bucket-A block (Render stays bucket-E).
 
 #include <doctest/doctest.h>
 
 #include "SmatchetToast.h"
+#include "../support/ScopedLimits.h"
 
 #include <cstddef>
 #include <string>
 
-TEST_CASE("SmatchetToastManager: live stack bounded at kMaxLiveToasts; history + unread errors keep the trail") {
+TEST_CASE("SmatchetToastManager: live stack bounded at MaxLiveToasts(); history + unread errors keep the trail") {
+    // Pin the two limits this test's arithmetic depends on (live cap 6, history 200); restored on exit.
+    const smatchet_tests::ScopedLimits pinnedLimits([](smatchet::limits::LimitsConfig& l) {
+        l.ToastMaxLive = 6;
+        l.ToastHistoryMax = 200;
+    });
     SmatchetToastManager& mgr = SmatchetToastManager::Instance();
     // Shared singleton — start from a clean slate and restore one at the end.
     mgr.DismissAllLive();
     mgr.ClearHistory();
     mgr.MarkHistorySeen();
 
-    const std::size_t cap = SmatchetToastManager::kMaxLiveToasts;
+    const std::size_t cap = SmatchetToastManager::MaxLiveToasts();
     const int pushed = static_cast<int>(cap) + 4;
     for (int i = 0; i < pushed; ++i) {
         mgr.Push("Save failed", "SMAT-" + std::to_string(i), ToastType::Error, 4000);

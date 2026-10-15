@@ -357,25 +357,35 @@ void AppendPlaneTruncationWarning(TrackerIssueFetchSummary& summary, const std::
 // rows via the pure mapper, stream completed batches, and advance/terminate on the cursor.
 // Reproduces the original inline loop byte-for-byte: cancel checks, outer page cap soft-warning,
 // empty-results clean stop, and the per-page hard-failure early return.
-PlanePageLoopResult
-RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, const std::string& planeProjectId,
-                 const std::string& projectIdentifier, const cpr::Header& headers,
-                 const std::vector<smatchet::plane::UserDisplayLookup>& userLookup,
-                 const PlaneClient::BatchCallback& onBatch, const PlaneClient::CancelCallback& shouldCancel,
-                 const std::string& sequenceIdInFilter, const std::string& updatedAtGteFilter,
-                 std::unordered_map<std::string, std::string>& localKeyToId, TrackerIssueFetchSummary& summary) {
+PlanePageLoopResult RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug,
+                                     const std::string& planeProjectId, const std::string& projectIdentifier,
+                                     const cpr::Header& headers,
+                                     const std::vector<smatchet::plane::UserDisplayLookup>& userLookup,
+                                     const PlaneClient::BatchCallback& onBatch,
+                                     const PlaneClient::CancelCallback& shouldCancel,
+                                     const std::string& sequenceIdInFilter, const std::string& updatedAtGteFilter,
+                                     std::unordered_map<std::string, std::string>& localKeyToId,
+                                     TrackerIssueFetchSummary& summary, const smatchet::search_guards::LoopCaps& caps) {
     PlanePageLoopResult result;
     const int pageSize = smatchet::search_guards::kPageSize;
     // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
-    // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
-    // and matches the per-server safety limit in JiraIssueSearch.cpp.
-    constexpr int kMaxPlanePages = smatchet::search_guards::kPlaneMaxPages;
-    constexpr size_t kMaxTotalFetchBytes = smatchet::search_guards::kPlaneMaxTotalFetchBytes;
-    constexpr size_t kMaxResultCount = smatchet::search_guards::kPlaneMaxResultCount;
+    // The page, byte and result caps are user-tunable (Config/TunableLimits.h) and mirror the per-server
+    // safety limits in JiraIssueSearch.cpp.
+    const int kMaxPlanePages = caps.maxPages;
+    const size_t kMaxTotalFetchBytes = caps.maxTotalFetchBytes;
+    const size_t kMaxResultCount = caps.maxResultCount;
+    const smatchet::search_guards::Deadline deadline = smatchet::search_guards::StartSearchDeadline();
     std::string listCursor;
 
     while (true) {
         if (shouldCancel && shouldCancel()) {
+            result.EndedCleanly = false;
+            break;
+        }
+        // Wall-clock guard on the whole walk (the per-request timeout only bounds one page).
+        if (deadline.Expired()) {
+            AppendPlaneTruncationWarning(summary, "Plane fetch time limit reached; remaining issues not fetched. "
+                                                  "Narrow your view.");
             result.EndedCleanly = false;
             break;
         }
@@ -438,16 +448,18 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
             onBatch(std::move(pageIssues));
         }
 
-        // Guard result count to prevent memory exhaustion from massive result sets.
-        if (summary.FetchedCount > kMaxResultCount) {
-            AppendPlaneTruncationWarning(summary, "Plane result count exceeded " + std::to_string(kMaxResultCount) +
+        // Phase 6: cursor pagination — advance or terminate.
+        listCursor = smatchet::plane::NextPaginationCursor(page.Body);
+
+        // Guard result count to prevent memory exhaustion from massive result sets. The cap is a soft
+        // bound rounded up to a whole page, and it only counts as truncation when more pages remain:
+        // a walk that just finished its last page is complete however many rows it held.
+        if (summary.FetchedCount >= kMaxResultCount && !listCursor.empty()) {
+            AppendPlaneTruncationWarning(summary, "Plane result count reached " + std::to_string(kMaxResultCount) +
                                                       " issues; remaining issues not fetched. Narrow your view.");
             result.EndedCleanly = false;
             break;
         }
-
-        // Phase 6: cursor pagination — advance or terminate.
-        listCursor = smatchet::plane::NextPaginationCursor(page.Body);
         if (listCursor.empty()) {
             result.EndedCleanly = true;
             break;
@@ -573,7 +585,10 @@ PlaneClient::FetchIssuesStreamedImpl(const BatchCallback& onBatch, const CancelC
         // Phases 4-6: drive the cursor-paginated work-items fetch/map/stream loop.
         PlanePageLoopResult loop = RunPlanePageLoop(
             planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers, userLookup,
-            filteredOnBatch, shouldCancel, sequenceIdInFilter, updatedAtGteFilter, localKeyToId, summary);
+            filteredOnBatch, shouldCancel, sequenceIdInFilter, updatedAtGteFilter, localKeyToId, summary,
+            // A changed-since probe (updated_at__gte window) is a background membership check: give it the
+            // looser probe ceiling so a busy window is not rejected as a partial walk.
+            updatedAtGteFilter.empty() ? smatchet::search_guards::PlaneCaps() : smatchet::search_guards::ProbeCaps());
         if (loop.HardFailed) {
             return summary;
         }
@@ -625,7 +640,7 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     // loop (was a §2.1 P1 bug: raw cpr::Get bypassed both). Classification via TrackerError
     // also fixes the second §2.1 P1: a 404 from a stale base URL was wrongly TransportDown.
     const cpr::Response resp =
-        TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+        TrackerGetLogged("PlaneClient", url, headers, TrackerProbeConnectTimeoutMs(), TrackerProbeOverallTimeoutMs());
     // §B2: shared reachability-probe classifier (see TrackerHttpClient.h). The per-backend switch
     // was hoisted there so Jira / Plane (and future backends) share one status → probe-kind matrix.
     return ClassifyReachabilityProbe(resp);

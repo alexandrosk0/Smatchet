@@ -337,15 +337,23 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
                       const std::vector<std::string>& selectedFields,
                       const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
                       const JiraClient::BatchCallback& onBatch, const JiraClient::CancelCallback& shouldCancel,
-                      TrackerIssueFetchSummary& summary, int maxPages = smatchet::search_guards::kJiraMaxPages) {
+                      TrackerIssueFetchSummary& summary, const smatchet::search_guards::LoopCaps& caps) {
     JiraPageLoopResult result;
     std::string nextPageToken;
-    const int kMaxPages = maxPages;
-    const size_t kMaxTotalFetchBytes = smatchet::search_guards::kJiraMaxTotalFetchBytes;
-    const size_t kMaxResultCount = smatchet::search_guards::kJiraMaxResultCount;
+    const int kMaxPages = caps.maxPages;
+    const size_t kMaxTotalFetchBytes = caps.maxTotalFetchBytes;
+    const size_t kMaxResultCount = caps.maxResultCount;
+    const smatchet::search_guards::Deadline deadline = smatchet::search_guards::StartSearchDeadline();
 
     for (int page = 1; page <= kMaxPages; ++page) {
         if (shouldCancel && shouldCancel()) {
+            result.endedCleanly = false;
+            break;
+        }
+        // Wall-clock guard: the pending cursor stays in nextPageToken, so the caller sees a partial walk.
+        if (deadline.Expired()) {
+            AppendJiraTruncationWarning(summary, "Jira fetch time limit reached; remaining issues not fetched. "
+                                                 "Narrow the view's JQL.");
             result.endedCleanly = false;
             break;
         }
@@ -390,9 +398,11 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
             summary.Error = TrackerErrorParse(summary.FetchError);
         }
 
-        // Guard result count to prevent memory exhaustion from massive result sets.
-        if (summary.FetchedCount > kMaxResultCount) {
-            AppendJiraTruncationWarning(summary, "Jira result count exceeded " + std::to_string(kMaxResultCount) +
+        // Guard result count to prevent memory exhaustion from massive result sets. The cap is a soft
+        // bound rounded up to a whole page, and it only counts as truncation when more pages remain:
+        // a walk that just finished its last page is complete however many rows it held.
+        if (summary.FetchedCount >= kMaxResultCount && !outcome.Stop && !outcome.NextToken.empty()) {
+            AppendJiraTruncationWarning(summary, "Jira result count reached " + std::to_string(kMaxResultCount) +
                                                      " issues; remaining issues not fetched. Narrow the view's JQL.");
             result.endedCleanly = false;
             break;
@@ -498,8 +508,9 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
 
-    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments,
-                                                          onBatch, shouldCancel, summary);
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments, onBatch, shouldCancel,
+                              summary, smatchet::search_guards::JiraCaps());
 
     summary.FullSyncCompleted = loop.endedCleanly && loop.fetchedPages > 0 && (!shouldCancel || !shouldCancel());
 
@@ -784,8 +795,9 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
     };
     auto shouldCancel = []() { return false; };
     TrackerIssueFetchSummary summary;
-    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments,
-                                                          onBatch, shouldCancel, summary);
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments, onBatch, shouldCancel,
+                              summary, smatchet::search_guards::ProbeCaps());
 
     if (!summary.FetchError.empty()) {
         return FetchResult::Err(summary.Error.Kind != TrackerErrorKind::None ? summary.Error
@@ -804,8 +816,9 @@ namespace {
 /// Returns the failure (kind preserved), a Cancelled error when `shouldCancel` fired, or Ok; `complete` is
 /// false when a cap cut the walk short (the caller decides what an incomplete answer is worth).
 TrackerError RunJiraRosterQuery(const std::string& base, const cpr::Header& headers, const std::string& jqlRaw,
-                                int pageSize, int maxPages, const JiraClient::CancelCallback& shouldCancel,
-                                TrackerRoster& roster, bool& complete, std::string& warning) {
+                                int pageSize, const smatchet::search_guards::LoopCaps& caps,
+                                const JiraClient::CancelCallback& shouldCancel, TrackerRoster& roster, bool& complete,
+                                std::string& warning) {
     const std::string baseSearchUrl =
         smatchet::jira::BuildJiraSearchUrl(base, UrlEncode(jqlRaw), pageSize, "updated", false);
     const std::vector<std::string> selectedFields = {"updated"};
@@ -821,8 +834,8 @@ TrackerError RunJiraRosterQuery(const std::string& base, const cpr::Header& head
         }
     };
     TrackerIssueFetchSummary summary;
-    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch,
-                                                          shouldCancel, summary, maxPages);
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary, caps);
     if (shouldCancel && shouldCancel()) {
         return TrackerErrorCancelled();
     }
@@ -853,7 +866,7 @@ Result<TrackerRoster, TrackerError> JiraClient::FetchViewRoster(const TrackerCon
     bool complete = false;
     const TrackerError err = RunJiraRosterQuery(
         NormalizeBaseUrl(cfg.Domain), BuildTrackerHeaders(cfg), jqlRaw, smatchet::search_guards::kJiraRosterPageSize,
-        smatchet::search_guards::kJiraMaxRosterPages, shouldCancel, roster, complete, roster.Warning);
+        smatchet::search_guards::JiraCaps(), shouldCancel, roster, complete, roster.Warning);
     if (!err.IsOk()) {
         return RosterResult::Err(err);
     }
@@ -878,8 +891,11 @@ Result<TrackerRoster, TrackerError> JiraClient::FetchRosterForKeys(const Tracker
         const std::size_t n = (std::min)(kJiraRosterKeysPerRequest, deduped.size() - offset);
         bool complete = false;
         std::string warning;
-        const TrackerError err = RunJiraRosterQuery(base, headers, BuildKeyInJql(deduped, offset, n),
-                                                    static_cast<int>(n), 1, shouldCancel, roster, complete, warning);
+        const TrackerError err = RunJiraRosterQuery(
+            base, headers, BuildKeyInJql(deduped, offset, n), static_cast<int>(n),
+            // One page of exactly `n` keys: never more pages or rows.
+            smatchet::search_guards::LoopCaps{1, n, smatchet::search_guards::ProbeMaxTotalFetchBytes()}, shouldCancel,
+            roster, complete, warning);
         if (!err.IsOk()) {
             return RosterResult::Err(err);
         }
@@ -908,7 +924,7 @@ Result<TrackerRoster, TrackerError> JiraClient::FetchChildRosterOfKeys(const Tra
         std::string warning;
         const TrackerError err = RunJiraRosterQuery(
             base, headers, BuildParentInJql(deduped, offset, n), smatchet::search_guards::kJiraRosterPageSize,
-            smatchet::search_guards::kJiraMaxRosterPages, shouldCancel, roster, complete, warning);
+            smatchet::search_guards::ProbeCaps(), shouldCancel, roster, complete, warning);
         if (!err.IsOk()) {
             return RosterResult::Err(err);
         }
@@ -952,8 +968,8 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
     };
     auto shouldCancel = []() { return false; };
     TrackerIssueFetchSummary summary;
-    const JiraPageLoopResult loop =
-        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary);
+    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch,
+                                                          shouldCancel, summary, smatchet::search_guards::ProbeCaps());
 
     if (!summary.FetchError.empty()) {
         return KeysResult::Err(summary.Error.Kind != TrackerErrorKind::None ? summary.Error

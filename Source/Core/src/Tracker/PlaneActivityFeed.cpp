@@ -2,6 +2,7 @@
 
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+#include "TunableLimits.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "PlaneIssueMappingPure.h"
@@ -43,7 +44,7 @@ void ScanIssueActivities(const std::string& listBase, const std::string& issueId
                          const std::string& accountId, const std::string& dayFrom, const std::string& dayTo,
                          const std::string& issueKey, const std::string& issueSummary, const std::string& issueUrl,
                          const std::atomic<bool>& cancel, std::vector<TrackerActivityEntry>& outEntries) {
-    const int kMaxActivityPages = 5; // per-issue activity pagination bound
+    const int kMaxActivityPages = smatchet::limits::Get().PlaneActivityMaxPages; // per-issue activity pagination bound
     std::string activityCursor;
     for (int activityPage = 1; activityPage <= kMaxActivityPages; ++activityPage) {
         if (cancel.load()) {
@@ -132,7 +133,7 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
 
     // Discovery: scan the project's work items (newest pages first is not guaranteed,
     // so the updated_at skip rule bounds the per-issue activity fetches instead).
-    const int kMaxDiscoveryPages = 10; // 1000 issues — bounded scan, not a full sync
+    const int kMaxDiscoveryPages = smatchet::limits::Get().PlaneDiscoveryMaxPages; // bounded scan, not a full sync
     std::string cursor;
     std::string outError;
     for (int page = 1; page <= kMaxDiscoveryPages; ++page) {
