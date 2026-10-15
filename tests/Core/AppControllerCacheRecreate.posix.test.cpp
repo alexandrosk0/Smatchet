@@ -109,6 +109,40 @@ TEST_CASE("AppController cache recreate: withdraws, wipes the queued rows, reope
     CHECK(doneCalls == 1);
 }
 
+TEST_CASE("AppController cache recreate: every live pane is emptied and re-armed to sync, not only the focused one") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db;
+    AppController app;
+    REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    GridLiveContext* const other = app.EnsurePaneContextLive("second-pane", "Jira");
+    REQUIRE(other != nullptr);
+    {
+        // The pane shows a row and has already made its first sync.
+        std::lock_guard<std::mutex> lock(other->activeTicketsMutex_);
+        CachedTicket stale;
+        stale.id = "OLD-1";
+        other->ActiveTickets.push_back(stale);
+        other->activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(other->ActiveTickets);
+    }
+    other->initialSyncKicked = true;
+    other->lastSyncedJql = "project = OLD";
+
+    int doneCalls = 0;
+    REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome&) { ++doneCalls; })
+                .has_value());
+    REQUIRE(PumpUntil(app, [&]() { return doneCalls > 0; }));
+
+    // The row came from the file that is gone: the pane is re-read from the new (empty) database on a worker.
+    const auto paneEmpty = [&]() {
+        std::lock_guard<std::mutex> lock(other->activeTicketsMutex_);
+        return other->ActiveTickets.empty();
+    };
+    CHECK(PumpUntil(app, paneEmpty));
+    // Its first-sync latch is re-armed, so the frame loop's EnsurePaneLiveSyncStarted syncs it again.
+    CHECK_FALSE(other->initialSyncKicked);
+    CHECK(other->lastSyncedJql.empty());
+}
+
 TEST_CASE("AppController cache recreate: a second recreate while one runs is refused and changes nothing") {
     smatchet_tests::OfflineQueueTestEnvGuard env;
     TempDb db;

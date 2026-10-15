@@ -300,6 +300,10 @@ void AppController::FinishCacheRecreate_(
     } else if (outcome.Wiped) {
         RefreshAfterPartialCacheWipe_();
     }
+    if (outcome.Wiped) {
+        RefreshOtherPanesAfterCacheWipe_(); // every pane showed rows from the file that is gone, not only the focused
+                                            // one
+    }
     cacheRecreating_.store(false); // down before onDone, which may start the follow-up sync
     if (outcome.Ok) {
         LOG_INFO("AppController: local cache recreated.");
@@ -343,6 +347,44 @@ void AppController::RefreshAfterPartialCacheWipe_() {
     }
     ctx.ActiveTicketsRevision.fetch_add(1);
     NotifyLuaTicketDataChanged();
+}
+
+void AppController::RefreshOtherPanesAfterCacheWipe_() {
+    const bool haveCache = std::atomic_load(&Cache) != nullptr;
+    GridLiveContext* const focused = &focusedContext();
+    for (std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+         it != gridContexts_.end(); ++it) {
+        GridLiveContext& ctx = *it->second;
+        if (&ctx == focused) {
+            continue;
+        }
+        // Re-arm the pane's first-sync latch (UI thread, like every write of these fields): a visible pane runs
+        // EnsurePaneLiveSyncStarted each frame, so it syncs against the new database without being refocused. A pane
+        // whose service already replayed a request held back by the gate (opened mid-recreate) is syncing: left alone.
+        if (!ctx.ticketSync_ || !ctx.ticketSync_->HasPendingWork()) {
+            ctx.initialSyncKicked = false;
+            ctx.lastSyncedJql.clear();
+            ctx.syncRetryAfter = std::chrono::steady_clock::time_point();
+        }
+        if (haveCache) {
+            GridLiveContext* const ctxPtr = &ctx;
+            const std::uint64_t generation = ctx.backendGeneration_.load();
+            try {
+                LaunchBackgroundTask(
+                    [this, ctxPtr, generation]() { RefreshLocalDataCheckedImpl_(*ctxPtr, &generation); });
+            } catch (const std::exception& ex) {
+                LOG_WARN("AppController: refreshing pane '%s' after the cache recreate did not start: %s",
+                         ctx.PaneId.c_str(), ex.what());
+            }
+            continue;
+        }
+        {
+            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            ctx.ActiveTickets.clear();
+            ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>();
+        }
+        ctx.ActiveTicketsRevision.fetch_add(1);
+    }
 }
 
 bool AppController::OpenLocalCacheFileForTest(const std::string& dbPath) {

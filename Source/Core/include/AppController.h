@@ -1583,6 +1583,11 @@ class AppController : public IAppThreading,
     /// The cache recreate failed after it deleted the cache files: refresh the focused pane and the queue
     /// snapshots so nothing keeps showing rows that are gone. UI thread.
     void RefreshAfterPartialCacheWipe_();
+    /// After the cache files were replaced (a recreate that finished, or failed after wiping): every live pane OTHER
+    /// than the focused one still shows rows from the file that is gone and has a cancelled sync. Re-reads each from
+    /// the new database on a worker (or empties it when there is none) and re-arms its first-sync latch, so a visible
+    /// pane syncs again on the next frame. The focused pane is refreshed and re-synced by FinishCacheRecreate_ itself.
+    void RefreshOtherPanesAfterCacheWipe_();
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};
