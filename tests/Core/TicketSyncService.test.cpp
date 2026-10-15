@@ -2754,11 +2754,14 @@ TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane re
 TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
     smatchet::sync::ChangeMonitorPaneState state;
     smatchet::sync::ChangeProbeCycleNotes notes;
-    for (std::size_t i = 0; i < smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals + 50; ++i) {
+    // Copied to a local: a `static constexpr` member odr-used by doctest's const& capture needs an out-of-line
+    // definition at C++14, and lld (the TSan Linux job) fails with an undefined symbol without it.
+    const std::size_t cap = smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals;
+    for (std::size_t i = 0; i < cap + 50; ++i) {
         notes.RefusedKeys.push_back("R-" + std::to_string(i));
     }
     state.Absorb(notes);
-    CHECK(state.RefusedKeys.size() == smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals);
+    CHECK(state.RefusedKeys.size() == cap);
 }
 
 TEST_CASE("Change monitor cycle: an incomplete roster is reported once, then the pane goes straight to changed-since") {
