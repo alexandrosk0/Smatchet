@@ -259,7 +259,11 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         ctx.DryRun = pa.dryRun;
         ctx.TimeoutMs = pa.timeoutMs;
 
+        // No frame is ever drawn for a one-shot command: a command that waits for UI-thread work (cache.recreate)
+        // has to pump the dispatcher itself. An async scenario starts its render loop below, after this is lowered.
+        boot.app->SetNoFrameLoop(true);
         smatchet::cmd::CommandResult dispatchResult = boot.app->Commands().Dispatch(toolName, argsToSend, ctx);
+        boot.app->SetNoFrameLoop(false);
 
         nlohmann::json envelope = dispatchResult.ToWireJson(toolName, pa.dryRun);
         const nlohmann::json envData = SafeObject(envelope, "data");

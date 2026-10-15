@@ -345,6 +345,20 @@ void AppController::RefreshAfterPartialCacheWipe_() {
     NotifyLuaTicketDataChanged();
 }
 
+bool AppController::OpenLocalCacheFileForTest(const std::string& dbPath) {
+    try {
+        std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(dbPath));
+    } catch (const std::exception& ex) {
+        LOG_ERROR("OpenLocalCacheFileForTest: failed to open '%s': %s", dbPath.c_str(), ex.what());
+        return false;
+    }
+    localCacheDbPath_ = dbPath;
+    // The services that read the cache (edit-meta, offline queues) exist only once wired; the recreate's refresh uses
+    // them.
+    WireCoreServices();
+    return true;
+}
+
 bool AppController::EnsureLocalCacheForUiTest() {
     // Bucket-E opt-in (SMATCHET_UITEST_WITH_LOCAL_CACHE=1). A normal boot already
     // opened a file-backed cache in InitConfig; only stand one up when it is unset

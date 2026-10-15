@@ -328,6 +328,15 @@ class AppController : public IAppThreading,
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
     bool IsOnUiThread() const override;
 
+    /// IMainThreadPoster. False only while the one-shot in-process CLI dispatches a command
+    /// (`SetNoFrameLoop(true)`, Source/Standalone/CliCommandRunner.cpp): nothing drains `mainThreadDispatcher` then,
+    /// so a command that waits for UI-thread work pumps it with `DrainMainThreadOnce`.
+    bool HasFrameLoop() const override { return !noFrameLoop_.load(); }
+    /// IMainThreadPoster. Runs the queued UI-thread tasks once (the dispatcher's own per-call time budget applies).
+    void DrainMainThreadOnce() override;
+    /// Marks the application as running without a frame loop; see `HasFrameLoop`. Set on the UI thread, read anywhere.
+    void SetNoFrameLoop(bool noFrameLoop) { noFrameLoop_.store(noFrameLoop); }
+
     /// IMainThreadPoster — post `fn` to the UI thread by delegating to
     /// `mainThreadDispatcher`. Lets command helpers marshal onto the UI thread
     /// through the interface without depending on AppController (core-include-dag
@@ -372,6 +381,11 @@ class AppController : public IAppThreading,
     /// SMATCHET_UITEST_WITH_LOCAL_CACHE=1 env opt-in. Returns true if a live cache is
     /// present on return.
     bool EnsureLocalCacheForUiTest();
+
+    /// TEST SEAM (headless AppController tests): opens a file-backed cache at `dbPath` and records it as the local
+    /// cache database path, so `StartRecreateLocalCacheDatabase` has a real file to withdraw, wipe and reopen without
+    /// a full `Initialize`. No production caller.
+    bool OpenLocalCacheFileForTest(const std::string& dbPath);
 
 #if defined(SMATCHET_WITH_AI)
     /// Phase 3 of ai-chat-claude-desktop-parity. Thin pass-through to
@@ -1920,6 +1934,7 @@ class AppController : public IAppThreading,
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
     /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
     void JoinCacheRecreateWorker_();
+    std::atomic<bool> noFrameLoop_{false};        ///< the one-shot in-process CLI: no frame loop drains the dispatcher
     std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
     std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
     std::thread cacheRecreateWorker_;             ///< joined by the next Start and by ~AppController

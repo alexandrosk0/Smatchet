@@ -462,6 +462,8 @@ bool AppController::IsOnUiThread() const {
     return std::this_thread::get_id() == uiThreadId_;
 }
 
+void AppController::DrainMainThreadOnce() { mainThreadDispatcher.Drain(); }
+
 void AppController::PostToMainThread(std::function<void()> fn) {
     // IMainThreadPoster — delegate to the concrete dispatcher. Lets the Commands/
     // helper templates marshal onto the UI thread through the interface without

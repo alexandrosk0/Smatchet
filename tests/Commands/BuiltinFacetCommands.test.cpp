@@ -427,6 +427,23 @@ struct TogglePoster : IMainThreadPoster {
     }
 };
 
+// The one-shot in-process CLI: the command runs on the UI thread, but no frame loop ever drains the posted tasks,
+// so the command has to pump the queue itself. `OnPump` models what the dispatcher would run (the recreate's
+// completion); left empty it models a queue that never produces the outcome.
+struct NoFrameLoopPoster : IMainThreadPoster {
+    int Pumps = 0;
+    std::function<void()> OnPump;
+    bool IsOnUiThread() const override { return true; }
+    void PostToMainThread(std::function<void()> fn) override { fn(); }
+    bool HasFrameLoop() const override { return false; }
+    void DrainMainThreadOnce() override {
+        ++Pumps;
+        if (OnPump) {
+            OnPump();
+        }
+    }
+};
+
 CommandContext AutomationCtx(bool confirmed = false, bool dryRun = false) {
     CommandContext ctx;
     ctx.Source = CommandSource::Cli; // automation source — the destructive gate is armed
@@ -581,6 +598,66 @@ TEST_CASE("cache.recreate from another thread waits for the outcome and reports 
     REQUIRE_FALSE(result.Ok);
     CHECK(result.Error.Code == ErrorCode::HandlerError);
     CHECK(result.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate with no frame loop pumps the UI-thread queue until the outcome arrives") {
+    // Smatchet.exe cmd cache.recreate --yes without MCP: the command runs on the thread that booted the app, nothing
+    // drains the dispatcher, and the process exits right after. Returning "started" there left the recreate undone.
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    NoFrameLoopPoster poster;
+    poster.OnPump = [&]() {
+        if (poster.Pumps == 3) {
+            sync.FinishRecreate(); // the dispatcher ran the worker's completion on the third pump
+        }
+    };
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE(r.Ok);
+    CHECK((*r.Data)["completed"] == true);
+    CHECK((*r.Data)["wiped"] == true);
+    CHECK(poster.Pumps == 3);
+    CHECK(sync.RecreateCalls == 1);
+    CHECK_FALSE(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 1); // the follow-up re-fetch started when the new database was ready
+}
+
+TEST_CASE("cache.recreate with no frame loop reports a failed recreate by whether the cache was wiped") {
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    sync.RecreateError = "Failed to open new database: disk full";
+    sync.RecreateWipes = true;
+    NoFrameLoopPoster poster;
+    poster.OnPump = [&]() { sync.FinishRecreate(); };
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate with no frame loop fails, rather than claiming it started, when the queue never delivers") {
+    // A poster that never drains to an outcome: the old code returned {started: true} with exit 0 and nothing wiped.
+    FakeSync sync;
+    sync.HoldRecreate = true; // the recreate never finishes
+    NoFrameLoopPoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+    CommandContext ctx = AutomationCtx(/*confirmed*/ true);
+    ctx.TimeoutMs = 60; // bound the wait
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, ctx);
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Code == ErrorCode::HandlerError);
+    CHECK(r.Error.Message.find("did not finish") != std::string::npos);
+    CHECK(r.Error.Message.find("no frame loop") != std::string::npos);
+    CHECK(poster.Pumps >= 1); // it did pump while it waited
+    CHECK(sync.RecreateCalls == 1);
     CHECK(sync.FullSyncCalls == 0);
 }
 
