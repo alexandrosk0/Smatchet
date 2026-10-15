@@ -146,7 +146,8 @@ void MergeProbeRow(const CachedTicket& t, CachedTicket& resident, ProbeMergeResu
         smatchet::sync::CarryForwardLazyCommentFields(lazy, incoming);
     }
     if (!incoming.GetFieldValueRef("updated").empty() && !resident.GetFieldValueRef("updated").empty() &&
-        incoming.GetFieldValueRef("updated") != resident.GetFieldValueRef("updated")) {
+        !smatchet::sync::IsSameRemoteVersion(incoming.GetFieldValueRef("updated"),
+                                             resident.GetFieldValueRef("updated"))) {
         out.movedKeys.push_back(t.id); // its tracker version moved: transitions and edit permissions are stale
     }
     if (resident.fieldValues != incoming.fieldValues || resident.fieldRichValues != incoming.fieldRichValues) {

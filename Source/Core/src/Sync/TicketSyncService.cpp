@@ -99,7 +99,7 @@ bool MergeRowsIntoActiveTickets(ITicketSyncDeps& deps, const std::vector<CachedT
             // A resident row whose tracker version moved: what hangs off the old version is stale.
             const std::string& was = current.GetFieldValueRef("updated");
             const std::string& now = row.GetFieldValueRef("updated");
-            if (!was.empty() && !now.empty() && was != now) {
+            if (!was.empty() && !now.empty() && !smatchet::sync::IsSameRemoteVersion(was, now)) {
                 movedIds.push_back(row.id);
             }
         }
@@ -1578,6 +1578,13 @@ TicketSyncService::DeltaOutcome TicketSyncService::RunDeltaFetch(std::uint64_t r
         } else {
             out.FallbackReason = "roster request failed: " + roster.error().Detail;
         }
+        return out;
+    }
+
+    if (!roster.value().Entries.empty() && !smatchet::sync::AnyRosterKeyHasCachedMeta(roster.value().Entries, meta)) {
+        // The cache knows versions, but none for this view (another pane's rows): every row would download as new.
+        out.FallbackReason = "no cached ticket versions for this view yet";
+        out.ExpectedFallback = true;
         return out;
     }
 

@@ -2892,3 +2892,36 @@ TEST_CASE("A reload that did not complete publishes no view listing") {
 
     CHECK(rig.deps.ViewListedPublishes == 0);
 }
+
+// --- delta-sync review follow-ups: version rendering and the pane's own cached versions -----------------------
+
+TEST_CASE("Delta reload: a pane with none of its own cached versions goes straight to a full fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("OTHER-1", "T1"), Stamped("OTHER-2", "T1")}); // a sibling pane's rows share the namespace
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("no cached ticket versions for this view") != std::string::npos);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0); // nothing was downloaded as "new" by key
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);        // the streamed full fetch ran instead
+}
+
+TEST_CASE("Delta reload: a stamp re-rendered in another zone is not a change") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "2024-05-01T10:00:00.000+0000")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "2024-05-01T12:00:00.000+0200"}}));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.BodiesFetched == 0);
+    CHECK(stats.Unchanged == 1);
+}
