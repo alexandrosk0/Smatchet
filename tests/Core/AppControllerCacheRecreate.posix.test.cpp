@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include "../support/FakeTicketSyncDeps.h"
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "AppController.h"
@@ -19,10 +20,17 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <thread>
 
 namespace {
+
+/// A headless controller is never Initialize()d, so it has no tracker backend factory; the follow-up sync a recreate
+/// starts would have none to build its backend with. Hand it the fake the TicketSyncService tests use.
+void UseFakeBackends(AppController& app) {
+    app.SetBackendFactory(std::unique_ptr<ITrackerBackendFactory>(new smatchet_tests::FakeTrackerBackendFactory()));
+}
 
 /// Drains the dispatcher until `done` is true (the worker needs the UI thread to withdraw the cache and to finish).
 template <typename Pred> bool PumpUntil(AppController& app, Pred done) {
@@ -75,6 +83,7 @@ TEST_CASE("AppController cache recreate: withdraws, wipes the queued rows, reope
     AppController app;
     GridContextDepsAdapter adapter(app); // the deps seam that hands out the live cache
     REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
     {
         const std::shared_ptr<ISyncCache> cache = adapter.CacheShared();
         REQUIRE(cache);
@@ -114,6 +123,7 @@ TEST_CASE("AppController cache recreate: every live pane is emptied and re-armed
     TempDb db;
     AppController app;
     REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
     GridLiveContext* const other = app.EnsurePaneContextLive("second-pane", "Jira");
     REQUIRE(other != nullptr);
     {
@@ -148,6 +158,7 @@ TEST_CASE("AppController cache recreate: a second recreate while one runs is ref
     TempDb db;
     AppController app;
     REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
 
     int doneCalls = 0;
     REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome&) { ++doneCalls; })
@@ -169,6 +180,7 @@ TEST_CASE("AppController cache recreate: a pane opened mid-recreate starts block
     TempDb db;
     AppController app;
     REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
 
     int doneCalls = 0;
     REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome&) { ++doneCalls; })
@@ -189,6 +201,7 @@ TEST_CASE("AppController cache recreate: shutting down mid-recreate stops the wo
     {
         AppController app;
         REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+        UseFakeBackends(app);
         REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome&) { ++doneCalls; })
                     .has_value());
         // No pump: the worker is parked waiting for the UI thread to hand the cache over. Destroying the controller
@@ -236,6 +249,7 @@ TEST_CASE("AppController cache recreate: the focused pane's held request rides o
     TempDb db;
     AppController app;
     REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
     GridLiveContext* const pane = app.EnsurePaneContextLive("focused-pane", "Jira");
     REQUIRE(pane != nullptr);
     app.SetFocusedPane("focused-pane");

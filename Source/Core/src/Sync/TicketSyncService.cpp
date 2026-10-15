@@ -1029,31 +1029,40 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     // new client from the caller's in-memory config, not a disk re-read that races the
     // debounced prefs save.
     const std::string newCacheKey = smatchet::cache_keys::TrackerCacheBackendKey(cfgCopy);
-    bool backendSwapped = false;
+    // The kind to build, empty when the live backend already serves this tracker and site.
+    std::string createKind;
+    bool siteChange = false; // same tracker kind, another site or account (#2268)
     if (trackerLower == "plane" && !isCurrentlyPlane) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("Plane", cfgCopy));
-        LOG_INFO("TicketSyncService: Switched backend to Plane.");
-        backendSwapped = true;
+        createKind = "Plane";
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("Jira", cfgCopy));
-        LOG_INFO("TicketSyncService: Switched backend to Jira.");
-        backendSwapped = true;
+        createKind = "Jira";
     } else if (trackerLower == "github" && !isCurrentlyGitHub) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("GitHub", cfgCopy));
-        LOG_INFO("TicketSyncService: Switched backend to GitHub.");
-        backendSwapped = true;
+        createKind = "GitHub";
     } else if (trackerLower == "linear" && !isCurrentlyLinear) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("Linear", cfgCopy));
-        LOG_INFO("TicketSyncService: Switched backend to Linear.");
-        backendSwapped = true;
+        createKind = "Linear";
     } else if (!lastAppliedCacheKey_.empty() && newCacheKey != lastAppliedCacheKey_) {
-        // Same tracker kind, another site or account (#2268): a Jira host or account, a Plane
-        // workspace, a GitHub repo, a Linear team. Build the client fresh (it may hold per-site
-        // state such as Plane's key-to-id map) and treat it as a backend switch below.
-        const std::string kind = ConfigManager::NormalizeViewsBackendKey(newTracker);
-        deps_.SetBackend(deps_.BackendFactory()->Create(kind, cfgCopy));
-        LOG_INFO("TicketSyncService: Recreated %s client for site '%s'.", kind.c_str(),
-                 smatchet::cache_keys::DescribeCacheBackendKey(newCacheKey).c_str());
+        // Build the client fresh (it may hold per-site state such as Plane's key-to-id map) and treat it as a
+        // backend switch below.
+        createKind = ConfigManager::NormalizeViewsBackendKey(newTracker);
+        siteChange = true;
+    }
+    bool backendSwapped = false;
+    if (!createKind.empty()) {
+        ITrackerBackendFactory* const factory = deps_.BackendFactory();
+        if (!factory) {
+            // A controller that was never Initialize()d (a headless embedder, a test) has none. Keep the current
+            // backend rather than dereference null, and leave the applied key alone so a later sync retries.
+            LOG_WARN("TicketSyncService: no backend factory; keeping the current backend instead of switching to %s.",
+                     createKind.c_str());
+            return;
+        }
+        deps_.SetBackend(factory->Create(createKind, cfgCopy));
+        if (siteChange) {
+            LOG_INFO("TicketSyncService: Recreated %s client for site '%s'.", createKind.c_str(),
+                     smatchet::cache_keys::DescribeCacheBackendKey(newCacheKey).c_str());
+        } else {
+            LOG_INFO("TicketSyncService: Switched backend to %s.", createKind.c_str());
+        }
         backendSwapped = true;
     }
     lastAppliedCacheKey_ = newCacheKey;
