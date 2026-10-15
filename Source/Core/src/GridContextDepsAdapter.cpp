@@ -37,11 +37,11 @@ GridLiveContext& GridContextDepsAdapter::ctx() const { return ctx_ != nullptr ? 
 
 // ---- IOfflineQueueDeps (and shared with ITicketSyncDeps) ------------------------------
 
-ISyncCache* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
+ISyncCache* GridContextDepsAdapter::Cache() { return std::atomic_load(&app_.Cache).get(); }
 
 // DR6: atomic_load snapshot of the cache shared_ptr so an off-thread caller (QueueCreateOffline)
 // holds it alive across the whole operation while the UI thread swaps it in
-// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic_load reader pattern above.
+// the cache recreate. Mirrors the ADR-0012 Backend atomic_load reader pattern above.
 // LocalCacheManager derives from ISyncCache, so the shared_ptr converts implicitly.
 std::shared_ptr<ISyncCache> GridContextDepsAdapter::CacheShared() { return std::atomic_load(&app_.Cache); }
 
@@ -324,7 +324,7 @@ TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
 
 // HasCache() is a PREDICATE, not the raw Cache* — keeps FieldEditPipelineService SQLite-free
 // (ADR-0020 sync-cache purity). Global state, so reads app_ (matches Cache() above).
-bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
+bool GridContextDepsAdapter::HasCache() const { return std::atomic_load(&app_.Cache) != nullptr; }
 
 PendingActionTarget GridContextDepsAdapter::LatchFocusedPaneTarget() const { return app_.LatchPendingActionTarget(); }
 

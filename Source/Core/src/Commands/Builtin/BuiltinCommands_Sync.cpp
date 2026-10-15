@@ -15,6 +15,9 @@
 #include "CachedTicketTypes.h" // CachedTicket (pack.Tickets element)
 #include <nlohmann/json.hpp>   // this sync command TU uses nlohmann::json directly.
 
+#include <chrono>
+#include <future>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -76,37 +79,81 @@ void RegisterSyncFullCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPos
     }
 }
 
+// The final result of a finished recreate: a failure says whether the cache files were already deleted, so a caller
+// never believes queued offline edits survived a wipe that went through (or were cleared when it did not).
+CommandResult CacheRecreateOutcomeToResult(const smatchet::sync::CacheRecreateOutcome& outcome) {
+    if (!outcome.Ok) {
+        return CommandResult::Failure(ErrorCode::HandlerError, smatchet::sync::DescribeCacheRecreateOutcome(outcome));
+    }
+    nlohmann::json out;
+    out["triggered"] = true;
+    out["completed"] = true;
+    out["wiped"] = outcome.Wiped;
+    return CommandResult::Success(std::move(out));
+}
+
+// cache.recreate: the wipe runs on a worker behind AppController's "recreating" gate, so the UI thread never waits
+// for a pane's in-flight request. Its outcome arrives on the UI thread; the follow-up full sync starts there too.
+// A caller on another thread (MCP / CLI / Lua) waits for the outcome HERE, off the UI thread, and returns the final
+// result including whether the wipe happened. A caller already on the UI thread (the command palette) cannot wait,
+// so it gets a "started" result at once; the completion toast and the log report the outcome.
+CommandResult RunCacheRecreate(IAppSync& app, IMainThreadPoster& poster) {
+    auto outcome = std::make_shared<std::promise<smatchet::sync::CacheRecreateOutcome>>();
+    std::future<smatchet::sync::CacheRecreateOutcome> finished = outcome->get_future();
+    const bool onUiThread = poster.IsOnUiThread();
+    const CommandResult started = RunOnUiThreadAsCommandResult(poster, [&app, outcome]() {
+        const VoidResult startedOk =
+            app.StartRecreateLocalCacheDatabase([&app, outcome](const smatchet::sync::CacheRecreateOutcome& done) {
+                if (done.Ok) {
+                    app.SyncWithBackendMode(nullptr, nullptr,
+                                            smatchet::sync::SyncMode::Full); // no sync after a failure
+                }
+                outcome->set_value(done);
+            });
+        if (!startedOk.has_value()) {
+            smatchet::sync::CacheRecreateOutcome refused; // nothing was deleted
+            refused.Error = startedOk.error();
+            return CacheRecreateOutcomeToResult(refused);
+        }
+        return CommandResult::Success({{"started", true}});
+    });
+    if (!started.Ok) {
+        return started;
+    }
+    nlohmann::json pending;
+    pending["triggered"] = true;
+    pending["started"] = true;
+    pending["completed"] = false;
+    if (onUiThread) {
+        return CommandResult::Success(std::move(pending));
+    }
+    if (finished.wait_for(std::chrono::minutes(5)) != std::future_status::ready) {
+        return CommandResult::Success(std::move(pending)); // still running: it reports through the toast and the log
+    }
+    try {
+        return CacheRecreateOutcomeToResult(finished.get());
+    } catch (const std::future_error&) {
+        return CommandResult::Failure(ErrorCode::HandlerError,
+                                      "The application shut down before the cache recreate finished.");
+    }
+}
+
 void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     {
-        Command c = MakeCommand("cache.recreate",
-                                "Wipe the local cache database (cached tickets AND queued offline edits) and "
-                                "re-fetch the active view from the tracker. Runs on the UI thread and waits for "
-                                "every pane's in-flight sync to stop, so the UI may pause briefly. A failure says "
-                                "whether the cache was already wiped.",
-                                [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
-                                    if (ctx.DryRun) {
-                                        return CommandResult::Success(
-                                            {{"wouldDo", "wipe local cache + offline queue, then full re-fetch"}});
-                                    }
-                                    // RecreateLocalCacheDatabase swaps the cache and joins every pane's
-                                    // worker: UI-thread-owned state, so the whole sequence runs there.
-                                    return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                        bool wiped = false;
-                                        const VoidResult recreated = app.RecreateLocalCacheDatabase(wiped);
-                                        if (!recreated.has_value()) {
-                                            // No sync starts after a failure. The wording says whether the cache files
-                                            // were already deleted, so a caller never believes queued offline edits
-                                            // survived a wipe that went through (or were cleared when it did not).
-                                            return CommandResult::Failure(
-                                                ErrorCode::HandlerError,
-                                                smatchet::sync::DescribeCacheRecreateFailure(wiped, recreated.error()));
-                                        }
-                                        app.SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
-                                        nlohmann::json out;
-                                        out["triggered"] = true;
-                                        return CommandResult::Success(std::move(out));
-                                    });
-                                });
+        Command c = MakeCommand(
+            "cache.recreate",
+            "Wipe the local cache database (cached tickets AND queued offline edits) and re-fetch the active view "
+            "from the tracker. The wipe runs on a worker behind a \"recreating\" gate that holds back new syncs and "
+            "cache access; the UI never waits for a running request. MCP / CLI / Lua callers wait for the outcome "
+            "and get the final result (a failure says whether the cache was already wiped); the command palette "
+            "gets \"started\" at once and a toast reports the outcome.",
+            [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
+                if (ctx.DryRun) {
+                    return CommandResult::Success(
+                        {{"wouldDo", "wipe local cache + offline queue, then full re-fetch"}});
+                }
+                return RunCacheRecreate(app, poster);
+            });
         c.Destructive = true; // deletes queued offline edits: relies on the registry's confirm gate
         c.Idempotent = false;
         c.AsyncSafe = false;

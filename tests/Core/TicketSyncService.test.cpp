@@ -3045,3 +3045,72 @@ TEST_CASE("Delta reload: a key the tracker refused is remembered, so later attem
     CHECK(rig.svc.LastSessionStats().Mode == "full"); // asked again, refused again, fell back again
     CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedCallsAfterFirst);
 }
+
+TEST_CASE("TicketSyncService cache teardown hands the worker out, holds every start back, and lifts on End" *
+          doctest::test_suite("[high-risk]")) {
+    // cache.recreate runs on a worker: BeginCacheTeardown must flag the running sync cancelled, hand its thread to the
+    // caller to join OFF the UI thread, and block new starts (SyncWithBackend drops, TickStreamingApply idles) so
+    // nothing touches the cache until EndCacheTeardown.
+    constexpr std::chrono::milliseconds kPageDelay(100);
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetSlowStreamedPages(/*pages=*/30, kPageDelay);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    bool inFlight = false;
+    for (int i = 0; i < 1000 && !inFlight; ++i) {
+        inFlight = fake->SlowStreamedPagesStarted() >= 1;
+        if (!inFlight) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(inFlight);
+    REQUIRE(svc.IsActive());
+
+    std::thread handedOut = svc.BeginCacheTeardown();
+    CHECK(handedOut.joinable()); // the caller joins it: the service no longer owns the thread
+    CHECK(svc.IsCacheTeardownActive());
+    const int pagesAtTeardown = fake->SlowStreamedPagesStarted();
+
+    // A start request during the teardown is dropped, and the apply tick does nothing.
+    svc.SyncWithBackend(&cfg, &views);
+    svc.TickStreamingApply();
+
+    const auto joinStart = std::chrono::steady_clock::now();
+    handedOut.join();
+    const auto joinElapsed = std::chrono::steady_clock::now() - joinStart;
+    CHECK(joinElapsed < kPageDelay * 10); // cancelled at the next page boundary, not 30 pages later
+    CHECK(fake->SlowStreamedPagesStarted() <= pagesAtTeardown + 1);
+
+    svc.EndCacheTeardown();
+    CHECK_FALSE(svc.IsCacheTeardownActive());
+    CHECK_FALSE(svc.IsActive());
+
+    // Syncs start again after the gate lifts.
+    fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("AFTER-1", "after"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService cache teardown with no running sync hands out nothing and still blocks starts") {
+    FakeTicketSyncDeps deps;
+    TicketSyncService svc(deps);
+    std::thread handedOut = svc.BeginCacheTeardown();
+    CHECK_FALSE(handedOut.joinable());
+    CHECK(svc.IsCacheTeardownActive());
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK_FALSE(svc.IsActive()); // dropped, not started
+    svc.EndCacheTeardown();
+    CHECK_FALSE(svc.IsCacheTeardownActive());
+}

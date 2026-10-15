@@ -3,7 +3,7 @@
 // docs/plans/appcontroller-clusters-followup.md). The method DECLARATIONS stay in
 // AppController.h; only the definitions and the file-local RemoveLocalCacheDbFiles helper
 // moved, so linkage and behavior are identical. The helper is used exclusively by
-// RecreateLocalCacheDatabase, so it moves with the cluster in a fresh anonymous namespace.
+// the cache recreate, so it moves with the cluster in a fresh anonymous namespace.
 // This TU never touches the pImpl, so it does not need the companion-TU subsystem superset.
 // clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining the AppController local-cache database methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
@@ -13,20 +13,26 @@
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
-// RecreateLocalCacheDatabase drives per-context streaming-sync teardown through
+#include "SmatchetLocalization.h"
+#include "Ui/SmatchetToast.h" // the completion toast (the recreate has no other UI)
+// The cache recreate drives per-context streaming-sync teardown through
 // GridLiveContext::ticketSync_ and clears OfflineQueueService state via offlineQueue_; both are
 // member unique_ptrs that AppController.h only forward-declares, so the pointees must be complete
 // here for the destructor and method calls.
 #include "OfflineQueueService.h"
 #include "Sync/PendingActionQueueService.h"
+#include "Sync/CacheRecreateReportPure.h"
 #include "TicketSyncService.h"
 
 #include <ghc/filesystem.hpp>
 
+#include <chrono>
 #include <exception>
+#include <future>
 #include <memory>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -84,109 +90,224 @@ std::string AppController::GetResolvedLocalCacheDbPath() const {
     return p.string();
 }
 
-VoidResult AppController::RecreateLocalCacheDatabase(bool& outWiped) {
-    outWiped = false;
-    if (localCacheDbPath_.empty()) {
-        return VoidResult::Err("Local cache database path is not set.");
+VoidResult AppController::StartRecreateLocalCacheDatabase(
+    std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) {
+    // UI thread. The gate goes up first, so two callers cannot both start; a refusal lowers it again.
+    bool expected = false;
+    if (!cacheRecreating_.compare_exchange_strong(expected, true)) {
+        return VoidResult::Err(smatchet::sync::CacheRecreateStartRefusal(false, false, true));
     }
-    if (shuttingDown_.load()) {
-        return VoidResult::Err("Application is shutting down.");
+    const std::string refusal =
+        smatchet::sync::CacheRecreateStartRefusal(localCacheDbPath_.empty(), shuttingDown_.load(), false);
+    if (!refusal.empty()) {
+        cacheRecreating_.store(false);
+        return VoidResult::Err(refusal);
+    }
+    if (cacheRecreateWorker_.joinable()) {
+        cacheRecreateWorker_.join(); // the previous run posted its completion as its last step: an instant join
     }
 
-    // hasPendingSyncRequest_ was removed by the TicketSyncService Phase 1C extraction
-    // (CODE_REVIEW item 11) — pending-sync state now lives on ticketSync_; the
-    // cancel-and-join below covers what the flag used to gate.
-    //
-    // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each
-    // non-focused GridLiveContext runs its own TicketSyncService std::thread that dereferences
-    // Cache via the sync-worker path; those must be joined before the atomic_store swap below or
-    // they race the freed cache. The DR6 atomic snapshot covers the Lua / offline-queue readers.
-    // All panes are flagged before any is joined, so the UI thread waits about one in-flight
-    // request, not one per busy pane.
-    CancelAndJoinAllPaneStreamingSyncs();
-    JoinBackgroundTasks();
+    // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each non-focused
+    // GridLiveContext runs its own TicketSyncService std::thread that dereferences Cache via the sync-worker path.
+    // The services are flagged cancelled, blocked from starting anything new, and hand their worker threads over:
+    // the UI thread never joins them (a request on the wire runs to its own timeout), the recreate worker does.
+    const std::vector<TicketSyncService*> services = CollectPaneSyncServices_();
+    auto syncThreads = std::make_shared<std::vector<std::thread>>();
+    for (TicketSyncService* svc : services) {
+        std::thread handedOut = svc->BeginCacheTeardown();
+        if (handedOut.joinable()) {
+            syncThreads->push_back(std::move(handedOut));
+        }
+    }
+    const std::string focusedCacheKey = focusedContext().CacheBackendKeyCopy();
+    try {
+        cacheRecreateWorker_ = std::thread([this, syncThreads, focusedCacheKey, onDone]() {
+            RunCacheRecreateWorker_(syncThreads, focusedCacheKey, onDone);
+        });
+    } catch (const std::exception& ex) {
+        // No worker could start: undo the gate. Joining here is the last resort (the threads were cancelled).
+        for (std::thread& t : *syncThreads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        for (TicketSyncService* svc : services) {
+            svc->EndCacheTeardown();
+        }
+        cacheRecreating_.store(false);
+        return VoidResult::Err(std::string("Could not start the cache recreate: ") + ex.what());
+    }
+    LOG_INFO("AppController: local cache recreate started (%zu pane sync worker(s) to stop).", syncThreads->size());
+    return VoidOk();
+}
 
-    // Streaming-sync teardown lives entirely on TicketSyncService since Phase 1C of the item
-    // 11 extraction: the cancel-and-join above cleared PendingBatches / BackgroundStaleIds /
-    // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
-    // counters. Both are no-ops if the service was never `Initialize`d.
-    // gridContexts_ is a UI-thread-owned map and RecreateLocalCacheDatabase runs on the UI
-    // thread, so iterating it here is free of concurrent structural mutation.
+std::vector<TicketSyncService*> AppController::CollectPaneSyncServices_() {
+    std::vector<TicketSyncService*> services;
+    services.reserve(gridContexts_.size() + 1);
     for (auto& entry : gridContexts_) {
         if (entry.second && entry.second->ticketSync_) {
-            entry.second->ticketSync_->ResetStaleDeletionState();
+            services.push_back(entry.second->ticketSync_.get());
         }
     }
-    // Explicit focused pass in case focusedContextPtr_ currently resolves to a retired husk
-    // (ADR-0012 graveyard) that is no longer in the live gridContexts_ map. Idempotent with
-    // the loop above when focused is a live entry.
+    // The focused context may be a retired husk (ADR-0012 graveyard) outside the live map. When it is a live
+    // entry instead, the duplicate is harmless: BeginCacheTeardown / EndCacheTeardown are idempotent.
     if (focusedContext().ticketSync_) {
-        focusedContext().ticketSync_->ResetStaleDeletionState();
+        services.push_back(focusedContext().ticketSync_.get());
     }
+    return services;
+}
 
-    // DR6: swap the cache via atomic_store so an off-thread worker that snapshotted the old
-    // cache with atomic_load keeps it alive for the duration of its use instead of racing this
-    // teardown. Mirrors the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
-    std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
+void AppController::RunCacheRecreateWorker_(std::shared_ptr<std::vector<std::thread>> syncThreads,
+                                            std::string focusedCacheKey,
+                                            std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) {
+    // All flagged before any is joined (Start), so the wait is about one in-flight request, not one per pane.
+    for (std::thread& t : *syncThreads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+    syncThreads->clear();
+    smatchet::sync::CacheRecreateOutcome outcome;
+    try {
+        outcome = RecreateCacheFilesOnWorker_(focusedCacheKey);
+    } catch (const std::exception& ex) {
+        outcome = smatchet::sync::CacheRecreateOutcome();
+        outcome.Error = ex.what();
+    } catch (...) {
+        outcome = smatchet::sync::CacheRecreateOutcome();
+        outcome.Error = "unknown error";
+    }
+    // A completion is never dropped for a full queue; at shutdown the post is a no-op and the process is ending.
+    mainThreadDispatcher.PostCompletionToMainThread(
+        [this, outcome, onDone]() { FinishCacheRecreate_(outcome, onDone); });
+}
+
+bool AppController::WithdrawCacheOnUiThread_(std::shared_ptr<LocalCacheManager>& outOldCache) {
+    auto handedBack = std::make_shared<std::promise<std::shared_ptr<LocalCacheManager>>>();
+    std::future<std::shared_ptr<LocalCacheManager>> future = handedBack->get_future();
+    // atomic_exchange: from this point every reader sees no cache, and the old one is held only by whoever latched it
+    // before. Doing it on the UI thread, between frames, means no UI code holds a raw pointer into it (the sync
+    // deps hand those out), so it can be closed on this worker without a use-after-free on the UI thread.
+    mainThreadDispatcher.PostCompletionToMainThread([this, handedBack]() {
+        handedBack->set_value(std::atomic_exchange(&Cache, std::shared_ptr<LocalCacheManager>()));
+    });
+    handedBack.reset(); // the posted task is now the promise's sole owner: a task the dispatcher drops breaks it
+    while (future.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+        if (cacheRecreateAbort_.load() || shuttingDown_.load()) {
+            return false;
+        }
+    }
+    try {
+        outOldCache = future.get();
+    } catch (const std::future_error&) {
+        return false; // the post was discarded (shutdown)
+    }
+    return true;
+}
+
+smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(const std::string& focusedCacheKey) {
+    smatchet::sync::CacheRecreateOutcome outcome;
+    std::shared_ptr<LocalCacheManager> oldCache;
+    if (!WithdrawCacheOnUiThread_(oldCache)) {
+        outcome.Error = "Application is shutting down.";
+        return outcome;
+    }
+    // Background tasks that latched the old cache before it was withdrawn finish first; the last reference is then
+    // dropped here, so SQLite closes on this worker and the files can be deleted.
+    JoinBackgroundTasks();
+    // Off-thread latchers outside the pool (Lua / MCP binds, offline-queue workers) may still hold it: give them a
+    // short bounded while to let go, or the Windows file delete would hit a sharing violation.
+    for (int waits = 0; waits < 50 && oldCache.use_count() > 1 && !cacheRecreateAbort_.load(); ++waits) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    oldCache.reset();
 
     bool anyRemoved = false;
-    VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
-    outWiped = anyRemoved;
+    const VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
+    outcome.Wiped = anyRemoved;
     if (!removeResult.has_value()) {
-        VoidResult failure = removeResult;
+        outcome.Error = removeResult.error();
         try {
-            auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-            std::atomic_store(&Cache, std::move(fresh));
+            std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(localCacheDbPath_));
         } catch (const std::exception& ex) {
-            failure = VoidResult::Err(removeResult.error() + " Failed to reopen database: " + ex.what());
+            outcome.Error += std::string(" Failed to reopen database: ") + ex.what();
         }
-        if (anyRemoved) {
-            RefreshAfterPartialCacheWipe_();
-        }
-        return failure;
+        return outcome;
     }
 
-    outWiped = true; // every cache file is gone from here on, whatever happens to the new database
+    outcome.Wiped = true; // every cache file is gone from here on, whatever happens to the new database
+    std::shared_ptr<LocalCacheManager> fresh;
     try {
-        auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-        std::atomic_store(&Cache, std::move(fresh));
+        fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
     } catch (const std::exception& ex) {
-        RefreshAfterPartialCacheWipe_();
-        return VoidResult::Err(std::string("Failed to open new database: ") + ex.what());
+        outcome.Error = std::string("Failed to open new database: ") + ex.what();
+        return outcome;
     }
-
     try {
-        (void)Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+        (void)fresh->RunOneTimeLegacyDropPendingAtMaxAttempts();
         // Fresh DB — nothing to copy, but stamp the tickets_v2 migration flag so the one-time
         // sweep never runs against rows written after this point (multi-grid Slice 1b).
-        (void)Cache->RunOneTimeTicketsV2CopyMigration(focusedContext().CacheBackendKeyCopy());
+        (void)fresh->RunOneTimeTicketsV2CopyMigration(focusedCacheKey);
         // Same for the pending-queue backend_key stamp (Slice 1c) — fresh DB, nothing to stamp,
         // but consume the one-time flag so it never runs against rows written after this point.
-        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(focusedContext().CacheBackendKeyCopy());
+        (void)fresh->RunOneTimePendingQueueBackendKeyStamp(focusedCacheKey);
         // And the site-key re-key (#2268): a fresh file holds no legacy rows; an empty list only sets the flag.
-        (void)Cache->RunOneTimeCacheIdentityRekey(std::vector<std::pair<std::string, std::string>>());
+        (void)fresh->RunOneTimeCacheIdentityRekey(std::vector<std::pair<std::string, std::string>>());
     } catch (const std::exception& ex) {
-        LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
+        LOG_WARN("AppController::StartRecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
     } catch (...) {
-        LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: unknown exception");
+        LOG_WARN("AppController::StartRecreateLocalCacheDatabase legacy cleanup: unknown exception");
     }
+    std::atomic_store(&Cache, fresh); // published only once it is fully set up
+    outcome.Ok = true;
+    return outcome;
+}
 
-    ClearLastTrackerTicketSyncWarning();
-    if (offlineQueue_) {
-        offlineQueue_->legacyPendingStartupBanner_.clear();
-        offlineQueue_->RequestSnapshotRefresh(); // the queue view must come from the new file
+void AppController::FinishCacheRecreate_(
+    const smatchet::sync::CacheRecreateOutcome& outcome,
+    const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone) {
+    // The worker threads are joined and the cache is swapped: drop the cancelled sessions' batches and stale-deletion
+    // state, and let syncs start again.
+    for (TicketSyncService* svc : CollectPaneSyncServices_()) {
+        svc->EndCacheTeardown();
     }
-    if (pendingActions_) {
-        pendingActions_->RequestSnapshotRefresh(); // the queue view must come from the new file
+    if (outcome.Ok) {
+        ClearLastTrackerTicketSyncWarning();
+        if (offlineQueue_) {
+            offlineQueue_->legacyPendingStartupBanner_.clear();
+            offlineQueue_->RequestSnapshotRefresh(); // the queue view must come from the new file
+        }
+        if (pendingActions_) {
+            pendingActions_->RequestSnapshotRefresh(); // the queue view must come from the new file
+        }
+        RefreshLocalDataAsync();
+    } else if (outcome.Wiped) {
+        RefreshAfterPartialCacheWipe_();
     }
-    RefreshLocalData();
-    return VoidOk();
+    cacheRecreating_.store(false); // down before onDone, which may start the follow-up sync
+    if (outcome.Ok) {
+        LOG_INFO("AppController: local cache recreated.");
+        SmatchetToastManager::Instance().Push(
+            std::string(SmatchetLocalization::T("toast.success", "Success")),
+            std::string(
+                SmatchetLocalization::T("toast.local_db_recreated", "Local database recreated; refreshing issues.")),
+            ToastType::Success, 4000);
+    } else {
+        const std::string detail = smatchet::sync::DescribeCacheRecreateOutcome(outcome);
+        LOG_WARN("AppController: local cache recreate failed: %s", detail.c_str());
+        SmatchetToastManager::Instance().Push(
+            std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")), detail,
+            ToastType::Error, 6000);
+    }
+    if (onDone) {
+        onDone(outcome);
+    }
 }
 
 void AppController::RefreshAfterPartialCacheWipe_() {
     // The cache files are gone but the recreate did not finish: the panes and the queue views must not keep
     // showing rows that no longer exist. A reopened database re-reads empty; with no database at all the focused
-    // pane's rows are cleared directly (RefreshLocalData has nothing to read).
+    // pane's rows are cleared directly (RefreshLocalDataAsync has nothing to read).
     if (offlineQueue_) {
         offlineQueue_->legacyPendingStartupBanner_.clear();
         offlineQueue_->RequestSnapshotRefresh();
@@ -195,7 +316,7 @@ void AppController::RefreshAfterPartialCacheWipe_() {
         pendingActions_->RequestSnapshotRefresh();
     }
     if (std::atomic_load(&Cache)) {
-        RefreshLocalData();
+        RefreshLocalDataAsync();
         return;
     }
     GridLiveContext& ctx = focusedContext();

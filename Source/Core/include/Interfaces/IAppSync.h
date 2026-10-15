@@ -15,13 +15,15 @@
 // Pillar-1 exclusion protects. GetFieldCatalogError is header-inlined but its only callers are
 // command TUs (never a draw loop), so its vtable slot is likewise off the hot path.
 
-#include "OfflineFirstPure.h"        // IsOfflineState (rank-0)
-#include "SmatchetResult.h"          // VoidResult (RecreateLocalCacheDatabase)
-#include "Sync/SyncMode.h"           // SyncMode (rank-0)
-#include "Sync/SyncSessionStats.h"   // SyncSessionStats (rank-0)
-#include "Sync/SyncTypes.h"          // TrackerIssueFetchPack (rank-0)
-#include "Types/ConnectivityTypes.h" // TrackerConnectivityState (rank-0)
+#include "OfflineFirstPure.h"             // IsOfflineState (rank-0)
+#include "SmatchetResult.h"               // VoidResult (StartRecreateLocalCacheDatabase)
+#include "Sync/CacheRecreateReportPure.h" // CacheRecreateOutcome (rank-0)
+#include "Sync/SyncMode.h"                // SyncMode (rank-0)
+#include "Sync/SyncSessionStats.h"        // SyncSessionStats (rank-0)
+#include "Sync/SyncTypes.h"               // TrackerIssueFetchPack (rank-0)
+#include "Types/ConnectivityTypes.h"      // TrackerConnectivityState (rank-0)
 
+#include <functional>
 #include <string>
 
 struct TrackerConfig; // pointer param — fwd-decl (concrete callers hold the full definition)
@@ -41,12 +43,18 @@ class IAppSync {
         (void)mode;
         SyncWithBackend(configOverride, viewsOverride);
     }
-    /// Wipes the local cache database and opens a fresh one. `outWiped` says whether the wipe happened: true as soon
-    /// as any cache file was deleted, so it can be true even when the call fails (a reopen failure, a sidecar
-    /// that would not delete). On a failure with `outWiped` set the cached rows are gone: the call has already
-    /// refreshed the focused pane and the queue snapshots, and the caller words the error as a partial wipe
-    /// (see DescribeCacheRecreateFailure). On a failure with `outWiped` clear nothing was deleted.
-    virtual VoidResult RecreateLocalCacheDatabase(bool& outWiped) = 0;
+    /// UI thread. Wipes the local cache database and opens a fresh one on a worker, behind a "recreating" gate: new
+    /// syncs and cache access wait, every pane's running sync is cancelled and joined off the UI thread. Returns an
+    /// error at once, with nothing changed, when it cannot start (no database path, shutting down, one already
+    /// running). Otherwise `onDone` is called exactly once on the UI thread when the recreate has finished (never,
+    /// if the application shuts down first), with whether the wipe happened: `Wiped` is true as soon as any cache
+    /// file was deleted, so it can be true even when the recreate failed. On a failed recreate the focused pane and
+    /// the queue snapshots are already refreshed, and the caller words the error with DescribeCacheRecreateOutcome.
+    /// The gate is down again when `onDone` runs, so it may start the follow-up sync.
+    virtual VoidResult
+    StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) = 0;
+    /// True from a successful StartRecreateLocalCacheDatabase until its `onDone` has run.
+    virtual bool IsLocalCacheRecreating() const = 0;
     /// Absolute path of the local cache database, for display; the raw configured path when it
     /// cannot be resolved.
     virtual std::string GetResolvedLocalCacheDbPath() const = 0;

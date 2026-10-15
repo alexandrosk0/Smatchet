@@ -255,6 +255,18 @@ void TicketSyncService::CancelAndJoinActiveStreamingSync() {
     }
 }
 
+std::thread TicketSyncService::BeginCacheTeardown() {
+    startsBlocked_.store(true);
+    RequestCancel();
+    return std::move(activeStreamingSync_.WorkerThread);
+}
+
+void TicketSyncService::EndCacheTeardown() {
+    CancelAndJoinActiveStreamingSync(); // the worker was handed out and joined: nothing left to wait for
+    ResetStaleDeletionState();
+    startsBlocked_.store(false);
+}
+
 void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     if (!deps_.Backend() || !deps_.Cache()) {
         LOG_WARN("TicketSyncService::ApplyIssueFetchPack skipped: backend=%d cache=%d", deps_.Backend() ? 1 : 0,
@@ -356,6 +368,9 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 }
 
 void TicketSyncService::TickStreamingApply() {
+    if (startsBlocked_.load()) {
+        return; // the cache is being recreated: nothing may start, and nothing may touch it
+    }
     // 1. Drain a superseded session, else start a pending request once the previous session
     //    (worker + apply queue + stale cleanup) is fully drained.
     const bool isWorkerActive = activeStreamingSync_.Active.load();
@@ -856,6 +871,10 @@ void TicketSyncService::ResetStaleDeletionState() {
 
 void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                                         smatchet::sync::SyncMode mode) {
+    if (startsBlocked_.load()) {
+        LOG_INFO("TicketSyncService::SyncWithBackend dropped: the local cache is being recreated.");
+        return;
+    }
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();

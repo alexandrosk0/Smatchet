@@ -245,7 +245,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
     // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
     // DR6: snapshot Cache with atomic_load and hold the shared_ptr for the whole deref, so a
-    // concurrent UI-thread RecreateLocalCacheDatabase swap can't free the cache under us. A null
+    // concurrent UI-thread StartRecreateLocalCacheDatabase swap can't free the cache under us. A null
     // snapshot degrades to a nil return (missing ticket) rather than a crash (Pillar 3). Mirrors
     // the ADR-0012 Backend atomic_load reader pattern.
     auto cacheSnap = std::atomic_load(&app_.Cache);
@@ -318,7 +318,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
 
     if (offline) {
         // DR6: snapshot Cache with atomic_load — this bind runs on the Lua automation / MCP
-        // worker thread and RecreateLocalCacheDatabase may swap the cache concurrently on the UI
+        // worker thread and StartRecreateLocalCacheDatabase may swap the cache concurrently on the UI
         // thread. Mirrors the ADR-0012 Backend atomic_load reader pattern. QueueCreateOffline
         // itself takes its own snapshot via deps_.CacheShared() for the enqueue path.
         auto cacheSnap = std::atomic_load(&app_.Cache);

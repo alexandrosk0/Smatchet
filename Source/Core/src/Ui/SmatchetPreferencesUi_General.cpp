@@ -335,10 +335,19 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
         ::ImGui::TextWrapped("%s", resolved.c_str());
     }
     ImGui::Spacing();
+    // The recreate runs on a worker behind a gate (IAppSync::StartRecreateLocalCacheDatabase); a second one cannot
+    // start while it runs, and the cue says why the button is off.
+    const bool recreating = sync.IsLocalCacheRecreating();
+    ImGui::BeginDisabled(recreating);
     if (ImGui::Button("Recreate database...")) {
         ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
     }
+    ImGui::EndDisabled();
     ImGui::SetItemTooltip("Permanently delete the local cache file and start with an empty database.");
+    if (recreating) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));
+    }
 
     if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -356,23 +365,24 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            bool wiped = false;
-            const VoidResult recreated = sync.RecreateLocalCacheDatabase(wiped);
-            if (recreated.has_value()) {
-                SmatchetToastManager::Instance().Push(
-                    std::string(SmatchetLocalization::T("toast.success", "Success")),
-                    std::string(SmatchetLocalization::T("toast.local_db_recreated",
-                                                        "Local database recreated; refreshing issues.")),
-                    ToastType::Success, 4000);
-                sync.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
+            // The wipe is asynchronous: the completion (AppController) pushes the success or failure toast, and
+            // this callback starts the follow-up full refresh once the new database is in place.
+            const VoidResult started = sync.StartRecreateLocalCacheDatabase(
+                [&sync, &d, &ui](const smatchet::sync::CacheRecreateOutcome& outcome) {
+                    if (outcome.Ok) {
+                        sync.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
+                    }
+                });
+            if (started.has_value()) {
                 ImGui::CloseCurrentPopup();
             } else {
+                // Refused before anything changed (no database path, shutting down, one already running).
                 const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
                                                              "Could not recreate the local database.");
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
-                    recreated.error().empty() ? std::string(detail)
-                                              : smatchet::sync::DescribeCacheRecreateFailure(wiped, recreated.error()),
+                    started.error().empty() ? std::string(detail)
+                                            : smatchet::sync::DescribeCacheRecreateFailure(false, started.error()),
                     ToastType::Error, 6000);
             }
         }

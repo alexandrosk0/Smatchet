@@ -461,7 +461,7 @@ void AppController::RefreshLocalDataAsync() {
 void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
                                                  const std::string& admitId) {
     // Latched once: worker callers (offline replay, UpdateTicket's queued saves) must not race the UI
-    // thread's atomic_store in RecreateLocalCacheDatabase.
+    // thread's atomic_store in StartRecreateLocalCacheDatabase.
     const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
     if (cache) {
         // The ticket orders this refresh against the others in flight for the pane (taken before the read starts).

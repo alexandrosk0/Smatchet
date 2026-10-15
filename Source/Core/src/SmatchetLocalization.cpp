@@ -1226,6 +1226,7 @@ const TranslationEntry kEntries[] = {
     {"views.fields.catalog_failed", "Couldn't load the field catalog: %s",
      u8"Impossible de charger le catalogue de champs : %s"},
     {"views.fields.retry", "Retry", u8"Réessayer"},
+    {"prefs.local_db.recreating", "Recreating the database...", u8"Recréation de la base de données..."},
     {"views.fields.loading_saved", "Loading saved fields...", u8"Chargement des champs enregistrés..."},
     {"comments.discard_confirm", "Discard the comment you're writing?",
      u8"Abandonner le commentaire en cours de rédaction ?"},

@@ -235,7 +235,7 @@ void AppController::WireCoreServices() {
     if (!fieldEdit_) {
         fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_, *transitions_);
     }
-    // TicketSyncService — its `CancelAndJoinActiveStreamingSync` is called by RecreateLocalCacheDatabase
+    // TicketSyncService — its `CancelAndJoinActiveStreamingSync` is called by StartRecreateLocalCacheDatabase
     // (which the legacy-pending cleanup may trigger), so it must exist before that path runs (item 11).
     // PANE-FROZEN adapter, unlike the five services above: a TicketSyncService must keep talking to
     // the context it was created for even while another pane holds focus (a focus-following adapter
@@ -450,7 +450,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     ctx.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(cfg));
     // One-time legacy migrations run HERE, against the authoritative resolved key (CR-948-1):
     // this is the same key every live read/write path queries (mirrors what
-    // RecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
+    // StartRecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
     // archives pending rows — archived rows must carry stamped keys) and BEFORE the first
     // ticket read (RefreshLocalData in InitFieldCatalog) / any replay tick.
     RunOneTimeCacheMigrations(cfg, ctx.CacheBackendKeyCopy());

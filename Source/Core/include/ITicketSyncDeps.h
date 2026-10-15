@@ -64,7 +64,7 @@ class ITicketSyncDeps {
     virtual ISyncCache* Cache() = 0;
     /// DR6 latched cache snapshot — strong handle over the same cache Cache() returns, so an
     /// off-thread caller holds it alive across its use while the UI thread swaps the cache in
-    /// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic-swap pattern. May be null.
+    /// StartRecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic-swap pattern. May be null.
     virtual std::shared_ptr<ISyncCache> CacheShared() = 0;
     virtual ITrackerIssueReader* Backend() = 0;
     /// Narrow connectivity view of the same backend — used for tracker-type detection during
@@ -111,7 +111,7 @@ class ITicketSyncDeps {
     virtual smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const { return {}; }
 
     /// Run `task` on a background worker (the production adapter forwards to `AppController::LaunchBackgroundTask`,
-    /// which tracks the worker so `RecreateLocalCacheDatabase` can join it before swapping the cache). The sync
+    /// which tracks the worker so `StartRecreateLocalCacheDatabase` can join it before swapping the cache). The sync
     /// service uses it for SQLite work that must not run on the UI thread (the stale-row delete). Defaulted to
     /// running inline so single-threaded test fakes need no stub.
     virtual void LaunchBackgroundTask(std::function<void()> task) {

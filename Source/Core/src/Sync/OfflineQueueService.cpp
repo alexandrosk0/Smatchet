@@ -403,7 +403,7 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     }
     // DR6: this method runs on an off-UI thread (Lua automation / MCP worker), so take ONE
     // atomic_load snapshot of the cache and use it for the whole enqueue — the UI thread may swap
-    // the cache in RecreateLocalCacheDatabase between the null-check and the EnqueuePendingCreate
+    // the cache in StartRecreateLocalCacheDatabase between the null-check and the EnqueuePendingCreate
     // below. Holding the shared_ptr keeps it alive across that gap. Mirrors the ADR-0012 Backend
     // atomic-swap latched-handle pattern.
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
@@ -877,7 +877,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
     // background task below, so a live backend swap (or pane-context retirement, multi-grid
     // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
-    // against the latched backend. The cache is latched the same way (RecreateLocalCacheDatabase).
+    // against the latched backend. The cache is latched the same way (StartRecreateLocalCacheDatabase).
     std::shared_ptr<ITrackerIssueReader> reader = deps_.ReaderShared();
     std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
     if (!cache || !reader || !mutations) {

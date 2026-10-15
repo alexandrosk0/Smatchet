@@ -1624,6 +1624,8 @@ add_executable(SmatchetTests
     Core/LookupFreshnessPure.test.cpp
     # delta-sync follow-up - the saved field catalog is restored off the UI thread (Sync/CatalogRestorePure.h).
     Core/CatalogRestorePure.test.cpp
+    # delta-sync follow-up - the cache recreate outcome and its refusal wording (Sync/CacheRecreateReportPure.h).
+    Core/CacheRecreateReportPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
@@ -2291,6 +2293,7 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_executable(SmatchetCommandsTests
         Commands/BuiltinCommandsDispatch.test.cpp
         Core/AppControllerFieldCatalog.posix.test.cpp
+        Core/AppControllerCacheRecreate.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"

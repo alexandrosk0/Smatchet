@@ -351,11 +351,15 @@ class AppController : public IAppThreading,
     /** Absolute path for display; falls back to the raw path if resolution fails. */
     std::string GetResolvedLocalCacheDbPath() const override;
     /**
-     * UI thread: closes SQLite, deletes the cache file (and WAL sidecars), opens a new empty database,
-     * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
-     * to refill from the tracker.
+     * UI thread: starts the cache recreate on a worker behind the "recreating" gate (see IAppSync). The worker
+     * joins every pane's cancelled sync and the background tasks, closes SQLite, deletes the cache file (and WAL
+     * sidecars) and opens a new empty database; the completion, on the UI thread, resets the streaming sync state,
+     * refreshes the queue views and the focused pane, then calls `onDone`. On success, `onDone` should call
+     * `SyncWithBackend` to refill from the tracker. The UI thread never joins a pane worker.
      */
-    VoidResult RecreateLocalCacheDatabase(bool& outWiped) override;
+    VoidResult
+    StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override;
+    bool IsLocalCacheRecreating() const override { return cacheRecreating_.load(); }
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
@@ -1219,8 +1223,9 @@ class AppController : public IAppThreading,
   private:
     // DR6: shared_ptr (not unique_ptr) so off-UI-thread workers (Lua automation / MCP pool,
     // off-thread offline-queue create) can atomic_load a snapshot and hold the cache alive
-    // across their whole use while the UI thread swaps it in RecreateLocalCacheDatabase. Writes
-    // are UI-thread-only via std::atomic_store; off-thread reads via std::atomic_load. Mirrors
+    // across their whole use while the cache recreate swaps it. The recreate withdraws it on the UI thread
+    // (std::atomic_exchange, so no UI code holds a raw pointer into it afterwards) and installs the new one from its
+    // worker (std::atomic_store); every read goes through std::atomic_load. Mirrors
     // the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
     std::shared_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
@@ -1559,7 +1564,7 @@ class AppController : public IAppThreading,
                               const smatchet::MembershipReconcilePlan& plan);
     void persistProbeRows_(const std::string& paneId, const std::string& backendKey,
                            std::vector<CachedTicket> updatedTickets);
-    /// RecreateLocalCacheDatabase failed after it deleted the cache files: refresh the focused pane and the queue
+    /// The cache recreate failed after it deleted the cache files: refresh the focused pane and the queue
     /// snapshots so nothing keeps showing rows that are gone. UI thread.
     void RefreshAfterPartialCacheWipe_();
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
@@ -1887,8 +1892,28 @@ class AppController : public IAppThreading,
     /// all are flagged before any is joined, so N busy panes cost about one in-flight HTTP timeout,
     /// not N. UI thread only — iterates `gridContexts_` without `gridContextsMutex_` (the UI thread
     /// is the only structural mutator, and holding the map lock across a join would deadlock if
-    /// a sync worker ever took it).
+    /// a sync worker ever took it). Shutdown only: the cache recreate hands the joins to its worker.
     void CancelAndJoinAllPaneStreamingSyncs();
+    /// Every live pane's sync service, plus the focused context's (it may be a retired husk outside
+    /// `gridContexts_`); the focused one can repeat an entry of the map. UI thread only.
+    std::vector<TicketSyncService*> CollectPaneSyncServices_();
+
+    // --- Cache recreate (StartRecreateLocalCacheDatabase) -------------------------------------------------
+    /// The worker body: join the handed-out sync threads, withdraw the cache on the UI thread, join the background
+    /// tasks, delete the files and open the new database, then post FinishCacheRecreate_.
+    void RunCacheRecreateWorker_(std::shared_ptr<std::vector<std::thread>> syncThreads, std::string focusedCacheKey,
+                                 std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone);
+    /// Worker steps 2..: everything after the sync threads were joined. Returns what the recreate did.
+    smatchet::sync::CacheRecreateOutcome RecreateCacheFilesOnWorker_(const std::string& focusedCacheKey);
+    /// Worker: asks the UI thread to detach the cache from `Cache` (so no UI code can reach it any more) and waits.
+    /// False when the application shut down first.
+    bool WithdrawCacheOnUiThread_(std::shared_ptr<LocalCacheManager>& outOldCache);
+    /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
+    void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
+                              const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
+    std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
+    std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
+    std::thread cacheRecreateWorker_;             ///< joined by the next Start and by ~AppController
 
     std::string localCacheDbPath_;
 

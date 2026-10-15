@@ -142,7 +142,9 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
         return future;
     }
 
-    LocalCacheManager* cache = Cache.get();
+    // Latched: the worker keeps the cache alive across the create even if a cache recreate withdraws it meanwhile.
+    const std::shared_ptr<LocalCacheManager> cacheOwner = std::atomic_load(&Cache);
+    LocalCacheManager* cache = cacheOwner.get();
     IssueDraft draftCopy = draft;
 
     // Update path: prune fields whose draft value already matches cache so we don't
@@ -173,8 +175,8 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
 
     // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
     // duration of the worker, per ADR 0012.
-    LaunchBackgroundTask([this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required,
-                          cancel, queueOnNetworkFailure]() {
+    LaunchBackgroundTask([this, promise, backend, mutations, cacheOwner, cache, cacheBackendKey, draftCopy, catalogCopy,
+                          required, cancel, queueOnNetworkFailure]() {
         // Cooperative cancel (WS-A): if the owner abandoned this create (bulk-import
         // `.clear()` / window-close / shutdown) before the worker started, return a
         // benign cancelled result without the network round-trip — and crucially

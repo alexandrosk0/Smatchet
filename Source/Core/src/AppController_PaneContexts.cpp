@@ -280,6 +280,11 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
         ctx->PaneId = paneId; // keys this pane's owned-ticket-id set — set BEFORE the sync service starts
         std::unique_ptr<GridContextDepsAdapter> adapter = std::make_unique<GridContextDepsAdapter>(*this, *ctx);
         ctx->ticketSync_ = std::make_unique<TicketSyncService>(*adapter);
+        if (cacheRecreating_.load()) {
+            // A pane opened while the cache is being recreated starts blocked, like the others; FinishCacheRecreate_
+            // lifts every service. Nothing runs yet, so there is no thread to hand out.
+            (void)ctx->ticketSync_->BeginCacheTeardown();
+        }
         // Stamp the site key (#2268) before the first sync re-stamps it, so cache writes made in between
         // land in the site's namespace, never in the bare tracker kind's.
         const std::string siteKey = ResolvePaneCacheKey(backendKey);
@@ -380,13 +385,14 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
         // unfiltered, so the pane still showed the union and then collapsed to one row on the
         // first edit, when the refresh finally applied the filter.
         std::vector<CachedTicket> seedTickets;
-        if (Cache) {
+        const std::shared_ptr<LocalCacheManager> seedCache = std::atomic_load(&Cache); // a recreate may withdraw it
+        if (seedCache) {
             // The pane's site key (#2268): the namespace its rows were saved under and its owned ids recorded
             // with (the sync stamps the same key from this config). Never the bare tracker kind.
             const std::string seedKey = smatchet::cache_keys::TrackerCacheBackendKey(cfgCopy);
             if (!seedKey.empty()) {
                 try {
-                    seedTickets = Cache->GetAllTickets(seedKey);
+                    seedTickets = seedCache->GetAllTickets(seedKey);
                     std::vector<std::string> ownedIds;
                     if (TryGetPaneOwnedTicketIds(seedKey, paneId, ownedIds)) {
                         const std::set<std::string> keep(ownedIds.begin(), ownedIds.end());
@@ -830,7 +836,9 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
 // 404 on its own change poll and purges then, so the row still converges away.
 void AppController::dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId,
                                          const std::string& backendKey, const smatchet::MembershipReconcilePlan& plan) {
-    if (Cache && !plan.cacheDeleteKeys.empty()) {
+    // Latched once: a cache recreate withdraws the cache from the UI thread's view between two loads.
+    const std::shared_ptr<LocalCacheManager> deleteCache = std::atomic_load(&Cache);
+    if (deleteCache && !plan.cacheDeleteKeys.empty()) {
         const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
         const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
         std::vector<std::string> keysToDrop;
@@ -845,7 +853,6 @@ void AppController::dropUnheldCacheRows_(const GridLiveContext& ctx, const std::
         }
         if (!keysToDrop.empty()) {
             // SQLite stays off the UI thread (Pillar 2): the deletes run on a worker with a latched handle.
-            const std::shared_ptr<LocalCacheManager> deleteCache = std::atomic_load(&Cache);
             LaunchBackgroundTask([deleteCache, backendKey, keysToDrop]() {
                 /* PILLAR2_WORKER_ONLY */ // est-latency: <=25 small transactions - off the UI thread
                 for (std::size_t i = 0; i < keysToDrop.size(); ++i) {
@@ -868,12 +875,13 @@ void AppController::dropUnheldCacheRows_(const GridLiveContext& ctx, const std::
 // Persists the rows a change probe updated to the durable cache.
 void AppController::persistProbeRows_(const std::string& paneId, const std::string& backendKey,
                                       std::vector<CachedTicket> updatedTickets) {
-    if (Cache && !updatedTickets.empty()) {
+    // Latched once: a cache recreate withdraws the cache from the UI thread's view between two loads.
+    const std::shared_ptr<LocalCacheManager> cacheSnapshot = std::atomic_load(&Cache);
+    if (cacheSnapshot && !updatedTickets.empty()) {
         // SQLite never runs on the UI thread (Pillar 2): the write goes to a worker holding a latched
-        // strong handle on the cache (the UI thread may swap it in RecreateLocalCacheDatabase). A failed
+        // strong handle on the cache (a cache recreate may swap it in StartRecreateLocalCacheDatabase). A failed
         // write must not escape the worker (it would end the app): the merge is already published, and
         // the stale cache rows converge on the next sync.
-        const std::shared_ptr<LocalCacheManager> cacheSnapshot = std::atomic_load(&Cache);
         const std::shared_ptr<const std::vector<CachedTicket>> rows =
             std::make_shared<const std::vector<CachedTicket>>(std::move(updatedTickets));
         LaunchBackgroundTask([cacheSnapshot, backendKey, paneId, rows]() {

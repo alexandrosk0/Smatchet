@@ -56,9 +56,23 @@ class TicketSyncService {
     TicketSyncService& operator=(const TicketSyncService&) = delete;
 
     /// Cancel any in-flight streaming sync, join the worker thread, clear the pending-batches
-    /// queue. Idempotent. Called from `~TicketSyncService`, `~AppController`,
-    /// `RecreateLocalCacheDatabase`, and the start path of every new sync.
+    /// queue. Idempotent. Called from `~TicketSyncService`, `~AppController`, `EndCacheTeardown`
+    /// and the start path of every new sync.
     void CancelAndJoinActiveStreamingSync();
+
+    /// Cache-recreate gate, step 1 (UI thread): from here no new sync starts (`SyncWithBackend` drops the request,
+    /// `TickStreamingApply` does nothing, so nothing reads or writes the cache), the running sync is flagged
+    /// cancelled, and its worker thread is handed to the caller to join OFF the UI thread (a request on the wire
+    /// runs to its own timeout). The returned thread is not joinable when no worker was running.
+    std::thread BeginCacheTeardown();
+
+    /// Cache-recreate gate, step 2 (UI thread, after the thread from `BeginCacheTeardown` was joined and the cache
+    /// was swapped): drops the cancelled session's batches and stale-deletion state and lifts the block, so the
+    /// next `SyncWithBackend` starts normally.
+    void EndCacheTeardown();
+
+    /// True between `BeginCacheTeardown` and `EndCacheTeardown`. Any thread.
+    bool IsCacheTeardownActive() const { return startsBlocked_.load(); }
 
     /// Flag the in-flight streaming sync (if any) Cancelled + Superseded WITHOUT joining. The
     /// worker observes the flags at its next page / phase boundary, so a request already on the
@@ -70,7 +84,7 @@ class TicketSyncService {
     /// ones, so they start further requests and teardown costs up to one HTTP timeout PER pane;
     /// two passes let every worker unwind concurrently, bounding the total to about one timeout.
     /// Null entries and duplicates are skipped. Used by `~AppController` and
-    /// `RecreateLocalCacheDatabase`.
+    /// `StartRecreateLocalCacheDatabase`.
     static void CancelAndJoinAll(const std::vector<TicketSyncService*>& services);
 
     /// TEST-ONLY SEAM: no production caller. Production applies fetches through the streaming path
@@ -112,7 +126,7 @@ class TicketSyncService {
     /// `AppController::IsStreamingSyncActive()` which de-inlines into a delegate.
     bool IsActive() const;
 
-    /// Reset stale-deletion state to empty. Called from `RecreateLocalCacheDatabase` after the
+    /// Reset stale-deletion state to empty. Called from `StartRecreateLocalCacheDatabase` after the
     /// SQLite file is replaced so the service doesn't try to delete tickets from a fresh DB.
     void ResetStaleDeletionState();
 
@@ -342,6 +356,8 @@ class TicketSyncService {
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
     std::atomic<std::uint64_t> sessionEpoch_{0};
+    /// Raised by BeginCacheTeardown, lowered by EndCacheTeardown (the cache-recreate gate).
+    std::atomic<bool> startsBlocked_{false};
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;

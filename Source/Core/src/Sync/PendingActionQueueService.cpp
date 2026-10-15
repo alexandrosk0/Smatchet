@@ -135,7 +135,7 @@ PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& ba
         out.Error = "No tracker backend is set up, so this could not be saved offline.";
         return out;
     }
-    // Latched once: the UI thread may swap the cache (RecreateLocalCacheDatabase) mid-enqueue.
+    // Latched once: the UI thread may swap the cache (StartRecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
         out.Error = "The local cache is unavailable, so this could not be saved offline.";

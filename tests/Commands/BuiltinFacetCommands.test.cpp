@@ -40,8 +40,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using smatchet::cmd::CommandContext;
@@ -143,11 +147,37 @@ struct FakeSync : IAppSync {
         }
     }
     bool RecreateWipes = false; // a failing recreate that already deleted the cache files
-    VoidResult RecreateLocalCacheDatabase(bool& outWiped) override {
-        ++RecreateCalls;
-        outWiped = RecreateError.empty() || RecreateWipes;
-        return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
+    // The recreate finishes inside the call (a real one finishes later, on the UI thread); `RecreateRefusal` models a
+    // refusal to start, `HoldRecreate` leaves it running so a test can finish it by hand.
+    std::string RecreateRefusal;
+    bool HoldRecreate = false;
+    std::atomic<bool> Recreating{false};
+    std::function<void(const smatchet::sync::CacheRecreateOutcome&)> HeldDone;
+    void FinishRecreate() {
+        smatchet::sync::CacheRecreateOutcome outcome;
+        outcome.Ok = RecreateError.empty();
+        outcome.Wiped = RecreateError.empty() || RecreateWipes;
+        outcome.Error = RecreateError;
+        Recreating = false;
+        auto done = std::move(HeldDone);
+        if (done) {
+            done(outcome);
+        }
     }
+    VoidResult
+    StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override {
+        ++RecreateCalls;
+        if (!RecreateRefusal.empty()) {
+            return VoidResult::Err(RecreateRefusal);
+        }
+        HeldDone = std::move(onDone);
+        Recreating = true; // after HeldDone: a thread that sees it may finish the recreate
+        if (!HoldRecreate) {
+            FinishRecreate();
+        }
+        return VoidOk();
+    }
+    bool IsLocalCacheRecreating() const override { return Recreating.load(); }
     std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
     void RefreshLocalData() override { ++RefreshCalls; }
     void RefreshLocalDataAsync() override { ++RefreshAsyncCalls; }
@@ -505,6 +535,67 @@ TEST_CASE("cache.recreate words a failure by whether the cache files were alread
     CHECK(wiped.Error.Message.find("disk full") != std::string::npos);
     CHECK(wiped.Error.Message.find("was not recreated") == std::string::npos);
     CHECK(sync.FullSyncCalls == 0); // no sync starts after a failure either way
+}
+
+TEST_CASE(
+    "cache.recreate from the UI thread starts the recreate and returns at once; the sync follows its completion") {
+    FakeSync sync;
+    sync.HoldRecreate = true; // the real recreate finishes later, on the UI thread
+    TogglePoster poster;
+    poster.OnUi = true; // the command palette: this thread cannot wait for the outcome
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE(r.Ok);
+    CHECK((*r.Data)["started"] == true);
+    CHECK((*r.Data)["completed"] == false);
+    CHECK(sync.RecreateCalls == 1);
+    CHECK(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 0); // nothing is re-fetched before the new database is in place
+
+    sync.FinishRecreate();
+    CHECK_FALSE(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 1);
+}
+
+TEST_CASE("cache.recreate from another thread waits for the outcome and reports whether the wipe happened") {
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    TogglePoster poster; // not on the UI thread: an MCP / CLI / Lua caller
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    CommandResult result;
+    std::thread caller([&]() { result = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true)); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!sync.IsLocalCacheRecreating() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(sync.IsLocalCacheRecreating());
+    sync.RecreateError = "Failed to open new database: disk full";
+    sync.RecreateWipes = true; // the files are gone, the new database could not be set up
+    sync.FinishRecreate();     // the UI thread's completion
+    caller.join();
+
+    REQUIRE_FALSE(result.Ok);
+    CHECK(result.Error.Code == ErrorCode::HandlerError);
+    CHECK(result.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate reports a refusal to start as nothing changed") {
+    FakeSync sync;
+    sync.RecreateRefusal = "The local cache is already being recreated.";
+    TogglePoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Message.find("already being recreated") != std::string::npos);
+    CHECK(r.Error.Message.find("was not recreated") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
 }
 
 TEST_CASE(
