@@ -1145,6 +1145,59 @@ TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged in
     CHECK(damaged.LookupCacheTtlSec == ttlBefore);
 }
 
+TEST_CASE("config.set refuses a non-boolean for a boolean key and keeps the text of a string key as typed") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", "false"}}, ctx).Ok);
+
+    for (const char* bad : {"yes", "42", "3.5", "\"maybe\"", "[]"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    CHECK_FALSE(ConfigManager::Load().ReadOnlyMode); // the refused writes changed nothing
+
+    // The spellings the vsync key takes work for the other boolean keys too.
+    for (const char* on : {"on", "true", "1", "\"true\""}) {
+        REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", "false"}}, ctx).Ok);
+        REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", on}}, ctx).Ok);
+        CHECK(ConfigManager::Load().ReadOnlyMode);
+        CHECK(ConfigManager::LoadMergedConfigJson().at("read_only_mode").is_boolean());
+    }
+
+    // A string key takes the text as typed: 123 and true are not stored as a number and a boolean.
+    for (const char* text : {"123", "true", "{\"a\":1}"}) {
+        REQUIRE(reg.Dispatch("config.set", {{"key", "jqlQuery"}, {"value", text}}, ctx).Ok);
+        REQUIRE(ConfigManager::LoadMergedConfigJson().at("jql").is_string());
+        CHECK(ConfigManager::LoadMergedConfigJson().at("jql").get<std::string>() == text);
+        CHECK(ConfigManager::Load().JqlQuery == text);
+    }
+}
+
+TEST_CASE("a hand-edited mistyped boolean, string or float costs only its own field, whatever its position") {
+    smatchet_tests::TestEnvGuard env;
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["domain"] = "acme.atlassian.net";
+        j["mcp_port"] = 8123;
+    });
+    const TrackerConfig defaults = TrackerConfig();
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["read_only_mode"] = "maybe"; // a string where a boolean belongs
+        j["email"] = 7;                // a number where a string belongs
+        j["show_log_window"] = nullptr;
+    });
+
+    const TrackerConfig loaded = ConfigManager::Load();
+
+    CHECK(loaded.ReadOnlyMode == defaults.ReadOnlyMode);
+    CHECK(loaded.Email == defaults.Email);
+    CHECK(loaded.ShowLogWindow == defaults.ShowLogWindow);
+    CHECK(loaded.Domain == "acme.atlassian.net"); // before the damaged keys in the table
+    CHECK(loaded.McpPort == 8123);                // after them
+}
+
 TEST_CASE("config.set takes an integral float like the load does (60.0) and still refuses a fraction (3.5)") {
     smatchet_tests::TestEnvGuard env;
     CommandRegistry reg;

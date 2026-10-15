@@ -124,9 +124,6 @@ Found in the Phase 3-5 review; none block the phases above.
 - `ApplyIssueFetchPack` is a dead path in production (only tests call it); remove it with its fixtures, or keep a single writer.
 - `cache.recreate` joins every pane worker (`CancelAndJoinAll`) on the UI thread and can freeze the UI for the length of the slowest in-flight request; documented in the command description and `docs/guides/cli.md`. Moving it off-thread needs the pane-context swap redesigned.
 - Found in the Phase 6-7 pre-merge review (deferred; none block the phases):
-  - The Fields tab shows the "saved" cue for a catalog served from its lifetime (`SmatchetViewsDashboardUi.cpp`, `DrawFieldsTabCatalogState`) but offers no Refresh action; the next fetch only happens on expiry. Add a Refresh next to the cue (it should set `triggerCatalogRefetch`).
-  - `config.set` validates integer keys only. A bool or string key written with the wrong type still makes the load fall back for that key (the int reads are per key and guarded now; bool, string and float reads in `LoadScalarFields` are not).
-  - `AppController` startup parses the field-catalog file once per candidate key (project-scoped, then the unscoped fallback); a scoped miss still costs a second parse.
 - Found in the post-rebase review (deferred; none block the merge):
   - Field-catalog snapshot restore and save still touch the file on the UI thread: `TryLoadFieldCatalogSnapshot` reads the whole file (and, once a day per snapshot, rewrites it) from startup and the render-path error handler, and a successful catalog apply saves the snapshot synchronously (`AppController_CatalogAndFieldEdit.cpp`, already on develop). Move restore and save to a worker (Pillar 2).
 

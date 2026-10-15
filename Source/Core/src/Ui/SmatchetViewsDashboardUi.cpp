@@ -611,8 +611,16 @@ void DrawFieldsTabCatalogState(AppController& app, UiDrawSession& d, bool noFiel
         return;
     }
     if (d.catalogServedFromSnapshot && !noFields) {
-        // Saved catalog inside its lifetime, no fetch running: say so instead of implying a live read.
+        // Saved catalog inside its lifetime, no fetch running: say so instead of implying a live read, and let the
+        // user ask for one now instead of waiting for the snapshot to expire. Offline the fetch could only fail
+        // (the saved catalog stays either way), so the button waits for the tracker.
         DataFreshnessCue::Draw(smatchet::offline::DataFreshness::CachedStale);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(app.IsTrackerOffline());
+        if (ImGui::SmallButton(SmatchetLocalization::T("common.refresh", "Refresh"))) {
+            d.triggerCatalogRefetch = true;
+        }
+        ImGui::EndDisabled();
         return;
     }
     const std::string& error = app.GetFieldCatalogError();

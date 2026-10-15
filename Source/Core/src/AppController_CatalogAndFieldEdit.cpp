@@ -205,13 +205,16 @@ void HandleFieldCatalogErrorInto(GridContextFieldCatalog& cat, const std::string
     std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
     bool unscopedSnapshot = false;
     if (!hasFieldsNow) {
-        snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
-                                                                        snapIssueTypeMeta, snapErr);
-        if (!snapshotLoaded && !fallbackCacheKey.empty()) {
-            snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(fallbackCacheKey, snapFields,
-                                                                            snapComponents, snapIssueTypeMeta, snapErr);
-            unscopedSnapshot = snapshotLoaded;
+        // One parse of the cache file for the project's own snapshot and the unscoped fallback.
+        std::vector<std::string> candidateKeys;
+        candidateKeys.push_back(catalogCacheKey);
+        if (!fallbackCacheKey.empty()) {
+            candidateKeys.push_back(fallbackCacheKey);
         }
+        std::size_t loadedIndex = 0;
+        snapshotLoaded = FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot(candidateKeys, snapFields, snapComponents,
+                                                                             snapIssueTypeMeta, snapErr, loadedIndex);
+        unscopedSnapshot = snapshotLoaded && loadedIndex > 0;
         if (snapshotLoaded && !catalogPlane) {
             MarkNonEditableTimetrackingReadOnly(snapFields);
             AddJiraCatalogFieldFixups(snapFields);

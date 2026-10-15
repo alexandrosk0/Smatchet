@@ -615,19 +615,21 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
 
         std::string projectKeyForCache = ResolveActiveViewProjectKeyForCatalog(activeTrackerType);
         std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
-        // One parse per candidate key: the load also reports the save time, so no second pass over the file.
+        // One parse of the file for both candidates, the project-scoped key and then, when that has no snapshot yet
+        // (first run with this project, or it was evicted), the unscoped one so we still restore *some* catalog
+        // offline; the grid's scoped fetch repopulates the project entry on next draw. The load also reports the
+        // save time, so no further pass over the file.
+        std::vector<std::string> candidateKeys;
+        if (!projectKeyForCache.empty()) {
+            candidateKeys.push_back(cacheKey);
+        }
+        candidateKeys.push_back(FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, std::string()));
         std::int64_t savedUnix = 0;
-        bool loaded = !projectKeyForCache.empty() &&
-                      FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents,
-                                                                     snapIssueTypeMeta, snapErr, &savedUnix);
-        if (!loaded) {
-            // No project-scoped snapshot yet (first run with this project, or it was evicted).
-            // Fall back to the unscoped key so we still restore *some* catalog offline; the grid's
-            // scoped fetch repopulates the project entry on next draw.
-            projectKeyForCache.clear();
-            cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
-            loaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents,
-                                                                    snapIssueTypeMeta, snapErr, &savedUnix);
+        std::size_t loadedIndex = 0;
+        const bool loaded = FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot(
+            candidateKeys, snapFields, snapComponents, snapIssueTypeMeta, snapErr, loadedIndex, &savedUnix);
+        if (loaded && loadedIndex + 1 == candidateKeys.size()) {
+            projectKeyForCache.clear(); // the unscoped snapshot is the one that loaded
         }
 
         if (loaded) {

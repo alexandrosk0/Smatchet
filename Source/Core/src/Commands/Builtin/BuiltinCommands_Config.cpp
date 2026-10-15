@@ -160,6 +160,34 @@ const CfgKey* ConfigSetKeyTable() {
     return kKeys;
 }
 
+// A boolean setting takes a boolean (on/off/1/0 spellings accepted) and a string setting takes text: a value of
+// another type written here would make every later load of the key fall back to its default. A string key keeps the
+// text as typed (123, true), not the JSON the parse above made of it. Integer keys are checked by the caller.
+CommandResult NormalizeNonIntegerValue(const CfgKey& found, const std::string& key, const std::string& rawVal,
+                                       nlohmann::json& val) {
+    if (ConfigManager::IsStringConfigKey(found.json)) {
+        if (!val.is_string()) {
+            val = rawVal;
+        }
+    } else if (ConfigManager::IsBoolConfigKey(found.json)) {
+        if (val.is_string()) {
+            const std::string& s = val.get_ref<const std::string&>();
+            if (s == "on" || s == "true" || s == "1") {
+                val = true;
+            } else if (s == "off" || s == "false" || s == "0") {
+                val = false;
+            }
+        } else if (val.is_number_integer() && (val.get<long long>() == 0 || val.get<long long>() == 1)) {
+            val = val.get<long long>() == 1;
+        }
+        if (!val.is_boolean()) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "Value for '" + key + "' must be a boolean.",
+                                          "Use: true, false, on, off, 1, 0");
+        }
+    }
+    return CommandResult::Success(nlohmann::json::object());
+}
+
 CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx) {
     const CfgKey* kKeys = ConfigSetKeyTable();
     const std::string key = args.value("key", std::string());
@@ -225,6 +253,10 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
                                                                         : std::string("Use a whole number."));
         }
         val = intValue;
+    }
+    const CommandResult typed = NormalizeNonIntegerValue(*found, key, rawVal, val);
+    if (!typed.Ok) {
+        return typed;
     }
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});

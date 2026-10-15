@@ -656,10 +656,69 @@ bool SnapshotBlobLoads(const nlohmann::json& root, const std::string& cacheKey) 
 
 } // namespace
 
-bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
-                                 std::vector<TrackerComponent>& outComponents,
-                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
-                                 std::int64_t* outSavedUnix) {
+namespace {
+
+// One snapshot load against an already-parsed file (the caller holds the file mutex). Fills the outputs and records
+// the read for the LRU order; may rewrite the file when the entry's last-used stamp is stale. Throws on a damaged
+// file; the callers decide what that means.
+bool LoadSnapshotFromRootLocked(nlohmann::json& root, const std::string& cacheKey, std::vector<TrackerField>& outFields,
+                                std::vector<TrackerComponent>& outComponents,
+                                std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                std::int64_t* outSavedUnix) {
+    // Resolve the blob: prefer exact cacheKey match; fall back to "Jira_legacy_v1" for Jira keys
+    // (mirrors the previous v2 behavior so a fresh upgrade keeps reading the v1 snapshot).
+    std::string resolvedKey = cacheKey;
+    if (!root.contains(resolvedKey) || !root[resolvedKey].is_object()) {
+        if (cacheKey.rfind("Jira|", 0) == 0 && root.contains("Jira_legacy_v1") && root["Jira_legacy_v1"].is_object()) {
+            resolvedKey = "Jira_legacy_v1";
+        } else {
+            outError = "No field catalog cache entry for this tracker context.";
+            return false;
+        }
+    }
+    nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
+    const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
+    if (resolvedKey == cacheKey &&
+        IsUnclaimedLegacyJiraSnapshot(root, indexIt == indexArr.end() ? nlohmann::json() : *indexIt, cacheKey)) {
+        outError = "The cached field catalog for this tracker context predates per-tracker keys.";
+        return false;
+    }
+    const bool ok = ParseCatalogEntryObject(root[resolvedKey], outFields, outComponents, outIssueTypeMeta, outError);
+    if (!ok) {
+        return false;
+    }
+
+    // Record the read for the LRU order and report the save time, both from this one parse. The touch stays in
+    // memory (PendingTouches) and reaches disk with the next save; only an entry unused for a whole interval
+    // (or re-indexed with no time) is rewritten here, so the file is not rewritten on every load.
+    if (indexIt != indexArr.end()) {
+        const std::int64_t now = TimeNowPure::NowUnixSeconds();
+        if (outSavedUnix != nullptr) {
+            *outSavedUnix = IntOr(*indexIt, "savedUnix", 0); // 0 for an entry saved before the stamp existed
+        }
+        if (IntOr(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
+            (*indexIt)["lastUsedUnix"] = now;
+            ApplyPendingTouches(root, /*consume=*/false); // dropped only once the write lands
+            std::string writeErr;
+            if (PersistRootLocked(root, writeErr)) {
+                PendingTouches().clear();
+            } else {
+                // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
+                // of truth. The touches stay queued for the next write, this load's own included.
+                PendingTouches()[resolvedKey] = now;
+                LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
+                         writeErr.c_str());
+            }
+        } else {
+            PendingTouches()[resolvedKey] = now;
+        }
+    }
+    return true;
+}
+
+void ResetSnapshotOutputs(std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
+                          std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                          std::int64_t* outSavedUnix) {
     outError.clear();
     if (outSavedUnix != nullptr) {
         *outSavedUnix = 0;
@@ -667,61 +726,20 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
     outFields.clear();
     outComponents.clear();
     outIssueTypeMeta.clear();
+}
+
+} // namespace
+
+bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
+                                 std::vector<TrackerComponent>& outComponents,
+                                 std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                 std::int64_t* outSavedUnix) {
+    ResetSnapshotOutputs(outFields, outComponents, outIssueTypeMeta, outError, outSavedUnix);
     try {
         std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
         nlohmann::json root = LoadAndMigrateRootLocked();
-
-        // Resolve the blob: prefer exact cacheKey match; fall back to "Jira_legacy_v1" for Jira keys
-        // (mirrors the previous v2 behavior so a fresh upgrade keeps reading the v1 snapshot).
-        std::string resolvedKey = cacheKey;
-        if (!root.contains(resolvedKey) || !root[resolvedKey].is_object()) {
-            if (cacheKey.rfind("Jira|", 0) == 0 && root.contains("Jira_legacy_v1") &&
-                root["Jira_legacy_v1"].is_object()) {
-                resolvedKey = "Jira_legacy_v1";
-            } else {
-                outError = "No field catalog cache entry for this tracker context.";
-                return false;
-            }
-        }
-        nlohmann::json& indexArr = root["entries"]; // the migration always leaves an array here
-        const auto indexIt = FindIndexEntry(indexArr, resolvedKey);
-        if (resolvedKey == cacheKey &&
-            IsUnclaimedLegacyJiraSnapshot(root, indexIt == indexArr.end() ? nlohmann::json() : *indexIt, cacheKey)) {
-            outError = "The cached field catalog for this tracker context predates per-tracker keys.";
-            return false;
-        }
-        const bool ok =
-            ParseCatalogEntryObject(root[resolvedKey], outFields, outComponents, outIssueTypeMeta, outError);
-        if (!ok) {
-            return false;
-        }
-
-        // Record the read for the LRU order and report the save time, both from this one parse. The touch stays in
-        // memory (PendingTouches) and reaches disk with the next save; only an entry unused for a whole interval
-        // (or re-indexed with no time) is rewritten here, so the file is not rewritten on every load.
-        if (indexIt != indexArr.end()) {
-            const std::int64_t now = TimeNowPure::NowUnixSeconds();
-            if (outSavedUnix != nullptr) {
-                *outSavedUnix = IntOr(*indexIt, "savedUnix", 0); // 0 for an entry saved before the stamp existed
-            }
-            if (IntOr(*indexIt, "lastUsedUnix", 0) <= now - kLruTouchIntervalSeconds) {
-                (*indexIt)["lastUsedUnix"] = now;
-                ApplyPendingTouches(root, /*consume=*/false); // dropped only once the write lands
-                std::string writeErr;
-                if (PersistRootLocked(root, writeErr)) {
-                    PendingTouches().clear();
-                } else {
-                    // Best-effort: the caller still gets the loaded data; the cache is a snapshot, not the source
-                    // of truth. The touches stay queued for the next write, this load's own included.
-                    PendingTouches()[resolvedKey] = now;
-                    LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
-                             writeErr.c_str());
-                }
-            } else {
-                PendingTouches()[resolvedKey] = now;
-            }
-        }
-        return true;
+        return LoadSnapshotFromRootLocked(root, cacheKey, outFields, outComponents, outIssueTypeMeta, outError,
+                                          outSavedUnix);
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: %s", ex.what());
@@ -729,6 +747,41 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
     } catch (...) {
         outError = "Unknown parse error for field catalog cache.";
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: unknown exception");
+        return false;
+    }
+}
+
+bool TryLoadFirstFieldCatalogSnapshot(const std::vector<std::string>& cacheKeys, std::vector<TrackerField>& outFields,
+                                      std::vector<TrackerComponent>& outComponents,
+                                      std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                      std::size_t& outLoadedIndex, std::int64_t* outSavedUnix) {
+    ResetSnapshotOutputs(outFields, outComponents, outIssueTypeMeta, outError, outSavedUnix);
+    outLoadedIndex = 0;
+    try {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        nlohmann::json root = LoadAndMigrateRootLocked(); // the one parse of the file, whatever the candidate count
+        for (std::size_t i = 0; i < cacheKeys.size(); ++i) {
+            ResetSnapshotOutputs(outFields, outComponents, outIssueTypeMeta, outError, outSavedUnix);
+            try {
+                if (LoadSnapshotFromRootLocked(root, cacheKeys[i], outFields, outComponents, outIssueTypeMeta, outError,
+                                               outSavedUnix)) {
+                    outLoadedIndex = i;
+                    return true;
+                }
+            } catch (const std::exception& ex) {
+                // A damaged entry costs only itself: the next candidate may still load.
+                outError = ex.what();
+                LOG_ERROR("FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot candidate %zu failed: %s", i, ex.what());
+            }
+        }
+        return false;
+    } catch (const std::exception& ex) {
+        outError = ex.what();
+        LOG_ERROR("FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot parse failed: %s", ex.what());
+        return false;
+    } catch (...) {
+        outError = "Unknown parse error for field catalog cache.";
+        LOG_ERROR("FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot parse failed: unknown exception");
         return false;
     }
 }
