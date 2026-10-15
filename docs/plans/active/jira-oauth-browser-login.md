@@ -37,6 +37,8 @@ Modified:
 10. `Source/Core/src/Commands/Builtin/` — `jira.oauth_login` / `jira.oauth_logout` command registration (+ CLI guide row; `cli-guide-registry-parity-gate`).
 11. `tests/CMakeLists.txt`, `Source/Core/CMakeLists.txt` — register new TUs in the Linux subset and the full rig.
 12. `Source/Core/src/Tracker/{README,CONTEXT}.md`, `PRIVACY.md` — document the auth modes and the extra hosts contacted (`auth.atlassian.com`, `api.atlassian.com`).
+13. `tests/live/jira_oauth_live_smoke.cpp` + an `EXCLUDE_FROM_ALL` `SmatchetJiraOAuthLiveSmoke` target in `tests/CMakeLists.txt` — drives the real client: refresh → `accessible-resources` → `GET /rest/api/3/myself` through the Bearer path. Self-SKIPs (exit 0) when its env vars are unset. A `--login` mode runs the browser flow once on a developer machine and prints the refresh token for `gh secret set`.
+14. `.github/workflows/jira-oauth-live-smoke.yml` — modelled on `linear-live-smoke.yml`: nightly + `workflow_dispatch` only (never on PRs, so secrets never reach fork PRs), `permissions: contents: read`, runs in a protected GitHub Environment `jira-live-smoke`. Reads **GitHub Actions secrets** `JIRA_TEST_OAUTH_CLIENT_ID`, `JIRA_TEST_OAUTH_CLIENT_SECRET`, `JIRA_TEST_OAUTH_REFRESH_TOKEN`, `JIRA_TEST_OAUTH_ROTATE_PAT`, and var `JIRA_TEST_SITE` (a sandbox Jira Cloud site).
 
 Deferred to a follow-up (visual-validation exception — touches `Smatchet*Ui*.cpp`, cannot be verified without a launched Windows exe): the Preferences → Tracker **Sign in with browser** button, status line and mode radio.
 
@@ -76,6 +78,7 @@ N/A — adds new TUs, extracts nothing.
 - **Atlassian may not require a secret / may support PKCE now.** Evidence is a community thread plus an open feature request, not current docs (docs host unreachable from the build container). Mitigation: the secret is user-supplied config, so if PKCE becomes available it is additive. *Verify against the live Atlassian console before release.*
 - **Callback URL matching.** Atlassian matches the registered URL exactly, so the port is fixed (configurable) rather than ephemeral; a busy port fails with a clear error. Whether the console accepts `http://localhost:<port>/callback` must be confirmed live; assumed yes.
 - **Rotating refresh token loss.** A crash between receiving and persisting the new refresh token forces re-login. Mitigated by persisting before the old token is dropped; accepted otherwise.
+- **Rotating refresh token vs. a static Actions secret.** Each refresh invalidates the previous refresh token (Atlassian also expires inactive ones), so a `JIRA_TEST_OAUTH_REFRESH_TOKEN` secret works once and then goes stale. The workflow therefore writes the rotated token back with `gh secret set` using `JIRA_TEST_OAUTH_ROTATE_PAT` — a fine-grained PAT limited to this repo's *Secrets: write* (the built-in `GITHUB_TOKEN` cannot write secrets). Mitigations: the PAT and all four secrets live only in the protected `jira-live-smoke` Environment; the lane runs nightly/manual only; the step masks the token and never echoes it; the smoke targets a throwaway sandbox Jira site and OAuth app, never a real tenant. Accepted: one extra high-value secret. If the rotated token is lost (failed write-back), the lane goes red until a maintainer re-runs `--login` and re-sets the secret; it never touches product code paths.
 - **Plaintext fallback off Windows** (README § Platform support): the refresh token and client secret inherit that existing limitation. Accepted; same as `ApiToken` today.
 - **Loopback exposure.** Bound to `127.0.0.1`, one request, random `state` (≥128 bits), constant-time compare, closes after first valid callback or timeout, serves a static page, logs nothing from the query.
 - Non-goals: multi-site OAuth (one cloudId; `JiraBackends[1+]` keep API-token auth), Jira Data Center/Server OAuth, other backends, shipping a bundled client secret, a relay server, the Preferences UI (follow-up).
@@ -88,7 +91,7 @@ N/A — adds new TUs, extracts nothing.
 - **Lint**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
 - **Doc validation**: `scripts/dev/test-docs.sh` green.
 - **Plan stress-test — `grill-with-docs`**: run before finalising; outcome recorded in § Deviations.
-- **Manual residue**: the live Atlassian round trip (needs a real OAuth app + Jira Cloud site) cannot be automated here; tracked as a `tooling.md` entry — a credentialled smoke like `2026-08-03-credentialled-setup-smoke`.
+- **Credentialled live lane**: `jira-oauth-live-smoke.yml` (nightly + manual, GitHub Actions secrets, see § Files to modify rows 13-14) automates the live Atlassian round trip once a maintainer has created the sandbox OAuth app and set the secrets. That one-time bootstrap (register the app, run `--login`, `gh secret set` ×4, create the Environment) is the only manual residue and is tracked as a `tooling.md` entry next to `2026-08-03-credentialled-setup-smoke`. The container build here cannot run the lane (no credentials, no browser), so it is verified by `actionlint`/YAML parse locally and by the first manual dispatch.
 
 ## Out of scope (flagged, not designed)
 
