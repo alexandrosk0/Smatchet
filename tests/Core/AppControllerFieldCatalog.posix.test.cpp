@@ -672,6 +672,25 @@ TEST_CASE("AppController::HandleFieldCatalogError drops a restore when the pane 
     CHECK(app.GetFieldCatalogError().empty());
 }
 
+TEST_CASE("AppController::IsFieldCatalogRestoring is per pane: a restore for one pane does not show on another") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    const TrackerConfig cfg = ConfigManager::Load();
+    GridLiveContext* const other = app.EnsurePaneContextLive("other-pane", "Jira");
+    REQUIRE(other != nullptr);
+    CHECK_FALSE(app.IsFieldCatalogRestoring());
+    CHECK_FALSE(app.IsFieldCatalogRestoring("other-pane"));
+    SaveFooSnapshotAndClear(app, cfg);
+
+    app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    CHECK(app.IsFieldCatalogRestoring());                   // the focused pane is reading its saved catalog
+    CHECK_FALSE(app.IsFieldCatalogRestoring("other-pane")); // the other pane is not
+    SettleCatalogRestore(app);
+    CHECK_FALSE(app.IsFieldCatalogRestoring());
+    CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
+}
+
 TEST_CASE("AppController::HandleFieldCatalogError still restores when the pane did not move") {
     smatchet_tests::OfflineQueueTestEnvGuard env;
     AppController app;

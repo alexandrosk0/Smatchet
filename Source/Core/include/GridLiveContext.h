@@ -42,6 +42,9 @@ struct GridContextFieldCatalog {
     /// drops its result, so the newest refresh decides the catalog. A catalog applied by another path
     /// (the grid's own fetch) does not supersede a refresh.
     std::atomic<std::uint64_t> RefreshSeq{0};
+    /// Failed-refresh snapshot restores (SetFieldCatalog / HandleFieldCatalogError) waiting on the file read for THIS
+    /// pane: drives the pane's "loading saved fields" cue (AppController::IsFieldCatalogRestoring).
+    std::atomic<int> errorRestoresInFlight{0};
     /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
     mutable std::mutex availableFieldsMutex_;
     std::vector<TrackerField> AvailableFields;

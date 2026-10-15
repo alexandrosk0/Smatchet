@@ -961,7 +961,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     CatalogSnapshotIo io;
     io.Queue = &catalogSnapshotIo_;
     io.PostToUi = [this](std::function<void()> fn) { mainThreadDispatcher.PostCompletionToMainThread(std::move(fn)); };
-    io.RestoresInFlight = &catalogErrorRestoresInFlight_;
+    io.RestoresInFlight = &pane.fieldCatalog.errorRestoresInFlight;
     // The pane's generation and cache key are latched here: a failed refresh with nothing in memory restores the
     // saved catalog on a worker and applies it later, and by then the pane may run another tracker or site.
     if (ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
@@ -1024,8 +1024,11 @@ AppController::ReadStartupCatalogRestore_(const std::shared_ptr<ITrackerBackend>
 
 void AppController::LaunchStartupCatalogRestore_(const TrackerConfig& cfg, const std::string& activeTrackerType) {
     if (startupCatalogRestoreInFlight_ && startupCatalogRestoreSlot_.valid()) {
-        startupCatalogRestoreSlot_
-            .wait(); // a second Initialize: let the first read finish rather than overwrite its slot
+        // A second Initialize (an embedded host re-initialising, a test) while the first read is still running. The
+        // slot is single, and a future from std::async blocks in its destructor, so overwriting it would wait for the
+        // first read just the same: waiting here only makes that explicit. It is one small snapshot-file read, at most
+        // once per re-Initialize, never in the frame loop.
+        startupCatalogRestoreSlot_.wait();
     }
     GridLiveContext& ctx = focusedContext();
     startupCatalogRestoreLatch_.Ctx = &ctx;
@@ -1048,6 +1051,15 @@ void AppController::LaunchStartupCatalogRestore_(const TrackerConfig& cfg, const
     }
 }
 
+bool AppController::IsFieldCatalogRestoring(const std::string& paneId) const {
+    const std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    const GridLiveContext& ctx = it != gridContexts_.end() && it->second ? *it->second : focusedContext();
+    return ctx.fieldCatalog.errorRestoresInFlight.load() > 0 ||
+           (startupCatalogRestoreInFlight_ && startupCatalogRestoreLatch_.Ctx == &ctx);
+}
+
+bool AppController::IsFieldCatalogRestoring() const { return IsFieldCatalogRestoring(focusedPaneId_); }
+
 void AppController::PollStartupCatalogRestore() {
     if (!startupCatalogRestoreInFlight_ || !startupCatalogRestoreSlot_.valid() ||
         startupCatalogRestoreSlot_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
@@ -1066,21 +1078,25 @@ void AppController::PollStartupCatalogRestore() {
 
 void AppController::ApplyStartupCatalogRestore_(StartupCatalogRestore restore) {
     const StartupCatalogRestoreLatch latch = startupCatalogRestoreLatch_;
-    if (!restore.Loaded || latch.Ctx == nullptr) {
+    const bool paneLatched = latch.Ctx != nullptr;
+    bool catalogEmpty = false;
+    if (restore.Loaded && paneLatched) {
+        const GridContextFieldCatalog& live = latch.Ctx->fieldCatalog;
+        std::lock_guard<std::mutex> lk(live.availableFieldsMutex_);
+        catalogEmpty = live.AvailableFields.empty();
+    }
+    const smatchet::sync::StartupRestoreAction action =
+        smatchet::sync::DecideStartupRestore(restore.Loaded, paneLatched, catalogEmpty,
+                                             paneLatched && latch.Ctx->backendGeneration_.load() == latch.Generation);
+    if (action == smatchet::sync::StartupRestoreAction::NothingToApply) {
         return; // no saved catalog: the grid's own fetch brings the first one
     }
-    GridContextFieldCatalog& cat = latch.Ctx->fieldCatalog;
-    bool catalogEmpty;
-    {
-        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        catalogEmpty = cat.AvailableFields.empty();
-    }
-    if (!smatchet::sync::MayApplyRestoredCatalog(catalogEmpty,
-                                                 latch.Ctx->backendGeneration_.load() == latch.Generation)) {
+    if (action == smatchet::sync::StartupRestoreAction::Superseded) {
         LOG_INFO("AppController: the saved field catalog was not restored: a newer catalog or another tracker is in "
                  "place.");
         return;
     }
+    GridContextFieldCatalog& cat = latch.Ctx->fieldCatalog;
     startupCatalogSavedUnix_.store(restore.SavedUnix);
     // The scope the snapshot was restored under: a fresh UNSCOPED snapshot must not stand in for the
     // project-scoped fetch of a view that resolves a project (see CanSkipCatalogFetch).
@@ -1145,8 +1161,8 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
     CatalogSnapshotIo io;
     io.Queue = &catalogSnapshotIo_;
     io.PostToUi = [this](std::function<void()> fn) { mainThreadDispatcher.PostCompletionToMainThread(std::move(fn)); };
-    io.RestoresInFlight = &catalogErrorRestoresInFlight_;
     GridLiveContext& pane = focusedContext();
+    io.RestoresInFlight = &pane.fieldCatalog.errorRestoresInFlight;
     HandleFieldCatalogErrorInto(pane.fieldCatalog, error, errorTransient, catalogCacheKey, backendKey,
                                 CatalogWriteGuard::LatchedTo(pane), std::string(), io);
 }

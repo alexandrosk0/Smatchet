@@ -26,9 +26,26 @@ TEST_CASE("MayApplyRestoredCatalog: a restore never overrides a catalog that lan
     CHECK_FALSE(MayApplyRestoredCatalog(false, false));
 }
 
-TEST_CASE("StartupCatalogDecisionMustWait: the skip decision waits for the restored snapshot") {
-    CHECK(StartupCatalogDecisionMustWait(true));
-    CHECK_FALSE(StartupCatalogDecisionMustWait(false));
+TEST_CASE("DecideStartupRestore: nothing saved, or no pane latched, applies nothing") {
+    // The grid's own fetch brings the first catalog; the restore never touches the pane.
+    CHECK(DecideStartupRestore(false, true, true, true) == StartupRestoreAction::NothingToApply);
+    CHECK(DecideStartupRestore(true, false, true, true) == StartupRestoreAction::NothingToApply);
+    CHECK(DecideStartupRestore(false, false, true, true) == StartupRestoreAction::NothingToApply);
+    // Whatever the pane looks like, an absent restore stays absent.
+    CHECK(DecideStartupRestore(false, true, false, false) == StartupRestoreAction::NothingToApply);
+}
+
+TEST_CASE("DecideStartupRestore: a restore never overrides a catalog that landed first") {
+    CHECK(DecideStartupRestore(true, true, false, true) == StartupRestoreAction::Superseded);
+}
+
+TEST_CASE("DecideStartupRestore: a restore read for another tracker is dropped") {
+    CHECK(DecideStartupRestore(true, true, true, false) == StartupRestoreAction::Superseded);
+    CHECK(DecideStartupRestore(true, true, false, false) == StartupRestoreAction::Superseded);
+}
+
+TEST_CASE("DecideStartupRestore: an empty pane on the same backend takes the saved catalog") {
+    CHECK(DecideStartupRestore(true, true, true, true) == StartupRestoreAction::Apply);
 }
 
 TEST_CASE(

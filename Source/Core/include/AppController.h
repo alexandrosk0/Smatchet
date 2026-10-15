@@ -301,8 +301,6 @@ class AppController : public IAppThreading,
     std::future<StartupCatalogRestore> startupCatalogRestoreSlot_;
     bool startupCatalogRestoreInFlight_ = false; ///< UI thread only; the slot's latch (see LaunchIntoSlot)
     StartupCatalogRestoreLatch startupCatalogRestoreLatch_;
-    /// Error-path catalog restores (SetFieldCatalog failures) reading the snapshot file on the worker.
-    std::atomic<int> catalogErrorRestoresInFlight_{0};
 
     /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the catalog `cat` and publish the
     /// offline warning. UI thread.
@@ -859,11 +857,13 @@ class AppController : public IAppThreading,
     /// True from startup until the saved field catalog has been read and installed (or found missing). The
     /// grid's fetch-or-skip decision for the startup catalog waits for it: it reads the restored snapshot.
     bool IsStartupCatalogRestorePending() const { return startupCatalogRestoreInFlight_; }
-    /// True while any saved field catalog is being read from disk for the pane: the startup restore, or the
-    /// restore after a failed refresh with no catalog in memory. Drives the "loading saved fields" cue.
-    bool IsFieldCatalogRestoring() const {
-        return startupCatalogRestoreInFlight_ || catalogErrorRestoresInFlight_.load() > 0;
-    }
+    /// True while a saved field catalog is being read from disk for pane `paneId` (the focused pane's when the id is
+    /// unknown): the startup restore, which was launched for the pane that was focused at startup, or the restore
+    /// after a failed refresh with no catalog in memory, which belongs to the pane that was focused when it failed.
+    /// Drives that pane's "loading saved fields" cue; another pane is not affected. UI thread.
+    bool IsFieldCatalogRestoring(const std::string& paneId) const;
+    /// `IsFieldCatalogRestoring` for the focused pane.
+    bool IsFieldCatalogRestoring() const;
     /// Blocks until every field-catalog snapshot save and restore queued so far has finished (tests that read the
     /// snapshot back right after SetFieldCatalog / RefreshFieldCatalog, and the destructor). A finished error-path
     /// restore still lands on the UI thread: drain `mainThreadDispatcher` after it. Never call it per frame.

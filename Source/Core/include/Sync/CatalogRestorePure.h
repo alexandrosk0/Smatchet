@@ -40,6 +40,26 @@ inline bool MayApplyRestoredCatalog(bool catalogEmptyNow, bool backendGeneration
     return catalogEmptyNow && backendGenerationUnchanged;
 }
 
+/// What happens to a finished startup restore when it lands on the UI thread.
+enum class StartupRestoreAction : unsigned char {
+    NothingToApply, ///< no saved catalog was found, or no pane was latched at launch: the grid's own fetch brings the
+                    ///< first
+    Superseded,     ///< a catalog landed first, or the pane switched tracker meanwhile: the older saved copy is dropped
+    Apply,          ///< install the saved catalog into the latched pane
+};
+
+/// The apply-or-drop decision of `AppController::ApplyStartupCatalogRestore_`, in the order it checks: a restore
+/// with nothing in it (or no latched pane) applies nothing; one that found a live catalog already in the pane, or a
+/// pane that runs another backend now, is dropped; otherwise it is installed.
+inline StartupRestoreAction DecideStartupRestore(bool snapshotLoaded, bool paneLatched, bool catalogEmptyNow,
+                                                 bool backendGenerationUnchanged) {
+    if (!snapshotLoaded || !paneLatched) {
+        return StartupRestoreAction::NothingToApply;
+    }
+    return MayApplyRestoredCatalog(catalogEmptyNow, backendGenerationUnchanged) ? StartupRestoreAction::Apply
+                                                                                : StartupRestoreAction::Superseded;
+}
+
 /// True when work latched at launch for one pane (a failed refresh's snapshot restore, which is read on a worker
 /// and lands later on the UI thread) still belongs to that pane when it lands: the pane's backend generation and its
 /// cache namespace key are both what they were at launch. A tracker or site switch (generation, key) or a retired
