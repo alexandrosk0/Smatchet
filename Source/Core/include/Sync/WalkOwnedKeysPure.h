@@ -3,10 +3,10 @@
 // WalkOwnedKeysPure - which resident rows a pane holds only because of the hierarchy walk. A reload adds the
 // parents and the children of the view's own rows; the view's roster never lists them, so a membership check
 // against the roster would read each of them as "left the view" (and the grid would drop them with a toast).
-// C++14; ParentKeyOf is the only call that links against the parent-hierarchy helpers.
+// C++14, header-only. The parent-field contract (ParentHierarchyPure::ParentKeyOf) is passed in by the caller: this
+// header sits below the tracker layer and must not include it.
 
 #include "CachedTicketTypes.h"
-#include "Tracker/ParentHierarchyPure.h"
 
 #include <string>
 #include <unordered_set>
@@ -14,6 +14,9 @@
 
 namespace smatchet {
 namespace sync {
+
+/// The parent key a row names (empty: none) - ParentHierarchyPure::ParentKeyOf in production.
+using ParentKeyFn = std::string (*)(const CachedTicket&);
 
 /// Ids of the rows in `resident` the membership check must leave alone because the hierarchy walk owns them.
 /// - A row that is the parent of another resident row: the walk loads it for that child whether or not the view
@@ -23,7 +26,8 @@ namespace sync {
 ///   outside the query (a ticket created here); neither can be shown to have left the view, so they stay.
 /// A listed row the roster no longer names is the one case left over: it left the view.
 inline std::unordered_set<std::string> WalkOwnedKeys(const std::vector<CachedTicket>& resident,
-                                                     const std::unordered_set<std::string>* viewListed) {
+                                                     const std::unordered_set<std::string>* viewListed,
+                                                     ParentKeyFn parentKeyOf) {
     std::unordered_set<std::string> present;
     present.reserve(resident.size());
     for (const CachedTicket& row : resident) {
@@ -31,7 +35,7 @@ inline std::unordered_set<std::string> WalkOwnedKeys(const std::vector<CachedTic
     }
     std::unordered_set<std::string> owned;
     for (const CachedTicket& row : resident) {
-        const std::string parentKey = ParentHierarchyPure::ParentKeyOf(row);
+        const std::string parentKey = parentKeyOf(row);
         if (!parentKey.empty() && present.find(parentKey) != present.end()) {
             owned.insert(parentKey);
         }

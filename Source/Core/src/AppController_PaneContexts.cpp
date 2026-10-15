@@ -31,6 +31,7 @@
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
 #include "Sync/WalkOwnedKeysPure.h"
+#include "Tracker/ParentHierarchyPure.h" // ParentKeyOf: the parent-field contract the walk-owned check applies
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
@@ -96,8 +97,9 @@ void SnapshotResidentForProbe(GridLiveContext& ctx, bool& useRoster, std::vector
                               std::unordered_map<std::string, std::string>& residentUpdated,
                               std::unordered_set<std::string>& walkOwned) {
     std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-    walkOwned = smatchet::sync::WalkOwnedKeys(
-        ctx.ActiveTickets, ctx.monitorState.ViewListedKnown ? &ctx.monitorState.ViewListed : nullptr);
+    walkOwned = smatchet::sync::WalkOwnedKeys(ctx.ActiveTickets,
+                                              ctx.monitorState.ViewListedKnown ? &ctx.monitorState.ViewListed : nullptr,
+                                              &ParentHierarchyPure::ParentKeyOf);
     cachedKeys.reserve(ctx.ActiveTickets.size());
     if (useRoster) {
         residentUpdated.reserve(ctx.ActiveTickets.size());
@@ -120,6 +122,43 @@ void SnapshotResidentForProbe(GridLiveContext& ctx, bool& useRoster, std::vector
 std::chrono::seconds ProbeWindow(std::chrono::system_clock::time_point polledAt,
                                  std::chrono::system_clock::time_point sinceAnchor) {
     return std::chrono::duration_cast<std::chrono::seconds>(polledAt - sinceAnchor) + std::chrono::seconds(60);
+}
+
+// Everything one monitor probe needs, copied off the UI thread: the worker never touches the pane's context.
+struct MonitorProbeJob {
+    std::string PaneId;
+    std::shared_ptr<ITrackerBackend> Backend; // strong handle: a live backend swap must not free it mid-fetch
+    TrackerConfig Cfg;
+    std::string PaneJql;
+    std::vector<std::string> SalientFieldIds;
+    std::vector<std::string> CachedKeys;                          // the membership baseline (changed-since path)
+    std::unordered_map<std::string, std::string> ResidentUpdated; // id -> held stamp (roster path only)
+    std::unordered_set<std::string> WalkOwned;                    // rows the hierarchy walk owns
+    std::unordered_set<std::string> RefusedKeys;                  // keys the tracker refused earlier
+    bool UseRoster = false;
+    std::chrono::seconds Window{0};
+};
+
+struct MonitorProbeResult {
+    std::vector<CachedTicket> Fetched;
+    std::vector<smatchet::MembershipRemovalVerdict> Verdicts;
+    smatchet::sync::ChangeProbeCycleNotes Notes;
+    bool AddNewRows = false;
+};
+
+// Worker half of one monitor cycle. False = soft failure (logged by the cycle): the caller skips the apply.
+bool RunMonitorProbe(MonitorProbeJob& job, MonitorProbeResult& result) {
+    ViewsStore views = ConfigManager::LoadViewsOrBootstrap(job.Cfg);
+    if (!job.PaneJql.empty()) {
+        job.Cfg.JqlQuery = job.PaneJql;
+    }
+    smatchet::sync::RosterProbeContext probeContext;
+    probeContext.RefusedKeys = &job.RefusedKeys;
+    probeContext.WalkOwned = &job.WalkOwned;
+    probeContext.Notes = &result.Notes;
+    return smatchet::sync::RunChangeProbeCycle(
+        job.Backend->Reader(), job.Cfg, views, job.UseRoster, job.ResidentUpdated, job.CachedKeys, job.Window,
+        job.SalientFieldIds, job.PaneId, result.Fetched, result.Verdicts, result.AddNewRows, probeContext);
 }
 
 // What merging a change probe's rows into the pane's resident rows changed.
@@ -752,48 +791,33 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         // re-dispatch while this probe runs.
         ctx.nextChangePollAt = now + interval;
 
-        TrackerConfig cfgCopy = cfg;
-        const std::string paneJql = ctx.lastSyncedJql; // pane's own query (empty → cfg's focused query)
-        // Snapshot the pane's CURRENT cached keys ON THE UI THREAD — the membership reconcile's
-        // baseline (item 10). The worker diffs these against the view's full key list to find rows
-        // that vanished; ctx must not be touched off-thread, so it is captured by value.
-        std::vector<std::string> cachedKeys;
-        // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query
-        // plus the keys-only query, and downloads only the bodies that moved. Others keep the old path.
-        // A pane whose roster came back incomplete (its view is larger than the reload's caps) goes straight to
-        // the changed-since path until its next reload, instead of paying for a capped walk every cycle.
-        bool useRoster =
+        MonitorProbeJob job;
+        job.PaneId = paneId;
+        job.Backend = backend;
+        job.Cfg = cfg;
+        job.PaneJql = ctx.lastSyncedJql; // pane's own query (empty -> cfg's focused query)
+        job.SalientFieldIds = salientFieldIds;
+        job.Window = window;
+        // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query plus the
+        // keys-only query, and downloads only the bodies that moved. Others keep the old path. A pane whose roster
+        // came back incomplete (its view is larger than the reload's caps) goes straight to the changed-since path
+        // until its next reload, instead of paying for a capped walk every cycle.
+        job.UseRoster =
             ctx.monitorState.ShouldTryRoster(cfg.DeltaSyncEnabled, backend->Reader().SupportsVersionedRoster());
-        std::unordered_map<std::string, std::string> residentUpdated; // id -> held stamp (roster path only)
-        std::unordered_set<std::string> walkOwned;
-        SnapshotResidentForProbe(ctx, useRoster, cachedKeys, residentUpdated, walkOwned);
-        const std::unordered_set<std::string> refusedKeys = ctx.monitorState.RefusedKeys;
-        LaunchBackgroundTask([this, paneId, backend, cfgCopy, paneJql, salientFieldIds, cachedKeys, residentUpdated,
-                              walkOwned, refusedKeys, useRoster, window, polledAt, capturedGeneration,
-                              capturedSyncEpoch]() mutable {
-            /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
-            ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
-            if (!paneJql.empty()) {
-                cfgCopy.JqlQuery = paneJql;
-            }
-            std::vector<CachedTicket> fetched;
-            std::vector<smatchet::MembershipRemovalVerdict> verdicts;
-            bool addNewRows = false;
-            smatchet::sync::ChangeProbeCycleNotes notes;
-            smatchet::sync::RosterProbeContext probeContext;
-            probeContext.RefusedKeys = &refusedKeys;
-            probeContext.WalkOwned = &walkOwned;
-            probeContext.Notes = &notes;
-            if (!smatchet::sync::RunChangeProbeCycle(backend->Reader(), cfgCopy, views, useRoster, residentUpdated,
-                                                     cachedKeys, window, salientFieldIds, paneId, fetched, verdicts,
-                                                     addNewRows, probeContext)) {
+        // Snapshot the pane's CURRENT cached keys ON THE UI THREAD - the membership reconcile's baseline (item 10).
+        // ctx must not be touched off-thread, so the worker gets everything by value.
+        SnapshotResidentForProbe(ctx, job.UseRoster, job.CachedKeys, job.ResidentUpdated, job.WalkOwned);
+        job.RefusedKeys = ctx.monitorState.RefusedKeys;
+        LaunchBackgroundTask([this, job = std::move(job), polledAt, capturedGeneration, capturedSyncEpoch]() mutable {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch - off the UI thread
+            MonitorProbeResult result;
+            if (!RunMonitorProbe(job, result)) {
                 return; // soft failure: logged, the anchor is untouched and the next interval retries
             }
-            mainThreadDispatcher.PostToMainThread([this, paneId, fetched = std::move(fetched),
-                                                   verdicts = std::move(verdicts), notes = std::move(notes), polledAt,
-                                                   capturedGeneration, capturedSyncEpoch, addNewRows]() mutable {
-                applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
-                                              capturedGeneration, capturedSyncEpoch, addNewRows, notes);
+            mainThreadDispatcher.PostToMainThread([this, paneId = job.PaneId, result = std::move(result), polledAt,
+                                                   capturedGeneration, capturedSyncEpoch]() mutable {
+                applyChangeProbeOnMainThread_(paneId, std::move(result.Fetched), std::move(result.Verdicts), polledAt,
+                                              capturedGeneration, capturedSyncEpoch, result.AddNewRows, result.Notes);
             });
         });
     }

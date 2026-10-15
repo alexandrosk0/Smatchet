@@ -2833,7 +2833,8 @@ TEST_CASE("WalkOwnedKeys without a view listing names only the parents a pane ho
     CachedTicket away = MakeTicket("T-1", "parent not held");
     away.fieldValues["parent"] = "X-1 - elsewhere";
 
-    const std::unordered_set<std::string> owned = smatchet::sync::WalkOwnedKeys({epic, story, orphan, away}, nullptr);
+    const std::unordered_set<std::string> owned =
+        smatchet::sync::WalkOwnedKeys({epic, story, orphan, away}, nullptr, &ParentHierarchyPure::ParentKeyOf);
 
     CHECK(owned == std::unordered_set<std::string>{"E-1"}); // a child may be a view row that left: it stays checkable
 }
@@ -2848,7 +2849,7 @@ TEST_CASE("WalkOwnedKeys with a view listing also owns every row the view's quer
     const std::unordered_set<std::string> listed = {"S-1", "G-1"};
 
     const std::unordered_set<std::string> owned =
-        smatchet::sync::WalkOwnedKeys({epic, story, walkChild, gone}, &listed);
+        smatchet::sync::WalkOwnedKeys({epic, story, walkChild, gone}, &listed, &ParentHierarchyPure::ParentKeyOf);
 
     // E-1 is a parent of a resident row and unlisted; S-2 is unlisted; S-1 is also a parent. G-1 is the one row
     // the monitor may still report as having left the view.
