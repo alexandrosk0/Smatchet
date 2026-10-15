@@ -114,36 +114,15 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 - **Phase 0 (open item)** — a spike against a live Jira instance: measure the page size for `fields=updated&maxResults=5000` versus `fields=key`; whether `updated` changes on comment edit and delete; read-after-write consistency. Its results set the roster page cap and the max row age. Until then: roster `maxResults=100`, named constant `kJiraMaxRosterPages`, `DeltaSyncMaxRowAgeSec` 21600.
 - Plane / GitHub / Linear roster implementations — follow-up per backend.
 
-## Review follow-ups (open)
+## Review follow-up decisions
 
-What is left of the Phase 3-7 review follow-ups needs a product or design decision. Each item states the question and the options; none is implemented. Everything else the reviews found is fixed on `feat/delta-sync-followups` (the change monitor's per-pane memory, stamp comparison by instant, view-field trimming, the roster-scoped delta precondition, the per-session apply map, rows the cache holds newer, remembered refused keys, the local-refresh ordering gate, cache-served change reports, `config.set` type checks, the one-parse catalog restore, the Fields tab Refresh, `cache.recreate` wipe reporting, the per-file LRU touches). The change-monitor probe-save race was checked and is obsolete: `SaveTicketsWithSyncMeta` refuses a row whose incoming `updated` is provably older than the stored one (tests in `LocalCacheTicketSyncMeta.test.cpp`), so a probe save that lands after a sync started cannot roll a stored row back; a Full sync bypasses the guard on purpose.
+The Phase 3-7 review follow-ups that needed a product or design decision are decided below (nothing is open). Everything else the reviews found is fixed on `feat/delta-sync-followups` (the change monitor's per-pane memory, stamp comparison by instant, view-field trimming, the roster-scoped delta precondition, the per-session apply map, rows the cache holds newer, remembered refused keys, the local-refresh ordering gate, cache-served change reports, `config.set` type checks, the one-parse catalog restore, the Fields tab Refresh, `cache.recreate` wipe reporting, the per-file LRU touches). The change-monitor probe-save race was checked and is obsolete: `SaveTicketsWithSyncMeta` refuses a row whose incoming `updated` is provably older than the stored one (tests in `LocalCacheTicketSyncMeta.test.cpp`), so a probe save that lands after a sync started cannot roll a stored row back; a Full sync bypasses the guard on purpose.
 
-- **Local edits on the old path.** The old full fetch overwrote a locally edited row on every reload. `UpdateTicket` now keeps the row's sync meta (so a local edit does not force a refetch), which means a delta sync serves a still-queued or dead-lettered edit as "unchanged" until the remote `updated` moves or `DeltaSyncMaxRowAgeSec` (6 h) expires.
-  - *Question:* should a delta reload refetch a row whose local edit is not yet confirmed by the tracker?
-  - *A. Keep (today).* Cheapest; the edit stays visible. A dead-lettered edit that never lands shows as the truth for up to 6 h.
-  - *B. Drop the row's meta while its edit is unconfirmed.* The next delta refetches it (one body request per edited row). An edit that did not land is overwritten by the remote value on that reload, a visible revert, unless the queue panel makes the loss visible first.
-  - *C. Keep the meta, but show a "pending" overlay on rows with a queued or dead-lettered edit.* No extra requests and no silent revert; needs a grid cue and a link to the offline-queue panel (grid-engine work).
-- **Session stats are indicative.** `sync.stats` samples a shared tracker traffic counter, so two panes syncing at once cross-count requests and bytes.
-  - *Question:* is "indicative" good enough, or must the numbers be exact per session?
-  - *A. Accept and document it in the `sync.stats` output (today).*
-  - *B. Attribute traffic per session* with a thread-local session id set by the sync worker and read by `NetworkUsageTracker` in the HTTP layer. Exact, but touches every backend's HTTP path.
-  - *C. Serialise the stats window:* record stats only for a session that ran alone, and mark the others "shared".
-- **`ApplyIssueFetchPack` is a dead path in production** (`AppController::ApplyIssueFetchPack` has no caller; about 25 tests in `TicketSyncService.test.cpp`, `SyncEmptyFullSyncGuard.test.cpp` and others drive `TicketSyncService::ApplyIssueFetchPack`).
-  - *Question:* remove it, or keep it?
-  - *A. Remove the production method with its fixtures.* Deletes those tests; the streaming path already has equivalents for stale deletion and the empty-sync guard, but the rule "never delete tests" applies until you approve it.
-  - *B. Keep a single writer:* rebuild the streaming apply on top of `ApplyIssueFetchPack`. Large and risky; no user-visible gain.
-  - *C. Keep it as a documented test-only seam* and delete only the unused `AppController` passthrough.
-- **`cache.recreate` joins every pane worker on the UI thread** and can freeze the UI for the length of the slowest in-flight request (documented in the command description and `docs/guides/cli.md`).
-  - *Question:* is a UI pause of up to one HTTP timeout acceptable for a destructive, rare command?
-  - *A. Keep and document (today).*
-  - *B. Run the teardown on a worker behind a "recreating" gate* that blocks syncs and writes and shows a progress cue; the pane-context swap has to be redesigned around the gate.
-  - *C. Cancel without joining:* flag the workers, swap the cache, and let late workers drop their results through a generation check (the `RefreshLocalData` pattern). Fast, but every worker needs the check.
-- **Field-catalog snapshot restore and save touch the file on the UI thread.** `TryLoadFirstFieldCatalogSnapshot` (now one parse) runs at startup and in the render-path error handler, and a successful catalog apply saves synchronously (`AppController_CatalogAndFieldEdit.cpp`).
-  - *Question:* move them to a worker (Pillar 2), accepting the sequencing changes below?
-  - *A. Keep both synchronous (today).* One bounded parse (the cache keeps at most 16 projects); the grid draws cached columns on frame 1.
-  - *B. Move only the save to a serial worker queue.* Safe for the app, but `AppControllerFieldCatalog.posix.test.cpp` (Linux only) loads the snapshot right after `SetFieldCatalog` returns, so it needs a flush hook.
-  - *C. Move both.* The startup grid may draw without columns until the restore lands, so it needs a "loading saved fields" cue (Pillar 6).
-- **`LookupCacheTtlSec` default.** It stays 0 (off), so a picker opened online, or reopened after an outage, reloads live (the offline-first contract). *Question:* ship a non-zero default (for example 3600 s) or add a Preferences control? Options: keep 0, 600 s, 3600 s, 86400 s; a non-zero default saves one project-list request per picker open but can show a project list up to the TTL old.
+- **Local edits: pending overlay (decided, option C; lands in a later commit on this branch).** The row keeps its sync meta; the grid marks every row with a queued or dead-lettered edit.
+- **Off the UI thread (decided; lands in later commits on this branch):** the field-catalog snapshot save, the catalog restore (startup and the error path) and the `cache.recreate` teardown.
+- **Session stats are approximate (kept as is).** `sync.stats` samples a shared tracker traffic counter, so two panes syncing at once cross-count requests and bytes. Decision: accept and say so. The `sync.stats` command description and `docs/guides/cli.md` call the request and byte numbers approximate; there is no per-session attribution.
+- **`LookupCacheTtlSec` stays 0 (off).** A picker opened online, or reopened after an outage, reloads live (the offline-first contract). No Preferences control, no non-zero default.
+- **`ApplyIssueFetchPack` is a documented test-only seam.** `TicketSyncService::ApplyIssueFetchPack` stays (its header says it has no production caller and that production applies through the streaming path); the unused `AppController::ApplyIssueFetchPack` passthrough was deleted. No test was removed.
 
 ## Phase 7 notes (lookups)
 

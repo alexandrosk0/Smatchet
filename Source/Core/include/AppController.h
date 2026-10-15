@@ -690,13 +690,10 @@ class AppController : public IAppThreading,
 
     /**
      * Runs FetchIssues under an internal mutex (safe with concurrent UI-triggered syncs).
-     * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
+     * Does not touch the SQLite cache; the result is applied by the streaming sync path.
      */
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                    const ViewsStore* viewsOverride = nullptr) override;
-
-    /** Merges fetch results into the local cache and updates connectivity banners. */
-    void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData() override;
     void RefreshLocalDataAsync() override;

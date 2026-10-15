@@ -73,6 +73,10 @@ class TicketSyncService {
     /// `RecreateLocalCacheDatabase`.
     static void CancelAndJoinAll(const std::vector<TicketSyncService*>& services);
 
+    /// TEST-ONLY SEAM: no production caller. Production applies fetches through the streaming path
+    /// (`TickStreamingApply`); `AppController` has no passthrough. Kept because the stale-deletion and
+    /// empty-full-sync-guard tests drive the one-shot apply directly. Do not add production callers.
+    ///
     /// Apply a single tracker-fetch result on the UI thread: persist fetched tickets to SQLite,
     /// classify any fetch error / soft warning, and prune cache rows that vanished from the
     /// remote when `FullSyncCompleted` is set.

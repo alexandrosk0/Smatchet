@@ -562,14 +562,8 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
     return pack;
 }
 
-// ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync: moved to TicketSyncService in
-// Phase 1A of the item 11 extraction. Thin delegators below.
-
-void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
-    if (focusedContext().ticketSync_) {
-        focusedContext().ticketSync_->ApplyIssueFetchPack(std::move(pack));
-    }
-}
+// ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync live in TicketSyncService (the former is a
+// test-only seam there; AppController has no passthrough for it).
 
 void AppController::CancelAndJoinAllPaneStreamingSyncs() {
     std::vector<TicketSyncService*> services;

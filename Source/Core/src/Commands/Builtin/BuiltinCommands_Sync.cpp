@@ -227,15 +227,18 @@ nlohmann::json SyncStatsToJson(const smatchet::sync::SyncSessionStats& stats) {
 }
 
 void RegisterSyncStatsCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
-    Command c = MakeCommand("sync.stats",
-                            "What the last finished sync session cost: mode (full/delta), roster size, bodies "
-                            "fetched, unchanged rows, requests, bytes, duration and fallback reason.",
-                            [&app, &poster](const nlohmann::json&, const CommandContext&) {
-                                // Resolves the focused pane, which is UI-thread-owned state.
-                                return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                    return CommandResult::Success(SyncStatsToJson(app.GetLastSyncSessionStats()));
-                                });
-                            });
+    Command c =
+        MakeCommand("sync.stats",
+                    "What the last finished sync session cost: mode (full/delta), roster size, bodies "
+                    "fetched, unchanged rows, requests, bytes, duration and fallback reason. The request and byte "
+                    "counts are approximate: they sample a traffic counter shared by every pane, so two panes "
+                    "syncing at once cross-count each other.",
+                    [&app, &poster](const nlohmann::json&, const CommandContext&) {
+                        // Resolves the focused pane, which is UI-thread-owned state.
+                        return RunOnUiThreadAsCommandResult(poster, [&app]() {
+                            return CommandResult::Success(SyncStatsToJson(app.GetLastSyncSessionStats()));
+                        });
+                    });
     c.Idempotent = true;
     reg.Register(std::move(c));
 }
