@@ -1626,6 +1626,8 @@ add_executable(SmatchetTests
     Core/CatalogRestorePure.test.cpp
     # delta-sync follow-up - the cache recreate outcome and its refusal wording (Sync/CacheRecreateReportPure.h).
     Core/CacheRecreateReportPure.test.cpp
+    # delta-sync follow-up - the pending-edit overlay of the grid, built from the queue snapshots (Sync/PendingOverlayPure.h).
+    Core/PendingOverlayPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):

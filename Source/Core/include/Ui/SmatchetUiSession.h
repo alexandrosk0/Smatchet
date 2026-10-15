@@ -31,6 +31,7 @@
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
 #include "AsyncLoadGatePure.h" // LaunchIntoSlot / TakeFromSlot for the cached-projects read
+#include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -743,6 +744,11 @@ struct UiDrawSession {
     /// (these are LRU project lists — a refresh-on-reopen is fine; see plan § Risks).
     std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsSnapshot;
     bool cachedProjectsSnapshotValid = false;
+    /// Unconfirmed edits of the offline queues, indexed for the grid's per-row and per-cell "pending" cue. Rebuilt
+    /// only when one of the two queue snapshots it was built from is replaced (RefreshPendingOverlay).
+    smatchet::sync::PendingOverlay pendingOverlay;
+    std::shared_ptr<const OfflineQueueSnapshot> pendingOverlayQueueSnap;
+    std::shared_ptr<const PendingActionsSnapshot> pendingOverlayActionsSnap;
     /// The read behind the snapshot runs on a worker in a single slot (AsyncLoadGatePure.h); `Forget` clicks queue
     /// here and run in the next read, so the file is never written on the UI thread either.
     std::future<std::vector<FieldCatalogCache::CachedProjectEntry>> cachedProjectsFuture;

@@ -1017,6 +1017,8 @@ class AppController : public IAppThreading,
     /// Cache key of the focused backend; it namespaces the offline queues, so UI state tied to a queued row is
     /// scoped by it too.
     std::string FocusedCacheBackendKey() const;
+    /// The cache namespace key of pane `paneId`'s context (the focused one's when the pane has none). UI thread.
+    std::string PaneCacheBackendKey(const std::string& paneId) const;
     std::vector<std::string> LiveCacheBackendKeys() const override;
     /// Latched strong handle to the lookup cache (the offline copies of tracker lookups), or null before the
     /// cache exists. For workers: its reads and writes hit disk.

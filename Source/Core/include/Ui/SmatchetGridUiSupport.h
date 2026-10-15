@@ -130,6 +130,11 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode)
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode);
 
+/// Brings `d.pendingOverlay` up to date with the offline-queue snapshots (in-memory, published by the queue
+/// workers: no SQLite). One shared_ptr load per snapshot per call; the index is rebuilt only when a snapshot was
+/// replaced. UI thread, once per pane window per frame.
+void RefreshPendingOverlay(AppController& app, UiDrawSession& d);
+
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);
 

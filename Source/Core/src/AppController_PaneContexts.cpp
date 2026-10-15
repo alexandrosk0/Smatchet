@@ -735,6 +735,11 @@ void AppController::SetWindowFocused(bool focused) {
     windowFocused_.store(focused);
 }
 
+std::string AppController::PaneCacheBackendKey(const std::string& paneId) const {
+    const auto it = gridContexts_.find(paneId);
+    return it != gridContexts_.end() && it->second ? it->second->CacheBackendKeyCopy() : FocusedCacheBackendKey();
+}
+
 void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
     SMATCHET_UI_PERF_SCOPE("AppController::TickChangeMonitors");
     // Global gate first — the whole feature is off, so do no per-pane work.
