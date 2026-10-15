@@ -1622,6 +1622,8 @@ add_executable(SmatchetTests
     Core/ActiveRowMerge.test.cpp
     # delta-sync Phase 7 - when a saved lookup row may be served without a live fetch (Sync/LookupFreshnessPure.h).
     Core/LookupFreshnessPure.test.cpp
+    # delta-sync follow-up - the saved field catalog is restored off the UI thread (Sync/CatalogRestorePure.h).
+    Core/CatalogRestorePure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):

@@ -605,6 +605,11 @@ void ApplyFieldSelectionToDraftColumns(const std::unordered_set<std::string>& se
 // refreshes — offline that can take a whole retry window (~90 s) — so only an empty catalog waits on
 // the fetch. With no fields and a failed fetch, the error and a Retry replace the silent empty list.
 void DrawFieldsTabCatalogState(AppController& app, UiDrawSession& d, bool noFields) {
+    if (app.IsFieldCatalogRestoring()) {
+        // The saved catalog is being read from disk (Pillar 2: off the UI thread); it lands within a few frames.
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("views.fields.loading_saved", "Loading saved fields..."));
+        return;
+    }
     if (d.fieldCatalogLoading) {
         DataFreshnessCue::Draw(noFields ? smatchet::offline::DataFreshness::LoadingNoCache
                                         : smatchet::offline::DataFreshness::Refreshing);
@@ -680,7 +685,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             const std::vector<const TrackerField*>& basicFields = categorized.basic;
 
             // Only an empty catalog that is still loading has nothing to edit yet.
-            const bool disableEditing = d.fieldCatalogLoading && availableFields.empty();
+            const bool disableEditing =
+                (d.fieldCatalogLoading || app.IsFieldCatalogRestoring()) && availableFields.empty();
             if (disableEditing) {
                 ImGui::BeginDisabled();
             }

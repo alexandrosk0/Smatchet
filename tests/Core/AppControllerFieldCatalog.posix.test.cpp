@@ -85,6 +85,13 @@ bool SnapshotHasField(AppController& app, const TrackerConfig& cfg, const std::s
     return SnapshotHasField(cfg, project, id);
 }
 
+/// A UI-thread SetFieldCatalog failure with nothing in memory reads the saved catalog on a worker and installs it
+/// from the main-thread queue: wait for the read, then run the install.
+void SettleCatalogRestore(AppController& app) {
+    REQUIRE(app.FlushFieldCatalogSnapshotIo());
+    app.mainThreadDispatcher.Drain();
+}
+
 } // namespace
 
 TEST_CASE("AppController::RefreshFieldCatalog applies a fetched catalog to the pane it fetched for") {
@@ -310,6 +317,7 @@ TEST_CASE("AppController::SetFieldCatalog restores a project's snapshot for a fa
 
     app.SetCurrentCatalogProject("FOO");
     app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    SettleCatalogRestore(app);
     CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
     CHECK(app.IsFieldCatalogScopedToProject("FOO"));
     CHECK(app.GetFieldCatalogError().empty()); // a restored catalog shows a warning, not an error
@@ -333,6 +341,7 @@ TEST_CASE("AppController::SetFieldCatalog falls back to the unscoped snapshot wh
     app.SetFieldCatalog({}, {}, {}, std::string());
     app.SetCurrentCatalogProject("FOO");
     app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    SettleCatalogRestore(app);
     CHECK(HasField(app.GetAvailableFields(), "customfield_any"));
     CHECK_FALSE(app.IsFieldCatalogScopedToProject("FOO"));
     CHECK(app.GetFieldCatalogError().empty());
@@ -359,6 +368,7 @@ TEST_CASE("AppController::SetFieldCatalog prefers the project's snapshot to the 
     app.SetFieldCatalog({}, {}, {}, std::string());
     app.SetCurrentCatalogProject("FOO");
     app.SetFieldCatalog(std::vector<TrackerField>(), std::vector<TrackerComponent>(), "tracker unreachable", true);
+    SettleCatalogRestore(app);
     CHECK(HasField(app.GetAvailableFields(), "customfield_foo"));
     CHECK_FALSE(HasField(app.GetAvailableFields(), "customfield_any"));
     CHECK(app.IsFieldCatalogScopedToProject("FOO"));

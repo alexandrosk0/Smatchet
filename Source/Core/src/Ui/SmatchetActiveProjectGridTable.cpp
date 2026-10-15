@@ -777,8 +777,8 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         // published yet) must read as loading too — not "No issues match this view."
         const bool paneFirstFetchLoading = ctx.pane.snapshotRevision == 0 && ctx.app.IsPaneSyncLive(ctx.pane.id);
         const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
-                                 d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted ||
-                                 paneFirstFetchLoading;
+                                 ctx.app.IsFieldCatalogRestoring() || d.connectivityRecoveryTicketFetchLoading ||
+                                 !d.initialTicketSyncStarted || paneFirstFetchLoading;
         if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ctx.pane.filteredIndices.clear();
             ctx.pane.gridState.RectSel.ClearAll();

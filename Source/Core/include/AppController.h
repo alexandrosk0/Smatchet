@@ -265,20 +265,48 @@ class AppController : public IAppThreading,
     /// local data, and restore the field catalog from a local snapshot when present.
     void InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType);
 
-    /// InitFieldCatalog helper — resolve the active view's project key from its JQL
-    /// so the startup catalog snapshot loads under the project-scoped cache entry.
-    /// Returns the resolved project key (empty when none resolves).
-    std::string ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const;
-
     /// When the catalog snapshot restored at startup was saved from a live fetch (epoch seconds; 0 = none or
-    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written once by
-    /// InitFieldCatalog before the first frame; read by the grid's startup-skip decision.
+    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written by
+    /// PollStartupCatalogRestore when the restore lands (UI thread); read by the grid's startup-skip decision,
+    /// which waits for IsStartupCatalogRestorePending() to clear first.
     std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
     std::string startupCatalogProjectKey_;
 
-    /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
-    /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
-    void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
+    /// What the startup restore of the saved field catalog read on its worker.
+    struct StartupCatalogRestore {
+        bool Loaded = false;
+        std::string Error;
+        std::vector<TrackerField> Fields;
+        std::vector<TrackerComponent> Components;
+        std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;
+        std::int64_t SavedUnix = 0;
+        std::string ProjectKey; ///< the scope it restores under ("" = the unscoped fallback)
+    };
+    /// The pane and settings the startup restore was launched for, latched on the UI thread.
+    struct StartupCatalogRestoreLatch {
+        GridLiveContext* Ctx = nullptr;
+        std::uint64_t Generation = 0;
+        std::string TrackerType;
+        std::int64_t RefreshTtlSec = 0;
+    };
+    /// InitFieldCatalog helper (UI thread): read the saved catalog on a worker (single-slot async load,
+    /// AsyncLoadGatePure.h). The view's project is resolved from the saved views file on that worker too.
+    void LaunchStartupCatalogRestore_(const TrackerConfig& cfg, const std::string& activeTrackerType);
+    /// The worker body: resolve the active view's project, then read the first snapshot that exists.
+    static StartupCatalogRestore ReadStartupCatalogRestore_(const std::shared_ptr<ITrackerBackend>& backend,
+                                                            const TrackerConfig& cfg,
+                                                            const std::string& activeTrackerType);
+    /// UI thread: install a finished restore into the pane it was launched for.
+    void ApplyStartupCatalogRestore_(StartupCatalogRestore restore);
+    std::future<StartupCatalogRestore> startupCatalogRestoreSlot_;
+    bool startupCatalogRestoreInFlight_ = false; ///< UI thread only; the slot's latch (see LaunchIntoSlot)
+    StartupCatalogRestoreLatch startupCatalogRestoreLatch_;
+    /// Error-path catalog restores (SetFieldCatalog failures) reading the snapshot file on the worker.
+    std::atomic<int> catalogErrorRestoresInFlight_{0};
+
+    /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the catalog `cat` and publish the
+    /// offline warning. UI thread.
+    void ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                           const std::string& activeTrackerType, const std::string& projectKey,
@@ -808,8 +836,19 @@ class AppController : public IAppThreading,
     /// snapshot — that would overwrite the site's saved catalog with an empty one (Pillar 6) — and does
     /// no disk I/O, so it is safe on the UI thread.
     void ClearFieldCatalogInMemory();
-    /// Blocks until every field-catalog snapshot save queued so far has reached the file (tests that read the snapshot
-    /// back right after SetFieldCatalog / RefreshFieldCatalog, and the destructor). Never call it per frame.
+    /// UI thread, once per frame: installs the startup catalog restore once its file read has finished.
+    void PollStartupCatalogRestore();
+    /// True from startup until the saved field catalog has been read and installed (or found missing). The
+    /// grid's fetch-or-skip decision for the startup catalog waits for it: it reads the restored snapshot.
+    bool IsStartupCatalogRestorePending() const { return startupCatalogRestoreInFlight_; }
+    /// True while any saved field catalog is being read from disk for the pane: the startup restore, or the
+    /// restore after a failed refresh with no catalog in memory. Drives the "loading saved fields" cue.
+    bool IsFieldCatalogRestoring() const {
+        return startupCatalogRestoreInFlight_ || catalogErrorRestoresInFlight_.load() > 0;
+    }
+    /// Blocks until every field-catalog snapshot save and restore queued so far has finished (tests that read the
+    /// snapshot back right after SetFieldCatalog / RefreshFieldCatalog, and the destructor). A finished error-path
+    /// restore still lands on the UI thread: drain `mainThreadDispatcher` after it. Never call it per frame.
     /// Returns false when `timeout` passed first.
     bool FlushFieldCatalogSnapshotIo(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error

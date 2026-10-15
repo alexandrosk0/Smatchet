@@ -290,6 +290,12 @@ AppController::~AppController() {
         LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within 5 s.");
     }
 
+    // The startup field-catalog restore reads its file on a std::async worker that owns copies only; wait for it here
+    // (RAII join) rather than leave it to the member destructor.
+    if (startupCatalogRestoreSlot_.valid()) {
+        startupCatalogRestoreSlot_.wait();
+    }
+
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's
