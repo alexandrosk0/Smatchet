@@ -293,12 +293,15 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // parallel `assistantHistoryRowIds` so subsequent pin-toggle ops have a row
     // id to flip. Guard against shrink/clear races by re-checking the index
     // against the current vector size — clear-chat may have run between the
-    // worker's INSERT and the dispatcher drain.
-    smatchet::ai::chat_persist::Start(*Cache, mainThreadDispatcher, [](std::size_t idx, std::int64_t rowId) {
-        if (idx < g_ui.assistantHistoryRowIds.size()) {
-            g_ui.assistantHistoryRowIds[idx] = rowId;
-        }
-    });
+    // worker's INSERT and the dispatcher drain. The worker resolves the cache per op
+    // through atomic_load (never a reference captured here): a cache recreate swaps
+    // `Cache` at runtime and frees the old manager, which a held `*Cache` would dangle on.
+    smatchet::ai::chat_persist::Start([this]() { return std::atomic_load(&Cache); }, mainThreadDispatcher,
+                                      [](std::size_t idx, std::int64_t rowId) {
+                                          if (idx < g_ui.assistantHistoryRowIds.size()) {
+                                              g_ui.assistantHistoryRowIds[idx] = rowId;
+                                          }
+                                      });
 #endif
 
     // Construct the deps adapter + owned single-responsibility services (extracted to keep
