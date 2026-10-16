@@ -187,20 +187,14 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     requestDeferredLiveTrackerBackendSuccessNotify_();
 
-    {
-        // Background-task thread: latch the cache with atomic_load (DR6) so a recreate swapping `Cache` between
-        // the null-check and the write can neither null-deref nor free it under SaveFetchedRows. Scoped to the
-        // write so the handle is not held across the refresh below.
-        const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
-        if (!cache) {
+    if (!Cache) {
 
-            return;
-        }
-
-        // Fetched from the tracker just now: store each row with the version it carries (a plain SaveTicket
-        // would drop the sync meta and make the next delta sync refetch the ticket).
-        smatchet::sync::SaveFetchedRows(*cache, cacheBackendKey, tickets);
+        return;
     }
+
+    // Fetched from the tracker just now: store each row with the version it carries (a plain SaveTicket would
+    // drop the sync meta and make the next delta sync refetch the ticket).
+    smatchet::sync::SaveFetchedRows(*Cache, cacheBackendKey, tickets);
 
     RefreshLocalData();
 }

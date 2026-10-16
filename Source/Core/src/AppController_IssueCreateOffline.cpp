@@ -142,9 +142,7 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
         return future;
     }
 
-    // Strong handle (DR6), captured by the worker below: a recreate that swaps `Cache` while the create
-    // runs cannot free the manager under IssueCreatePipeline::Run.
-    std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
+    LocalCacheManager* cache = Cache.get();
     IssueDraft draftCopy = draft;
 
     // Update path: prune fields whose draft value already matches cache so we don't
@@ -188,7 +186,7 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
             return;
         }
         IssueCreateResult result =
-            IssueCreatePipeline::Run(*mutations, cache.get(), cacheBackendKey, draftCopy, required, *catalogCopy);
+            IssueCreatePipeline::Run(*mutations, cache, cacheBackendKey, draftCopy, required, *catalogCopy);
         if (queueOnNetworkFailure && IsOfflineQueueableFailure(result) && !cancel.IsCancelled() && offlineQueue_) {
             // Pillar 6: unreachable tracker — queue the (pruned) draft for replay, off the UI thread,
             // under the namespace latched at submit.
