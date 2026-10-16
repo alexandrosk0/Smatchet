@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 class LocalCacheManager;
 class MainThreadDispatcher;
@@ -51,11 +52,21 @@ struct Op {
 /// `Op::messageIndex` shipped at enqueue time; `rowId` is the SQLite-assigned id.
 using OnAppendCallback = std::function<void(std::size_t messageIndex, std::int64_t rowId)>;
 
+/// Resolves the live cache for ONE op. Called on the worker thread before every op; the
+/// returned strong handle is held only while that op runs, so a cache swap (the recreate
+/// paths `std::atomic_store` a new `AppController::Cache`) frees the old manager after at
+/// most one in-flight write instead of leaving the worker on a dangling reference. May
+/// return null while a recreate has withdrawn the cache: the worker then retries the op
+/// until a cache is published again, or drops it (counted, one `LOG_WARN`) at `Stop`.
+using CacheResolver = std::function<std::shared_ptr<LocalCacheManager>()>;
+
 /// Starts the worker. Idempotent — a second `Start` while running is logged + ignored.
-/// Lifetime contract: caller MUST invoke `Stop()` before `lcm` or `dispatcher` destruct.
+/// Lifetime contract: caller MUST invoke `Stop()` before whatever `resolveCache` reads or
+/// `dispatcher` destruct. `Start` and `Stop` are called from one owner thread (the
+/// `AppController` lifecycle), never concurrently with each other.
 /// `onAppend` is invoked on the UI thread via `dispatcher.PostToMainThread`; it may be
 /// empty (no UI backfill, used by tests that drive the worker without a UI session).
-void Start(LocalCacheManager& lcm, MainThreadDispatcher& dispatcher, OnAppendCallback onAppend);
+void Start(CacheResolver resolveCache, MainThreadDispatcher& dispatcher, OnAppendCallback onAppend);
 
 /// Signals the worker to stop, best-effort drains pending ops within ~250 ms, joins.
 /// Idempotent — safe to call when not running. After return, `Enqueue` no-ops.
