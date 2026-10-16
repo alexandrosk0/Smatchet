@@ -155,6 +155,9 @@ AppController* PrepareGridSearch(ImGuiTestContext* ctx) {
         return nullptr;
     }
     // The search box lives in the pane header, which the live primary pane draws every frame.
+    // "##GridFilter" is a window-relative id: without the ref it resolves at the root of the
+    // id stack, where no such item exists, so the probe below could never succeed.
+    ctx->SetRef(kPrimaryWindow);
     const bool boxLive = YieldUntil(ctx, [ctx] { return ctx->ItemExists("##GridFilter"); });
     IM_CHECK_NO_RET(boxLive);
     if (!boxLive) {

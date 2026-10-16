@@ -32,7 +32,14 @@
 #                                     "Update Available" modal can never open and
 #                                     swallow hover / nav / item registration
 #                                     (ConfigManager env override; test
-#                                     2026-08-06-bucket-e-prefs-body-and-modal-inhibition (c)).
+#                                     2026-08-06-bucket-e-prefs-body-and-modal-inhibition (c));
+#         SMATCHET_DB_PATH=<dir>/Smatchet_LocalCache.sqlite
+#                                   — the SQLite cache. Its default is the RELATIVE
+#                                     kDefaultDbPath, which opens in the child's
+#                                     working directory (the repo root for every
+#                                     driver), not under SMATCHET_USER_DATA.
+#                                     Always overridden, so a developer's own
+#                                     SMATCHET_DB_PATH can never reach a test run.
 #       --seed writes UI_TEST_SEED_CONFIG as the profile's config: a configured
 #       profile (not read-only, no auto-opened Preferences, no
 #       ##WhisperSetupBanner floating over window headers). Leave it off for a
@@ -160,6 +167,7 @@ ui_test_isolate_home() {
     fi
     export UI_TEST_HOME
     export SMATCHET_USER_DATA="$UI_TEST_HOME" SMATCHET_UPDATE_CHECK=0
+    export SMATCHET_DB_PATH="$UI_TEST_HOME/Smatchet_LocalCache.sqlite"
     if [ "$shadow" -eq 1 ]; then
         export LOCALAPPDATA="$UI_TEST_HOME" APPDATA="$UI_TEST_HOME" XDG_CONFIG_HOME="$UI_TEST_HOME"
     fi

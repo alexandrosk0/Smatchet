@@ -44,6 +44,21 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
     return false;
 }
 
+// Like YieldUntil, but pred() must hold on holdFrames consecutive frames — for focus state, where a
+// one-frame sighting can still be reverted by the host's two-frame focus debounce.
+template <typename Pred>
+bool YieldUntilHeld(ImGuiTestContext* ctx, Pred pred, int holdFrames = 5, int maxFrames = 300) {
+    int held = 0;
+    for (int i = 0; i < maxFrames; ++i) {
+        ctx->Yield();
+        held = pred() ? held + 1 : 0;
+        if (held >= holdFrames) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool WindowIsLive(const char* title) {
     const ImGuiWindow* win = ImGui::FindWindowByName(title);
     return win != nullptr && win->Active;
@@ -242,11 +257,38 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
         const std::string paneTwoId = g_ui.gridPanes[1].id;
 
-        // Pane 2 takes focus on open; refocus the PRIMARY so pane 2 is non-focused BUT still visible
-        // (both windows Active). Its context must stay live and keep receiving ticket updates.
-        ctx->WindowFocus((std::string("//") + kPrimary).c_str());
-        const bool nonFocusedVisible =
-            YieldUntil(ctx, [&] { return g_ui.focusedPaneId != paneTwoId && WindowIsLive(paneTwoName.c_str()); });
+        // Let the "+" hand-off settle before moving focus anywhere. The new pane docks as a TAB in
+        // the primary's node and re-selects its own tab for selectTabFrames frames, pulling ImGui
+        // focus back with it; a focus move issued inside that window is undone a frame later.
+        const bool paneTwoSettled = YieldUntil(ctx, [&] {
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return paneTwo != nullptr && paneTwo->selectTabFrames == 0 && g_ui.focusedPaneId == paneTwoId &&
+                   WindowIsLive(paneTwoName.c_str());
+        });
+        IM_CHECK_NO_RET(paneTwoSettled);
+        if (!paneTwoSettled) {
+            return;
+        }
+
+        // A tab behind the primary is not visible (its Begin returns false), so split pane 2 to the
+        // RIGHT of the primary first: "non-focused but visible" needs both windows on screen at once.
+        const std::string paneTwoAbsRef = std::string("//") + paneTwoName;
+        const std::string primaryAbsRef = std::string("//") + kPrimary;
+        ctx->DockInto(paneTwoAbsRef.c_str(), primaryAbsRef.c_str(), ImGuiDir_Right);
+        const bool bothVisible =
+            YieldUntil(ctx, [&] { return WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str()); });
+        IM_CHECK_NO_RET(bothVisible);
+        if (!bothVisible) {
+            return;
+        }
+
+        // Refocus the PRIMARY so pane 2 is non-focused BUT still visible. The host adopts a focus
+        // report only after two consecutive frames, so require the state to HOLD rather than
+        // accepting a single-frame sighting. Pane 2's context must stay live and keep receiving rows.
+        ctx->WindowFocus(primaryAbsRef.c_str());
+        const bool nonFocusedVisible = YieldUntilHeld(ctx, [&] {
+            return g_ui.focusedPaneId != paneTwoId && WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str());
+        });
         IM_CHECK_NO_RET(nonFocusedVisible);
 
         // The non-focused visible pane's OWN snapshot fills from its live context (the fixture's rows
