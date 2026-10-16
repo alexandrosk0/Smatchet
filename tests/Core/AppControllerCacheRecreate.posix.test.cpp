@@ -29,7 +29,7 @@ namespace {
 /// A headless controller is never Initialize()d, so it has no tracker backend factory; the follow-up sync a recreate
 /// starts would have none to build its backend with. Hand it the fake the TicketSyncService tests use.
 void UseFakeBackends(AppController& app) {
-    app.SetBackendFactory(std::unique_ptr<ITrackerBackendFactory>(new smatchet_tests::FakeTrackerBackendFactory()));
+    app.SetBackendFactory(std::make_unique<smatchet_tests::FakeTrackerBackendFactory>());
 }
 
 /// Drains the dispatcher until `done` is true (the worker needs the UI thread to withdraw the cache and to finish).

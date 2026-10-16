@@ -26,6 +26,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -166,8 +167,18 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
             fn();
         }
     }
+    /// When set, a launched task is dropped unrun (the real LaunchBackgroundTask does so at shutdown).
+    bool SkipBackgroundTasks = false;
+    /// When set, the launch itself throws (after the task was handed over).
+    bool ThrowOnLaunch = false;
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++BackgroundTasksLaunched;
+        if (ThrowOnLaunch) {
+            throw std::runtime_error("launch failed");
+        }
+        if (SkipBackgroundTasks) {
+            return;
+        }
         if (DeferBackgroundTasks) {
             DeferredTasks.push_back(std::move(task));
             return;

@@ -257,7 +257,9 @@ class TicketSyncService {
 
     /// Normalize the requested tracker kind, swap the live backend when it differs, and on a
     /// cross-kind swap clear the in-memory ActiveTickets snapshot so stale items don't linger.
-    void SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy);
+    /// False when a backend was needed but no factory can build it: the sync warning is set and the session must not
+    /// start (it would run against the old tracker).
+    bool SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy);
 
     /// Background streaming-fetch worker body. Coordinates with the UI thread via FSM atomics
     /// + `QueueMutex`.
@@ -398,11 +400,16 @@ class TicketSyncService {
     void SyncWithBackendNow_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                              smatchet::sync::SyncMode mode);
     /// A files read finished after a newer request was made: its sync is not started. A Full mode is kept (queued
-    /// behind a running session, else folded into the next request) so dropping it never downgrades to Delta.
-    void FoldDroppedRequest_(smatchet::sync::SyncMode mode);
+    /// behind a running session, else folded into the next request) so dropping it never downgrades to Delta, unless a
+    /// newer request already applied a Full (that one covers it; keeping it would turn the next request into a second
+    /// Full). `seq` is the dropped request's place in the order.
+    void FoldDroppedRequest_(smatchet::sync::SyncMode mode, std::uint64_t seq);
     /// Requests made so far, bumped by every public SyncWithBackend call (UI thread only). A files read compares it
     /// with the value it was launched at when its post lands.
     std::uint64_t requestSeq_ = 0;
+    /// The place of the newest request that was applied as a Full (0 = none yet): it began, or joined the queue
+    /// behind, a Full session. UI thread only.
+    std::uint64_t lastFullAppliedSeq_ = 0;
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;

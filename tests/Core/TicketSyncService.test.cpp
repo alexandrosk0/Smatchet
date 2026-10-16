@@ -2754,9 +2754,7 @@ TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane re
 TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
     smatchet::sync::ChangeMonitorPaneState state;
     smatchet::sync::ChangeProbeCycleNotes notes;
-    // Copied to a local: a `static constexpr` member odr-used by doctest's const& capture needs an out-of-line
-    // definition at C++14, and lld (the TSan Linux job) fails with an undefined symbol without it.
-    const std::size_t cap = smatchet::sync::ChangeMonitorPaneState::kMaxRememberedRefusals;
+    const std::size_t cap = smatchet::sync::ChangeMonitorPaneState::MaxRememberedRefusals();
     for (std::size_t i = 0; i < cap + 50; ++i) {
         notes.RefusedKeys.push_back("R-" + std::to_string(i));
     }
@@ -3746,8 +3744,9 @@ TEST_CASE("TicketSyncService::SyncWithBackend with views but no config reads the
     svc.CancelAndJoinActiveStreamingSync();
 }
 
-TEST_CASE("TicketSyncService: a sync that needs a new backend keeps the current one when there is no factory") {
-    // A controller that was never Initialize()d has no backend factory; the sync must not dereference null.
+TEST_CASE("TicketSyncService: a sync that needs a new backend does not start when there is no factory") {
+    // A controller that was never Initialize()d has no backend factory; the sync must not dereference null, and it
+    // must not run against the old tracker either (its issues would be cached under the new tracker's key).
     smatchet_tests::TestEnvGuard env;
     FakeTicketSyncDeps deps;
     deps.Factory.reset();
@@ -3756,9 +3755,92 @@ TEST_CASE("TicketSyncService: a sync that needs a new backend keeps the current 
     const TrackerConfig plane = ConfigFor("Plane");
     ViewsStore views;
     svc.SyncWithBackend(&plane, &views);
-    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
     CHECK(deps.BackendImpl.get() == before);
+    CHECK(svc.SessionEpoch() == 0); // no session was started
+    CHECK_FALSE(svc.IsActive());
+    CHECK_FALSE(svc.HasPendingWork());
+    CHECK(deps.SyncNotifications.empty()); // no "Syncing" toast for a sync that never ran
+    // The status surface (sync.tracker_status reads the sync warning) says why.
+    CHECK(deps.LastTrackerTicketSyncWarning.find("Sync not started") != std::string::npos);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("Plane") != std::string::npos);
+    CHECK_FALSE(deps.LastTrackerTicketSyncWarningTransient);
     svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a views read whose task is skipped or whose launch throws leaves nothing pending") {
+    // The count of reads in flight is carried by a guard the task owns: a task dropped at shutdown (the real
+    // LaunchBackgroundTask returns without running it) or a launch that throws must not leave HasPendingWork true.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    TicketSyncService svc(deps);
+    const TrackerConfig cfg = ConfigFor("fake");
+
+    SUBCASE("the launch skips the task") {
+        deps.SkipBackgroundTasks = true;
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(deps.BackgroundTasksLaunched == 1);
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+    SUBCASE("the launch throws") {
+        deps.ThrowOnLaunch = true;
+        CHECK_THROWS(svc.SyncWithBackend(&cfg, nullptr));
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+    SUBCASE("a parked task destroyed without running") {
+        deps.DeferBackgroundTasks = true;
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(svc.HasPendingWork());
+        deps.DeferredTasks.clear();
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+}
+
+TEST_CASE(
+    "TicketSyncService: two async Fulls landing in reverse order do not leave a stray Full for the next request") {
+    // The newer Full runs; the older one is dropped. Keeping its Full would turn the unrelated Delta that follows into
+    // a second Full.
+    DeltaRig rig;
+    SeedUnchangedView(rig); // a Delta runs as delta here, a Full as full
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full); // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the newer Full starts; the older then finds itself overtaken
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 2);
+    CHECK(rig.svc.LastSessionStats().Mode == "delta"); // not a stray second Full
+}
+
+TEST_CASE("TicketSyncService: a Full folded while the teardown gate is up survives a held Delta") {
+    // A dropped Full folds while the gate is up, and a Delta held by the gate arrives at EndCacheTeardown: the
+    // follow-up keeps the Full instead of being overwritten by the Delta.
+    DeltaRig rig;
+    SeedUnchangedView(rig);
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the Delta is held by the gate; the Full is dropped and folded
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta); // the recreate's follow-up
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
 }
 
 TEST_CASE("TicketSyncService: a requested sync counts as pending until the post that starts it has run") {

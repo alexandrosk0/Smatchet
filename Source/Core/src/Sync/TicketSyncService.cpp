@@ -289,7 +289,7 @@ void TicketSyncService::EndCacheTeardown(bool foldIntoFollowUp) {
     blockedRequest_ = BlockedSyncRequest();
     if (foldIntoFollowUp) {
         // The caller syncs right after this returns: keep only the mode (Full stays sticky), so one session runs.
-        foldedMode_ = request.Mode;
+        foldedMode_ = hasFoldedMode_ ? smatchet::sync::CombineSyncModes(foldedMode_, request.Mode) : request.Mode;
         hasFoldedMode_ = true;
         LOG_INFO("TicketSyncService: the sync requested during the cache recreate rides on the follow-up sync "
                  "(mode=%s).",
@@ -938,6 +938,9 @@ void TicketSyncService::SyncWithBackendNow_(const TrackerConfig* configOverride,
         mode = smatchet::sync::CombineSyncModes(foldedMode_, mode); // the held request rides on this one
         hasFoldedMode_ = false;
     }
+    if (mode == smatchet::sync::SyncMode::Full) {
+        lastFullAppliedSeq_ = requestSeq_; // requestSeq_ is this request's own place: an overtaken one never gets here
+    }
     LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
 
     if (configOverride == nullptr || viewsOverride == nullptr) {
@@ -1006,44 +1009,41 @@ void TicketSyncService::SyncWithBackendLoadingViews_(const TrackerConfig* config
     }
     // Counted from the call until the UI-thread post it ends in has run (HasPendingWork): the pane does not retire,
     // so `deps`, which the pane's context owns, outlives the task, and a caller waiting for the sync to settle does
-    // not see a gap between the read finishing and the session starting. Raised before the launch, lowered when the
-    // post is gone (run, or never made), or here when the task never starts.
+    // not see a gap between the read finishing and the session starting. Raised here, before the launch; the guard
+    // carries the count through the task into the post, and whichever copy goes last (the post ran or was dropped,
+    // the task was skipped at shutdown, a read threw) lowers it, so no path leaves HasPendingWork stuck.
     inFlight->fetch_add(1);
-    try {
-        deps_.LaunchBackgroundTask(
-            [self, deps, alive, inFlight, haveCfg, haveViews, cfgGiven, viewsGiven, mode, seq]() {
-                /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - config + views file read and parse, off the UI thread
-                // A missing config file loads as the defaults, the same as sync.full.
-                const TrackerConfig cfg = haveCfg ? cfgGiven : ConfigManager::Load();
-                ViewsStore views = haveViews ? viewsGiven : ConfigManager::LoadViewsOrBootstrap(cfg);
-                // Held by the post, so the count drops after the post ran (or was dropped), not when the read ended.
-                const std::shared_ptr<ViewsLoadCount> counted = std::make_shared<ViewsLoadCount>(inFlight);
-                if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
-                    deps->PostToMainThread([self, alive, cfg, views, mode, seq, counted]() {
-                        if (!alive->load()) {
-                            return; // the pane's service was destroyed while the files were read
-                        }
-                        if (self->requestSeq_ != seq) {
-                            // The workers run on separate threads, so the posts can land in any order: a request made
-                            // after this one is already applied, or still on its way. Applying this one now would
-                            // supersede it and sync the older view.
-                            self->FoldDroppedRequest_(mode);
-                            return;
-                        }
-                        self->SyncWithBackendNow_(&cfg, &views, mode); // not a new request: it keeps its place
-                    });
+    const std::shared_ptr<ViewsLoadCount> counted = std::make_shared<ViewsLoadCount>(inFlight);
+    deps_.LaunchBackgroundTask([self, deps, alive, haveCfg, haveViews, cfgGiven, viewsGiven, mode, seq, counted]() {
+        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms - config + views file read and parse, off the UI thread
+        // A missing config file loads as the defaults, the same as sync.full.
+        const TrackerConfig cfg = haveCfg ? cfgGiven : ConfigManager::Load();
+        ViewsStore views = haveViews ? viewsGiven : ConfigManager::LoadViewsOrBootstrap(cfg);
+        if (alive->load()) { // a destroyed service has nothing to sync, and its deps may be gone
+            deps->PostToMainThread([self, alive, cfg, views, mode, seq, counted]() {
+                if (!alive->load()) {
+                    return; // the pane's service was destroyed while the files were read
                 }
+                if (self->requestSeq_ != seq) {
+                    // The workers run on separate threads, so the posts can land in any order: a request made
+                    // after this one is already applied, or still on its way. Applying this one now would
+                    // supersede it and sync the older view.
+                    self->FoldDroppedRequest_(mode, seq);
+                    return;
+                }
+                self->SyncWithBackendNow_(&cfg, &views, mode); // not a new request: it keeps its place
             });
-    } catch (...) {
-        inFlight->fetch_sub(1); // the task never started
-        throw;
-    }
+        }
+    });
 }
 
-void TicketSyncService::FoldDroppedRequest_(smatchet::sync::SyncMode mode) {
+void TicketSyncService::FoldDroppedRequest_(smatchet::sync::SyncMode mode, std::uint64_t seq) {
     LOG_INFO("TicketSyncService: a sync request was overtaken by a newer one before its files were read; dropped.");
     if (mode != smatchet::sync::SyncMode::Full) {
         return; // a Delta adds nothing to whatever the newer request runs
+    }
+    if (lastFullAppliedSeq_ > seq) {
+        return; // a newer request already applied a Full (running, done, or queued): a kept Full would run twice
     }
     // Full stays sticky: it rides on the request queued behind a running session, else on the next request.
     if (hasPendingSyncRequest_) {
@@ -1054,7 +1054,7 @@ void TicketSyncService::FoldDroppedRequest_(smatchet::sync::SyncMode mode) {
     }
 }
 
-void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {
+bool TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {
     // Swap Backend type safely before starting the worker.
     std::string newTracker = cfgCopy.TrackerType;
     if (newTracker.empty())
@@ -1095,11 +1095,15 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     if (!createKind.empty()) {
         ITrackerBackendFactory* const factory = deps_.BackendFactory();
         if (!factory) {
-            // A controller that was never Initialize()d (a headless embedder, a test) has none. Keep the current
-            // backend rather than dereference null, and leave the applied key alone so a later sync retries.
-            LOG_WARN("TicketSyncService: no backend factory; keeping the current backend instead of switching to %s.",
+            // A controller that was never Initialize()d (a headless embedder, a test) has none. Do not run the session
+            // against the old tracker (its issues would be cached under the new one's key): say so where the status
+            // surface reads it, and leave the applied key alone so a later sync retries.
+            LOG_WARN("TicketSyncService: no backend factory; the sync is not started (it cannot switch to %s).",
                      createKind.c_str());
-            return;
+            deps_.SetLastTrackerTicketSyncWarning("Sync not started: no tracker backend can be created for " +
+                                                      createKind + " in this session.",
+                                                  /*transient=*/false);
+            return false;
         }
         deps_.SetBackend(factory->Create(createKind, cfgCopy));
         if (siteChange) {
@@ -1144,6 +1148,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
         deps_.SetPendingLuaWindowBump(true);
         LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend change.");
     }
+    return true;
 }
 
 void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
@@ -1152,10 +1157,12 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         activeStreamingSync_.WorkerThread.join();
     }
 
+    if (!SwapBackendIfTrackerChanged(cfgCopy)) {
+        return; // no backend to sync against: the warning is set, and no session starts
+    }
+
     deps_.NotifySyncStatus("Syncing", "Refreshing issues from Tracker...", ITicketSyncDeps::SyncNotifyLevel::Info,
                            2500);
-
-    SwapBackendIfTrackerChanged(cfgCopy);
 
     const std::uint64_t reqId = ++currentFetchRequestId_;
     ++sessionEpoch_;

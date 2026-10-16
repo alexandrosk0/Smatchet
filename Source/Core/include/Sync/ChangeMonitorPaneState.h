@@ -29,7 +29,9 @@ struct ChangeProbeCycleNotes {
 struct ChangeMonitorPaneState {
     /// A refused key stays in the roster diff every cycle (its stamp never matches a held row), and isolating it
     /// costs about 2 * log2(n) extra requests each time. The set is bounded so a hostile tracker cannot grow it.
-    static constexpr std::size_t kMaxRememberedRefusals = 256;
+    /// A function, not a `static constexpr` member: at C++14 such a member needs an out-of-line definition once it is
+    /// bound by reference (a CHECK, std::min).
+    static std::size_t MaxRememberedRefusals() { return 256; }
 
     bool RosterIncomplete = false;
     std::unordered_set<std::string> RefusedKeys;
@@ -64,7 +66,7 @@ struct ChangeMonitorPaneState {
             RosterIncomplete = true;
         }
         for (const std::string& key : notes.RefusedKeys) {
-            if (RefusedKeys.size() >= kMaxRememberedRefusals) {
+            if (RefusedKeys.size() >= MaxRememberedRefusals()) {
                 break;
             }
             RefusedKeys.insert(key);
