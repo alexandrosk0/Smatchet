@@ -5,6 +5,7 @@
 // the standalone and DX12 targets and in the doctest rig. The version/field rules shared with the
 // cache layer live in TicketSyncMeta.h (re-exported here).
 
+#include "Sync/RemoteVersionPure.h"
 #include "Sync/SyncMode.h"
 #include "TicketSyncMeta.h"
 #include "TrackerRoster.h"
@@ -26,7 +27,9 @@ struct SyncStrategyInput {
     SyncMode Requested = SyncMode::Delta;
     bool DeltaEnabled = true;           ///< TrackerConfig::DeltaSyncEnabled (the kill switch)
     bool BackendSupportsRoster = false; ///< ITrackerIssueReader::SupportsVersionedRoster()
-    bool HaveAnyCachedMeta = false;     ///< the cache holds at least one row with a known version
+    /// The cache holds at least one row with a known version. A namespace-wide pre-check (the cache is shared by
+    /// every pane); once the roster is in, AnyRosterKeyHasCachedMeta narrows it to this view's own rows.
+    bool HaveAnyCachedMeta = false;
 };
 
 struct SyncStrategyChoice {
@@ -82,7 +85,8 @@ inline DeltaFetchSet ComputeDeltaFetchSet(const std::vector<TrackerRosterEntry>&
         bool fetch = it == meta.end();
         if (!fetch) {
             const TicketSyncMeta& cached = it->second;
-            fetch = cached.RemoteUpdated.empty() || entry.Updated.empty() || cached.RemoteUpdated != entry.Updated ||
+            fetch = cached.RemoteUpdated.empty() || entry.Updated.empty() ||
+                    !IsSameRemoteVersion(cached.RemoteUpdated, entry.Updated) ||
                     !FieldsSatisfy(cached.Fields, requiredFields) ||
                     (maxRowAgeSec > 0 &&
                      (cached.SyncedAtEpochSec <= 0 || nowEpochSec - cached.SyncedAtEpochSec > maxRowAgeSec));
@@ -90,6 +94,19 @@ inline DeltaFetchSet ComputeDeltaFetchSet(const std::vector<TrackerRosterEntry>&
         (fetch ? set.ToFetch : set.Unchanged).push_back(entry.Key);
     }
     return set;
+}
+
+/// True when the cache knows a version for at least one key the roster lists. A sibling pane's cached versions make
+/// the namespace-wide check pass for a pane that has none of its own: every row would then download as new.
+inline bool AnyRosterKeyHasCachedMeta(const std::vector<TrackerRosterEntry>& roster,
+                                      const std::unordered_map<std::string, TicketSyncMeta>& meta) {
+    for (const TrackerRosterEntry& entry : roster) {
+        const auto it = meta.find(entry.Key);
+        if (!entry.Key.empty() && it != meta.end() && !it->second.RemoteUpdated.empty()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// When most of the view changed, a roster round trip plus keyed downloads costs more than one streamed fetch:
@@ -127,7 +144,7 @@ inline RosterDiff DiffRosterAgainstResident(const TrackerRoster& roster,
         if (it == resident.end()) {
             diff.ToFetch.push_back(entry.Key);
             diff.Added.push_back(entry.Key);
-        } else if (!entry.Updated.empty() && it->second != entry.Updated) {
+        } else if (!entry.Updated.empty() && !IsSameRemoteVersion(it->second, entry.Updated)) {
             diff.ToFetch.push_back(entry.Key);
         }
     }
@@ -142,12 +159,19 @@ inline RosterDiff DiffRosterAgainstResident(const TrackerRoster& roster,
     return diff;
 }
 
-/// The fields a view needs a cached row to carry: its column ids, minus blanks and the synthetic "id".
+/// The fields a view needs a cached row to carry: its column ids, trimmed, minus blanks and the synthetic "id".
+/// A hand-edited view with padded ids must still be covered by a row fetched with the clean ones.
 inline std::vector<std::string> RequiredFieldsOfView(const std::vector<std::string>& viewFields) {
     std::vector<std::string> required;
     for (const std::string& field : viewFields) {
-        if (!field.empty() && field != "id") {
-            required.push_back(field);
+        const std::size_t first = field.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            continue;
+        }
+        const std::size_t last = field.find_last_not_of(" \t\r\n");
+        std::string id = field.substr(first, last - first + 1);
+        if (id != "id") {
+            required.push_back(std::move(id));
         }
     }
     return NormalizeFieldList(std::move(required));

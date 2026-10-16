@@ -95,8 +95,11 @@ class OfflineQueueService {
 
     // --- Phase 1B: write methods + remaining field-edit read accessors -------------------
     /// Persist an offline create row under `backendKey` (the queue namespace replay filters on; empty means
-    /// the focused pane's). Returns the new SQLite row id, or 0 on read-only / failure.
-    std::int64_t QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey = std::string());
+    /// the focused pane's). Returns the new SQLite row id, or 0 on read-only / failure. While the local cache is
+    /// being recreated nothing is written (the file is about to be deleted): it returns 0 and, when `outError` is
+    /// given, sets it to the localized "being recreated, retry in a moment" message.
+    std::int64_t QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey = std::string(),
+                                    std::string* outError = nullptr);
 
     /// Move selected dead-letter rows back to the active offline queue (attempts reset to 0).
     /// Each row keeps its ORIGINAL `backend_key` (multi-grid Slice 1c) — never the focused

@@ -28,7 +28,7 @@
 // RenderNewIssueDraftRow, the ticket-grid rows, the cell editors):
 //   1. fixture-gate  — FixtureEnvSet(); skip-with-log if unset.
 //   2. boot-check    — SmatchetActiveUiTestAppController(); skip-with-log if null.
-//   3. sync          — app->SyncWithBackend(); YieldUntil(!IsStreamingSyncActive()).
+//   3. sync          — app->SyncWithBackend(); YieldUntil(!IsSyncPendingOrActive()).
 //   4. data-check    — IM_CHECK(!GetActiveTickets().empty()) (proves fixture loaded).
 //   5. focus         — re-arm requestActiveProjectFocus each frame until the
 //                      window is live (it docks alongside Views, so it can open
@@ -122,7 +122,7 @@ static void RegisterActiveProjectGridRendersToolbar(ImGuiTestEngine* engine) {
 
         // Drive a sync through the fixture-backed factory and wait for completion.
         app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
         IM_CHECK_NO_RET(syncDone);
 
         // Proves the fixture loaded — SMAT-1/SMAT-2 are now in the grid model.

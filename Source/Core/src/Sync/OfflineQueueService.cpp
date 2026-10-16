@@ -12,6 +12,7 @@
 #include "ISyncCache.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "Sync/CacheRecreatingMessage.h"
 #include "SmatchetLocalization.h"
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
@@ -396,19 +397,35 @@ void OfflineQueueService::SweepOneLegacyPendingCreate(const PendingCreate& pc, c
 
 // --- Phase 1B: write methods + remaining field-edit read accessors ----------------------
 
-std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey) {
+std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey,
+                                                     std::string* outError) {
+    if (outError != nullptr) {
+        outError->clear();
+    }
     if (ConfigManager::Load().ReadOnlyMode) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline blocked by read-only mode.");
         return 0;
     }
+    // Before the cache is latched: the old file is still there for the first moments of a recreate and a row written
+    // into it would be wiped with it.
+    if (deps_.IsCacheRecreating()) {
+        LOG_WARN("OfflineQueueService::QueueCreateOffline refused: the local cache is being recreated.");
+        if (outError != nullptr) {
+            *outError = smatchet::sync::CacheRecreatingEnqueueMessage();
+        }
+        return 0;
+    }
     // DR6: this method runs on an off-UI thread (Lua automation / MCP worker), so take ONE
     // atomic_load snapshot of the cache and use it for the whole enqueue — the UI thread may swap
-    // the cache in RecreateLocalCacheDatabase between the null-check and the EnqueuePendingCreate
+    // the cache in StartRecreateLocalCacheDatabase between the null-check and the EnqueuePendingCreate
     // below. Holding the shared_ptr keeps it alive across that gap. Mirrors the ADR-0012 Backend
     // atomic-swap latched-handle pattern.
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline skipped: cache not initialized.");
+        if (outError != nullptr && deps_.IsCacheRecreating()) {
+            *outError = smatchet::sync::CacheRecreatingEnqueueMessage(); // the recreate began after the check above
+        }
         return 0;
     }
     const std::string payload = IssueDraftHelpers::ToJson(draft);
@@ -591,11 +608,23 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
     }
     // Runs on the field-edit worker (Pillar 6 queue-first) — latch the cache once. Same DR6
     // reasoning as QueueCreateOffline: the UI thread may swap the cache mid-enqueue.
+    // Before the cache is latched: the old file is still there for the first moments of a recreate and an edit queued
+    // into it would be wiped with it.
+    if (deps_.IsCacheRecreating()) {
+        outError = smatchet::sync::CacheRecreatingEnqueueMessage();
+        LOG_WARN("OfflineQueueService::QueueFieldEditOffline refused: the local cache is being recreated issue=%s "
+                 "field=%s",
+                 issueKey.c_str(), fieldId.c_str());
+        return 0;
+    }
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        outError = SmatchetLocalization::T("offline.cache_unavailable",
-                                           "Local cache is unavailable, so this edit cannot be queued offline. "
-                                           "Restart Smatchet or check Settings -> Preferences -> Local data.");
+        outError = deps_.IsCacheRecreating()
+                       ? smatchet::sync::CacheRecreatingEnqueueMessage()
+                       : SmatchetLocalization::T("offline.cache_unavailable",
+                                                 "Local cache is unavailable, so this edit cannot be queued "
+                                                 "offline. Restart Smatchet or check Settings -> Preferences -> "
+                                                 "Local data.");
         return 0;
     }
     if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {
@@ -877,7 +906,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
     // background task below, so a live backend swap (or pane-context retirement, multi-grid
     // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
-    // against the latched backend. The cache is latched the same way (RecreateLocalCacheDatabase).
+    // against the latched backend. The cache is latched the same way (StartRecreateLocalCacheDatabase).
     std::shared_ptr<ITrackerIssueReader> reader = deps_.ReaderShared();
     std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
     if (!cache || !reader || !mutations) {

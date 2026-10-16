@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "Sync/ChangeMonitorPaneState.h"
+#include "Sync/LocalRefreshGatePure.h"
 #include "TrackerFieldSchema.h"
 
 class ITrackerBackend;
@@ -40,6 +42,9 @@ struct GridContextFieldCatalog {
     /// drops its result, so the newest refresh decides the catalog. A catalog applied by another path
     /// (the grid's own fetch) does not supersede a refresh.
     std::atomic<std::uint64_t> RefreshSeq{0};
+    /// Failed-refresh snapshot restores (SetFieldCatalog / HandleFieldCatalogError) waiting on the file read for THIS
+    /// pane: drives the pane's "loading saved fields" cue (AppController::IsFieldCatalogRestoring).
+    std::atomic<int> errorRestoresInFlight{0};
     /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
     mutable std::mutex availableFieldsMutex_;
     std::vector<TrackerField> AvailableFields;
@@ -124,6 +129,10 @@ struct GridLiveContext {
     /// that is still the latest when it lands re-reads the grid, so a burst of edits never flashes an
     /// intermediate row (Pillar 2: the saves run on a worker).
     std::atomic<std::uint64_t> ticketSaveSeq_{0};
+    /// Orders this pane's reads of the local cache: a refresh that started earlier never replaces the rows of one
+    /// that started later and landed first. The ticket is taken before the read; the claim is made under
+    /// activeTicketsMutex_ (AppController::RefreshLocalDataCheckedImpl_).
+    smatchet::sync::LocalRefreshGate localRefreshGate_;
     /// Guards ActiveTickets + activeTicketsPublished_ (same contract as the old
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;
@@ -233,6 +242,9 @@ struct GridLiveContext {
     /// without fetching or toasting), so enabling the monitor on an already-populated pane
     /// does not replay the whole view as "changes".
     bool changeBaselineEstablished = false;
+    /// What the monitor learned about this pane between cycles (roster found incomplete, keys the tracker refuses).
+    /// Cleared when the pane's next reload finishes (GridContextDepsAdapter::OnStreamingSyncSessionFinished).
+    smatchet::sync::ChangeMonitorPaneState monitorState;
 
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.

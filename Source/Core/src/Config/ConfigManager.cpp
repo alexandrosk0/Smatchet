@@ -430,17 +430,41 @@ bool JsonToInt(const nlohmann::json& v, int& out) {
     return false;
 }
 
+// Typed reads that fall back instead of throwing. The JSON library's value(key, default) throws on a value of another
+// type, which aborted the whole scalar group: one hand-edited or mistyped key reset every field after it to its
+// default. Each helper changes `out` only when the key holds the right kind of value.
+void ReadStringField(const nlohmann::json& j, const char* key, std::string& out) {
+    const auto it = j.find(key);
+    if (it != j.end() && it->is_string()) {
+        out = it->get<std::string>();
+    }
+}
+
+void ReadBoolField(const nlohmann::json& j, const char* key, bool& out) {
+    const auto it = j.find(key);
+    if (it != j.end() && it->is_boolean()) {
+        out = it->get<bool>();
+    }
+}
+
+void ReadFloatField(const nlohmann::json& j, const char* key, float& out) {
+    const auto it = j.find(key);
+    if (it != j.end() && it->is_number()) {
+        out = static_cast<float>(it->get<double>());
+    }
+}
+
 // Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
 // table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // `db_path` is read here but never persisted by Save (override-only field — see the note on
     // kStringFields). Must stay outside the round-trip table so Save can't write it back.
-    cfg.DbPath = j.value("db_path", cfg.DbPath);
+    ReadStringField(j, "db_path", cfg.DbPath);
     for (std::size_t i = 0; i < CountOf(kStringFields); ++i) {
-        cfg.*(kStringFields[i].member) = j.value(kStringFields[i].key, cfg.*(kStringFields[i].member));
+        ReadStringField(j, kStringFields[i].key, cfg.*(kStringFields[i].member));
     }
     for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
-        cfg.*(kBoolFields[i].member) = j.value(kBoolFields[i].key, cfg.*(kBoolFields[i].member));
+        ReadBoolField(j, kBoolFields[i].key, cfg.*(kBoolFields[i].member));
     }
     // Migration grandfather for AI custom-endpoint SSRF consent. A config written by
     // a pre-feature build carries neither consent key. If such a config already has
@@ -470,13 +494,12 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
         }
     }
     for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {
-        cfg.*(kFloatFields[i].member) =
-            static_cast<float>(j.value(kFloatFields[i].key, static_cast<double>(cfg.*(kFloatFields[i].member))));
+        ReadFloatField(j, kFloatFields[i].key, cfg.*(kFloatFields[i].member));
     }
-    // Dual-key fallback (current `log_tracker_http_bodies`, legacy `log_jira_http_bodies`) —
-    // not table-expressible; kept explicit.
-    cfg.LogTrackerHttpBodies =
-        j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
+    // Dual-key fallback (current log_tracker_http_bodies, legacy log_jira_http_bodies) -
+    // not table-expressible; kept explicit. The current key wins when it holds a boolean.
+    ReadBoolField(j, "log_jira_http_bodies", cfg.LogTrackerHttpBodies);
+    ReadBoolField(j, "log_tracker_http_bodies", cfg.LogTrackerHttpBodies);
 }
 
 } // namespace config_detail
@@ -488,6 +511,27 @@ bool ConfigManager::JsonToInt(const nlohmann::json& v, int& out) { return smatch
 
 bool ConfigManager::IsIntConfigKey(const std::string& jsonKey) {
     for (const auto& field : kIntFields) {
+        if (jsonKey == field.key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ConfigManager::IsBoolConfigKey(const std::string& jsonKey) {
+    if (jsonKey == "log_tracker_http_bodies") {
+        return true; // the dual-key bool read outside the table (LoadScalarFields)
+    }
+    for (const auto& field : kBoolFields) {
+        if (jsonKey == field.key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ConfigManager::IsStringConfigKey(const std::string& jsonKey) {
+    for (const auto& field : kStringFields) {
         if (jsonKey == field.key) {
             return true;
         }

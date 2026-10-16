@@ -612,3 +612,45 @@ TEST_CASE("PendingActionQueueService queue-panel actions: discard, restore and d
     CHECK(rig.Cache().LoadDeadPendingActions().empty());
     CHECK(rig.svc.Snapshot()->Dead.empty());
 }
+
+// --- cache.recreate gate: an enqueue in the withdraw window fails loudly, with a message that says why ---------------
+
+TEST_CASE("an action queued while the cache is being recreated fails with a 'being recreated' message") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.deps.CacheImpl.reset(); // the withdraw: no cache until the fresh one is published
+    rig.deps.CacheRecreatingImpl = true;
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("hi"));
+    CHECK(r.K != PendingActionSubmitResult::Kind::Queued);
+    CHECK(r.QueueId == 0);
+    CHECK(r.Error.find("being recreated") != std::string::npos);
+    CHECK(r.Error.find("Retry in a moment") != std::string::npos);
+}
+
+TEST_CASE("an action queued with no cache and no recreate in progress keeps the 'unavailable' message") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.deps.CacheImpl.reset();
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("hi"));
+    CHECK(r.QueueId == 0);
+    CHECK(r.Error.find("unavailable") != std::string::npos);
+    CHECK(r.Error.find("being recreated") == std::string::npos);
+}
+
+TEST_CASE("an action queued during the early recreate window (cache still present) fails and writes nothing") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.deps.CacheRecreatingImpl = true; // the gate is up before the cache is withdrawn; the cache is still there
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                              "ABC-1", CommentPayload("hi"));
+    CHECK(r.K != PendingActionSubmitResult::Kind::Queued);
+    CHECK(r.QueueId == 0);
+    CHECK(r.Error.find("being recreated") != std::string::npos);
+    CHECK(r.Error.find("Retry in a moment") != std::string::npos);
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}

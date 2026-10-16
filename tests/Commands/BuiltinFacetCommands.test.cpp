@@ -35,13 +35,18 @@
 #include "IssueDraft.h"
 #include "Sync/OfflineQueueTypes.h"
 #include "Tracker/TrackerFieldSchema.h"
+#include "VsyncControl.h"
 
 #include <doctest/doctest.h>
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using smatchet::cmd::CommandContext;
@@ -142,10 +147,43 @@ struct FakeSync : IAppSync {
             ++FullSyncCalls;
         }
     }
-    VoidResult RecreateLocalCacheDatabase() override {
-        ++RecreateCalls;
-        return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
+    bool RecreateWipes = false; // a failing recreate that already deleted the cache files
+    // The recreate finishes inside the call (a real one finishes later, on the UI thread); `RecreateRefusal` models a
+    // refusal to start, `HoldRecreate` leaves it running so a test can finish it by hand.
+    std::string RecreateRefusal;
+    bool HoldRecreate = false;
+    std::atomic<bool> Recreating{false};
+    std::function<void(const smatchet::sync::CacheRecreateOutcome&)> HeldDone;
+    void FinishRecreate() {
+        smatchet::sync::CacheRecreateOutcome outcome;
+        outcome.Ok = RecreateError.empty();
+        outcome.Wiped = RecreateError.empty() || RecreateWipes;
+        outcome.Error = RecreateError;
+        Recreating = false;
+        if (outcome.Ok) {
+            // The contract of IAppSync::StartRecreateLocalCacheDatabase: the recreate itself starts the follow-up full
+            // sync (AppController::FinishCacheRecreate_), so the command's completion must not.
+            SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+        }
+        auto done = std::move(HeldDone);
+        if (done) {
+            done(outcome);
+        }
     }
+    VoidResult
+    StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override {
+        ++RecreateCalls;
+        if (!RecreateRefusal.empty()) {
+            return VoidResult::Err(RecreateRefusal);
+        }
+        HeldDone = std::move(onDone);
+        Recreating = true; // after HeldDone: a thread that sees it may finish the recreate
+        if (!HoldRecreate) {
+            FinishRecreate();
+        }
+        return VoidOk();
+    }
+    bool IsLocalCacheRecreating() const override { return Recreating.load(); }
     std::string GetResolvedLocalCacheDbPath() const override { return "/tmp/fake-cache.db"; }
     void RefreshLocalData() override { ++RefreshCalls; }
     void RefreshLocalDataAsync() override { ++RefreshAsyncCalls; }
@@ -288,6 +326,11 @@ struct FakeMutations : IAppTicketMutations {
         return Outcome(WorklogOutcome, "worklog rejected");
     }
     std::int64_t QueueCreateOffline(const IssueDraft&) override { return QueuedId; }
+    std::int64_t QueueCreateOffline(const IssueDraft&, std::string& outError) override {
+        outError = QueueRefusal;
+        return QueuedId;
+    }
+    std::string QueueRefusal; // why a queue-offline create returned 0 (the recreating cache), empty for no reason
     std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken) override {
         std::promise<IssueCreateResult> p;
         IssueCreateResult r;
@@ -395,6 +438,23 @@ struct TogglePoster : IMainThreadPoster {
     }
 };
 
+// The one-shot in-process CLI: the command runs on the UI thread, but no frame loop ever drains the posted tasks,
+// so the command has to pump the queue itself. `OnPump` models what the dispatcher would run (the recreate's
+// completion); left empty it models a queue that never produces the outcome.
+struct NoFrameLoopPoster : IMainThreadPoster {
+    int Pumps = 0;
+    std::function<void()> OnPump;
+    bool IsOnUiThread() const override { return true; }
+    void PostToMainThread(std::function<void()> fn) override { fn(); }
+    bool HasFrameLoop() const override { return false; }
+    void DrainMainThreadOnce() override {
+        ++Pumps;
+        if (OnPump) {
+            OnPump();
+        }
+    }
+};
+
 CommandContext AutomationCtx(bool confirmed = false, bool dryRun = false) {
     CommandContext ctx;
     ctx.Source = CommandSource::Cli; // automation source — the destructive gate is armed
@@ -480,6 +540,150 @@ TEST_CASE("users.* — backend results propagate; a failed fetch is BackendError
         CHECK(r.Error.Code == ErrorCode::BackendError);
         CHECK(r.Error.Message.find("boom") != std::string::npos);
     }
+}
+
+TEST_CASE("cache.recreate words a failure by whether the cache files were already wiped") {
+    FakeSync sync;
+    TogglePoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    sync.RecreateError = "Failed to reopen database: disk full";
+    sync.RecreateWipes = false; // nothing was deleted
+    const CommandResult untouched = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(untouched.Ok);
+    CHECK(untouched.Error.Message.find("was not recreated") != std::string::npos);
+    CHECK(untouched.Error.Message.find("was wiped") == std::string::npos);
+
+    sync.RecreateWipes = true; // the files are gone, the new database could not be set up
+    const CommandResult wiped = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(wiped.Ok);
+    CHECK(wiped.Error.Code == ErrorCode::HandlerError);
+    CHECK(wiped.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(wiped.Error.Message.find("disk full") != std::string::npos);
+    CHECK(wiped.Error.Message.find("was not recreated") == std::string::npos);
+    CHECK(sync.FullSyncCalls == 0); // no sync starts after a failure either way
+}
+
+TEST_CASE(
+    "cache.recreate from the UI thread starts the recreate and returns at once; the sync follows its completion") {
+    FakeSync sync;
+    sync.HoldRecreate = true; // the real recreate finishes later, on the UI thread
+    TogglePoster poster;
+    poster.OnUi = true; // the command palette: this thread cannot wait for the outcome
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE(r.Ok);
+    CHECK((*r.Data)["started"] == true);
+    CHECK((*r.Data)["completed"] == false);
+    CHECK(sync.RecreateCalls == 1);
+    CHECK(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 0); // nothing is re-fetched before the new database is in place
+
+    sync.FinishRecreate();
+    CHECK_FALSE(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 1);
+}
+
+TEST_CASE("cache.recreate from another thread waits for the outcome and reports whether the wipe happened") {
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    TogglePoster poster; // not on the UI thread: an MCP / CLI / Lua caller
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    CommandResult result;
+    std::thread caller([&]() { result = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true)); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!sync.IsLocalCacheRecreating() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(sync.IsLocalCacheRecreating());
+    sync.RecreateError = "Failed to open new database: disk full";
+    sync.RecreateWipes = true; // the files are gone, the new database could not be set up
+    sync.FinishRecreate();     // the UI thread's completion
+    caller.join();
+
+    REQUIRE_FALSE(result.Ok);
+    CHECK(result.Error.Code == ErrorCode::HandlerError);
+    CHECK(result.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate with no frame loop pumps the UI-thread queue until the outcome arrives") {
+    // Smatchet.exe cmd cache.recreate --yes without MCP: the command runs on the thread that booted the app, nothing
+    // drains the dispatcher, and the process exits right after. Returning "started" there left the recreate undone.
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    NoFrameLoopPoster poster;
+    poster.OnPump = [&]() {
+        if (poster.Pumps == 3) {
+            sync.FinishRecreate(); // the dispatcher ran the worker's completion on the third pump
+        }
+    };
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE(r.Ok);
+    CHECK((*r.Data)["completed"] == true);
+    CHECK((*r.Data)["wiped"] == true);
+    CHECK(poster.Pumps == 3);
+    CHECK(sync.RecreateCalls == 1);
+    CHECK_FALSE(sync.IsLocalCacheRecreating());
+    CHECK(sync.FullSyncCalls == 1); // the follow-up re-fetch started when the new database was ready
+}
+
+TEST_CASE("cache.recreate with no frame loop reports a failed recreate by whether the cache was wiped") {
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    sync.RecreateError = "Failed to open new database: disk full";
+    sync.RecreateWipes = true;
+    NoFrameLoopPoster poster;
+    poster.OnPump = [&]() { sync.FinishRecreate(); };
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Message.find("was wiped") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate with no frame loop fails, rather than claiming it started, when the queue never delivers") {
+    // A poster that never drains to an outcome: the old code returned {started: true} with exit 0 and nothing wiped.
+    FakeSync sync;
+    sync.HoldRecreate = true; // the recreate never finishes
+    NoFrameLoopPoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+    CommandContext ctx = AutomationCtx(/*confirmed*/ true);
+    ctx.TimeoutMs = 60; // bound the wait
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, ctx);
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Code == ErrorCode::HandlerError);
+    CHECK(r.Error.Message.find("did not finish") != std::string::npos);
+    CHECK(r.Error.Message.find("no frame loop") != std::string::npos);
+    CHECK(poster.Pumps >= 1); // it did pump while it waited
+    CHECK(sync.RecreateCalls == 1);
+    CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate reports a refusal to start as nothing changed") {
+    FakeSync sync;
+    sync.RecreateRefusal = "The local cache is already being recreated.";
+    TogglePoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    const CommandResult r = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true));
+    REQUIRE_FALSE(r.Ok);
+    CHECK(r.Error.Message.find("already being recreated") != std::string::npos);
+    CHECK(r.Error.Message.find("was not recreated") != std::string::npos);
+    CHECK(sync.FullSyncCalls == 0);
 }
 
 TEST_CASE(
@@ -877,6 +1081,11 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
         mut.QueuedId = 0;
         const CommandResult fail = reg.Dispatch("ticket.create", args, yes);
         CHECK(fail.Error.Code == ErrorCode::HandlerError);
+        CHECK(fail.Error.Message == "Failed to queue offline create."); // no specific reason: the generic text
+        mut.QueueRefusal = "The local database is being recreated, retry in a moment.";
+        const CommandResult recreating = reg.Dispatch("ticket.create", args, yes);
+        CHECK(recreating.Error.Code == ErrorCode::HandlerError);
+        CHECK(recreating.Error.Message == mut.QueueRefusal); // the refusal reaches the caller
     }
     {
         const nlohmann::json args = {{"projectKey", "PROJ"}, {"summary", "s"}};
@@ -1118,6 +1327,90 @@ TEST_CASE("config.set rejects a non-integer for an integer key, and a damaged in
     CHECK(damaged.McpPort == 8123);
     CHECK(damaged.MaxUserChanges == 77);
     CHECK(damaged.LookupCacheTtlSec == ttlBefore);
+}
+
+TEST_CASE("config.set refuses a non-boolean for a boolean key and keeps the text of a string key as typed") {
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", "false"}}, ctx).Ok);
+
+    for (const char* bad : {"yes", "42", "3.5", "\"maybe\"", "[]"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    CHECK_FALSE(ConfigManager::Load().ReadOnlyMode); // the refused writes changed nothing
+
+    // The spellings the vsync key takes work for the other boolean keys too.
+    for (const char* on : {"on", "true", "1", "\"true\""}) {
+        REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", "false"}}, ctx).Ok);
+        REQUIRE(reg.Dispatch("config.set", {{"key", "readOnlyMode"}, {"value", on}}, ctx).Ok);
+        CHECK(ConfigManager::Load().ReadOnlyMode);
+        CHECK(ConfigManager::LoadMergedConfigJson().at("read_only_mode").is_boolean());
+    }
+
+    // A string key takes the text as typed: 123 and true are not stored as a number and a boolean.
+    for (const char* text : {"123", "true", "{\"a\":1}"}) {
+        REQUIRE(reg.Dispatch("config.set", {{"key", "jqlQuery"}, {"value", text}}, ctx).Ok);
+        REQUIRE(ConfigManager::LoadMergedConfigJson().at("jql").is_string());
+        CHECK(ConfigManager::LoadMergedConfigJson().at("jql").get<std::string>() == text);
+        CHECK(ConfigManager::Load().JqlQuery == text);
+    }
+}
+
+TEST_CASE("config.set vsync takes the boolean spellings, stores a real boolean and applies it live") {
+    // vsync has no normalisation of its own: it goes through the same boolean check as every boolean key.
+    smatchet_tests::TestEnvGuard env;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+    const bool before = smatchet::vsync::Enabled();
+
+    for (const char* off : {"off", "false", "0", "\"false\"", "\"off\""}) {
+        smatchet::vsync::SetEnabled(true);
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "vsync"}, {"value", off}}, ctx);
+        REQUIRE(r.Ok);
+        CHECK_FALSE(smatchet::vsync::Enabled()); // applied live
+        CHECK(ConfigManager::LoadMergedConfigJson().at("vsync_enabled").is_boolean());
+        CHECK_FALSE(ConfigManager::Load().VsyncEnabled);
+    }
+    for (const char* on : {"on", "true", "1", "\"true\""}) {
+        smatchet::vsync::SetEnabled(false);
+        REQUIRE(reg.Dispatch("config.set", {{"key", "vsync"}, {"value", on}}, ctx).Ok);
+        CHECK(smatchet::vsync::Enabled());
+        CHECK(ConfigManager::Load().VsyncEnabled);
+    }
+    for (const char* bad : {"maybe", "5", "3.5", "[]"}) {
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "vsync"}, {"value", bad}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+        CHECK(r.Error.Message.find("must be a boolean") != std::string::npos);
+    }
+    smatchet::vsync::SetEnabled(before);
+}
+
+TEST_CASE("a hand-edited mistyped boolean, string or float costs only its own field, whatever its position") {
+    smatchet_tests::TestEnvGuard env;
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["domain"] = "acme.atlassian.net";
+        j["mcp_port"] = 8123;
+    });
+    const TrackerConfig defaults = TrackerConfig();
+    ConfigManager::UpdateConfigJson([](nlohmann::json& j) {
+        j["read_only_mode"] = "maybe"; // a string where a boolean belongs
+        j["email"] = 7;                // a number where a string belongs
+        j["show_log_window"] = nullptr;
+    });
+
+    const TrackerConfig loaded = ConfigManager::Load();
+
+    CHECK(loaded.ReadOnlyMode == defaults.ReadOnlyMode);
+    CHECK(loaded.Email == defaults.Email);
+    CHECK(loaded.ShowLogWindow == defaults.ShowLogWindow);
+    CHECK(loaded.Domain == "acme.atlassian.net"); // before the damaged keys in the table
+    CHECK(loaded.McpPort == 8123);                // after them
 }
 
 TEST_CASE("config.set takes an integral float like the load does (60.0) and still refuses a fraction (3.5)") {

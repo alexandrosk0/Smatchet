@@ -108,6 +108,19 @@ std::string SavedCommentThread(const AppController& app, const char* issueId) {
     return it == tickets->end() ? std::string() : it->GetFieldRichValue(kCommentThreadRichKey);
 }
 
+// The primary grid pane's live ticket table (its scrolling child is named "<window>/TicketGrid_<id>"), or null.
+const ImGuiTable* LiveTicketGridTable() {
+    ImGuiContext& g = *GImGui;
+    for (int n = 0; n < g.Tables.GetMapSize(); ++n) {
+        const ImGuiTable* table = g.Tables.TryGetMapData(n);
+        if (table != nullptr && table->InnerWindow != nullptr && table->LastFrameActive >= g.FrameCount - 1 &&
+            std::strstr(table->InnerWindow->Name, "/TicketGrid_") != nullptr) {
+            return table;
+        }
+    }
+    return nullptr;
+}
+
 // Wait until the comments modal's load has ended (FetchInFlight released).
 bool WaitForCommentsLoad(ImGuiTestContext* ctx) {
     return YieldUntil(ctx, 300, []() {
@@ -1198,6 +1211,161 @@ static void RegisterOfflineFirstBulkPrefetchFailureBacksOff(ImGuiTestEngine* eng
     };
 }
 
+// OfflineFirst/PendingCue_GridRowShowsPending: a row with a queued offline edit shows the "pending" cue in the real
+// grid, and only that row. Locks the grid's three wires of the cue (SmatchetActiveProjectGridTable.cpp,
+// drawActiveProjectGridRows): RefreshPendingOverlay (the index is built from the queue snapshots), the pane's
+// cacheBackendKey (every row lookup is keyed by it) and the per-row PendingRowCueFor assignment. Dropping any one
+// makes the label vanish, which this test sees through the probe the key cell raises when it draws the label.
+static void RegisterOfflineFirstPendingCueGridRowShowsPending(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "PendingCue_GridRowShowsPending");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope; // the queue write must land: a rejected write would pass vacuously
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const TrackerField* foundStatusField = app->FindFieldById("status");
+        const auto tickets = app->GetActiveTicketsSnapshot();
+        IM_CHECK_NO_RET(foundStatusField != nullptr);
+        IM_CHECK_NO_RET(tickets != nullptr);
+        if (!foundStatusField || !tickets) {
+            return;
+        }
+        const TrackerField statusField = *foundStatusField;
+        const auto ticketIt = std::find_if(tickets->begin(), tickets->end(),
+                                           [](const CachedTicket& ticket) { return ticket.id == "OFF-1"; });
+        const auto otherIt = std::find_if(tickets->begin(), tickets->end(),
+                                          [](const CachedTicket& ticket) { return ticket.id == "OFF-2"; });
+        IM_CHECK_NO_RET(ticketIt != tickets->end());
+        IM_CHECK_NO_RET(otherIt != tickets->end());
+        IM_CHECK_NO_RET(FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") == nullptr);
+        if (ticketIt == tickets->end() || otherIt == tickets->end()) {
+            return;
+        }
+
+        // The grid body is replaced by the welcome state until the backend has been reachable once; set the flag for
+        // the test (restored on exit) so the rows are what is under test.
+        const char* const kGrid = "Smatchet - Active Project";
+        struct Restore {
+            bool Reachable;
+            ~Restore() { g_ui.cfg.BackendHasBeenReachable = Reachable; }
+        } restore{g_ui.cfg.BackendHasBeenReachable};
+        g_ui.cfg.BackendHasBeenReachable = true;
+        const bool primaryLive = YieldUntil(ctx, 300, [kGrid]() {
+            g_ui.requestActiveProjectFocus = true;
+            const ImGuiWindow* win = ImGui::FindWindowByName(kGrid);
+            return win != nullptr && win->Active;
+        });
+        IM_CHECK_NO_RET(primaryLive);
+
+        // The focused pane shows the Offline Queue panel above its table once an edit is queued, and the headless dock
+        // slot is too short for panel plus rows. So open a second pane (it takes focus, and with it the panel) and
+        // split it to the right of the primary: the primary is then an unfocused pane, which draws its rows with no
+        // panel above them. The edit is queued from the new pane; the overlay is keyed by (cache key, issue), so the
+        // primary's row for the same issue shows the cue.
+        g_ui.cfg.WhisperSetupCompleted = true; // keep the first-run banner off the pane header
+        g_ui.paneAddRequest.sourceId = "main";
+        const bool paneAdded = YieldUntil(
+            ctx, 300, []() { return g_ui.gridPanes.size() == 2 && !g_ui.gridPanes[1].cachedWindowName.empty(); });
+        IM_CHECK_NO_RET(paneAdded);
+        if (!paneAdded) {
+            return;
+        }
+        const std::string paneTwoId = g_ui.gridPanes[1].id;
+        const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
+        struct PaneCleanup {
+            std::string Id;
+            ~PaneCleanup() {
+                if (GridPane* pane = FindGridPaneById(g_ui.gridPanes, Id)) {
+                    pane->open = false; // closed as the tab X would; the host sweep removes it
+                }
+            }
+        } paneCleanup{paneTwoId};
+        const bool paneTwoLive = YieldUntil(ctx, 300, [&paneTwoName]() {
+            const ImGuiWindow* win = ImGui::FindWindowByName(paneTwoName.c_str());
+            return win != nullptr && win->Active;
+        });
+        IM_CHECK_NO_RET(paneTwoLive);
+        if (!paneTwoLive) {
+            return;
+        }
+        // The new window takes ImGui focus; docking is driven only once it has been drawn (and focused) for a frame.
+        IM_CHECK_NO_RET(YieldUntil(ctx, 300, [paneTwoId]() { return g_ui.focusedPaneId == paneTwoId; }));
+        ctx->Yield(3);
+        const std::string paneTwoAbsRef = std::string("//") + paneTwoName;
+        const std::string primaryAbsRef = std::string("//") + kGrid;
+        ctx->DockInto(paneTwoAbsRef.c_str(), primaryAbsRef.c_str(), ImGuiDir_Right);
+        const bool bothVisible = YieldUntil(ctx, 300, [&paneTwoName, kGrid]() {
+            const ImGuiWindow* one = ImGui::FindWindowByName(kGrid);
+            const ImGuiWindow* two = ImGui::FindWindowByName(paneTwoName.c_str());
+            return one != nullptr && one->Active && two != nullptr && two->Active;
+        });
+        IM_CHECK_NO_RET(bothVisible);
+        const bool tableLive = YieldUntil(ctx, 300, []() { return LiveTicketGridTable() != nullptr; });
+        IM_CHECK_NO_RET(tableLive);
+
+        // Offline, so the queued edit stays queued while the grid draws.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+
+        // Nothing is queued yet: no row shows the cue.
+        ResetPendingRowCuesDrawnForTests();
+        ctx->Yield(10);
+        IM_CHECK_NO_RET(PendingRowCueDrawnForTests("OFF-1") == 0);
+
+        PendingFieldEdit edit;
+        edit.IssueId = "OFF-1";
+        edit.Field = statusField;
+        edit.Values = {"2"};
+        edit.OriginalValue = ticketIt->GetFieldValue("status");
+        edit.HasOriginalValue = true;
+        ProcessGridFieldEdits(*app, g_ui, {edit}, false);
+        IM_CHECK_NO_RET(YieldUntil(
+            ctx, 120, [app]() { return FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") != nullptr; }));
+
+        // The grid draws the "pending" label on the edited row (queued, so not the red "not sent"), not on the other.
+        const bool cueDrawn = YieldUntil(ctx, 300, []() {
+            g_ui.cfg.BackendHasBeenReachable = true;
+            return PendingRowCueDrawnForTests("OFF-1") != 0;
+        });
+        if (!cueDrawn) {
+            const std::string paneKey = app->PaneCacheBackendKey(g_ui.focusedPaneId);
+            ctx->LogError(
+                "the grid never drew the pending cue for OFF-1 (overlay not built, wrong cache key, or the "
+                "per-row cue not assigned): pane_key='%s' overlay_row=%d held_snapshot_rows=%d "
+                "live_snapshot_rows=%d table_live=%d",
+                paneKey.c_str(), static_cast<int>(g_ui.pendingOverlay.Row(paneKey, "OFF-1")),
+                g_ui.pendingOverlayQueueSnap ? static_cast<int>(g_ui.pendingOverlayQueueSnap->PendingEdits.size()) : -1,
+                static_cast<int>(app->GetOfflineQueueSnapshot()->PendingEdits.size()),
+                LiveTicketGridTable() != nullptr ? 1 : 0);
+        }
+        IM_CHECK_NO_RET(cueDrawn);
+        IM_CHECK_NO_RET(PendingRowCueDrawnForTests("OFF-1") == 1);
+        IM_CHECK_NO_RET(PendingRowCueDrawnForTests("OFF-2") == 0);
+
+        // Back online: the edit is sent and the queue drains, so no row is left pending for a later test.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        const bool drained = YieldUntil(
+            ctx, 900, [app]() { return FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") == nullptr; });
+        if (!drained) {
+            const std::vector<PendingFieldEditRecord> leftover = app->GetPendingFieldEdits();
+            const PendingFieldEditRecord* row = FindQueuedEdit(leftover, "OFF-1", "status");
+            if (row) {
+                app->DeletePendingFieldEdits({row->Id}); // never leak the row into a retry or a later test
+            }
+        }
+        IM_CHECK_NO_RET(drained);
+        ResetPendingRowCuesDrawnForTests();
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
@@ -1213,6 +1381,7 @@ extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstQueueHeldForAnotherSiteIsNeverSent(engine);
     RegisterOfflineFirstUpdateTicketShowsNowAndSavesInOrder(engine);
     RegisterOfflineFirstBulkPrefetchFailureBacksOff(engine);
+    RegisterOfflineFirstPendingCueGridRowShowsPending(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

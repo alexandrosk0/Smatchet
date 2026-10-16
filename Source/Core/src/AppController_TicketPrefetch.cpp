@@ -73,7 +73,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
 void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend,
                                              const std::string& cacheBackendKey,
                                              const std::vector<std::string>& issueKeys) {
-    if (!Cache || !backend) {
+    if (!std::atomic_load(&Cache) || !backend) {
         return;
     }
     if (IsTrackerOffline()) {
@@ -187,14 +187,16 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     requestDeferredLiveTrackerBackendSuccessNotify_();
 
-    if (!Cache) {
+    // Latched once: a cache recreate may withdraw the cache between the check and the write.
+    const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
+    if (!cache) {
 
         return;
     }
 
     // Fetched from the tracker just now: store each row with the version it carries (a plain SaveTicket would
     // drop the sync meta and make the next delta sync refetch the ticket).
-    smatchet::sync::SaveFetchedRows(*Cache, cacheBackendKey, tickets);
+    smatchet::sync::SaveFetchedRows(*cache, cacheBackendKey, tickets);
 
     RefreshLocalData();
 }
