@@ -8,7 +8,115 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (6 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `bucket-e-grid-tests-ci`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/bucket-e-gridsearch-gridpanes-ci`
+- **Started**: 2026-10-16T09:56:35Z
+- **Write set** (6 paths):
+  - `tests/ui/grid_search_apply.test.cpp`
+  - `tests/ui/grid_pane_windows.test.cpp`
+  - `.github/workflows/build-and-test.yml`
+  - `scripts/dev/lib/ui-test-driver.sh`
+  - `.gitignore`
+  - `tests/bats/ui_test_driver_lib.bats`
+- **Notes**: Fix GridSearch/GridPanes bucket-E defects + run them in the fixture CI lane
+
+### `chat-persist-cache-swap-uaf`
+
+- **Owner**: `claude-serene-rosalind`
+- **Branch**: `fix/chat-persist-cache-swap-uaf`
+- **Started**: 2026-10-16T09:56:12Z
+- **Write set** (7 paths):
+  - `Source/Core/include/SmatchetChatPersistWorker.h`
+  - `Source/Core/src/SmatchetChatPersistWorker.cpp`
+  - `Source/Core/src/AppController_Init.cpp`
+  - `Source/Core/src/AppController_TicketPrefetch.cpp`
+  - `Source/Core/src/AppController_IssueCreateOffline.cpp`
+  - `tests/Core/SmatchetChatPersistWorker.test.cpp`
+  - `tests/CMakeLists.txt`
+- **Notes**: chat_persist worker resolves cache per op (UAF after cache recreate)
+
+### `history-field-viewer-wt`
+
+- **Owner**: `orchestrator`
+- **Branch**: `feat/grid-key-copy-link-csv`
+- **Started**: 2026-10-13T18:08:38Z
+- **Updated**: 2026-10-13T20:45:19Z
+- **Write set** (19 paths):
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/SmatchetCommentsModalUi.h`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/SmatchetLocalization.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/Ui/SmatchetActiveProjectGridCells.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/Ui/SmatchetCommentsModalUi.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/Ui/SmatchetActivityLogViewerUi.h`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/Ui/SmatchetFieldViewerKindPure.h`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/Ui/SmatchetFieldViewerModalUi.h`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/Ui/SmatchetActivityLogViewerUi.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/Ui/SmatchetFieldViewerModalUi.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/tests/CMakeLists.txt`
+  - `.claude/worktrees/history-field-window-view-dc5005/tests/ui/CMakeLists.txt`
+  - `.claude/worktrees/history-field-window-view-dc5005/tests/ui/ui_tests_registry.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/tests/Core/SmatchetFieldViewerKindPure.test.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/tests/ui/field_viewer_modal.test.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/Ui/SmatchetHeightCulledList.h`
+  - `.claude/worktrees/history-field-window-view-dc5005/.review-findings.json`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/src/TicketFieldEditor_Modal.cpp`
+  - `.claude/worktrees/history-field-window-view-dc5005/Source/Core/include/Ui/SmatchetModalPopupOpen.h`
+
+### `hook-tree-resolution`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/hook-tree-resolution`
+- **Started**: 2026-10-04T16:08:37Z
+- **Updated**: 2026-10-04T16:11:55Z
+- **Write set** (27 paths):
+  - `docs/plans/active/hook-tree-resolution.md`
+  - `docs/plans/shipped/hook-tree-resolution.md`
+  - `docs/plans/INDEX.md`
+  - `agents/scripts/core/hook-event-lib.sh`
+  - `agents/scripts/core/test-hook-event-lib-bats.sh`
+  - `tests/bats/hook_event_lib.bats`
+  - `docs/harness/claude-code/hooks/guard-plan-lock.sh`
+  - `docs/harness/claude-code/hooks/guard-head-drift.sh`
+  - `docs/harness/claude-code/hooks/resync-head-baseline.sh`
+  - `agents/scripts/core/session-tree-banner.sh`
+  - `docs/harness/claude-code/hooks/guard-shared-tree.sh`
+  - `docs/harness/claude-code/hooks/lint-cpp-common.sh`
+  - `docs/harness/claude-code/hooks/lint-cpp.sh`
+  - `docs/harness/claude-code/hooks/lint-cpp-drain.sh`
+  - `docs/harness/claude-code/hooks/lint-portable-purity.sh`
+  - `docs/harness/claude-code/hooks/lint-syntax-both.py`
+  - `docs/harness/claude-code/hooks/clear-tree-dirty.sh`
+  - `docs/harness/claude-code/hooks/pre-ship-stop-gate.sh`
+  - `docs/harness/claude-code/hooks/capture-intent.sh`
+  - `docs/harness/claude-code/hooks/pretool-workflow-fleet-preflight.sh`
+  - `tests/bats/guard_plan_lock.bats`
+  - `tests/bats/guard_head_drift.bats`
+  - `tests/bats/guard_shared_tree.bats`
+  - `tests/bats/session_registry.bats`
+  - `docs/agent-rules/process-rules.md`
+  - `docs/self-improvement/categories/tooling/2026-10-04-hooks-key-on-claude-project-dir.md`
+  - `scripts/dev/worktree.sh`
+
+### `shutdown-drain-dr8b-deflake`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/great-nightingale-b86f26`
+- **Started**: 2026-10-15T13:44:31Z
+- **Write set** (1 paths):
+  - `tests/Core/ShutdownFutureDrain.test.cpp`
+- **Notes**: deflake DR8(b) sleep-then-assert
+
+### `ui-monkey-watchdog-kills-walk`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/ui-monkey-watchdog-kills-walk`
+- **Started**: 2026-10-04T22:09:00Z
+- **Write set** (2 paths):
+  - `tests/ui/ui_monkey.test.cpp`
+  - `.github/workflows/ui-monkey-nightly.yml`
+- **Notes**: fix #2216: UI monkey walk aborted by the engine's 60 s per-test watchdog, reported as a crash
+
