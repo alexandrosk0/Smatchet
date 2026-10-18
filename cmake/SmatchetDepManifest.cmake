@@ -30,7 +30,7 @@ function(smatchet_collect_dep_manifest OUT_VAR)
     list(APPEND _deps "Dear ImGui|v1.92.7-docking|MIT|https://github.com/ocornut/imgui|v1.92.7-docking")
     list(APPEND _deps "nlohmann/json|v3.11.3|MIT|https://github.com/nlohmann/json|json v3.11.3")
     list(APPEND _deps "SQLiteCpp|3.3.1|MIT|https://github.com/SRombauts/SQLiteCpp|SQLiteCpp 3.3.1")
-    list(APPEND _deps "cpp-httplib|v0.59.0|MIT|https://github.com/yhirose/cpp-httplib|cpp-httplib v0.59.0")
+    list(APPEND _deps "cpp-httplib|v0.61.0|MIT|https://github.com/yhirose/cpp-httplib|cpp-httplib v0.61.0")
     list(APPEND _deps "md4c|0.5.2|MIT|https://github.com/mity/md4c|md4c release-0.5.2")
     list(APPEND _deps "ghc::filesystem|v1.5.14|MIT|https://github.com/gulrak/filesystem|ghc::filesystem v1.5.14")
 

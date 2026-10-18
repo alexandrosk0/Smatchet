@@ -720,18 +720,21 @@ endif()
 
 smatchet_fetch_status("Fetching cpp-httplib...")
 smatchet_prepare_httplib()
-# Pinned to the exact commit the v0.59.0 lightweight tag resolves to (reproducible
-# builds / supply chain). v0.49.0 carried CVE-2026-77358 (HIGH, TLS WebSocket
-# client use-after-free; fixed v0.50.1), CVE-2026-77341 (chunked trailer CRLF
-# injection; fixed v0.50.0), CVE-2026-102944 (HIGH, Cookie leak on cross-origin
-# redirect; fixed v0.51.0) and CVE-2026-103930 (request-target CRLF; fixed
-# v0.51.0). v0.59.0 is the latest release and clears all four. The server/client
-# surface Smatchet uses (Server bind/listen/stop, Client timeouts + Get/Post,
-# Response::set_content / set_chunked_content_provider, DataSink, ThreadPool) is
-# declaration-identical between v0.49.0 and v0.59.0, and the CMake option set and
-# dependency lookups are unchanged, so smatchet_prepare_httplib() still covers them.
+# Pinned to the exact commit the v0.61.0 lightweight tag resolves to (reproducible
+# builds / supply chain). v0.49.0 carried four OSV findings: CVE-2026-77358 (TLS
+# WebSocket client use-after-free; CVSS 4.0 8.2, GitHub advisory Moderate; fixed
+# v0.50.1), CVE-2026-102944 (Cookie leak on cross-origin redirect; CVSS 3.1 7.5;
+# fixed v0.51.0), CVE-2026-77341 (chunked-trailer CRLF injection; fixed v0.50.0)
+# and CVE-2026-103930 (request-target CRLF; fixed v0.51.0). v0.61.0 (2026-10-13)
+# clears all four. The server/client surface Smatchet uses (Server bind/listen/stop,
+# Client timeouts + Get/Post, Response::set_content / set_chunked_content_provider,
+# DataSink, ThreadPool) is declaration-identical between v0.49.0 and v0.61.0, and
+# the CMake option set and dependency lookups are unchanged, so
+# smatchet_prepare_httplib() still covers them. Since v0.61.0 the server answers 400
+# to a request with two Host lines or a Host byte outside uri-host; a well-formed
+# foreign Host still reaches the MCP Host gate (403).
 # Lightweight tag; resolved via:
-# git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.59.0
+# git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.61.0
 # GIT_SUBMODULES "" — cpp-httplib has no submodules we link, but FetchContent's
 # generated gitclone script runs `git submodule update --recursive --init`
 # UNCONDITIONALLY (it does not pre-check `.gitmodules`). On a fresh worktree/CI
@@ -740,7 +743,7 @@ smatchet_prepare_httplib()
 # "git-sh-setup: file not found" → "Failed to update submodules". Empirically
 # confirmed: httplib fails the fresh fetch with NO `.gitmodules` present. Skip
 # the step. Same fix as json/cpr/sqlitecpp/sol2 above.
-FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b  # cpp-httplib v0.59.0
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG c419c904da4ed0d057f169c225c58cc795c07e4d  # cpp-httplib v0.61.0
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(httplib)
 
