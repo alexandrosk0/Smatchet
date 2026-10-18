@@ -430,6 +430,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
+        # The worker's cache swap / null-cache retry / Stop cases race the worker thread against
+        # the test thread's atomic_store of the cache, so they run here under TSan too. Needs only
+        # LocalCacheManager (linked above) and the header-only MainThreadDispatcher.
+        Core/SmatchetChatPersistWorker.test.cpp
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
         # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
         # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
