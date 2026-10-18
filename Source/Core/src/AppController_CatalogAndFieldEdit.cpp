@@ -1103,20 +1103,23 @@ void AppController::ApplyStartupCatalogRestore_(StartupCatalogRestore restore) {
         return;
     }
     GridContextFieldCatalog& cat = latch.Ctx->fieldCatalog;
-    startupCatalogSavedUnix_.store(restore.SavedUnix);
-    // The scope the snapshot was restored under: a fresh UNSCOPED snapshot must not stand in for the
-    // project-scoped fetch of a view that resolves a project (see CanSkipCatalogFetch).
-    startupCatalogProjectKey_ = restore.ProjectKey;
     // A snapshot inside its lifetime is current, not an offline stand-in: the grid may skip the live fetch, so no
     // "working offline" notice either.
     const bool snapshotFresh =
         smatchet::sync::IsLookupRowFresh(restore.SavedUnix, TimeNowPure::NowUnixSeconds(), latch.RefreshTtlSec);
-    ApplyStartupFieldCatalogSnapshot(cat, std::move(restore.Fields), std::move(restore.Components),
-                                     std::move(restore.IssueTypeMeta), latch.TrackerType, restore.ProjectKey,
-                                     snapshotFresh);
+    if (!ApplyStartupFieldCatalogSnapshot(cat, std::move(restore.Fields), std::move(restore.Components),
+                                          std::move(restore.IssueTypeMeta), latch.TrackerType, restore.ProjectKey,
+                                          snapshotFresh)) {
+        LOG_INFO("AppController: the saved field catalog was not restored: a live catalog landed first.");
+        return;
+    }
+    startupCatalogSavedUnix_.store(restore.SavedUnix);
+    // The scope the snapshot was restored under: a fresh UNSCOPED snapshot must not stand in for the
+    // project-scoped fetch of a view that resolves a project (see CanSkipCatalogFetch).
+    startupCatalogProjectKey_ = restore.ProjectKey;
 }
 
-void AppController::ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
+bool AppController::ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                                      const std::string& activeTrackerType,
@@ -1136,6 +1139,11 @@ void AppController::ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& ca
     std::size_t fieldCount = 0;
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        // Checked again under the install lock: a worker's live fetch (ApplyFieldCatalogInto) can land between the
+        // caller's empty check and here, and a live catalog always wins over the older saved copy.
+        if (!cat.AvailableFields.empty()) {
+            return false;
+        }
         // Record the scope the snapshot was saved under, so FieldCatalogLacksProjectScope (#2146) describes the
         // catalog actually in memory until the grid's live fetch replaces it.
         cat.currentCatalogProjectKey_ = projectKey;
@@ -1155,6 +1163,7 @@ void AppController::ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& ca
     }
     cat.TrackerFieldCatalogRevision.fetch_add(1);
     LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)", fieldCount);
+    return true;
 }
 
 bool AppController::FlushFieldCatalogSnapshotIo(std::chrono::milliseconds timeout) {

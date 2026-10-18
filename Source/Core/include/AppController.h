@@ -306,8 +306,9 @@ class AppController : public IAppThreading,
     StartupCatalogRestoreLatch startupCatalogRestoreLatch_;
 
     /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the catalog `cat` and publish the
-    /// offline warning. UI thread.
-    void ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
+    /// offline warning. UI thread. False, changing nothing, when `cat` already holds a catalog (a live fetch that
+    /// landed first wins).
+    bool ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                           const std::string& activeTrackerType, const std::string& projectKey,

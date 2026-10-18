@@ -2299,6 +2299,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_executable(SmatchetCommandsTests
         Commands/BuiltinCommandsDispatch.test.cpp
         Core/AppControllerFieldCatalog.posix.test.cpp
+        # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
+        # the database file, so this TU opens a real file inside the test env's temp directory.
         Core/AppControllerCacheRecreate.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
