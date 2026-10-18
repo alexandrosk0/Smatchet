@@ -265,20 +265,50 @@ class AppController : public IAppThreading,
     /// local data, and restore the field catalog from a local snapshot when present.
     void InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType);
 
-    /// InitFieldCatalog helper — resolve the active view's project key from its JQL
-    /// so the startup catalog snapshot loads under the project-scoped cache entry.
-    /// Returns the resolved project key (empty when none resolves).
-    std::string ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const;
-
     /// When the catalog snapshot restored at startup was saved from a live fetch (epoch seconds; 0 = none or
-    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written once by
-    /// InitFieldCatalog before the first frame; read by the grid's startup-skip decision.
+    /// unknown) and the project scope ("" = unscoped fallback) it was restored under. Written by
+    /// PollStartupCatalogRestore when the restore lands (UI thread); read by the grid's startup-skip decision,
+    /// which waits for IsStartupCatalogRestorePending() to clear first.
     std::atomic<std::int64_t> startupCatalogSavedUnix_{0};
     std::string startupCatalogProjectKey_;
 
-    /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
-    /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
-    void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
+    /// What the startup restore of the saved field catalog read on its worker.
+    struct StartupCatalogRestore {
+        bool Loaded = false;
+        std::string Error;
+        std::vector<TrackerField> Fields;
+        std::vector<TrackerComponent> Components;
+        std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;
+        std::int64_t SavedUnix = 0;
+        std::string ProjectKey; ///< the scope it restores under ("" = the unscoped fallback)
+    };
+    /// The pane and settings the startup restore was launched for, latched on the UI thread.
+    struct StartupCatalogRestoreLatch {
+        GridLiveContext* Ctx = nullptr;
+        std::uint64_t Generation = 0;
+        /// The pane's cache namespace key at launch. A same-kind site switch keeps the generation but moves the key,
+        /// so the apply checks both (PaneLatchHolds), the same as the error-path restore.
+        std::string CacheKey;
+        std::string TrackerType;
+        std::int64_t RefreshTtlSec = 0;
+    };
+    /// InitFieldCatalog helper (UI thread): read the saved catalog on a worker (single-slot async load,
+    /// AsyncLoadGatePure.h). The view's project is resolved from the saved views file on that worker too.
+    void LaunchStartupCatalogRestore_(const TrackerConfig& cfg, const std::string& activeTrackerType);
+    /// The worker body: resolve the active view's project, then read the first snapshot that exists.
+    static StartupCatalogRestore ReadStartupCatalogRestore_(const std::shared_ptr<ITrackerBackend>& backend,
+                                                            const TrackerConfig& cfg,
+                                                            const std::string& activeTrackerType);
+    /// UI thread: install a finished restore into the pane it was launched for.
+    void ApplyStartupCatalogRestore_(StartupCatalogRestore restore);
+    std::future<StartupCatalogRestore> startupCatalogRestoreSlot_;
+    bool startupCatalogRestoreInFlight_ = false; ///< UI thread only; the slot's latch (see LaunchIntoSlot)
+    StartupCatalogRestoreLatch startupCatalogRestoreLatch_;
+
+    /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the catalog `cat` and publish the
+    /// offline warning. UI thread. False, changing nothing, when `cat` already holds a catalog (a live fetch that
+    /// landed first wins).
+    bool ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& cat, std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                           const std::string& activeTrackerType, const std::string& projectKey,
@@ -299,6 +329,15 @@ class AppController : public IAppThreading,
     /// the mutation to `mainThreadDispatcher` (required when called from an MCP / Lua worker).
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
     bool IsOnUiThread() const override;
+
+    /// IMainThreadPoster. False only while the one-shot in-process CLI dispatches a command
+    /// (`SetNoFrameLoop(true)`, Source/Standalone/CliCommandRunner.cpp): nothing drains `mainThreadDispatcher` then,
+    /// so a command that waits for UI-thread work pumps it with `DrainMainThreadOnce`.
+    bool HasFrameLoop() const override { return !noFrameLoop_.load(); }
+    /// IMainThreadPoster. Runs the queued UI-thread tasks once (the dispatcher's own per-call time budget applies).
+    void DrainMainThreadOnce() override;
+    /// Marks the application as running without a frame loop; see `HasFrameLoop`. Set on the UI thread, read anywhere.
+    void SetNoFrameLoop(bool noFrameLoop) { noFrameLoop_.store(noFrameLoop); }
 
     /// IMainThreadPoster — post `fn` to the UI thread by delegating to
     /// `mainThreadDispatcher`. Lets command helpers marshal onto the UI thread
@@ -323,11 +362,15 @@ class AppController : public IAppThreading,
     /** Absolute path for display; falls back to the raw path if resolution fails. */
     std::string GetResolvedLocalCacheDbPath() const override;
     /**
-     * UI thread: closes SQLite, deletes the cache file (and WAL sidecars), opens a new empty database,
-     * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
-     * to refill from the tracker.
+     * UI thread: starts the cache recreate on a worker behind the "recreating" gate (see IAppSync). The worker
+     * joins every pane's cancelled sync and the background tasks, closes SQLite, deletes the cache file (and WAL
+     * sidecars) and opens a new empty database; the completion, on the UI thread, resets the streaming sync state,
+     * refreshes the queue views and the focused pane, then calls `onDone`. On success, `onDone` should call
+     * `SyncWithBackend` to refill from the tracker. The UI thread never joins a pane worker.
      */
-    VoidResult RecreateLocalCacheDatabase() override;
+    VoidResult
+    StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override;
+    bool IsLocalCacheRecreating() const override { return cacheRecreating_.load(); }
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
@@ -340,6 +383,16 @@ class AppController : public IAppThreading,
     /// SMATCHET_UITEST_WITH_LOCAL_CACHE=1 env opt-in. Returns true if a live cache is
     /// present on return.
     bool EnsureLocalCacheForUiTest();
+
+    /// TEST SEAM (headless AppController tests): opens a file-backed cache at `dbPath` and records it as the local
+    /// cache database path, so `StartRecreateLocalCacheDatabase` has a real file to withdraw, wipe and reopen without
+    /// a full `Initialize`. No production caller.
+    bool OpenLocalCacheFileForTest(const std::string& dbPath);
+    /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
+    /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
+    void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {
+        cacheRecreateHolderWaitMs_.store(static_cast<long long>(wait.count()));
+    }
 
 #if defined(SMATCHET_WITH_AI)
     /// Phase 3 of ai-chat-claude-desktop-parity. Thin pass-through to
@@ -690,13 +743,10 @@ class AppController : public IAppThreading,
 
     /**
      * Runs FetchIssues under an internal mutex (safe with concurrent UI-triggered syncs).
-     * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
+     * Does not touch the SQLite cache; the result is applied by the streaming sync path.
      */
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                    const ViewsStore* viewsOverride = nullptr) override;
-
-    /** Merges fetch results into the local cache and updates connectivity banners. */
-    void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData() override;
     void RefreshLocalDataAsync() override;
@@ -718,6 +768,11 @@ class AppController : public IAppThreading,
     /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to
     /// `ticketSync_->IsActive()`.
     bool IsStreamingSyncActive() const;
+    /// `IsStreamingSyncActive()`, or a sync the focused pane was asked for is still on its way: its config or saved
+    /// views are being read on a worker, before any session starts. A caller that waits for a requested sync to
+    /// settle waits on this one; `IsStreamingSyncActive()` is false in that window. Delegates to
+    /// `ticketSync_->HasPendingWork()`.
+    bool IsSyncPendingOrActive() const;
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetFieldCatalogRevision() const { return fieldCatalog().TrackerFieldCatalogRevision.load(); }
@@ -811,6 +866,23 @@ class AppController : public IAppThreading,
     /// snapshot — that would overwrite the site's saved catalog with an empty one (Pillar 6) — and does
     /// no disk I/O, so it is safe on the UI thread.
     void ClearFieldCatalogInMemory();
+    /// UI thread, once per frame: installs the startup catalog restore once its file read has finished.
+    void PollStartupCatalogRestore();
+    /// True from startup until the saved field catalog has been read and installed (or found missing). The
+    /// grid's fetch-or-skip decision for the startup catalog waits for it: it reads the restored snapshot.
+    bool IsStartupCatalogRestorePending() const { return startupCatalogRestoreInFlight_; }
+    /// True while a saved field catalog is being read from disk for pane `paneId` (the focused pane's when the id is
+    /// unknown): the startup restore, which was launched for the pane that was focused at startup, or the restore
+    /// after a failed refresh with no catalog in memory, which belongs to the pane that was focused when it failed.
+    /// Drives that pane's "loading saved fields" cue; another pane is not affected. UI thread.
+    bool IsFieldCatalogRestoring(const std::string& paneId) const;
+    /// `IsFieldCatalogRestoring` for the focused pane.
+    bool IsFieldCatalogRestoring() const;
+    /// Blocks until every field-catalog snapshot save and restore queued so far has finished (tests that read the
+    /// snapshot back right after SetFieldCatalog / RefreshFieldCatalog, and the destructor). A finished error-path
+    /// restore still lands on the UI thread: drain `mainThreadDispatcher` after it. Never call it per frame.
+    /// Returns false when `timeout` passed first.
+    bool FlushFieldCatalogSnapshotIo(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
     /// state. `backendKey` is the caller's NormalizeViewsBackendKey result (names the backend in
@@ -902,6 +974,7 @@ class AppController : public IAppThreading,
      * due to connectivity errors. Replayed by `TickOfflineCreates`.
      */
     std::int64_t QueueCreateOffline(const IssueDraft& draft) override;
+    std::int64_t QueueCreateOffline(const IssueDraft& draft, std::string& outError) override;
 
     /**
      * Replay any queued offline creates. No-op when the queue is empty or the
@@ -973,6 +1046,8 @@ class AppController : public IAppThreading,
     /// Cache key of the focused backend; it namespaces the offline queues, so UI state tied to a queued row is
     /// scoped by it too.
     std::string FocusedCacheBackendKey() const;
+    /// The cache namespace key of pane `paneId`'s context (the focused one's when the pane has none). UI thread.
+    std::string PaneCacheBackendKey(const std::string& paneId) const;
     std::vector<std::string> LiveCacheBackendKeys() const override;
     /// Latched strong handle to the lookup cache (the offline copies of tracker lookups), or null before the
     /// cache exists. For workers: its reads and writes hit disk.
@@ -1179,8 +1254,9 @@ class AppController : public IAppThreading,
   private:
     // DR6: shared_ptr (not unique_ptr) so off-UI-thread workers (Lua automation / MCP pool,
     // off-thread offline-queue create) can atomic_load a snapshot and hold the cache alive
-    // across their whole use while the UI thread swaps it in RecreateLocalCacheDatabase. Writes
-    // are UI-thread-only via std::atomic_store; off-thread reads via std::atomic_load. Mirrors
+    // across their whole use while the cache recreate swaps it. The recreate withdraws it on the UI thread
+    // (std::atomic_exchange, so no UI code holds a raw pointer into it afterwards) and installs the new one from its
+    // worker (std::atomic_store); every read goes through std::atomic_load. Mirrors
     // the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
     std::shared_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
@@ -1511,13 +1587,22 @@ class AppController : public IAppThreading,
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
-                                       std::uint64_t capturedSyncEpoch, bool addNewRows);
+                                       std::uint64_t capturedSyncEpoch, bool addNewRows,
+                                       const smatchet::sync::ChangeProbeCycleNotes& notes);
     /// applyChangeProbeOnMainThread_ halves: drop the shared cache rows of 404'd keys no sibling pane retains,
     /// and persist the rows a probe updated (worker write, latched cache handle). UI thread.
     void dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
                               const smatchet::MembershipReconcilePlan& plan);
     void persistProbeRows_(const std::string& paneId, const std::string& backendKey,
                            std::vector<CachedTicket> updatedTickets);
+    /// The cache recreate failed after it deleted the cache files: refresh the focused pane and the queue
+    /// snapshots so nothing keeps showing rows that are gone. UI thread.
+    void RefreshAfterPartialCacheWipe_();
+    /// After the cache files were replaced (a recreate that finished, or failed after wiping): every live pane OTHER
+    /// than the focused one still shows rows from the file that is gone and has a cancelled sync. Re-reads each from
+    /// the new database on a worker (or empties it when there is none) and re-arms its first-sync latch, so a visible
+    /// pane syncs again on the next frame. The focused pane is refreshed and re-synced by FinishCacheRecreate_ itself.
+    void RefreshOtherPanesAfterCacheWipe_();
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
     /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
     std::atomic<bool> windowFocused_{true};
@@ -1770,6 +1855,11 @@ class AppController : public IAppThreading,
     /// tasks, so JoinBackgroundTasks (shutdown, cache recreate) waits for every queued save.
     smatchet::SerialTaskQueue ticketSaves_{
         [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
+    /// The field-catalog snapshot file's writes (and, once restores move here, its reads), in call order, off the
+    /// UI thread (Pillar 2). Drains are background tasks, so JoinBackgroundTasks waits for them; the destructor
+    /// also flushes the queue before shutdown flags the pool, so a save still queued reaches the file.
+    smatchet::SerialTaskQueue catalogSnapshotIo_{
+        [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
 
     // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to
     // OfflineQueueService (item 12 extraction phases 1A / 1C). Accessed via offlineQueue_.
@@ -1838,8 +1928,46 @@ class AppController : public IAppThreading,
     /// all are flagged before any is joined, so N busy panes cost about one in-flight HTTP timeout,
     /// not N. UI thread only — iterates `gridContexts_` without `gridContextsMutex_` (the UI thread
     /// is the only structural mutator, and holding the map lock across a join would deadlock if
-    /// a sync worker ever took it).
+    /// a sync worker ever took it). Shutdown only: the cache recreate hands the joins to its worker.
     void CancelAndJoinAllPaneStreamingSyncs();
+    /// Every live pane's sync service, plus the focused context's (it may be a retired husk outside
+    /// `gridContexts_`); the focused one can repeat an entry of the map. UI thread only.
+    std::vector<TicketSyncService*> CollectPaneSyncServices_();
+
+    // --- Cache recreate (StartRecreateLocalCacheDatabase) -------------------------------------------------
+    /// The worker body: join the handed-out sync threads, withdraw the cache on the UI thread, join the background
+    /// tasks, delete the files and open the new database, then post FinishCacheRecreate_.
+    void RunCacheRecreateWorker_(std::shared_ptr<std::vector<std::thread>> syncThreads, std::string focusedCacheKey,
+                                 std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone);
+    /// Worker steps 2..: everything after the sync threads were joined. Returns what the recreate did.
+    smatchet::sync::CacheRecreateOutcome RecreateCacheFilesOnWorker_(const std::string& focusedCacheKey);
+    /// Worker: asks the UI thread to detach the cache from `Cache` (so no UI code can reach it any more) and waits.
+    /// False when the application shut down first.
+    bool WithdrawCacheOnUiThread_(std::shared_ptr<LocalCacheManager>& outOldCache);
+    /// Worker: drops the withdrawn cache so its files can be deleted. True once it is destroyed and its connection
+    /// closed. False (`outError` set, nothing deleted) when another owner still holds it after the bounded wait (it is
+    /// put back in `Cache`) or its close, running on that owner's thread, does not finish in time (the file is
+    /// reopened into `Cache`).
+    bool ReleaseWithdrawnCache_(std::shared_ptr<LocalCacheManager> oldCache, std::string& outError);
+    /// UI thread: re-read `ctx`'s rows from the local cache on a background task (generation-checked).
+    void LaunchPaneReread_(GridLiveContext& ctx);
+    /// UI thread: LaunchPaneReread_ for every live pane except the focused one (RefreshLocalDataAsync covers that).
+    void RereadOtherPanesFromCache_();
+    /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
+    void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
+                              const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
+    /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
+    /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
+    /// is waited for (RAII join) rather than left to the member destructor.
+    void DrainCatalogWorkBeforeShutdown_();
+    /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
+    /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
+    void JoinCacheRecreateWorker_();
+    std::atomic<bool> noFrameLoop_{false};        ///< the one-shot in-process CLI: no frame loop drains the dispatcher
+    std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
+    std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
+    std::atomic<long long> cacheRecreateHolderWaitMs_{5000}; ///< ReleaseWithdrawnCache_'s bounded waits (test seam)
+    std::thread cacheRecreateWorker_;                        ///< joined by the next Start and by ~AppController
 
     std::string localCacheDbPath_;
 

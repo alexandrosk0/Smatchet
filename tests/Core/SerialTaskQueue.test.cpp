@@ -3,6 +3,7 @@
 #include "SerialTaskQueue.h"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <stdexcept>
@@ -120,4 +121,58 @@ TEST_CASE("SerialTaskQueue never overlaps tasks and keeps each poster's order un
             CHECK(got[static_cast<std::size_t>(i)] == i);
         }
     }
+}
+
+TEST_CASE("SerialTaskQueue::Flush returns at once on an idle queue") {
+    SerialTaskQueue queue([](std::function<void()> drain) { drain(); });
+    CHECK(queue.Flush());
+    CHECK(queue.Post([]() {}).empty());
+    CHECK(queue.Flush(std::chrono::milliseconds(10)));
+}
+
+TEST_CASE("SerialTaskQueue::Flush waits for the worker to finish every posted task") {
+    std::vector<std::thread> workers;
+    SerialTaskQueue queue([&workers](std::function<void()> drain) { workers.emplace_back(std::move(drain)); });
+    std::atomic<int> done{0};
+    for (int i = 0; i < 5; ++i) {
+        CHECK(queue
+                  .Post([&done]() {
+                      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                      done.fetch_add(1);
+                  })
+                  .empty());
+    }
+    CHECK(queue.Flush());
+    CHECK(done.load() == 5);
+    for (std::thread& w : workers) {
+        w.join();
+    }
+}
+
+TEST_CASE("SerialTaskQueue::Flush times out while a task is still running") {
+    std::vector<std::thread> workers;
+    SerialTaskQueue queue([&workers](std::function<void()> drain) { workers.emplace_back(std::move(drain)); });
+    std::atomic<bool> release{false};
+    CHECK(queue
+              .Post([&release]() {
+                  while (!release.load()) {
+                      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                  }
+              })
+              .empty());
+    CHECK_FALSE(queue.Flush(std::chrono::milliseconds(20)));
+    release.store(true);
+    CHECK(queue.Flush());
+    for (std::thread& w : workers) {
+        w.join();
+    }
+}
+
+TEST_CASE("SerialTaskQueue::Flush drains a task a failed launch left behind on the calling thread") {
+    SerialTaskQueue queue([](std::function<void()>) { throw std::runtime_error("no threads"); });
+    int ran = 0;
+    CHECK(queue.Post([&ran]() { ++ran; }) == "no threads");
+    CHECK(ran == 0);
+    CHECK(queue.Flush());
+    CHECK(ran == 1);
 }

@@ -83,6 +83,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                          const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
+    void PostToMainThread(std::function<void()> fn) override;
     void RefreshLocalData() override;
     /// Generation-checked variant (issue #1081): forwards THIS adapter's ctx() into
     /// AppController's checked refresh impl. On a pane-frozen adapter capture + re-check + apply
@@ -98,6 +99,8 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // like RequestDeferredLiveTrackerBackendSuccessNotify above. Forwards to the context's
     // mutex-guarded key (multi-grid Slice 1b).
     std::string CacheBackendKey() const override;
+    /// The cache-recreate gate (IOfflineQueueDeps): a queued edit that finds no cache words its failure for it.
+    bool IsCacheRecreating() const override;
     /// Capture-then-check token (issue #1081) — the context's backendGeneration_ atomic.
     std::uint64_t BackendGeneration() const override;
 
@@ -113,6 +116,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     /// Records THIS pane's kept ids under (cache backend key, pane id) so a sibling pane's sweep
     /// can subtract them even after the hidden-pane LRU has evicted this context's rows.
     void PublishOwnedTicketIds(const std::vector<std::string>& ids) override;
+    void PublishViewListedIds(const std::vector<std::string>& ids) override;
     /// Tracker HTTP counters from the process-wide NetworkUsageTracker (delta-sync session stats).
     smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const override;
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override;
@@ -131,6 +135,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::vector<CachedTicket>& ActiveTickets() override;
     void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) override;
     void BumpActiveTicketsRevision() override;
+    std::uint64_t ActiveTicketsRevisionNow() const override;
     void PruneEditMetaCacheToActiveTickets() override;
     void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override;
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) override;

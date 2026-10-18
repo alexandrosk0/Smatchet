@@ -25,6 +25,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Logger.h"
+#include "Sync/CatalogRestorePure.h"
 #include "Sync/LookupFreshnessPure.h"
 #include "TimeNowPure.h"
 #include "LookupPayloadsPure.h"
@@ -1726,7 +1727,12 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
     // A saved catalog still inside its lifetime that covers every column of the active view stands in for the
     // startup fetch (offline-first: it is what the grid draws, with a "saved" cue); one refresh is scheduled for
     // when it expires. Only the first start may skip: later requests are explicit (tracker or preference change).
-    if (!d.fieldCatalogFetchStarted && !d.catalogStartupSkipTried && !d.fieldCatalogLoading) {
+    // The saved catalog is read on a worker (Pillar 2): the skip decision reads its age, project and columns, so it
+    // (and the live fetch it would replace) waits for the read to land, a few frames at most.
+    app.PollStartupCatalogRestore();
+    const bool catalogRestorePending =
+        smatchet::sync::StartupCatalogDecisionMustWait(app.IsStartupCatalogRestorePending());
+    if (!catalogRestorePending && !d.fieldCatalogFetchStarted && !d.catalogStartupSkipTried && !d.fieldCatalogLoading) {
         d.catalogStartupSkipTried = true;
         TrySkipStartupCatalogFetch(app, d, ViewState.GetActiveView());
     }
@@ -1735,7 +1741,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.triggerCatalogRefetch = true; // the snapshot expired: refresh it
     }
 
-    if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
+    if (!catalogRestorePending && (!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
         d.triggerCatalogRefetch = false;
         startCatalogFetch(d.cfg);
     }

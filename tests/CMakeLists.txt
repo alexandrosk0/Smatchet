@@ -1628,8 +1628,21 @@ add_executable(SmatchetTests
     Core/TicketSyncMeta.test.cpp
     # delta-sync Phase 3 - the pure strategy / fetch-set / full-fetch-threshold decisions (Sync/DeltaSyncPure.h).
     Core/DeltaSyncPure.test.cpp
+    # delta-sync review follow-ups - the apply drain's per-session id -> index map and version-move report
+    # (Sync/ActiveRowMergePure.h) and the local-cache refresh ordering gate (Sync/LocalRefreshGatePure.h).
+    Core/ActiveRowMerge.test.cpp
     # delta-sync Phase 7 - when a saved lookup row may be served without a live fetch (Sync/LookupFreshnessPure.h).
     Core/LookupFreshnessPure.test.cpp
+    # delta-sync follow-up - the saved field catalog is restored off the UI thread (Sync/CatalogRestorePure.h).
+    Core/CatalogRestorePure.test.cpp
+    # delta-sync follow-up - the cache recreate outcome and its refusal wording (Sync/CacheRecreateReportPure.h).
+    Core/CacheRecreateReportPure.test.cpp
+    # delta-sync follow-up - the pending-edit overlay of the grid, built from the queue snapshots (Sync/PendingOverlayPure.h).
+    Core/PendingOverlayPure.test.cpp
+    # delta-sync follow-up - the bounded, expiring memory of the keys a tracker refused on a delta attempt.
+    Core/RefusedKeysPure.test.cpp
+    # delta-sync follow-up - a stale cached-projects read must not bring a forgotten project back.
+    Core/CachedProjectsPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
@@ -2297,6 +2310,9 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_executable(SmatchetCommandsTests
         Commands/BuiltinCommandsDispatch.test.cpp
         Core/AppControllerFieldCatalog.posix.test.cpp
+        # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
+        # the database file, so this TU opens a real file inside the test env's temp directory.
+        Core/AppControllerCacheRecreate.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"

@@ -82,7 +82,7 @@ AppController* BootSyncPrimaryLive(ImGuiTestContext* ctx) {
     // tests self-contained instead of relying on the driver pre-seeding whisper_setup_completed.
     g_ui.cfg.WhisperSetupCompleted = true;
     app->SyncWithBackend();
-    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
     IM_CHECK_NO_RET(syncDone);
     IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
 

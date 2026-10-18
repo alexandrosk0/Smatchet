@@ -160,6 +160,34 @@ const CfgKey* ConfigSetKeyTable() {
     return kKeys;
 }
 
+// A boolean setting takes a boolean (on/off/1/0 spellings accepted) and a string setting takes text: a value of
+// another type written here would make every later load of the key fall back to its default. A string key keeps the
+// text as typed (123, true), not the JSON the parse above made of it. Integer keys are checked by the caller.
+CommandResult NormalizeNonIntegerValue(const CfgKey& found, const std::string& key, const std::string& rawVal,
+                                       nlohmann::json& val) {
+    if (ConfigManager::IsStringConfigKey(found.json)) {
+        if (!val.is_string()) {
+            val = rawVal;
+        }
+    } else if (ConfigManager::IsBoolConfigKey(found.json)) {
+        if (val.is_string()) {
+            const std::string& s = val.get_ref<const std::string&>();
+            if (s == "on" || s == "true" || s == "1") {
+                val = true;
+            } else if (s == "off" || s == "false" || s == "0") {
+                val = false;
+            }
+        } else if (val.is_number_integer() && (val.get<long long>() == 0 || val.get<long long>() == 1)) {
+            val = val.get<long long>() == 1;
+        }
+        if (!val.is_boolean()) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "Value for '" + key + "' must be a boolean.",
+                                          "Use: true, false, on, off, 1, 0");
+        }
+    }
+    return CommandResult::Success(nlohmann::json::object());
+}
+
 CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx) {
     const CfgKey* kKeys = ConfigSetKeyTable();
     const std::string key = args.value("key", std::string());
@@ -191,28 +219,8 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
         return CommandResult::Failure(ErrorCode::ValidationError,
                                       "Key '" + key + "' is not in the config.set allowlist.", "Allowed: " + allowed);
     }
-    // vsync convenience: accept on/off (and 1/0 after the JSON parse above) in
-    // addition to true/false, normalised to a bool so the kBoolFields round-trip
-    // and the live hub both see a real boolean.
-    if (key == "vsync") {
-        if (val.is_string()) {
-            // Quoted forms too ("true"/"false"/"1"/"0" arrive as strings when the
-            // caller quotes them past the JSON parse) — the validation hint lists
-            // them all, so all of them must actually normalise (CR-953 review).
-            const std::string& s = val.get_ref<const std::string&>();
-            if (s == "on" || s == "true" || s == "1") {
-                val = true;
-            } else if (s == "off" || s == "false" || s == "0") {
-                val = false;
-            }
-        } else if (val.is_number_integer()) {
-            val = (val.get<int>() != 0);
-        }
-        if (!val.is_boolean()) {
-            return CommandResult::Failure(ErrorCode::ValidationError, "Value for 'vsync' must be a boolean.",
-                                          "Use: on, off, true, false, 1, 0");
-        }
-    }
+    // vsync takes on/off/true/false/1/0 like every boolean key: NormalizeNonIntegerValue below turns them into a real
+    // boolean, so the kBoolFields round-trip and the live hub (applied after the write) both see one.
     // An integer setting takes an integer: a string or fraction written here would make every later load of
     // that key fall back to its default (and, before the load was guarded, abort the fields after it).
     if (ConfigManager::IsIntConfigKey(found->json)) {
@@ -225,6 +233,10 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
                                                                         : std::string("Use a whole number."));
         }
         val = intValue;
+    }
+    const CommandResult typed = NormalizeNonIntegerValue(*found, key, rawVal, val);
+    if (!typed.Ok) {
+        return typed;
     }
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});

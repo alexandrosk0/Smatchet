@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -555,6 +556,42 @@ bool HasNonWhitespaceChar(const char* text, std::size_t len) {
 }
 
 } // namespace
+
+void RefreshPendingOverlay(AppController& app, UiDrawSession& d) {
+    // Two atomic shared_ptr loads of snapshots the queue workers already published (no SQLite, no lock the worker
+    // holds); the index is rebuilt only when one was replaced.
+    (void)smatchet::sync::RefreshPendingOverlayIfChanged(d.pendingOverlay, d.pendingOverlayQueueSnap,
+                                                         d.pendingOverlayActionsSnap, app.GetOfflineQueueSnapshot(),
+                                                         app.GetPendingActionsSnapshot());
+}
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+namespace {
+std::map<std::string, int>& PendingRowCuesDrawn() {
+    static std::map<std::string, int> drawn;
+    return drawn;
+}
+} // namespace
+
+void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention) {
+    std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    const int value = needsAttention ? 2 : 1;
+    const std::map<std::string, int>::iterator it = drawn.find(issueKey);
+    if (it != drawn.end()) {
+        it->second = value;
+    } else if (drawn.size() < 64) {
+        drawn.emplace(issueKey, value);
+    }
+}
+
+int PendingRowCueDrawnForTests(const std::string& issueKey) {
+    const std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    const std::map<std::string, int>::const_iterator it = drawn.find(issueKey);
+    return it == drawn.end() ? 0 : it->second;
+}
+
+void ResetPendingRowCuesDrawnForTests() { PendingRowCuesDrawn().clear(); }
+#endif // SMATCHET_BUILD_UI_TESTS
 
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {

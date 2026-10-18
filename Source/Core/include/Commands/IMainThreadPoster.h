@@ -26,6 +26,17 @@ class IMainThreadPoster {
     /// through a droppable-task overflow; only its own completion cap evicts one. Defaults to
     /// PostToMainThread, droppable, for posters without a completion path.
     virtual void PostCompletionToMainThread(std::function<void()> fn) { PostToMainThread(std::move(fn)); }
+
+    /// True when something drains the posted tasks while a command waits: the frame loop of the running application.
+    /// False for the one-shot in-process CLI (`Smatchet.exe cmd ...` in a build without MCP), which dispatches the
+    /// command on the thread that booted the application and exits right after, with no frame ever drawn. A command
+    /// that starts UI-thread work from a worker and waits for it must then pump the queue itself
+    /// (`DrainMainThreadOnce`), or the work never runs and the process exits with it undone. Defaults to true.
+    virtual bool HasFrameLoop() const { return true; }
+
+    /// Runs the posted tasks once on the calling thread, which must be the UI thread. Only meaningful when
+    /// `HasFrameLoop()` is false; a no-op by default.
+    virtual void DrainMainThreadOnce() {}
 };
 
 #endif // SMATCHET_COMMANDS_IMAIN_THREAD_POSTER_H

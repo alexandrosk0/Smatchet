@@ -199,3 +199,49 @@ TEST_CASE("FieldCatalogCache: one malformed index entry is skipped, not the whol
     CHECK(FieldCatalogCache::FieldCatalogSnapshotSavedUnix(good) == savedUnix);
     CHECK(FieldCatalogCache::ListCachedProjects().size() >= 2); // the good entry and the readable-enough ones
 }
+
+TEST_CASE("FieldCatalogCache: TryLoadFirstFieldCatalogSnapshot loads the first candidate that has a snapshot") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://example.atlassian.net";
+    const std::string scopedKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, "BLOOP");
+    const std::string unscopedKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, std::string());
+    std::vector<TrackerField> fields;
+    fields.push_back(MakeComponentsField(/*withOptions=*/true));
+    std::string saveErr;
+    // Only the unscoped snapshot exists: the project's own was never saved (or was evicted).
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(unscopedKey, "Jira", cfg.Domain, std::string(),
+                                                        /*maxProjects=*/16, fields, {}, {}, saveErr));
+
+    std::vector<TrackerField> outFields;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::string loadErr;
+    std::size_t loadedIndex = 99;
+    std::int64_t savedUnix = 0;
+
+    SUBCASE("the scoped miss falls through to the unscoped candidate") {
+        REQUIRE(FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot({scopedKey, unscopedKey}, outFields, outComponents,
+                                                                    outMeta, loadErr, loadedIndex, &savedUnix));
+        CHECK(loadedIndex == 1);
+        CHECK(FindField(outFields, "components") != nullptr);
+        CHECK(savedUnix > 0);
+    }
+    SUBCASE("the first candidate wins when it has a snapshot") {
+        REQUIRE(FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot({unscopedKey, scopedKey}, outFields, outComponents,
+                                                                    outMeta, loadErr, loadedIndex));
+        CHECK(loadedIndex == 0);
+    }
+    SUBCASE("no candidate has a snapshot") {
+        CHECK_FALSE(FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot({scopedKey}, outFields, outComponents, outMeta,
+                                                                        loadErr, loadedIndex));
+        CHECK_FALSE(loadErr.empty());
+        CHECK(outFields.empty());
+    }
+    SUBCASE("an empty candidate list loads nothing") {
+        CHECK_FALSE(FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot({}, outFields, outComponents, outMeta, loadErr,
+                                                                        loadedIndex));
+    }
+}

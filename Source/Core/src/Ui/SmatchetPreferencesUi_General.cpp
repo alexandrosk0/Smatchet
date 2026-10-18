@@ -36,6 +36,7 @@
 #include "Interfaces/IAppSync.h"
 #include "SmatchetHelpMarker.h"
 #include "Ui/SmatchetDestructiveButton.h"
+#include "Sync/CacheRecreateReportPure.h"
 #include "Ui/SmatchetStorageSnapshotPure.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
@@ -316,7 +317,7 @@ void DrawGeneralStorageSection(const IAppMeta& meta, UiDrawSession& d) {
 
 // Local database: intro blurb, resolved cache path, the "Recreate database..."
 // button and its confirm modal (modal stays whole with its opener).
-void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSession& d) {
+void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     if (!d.prefsFilter.ShowSetting("general.local_database.recreate")) {
         return;
     }
@@ -334,10 +335,19 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
         ::ImGui::TextWrapped("%s", resolved.c_str());
     }
     ImGui::Spacing();
+    // The recreate runs on a worker behind a gate (IAppSync::StartRecreateLocalCacheDatabase); a second one cannot
+    // start while it runs, and the cue says why the button is off.
+    const bool recreating = sync.IsLocalCacheRecreating();
+    ImGui::BeginDisabled(recreating);
     if (ImGui::Button("Recreate database...")) {
         ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
     }
+    ImGui::EndDisabled();
     ImGui::SetItemTooltip("Permanently delete the local cache file and start with an empty database.");
+    if (recreating) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));
+    }
 
     if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -355,21 +365,20 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            const VoidResult recreated = sync.RecreateLocalCacheDatabase();
-            if (recreated.has_value()) {
-                SmatchetToastManager::Instance().Push(
-                    std::string(SmatchetLocalization::T("toast.success", "Success")),
-                    std::string(SmatchetLocalization::T("toast.local_db_recreated",
-                                                        "Local database recreated; refreshing issues.")),
-                    ToastType::Success, 4000);
-                sync.SyncWithBackend(&d.cfg, &ui.GetViewsStore());
+            // The wipe is asynchronous: the completion (AppController) pushes the success or failure toast and, on
+            // success, starts the follow-up full refresh once the new database is in place.
+            const VoidResult started = sync.StartRecreateLocalCacheDatabase(nullptr);
+            if (started.has_value()) {
                 ImGui::CloseCurrentPopup();
             } else {
+                // Refused before anything changed (no database path, shutting down, one already running).
                 const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
                                                              "Could not recreate the local database.");
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
-                    recreated.error().empty() ? std::string(detail) : recreated.error(), ToastType::Error, 6000);
+                    started.error().empty() ? std::string(detail)
+                                            : smatchet::sync::DescribeCacheRecreateFailure(false, started.error()),
+                    ToastType::Error, 6000);
             }
         }
         ImGui::EndPopup();
@@ -378,11 +387,11 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, IAppSync& sync, UiDrawSessi
 
 } // namespace
 
-void DrawGeneralPreferencesTab(SmatchetUI& ui, const IAppMeta& meta, IAppSync& sync, UiDrawSession& d) {
+void DrawGeneralPreferencesTab(const IAppMeta& meta, IAppSync& sync, UiDrawSession& d) {
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] { DrawGeneralUpdatesSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region",
                                               [&] { DrawGeneralLanguageRegionSection(d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] { DrawGeneralStorageSection(meta, d); });
     SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database",
-                                              [&] { DrawGeneralLocalDatabaseSection(ui, sync, d); });
+                                              [&] { DrawGeneralLocalDatabaseSection(sync, d); });
 }

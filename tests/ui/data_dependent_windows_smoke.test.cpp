@@ -538,7 +538,7 @@ void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
         // the draft row) renders. Inactive-branch coverage ("[+ new]" cell) runs for
         // free here every frame before we activate the draft.
         app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
         IM_CHECK_NO_RET(syncDone);
         const auto tickets = app->GetActiveTickets();
         IM_CHECK_NO_RET(!tickets.empty());
@@ -628,7 +628,7 @@ void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
 
         // Load the fixture grid so the host pane docks + activates (mirrors case 7).
         app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
         IM_CHECK_NO_RET(syncDone);
         IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
 
