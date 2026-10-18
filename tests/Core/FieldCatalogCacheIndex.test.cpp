@@ -541,13 +541,16 @@ TEST_CASE("FieldCatalogCache: a load whose touch write fails keeps its own touch
 
 TEST_CASE("FieldCatalogCache: a touch queued against one data directory never folds into another directory's file") {
     const std::int64_t freshUnix = TimeNowPure::NowUnixSeconds() - 60;
+    std::string firstDir;
     {
         smatchet_tests::TestEnvGuard firstEnv;
+        firstDir = firstEnv.Dir();
         CacheFileCleanup firstFile(firstEnv);
         WriteCacheFile(firstFile, TwoEntryCache(std::to_string(freshUnix)));
         REQUIRE(Loads("k-fresh")); // used within the day: the touch waits in memory, keyed to this directory's file
     }
     smatchet_tests::TestEnvGuard secondEnv;
+    REQUIRE(secondEnv.Dir() != firstDir); // two guards never share a directory, even within one clock tick
     CacheFileCleanup secondFile(secondEnv);
     WriteCacheFile(secondFile, TwoEntryCache(std::to_string(freshUnix)));
 

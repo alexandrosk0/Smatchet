@@ -44,6 +44,16 @@ TEST_CASE("DecideStartupRestore: a restore read for another tracker is dropped")
     CHECK(DecideStartupRestore(true, true, false, false) == StartupRestoreAction::Superseded);
 }
 
+TEST_CASE("DecideStartupRestore: a same-kind site switch during the read drops the restore") {
+    // Same tracker kind, another site: the generation is unchanged but the cache key moved, and the site-change
+    // reset has already emptied the pane's catalog. The latch must not hold, or the old site's fields land here.
+    const bool latchHolds = PaneLatchHolds(7, 7, "Jira@another-site.example", "Jira@jira.example");
+    CHECK_FALSE(latchHolds);
+    CHECK(DecideStartupRestore(true, true, true, latchHolds) == StartupRestoreAction::Superseded);
+    CHECK(DecideStartupRestore(true, true, true, PaneLatchHolds(7, 7, "Jira@jira.example", "Jira@jira.example")) ==
+          StartupRestoreAction::Apply);
+}
+
 TEST_CASE("DecideStartupRestore: an empty pane on the same backend takes the saved catalog") {
     CHECK(DecideStartupRestore(true, true, true, true) == StartupRestoreAction::Apply);
 }

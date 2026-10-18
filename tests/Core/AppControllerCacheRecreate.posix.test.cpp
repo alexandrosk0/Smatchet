@@ -14,12 +14,14 @@
 #include "ConfigManager.h"
 #include "GridLiveContext.h"
 #include "GridContextDepsAdapter.h"
+#include "LocalCacheManager.h"
 #include "Persistence/ISyncCache.h"
 #include "Sync/TicketSyncService.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -116,6 +118,45 @@ TEST_CASE("AppController cache recreate: withdraws, wipes the queued rows, reope
                 .has_value());
     REQUIRE(PumpUntil(app, [&]() { return doneCalls > 0; }));
     CHECK(doneCalls == 1);
+}
+
+TEST_CASE("AppController cache recreate: a holder that outlives the bounded wait keeps the file and the old cache") {
+    // An off-pool holder (a chat persist write, a Lua / MCP bind) still holding the old cache after the bounded wait
+    // must not have the file deleted under it: on POSIX the unlink succeeds under the open handle and its commits
+    // would land in a file nothing reads again. The recreate fails with nothing wiped and puts the same cache back.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    REQUIRE(app.OpenLocalCacheFileForTest(db.Path));
+    UseFakeBackends(app);
+    app.SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds(200)); // the holder never lets go: keep it short
+    const std::shared_ptr<ISyncCache> held = adapter.CacheShared();        // held across the whole recreate
+    REQUIRE(held);
+    held->EnqueuePendingCreate("Jira", "{\"summary\":\"written by the holder\"}");
+
+    int doneCalls = 0;
+    smatchet::sync::CacheRecreateOutcome outcome;
+    REQUIRE(app.StartRecreateLocalCacheDatabase([&](const smatchet::sync::CacheRecreateOutcome& finished) {
+                   ++doneCalls;
+                   outcome = finished;
+               })
+                .has_value());
+    REQUIRE(PumpUntil(app, [&]() { return doneCalls > 0; }));
+    CHECK(doneCalls == 1);
+    CHECK_FALSE(outcome.Ok);
+    CHECK_FALSE(outcome.Wiped);
+    CHECK(outcome.Error.find("still in use") != std::string::npos);
+    CHECK_FALSE(app.IsLocalCacheRecreating());
+
+    const std::shared_ptr<ISyncCache> after = adapter.CacheShared();
+    REQUIRE(after);
+    CHECK(after.get() == held.get());                // the same cache is back in place, not a reopened one
+    CHECK(after->LoadPendingCreates().size() == 1u); // and the holder's write is still in it
+    // ...and in the file on disk: a second connection reads it by path, which an unlinked file would fail.
+    CHECK(std::ifstream(db.Path, std::ios::binary).good());
+    LocalCacheManager secondConnection(db.Path);
+    CHECK(secondConnection.LoadPendingCreates().size() == 1u);
 }
 
 TEST_CASE("AppController cache recreate: every live pane is emptied and re-armed to sync, not only the focused one") {

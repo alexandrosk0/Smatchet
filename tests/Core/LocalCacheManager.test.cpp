@@ -10,8 +10,12 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <future>
+#include <memory>
 #include <string>
+#include <thread>
 #include <type_traits>
 
 using smatchet_tests::SqliteMemFixture;
@@ -523,4 +527,31 @@ TEST_CASE("LocalCacheManager: SaveTickets on an empty batch is a no-op") {
     fix.Ref().SaveTickets(kBk, {});
     CachedTicket got;
     CHECK_FALSE(fix.Ref().TryGetTicket(kBk, "anything", got));
+}
+
+TEST_CASE("LocalCacheManager: CloseSignal fires only once the manager is destroyed") {
+    std::shared_ptr<LocalCacheManager> lcm = std::make_shared<LocalCacheManager>(":memory:");
+    const std::shared_ptr<LocalCacheCloseSignal> closed = lcm->CloseSignal();
+    REQUIRE(static_cast<bool>(closed));
+    CHECK_FALSE(closed->WaitFor(std::chrono::milliseconds(0))); // alive: not closed
+    lcm.reset();                                                // last reference, destroyed on this thread
+    CHECK(closed->WaitFor(std::chrono::milliseconds(0)));       // already set when reset() returns
+}
+
+TEST_CASE("LocalCacheManager: CloseSignal lets an owner wait for a destructor running on another thread") {
+    // The cache recreate drops its reference while another thread may hold the last one; it must not touch the files
+    // until that thread's destructor has closed the connection.
+    std::shared_ptr<LocalCacheManager> lcm = std::make_shared<LocalCacheManager>(":memory:");
+    const std::shared_ptr<LocalCacheCloseSignal> closed = lcm->CloseSignal();
+    std::promise<void> release;
+    std::future<void> released = release.get_future();
+    std::thread other([held = lcm, &released]() mutable {
+        released.wait();
+        held.reset(); // the last reference: the destructor runs on this thread
+    });
+    lcm.reset();                                                 // not the last reference: nothing is destroyed yet
+    CHECK_FALSE(closed->WaitFor(std::chrono::milliseconds(20))); // still open while the other thread holds it
+    release.set_value();
+    CHECK(closed->WaitFor(std::chrono::seconds(10)));
+    other.join();
 }

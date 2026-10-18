@@ -34,30 +34,32 @@ inline std::string RestoredSnapshotScope(const std::string& projectKey, std::siz
 }
 
 /// True when a restore that finished reading may still be applied: the pane's catalog is still empty (a live
-/// fetch or another restore that landed first wins, never the older saved copy) and the pane still runs the
-/// backend the restore was read for.
-inline bool MayApplyRestoredCatalog(bool catalogEmptyNow, bool backendGenerationUnchanged) {
-    return catalogEmptyNow && backendGenerationUnchanged;
+/// fetch or another restore that landed first wins, never the older saved copy) and the pane latch still holds —
+/// same backend generation and same cache namespace key (PaneLatchHolds) as when the restore was launched.
+inline bool MayApplyRestoredCatalog(bool catalogEmptyNow, bool paneLatchHolds) {
+    return catalogEmptyNow && paneLatchHolds;
 }
 
 /// What happens to a finished startup restore when it lands on the UI thread.
 enum class StartupRestoreAction : unsigned char {
     NothingToApply, ///< no saved catalog was found, or no pane was latched at launch: the grid's own fetch brings the
                     ///< first
-    Superseded,     ///< a catalog landed first, or the pane switched tracker meanwhile: the older saved copy is dropped
+    Superseded,     ///< a catalog landed first, or the pane switched tracker or site meanwhile: the older saved copy is
+                    ///< dropped
     Apply,          ///< install the saved catalog into the latched pane
 };
 
 /// The apply-or-drop decision of `AppController::ApplyStartupCatalogRestore_`, in the order it checks: a restore
 /// with nothing in it (or no latched pane) applies nothing; one that found a live catalog already in the pane, or a
-/// pane that runs another backend now, is dropped; otherwise it is installed.
+/// pane whose latch no longer holds (another backend or another site now, see PaneLatchHolds), is dropped; otherwise
+/// it is installed.
 inline StartupRestoreAction DecideStartupRestore(bool snapshotLoaded, bool paneLatched, bool catalogEmptyNow,
-                                                 bool backendGenerationUnchanged) {
+                                                 bool paneLatchHolds) {
     if (!snapshotLoaded || !paneLatched) {
         return StartupRestoreAction::NothingToApply;
     }
-    return MayApplyRestoredCatalog(catalogEmptyNow, backendGenerationUnchanged) ? StartupRestoreAction::Apply
-                                                                                : StartupRestoreAction::Superseded;
+    return MayApplyRestoredCatalog(catalogEmptyNow, paneLatchHolds) ? StartupRestoreAction::Apply
+                                                                    : StartupRestoreAction::Superseded;
 }
 
 /// True when work latched at launch for one pane (a failed refresh's snapshot restore, which is read on a worker

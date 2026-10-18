@@ -26,6 +26,7 @@
 
 #include <ghc/filesystem.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <future>
@@ -221,6 +222,58 @@ bool AppController::WithdrawCacheOnUiThread_(std::shared_ptr<LocalCacheManager>&
     return true;
 }
 
+bool AppController::ReleaseWithdrawnCache_(std::shared_ptr<LocalCacheManager> oldCache, std::string& outError) {
+    if (!oldCache) {
+        return true; // there was no cache open: nothing holds the files
+    }
+    // The files may be deleted only once the old LocalCacheManager is destroyed and SQLite has closed them. A holder
+    // still running (a Lua / MCP bind, a chat persist write, a queued save that locked its weak_ptr) keeps the handle
+    // open: deleting under it fails on Windows with a sharing violation, and on POSIX unlinks the file under the live
+    // handle, so that holder's commits land in a file nothing reads again, and its later close can checkpoint and
+    // delete the -wal / -shm files the new database has opened at the same paths.
+    const std::chrono::milliseconds budget((std::max)(0LL, cacheRecreateHolderWaitMs_.load()));
+    const std::shared_ptr<LocalCacheCloseSignal> closed = oldCache->CloseSignal();
+    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + budget;
+    while (oldCache.use_count() > 1 && !cacheRecreateAbort_.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    const long holdersAtDeadline = oldCache.use_count();
+    const std::weak_ptr<LocalCacheManager> oldCacheWeak = oldCache;
+    oldCache.reset();
+    if (const std::shared_ptr<LocalCacheManager> stillHeld = oldCacheWeak.lock()) {
+        // Still in use: keep it, report the recreate as failed with nothing wiped; the user retries once it lets go.
+        LOG_WARN("AppController::StartRecreateLocalCacheDatabase: the old cache still had %ld other owner(s) after the "
+                 "bounded wait; nothing was deleted and the old cache is back in place.",
+                 holdersAtDeadline - 1);
+        std::atomic_store(&Cache, stillHeld);
+        outError = "The local cache is still in use by a background task. Nothing was deleted; try again in a moment.";
+        return false;
+    }
+    // No owner is left, but if one let go after the wait its thread runs the destructor, not this one: wait for that
+    // close to finish (already done when this thread dropped the last reference). Shutdown stops the wait.
+    const std::chrono::steady_clock::time_point closeDeadline = std::chrono::steady_clock::now() + budget;
+    bool closedInTime = closed->WaitFor(std::chrono::milliseconds(0));
+    while (!closedInTime && !cacheRecreateAbort_.load() && std::chrono::steady_clock::now() < closeDeadline) {
+        closedInTime = closed->WaitFor(std::chrono::milliseconds(50));
+    }
+    if (closedInTime) {
+        return true;
+    }
+    if (cacheRecreateAbort_.load()) {
+        outError = "Application is shutting down."; // nothing deleted, and no reopen while the app tears down
+        return false;
+    }
+    LOG_WARN("AppController::StartRecreateLocalCacheDatabase: the old cache did not finish closing in time; nothing "
+             "was deleted and the file is reopened.");
+    outError = "The local cache is still closing. Nothing was deleted; try again in a moment.";
+    try {
+        std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(localCacheDbPath_));
+    } catch (const std::exception& ex) {
+        outError += std::string(" Failed to reopen database: ") + ex.what();
+    }
+    return false;
+}
+
 smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(const std::string& focusedCacheKey) {
     smatchet::sync::CacheRecreateOutcome outcome;
     std::shared_ptr<LocalCacheManager> oldCache;
@@ -231,12 +284,9 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     // Background tasks that latched the old cache before it was withdrawn finish first; the last reference is then
     // dropped here, so SQLite closes on this worker and the files can be deleted.
     JoinBackgroundTasks();
-    // Off-thread latchers outside the pool (Lua / MCP binds, offline-queue workers) may still hold it: give them a
-    // short bounded while to let go, or the Windows file delete would hit a sharing violation.
-    for (int waits = 0; waits < 50 && oldCache.use_count() > 1 && !cacheRecreateAbort_.load(); ++waits) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!ReleaseWithdrawnCache_(std::move(oldCache), outcome.Error)) {
+        return outcome; // nothing deleted; a cache is back in `Cache`
     }
-    oldCache.reset();
 
     bool anyRemoved = false;
     const VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
@@ -305,6 +355,11 @@ void AppController::FinishCacheRecreate_(
         RefreshLocalDataAsync();
     } else if (outcome.Wiped) {
         RefreshAfterPartialCacheWipe_();
+    } else {
+        // Nothing was deleted and a cache is back in place, but ticket saves queued before the withdraw were dropped
+        // while it was out, so a pane can show rows SQLite never stored: re-read every pane from the file.
+        RefreshLocalDataAsync();
+        RereadOtherPanesFromCache_();
     }
     if (outcome.Wiped) {
         RefreshOtherPanesAfterCacheWipe_(); // every pane showed rows from the file that is gone, not only the focused
@@ -360,6 +415,27 @@ void AppController::RefreshAfterPartialCacheWipe_() {
     NotifyLuaTicketDataChanged();
 }
 
+void AppController::LaunchPaneReread_(GridLiveContext& ctx) {
+    GridLiveContext* const ctxPtr = &ctx;
+    const std::uint64_t generation = ctx.backendGeneration_.load();
+    try {
+        LaunchBackgroundTask([this, ctxPtr, generation]() { RefreshLocalDataCheckedImpl_(*ctxPtr, &generation); });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: re-reading pane '%s' from the local cache did not start: %s", ctx.PaneId.c_str(),
+                 ex.what());
+    }
+}
+
+void AppController::RereadOtherPanesFromCache_() {
+    GridLiveContext* const focused = &focusedContext();
+    for (std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+         it != gridContexts_.end(); ++it) {
+        if (it->second && it->second.get() != focused) {
+            LaunchPaneReread_(*it->second);
+        }
+    }
+}
+
 void AppController::RefreshOtherPanesAfterCacheWipe_() {
     const bool haveCache = std::atomic_load(&Cache) != nullptr;
     GridLiveContext* const focused = &focusedContext();
@@ -378,15 +454,7 @@ void AppController::RefreshOtherPanesAfterCacheWipe_() {
             ctx.syncRetryAfter = std::chrono::steady_clock::time_point();
         }
         if (haveCache) {
-            GridLiveContext* const ctxPtr = &ctx;
-            const std::uint64_t generation = ctx.backendGeneration_.load();
-            try {
-                LaunchBackgroundTask(
-                    [this, ctxPtr, generation]() { RefreshLocalDataCheckedImpl_(*ctxPtr, &generation); });
-            } catch (const std::exception& ex) {
-                LOG_WARN("AppController: refreshing pane '%s' after the cache recreate did not start: %s",
-                         ctx.PaneId.c_str(), ex.what());
-            }
+            LaunchPaneReread_(ctx);
             continue;
         }
         {

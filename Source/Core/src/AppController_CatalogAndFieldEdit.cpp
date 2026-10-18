@@ -1033,6 +1033,7 @@ void AppController::LaunchStartupCatalogRestore_(const TrackerConfig& cfg, const
     GridLiveContext& ctx = focusedContext();
     startupCatalogRestoreLatch_.Ctx = &ctx;
     startupCatalogRestoreLatch_.Generation = ctx.backendGeneration_.load();
+    startupCatalogRestoreLatch_.CacheKey = ctx.CacheBackendKeyCopy();
     startupCatalogRestoreLatch_.TrackerType = activeTrackerType;
     startupCatalogRestoreLatch_.RefreshTtlSec = cfg.FieldCatalogRefreshTtlSec;
     const std::shared_ptr<ITrackerBackend> backend = BackendShared();
@@ -1085,15 +1086,20 @@ void AppController::ApplyStartupCatalogRestore_(StartupCatalogRestore restore) {
         std::lock_guard<std::mutex> lk(live.availableFieldsMutex_);
         catalogEmpty = live.AvailableFields.empty();
     }
+    // Generation AND cache key: a same-kind site switch during the read keeps the generation but moves the key, and
+    // ResetOnCacheSiteChange has emptied the catalog by then, so the generation alone would install the previous
+    // site's snapshot into the new site's pane.
+    const bool latchHolds =
+        paneLatched && smatchet::sync::PaneLatchHolds(latch.Ctx->backendGeneration_.load(), latch.Generation,
+                                                      latch.Ctx->CacheBackendKeyCopy(), latch.CacheKey);
     const smatchet::sync::StartupRestoreAction action =
-        smatchet::sync::DecideStartupRestore(restore.Loaded, paneLatched, catalogEmpty,
-                                             paneLatched && latch.Ctx->backendGeneration_.load() == latch.Generation);
+        smatchet::sync::DecideStartupRestore(restore.Loaded, paneLatched, catalogEmpty, latchHolds);
     if (action == smatchet::sync::StartupRestoreAction::NothingToApply) {
         return; // no saved catalog: the grid's own fetch brings the first one
     }
     if (action == smatchet::sync::StartupRestoreAction::Superseded) {
-        LOG_INFO("AppController: the saved field catalog was not restored: a newer catalog or another tracker is in "
-                 "place.");
+        LOG_INFO("AppController: the saved field catalog was not restored: a newer catalog, another tracker or another "
+                 "site is in place.");
         return;
     }
     GridContextFieldCatalog& cat = latch.Ctx->fieldCatalog;

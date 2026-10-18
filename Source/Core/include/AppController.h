@@ -286,6 +286,9 @@ class AppController : public IAppThreading,
     struct StartupCatalogRestoreLatch {
         GridLiveContext* Ctx = nullptr;
         std::uint64_t Generation = 0;
+        /// The pane's cache namespace key at launch. A same-kind site switch keeps the generation but moves the key,
+        /// so the apply checks both (PaneLatchHolds), the same as the error-path restore.
+        std::string CacheKey;
         std::string TrackerType;
         std::int64_t RefreshTtlSec = 0;
     };
@@ -384,6 +387,11 @@ class AppController : public IAppThreading,
     /// cache database path, so `StartRecreateLocalCacheDatabase` has a real file to withdraw, wipe and reopen without
     /// a full `Initialize`. No production caller.
     bool OpenLocalCacheFileForTest(const std::string& dbPath);
+    /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
+    /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
+    void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {
+        cacheRecreateHolderWaitMs_.store(static_cast<long long>(wait.count()));
+    }
 
 #if defined(SMATCHET_WITH_AI)
     /// Phase 3 of ai-chat-claude-desktop-parity. Thin pass-through to
@@ -1935,6 +1943,15 @@ class AppController : public IAppThreading,
     /// Worker: asks the UI thread to detach the cache from `Cache` (so no UI code can reach it any more) and waits.
     /// False when the application shut down first.
     bool WithdrawCacheOnUiThread_(std::shared_ptr<LocalCacheManager>& outOldCache);
+    /// Worker: drops the withdrawn cache so its files can be deleted. True once it is destroyed and its connection
+    /// closed. False (`outError` set, nothing deleted) when another owner still holds it after the bounded wait (it is
+    /// put back in `Cache`) or its close, running on that owner's thread, does not finish in time (the file is
+    /// reopened into `Cache`).
+    bool ReleaseWithdrawnCache_(std::shared_ptr<LocalCacheManager> oldCache, std::string& outError);
+    /// UI thread: re-read `ctx`'s rows from the local cache on a background task (generation-checked).
+    void LaunchPaneReread_(GridLiveContext& ctx);
+    /// UI thread: LaunchPaneReread_ for every live pane except the focused one (RefreshLocalDataAsync covers that).
+    void RereadOtherPanesFromCache_();
     /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
     void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
@@ -1948,7 +1965,8 @@ class AppController : public IAppThreading,
     std::atomic<bool> noFrameLoop_{false};        ///< the one-shot in-process CLI: no frame loop drains the dispatcher
     std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
     std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
-    std::thread cacheRecreateWorker_;             ///< joined by the next Start and by ~AppController
+    std::atomic<long long> cacheRecreateHolderWaitMs_{5000}; ///< ReleaseWithdrawnCache_'s bounded waits (test seam)
+    std::thread cacheRecreateWorker_;                        ///< joined by the next Start and by ~AppController
 
     std::string localCacheDbPath_;
 
