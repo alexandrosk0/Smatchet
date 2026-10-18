@@ -1,9 +1,12 @@
 #pragma once
 
-// Pure, ImGui-free decision helpers for the bottom-panel drag-to-hide / drag-to-reveal
-// gesture (P4V-style pane collapse). The impure driver in SmatchetBottomPanelDrag.cpp
-// feeds live dock geometry in; keeping the thresholds and decisions here lets
-// tests/Core pin the gesture contract without an ImGui context.
+// Pure, ImGui-free decision helpers for the edge-panel drag-to-hide / drag-to-reveal
+// gesture (P4V-style pane collapse). Written in bottom-panel terms (Y, height) but
+// axis-neutral: the bottom panel and the right-hand side columns all anchor at their far edge
+// (bottom / right), so the driver feeds X values and widths through the same helpers.
+// The impure driver in SmatchetBottomPanelDrag.cpp feeds live dock geometry in; keeping
+// the thresholds and decisions here lets tests/Core pin the gesture contract without an
+// ImGui context.
 
 namespace SmatchetBottomPanelDragPure {
 
@@ -63,5 +66,61 @@ inline float RestoreHeight(float rememberedPx, float minHeightPx, float workHeig
     const float base = rememberedPx > minHeightPx ? rememberedPx : kDefaultRevealHeightPx;
     return ClampPx(base, minHeightPx, maxH > minHeightPx ? maxH : minHeightPx);
 }
+
+// Two hidden side panels may park their reveal grips at the same x. The grip draws unless
+// another grip within tolPx belongs to a more recently collapsed panel (LIFO: the panel
+// the user hid last is the one they expect to get back first).
+inline bool ShouldDrawRevealGrip(float myEdge, unsigned mySeq, float otherEdge, unsigned otherSeq, float tolPx) {
+    const float delta = myEdge > otherEdge ? myEdge - otherEdge : otherEdge - myEdge;
+    return !(delta <= tolPx && otherSeq > mySeq);
+}
+
+// Side-column reveal strip: the press only becomes a reveal once the drag has travelled
+// leftward past the open threshold AND clearly more horizontally than vertically, so a
+// vertical scrollbar drag or a plain click on the strip is never hijacked.
+inline bool RevealDragCommits(float dragStartX, float mouseX, float crossTravelPx) {
+    const float dx = dragStartX - mouseX;
+    const float absCross = crossTravelPx < 0.0f ? -crossTravelPx : crossTravelPx;
+    return dx >= kRevealDragThresholdPx && dx > absCross * 1.5f;
+}
+
+// Side-column reveal strip: should the active item keep its press instead of letting a
+// reveal drag steal it? Yield to dock splitters / tab bars, text inputs being edited, a
+// drag-and-drop or window move in flight, the horizontal scrollbar, a table column drag
+// (resize handle or header reorder) and the bottom reveal grip - all of them are horizontal-drag (or must-not-steal)
+// interactions. Residual, accepted: sliders / DragFloat that reach the 7px strip are stolen
+// once the drag commits.
+inline bool ShouldYieldToActiveItem(bool inDockHost, bool textInput, bool dragDropActive, bool horizontalScrollbar,
+                                    bool windowMoving, bool tableColumnDrag, bool bottomGrip) {
+    return inDockHost || textInput || dragDropActive || horizontalScrollbar || windowMoving || tableColumnDrag ||
+           bottomGrip;
+}
+
+// The strip may arm / highlight / show a tooltip only when the mouse is over dockspace
+// content itself - not through a modal, a floating window above it, a window drag or a
+// drag-and-drop.
+inline bool SideStripReachable(bool modalOpen, bool windowMoving, bool overDockContent, bool dragDropActive) {
+    return !modalOpen && !windowMoving && overDockContent && !dragDropActive;
+}
+
+// View > Appearance side-bar "show": reopen what the hidden columns remembered; when nothing
+// is remembered, fall back to the Views dashboard (Primary only) so the toggle always shows
+// something, else do nothing (Secondary has no fallback).
+enum class SideBarShowPlan { ExpandRemembered, FallbackToViews, Nothing };
+
+inline SideBarShowPlan PlanSideBarShow(bool anyRemembered, bool hasViewsFallback) {
+    if (anyRemembered) {
+        return SideBarShowPlan::ExpandRemembered;
+    }
+    return hasViewsFallback ? SideBarShowPlan::FallbackToViews : SideBarShowPlan::Nothing;
+}
+
+// A remembered tab is spent once its window is open again by any other route (menu, command,
+// toggle): keeping it would let a later "show" reopen a window the user closed since.
+inline bool ShouldKeepRestoreKey(bool windowAlreadyOpen) { return !windowAlreadyOpen; }
+
+// A side-bar config flag mirrors "anything visible afterwards": leftover tabs that survived
+// the collapse in ANY column of the group keep it true.
+inline bool SideBarFlagAfterCollapse(bool anyColumnHadLeftovers) { return anyColumnHadLeftovers; }
 
 } // namespace SmatchetBottomPanelDragPure

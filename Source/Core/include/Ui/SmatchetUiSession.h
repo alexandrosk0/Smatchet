@@ -307,6 +307,47 @@ struct JqlEditorState {
     bool jqlBufSemanticRewrite = false;
 };
 
+/// Per-edge-panel drag-to-hide / drag-to-reveal state (SmatchetBottomPanelDrag.cpp). One
+/// instance per panel the driver serves (bottom panel, Views column, primary and secondary
+/// side bars). "Extent" is the panel's size along its drag axis: height for the bottom
+/// panel, width for the side columns.
+struct EdgePanelDragState {
+    /// Layout keys of the panel tabs that were open when the panel was hidden, so
+    /// revealing it restores the same tab set (empty -> the bottom panel reveals its Log;
+    /// a side column has no fallback and shows no reveal grip).
+    std::vector<std::string> restoreKeys;
+    /// Panel extent (px) captured at hide time, re-applied on reveal.
+    float restoreExtent = 0.0f;
+    /// Extent (px) to write into the node's SizeRef while the countdown below runs.
+    float pendingExtent = 0.0f;
+    /// Frames left to (re)apply pendingExtent after a reveal — the node is rebuilt
+    /// asynchronously over a couple of frames (same idea as layoutForceDefaultsFrames).
+    int applyFrames = 0;
+    /// ImGuiID of the dock splitter directly before the panel while the user drags it
+    /// (0 when no such drag is live).
+    ImGuiID splitterDragId = 0;
+    /// True while the live splitter drag sits inside the hide band — releasing now hides
+    /// the panel (the release-to-hide overlay hint is up).
+    bool hideArmed = false;
+    /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
+    /// mouse release.
+    bool revealDragActive = false;
+    /// Largest extent the live reveal drag reached — release-in-band only cancels the
+    /// reveal when the drag genuinely opened the panel first (see
+    /// SmatchetBottomPanelDragPure::ShouldCollapseOnRevealRelease).
+    float revealPeakExtent = 0.0f;
+    /// Mouse position along the drag axis at reveal-grip press, for the open-threshold test.
+    float revealDragStart = 0.0f;
+    /// Side columns: mouse position across the drag axis at press, for the
+    /// horizontal-vs-vertical commit test (SmatchetBottomPanelDragPure::RevealDragCommits).
+    float revealDragStartCross = 0.0f;
+    /// Side columns: a press landed in the reveal strip and the drag has not committed yet.
+    bool revealArmed = false;
+    /// Stamp from UiDrawSession::edgePanelCollapseCounter when this panel last hid tabs;
+    /// among coincident reveal grips the most recently collapsed panel wins.
+    unsigned collapseSeq = 0;
+};
+
 struct UiDrawSession {
     bool cfgInitialized = false;
     TrackerConfig cfg;
@@ -496,32 +537,16 @@ struct UiDrawSession {
     /// Per-window "expand over the whole workspace" toggle state (SmatchetWindowExpand.h).
     SmatchetWindowExpand::WindowExpandState windowExpand;
 
-    // --- Bottom-panel drag-to-hide / drag-to-reveal (SmatchetBottomPanelDrag.cpp) ---
-    /// Layout keys of the bottom-panel tabs that were open when the panel was hidden,
-    /// so revealing it restores the same tab set (empty -> the Log is revealed).
-    std::vector<std::string> bottomPanelRestoreKeys;
-    /// Panel height (px) captured at hide time, re-applied on reveal.
-    float bottomPanelRestoreHeight = 0.0f;
-    /// Height (px) to write into the bottom node's SizeRef while the countdown below runs.
-    float bottomPanelPendingHeight = 0.0f;
-    /// Frames left to (re)apply bottomPanelPendingHeight after a reveal — the node is
-    /// rebuilt asynchronously over a couple of frames (same idea as layoutForceDefaultsFrames).
-    int bottomPanelApplyHeightFrames = 0;
-    /// ImGuiID of the dock splitter directly above the bottom panel while the user drags
-    /// it (0 when no such drag is live).
-    ImGuiID bottomPanelSplitterDragId = 0;
-    /// True while the live splitter drag sits inside the hide band — releasing now hides
-    /// the panel (the release-to-hide overlay hint is up).
-    bool bottomPanelHideArmed = false;
-    /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
-    /// mouse release.
-    bool bottomPanelRevealDragActive = false;
-    /// Largest height the live reveal drag reached — release-in-band only cancels the
-    /// reveal when the drag genuinely opened the panel first (see
-    /// SmatchetBottomPanelDragPure::ShouldCollapseOnRevealRelease).
-    float bottomPanelRevealPeakHeight = 0.0f;
-    /// Mouse Y at reveal-grip press, for the open-threshold test.
-    float bottomPanelRevealDragStartY = 0.0f;
+    // --- Edge-panel drag-to-hide / drag-to-reveal (SmatchetBottomPanelDrag.cpp) ---
+    /// Bottom panel (restoreKeys empty -> the Log is revealed on a grip drag).
+    EdgePanelDragState bottomPanelDrag;
+    /// Right-hand columns: Views column, primary / secondary side bars. Each holds the tabbed
+    /// set it hid; they have no fallback, so an empty restoreKeys means no reveal grip.
+    EdgePanelDragState viewsColumnDrag;
+    EdgePanelDragState primarySideBarDrag;
+    EdgePanelDragState secondarySideBarDrag;
+    /// Session-wide collapse counter feeding EdgePanelDragState::collapseSeq.
+    unsigned edgePanelCollapseCounter = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
