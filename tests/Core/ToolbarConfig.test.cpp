@@ -80,6 +80,71 @@ TEST_CASE("ToolbarConfig::Default is non-empty and visible") {
     CHECK(d.Buttons.size() >= 4);
 }
 
+TEST_CASE("ToolbarConfig::Default: Views button reveals the Views Dashboard, not the data-only view.list") {
+    const ToolbarConfig d = ToolbarConfig::Default();
+    const ToolbarButton* views = nullptr;
+    for (const ToolbarButton& b : d.Buttons) {
+        if (b.Tooltip == "Views") {
+            views = &b;
+        }
+        // view.list returns data over CLI/MCP and opens no window — never a toolbar default.
+        CHECK(b.CommandId != "view.list");
+    }
+    REQUIRE(views != nullptr);
+    CHECK(views->Kind == ToolbarButtonKind::Command);
+    CHECK(views->CommandId == "view.toggle.views_dashboard");
+    // "show" (not toggle): a click always reveals, never closes an already-open dashboard.
+    const nlohmann::json args = nlohmann::json::parse(views->ArgsJson);
+    CHECK(args.value("action", std::string()) == "show");
+}
+
+TEST_CASE("MigrateLegacyViewsToolbarButton: rewrites the legacy view.list default") {
+    ToolbarConfig c;
+    ToolbarButton legacy = Cmd("view.list");
+    legacy.IconName = "list";
+    legacy.Tooltip = "Views";
+    c.Buttons.push_back(legacy);
+
+    CHECK(MigrateLegacyViewsToolbarButton(c) == 1);
+    CHECK(c.Buttons[0].CommandId == "view.toggle.views_dashboard");
+    CHECK(c.Buttons[0].ArgsJson == "{\"action\":\"show\"}");
+    CHECK(c.Buttons[0].IconName == "list"); // appearance untouched
+    CHECK(c.Buttons[0].Tooltip == "Views");
+}
+
+TEST_CASE("MigrateLegacyViewsToolbarButton: idempotent and a no-op on a current default") {
+    ToolbarConfig c = ToolbarConfig::Default();
+    const nlohmann::json before = c;
+    CHECK(MigrateLegacyViewsToolbarButton(c) == 0);
+    CHECK(nlohmann::json(c) == before);
+
+    ToolbarConfig legacy;
+    ToolbarButton b = Cmd("view.list");
+    b.IconName = "list";
+    b.Tooltip = "Views";
+    legacy.Buttons.push_back(b);
+    CHECK(MigrateLegacyViewsToolbarButton(legacy) == 1);
+    CHECK(MigrateLegacyViewsToolbarButton(legacy) == 0); // second pass finds nothing left
+}
+
+TEST_CASE("MigrateLegacyViewsToolbarButton: leaves user-customised view.list buttons alone") {
+    ToolbarConfig c;
+    ToolbarButton custom = Cmd("view.list"); // user's own label + icon, deliberately data-listing
+    custom.IconName = "table";
+    custom.Tooltip = "Dump views";
+    c.Buttons.push_back(custom);
+    ToolbarButton luaBtn;
+    luaBtn.Kind = ToolbarButtonKind::Lua;
+    luaBtn.CommandId = "view.list";
+    luaBtn.IconName = "list";
+    luaBtn.Tooltip = "Views";
+    c.Buttons.push_back(luaBtn); // non-Command kind never matches
+
+    CHECK(MigrateLegacyViewsToolbarButton(c) == 0);
+    CHECK(c.Buttons[0].CommandId == "view.list");
+    CHECK(c.Buttons[1].CommandId == "view.list");
+}
+
 TEST_CASE("ResolveEffectiveToolbar: empty append yields the global list (trimmed)") {
     ToolbarConfig g;
     g.Buttons.push_back(Cmd("a"));

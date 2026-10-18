@@ -58,7 +58,7 @@ class SmatchetToolbarUi {
     void DrawEditorButtonList(EditorCtx& ctx);
     void DrawEditorFieldEditor(EditorCtx& ctx);
     void DrawEditorFooter(AppController& app, EditorCtx& ctx, TrackerConfig& cfg);
-    void DispatchButton(AppController& app, TrackerConfig& cfg, const ToolbarButton& b);
+    void DispatchButton(AppController& app, const ToolbarButton& b);
     // Reload the active backend's appended buttons from disk into trackerAppendCache_, but only
     // when the active backend key changed (or the cache was invalidated) — keeps RenderBar off the
     // disk on the per-frame path. A null backend yields an empty cache.
