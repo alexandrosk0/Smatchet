@@ -108,7 +108,7 @@ const char* kPrimaryWindow = "Smatchet - Active Project";
 // logged skip/check) when the backend never settled.
 bool BootSyncFocusPrimary(ImGuiTestContext* ctx, AppController* app) {
     app->SyncWithBackend();
-    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
     IM_CHECK_NO_RET(syncDone);
     // Past the fixture gate the deterministic backend MUST yield rows — a completed-but-empty
     // sync is a real failure, not a silent skip. Hard-assert it (mirroring

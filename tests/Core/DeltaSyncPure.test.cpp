@@ -192,3 +192,50 @@ TEST_CASE("DiffRosterAgainstResident: duplicate roster keys are handled once") {
     roster.Entries = {R("A-1", "T1"), R("A-1", "T1")};
     CHECK(DiffRosterAgainstResident(roster, {}).ToFetch == std::vector<std::string>{"A-1"});
 }
+
+TEST_CASE("ComputeDeltaFetchSet: two renderings of one instant are the same version, a later instant is not") {
+    std::unordered_map<std::string, TicketSyncMeta> meta;
+    meta["A-1"] = Meta("2024-05-01T10:00:00.000+0000", {"summary"});
+    meta["A-2"] = Meta("2024-05-01T10:00:00.000+0000", {"summary"});
+    meta["A-3"] = Meta("2024-05-01T10:00:00.000+0000", {"summary"});
+    const std::vector<TrackerRosterEntry> roster = {
+        R("A-1", "2024-05-01T12:00:00.000+0200"), // the same instant in another zone: unchanged
+        R("A-2", "2024-05-01T10:00:00Z"),         // the same instant, UTC spelling: unchanged
+        R("A-3", "2024-05-01T10:00:01.000+0000")  // one second later: moved
+    };
+
+    const DeltaFetchSet set = ComputeDeltaFetchSet(roster, meta, {"summary"}, 2000, 0);
+
+    CHECK(set.Unchanged == std::vector<std::string>{"A-1", "A-2"});
+    CHECK(set.ToFetch == std::vector<std::string>{"A-3"});
+}
+
+TEST_CASE("DiffRosterAgainstResident: a re-rendered stamp is not a change, a different instant is") {
+    TrackerRoster roster;
+    roster.Complete = true;
+    roster.Entries = {R("A-1", "2024-05-01T12:00:00.000+0200"), R("A-2", "2024-05-01T12:00:05.000+0200")};
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "2024-05-01T10:00:00.000+0000"},
+                                                                   {"A-2", "2024-05-01T10:00:00.000+0000"}};
+
+    const RosterDiff diff = DiffRosterAgainstResident(roster, resident);
+
+    CHECK(diff.ToFetch == std::vector<std::string>{"A-2"});
+    CHECK(diff.Added.empty());
+}
+
+TEST_CASE("RequiredFieldsOfView trims padded ids so a hand-edited view is still covered by a clean row") {
+    const std::vector<std::string> required = RequiredFieldsOfView({" summary", "status\t", "  ", " id ", "labels"});
+    CHECK(required == std::vector<std::string>{"labels", "status", "summary"});
+    CHECK(FieldsSatisfy(NormalizeFieldList({"summary", "status", "labels"}), required));
+}
+
+TEST_CASE("AnyRosterKeyHasCachedMeta: a sibling pane's cached versions do not count for this view") {
+    std::unordered_map<std::string, TicketSyncMeta> meta;
+    meta["OTHER-1"] = Meta("T1", {"summary"});
+    meta["BLANK-1"] = Meta("", {"summary"}); // a row cached with no known version
+
+    CHECK_FALSE(AnyRosterKeyHasCachedMeta({R("A-1", "T1"), R("BLANK-1", "T1")}, meta));
+    CHECK(AnyRosterKeyHasCachedMeta({R("A-1", "T1"), R("OTHER-1", "T1")}, meta));
+    CHECK_FALSE(AnyRosterKeyHasCachedMeta({}, meta));
+    CHECK_FALSE(AnyRosterKeyHasCachedMeta({R("", "T1")}, meta));
+}

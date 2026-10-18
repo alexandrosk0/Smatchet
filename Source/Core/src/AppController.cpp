@@ -222,6 +222,7 @@ AppController::~AppController() {
     smatchet::config_save::Stop();
 
     mainThreadDispatcher.BeginShutdown();
+    JoinCacheRecreateWorker_(); // a recreate still running stops waiting on the UI thread and is joined
 
     // Every pane, not just the focused one: each TicketSyncService destructor would otherwise
     // join its busy worker during gridContexts_ member destruction, one pane after another,
@@ -284,6 +285,7 @@ AppController::~AppController() {
 
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
 
+    DrainCatalogWorkBeforeShutdown_(); // queued snapshot saves reach the file; the startup restore read is joined
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's
@@ -460,6 +462,8 @@ bool AppController::IsOnUiThread() const {
     return std::this_thread::get_id() == uiThreadId_;
 }
 
+void AppController::DrainMainThreadOnce() { mainThreadDispatcher.Drain(); }
+
 void AppController::PostToMainThread(std::function<void()> fn) {
     // IMainThreadPoster — delegate to the concrete dispatcher. Lets the Commands/
     // helper templates marshal onto the UI thread through the interface without
@@ -520,10 +524,11 @@ void AppController::LoadAiChatMessages(std::size_t cap, std::vector<AiMessage>& 
                                        std::vector<std::int64_t>& outIds) const {
     outMessages.clear();
     outIds.clear();
-    if (!Cache) {
+    const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache); // a recreate may withdraw it
+    if (!cache) {
         return;
     }
-    Cache->LoadChatMessages(cap, outMessages, outIds);
+    cache->LoadChatMessages(cap, outMessages, outIds);
 }
 #endif
 
@@ -543,7 +548,7 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
     // plain Backend read would race a live SetBackend swap. The shared_ptr also keeps the backend
     // alive across the blocking FetchIssues call (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
-    if (!backend || !Cache) {
+    if (!backend || !std::atomic_load(&Cache)) {
 
         return pack;
     }
@@ -562,28 +567,13 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
     return pack;
 }
 
-// ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync: moved to TicketSyncService in
-// Phase 1A of the item 11 extraction. Thin delegators below.
-
-void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
-    if (focusedContext().ticketSync_) {
-        focusedContext().ticketSync_->ApplyIssueFetchPack(std::move(pack));
-    }
-}
+// ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync live in TicketSyncService (the former is a
+// test-only seam there; AppController has no passthrough for it).
 
 void AppController::CancelAndJoinAllPaneStreamingSyncs() {
-    std::vector<TicketSyncService*> services;
-    services.reserve(gridContexts_.size() + 1);
-    for (auto& entry : gridContexts_) {
-        if (entry.second && entry.second->ticketSync_) {
-            services.push_back(entry.second->ticketSync_.get());
-        }
-    }
     // The focused context may be a retired husk (ADR-0012 graveyard) outside the live map. When it
     // is a live entry instead, CancelAndJoinAll drops the duplicate.
-    if (focusedContext().ticketSync_) {
-        services.push_back(focusedContext().ticketSync_.get());
-    }
+    std::vector<TicketSyncService*> services = CollectPaneSyncServices_();
     TicketSyncService::CancelAndJoinAll(services);
 }
 
@@ -615,4 +605,8 @@ void AppController::SyncWithBackendMode(const TrackerConfig* configOverride, con
 
 bool AppController::IsStreamingSyncActive() const {
     return focusedContext().ticketSync_ && focusedContext().ticketSync_->IsActive();
+}
+
+bool AppController::IsSyncPendingOrActive() const {
+    return focusedContext().ticketSync_ && focusedContext().ticketSync_->HasPendingWork();
 }

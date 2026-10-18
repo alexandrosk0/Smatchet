@@ -25,6 +25,7 @@
 
 #include "CachedTicketTypes.h"     // for CachedTicket (in vector & shared_ptr returns)
 #include "Sync/SyncSessionStats.h" // TrackerTrafficSample (per-session request/byte accounting)
+#include "TimeNowPure.h"           // NowUnixSeconds (the default clock)
 
 class ISyncCache;
 class ITrackerBackend;
@@ -64,7 +65,7 @@ class ITicketSyncDeps {
     virtual ISyncCache* Cache() = 0;
     /// DR6 latched cache snapshot — strong handle over the same cache Cache() returns, so an
     /// off-thread caller holds it alive across its use while the UI thread swaps the cache in
-    /// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic-swap pattern. May be null.
+    /// StartRecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic-swap pattern. May be null.
     virtual std::shared_ptr<ISyncCache> CacheShared() = 0;
     virtual ITrackerIssueReader* Backend() = 0;
     /// Narrow connectivity view of the same backend — used for tracker-type detection during
@@ -100,6 +101,10 @@ class ITicketSyncDeps {
     /// LRU evicts a pane whose cache rows survive — the recorded set outlives the eviction and is
     /// dropped only on 30 s retirement. Defaulted no-op so the test fakes need no stub.
     virtual void PublishOwnedTicketIds(const std::vector<std::string>& /*ids*/) {}
+    /// The ids this pane's view query returned in a COMPLETE reload (a subset of the owned ids: the rest are the
+    /// parents and children the hierarchy walk added). The change monitor uses it to tell a row that left the
+    /// view from one the walk owns. UI thread, once per completed session. Defaulted no-op for the test fakes.
+    virtual void PublishViewListedIds(const std::vector<std::string>& /*ids*/) {}
 
     /// Tracker HTTP traffic counters right now (monotonic). A session reads it at its start and end
     /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no
@@ -107,12 +112,20 @@ class ITicketSyncDeps {
     virtual smatchet::sync::TrackerTrafficSample SampleTrackerTraffic() const { return {}; }
 
     /// Run `task` on a background worker (the production adapter forwards to `AppController::LaunchBackgroundTask`,
-    /// which tracks the worker so `RecreateLocalCacheDatabase` can join it before swapping the cache). The sync
+    /// which tracks the worker so `StartRecreateLocalCacheDatabase` can join it before swapping the cache). The sync
     /// service uses it for SQLite work that must not run on the UI thread (the stale-row delete). Defaulted to
     /// running inline so single-threaded test fakes need no stub.
     virtual void LaunchBackgroundTask(std::function<void()> task) {
         if (task) {
             task();
+        }
+    }
+
+    /// Run `fn` on the UI thread (the production adapter forwards to `AppController::PostToMainThread`). Defaulted
+    /// to running inline so single-threaded test fakes need no stub.
+    virtual void PostToMainThread(std::function<void()> fn) {
+        if (fn) {
+            fn();
         }
     }
 
@@ -146,6 +159,10 @@ class ITicketSyncDeps {
     /// fixtures and future deps implementers without per-pane latches need no stub.
     virtual void OnStreamingSyncSessionFinished(bool fetchOk) { (void)fetchOk; }
 
+    /// The wall clock, in unix seconds, that a delta session ages cached rows and remembered refusals against. Any
+    /// thread. A seam so a test moves time forward instead of sleeping; production keeps the system clock.
+    virtual std::int64_t NowUnixSeconds() const { return TimeNowPure::NowUnixSeconds(); }
+
     // ---- Active-tickets cache ---------------------------------------------------------
     virtual std::mutex& ActiveTicketsMutex() = 0;
     virtual std::vector<CachedTicket>& ActiveTickets() = 0;
@@ -154,6 +171,9 @@ class ITicketSyncDeps {
     virtual void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) = 0;
     /// Bump `ActiveTicketsRevision.fetch_add(1)` — UI sort caches re-evaluate on bump.
     virtual void BumpActiveTicketsRevision() = 0;
+    /// The current value of that revision. Read it under `ActiveTicketsMutex` together with the roster: the apply
+    /// drain keeps its id -> index map across frames and trusts it only while this value is the one it recorded.
+    virtual std::uint64_t ActiveTicketsRevisionNow() const = 0;
 
     // ---- Edit-meta + Lua glue ---------------------------------------------------------
     virtual void PruneEditMetaCacheToActiveTickets() = 0;

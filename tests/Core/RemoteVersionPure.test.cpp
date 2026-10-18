@@ -88,3 +88,14 @@ TEST_CASE("IsIncomingRowStale with a clock treats a resident stamp more than a d
     CHECK_FALSE(smatchet::sync::IsStampImplausiblyInFuture("garbage", nowMs));
     CHECK_FALSE(smatchet::sync::IsStampImplausiblyInFuture("2026-05-01T12:00:00Z", nowMs));
 }
+
+TEST_CASE("IsSameRemoteVersion: equal text or one instant in two renderings; unparsable stamps need equal text") {
+    using smatchet::sync::IsSameRemoteVersion;
+    CHECK(IsSameRemoteVersion("2024-05-01T10:00:00.000+0000", "2024-05-01T10:00:00.000+0000"));
+    CHECK(IsSameRemoteVersion("2024-05-01T10:00:00.000+0000", "2024-05-01T10:00:00Z"));
+    CHECK(IsSameRemoteVersion("2024-05-01T10:00:00.000+0000", "2024-05-01T11:00:00.000+0100"));
+    CHECK_FALSE(IsSameRemoteVersion("2024-05-01T10:00:00.000+0000", "2024-05-01T10:00:00.001+0000"));
+    CHECK(IsSameRemoteVersion("opaque-v7", "opaque-v7"));
+    CHECK_FALSE(IsSameRemoteVersion("opaque-v7", "opaque-v8"));
+    CHECK_FALSE(IsSameRemoteVersion("opaque-v7", ""));
+}

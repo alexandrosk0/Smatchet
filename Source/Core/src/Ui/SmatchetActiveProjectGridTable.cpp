@@ -776,9 +776,9 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         // runs its own live sync, so a pane mid-first-fetch (sync live, no snapshot rows
         // published yet) must read as loading too — not "No issues match this view."
         const bool paneFirstFetchLoading = ctx.pane.snapshotRevision == 0 && ctx.app.IsPaneSyncLive(ctx.pane.id);
-        const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
-                                 d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted ||
-                                 paneFirstFetchLoading;
+        const bool syncLoading =
+            d.initialTicketSyncLoading || d.fieldCatalogLoading || ctx.app.IsFieldCatalogRestoring(ctx.pane.id) ||
+            d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted || paneFirstFetchLoading;
         if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ctx.pane.filteredIndices.clear();
             ctx.pane.gridState.RectSel.ClearAll();
@@ -1057,6 +1057,10 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     }
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
+    // The pending-edit cue (offline queue) of this pane's rows: the index is rebuilt only when a queue snapshot changed
+    // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
+    RefreshPendingOverlay(app, ctx.d);
+    ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
     const size_t oldFilteredCount = pane.filteredIndices.size();
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),
@@ -1139,6 +1143,9 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
             // Parent-hierarchy depth for this row (Id-cell indent); 0 unless StoryGroupSort is on
             // with parents shown (HideParents flattens the indent and drops the tint).
             ctx.currentRowDepth = (ticketIndex < pane.cachedDepths.size()) ? pane.cachedDepths[ticketIndex] : 0;
+            // Unconfirmed local edit of this row (offline queue): one hash lookup, none when nothing is queued.
+            ctx.currentRowPending =
+                smatchet::sync::PendingRowCueFor(ctx.d.pendingOverlay, ctx.cacheBackendKey, ticket.id);
             if (statusColor.w > 0.0f) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                                        ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));

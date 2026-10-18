@@ -473,8 +473,8 @@ TEST_CASE("FieldCatalogCache: a failed touch write keeps the queued touches for 
         CHECK(touchedAfterFailure()); // the queued touch survived the failed write
     }
 
-    REQUIRE(Loads("k-old")); // the write works now and carries the touch to disk
-    CHECK(ReadCacheFile(file).find("\"lastUsedUnix\":" + recent) == std::string::npos);
+    REQUIRE(Loads("k-old"));                            // the write works now and carries the touch to disk
+    CHECK(PersistedLastUsedOf(file, "R") > recentUnix); // the file itself now holds the touch the failed write kept
 }
 
 namespace {
@@ -537,4 +537,23 @@ TEST_CASE("FieldCatalogCache: a load whose touch write fails keeps its own touch
     }
     REQUIRE(Save("k-other", "OTHER", 16));
     CHECK(PersistedLastUsedOf(file, "O") > 100); // this load's own touch rode along with the next write
+}
+
+TEST_CASE("FieldCatalogCache: a touch queued against one data directory never folds into another directory's file") {
+    const std::int64_t freshUnix = TimeNowPure::NowUnixSeconds() - 60;
+    std::string firstDir;
+    {
+        smatchet_tests::TestEnvGuard firstEnv;
+        firstDir = firstEnv.Dir();
+        CacheFileCleanup firstFile(firstEnv);
+        WriteCacheFile(firstFile, TwoEntryCache(std::to_string(freshUnix)));
+        REQUIRE(Loads("k-fresh")); // used within the day: the touch waits in memory, keyed to this directory's file
+    }
+    smatchet_tests::TestEnvGuard secondEnv;
+    REQUIRE(secondEnv.Dir() != firstDir); // two guards never share a directory, even within one clock tick
+    CacheFileCleanup secondFile(secondEnv);
+    WriteCacheFile(secondFile, TwoEntryCache(std::to_string(freshUnix)));
+
+    REQUIRE(Save("k-other", "OTHER", 16));                    // a write into the second directory's file
+    CHECK(PersistedLastUsedOf(secondFile, "R") == freshUnix); // the first directory's touch did not ride along
 }

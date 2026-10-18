@@ -8,13 +8,18 @@
 #include "Commands/MainThreadDispatch.h" // RunOnUiThreadAsCommandResult
 
 #include "Interfaces/IAppSync.h" // fan-in: sync.* depends on the narrow IAppSync facet, not the full AppController.h.
+#include "Sync/CacheRecreateReportPure.h"
 #include "Sync/SyncMode.h"
 #include "Sync/SyncSessionStats.h"
 #include "Sync/SyncTypes.h"    // TrackerIssueFetchPack
 #include "CachedTicketTypes.h" // CachedTicket (pack.Tickets element)
 #include <nlohmann/json.hpp>   // this sync command TU uses nlohmann::json directly.
 
+#include <chrono>
+#include <future>
+#include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace smatchet {
@@ -75,34 +80,111 @@ void RegisterSyncFullCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPos
     }
 }
 
+// The final result of a finished recreate: a failure says whether the cache files were already deleted, so a caller
+// never believes queued offline edits survived a wipe that went through (or were cleared when it did not).
+CommandResult CacheRecreateOutcomeToResult(const smatchet::sync::CacheRecreateOutcome& outcome) {
+    if (!outcome.Ok) {
+        return CommandResult::Failure(ErrorCode::HandlerError, smatchet::sync::DescribeCacheRecreateOutcome(outcome));
+    }
+    nlohmann::json out;
+    out["triggered"] = true;
+    out["completed"] = true;
+    out["wiped"] = outcome.Wiped;
+    return CommandResult::Success(std::move(out));
+}
+
+// The recreate's outcome arrives as a task posted to the UI thread, and this caller IS the UI thread with no frame
+// loop to run it (the one-shot in-process CLI): pump the queue until it has run, for at most `bound`. A recreate that
+// has not finished by then is abandoned when the process exits, so that is a failure, never a "started" success.
+CommandResult WaitForRecreateByPumping(std::future<smatchet::sync::CacheRecreateOutcome>& finished,
+                                       IMainThreadPoster& poster, std::chrono::milliseconds bound) {
+    const auto deadline = std::chrono::steady_clock::now() + bound;
+    while (finished.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return CommandResult::Failure(
+                ErrorCode::HandlerError,
+                "The cache recreate did not finish within " + std::to_string(bound.count() / 1000) +
+                    " s. This process has no frame loop to finish it, so it is abandoned when the process exits "
+                    "(the cache may or may not have been wiped).",
+                "Raise --timeout, or run cache.recreate against the running application.");
+        }
+        poster.DrainMainThreadOnce();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    try {
+        return CacheRecreateOutcomeToResult(finished.get());
+    } catch (const std::future_error&) {
+        return CommandResult::Failure(ErrorCode::HandlerError,
+                                      "The application shut down before the cache recreate finished.");
+    }
+}
+
+// cache.recreate: the wipe runs on a worker behind AppController's "recreating" gate, so the UI thread never waits
+// for a pane's in-flight request. Its outcome arrives on the UI thread; on success the recreate itself starts the
+// follow-up full sync of the focused pane before this completion runs.
+// A caller on another thread (MCP / CLI / Lua) waits for the outcome HERE, off the UI thread, and returns the final
+// result including whether the wipe happened. A caller already on the UI thread with a frame loop (the command
+// palette) cannot wait, so it gets a "started" result at once; the completion toast and the log report the outcome.
+// A caller on the UI thread WITHOUT a frame loop (the one-shot in-process CLI) pumps the dispatcher itself until the
+// outcome arrives (WaitForRecreateByPumping).
+CommandResult RunCacheRecreate(IAppSync& app, IMainThreadPoster& poster, const CommandContext& ctx) {
+    auto outcome = std::make_shared<std::promise<smatchet::sync::CacheRecreateOutcome>>();
+    std::future<smatchet::sync::CacheRecreateOutcome> finished = outcome->get_future();
+    const bool onUiThread = poster.IsOnUiThread();
+    const CommandResult started = RunOnUiThreadAsCommandResult(poster, [&app, outcome]() {
+        const VoidResult startedOk =
+            app.StartRecreateLocalCacheDatabase([outcome](const smatchet::sync::CacheRecreateOutcome& done) {
+                outcome->set_value(done); // the follow-up full sync (on success) is started by the recreate itself
+            });
+        if (!startedOk.has_value()) {
+            smatchet::sync::CacheRecreateOutcome refused; // nothing was deleted
+            refused.Error = startedOk.error();
+            return CacheRecreateOutcomeToResult(refused);
+        }
+        return CommandResult::Success({{"started", true}});
+    });
+    if (!started.Ok) {
+        return started;
+    }
+    nlohmann::json pending;
+    pending["triggered"] = true;
+    pending["started"] = true;
+    pending["completed"] = false;
+    const std::chrono::milliseconds bound =
+        ctx.TimeoutMs > 0 ? std::chrono::milliseconds(ctx.TimeoutMs) : std::chrono::milliseconds(5 * 60 * 1000);
+    if (onUiThread && !poster.HasFrameLoop()) {
+        return WaitForRecreateByPumping(finished, poster, bound);
+    }
+    if (onUiThread) {
+        return CommandResult::Success(std::move(pending));
+    }
+    if (finished.wait_for(bound) != std::future_status::ready) {
+        return CommandResult::Success(std::move(pending)); // still running: it reports through the toast and the log
+    }
+    try {
+        return CacheRecreateOutcomeToResult(finished.get());
+    } catch (const std::future_error&) {
+        return CommandResult::Failure(ErrorCode::HandlerError,
+                                      "The application shut down before the cache recreate finished.");
+    }
+}
+
 void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
     {
-        Command c =
-            MakeCommand("cache.recreate",
-                        "Wipe the local cache database (cached tickets AND queued offline edits) and "
-                        "re-fetch the active view from the tracker. Runs on the UI thread and waits for "
-                        "every pane's in-flight sync to stop, so the UI may pause briefly.",
-                        [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
-                            if (ctx.DryRun) {
-                                return CommandResult::Success(
-                                    {{"wouldDo", "wipe local cache + offline queue, then full re-fetch"}});
-                            }
-                            // RecreateLocalCacheDatabase swaps the cache and joins every pane's
-                            // worker: UI-thread-owned state, so the whole sequence runs there.
-                            return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                const VoidResult recreated = app.RecreateLocalCacheDatabase();
-                                if (!recreated.has_value()) {
-                                    // The wipe did not happen: report it and do not start a sync, so a
-                                    // caller never believes queued offline edits were cleared.
-                                    return CommandResult::Failure(
-                                        ErrorCode::HandlerError, "Local cache was not recreated: " + recreated.error());
-                                }
-                                app.SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
-                                nlohmann::json out;
-                                out["triggered"] = true;
-                                return CommandResult::Success(std::move(out));
-                            });
-                        });
+        Command c = MakeCommand(
+            "cache.recreate",
+            "Wipe the local cache database (cached tickets AND queued offline edits) and re-fetch the active view "
+            "from the tracker. The wipe runs on a worker behind a \"recreating\" gate that holds back new syncs and "
+            "cache access; the UI never waits for a running request. MCP / CLI / Lua callers wait for the outcome "
+            "and get the final result (a failure says whether the cache was already wiped); the command palette "
+            "gets \"started\" at once and a toast reports the outcome.",
+            [&app, &poster](const nlohmann::json&, const CommandContext& ctx) {
+                if (ctx.DryRun) {
+                    return CommandResult::Success(
+                        {{"wouldDo", "wipe local cache + offline queue, then full re-fetch"}});
+                }
+                return RunCacheRecreate(app, poster, ctx);
+            });
         c.Destructive = true; // deletes queued offline edits: relies on the registry's confirm gate
         c.Idempotent = false;
         c.AsyncSafe = false;
@@ -223,15 +305,18 @@ nlohmann::json SyncStatsToJson(const smatchet::sync::SyncSessionStats& stats) {
 }
 
 void RegisterSyncStatsCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
-    Command c = MakeCommand("sync.stats",
-                            "What the last finished sync session cost: mode (full/delta), roster size, bodies "
-                            "fetched, unchanged rows, requests, bytes, duration and fallback reason.",
-                            [&app, &poster](const nlohmann::json&, const CommandContext&) {
-                                // Resolves the focused pane, which is UI-thread-owned state.
-                                return RunOnUiThreadAsCommandResult(poster, [&app]() {
-                                    return CommandResult::Success(SyncStatsToJson(app.GetLastSyncSessionStats()));
-                                });
-                            });
+    Command c =
+        MakeCommand("sync.stats",
+                    "What the last finished sync session cost: mode (full/delta), roster size, bodies "
+                    "fetched, unchanged rows, requests, bytes, duration and fallback reason. The request and byte "
+                    "counts are approximate: they sample a traffic counter shared by every pane, so two panes "
+                    "syncing at once cross-count each other.",
+                    [&app, &poster](const nlohmann::json&, const CommandContext&) {
+                        // Resolves the focused pane, which is UI-thread-owned state.
+                        return RunOnUiThreadAsCommandResult(poster, [&app]() {
+                            return CommandResult::Success(SyncStatsToJson(app.GetLastSyncSessionStats()));
+                        });
+                    });
     c.Idempotent = true;
     reg.Register(std::move(c));
 }

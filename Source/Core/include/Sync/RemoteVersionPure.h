@@ -171,6 +171,12 @@ inline RemoteVersionOrder CompareRemoteUpdated(const std::string& incoming, cons
     return incomingMs == residentMs ? RemoteVersionOrder::Same : RemoteVersionOrder::Newer;
 }
 
+/// True when two stamps name the same tracker version: equal text, or two renderings of one instant ("+0000" and
+/// "Z", another zone's offset). Stamps that do not parse count as the same only when their text is equal.
+inline bool IsSameRemoteVersion(const std::string& a, const std::string& b) {
+    return a == b || CompareRemoteUpdated(a, b) == RemoteVersionOrder::Same;
+}
+
 /// True when an incoming row must NOT replace the resident one because it is provably older.
 /// Unknown order never blocks (the pre-delta behaviour: the incoming row wins).
 inline bool IsIncomingRowStale(const std::string& incomingUpdated, const std::string& residentUpdated) {

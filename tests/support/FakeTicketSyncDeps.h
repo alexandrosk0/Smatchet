@@ -19,10 +19,14 @@
 #include "FakeSyncCache.h"
 #include "ISyncCache.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -35,7 +39,11 @@ namespace smatchet_tests {
 /// this with their own factory.
 class FakeTrackerBackendFactory : public ITrackerBackendFactory {
   public:
-    std::unique_ptr<ITrackerBackend> Create(const std::string& /*trackerType*/, const TrackerConfig& /*cfg*/) override {
+    /// Every `trackerType` a Create call asked for, in order.
+    std::vector<std::string> CreatedTypes;
+
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& /*cfg*/) override {
+        CreatedTypes.push_back(trackerType);
         return std::unique_ptr<ITrackerBackend>(new FakeTrackerClient());
     }
 };
@@ -54,6 +62,10 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::chrono::steady_clock::time_point LastPushOutageAt{};
     int PushOutageCalls = 0;
     int DeferredLiveNotifyCalls = 0;
+    /// Seconds added to the system clock the sync service reads (NowUnixSeconds): a test moves time forward by
+    /// bumping it instead of sleeping.
+    std::atomic<std::int64_t> ClockOffsetSec{0};
+    std::int64_t NowUnixSeconds() const override { return TimeNowPure::NowUnixSeconds() + ClockOffsetSec.load(); }
 
     /// Records every NotifySyncStatus call (the UI-free toast hook). Tests assert the
     /// title / level sequence instead of poking the real ImGui toast manager.
@@ -108,6 +120,13 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     void OnTicketsRemotelyChanged(const std::vector<std::string>& ids) override {
         RemotelyChanged.insert(RemotelyChanged.end(), ids.begin(), ids.end());
     }
+    /// What PublishViewListedIds received (the view query's own ids of the last completed session) and how often.
+    std::vector<std::string> ViewListed;
+    int ViewListedPublishes = 0;
+    void PublishViewListedIds(const std::vector<std::string>& ids) override {
+        ViewListed = ids;
+        ++ViewListedPublishes;
+    }
     /// When set, launched tasks are parked in `DeferredTasks` instead of running inline, so a test can hold a
     /// background task "in flight" and run it (RunDeferredTasks) when it chooses.
     bool DeferBackgroundTasks = false;
@@ -122,8 +141,44 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
             }
         }
     }
+    /// How many times the service posted work to the UI thread (it runs inline, as the interface default does).
+    int PostsToMainThread = 0;
+    /// When set, posts are parked in `DeferredPosts` instead of running inline, so a test can land them in any
+    /// order (RunDeferredPosts), the way posts from separate worker threads can.
+    bool DeferPosts = false;
+    std::vector<std::function<void()>> DeferredPosts;
+    void RunDeferredPosts(bool reverse = false) {
+        std::vector<std::function<void()>> posts;
+        posts.swap(DeferredPosts);
+        if (reverse) {
+            std::reverse(posts.begin(), posts.end());
+        }
+        for (auto& post : posts) {
+            post();
+        }
+    }
+    void PostToMainThread(std::function<void()> fn) override {
+        ++PostsToMainThread;
+        if (DeferPosts) {
+            DeferredPosts.push_back(std::move(fn));
+            return;
+        }
+        if (fn) {
+            fn();
+        }
+    }
+    /// When set, a launched task is dropped unrun (the real LaunchBackgroundTask does so at shutdown).
+    bool SkipBackgroundTasks = false;
+    /// When set, the launch itself throws (after the task was handed over).
+    bool ThrowOnLaunch = false;
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++BackgroundTasksLaunched;
+        if (ThrowOnLaunch) {
+            throw std::runtime_error("launch failed");
+        }
+        if (SkipBackgroundTasks) {
+            return;
+        }
         if (DeferBackgroundTasks) {
             DeferredTasks.push_back(std::move(task));
             return;
@@ -183,6 +238,9 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         ActiveTicketsPublishedImpl = std::move(snap);
     }
     void BumpActiveTicketsRevision() override { ++ActiveTicketsRevisionImpl; }
+    std::uint64_t ActiveTicketsRevisionNow() const override {
+        return static_cast<std::uint64_t>(ActiveTicketsRevisionImpl);
+    }
 
     void PruneEditMetaCacheToActiveTickets() override { ++PruneEditMetaCalls; }
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig /*cfg*/) override { ++WarmIssueTypeEditMetaCalls; }

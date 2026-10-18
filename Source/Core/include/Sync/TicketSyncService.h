@@ -22,13 +22,15 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Sync/SyncMode.h"         // SyncMode: Delta (changed tickets only) vs Full (whole view).
-#include "Sync/SyncSessionStats.h" // SyncSessionStats - what the last session cost (sync.stats).
+#include "Sync/ActiveRowMergePure.h" // ActiveRowIndex: the apply drain's id -> index map, kept per session.
+#include "Sync/SyncMode.h"           // SyncMode: Delta (changed tickets only) vs Full (whole view).
+#include "Sync/SyncSessionStats.h"   // SyncSessionStats - what the last session cost (sync.stats).
 #include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "SmatchetResult.h"       // Result<>
 #include "TicketSyncMeta.h"       // TicketSyncMeta (the per-session version snapshot)
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
+#include "Sync/RefusedKeysPure.h" // RefusedKeySet (the keys a tracker refused on a delta attempt)
 
 struct TrackerError;             // Tracker/TrackerError.h — only named in the FetchHierarchyHop declaration
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
@@ -55,9 +57,35 @@ class TicketSyncService {
     TicketSyncService& operator=(const TicketSyncService&) = delete;
 
     /// Cancel any in-flight streaming sync, join the worker thread, clear the pending-batches
-    /// queue. Idempotent. Called from `~TicketSyncService`, `~AppController`,
-    /// `RecreateLocalCacheDatabase`, and the start path of every new sync.
+    /// queue. Idempotent. Called from `~TicketSyncService`, `~AppController`, `EndCacheTeardown`
+    /// and the start path of every new sync.
     void CancelAndJoinActiveStreamingSync();
+
+    /// Cache-recreate gate, step 1 (UI thread): from here no new sync starts (`SyncWithBackend` only records the
+    /// request, to run when the gate lifts; `TickStreamingApply` does nothing, so nothing reads or writes the
+    /// cache), the running sync is flagged
+    /// cancelled, and its worker thread is handed to the caller to join OFF the UI thread (a request on the wire
+    /// runs to its own timeout). The returned thread is not joinable when no worker was running.
+    /// A request queued behind the running session (`hasPendingSyncRequest_`) moves into the held slot, the one
+    /// `EndCacheTeardown` replays or folds, so it does not also start a superseded session of its own; its mode
+    /// combines with later held requests (Full wins).
+    std::thread BeginCacheTeardown();
+
+    /// Cache-recreate gate, step 2 (UI thread, after the thread from `BeginCacheTeardown` was joined and the cache
+    /// was swapped): drops the cancelled session's batches and stale-deletion state, lifts the block, and replays
+    /// the sync request recorded while it was up (if any) with its mode, so a pane opened or a views load that
+    /// finished during the recreate still syncs. A no-op when the gate is not up.
+    /// `foldIntoFollowUp` is for a caller that starts its own sync right after (the recreate's follow-up full
+    /// refresh): the recorded request is not started here, only its mode is kept, and the next `SyncWithBackend`
+    /// combines with it (Full wins) - so exactly one session runs after the recreate instead of a replay that the
+    /// follow-up then cancels or duplicates.
+    /// The caller must follow with a `SyncWithBackend` right away (AppController::FinishCacheRecreate_ does, in the
+    /// same call). A fold nobody consumed is dropped by the next `BeginCacheTeardown`, so it
+    /// cannot turn an unrelated later refresh into a Full.
+    void EndCacheTeardown(bool foldIntoFollowUp = false);
+
+    /// True between `BeginCacheTeardown` and `EndCacheTeardown`. Any thread.
+    bool IsCacheTeardownActive() const { return startsBlocked_.load(); }
 
     /// Flag the in-flight streaming sync (if any) Cancelled + Superseded WITHOUT joining. The
     /// worker observes the flags at its next page / phase boundary, so a request already on the
@@ -69,9 +97,13 @@ class TicketSyncService {
     /// ones, so they start further requests and teardown costs up to one HTTP timeout PER pane;
     /// two passes let every worker unwind concurrently, bounding the total to about one timeout.
     /// Null entries and duplicates are skipped. Used by `~AppController` and
-    /// `RecreateLocalCacheDatabase`.
+    /// `StartRecreateLocalCacheDatabase`.
     static void CancelAndJoinAll(const std::vector<TicketSyncService*>& services);
 
+    /// TEST-ONLY SEAM: no production caller. Production applies fetches through the streaming path
+    /// (`TickStreamingApply`); `AppController` has no passthrough. Kept because the stale-deletion and
+    /// empty-full-sync-guard tests drive the one-shot apply directly. Do not add production callers.
+    ///
     /// Apply a single tracker-fetch result on the UI thread: persist fetched tickets to SQLite,
     /// classify any fetch error / soft warning, and prune cache rows that vanished from the
     /// remote when `FullSyncCompleted` is set.
@@ -88,6 +120,13 @@ class TicketSyncService {
     /// `mode` Delta (the default) lists the view's tickets with their versions and downloads only the changed
     /// ones, falling back to a full fetch on any failure; Full forces the whole-view download. Requests queued
     /// behind a running session combine so that Full wins (smatchet::sync::CombineSyncModes).
+    /// With no `configOverride` or no `viewsOverride` the missing part (the config file, the saved views) is read
+    /// first, on a worker (the file read and parse never run on the UI thread), and the sync then starts from a
+    /// UI-thread post; the request is dropped if this service was destroyed meanwhile, or if a newer SyncWithBackend
+    /// call (of any shape) was made while it read: the reads run on separate threads and their posts can land out of
+    /// order, and the newest request wins. A dropped Full is kept (queued or folded into the next request).
+    /// While the cache-recreate gate is up (`IsCacheTeardownActive`) nothing starts: the request is recorded instead
+    /// (the latest config and views, the mode combined so that Full wins) and `EndCacheTeardown` replays it.
     void SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
                          smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
 
@@ -96,6 +135,10 @@ class TicketSyncService {
     /// than the probe saw. Any thread.
     std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
 
+    /// How many times the apply drain built its id -> index map from scratch (cumulative). A session builds it once
+    /// and rebuilds only when the roster changed behind it; diagnostics and tests. UI thread.
+    std::size_t MergeIndexBuilds() const { return mergeIndex_.Builds; }
+
     /// What the most recently finished session cost (`Valid` is false until one finishes). Any thread.
     smatchet::sync::SyncSessionStats LastSessionStats() const;
 
@@ -103,7 +146,13 @@ class TicketSyncService {
     /// `AppController::IsStreamingSyncActive()` which de-inlines into a delegate.
     bool IsActive() const;
 
-    /// Reset stale-deletion state to empty. Called from `RecreateLocalCacheDatabase` after the
+    /// `IsActive()`, or a saved-views read for a sync request is still running on a worker. That worker posts its
+    /// result through `ITicketSyncDeps`, which belongs to the pane's context, so the pane must not retire (and free
+    /// the service and, with it, the deps) while one is in flight. `AppController::retireExpiredHiddenContexts_`
+    /// postpones on this, not on `IsActive()` (a views read is not a "sync running" for the status line). Any thread.
+    bool HasPendingWork() const;
+
+    /// Reset stale-deletion state to empty. Called from `StartRecreateLocalCacheDatabase` after the
     /// SQLite file is replaced so the service doesn't try to delete tickets from a fresh DB.
     void ResetStaleDeletionState();
 
@@ -190,6 +239,8 @@ class TicketSyncService {
         std::vector<SyncBatch> PendingBatches;
         std::unordered_set<std::string> KeepIds;
         std::vector<std::string> BackgroundStaleIds;
+        /// Ids the view's own query returned this session; filled by PublishWorkerResult, guarded by QueueMutex.
+        std::vector<std::string> ViewListedIds;
 
         /// Worker-filled part of the session cost record (mode, bodies, ...), guarded by QueueMutex.
         smatchet::sync::SyncSessionStats WorkerStats;
@@ -206,7 +257,9 @@ class TicketSyncService {
 
     /// Normalize the requested tracker kind, swap the live backend when it differs, and on a
     /// cross-kind swap clear the in-memory ActiveTickets snapshot so stale items don't linger.
-    void SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy);
+    /// False when a backend was needed but no factory can build it: the sync warning is set and the session must not
+    /// start (it would run against the old tracker).
+    bool SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy);
 
     /// Background streaming-fetch worker body. Coordinates with the UI thread via FSM atomics
     /// + `QueueMutex`.
@@ -230,9 +283,12 @@ class TicketSyncService {
 
     /// Publishes a finished worker session (result flags, stats, stale ids) under QueueMutex; a no-op when
     /// the session was superseded or cancelled.
+    /// `viewListedIds` are the ids the view's own query returned (not the hierarchy walk's rows); a completed
+    /// session hands them to the deps (PublishViewListedIds) when it finalizes.
     void PublishWorkerResult(std::uint64_t reqId, const TrackerIssueFetchSummary& summary,
                              const std::unordered_set<std::string>& keepIds,
-                             const smatchet::sync::SyncSessionStats& partialStats);
+                             const smatchet::sync::SyncSessionStats& partialStats,
+                             std::vector<std::string> viewListedIds);
 
     /// Appends rows to the apply queue; false when the session was superseded / cancelled meanwhile.
     /// A freshly fetched batch (`cachedUnchanged` false) is persisted HERE, on the worker, before it is
@@ -321,9 +377,39 @@ class TicketSyncService {
     /// one row. UI thread, once per session.
     void ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompleted, std::size_t keptThisSession);
 
+    /// Phase 4d: hand the ids the view's own query returned to the deps once a COMPLETE session finished (a
+    /// partial answer is not a listing of the view). UI thread, once per session.
+    void PublishViewListing(bool fullSyncCompleted);
+
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
     std::atomic<std::uint64_t> sessionEpoch_{0};
+    /// Raised by BeginCacheTeardown, lowered by EndCacheTeardown (the cache-recreate gate).
+    std::atomic<bool> startsBlocked_{false};
+    /// Cleared by the destructor; a worker's UI-thread post checks it before touching the service.
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    /// Saved-views reads (SyncWithBackendLoadingViews_) still running on a worker; shared so the worker can lower it
+    /// after the service is gone. Counted by HasPendingWork.
+    std::shared_ptr<std::atomic<int>> viewsLoadsInFlight_ = std::make_shared<std::atomic<int>>(0);
+    /// SyncWithBackend without config or views: load what is missing off the UI thread, then start (see
+    /// SyncWithBackend).
+    void SyncWithBackendLoadingViews_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                      smatchet::sync::SyncMode mode);
+    /// The body of SyncWithBackend, without counting a new request (the UI-thread post of a finished files read is
+    /// the request it was made for).
+    void SyncWithBackendNow_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                             smatchet::sync::SyncMode mode);
+    /// A files read finished after a newer request was made: its sync is not started. A Full mode is kept (queued
+    /// behind a running session, else folded into the next request) so dropping it never downgrades to Delta, unless a
+    /// newer request already applied a Full (that one covers it; keeping it would turn the next request into a second
+    /// Full). `seq` is the dropped request's place in the order.
+    void FoldDroppedRequest_(smatchet::sync::SyncMode mode, std::uint64_t seq);
+    /// Requests made so far, bumped by every public SyncWithBackend call (UI thread only). A files read compares it
+    /// with the value it was launched at when its post lands.
+    std::uint64_t requestSeq_ = 0;
+    /// The place of the newest request that was applied as a Full (0 = none yet): it began, or joined the queue
+    /// behind, a Full session. UI thread only.
+    std::uint64_t lastFullAppliedSeq_ = 0;
     mutable std::mutex statsMutex_;
     smatchet::sync::SyncSessionStats lastStats_; // guarded by statsMutex_
     StreamingSyncState activeStreamingSync_;
@@ -336,11 +422,41 @@ class TicketSyncService {
     /// Versions of the cached rows as of the session start; worker-thread only (written before the first
     /// batch is queued, read while persisting the batches of the same session).
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;
+    /// Keys the tracker refused to serve on an earlier delta attempt of this service. Each such attempt falls back
+    /// to a full fetch; without this memory a key that stays refused would make every later delta attempt do the
+    /// same. They are skipped - their cached row stands in, so the session still counts the key as returned and
+    /// stays authoritative, and nothing is purged - until the memory is cleared by an
+    /// explicit Full sync or a tracker switch, the key is served by a later fetch (the fallback full fetch
+    /// included, at the version it was refused for or a newer one), it is older than DeltaSyncMaxRowAgeSec, or
+    /// more than RefusedKeySet::MaxKeys() newer ones pushed it out. Worker-only during a session; cleared on the UI
+    /// thread while no worker runs.
+    smatchet::sync::RefusedKeySet refusedKeys_;
+    /// The apply drain's id -> index map, kept for the whole session (UI thread).
+    smatchet::sync::ActiveRowIndex mergeIndex_;
     /// Fills `sessionMeta_` from the cache (worker thread). Returns the error text when the read failed (the
     /// snapshot is then empty), empty on success.
     std::string LoadSessionMeta();
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
+
+    /// The sync request that arrived while the cache-recreate gate was up, replayed by `EndCacheTeardown`. Latest
+    /// config and views win (a null override stays null: the saved ones are read at replay); the mode combines, so
+    /// a Full request is never downgraded by a later Delta one. UI thread only.
+    struct BlockedSyncRequest {
+        bool Has = false;
+        bool HasConfig = false;
+        TrackerConfig Config;
+        bool HasViews = false;
+        ViewsStore Views;
+        smatchet::sync::SyncMode Mode = smatchet::sync::SyncMode::Delta;
+    };
+    BlockedSyncRequest blockedRequest_;
+    /// The mode of a blocked request folded into the follow-up sync (`EndCacheTeardown(true)`): combined with the
+    /// mode of the next `SyncWithBackend`, then cleared. UI thread only.
+    bool hasFoldedMode_ = false;
+    smatchet::sync::SyncMode foldedMode_ = smatchet::sync::SyncMode::Delta;
+    void RecordBlockedSyncRequest_(const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                   smatchet::sync::SyncMode mode);
 
     // Stale-deletion bookkeeping. `isDeletingStale_` is atomic because `IsActive()` reads it
     // from `AppController::IsStreamingSyncActive()` which is callable from any thread. The
