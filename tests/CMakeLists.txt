@@ -430,6 +430,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
+        # The worker's cache swap / null-cache retry / Stop cases race the worker thread against
+        # the test thread's atomic_store of the cache, so they run here under TSan too. Needs only
+        # LocalCacheManager (linked above) and the header-only MainThreadDispatcher.
+        Core/SmatchetChatPersistWorker.test.cpp
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
         # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
         # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
@@ -861,6 +865,10 @@ add_executable(SmatchetTests
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
     Core/LocalCacheManagerChat.test.cpp
+    # The chat_persist worker against real in-memory LCMs: it resolves the cache per op, so a
+    # cache recreate (swap + free) is followed and a withdrawn (null) cache is retried, never
+    # dereferenced. Self-gates on SMATCHET_WITH_AI like the chat TU above.
+    Core/SmatchetChatPersistWorker.test.cpp
     Core/BackendAuditTrail.test.cpp
     # security #10 regression guard — the offline-queue create audit copy of the draft must be
     # structurally redacted (RedactJson over the parsed payload) while the enqueued/replayed
@@ -1482,6 +1490,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    # chat_persist worker (Core/SmatchetChatPersistWorker.test.cpp). Self-gates on SMATCHET_WITH_AI;
+    # needs only LocalCacheManager + the header-only MainThreadDispatcher, both linked here.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
