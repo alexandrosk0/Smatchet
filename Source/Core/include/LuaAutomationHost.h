@@ -16,28 +16,27 @@
 // before `Initialize`) can be buffered into `pendingLogSinks_` on
 // AppController and drained on first construction.
 
-#include <functional>
-#include <string>
-#include <vector>
+#include "StringSinkList.h"
+
+#include <memory>
 
 class LuaAutomationHost {
   public:
     LuaAutomationHost() = default;
 
     /// Register a sink that receives every line written to the Lua log ring.
-    /// Called from plugins in `OnEarlyInit` only (before `InitLua` completes).
-    void AddAutomationLogSink(std::function<void(const std::string&)> sink);
+    /// Called from plugins in `OnEarlyInit` (before `InitLua` completes) and from commands.
+    void AddAutomationLogSink(smatchet::StringSinkList::Sink sink);
 
     /// Drop all sinks. Called before destroying plugins to avoid dangling `[this]` captures.
     void ClearAutomationLogSinks();
 
-    /// Snapshot copy of the sink list for the Lua log writer to iterate without holding the
-    /// host alive (the writer is called from background threads). Empty when no sinks are
-    /// registered.
-    std::vector<std::function<void(const std::string&)>> SnapshotLogSinks() const;
+    /// The current sinks (never null), for the Lua log writer to iterate on whatever thread it
+    /// runs: the list is immutable once published, so a concurrent Add or Clear cannot change it.
+    std::shared_ptr<const smatchet::StringSinkList::Sinks> SnapshotLogSinks() const;
 
   private:
-    /// Plugin-registered sinks for the Lua log stream. UI-thread-only writes via `Add*` /
-    /// `Clear*`; the Lua worker reads via `SnapshotLogSinks` so it iterates a stable copy.
-    std::vector<std::function<void(const std::string&)>> automationLogSinks_;
+    /// Plugin-registered sinks for the Lua log stream. Written on the UI thread, read on the
+    /// automation worker and the UI thread; StringSinkList makes that safe.
+    smatchet::StringSinkList automationLogSinks_;
 };

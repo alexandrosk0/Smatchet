@@ -21,13 +21,17 @@
 // closure: MainThreadDispatcher.h (header-only) + UiPerfMonitor.cpp (the SMATCHET_UI_PERF_SCOPE in
 // Drain()) — both ImGui-free.
 
+#include "Commands/IMainThreadPoster.h"
+#include "Commands/MainThreadDispatch.h"
 #include "MainThreadDispatcher.h"
 
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -147,11 +151,11 @@ TEST_CASE("MainThreadDispatcher: BeginShutdown races concurrent posters without 
     dispatcher.PostToMainThread([&] { drainedAfterShutdown.fetch_add(1, std::memory_order_relaxed); });
     CHECK(dispatcher.QueueLen() == lenBefore); // post rejected post-shutdown
 
-    // The final drain still empties whatever landed before BeginShutdown (shutdown ignores the
-    // per-frame budget so the last drain runs the whole tail), and the post-shutdown task above
-    // never ran.
-    dispatcher.Drain();
+    // BeginShutdown discarded whatever landed before it, so nothing is left for a drain, and the
+    // post-shutdown task above never ran.
     CHECK(dispatcher.QueueLen() == 0u);
+    dispatcher.Drain();
+    CHECK(dispatcher.LastDrainTaskCount() == 0u);
     // The post-shutdown task is the only one that would have added +1; it was rejected, and every
     // pre-shutdown producer task adds 0, so the counter never moved.
     CHECK(drainedAfterShutdown.load() == 0);
@@ -249,5 +253,66 @@ TEST_CASE("MainThreadDispatcher: concurrent completion and droppable posters pas
 
     CHECK(completionsRan == kCompletions); // every completion ran exactly once
     CHECK(droppableRan + static_cast<long>(dispatcher.DroppedTaskCount()) == kDroppable);
+    CHECK(dispatcher.QueueLen() == 0u);
+}
+
+// ---- #2306: a worker blocked on a queued UI-thread task must not hang shutdown ----
+// RunOnUiThread posts a task that owns a promise and blocks on its future. A task queued before
+// BeginShutdown used to stay queued until the dispatcher itself was destroyed, after the joins that
+// wait for that worker, so the join hung. BeginShutdown now destroys the queued task, breaking the
+// promise, and the worker unblocks with a shutdown error. No frame drains here: that is the point.
+
+namespace {
+
+class DispatcherPoster : public IMainThreadPoster {
+  public:
+    explicit DispatcherPoster(MainThreadDispatcher& dispatcher) : dispatcher_(dispatcher) {}
+    bool IsOnUiThread() const override { return false; }
+    void PostToMainThread(std::function<void()> fn) override { dispatcher_.PostToMainThread(std::move(fn)); }
+
+  private:
+    MainThreadDispatcher& dispatcher_;
+};
+
+} // namespace
+
+TEST_CASE("MainThreadDispatcher: BeginShutdown releases a worker blocked on a queued RunOnUiThread task") {
+    MainThreadDispatcher dispatcher;
+    DispatcherPoster poster(dispatcher);
+    std::atomic<bool> finished(false);
+    std::atomic<bool> ranOnUi(false);
+    std::string error;
+    std::thread worker([&] {
+        try {
+            smatchet::cmd::RunOnUiThread<int>(poster, [&ranOnUi]() {
+                ranOnUi.store(true);
+                return 1;
+            });
+        } catch (const std::runtime_error& ex) {
+            error = ex.what();
+        }
+        finished.store(true, std::memory_order_release);
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (dispatcher.QueueLen() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    REQUIRE(dispatcher.QueueLen() == 1u);
+    CHECK_FALSE(finished.load(std::memory_order_acquire));
+
+    dispatcher.BeginShutdown(); // no drain: the frame loop has stopped
+    while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool released = finished.load(std::memory_order_acquire);
+    if (!released) {
+        // Unblock the worker so the test fails instead of hanging: run the task it waits on.
+        DrainAll(dispatcher);
+    }
+    worker.join();
+    REQUIRE(released);
+    CHECK_FALSE(ranOnUi.load());
+    CHECK(error.find("cancelled") != std::string::npos);
     CHECK(dispatcher.QueueLen() == 0u);
 }

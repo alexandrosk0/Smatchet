@@ -269,8 +269,11 @@ void AppController::Impl::InitLuaUi(sol::state& state) {
 
 void AppController::Impl::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
-    if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
-        for (const auto& sink : luaHost_->SnapshotLogSinks()) {
+    // One snapshot: it is immutable, so a sink registered or cleared meanwhile cannot change it.
+    const std::shared_ptr<const smatchet::StringSinkList::Sinks> sinks =
+        luaHost_ ? luaHost_->SnapshotLogSinks() : nullptr;
+    if (sinks && !sinks->empty()) {
+        for (const auto& sink : *sinks) {
             sink(clean);
         }
     } else {
@@ -406,9 +409,7 @@ void AppController::Impl::ReplayActiveSetupScripts(sol::state& state, sol::envir
         if (!app_.IsLuaScriptConsented(resolved, /*interactive=*/false, consentReason)) {
             const std::string bare = "[LUA setup-bg] " + path + ": " + consentReason;
             LuaLogInfoBind(std::string("[ERROR] ") + bare);
-            for (const auto& sink : app_.errorSinks_) {
-                sink(bare);
-            }
+            app_.errorSinks_.InvokeAll(bare);
             app_.scriptingWindowOpenRequested_.store(true);
             continue;
         }
@@ -417,9 +418,7 @@ void AppController::Impl::ReplayActiveSetupScripts(sol::state& state, sol::envir
             sol::error err = script;
             const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
             LuaLogInfoBind(std::string("[ERROR] ") + bare);
-            for (const auto& sink : app_.errorSinks_) {
-                sink(bare);
-            }
+            app_.errorSinks_.InvokeAll(bare);
             app_.scriptingWindowOpenRequested_.store(true);
             continue;
         }
@@ -430,9 +429,7 @@ void AppController::Impl::ReplayActiveSetupScripts(sol::state& state, sol::envir
             sol::error err = res;
             const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
             LuaLogInfoBind(std::string("[ERROR] ") + bare);
-            for (const auto& sink : app_.errorSinks_) {
-                sink(bare);
-            }
+            app_.errorSinks_.InvokeAll(bare);
             app_.scriptingWindowOpenRequested_.store(true);
         }
     }
@@ -533,9 +530,7 @@ void AppController::Impl::RunAutomationJob(sol::state& state, sol::environment& 
         // Route through the normal info sink so the console shows it, but also
         // through dedicated error sinks (persistent error panel + window-open).
         LuaLogInfoBind(std::string("[ERROR] ") + bare);
-        for (const auto& sink : app_.errorSinks_) {
-            sink(bare);
-        }
+        app_.errorSinks_.InvokeAll(bare);
         app_.scriptingWindowOpenRequested_.store(true);
     };
 
@@ -674,16 +669,16 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string bare = std::string(prefix) + detail;
         const std::string decorated = std::string("[ERROR] ") + bare;
-        if (impl_->luaHost_ && !impl_->luaHost_->SnapshotLogSinks().empty()) {
-            for (const auto& sink : impl_->luaHost_->SnapshotLogSinks()) {
+        const std::shared_ptr<const smatchet::StringSinkList::Sinks> sinks =
+            impl_->luaHost_ ? impl_->luaHost_->SnapshotLogSinks() : nullptr;
+        if (sinks && !sinks->empty()) {
+            for (const auto& sink : *sinks) {
                 sink(decorated);
             }
         } else {
             LOG_ERROR("%s", decorated.c_str());
         }
-        for (const auto& sink : errorSinks_) {
-            sink(bare);
-        }
+        errorSinks_.InvokeAll(bare);
         scriptingWindowOpenRequested_.store(true);
     };
 
