@@ -279,12 +279,16 @@ void RestoreSnapshotForErrorAsync(GridContextFieldCatalog& cat, const CatalogSna
                                   const CatalogWriteGuard& guard) {
     GridContextFieldCatalog* const catPtr = &cat;
     const auto handled = std::make_shared<std::atomic<bool>>(false);
+    // The restore finishes later, on the UI thread: the guard's Config points at the caller's configuration, which
+    // is gone by then. The snapshot keys were built from it already; the deferred copy carries no pointer to it.
+    CatalogWriteGuard deferredGuard = guard;
+    deferredGuard.Config = nullptr;
     const auto finish = [catPtr, io, handled, error, errorTransient, backendKey,
-                         guard](std::shared_ptr<ErrorRestoreSnapshot> snap) {
+                         deferredGuard](std::shared_ptr<ErrorRestoreSnapshot> snap) {
         if (handled->exchange(true)) {
             return;
         }
-        FinishCatalogError(*catPtr, std::move(*snap), error, errorTransient, backendKey, guard);
+        FinishCatalogError(*catPtr, std::move(*snap), error, errorTransient, backendKey, deferredGuard);
         if (io.RestoresInFlight != nullptr) {
             io.RestoresInFlight->fetch_sub(1);
         }
@@ -968,6 +972,57 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                               errorTransient, CatalogWriteGuard::LatchedTo(pane), io)) {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
+}
+
+GridCatalogFetchLatch AppController::LatchGridCatalogFetch() {
+    GridLiveContext& pane = focusedContext();
+    GridCatalogFetchLatch latch;
+    latch.Pane = &pane;
+    latch.PaneGeneration = pane.backendGeneration_.load();
+    latch.CatalogEpoch = pane.fieldCatalog.CatalogEpoch.load();
+    latch.PaneCacheKey = pane.CacheBackendKeyCopy();
+    return latch;
+}
+
+bool AppController::IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch& latch) const {
+    return latch.Pane == &focusedContext();
+}
+
+bool AppController::ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& latch, const TrackerConfig& fetchCfg,
+                                                const std::string& projectKey, std::vector<TrackerField> fields,
+                                                std::vector<TrackerComponent> components,
+                                                std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
+                                                const std::string& error, bool errorTransient) {
+    if (latch.Pane == nullptr) {
+        return false;
+    }
+    GridLiveContext& pane = *latch.Pane;
+    GridContextFieldCatalog& cat = pane.fieldCatalog;
+    // The same guard RefreshFieldCatalog builds, from what the grid latched at launch: a pane that switched
+    // tracker or site, was retired, or had its catalog cleared since then drops the result.
+    CatalogWriteGuard guard;
+    guard.Generation = &pane.backendGeneration_;
+    guard.ExpectedGeneration = latch.PaneGeneration;
+    guard.Epoch = &cat.CatalogEpoch;
+    guard.ExpectedEpoch = latch.CatalogEpoch;
+    guard.Pane = &pane;
+    guard.PaneGeneration = latch.PaneGeneration;
+    guard.PaneCacheKey = latch.PaneCacheKey;
+    guard.Config = &fetchCfg;
+    guard.HasProject = true;
+    guard.Project = projectKey;
+    // UI thread: the snapshot is queued for writing, and a failure with nothing in memory reads it back on the
+    // queue's worker and applies the restore here when it lands (as SetFieldCatalog does).
+    CatalogSnapshotIo io;
+    io.Queue = &catalogSnapshotIo_;
+    io.PostToUi = [this](std::function<void()> fn) { mainThreadDispatcher.PostCompletionToMainThread(std::move(fn)); };
+    io.RestoresInFlight = &cat.errorRestoresInFlight;
+    if (!ApplyFieldCatalogInto(cat, std::move(fields), std::move(components), std::move(issueTypeMeta), error,
+                               errorTransient, guard, io)) {
+        return false;
+    }
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
 }
 
 void AppController::ClearFieldCatalogInMemory() {

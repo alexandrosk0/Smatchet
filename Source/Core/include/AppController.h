@@ -109,6 +109,7 @@ class AiAssistantController;
 #include "Types/FieldEditTypes.h"
 #include "Types/ConnectivityTypes.h"
 #include "Types/AttachmentTypes.h"
+#include "Types/CatalogFetchTypes.h"
 #include "Types/HostCallbacks.h"
 
 // Fan-in Phase 5 (docs/plans/appcontroller-fan-in-phase5-facets.md): narrow interface
@@ -896,6 +897,22 @@ class AppController : public IAppThreading,
     /// Pass the same project key the fetch was scoped to (empty = unscoped). Guarded by
     /// availableFieldsMutex_.
     void SetCurrentCatalogProject(const std::string& projectKey);
+    /// UI thread, as the grid starts its field-catalog fetch: latches the focused pane, its backend generation,
+    /// catalog epoch and cache namespace, for ApplyGridFieldCatalogResult.
+    GridCatalogFetchLatch LatchGridCatalogFetch();
+    /// True when `latch` was taken for the pane that is focused now (UI thread).
+    bool IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch& latch) const;
+    /// UI thread: applies the grid's field-catalog fetch result to the pane `latch` names, the way RefreshFieldCatalog
+    /// applies its own: the snapshot is keyed by `fetchCfg` and `projectKey` (the configuration and project the fetch
+    /// ran with, not whatever is configured when it lands), the Jira-vs-Plane fixups follow `fetchCfg`'s tracker, and
+    /// the project is pinned with the catalog. Dropped when the pane has switched tracker or site, been retired or had
+    /// its catalog cleared since the latch (#2328). A non-empty `error` takes the failure path for that pane and
+    /// project (restoring its saved catalog when memory is empty). Returns true when a catalog was applied.
+    bool ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& latch, const TrackerConfig& fetchCfg,
+                                     const std::string& projectKey, std::vector<TrackerField> fields,
+                                     std::vector<TrackerComponent> components,
+                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
+                                     bool errorTransient);
     /// Replace the cached user list (e.g. after a successful `FetchUsers`). Surfaces to
     /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
     /// Idempotent; safe to call with an empty vector to clear the cache.
