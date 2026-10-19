@@ -1207,9 +1207,12 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
             // Unified focus path: hand wantFocus to DrawWindow which applies the
             // SetNextWindowFocus-before-Begin + SetWindowFocus-after-Begin pattern internally.
             const bool wantPerfFocus = g_ui.requestPerformanceFocus;
+            // Raises the tab when the window is docked behind a sibling (#2274); held while it does not exist yet.
+            const bool keepPerfFocusArmed =
+                SmatchetWindowExpand::ServiceDockedFocusRequest(g_ui, "Performance", wantPerfFocus);
             g_perfUi.DrawWindow(&g_ui.showPerformance, wantPerfFocus);
+            g_ui.requestPerformanceFocus = keepPerfFocusArmed;
             if (wantPerfFocus) {
-                g_ui.requestPerformanceFocus = false;
                 LOG_DEBUG("Performance window: focused via menu request");
             }
         } else if (g_ui.requestPerformanceFocus) {
