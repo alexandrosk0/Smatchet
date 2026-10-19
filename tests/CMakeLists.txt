@@ -160,6 +160,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (MainThreadDispatcher.h); the SMATCHET_UI_PERF_SCOPE in Drain() pulls UiPerfMonitor.cpp
         # (ImGui-free), linked just below.
         Core/MainThreadDispatcherConcurrent.test.cpp
+        # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
+        Core/GridCopyPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:

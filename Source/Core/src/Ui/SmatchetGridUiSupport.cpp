@@ -454,7 +454,7 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
             const TicketGridColumn& col = columns[static_cast<size_t>(c)];
             const TrackerField* meta =
                 (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
-            out += SanitizeForSpreadsheet(GetCellRawForCopy(t, col, meta));
+            out += TsvCopyCell(GetCellRawForCopy(t, col, meta));
             if (c < c1)
                 out.push_back('\t');
         }

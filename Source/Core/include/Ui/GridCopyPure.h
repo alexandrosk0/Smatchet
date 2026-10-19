@@ -1,5 +1,6 @@
-// GridCopyPure.h — pure row-mapping + CSV-line helpers behind the Key cell's "Copy N selected
-// rows as CSV" menu item (SmatchetGridUiSupport.cpp, BuildGridRowsCsv).
+// GridCopyPure.h — pure row-mapping + CSV-line / TSV-cell helpers behind the Key cell's "Copy N
+// selected rows as CSV" menu item and the Ctrl+C TSV copy (SmatchetGridUiSupport.cpp, BuildGridRowsCsv
+// and CopyGridRectAsTsv).
 //
 // Header-only and standard-library-only on purpose: the cell-value lookup lives in
 // TicketGridModel.cpp, which is ImGui-coupled and cannot link into the unit tests, so only the
@@ -41,15 +42,16 @@ inline std::vector<std::size_t> ResolveGridRowsToTicketIndices(const std::set<in
     return out;
 }
 
-/// Comma-join of CsvEscapeField(cell) for each cell, terminated with '\n' (RFC 4180 quoting but
-/// LF, not CRLF, line endings — spreadsheets and text editors accept both).
+/// Comma-join of each cell, formula-guarded (GuardSpreadsheetFormula: tracker text that starts like a
+/// formula is pasted as text) and then RFC 4180-quoted (CsvEscapeField), terminated with '\n' (LF, not
+/// CRLF, line endings — spreadsheets and text editors accept both).
 inline std::string BuildCsvLine(const std::vector<std::string>& cells) {
     std::string out;
     for (std::size_t i = 0; i < cells.size(); ++i) {
         if (i != 0) {
             out.push_back(',');
         }
-        out += CsvEscapeField(cells[i]);
+        out += CsvEscapeField(GuardSpreadsheetFormula(cells[i]));
     }
     out.push_back('\n');
     return out;

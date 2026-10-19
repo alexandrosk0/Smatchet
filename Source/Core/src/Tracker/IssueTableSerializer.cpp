@@ -110,8 +110,10 @@ std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, ch
     std::string cell;
     bool inQuotes = false;
 
+    // SerializeTickets (Bulk Export) and the grid's copy quote text that starts like a formula
+    // (GuardSpreadsheetFormula); undo that here so an exported file imports with its original values.
     auto flushCell = [&]() {
-        row.emplace_back(std::move(cell));
+        row.emplace_back(UnguardSpreadsheetFormula(cell));
         cell.clear();
     };
     auto flushRow = [&]() {
@@ -398,19 +400,21 @@ std::string SerializeTickets(const std::vector<CachedTicket>& tickets, const std
 
     const char delim = (fmt == Format::Tsv) ? '\t' : ',';
     std::string out;
-    // header: include implicit "key" first for round-tripping
-    out += EscapeCsvCell("key", delim);
+    // header: include implicit "key" first for round-tripping. Every cell gets the formula-injection guard
+    // before CSV quoting (a summary like "=HYPERLINK(...)" must open as text); ParseDelimited strips it again.
+    const auto cellOut = [delim](const std::string& v) { return EscapeCsvCell(GuardSpreadsheetFormula(v), delim); };
+    out += cellOut("key");
     for (const auto& c : cols) {
         out.push_back(delim);
-        out += EscapeCsvCell(c, delim);
+        out += cellOut(c);
     }
     out.push_back('\n');
 
     for (const auto& t : tickets) {
-        out += EscapeCsvCell(t.id, delim);
+        out += cellOut(t.id);
         for (const auto& c : cols) {
             out.push_back(delim);
-            out += EscapeCsvCell(t.GetFieldValue(c), delim);
+            out += cellOut(t.GetFieldValue(c));
         }
         out.push_back('\n');
     }
