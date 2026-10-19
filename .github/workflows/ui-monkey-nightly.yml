@@ -87,8 +87,12 @@ jobs:
         run: |
           set -uo pipefail
           # --spawn isolates a crash in a child process so the parent still reports it. The
-          # monkey self-bounds by SMATCHET_UI_MONKEY_STEPS; --frames must exceed its frame use
-          # (~2 frames/step). timeout is the hang backstop.
+          # monkey self-bounds by SMATCHET_UI_MONKEY_STEPS and by a 240 s walk budget, under the
+          # 300 s engine watchdog it sets for itself (tests/ui/ui_monkey.test.cpp, #2216).
+          # --timeout is the parent's wait for the spawned run: without it the wait is derived
+          # from --frames as frames/60 + 30 s (about 163 s here), shorter than the walk, and the
+          # parent's timeout envelope (ok:false) reads as a crash below. 420 s outlasts the walk
+          # plus boot and stays under the `timeout` hang backstop.
           #
           # Output goes to a FILE — never a `$( )` capture. The --spawn grandchild inherits
           # the parent's stdout, so a command substitution's pipe stays open until the
@@ -107,7 +111,7 @@ jobs:
           # category ("UiMonkey") nor the name ("RandomWalk"), so it matched ZERO tests
           # and this lane ran vacuously from its first nightly (Issue #1666 — the
           # "crash" it reported was actually this zero-match, mislabeled).
-          echo "ui-monkey: ui_test.run --name=UiMonkey --frames=8000 --spawn --yes"
+          echo "ui-monkey: ui_test.run --name=UiMonkey --frames=8000 --timeout=420000 --spawn --yes"
           # errexit is on (`shell: bash` => `bash --noprofile --norc -eo pipefail {0}`) and
           # `set -uo pipefail` does not clear it, so a bare invocation + `rc=$?` would exit
           # the script the moment the hang backstop fires (rc 124) — skipping the taskkill
@@ -116,7 +120,7 @@ jobs:
           # keeps the status in an errexit-exempt condition context.
           rc=0
           timeout -k 30 600 ./Smatchet.exe cmd ui_test.run --name='UiMonkey' \
-            --frames=8000 --spawn --yes > ui-monkey-run.out 2>&1 || rc=$?
+            --frames=8000 --timeout=420000 --spawn --yes > ui-monkey-run.out 2>&1 || rc=$?
           # `timeout` has returned, so the parent is gone and any surviving Smatchet.exe is
           # the orphaned --spawn grandchild. Reap it before reading the log so it cannot
           # outlive the step (no-op on a clean run, hence the `|| true`).
