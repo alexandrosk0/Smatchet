@@ -2193,7 +2193,8 @@ incident it then reports.
 3. `AGENTS.md` § Tiered enforcement should say plainly that `deviation-overdue` is whole-tree and
    merge-blocking, not diff-scoped. Today a reader has to infer that from the script.
 
-Triggered-follow-up: when=date:2026-09-20; action=confirm the 25-marker 2026-09-30 cohort has been re-evaluated before it fires; baseline=25 markers dated 2026-09-30 as of 2026-08-16; fired=never
+Triggered-follow-up: when=date:2026-09-20; action=confirm the 25-marker 2026-09-30 cohort has been re-evaluated before it fires; baseline=25 markers dated 2026-09-30 as of 2026-08-16; fired=2026-10-18
+Follow-up check (2026-10-18): resolved. 0 SMATCHET_DEVIATION markers in Source/ and tests/ carry revisit=2026-09-30 (baseline 25), none carries any 2026 revisit date, and the earliest dated revisit is 2027-03-01, so none is overdue.
 
 **Applied 2026-10-04.**
 1. The 2026-09-30 / 10-01, 11-30 / 12-01 and 2026-12-31 cohorts were each re-evaluated in their own PR (#2272, #2275, #2280). Markers were retired where they exempted nothing, folded where the clone could be folded, set to `revisit=never` where standing, and otherwise staggered with a debt entry. Unwrapping the wrapped markers showed the 2026-12-31 cohort had been larger than the gate could see.
