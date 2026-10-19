@@ -189,6 +189,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # allocation-light, so it rides this curated subset — which also gives the
         # Linux ninja-test-linux lane a runnable signal for it, not just Windows.
         Core/LogTailSelect.test.cpp
+        # RedactLogLine scans (#2304) and the callstack format scans (#2311), each checked
+        # against the std::regex code it replaced. Pure and ImGui-free, so the Linux lanes run
+        # them too, not only the Windows rig (where the MSVC 14.51 regex limit was found).
+        Core/TextRedactionScan.test.cpp
+        Core/CallstackParserScan.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
         # --- Sync layer: the ADR-0012 atomic backend-swap race + ADR-0020 ISyncCache
         #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
         #     latched strong handles surviving live swaps); TicketSyncService drives the
@@ -739,6 +745,8 @@ add_executable(SmatchetTests
     Core/IssueDraft.test.cpp
     Core/IssueCreatePipeline.test.cpp
     Core/CallstackParser.test.cpp
+    # Callstack format scans vs the regexes they replaced (#2311) + long-line inputs.
+    Core/CallstackParserScan.test.cpp
     # Function-size decomposition (feat/funcsize-cpp-syntax-highlight) — pure
     # ImGui-free lexers extracted from CppSyntaxHighlight.cpp's draw helpers to
     # bring DrawColoredCppLine / DrawColoredCallstackLine under the 30-branch
@@ -1215,6 +1223,8 @@ add_executable(SmatchetTests
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.
     Core/BugReportBody.test.cpp
+    # RedactLogLine scans vs the regex pipeline they replaced (#2304) + long-token inputs.
+    Core/TextRedactionScan.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
