@@ -5,8 +5,10 @@
 #include "SmatchetWindowExpand.h"
 
 #include "Logger.h"
+#include "SmatchetFocusRequest.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetLocalizedImGui.h"
+#include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -343,9 +345,25 @@ void DrawToggle(UiDrawSession& d) {
     DrawTitleBarToggle(s, window, id, s.ExpandedId == id, current);
 }
 
+bool ServiceDockedFocusRequest(UiDrawSession& d, const char* windowName, bool wantFocus) {
+    if (!wantFocus) {
+        return false;
+    }
+    // A window docked behind a sibling tab is only raised by selecting its tab: SetNextWindowFocus and
+    // a post-Begin SetWindowFocus leave the tab bar alone (imgui#2304), and Begin returns false for a
+    // hidden tab, so a post-Begin focus never even runs (#2274). On a window's first-ever open it does
+    // not exist yet and the selection cannot resolve, so the request stays armed for a bounded few
+    // frames instead of being dropped.
+    const bool resolved = SmatchetUI::selectDockedTab(windowName);
+    int& retries = d.windowExpand.FocusRetries[static_cast<unsigned int>(ImHashStr(windowName))];
+    return smatchet::ui::FocusRequestStaysArmed(resolved, retries, SmatchetUI::kFocusRequestRetryFrames);
+}
+
 bool BeginWindowWithToggle(UiDrawSession& d, const char* windowName, bool* open, bool& focusRequest) {
     const bool wantFocus = focusRequest;
-    focusRequest = false;
+    // Before BeginWindow, whose next-window writes must be the last ones before Begin (as in
+    // beginPreferencesWindow).
+    focusRequest = ServiceDockedFocusRequest(d, windowName, wantFocus);
     BeginWindow(d, windowName);
     // The callers' TUs route ImGui through SmatchetLocalizedImGui: the same Begin keeps the localized
     // title (the window's real name) and the shared panel flags.

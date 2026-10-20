@@ -99,8 +99,8 @@ TEST_CASE("CallstackParser::ParseCallstackText handles Clang/GDB path:line[:col]
     }
 
     SUBCASE("Unreal [path:line] frame with a 200-character path") {
-        // The line has no `(`+digit pair, so the MSVC-format regex — whose scan of a long
-        // slash-separated token is the costliest in the parser — is not run on it at all.
+        // The line has no `(`+digit pair, so the MSVC-format scan is not run on it at all; the
+        // bracket format finds the frame at the end of a long backslash-separated path.
         std::string path = "D:\\build";
         for (int i = 0; i < 24; ++i) {
             path += "\\Runtime";
@@ -305,16 +305,14 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
 
     SUBCASE("1 KiB single line completes under 2000 ms (ReDoS sentinel)") {
         // Build one line of 1 KiB 'a' chars ending in "(1):2", followed by a real frame on the
-        // next line. 1 KiB sits below the parser's per-line cap (kMaxLineLengthForRegex = 16 KiB in
+        // next line. 1 KiB sits below the parser's per-line cap (kMaxLineLength = 16 KiB in
         // CallstackParser.cpp), and the "(1):2" tail carries the `(`+digit and `:`+digit pairs the
-        // parser looks for before it runs a format regex, so this case still flows through the
-        // regex set and exercises the worst-case backtracking ceiling for a realistic-but-noisy
-        // paste. The hostile line must not match any of the three format regexes, whether the
-        // matcher scans it to the end or gives up with std::regex_error (the MSVC STL from toolset
-        // 14.51 on does, on its per-search complexity budget); the real frame on the next line is
-        // recovered either way.
-        // 2000 ms budget accommodates slow CI runners; true catastrophic ReDoS on 1 KiB would
-        // take seconds-to-minutes, so this threshold still catches the failure class it guards.
+        // parser looks for before it runs a format scan, so this case flows through all three
+        // formats. The hostile line must not match any of them; the real frame on the next line is
+        // recovered. The format scans are linear (#2311); the regexes they replaced backtracked
+        // from every start position, which is the failure class this timing still guards.
+        // 2000 ms budget accommodates slow CI runners; a return of super-linear scanning on 1 KiB
+        // would take seconds-to-minutes, so this threshold still catches it.
         // Under AddressSanitizer the instrumentation adds a large CONSTANT overhead (~3-10x) a
         // 2 s wall-clock can't absorb — it red-walled every C++ PR's ASan rig once the doctest
         // suite actually built with /fsanitize=address (#1190). ReDoS is a SUPER-LINEAR blowup
@@ -347,10 +345,9 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
     }
 
     SUBCASE("a line the MSVC format gives up on still reaches the path:line format") {
-        // The 1 KiB unbroken token ahead of "(1)" makes the MSVC-format regex scan the whole
-        // line without a match — or, where the matcher has a complexity budget, throw
-        // std::regex_error. Either way that format reports no match and the path:line format
-        // still finds the frame at the end of the line.
+        // The 1 KiB unbroken token ahead of "(1)" holds no `.ext`, so the MSVC format has no
+        // match on this line (the regexes it replaced could also give up here, on MSVC 14.51+'s
+        // complexity budget); the path:line format finds the frame at the end of the line.
         const std::string text = std::string(1 * 1024, 'a') + "(1) /home/dev/baz.cpp:20";
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
         REQUIRE(frames.size() == 1);
@@ -359,11 +356,9 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
     }
 
     SUBCASE("64 KiB single line bypasses regex via length cap (DoS guard)") {
-        // Beyond kMaxLineLengthForRegex (16 KiB), the parser skips the line entirely without
-        // feeding it to std::regex_search. Pure stack-overflow / O(n^k) DoS prevention — the
-        // unbounded path would crash the doctest runner well before any timing budget mattered.
-        // 64 KiB proves the cap fires for anything ~4x past the threshold; a clean run on the
-        // same machine completes the parse in well under 50 ms because no regex executes.
+        // Beyond kMaxLineLength (16 KiB), the parser skips the line entirely without scanning it
+        // or building its per-line tables. 64 KiB proves the cap fires for anything ~4x past the
+        // threshold; a clean run completes the parse in well under 50 ms.
         std::string huge(64 * 1024, 'a');
         const std::string text = huge + "\nC:\\real.cpp(7)\n";
         const auto t0 = std::chrono::steady_clock::now();
@@ -401,8 +396,8 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
     }
 
     SUBCASE("NUL-embedded fixture: parser preserves embedded NUL bytes without crashing") {
-        // std::string supports embedded NUL bytes; std::regex_search on libstdc++ iterates the
-        // full [begin,end) range rather than stopping at the first NUL, so the parser sees the
+        // std::string supports embedded NUL bytes; the format scans walk the full [begin,end)
+        // range rather than stopping at the first NUL, so the parser sees the
         // whole 19-byte buffer and emits a single frame. The load-bearing invariant is "no
         // crash, no UB" (Pillar 3); the NUL is preserved verbatim in FilePath. Lock both.
         const std::string fixture("C:/pre\0/post.cpp:42", 19);

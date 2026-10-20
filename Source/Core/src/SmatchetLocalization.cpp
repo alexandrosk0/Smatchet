@@ -1150,7 +1150,7 @@ const TranslationEntry kEntries[] = {
     {"toast.view_saved", "View saved", u8"Vue enregistrée"},
     {"toast.discarded_changes", "Discarded changes", u8"Modifications annulées"},
     {"toast.view_deleted", "View deleted", u8"Vue supprimée"},
-    {"toast.reverted_layout", "Reverted layout", u8"Disposition rétablie"},
+    {"toast.reverted_layout", "Reverted query", u8"Requête rétablie"},
 
     // Bug report / Lua action / quick comment / bulk import toasts.
     {"toast.bug_report", "Bug report", u8"Rapport de bug"},
@@ -1381,8 +1381,8 @@ const TranslationEntry kEntries[] = {
     {"cmdpalette.parameters", "Parameters:", u8"Paramètres :"},
     {"cmdpalette.run", "Run", u8"Exécuter"},
     {"cmdpalette.hint", "Type a command or search...", u8"Saisissez une commande ou recherchez..."},
-    {"cmdpalette.destructive_hint", "Destructive — hold Shift+Enter to confirm",
-     u8"Destructif — maintenez Maj+Entrée pour confirmer"},
+    {"cmdpalette.destructive_hint", "Destructive — hold Shift and click, or press Shift+Enter",
+     u8"Destructif — maintenez Maj et cliquez, ou appuyez sur Maj+Entrée"},
     {"cmdpalette.footer_hint", "Enter to run · Esc to close · Up/Down to navigate",
      u8"Entrée pour exécuter · Échap pour fermer · Haut/Bas pour naviguer"},
     {"cmdpalette.set_shortcut", "Set shortcut...", u8"Définir le raccourci..."},

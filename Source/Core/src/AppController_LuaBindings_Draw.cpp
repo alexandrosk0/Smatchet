@@ -557,9 +557,7 @@ void AppController::SurfaceLuaFieldError(const std::string& fieldName, const std
                                          const std::string& errMsg) {
     const std::string bare = "[LUA cell] field=" + fieldName + " id=" + issueId + ": " + errMsg;
     impl_->LuaLogInfoBind(std::string("[ERROR] ") + bare);
-    for (const auto& sink : errorSinks_) {
-        sink(bare);
-    }
+    errorSinks_.InvokeAll(bare);
     scriptingWindowOpenRequested_.store(true);
 }
 
@@ -1036,9 +1034,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         outError = err.what();
         LOG_TRACE("ExecuteLuaConsoleSnippet: load_error %s", TruncateForTrace(outError).c_str());
         impl_->LuaLogInfoBind(std::string("[ERROR] ") + outError);
-        for (const auto& sink : errorSinks_) {
-            sink(outError);
-        }
+        errorSinks_.InvokeAll(outError);
         scriptingWindowOpenRequested_.store(true);
         return false;
     }
@@ -1060,9 +1056,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         LOG_TRACE("ExecuteLuaConsoleSnippet: runtime_error %s", TruncateForTrace(outError).c_str());
         // Red scrolling-log entry + persistent error panel + auto-open window.
         impl_->LuaLogInfoBind(std::string("[ERROR] ") + outError);
-        for (const auto& sink : errorSinks_) {
-            sink(outError);
-        }
+        errorSinks_.InvokeAll(outError);
         scriptingWindowOpenRequested_.store(true);
         return false;
     }
@@ -1201,9 +1195,7 @@ void AppController::RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint6
         // once per record-event per window, not per frame.
         const std::string bare = "[LUA window] " + w.name + ": " + callErr;
         impl_->LuaLogInfoBind(std::string("[ERROR] ") + bare);
-        for (const auto& sink : errorSinks_) {
-            sink(bare);
-        }
+        errorSinks_.InvokeAll(bare);
         scriptingWindowOpenRequested_.store(true);
         w.cmds.clear();
         w.hasError = true;

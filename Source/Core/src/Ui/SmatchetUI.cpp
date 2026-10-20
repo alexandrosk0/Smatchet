@@ -1207,9 +1207,12 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
             // Unified focus path: hand wantFocus to DrawWindow which applies the
             // SetNextWindowFocus-before-Begin + SetWindowFocus-after-Begin pattern internally.
             const bool wantPerfFocus = g_ui.requestPerformanceFocus;
+            // Raises the tab when the window is docked behind a sibling (#2274); held while it does not exist yet.
+            const bool keepPerfFocusArmed =
+                SmatchetWindowExpand::ServiceDockedFocusRequest(g_ui, "Performance", wantPerfFocus);
             g_perfUi.DrawWindow(&g_ui.showPerformance, wantPerfFocus);
+            g_ui.requestPerformanceFocus = keepPerfFocusArmed;
             if (wantPerfFocus) {
-                g_ui.requestPerformanceFocus = false;
                 LOG_DEBUG("Performance window: focused via menu request");
             }
         } else if (g_ui.requestPerformanceFocus) {
@@ -1620,41 +1623,53 @@ bool ApplyReadyFieldCatalogFetch(AppController& app, UiDrawSession& d) {
                 d.triggerCatalogRefetch = true;
                 return false;
             }
+            // The result belongs to the pane and configuration latched when the fetch started (#2328): applied there,
+            // keyed by them, and dropped if that pane has since switched tracker or site or cleared its catalog. If
+            // focus moved to another pane of the same site meanwhile, that pane fetches its own.
+            const GridCatalogFetchLatch& latch = d.fieldCatalogFetchLatch;
+            if (!app.IsGridCatalogFetchForFocusedPane(latch)) {
+                d.triggerCatalogRefetch = true;
+            }
             if (result.Ok) {
-                // Pin the project key the fetch was scoped to so the snapshot saves under the
-                // project-scoped cache entry (which carries Phase-3 component options), not the
-                // unscoped ("") key. Without this the scoped result is lost on next startup and
-                // the components column renders as text. See AppController::SetCurrentCatalogProject.
-                app.SetCurrentCatalogProject(result.ProjectKey);
-                app.SetFieldCatalog(std::move(result.Fields), std::move(result.Components),
-                                    std::move(result.IssueTypeMeta), std::string());
+                // The project the fetch was scoped to keys the snapshot (the project-scoped cache entry carries
+                // Phase-3 component options) and is pinned with the catalog.
+                const bool applied = app.ApplyGridFieldCatalogResult(
+                    latch, d.fieldCatalogFetchConfig, result.ProjectKey, std::move(result.Fields),
+                    std::move(result.Components), std::move(result.IssueTypeMeta), std::string(), false);
                 // Push the fetched user list into the AppController cache so JQL
                 // autocomplete can suggest assignees / reporters by display name. A catalog fetch still
                 // succeeds when its user lookup fails (the catalog carries a Warning and no users), so an
-                // empty list keeps the roster seeded from the store and never overwrites the saved one.
+                // empty list keeps the roster seeded from the store and never overwrites the saved one. The
+                // roster belongs to the site, which the check above matched to the focused pane, so it is kept
+                // even when the catalog itself was dropped; the catalog's warning is shown only with its catalog.
                 if (!result.Users.empty()) {
                     app.SetAvailableUsers(std::move(result.Users));
                     app.SaveAvailableUsersForOfflineAsync(result.CacheBackendKey, std::move(result.UsersPayloadJson));
                 }
-                d.fieldCatalogWarning = result.Warning;
+                if (applied && app.IsGridCatalogFetchForFocusedPane(latch)) {
+                    d.fieldCatalogWarning = result.Warning;
+                }
             } else if (result.Error.find("Tracker backend is not initialized") != std::string::npos) {
                 d.fieldCatalogLoading = false;
                 d.fieldCatalogFetchStarted = false;
                 d.triggerCatalogRefetch = true;
             } else {
                 // The failure is the fetch's project's too: its offline snapshot is the one to restore.
-                app.SetCurrentCatalogProject(result.ProjectKey);
-                app.SetFieldCatalog({}, {},
-                                    result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
-                                    result.ErrorTransient);
+                app.ApplyGridFieldCatalogResult(latch, d.fieldCatalogFetchConfig, result.ProjectKey, {}, {}, {},
+                                                result.Error.empty() ? std::string("Failed to fetch field catalog.")
+                                                                     : result.Error,
+                                                result.ErrorTransient);
                 d.fieldCatalogWarning.clear();
             }
         } catch (const std::exception& ex) {
-            app.SetFieldCatalog({}, {}, std::string("Field catalog load failed: ") + ex.what());
+            // No result, so no resolved project: the failure restores the latched pane's unscoped snapshot.
+            app.ApplyGridFieldCatalogResult(d.fieldCatalogFetchLatch, d.fieldCatalogFetchConfig, std::string(), {}, {},
+                                            {}, std::string("Field catalog load failed: ") + ex.what(), false);
             d.fieldCatalogWarning.clear();
             LOG_ERROR("SmatchetUI: field catalog future exception: %s", ex.what());
         } catch (...) {
-            app.SetFieldCatalog({}, {}, "Field catalog load failed.");
+            app.ApplyGridFieldCatalogResult(d.fieldCatalogFetchLatch, d.fieldCatalogFetchConfig, std::string(), {}, {},
+                                            {}, "Field catalog load failed.", false);
             d.fieldCatalogWarning.clear();
             LOG_ERROR("SmatchetUI: field catalog future unknown exception");
         }
@@ -1721,6 +1736,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         app.SeedAvailableUsersFromStoreAsync();
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
+        // Latched with the backend StartFieldCatalogFetchAsync latches: the result is applied to this pane, keyed by
+        // this configuration, or dropped (#2328). Focus moving to another pane of the same site does not redirect
+        // it; one on another site discards it first (ApplyReadyFieldCatalogFetch).
+        d.fieldCatalogFetchLatch = app.LatchGridCatalogFetch();
+        d.fieldCatalogFetchConfig = fetchCfg;
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
     };
 

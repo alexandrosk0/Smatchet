@@ -713,6 +713,10 @@ void ShutdownApplication(BootstrapContext& ctx) {
     if (ctx.app && ctx.pluginHost) {
         ctx.app->ClearAutomationLogSinks();
         ctx.app->SetRuntimePluginHost(nullptr);
+        // The frame loop has stopped, so nothing drains the dispatcher any more. Release its queued
+        // tasks before OnStop joins the MCP pool: a pool worker blocked on one of them (a command
+        // marshalled to the UI thread in the last frame) would otherwise keep that join waiting.
+        ctx.app->mainThreadDispatcher.BeginShutdown();
         ctx.pluginHost->OnStop();
     }
 

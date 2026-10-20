@@ -158,8 +158,18 @@ CommandResult RunCacheRecreate(IAppSync& app, IMainThreadPoster& poster, const C
     if (onUiThread) {
         return CommandResult::Success(std::move(pending));
     }
-    if (finished.wait_for(bound) != std::future_status::ready) {
-        return CommandResult::Success(std::move(pending)); // still running: it reports through the toast and the log
+    // The outcome arrives through a UI-thread post. Once the host begins shutting down (before it stops the MCP
+    // pool), that post is a no-op, so stop waiting then rather than hold the shutdown join for the whole bound.
+    const auto deadline = std::chrono::steady_clock::now() + bound;
+    while (finished.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+        if (!poster.AcceptsPosts()) {
+            return CommandResult::Failure(ErrorCode::HandlerError,
+                                          "The application began shutting down before the cache recreate reported "
+                                          "its outcome (the cache may or may not have been wiped).");
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return CommandResult::Success(std::move(pending)); // still running: it reports through the toast and log
+        }
     }
     try {
         return CacheRecreateOutcomeToResult(finished.get());

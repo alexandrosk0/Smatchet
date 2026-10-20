@@ -32,12 +32,25 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <random>
 #include <string>
 
 namespace {
+
+// Time budgets the walk stays inside (#2216). The engine aborts any test that runs past
+// ImGuiTestEngineIO::ConfigWatchdogKillTest — 60 s by default — with IM_CHECK(false), and the
+// nightly reads that failure as a crash: under llvmpipe on the Windows runner the walk took longer
+// than that, so every night filed a "crash" with the default seed and no crash behind it. The monkey
+// therefore raises the kill threshold for the engine runs it is registered in (only when
+// SMATCHET_UI_MONKEY=1, i.e. the monkey nightly) and ends its walk cleanly well before it. A walk cut
+// short logs how far it got; the inputs it sent are a prefix of the seeded sequence, so a finding
+// still replays. The other deadline is the CLI parent's wait for the spawned run: the workflow passes
+// --timeout so it outlasts the walk (with --frames alone it is frames/60 + 30 s, about 163 s).
+constexpr float kWatchdogKillTestSeconds = 300.0f; // above the walk budget, below the workflow's --timeout
+constexpr double kWalkBudgetSeconds = 240.0;
 
 template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
     for (int i = 0; i < maxFrames; ++i) {
@@ -93,10 +106,9 @@ int MonkeySteps() {
 // shortcut. These are pure navigation / editing keys, safe to spray at any focused widget.
 ImGuiKey RandomNavKey(std::mt19937& rng) {
     static const ImGuiKey kKeys[] = {
-        ImGuiKey_Tab,       ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow,
-        ImGuiKey_DownArrow, ImGuiKey_Enter,     ImGuiKey_Space,      ImGuiKey_Backspace,
-        ImGuiKey_Delete,    ImGuiKey_Home,      ImGuiKey_End,        ImGuiKey_PageUp,
-        ImGuiKey_PageDown,  ImGuiKey_Escape,
+        ImGuiKey_Tab,   ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow,
+        ImGuiKey_Enter, ImGuiKey_Space,     ImGuiKey_Backspace,  ImGuiKey_Delete,  ImGuiKey_Home,
+        ImGuiKey_End,   ImGuiKey_PageUp,    ImGuiKey_PageDown,   ImGuiKey_Escape,
     };
     const std::size_t n = sizeof(kKeys) / sizeof(kKeys[0]);
     return kKeys[rng() % n];
@@ -130,7 +142,15 @@ void RegisterRandomWalk(ImGuiTestEngine* engine) {
         }
 
         std::mt19937 rng(seed);
-        for (int step = 0; step < steps; ++step) {
+        const auto walkStart = std::chrono::steady_clock::now();
+        int step = 0;
+        for (; step < steps; ++step) {
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - walkStart).count();
+            if (elapsed >= kWalkBudgetSeconds) {
+                ctx->LogInfo("ui-monkey: stopping after %d of %d steps (%.0f s) — walk time budget reached", step,
+                             steps, elapsed);
+                break;
+            }
             const unsigned action = rng() % 10u;
             if (action < 4u) {
                 ctx->KeyPress(RandomNavKey(rng));
@@ -162,7 +182,7 @@ void RegisterRandomWalk(ImGuiTestEngine* engine) {
         // Leave the UI in a clean-ish state for any subsequent test.
         ctx->KeyPress(ImGuiKey_Escape);
         ctx->Yield();
-        ctx->LogInfo("ui-monkey: completed %d steps without a crash", steps);
+        ctx->LogInfo("ui-monkey: completed %d steps without a crash", step);
     };
 }
 
@@ -175,6 +195,11 @@ extern "C" void SmatchetRegisterUiMonkeyTests(ImGuiTestEngine* engine) {
     if (!MonkeyEnabled()) {
         return;
     }
+    // The longer kill threshold applies to every test of this engine run, which in the nightly is the
+    // monkey alone (filter "UiMonkey"); the walk still ends itself before it. A frame that never finishes
+    // was never the watchdog's to catch (it runs between frames): the parent's --timeout and the
+    // workflow's `timeout` are the hang backstops.
+    ImGuiTestEngine_GetIO(engine).ConfigWatchdogKillTest = kWatchdogKillTestSeconds;
     RegisterRandomWalk(engine);
 }
 

@@ -47,6 +47,7 @@ struct McpToolDefinition;
 #include "IssueCreatePipeline.h"
 #include "CancelToken.h"
 #include "SerialTaskQueue.h" // ticketSaves_: UpdateTicket's ordered off-UI-thread cache writes
+#include "StringSinkList.h"  // errorSinks_: registered on the UI thread, invoked from the automation worker
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
@@ -109,6 +110,7 @@ class AiAssistantController;
 #include "Types/FieldEditTypes.h"
 #include "Types/ConnectivityTypes.h"
 #include "Types/AttachmentTypes.h"
+#include "Types/CatalogFetchTypes.h"
 #include "Types/HostCallbacks.h"
 
 // Fan-in Phase 5 (docs/plans/appcontroller-fan-in-phase5-facets.md): narrow interface
@@ -336,6 +338,8 @@ class AppController : public IAppThreading,
     bool HasFrameLoop() const override { return !noFrameLoop_.load(); }
     /// IMainThreadPoster. Runs the queued UI-thread tasks once (the dispatcher's own per-call time budget applies).
     void DrainMainThreadOnce() override;
+    /// IMainThreadPoster. False once a host has called `mainThreadDispatcher.BeginShutdown()`.
+    bool AcceptsPosts() const override { return !mainThreadDispatcher.HasBegunShutdown(); }
     /// Marks the application as running without a frame loop; see `HasFrameLoop`. Set on the UI thread, read anywhere.
     void SetNoFrameLoop(bool noFrameLoop) { noFrameLoop_.store(noFrameLoop); }
 
@@ -423,7 +427,8 @@ class AppController : public IAppThreading,
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink) override;
-    /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
+    /** Drop all automation log AND error sinks, waiting for any still running on another thread. Call
+     *  before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
     /// Register a sink that receives Lua error messages (automation runner + setup script
@@ -896,6 +901,23 @@ class AppController : public IAppThreading,
     /// Pass the same project key the fetch was scoped to (empty = unscoped). Guarded by
     /// availableFieldsMutex_.
     void SetCurrentCatalogProject(const std::string& projectKey);
+    /// UI thread, as the grid starts its field-catalog fetch: latches the focused pane, its backend generation,
+    /// catalog epoch and cache namespace, for ApplyGridFieldCatalogResult.
+    GridCatalogFetchLatch LatchGridCatalogFetch();
+    /// True when `latch` was taken for the pane that is focused now (UI thread).
+    bool IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch& latch) const;
+    /// UI thread: applies the grid's field-catalog fetch result to the pane `latch` names, the way RefreshFieldCatalog
+    /// applies its own: the snapshot is keyed by `fetchCfg` and `projectKey` (the configuration and project the fetch
+    /// ran with, not whatever is configured when it lands), the Jira-vs-Plane fixups follow `fetchCfg`'s tracker, and
+    /// the project is pinned with the catalog. Dropped when `fetchCfg` names another tracker or site than the pane
+    /// runs, or the pane has switched tracker or site, been retired, had its catalog cleared or started a
+    /// RefreshFieldCatalog since the latch (#2328). A non-empty `error` takes the failure path for that pane and
+    /// project (restoring its saved catalog when memory is empty). Returns true when a catalog was applied.
+    bool ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& latch, const TrackerConfig& fetchCfg,
+                                     const std::string& projectKey, std::vector<TrackerField> fields,
+                                     std::vector<TrackerComponent> components,
+                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
+                                     bool errorTransient);
     /// Replace the cached user list (e.g. after a successful `FetchUsers`). Surfaces to
     /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
     /// Idempotent; safe to call with an empty vector to clear the cache.
@@ -1687,10 +1709,12 @@ class AppController : public IAppThreading,
 
     /// Error sinks registered via AddAutomationErrorSink — called on any Lua error in
     /// the automation runner or setup path. Unconditional (no Lua guard) so the plugin can
-    /// register regardless of build config. Accessed on the UI thread (registration in
-    /// OnEarlyInit) and on the background automation worker thread (call time) — the
-    /// sinks themselves must be UI-thread-safe (e.g. post via mainThreadDispatcher).
-    std::vector<std::function<void(const std::string&)>> errorSinks_;
+    /// register regardless of build config. Registered on the UI thread (OnEarlyInit, the
+    /// debug.lua_log_test command) and invoked on the background automation worker as well as
+    /// the UI thread, so the list is a StringSinkList: an invocation iterates an immutable
+    /// snapshot, never a vector a concurrent registration is reallocating (#2307). The sinks
+    /// themselves must be UI-thread-safe (e.g. post via mainThreadDispatcher).
+    smatchet::StringSinkList errorSinks_;
     /// Atomically set by the background automation worker on Lua error; consumed once per
     /// frame by LuaConsolePlugin::OnDraw to open + focus the Scripting window.
     std::atomic<bool> scriptingWindowOpenRequested_{false};

@@ -272,9 +272,10 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestAuditTrailFocus;
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
-        d.requestAuditTrailFocus = false;
     }
     prepareTopLevelWindow(d, "audit", 920.0f, 520.0f, wantFocus);
+    // Raises the tab when the window is docked behind a sibling (#2274); held while it does not exist yet.
+    d.requestAuditTrailFocus = SmatchetWindowExpand::ServiceDockedFocusRequest(d, "Backend Audit", wantFocus);
     if (!d.auditTrailWindowWasOpen) {
         d.auditTrailWindowWasOpen = true;
         d.auditLastFilePoll = {};

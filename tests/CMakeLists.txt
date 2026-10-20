@@ -162,6 +162,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/MainThreadDispatcherConcurrent.test.cpp
         # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
         Core/GridCopyPure.test.cpp
+        # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
+        # register-vs-invoke case is a TSan target. Header-only.
+        Core/StringSinkList.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
@@ -191,6 +194,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # allocation-light, so it rides this curated subset — which also gives the
         # Linux ninja-test-linux lane a runnable signal for it, not just Windows.
         Core/LogTailSelect.test.cpp
+        # RedactLogLine scans (#2304) and the callstack format scans (#2311), each checked
+        # against the std::regex code it replaced. Pure and ImGui-free, so the Linux lanes run
+        # them too, not only the Windows rig (where the MSVC 14.51 regex limit was found).
+        Core/TextRedactionScan.test.cpp
+        Core/CallstackParserScan.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
         # --- Sync layer: the ADR-0012 atomic backend-swap race + ADR-0020 ISyncCache
         #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
         #     latched strong handles surviving live swaps); TicketSyncService drives the
@@ -518,6 +527,7 @@ add_executable(SmatchetTests
     Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
+    Core/StringSinkList.test.cpp
     Core/CacheEvictionPolicy.test.cpp
     # SECURITY_AUDIT_2026-06-13 synthesis #9 — pure pre-decode dimension/pixel-budget gate behind
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
@@ -741,6 +751,8 @@ add_executable(SmatchetTests
     Core/IssueDraft.test.cpp
     Core/IssueCreatePipeline.test.cpp
     Core/CallstackParser.test.cpp
+    # Callstack format scans vs the regexes they replaced (#2311) + long-line inputs.
+    Core/CallstackParserScan.test.cpp
     # Function-size decomposition (feat/funcsize-cpp-syntax-highlight) — pure
     # ImGui-free lexers extracted from CppSyntaxHighlight.cpp's draw helpers to
     # bring DrawColoredCppLine / DrawColoredCallstackLine under the 30-branch
@@ -1217,6 +1229,8 @@ add_executable(SmatchetTests
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.
     Core/BugReportBody.test.cpp
+    # RedactLogLine scans vs the regex pipeline they replaced (#2304) + long-token inputs.
+    Core/TextRedactionScan.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
@@ -2315,6 +2329,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
         # the database file, so this TU opens a real file inside the test env's temp directory.
         Core/AppControllerCacheRecreate.posix.test.cpp
+        # ~AppController joins tasks launched while shutdown begins (#2308): a stress over the real controller.
+        Core/AppControllerShutdown.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"

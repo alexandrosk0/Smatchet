@@ -385,7 +385,7 @@ void DrawWhisperTestConnection(IAppThreading& app, UiDrawSession& d, WhisperPref
             smatchet::whisper::pure::ResolveWhisperApiKey(d.cfg.WhisperApiKey, providerStr, d.cfg.AiApiKey);
         if (resolvedKey.empty()) {
             state.testResult =
-                std::string(SmatchetLocalization::T("whisper.preferences.testConnection.failure", "x ")) +
+                std::string(SmatchetLocalization::T("whisper.preferences.testConnection.failure", "Failed: ")) +
                 "no API key configured";
             state.testResultType = 2;
         } else {

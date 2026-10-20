@@ -37,6 +37,11 @@ class IMainThreadPoster {
     /// Runs the posted tasks once on the calling thread, which must be the UI thread. Only meaningful when
     /// `HasFrameLoop()` is false; a no-op by default.
     virtual void DrainMainThreadOnce() {}
+
+    /// False once the host has begun shutting down and posts are no-ops. A worker waiting for an outcome that a
+    /// UI-thread post delivers (cache.recreate) stops waiting then: the post will never run. Safe from any
+    /// thread. Defaults to true.
+    virtual bool AcceptsPosts() const { return true; }
 };
 
 #endif // SMATCHET_COMMANDS_IMAIN_THREAD_POSTER_H

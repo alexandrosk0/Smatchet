@@ -4,11 +4,12 @@
 // there via using-aliases) — NOT the full AppController.h. Keeping the include out stops
 // SmatchetUiSession.h transitively spreading AppController.h into every Ui TU that includes
 // it; TUs that really use AppController methods must (and do) include it directly.
-#include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
-#include "Types/AttachmentTypes.h" // AttachmentDescriptor
-#include "Types/FieldEditTypes.h"  // FieldEditResult
-#include "PendingActionTypes.h"    // PendingActionTarget (the pane a grid edit was made in)
-#include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
+#include "Types/AppUpdateTypes.h"    // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
+#include "Types/AttachmentTypes.h"   // AttachmentDescriptor
+#include "Types/FieldEditTypes.h"    // FieldEditResult
+#include "Types/CatalogFetchTypes.h" // GridCatalogFetchLatch (the grid's catalog fetch, latched at launch)
+#include "PendingActionTypes.h"      // PendingActionTarget (the pane a grid edit was made in)
+#include "Sync/SyncTypes.h"          // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
@@ -154,8 +155,8 @@ struct FieldCatalogFetchResult {
     bool Ok = false;
     std::string BackendKey;
     /// Project key this catalog was scoped to (resolved from the active-view JQL). The grid
-    /// completion pins it via AppController::SetCurrentCatalogProject() before SetFieldCatalog()
-    /// so the snapshot lands under the project-scoped cache entry that carries component options.
+    /// completion hands it to AppController::ApplyGridFieldCatalogResult, which keys the snapshot by it
+    /// (the project-scoped cache entry carries component options) and pins it with the catalog.
     /// Empty when the JQL resolves no project (unscoped fetch).
     std::string ProjectKey;
     std::vector<TrackerField> Fields;
@@ -683,6 +684,10 @@ struct UiDrawSession {
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
     std::future<FieldCatalogFetchResult> fieldCatalogFuture;
+    /// What fieldCatalogFuture's fetch latched when it started — the pane it is for and the configuration it runs
+    /// with — so its result is applied to that pane under that configuration (#2328).
+    GridCatalogFetchLatch fieldCatalogFetchLatch;
+    TrackerConfig fieldCatalogFetchConfig;
     bool triggerCatalogRefetch = false;
     /// The startup fetch may be skipped once per process (the restored snapshot belongs to the startup tracker).
     bool catalogStartupSkipTried = false;
