@@ -166,6 +166,15 @@ TEST_CASE("StringSinkList::ClearAndWait from inside a sink wakes when another th
         std::this_thread::yield();
     }
     std::thread clearer([state] { state->list.InvokeAll("clear"); });
+    // ClearAndWait swaps the list empty and then waits under the same lock, so an empty snapshot
+    // proves the clearer is inside it before the holder is released; otherwise a slow start
+    // could let the test pass without exercising the cross-thread wake. Bounded so a regression
+    // fails instead of hanging.
+    const auto swapDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!state->list.Snapshot()->empty() && std::chrono::steady_clock::now() < swapDeadline) {
+        std::this_thread::yield();
+    }
+    CHECK(state->list.Snapshot()->empty()); // a CHECK, not REQUIRE: the threads below must still be released
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     CHECK_FALSE(state->clearReturned.load(std::memory_order_acquire)); // waits for the holding sink
 
