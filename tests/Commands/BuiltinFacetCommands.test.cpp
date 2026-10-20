@@ -431,7 +431,9 @@ struct InlinePoster : IMainThreadPoster {
 struct TogglePoster : IMainThreadPoster {
     bool OnUi = false;
     int Posts = 0;
+    std::atomic<bool> Accepting{true}; // false models a host that has begun shutting down
     bool IsOnUiThread() const override { return OnUi; }
+    bool AcceptsPosts() const override { return Accepting.load(); }
     void PostToMainThread(std::function<void()> fn) override {
         ++Posts;
         fn();
@@ -610,6 +612,35 @@ TEST_CASE("cache.recreate from another thread waits for the outcome and reports 
     CHECK(result.Error.Code == ErrorCode::HandlerError);
     CHECK(result.Error.Message.find("was wiped") != std::string::npos);
     CHECK(sync.FullSyncCalls == 0);
+}
+
+TEST_CASE("cache.recreate from another thread stops waiting once the host begins shutting down (#2306)") {
+    // The outcome is delivered by a UI-thread post, which is a no-op after BeginShutdown; the MCP worker must not
+    // hold the host's pool join for the whole 5-minute bound.
+    FakeSync sync;
+    sync.HoldRecreate = true;
+    TogglePoster poster;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterSyncCommands(reg, sync, poster);
+
+    CommandResult result;
+    std::thread caller([&]() { result = reg.Dispatch("cache.recreate", {}, AutomationCtx(/*confirmed*/ true)); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!sync.IsLocalCacheRecreating() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(sync.IsLocalCacheRecreating());
+    const auto shutdownAt = std::chrono::steady_clock::now();
+    poster.Accepting.store(false);
+    caller.join();
+    const auto waitedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - shutdownAt).count();
+
+    REQUIRE_FALSE(result.Ok);
+    CHECK(result.Error.Code == ErrorCode::HandlerError);
+    CHECK(result.Error.Message.find("shutting down") != std::string::npos);
+    CHECK(waitedMs < 5000); // one 50 ms wait slice, with room for sanitizers
+    sync.FinishRecreate();  // the late completion has no waiter left and must not throw
 }
 
 TEST_CASE("cache.recreate with no frame loop pumps the UI-thread queue until the outcome arrives") {

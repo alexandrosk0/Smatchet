@@ -47,6 +47,7 @@ struct McpToolDefinition;
 #include "IssueCreatePipeline.h"
 #include "CancelToken.h"
 #include "SerialTaskQueue.h" // ticketSaves_: UpdateTicket's ordered off-UI-thread cache writes
+#include "StringSinkList.h"  // errorSinks_: registered on the UI thread, invoked from the automation worker
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
@@ -337,6 +338,8 @@ class AppController : public IAppThreading,
     bool HasFrameLoop() const override { return !noFrameLoop_.load(); }
     /// IMainThreadPoster. Runs the queued UI-thread tasks once (the dispatcher's own per-call time budget applies).
     void DrainMainThreadOnce() override;
+    /// IMainThreadPoster. False once a host has called `mainThreadDispatcher.BeginShutdown()`.
+    bool AcceptsPosts() const override { return !mainThreadDispatcher.HasBegunShutdown(); }
     /// Marks the application as running without a frame loop; see `HasFrameLoop`. Set on the UI thread, read anywhere.
     void SetNoFrameLoop(bool noFrameLoop) { noFrameLoop_.store(noFrameLoop); }
 
@@ -424,7 +427,8 @@ class AppController : public IAppThreading,
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink) override;
-    /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
+    /** Drop all automation log AND error sinks, waiting for any still running on another thread. Call
+     *  before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
     /// Register a sink that receives Lua error messages (automation runner + setup script
@@ -1705,10 +1709,12 @@ class AppController : public IAppThreading,
 
     /// Error sinks registered via AddAutomationErrorSink — called on any Lua error in
     /// the automation runner or setup path. Unconditional (no Lua guard) so the plugin can
-    /// register regardless of build config. Accessed on the UI thread (registration in
-    /// OnEarlyInit) and on the background automation worker thread (call time) — the
-    /// sinks themselves must be UI-thread-safe (e.g. post via mainThreadDispatcher).
-    std::vector<std::function<void(const std::string&)>> errorSinks_;
+    /// register regardless of build config. Registered on the UI thread (OnEarlyInit, the
+    /// debug.lua_log_test command) and invoked on the background automation worker as well as
+    /// the UI thread, so the list is a StringSinkList: an invocation iterates an immutable
+    /// snapshot, never a vector a concurrent registration is reallocating (#2307). The sinks
+    /// themselves must be UI-thread-safe (e.g. post via mainThreadDispatcher).
+    smatchet::StringSinkList errorSinks_;
     /// Atomically set by the background automation worker on Lua error; consumed once per
     /// frame by LuaConsolePlugin::OnDraw to open + focus the Scripting window.
     std::atomic<bool> scriptingWindowOpenRequested_{false};

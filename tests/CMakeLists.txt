@@ -160,6 +160,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (MainThreadDispatcher.h); the SMATCHET_UI_PERF_SCOPE in Drain() pulls UiPerfMonitor.cpp
         # (ImGui-free), linked just below.
         Core/MainThreadDispatcherConcurrent.test.cpp
+        # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
+        # register-vs-invoke case is a TSan target. Header-only.
+        Core/StringSinkList.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
@@ -522,6 +525,7 @@ add_executable(SmatchetTests
     Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
+    Core/StringSinkList.test.cpp
     Core/CacheEvictionPolicy.test.cpp
     # SECURITY_AUDIT_2026-06-13 synthesis #9 — pure pre-decode dimension/pixel-budget gate behind
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
@@ -2323,6 +2327,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
         # the database file, so this TU opens a real file inside the test env's temp directory.
         Core/AppControllerCacheRecreate.posix.test.cpp
+        # ~AppController joins tasks launched while shutdown begins (#2308): a stress over the real controller.
+        Core/AppControllerShutdown.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"

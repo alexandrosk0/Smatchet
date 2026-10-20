@@ -343,6 +343,24 @@ void AppController::LaunchBackgroundTask(std::function<void()> task) {
     }
 
     auto done = std::make_shared<std::atomic<bool>>(false);
+    // The shutdown re-check, the thread's creation and its registration happen under one hold of
+    // backgroundWorkersMutex_. ~AppController sets shuttingDown_ before JoinBackgroundTasks takes its
+    // snapshot under this mutex, so a launch racing shutdown either registers its thread before that
+    // snapshot (and is joined) or sees the flag here and creates no thread. Checking only above left a
+    // window in which a worker launching a task got its thread registered after the snapshot: nothing
+    // joined it, and destroying the joinable std::thread called std::terminate (#2308).
+    std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
+    if (shuttingDown_.load()) {
+        return;
+    }
+    // Amortized mid-session reap: join + drop any previously-finished workers so the vector
+    // tracks only in-flight (plus just-finished) work, not every task ever spawned.
+    reapFinishedBackgroundWorkersLocked_();
+    // Grow before the thread exists: a push_back that failed to grow after construction would
+    // destroy a joinable std::thread (std::terminate). With the room in place the push cannot throw.
+    if (backgroundWorkers_.size() == backgroundWorkers_.capacity()) {
+        backgroundWorkers_.reserve(backgroundWorkers_.empty() ? 8 : backgroundWorkers_.size() * 2);
+    }
     std::thread worker([this, task = std::move(task), done]() mutable {
         if (!shuttingDown_.load()) {
             // An exception escaping a worker thread function calls std::terminate
@@ -365,11 +383,6 @@ void AppController::LaunchBackgroundTask(std::function<void()> task) {
         // that's past task() — join() then returns essentially immediately.
         done->store(true, std::memory_order_release);
     });
-
-    std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
-    // Amortized mid-session reap: join + drop any previously-finished workers so the vector
-    // tracks only in-flight (plus just-finished) work, not every task ever spawned.
-    reapFinishedBackgroundWorkersLocked_();
     backgroundWorkers_.push_back(BackgroundWorker{std::move(worker), std::move(done)});
 }
 
