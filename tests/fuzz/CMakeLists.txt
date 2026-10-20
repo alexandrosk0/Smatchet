@@ -54,7 +54,7 @@ smatchet_add_fuzz_target(fuzz_image_dims
 # Shared minimal logger closure. LOG_* routes through a function-local-static
 # singleton (Logger::Instance()), so it is safe to call uninitialised during
 # fuzzing. TextRedaction.cpp is Logger.cpp's only first-party transitive dep
-# (regex + std, ImGui-free); the LOG_AGENT_DEBUG bridge stays behind
+# (std only, ImGui-free; needs include/ for AsciiCharClass.h); the LOG_AGENT_DEBUG bridge stays behind
 # #if defined(SMATCHET_AGENT_DEBUG) (off under the fuzz preset).
 set(_fuzz_logger_srcs
     "${_fuzz_core}/src/Logger.cpp"
@@ -73,7 +73,7 @@ smatchet_add_fuzz_target(fuzz_cpp_lex
     CORPUS cpp_lex)
 
 # ParseCallstackText — untrusted pasted callstack text -> structured frames.
-# Closure: CallstackParser.cpp (regex + cctype + algorithm, no Logger). The header
+# Closure: CallstackParser.cpp (cctype + algorithm, no Logger). The header
 # pulls Config/ConfigManager.h for PathRemapRule (ApplyPathRemaps is defined in the
 # same .cpp), which bare-includes KeybindingsConfig.h + ToolbarConfig.h (under
 # include/Config) and <nlohmann/json_fwd.hpp> — hence the extra include dir + the

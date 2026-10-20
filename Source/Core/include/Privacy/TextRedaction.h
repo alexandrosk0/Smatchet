@@ -6,8 +6,10 @@
 // TextRedaction — keyless, best-effort scrubber for free-text log lines bound
 // for an outbound bug report. Unlike BackendAuditTrail::RedactText (which needs
 // a key to redact), this scrubs by *shape*: auth headers, secret URL params,
-// userinfo in URLs, emails, and long opaque tokens. Pure (std::regex only, no
-// live state) so the phase-2 crash path can reuse it against an on-disk log.
+// userinfo in URLs, emails, and long opaque tokens. Pure (hand-written scans,
+// no live state) so the phase-2 crash path can reuse it against an on-disk log.
+// Every pass is linear in the line length and nothing here throws: the logger
+// calls it on each LOG_* line, on whatever thread is logging.
 //
 // This is a safety net, NOT a guarantee — the bug-report modal's egress preview
 // + explicit consent gate is the real safeguard (see log-a-bug-github plan).
@@ -27,7 +29,9 @@ namespace privacy {
 /// fake log line (CR/LF) or drive terminal escapes (ANSI), and cannot hide a secret
 /// byte mid-token to evade the shape matchers. A 40-char lowercase-hex run (git
 /// SHA-1) is deliberately preserved so commit hashes survive in the report.
-/// Idempotent on already-redacted text.
+/// Idempotent on already-redacted text. Does not throw: if a pass cannot
+/// finish (allocation failure), the whole line comes back as `<redacted>`
+/// rather than partly scrubbed.
 std::string RedactLogLine(const std::string& line);
 
 /// Apply RedactLogLine to every `\n`-separated line of `text` (line endings
