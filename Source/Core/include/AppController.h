@@ -47,7 +47,7 @@ struct McpToolDefinition;
 #include "IssueCreatePipeline.h"
 #include "CancelToken.h"
 #include "SerialTaskQueue.h" // ticketSaves_: UpdateTicket's ordered off-UI-thread cache writes
-#include "StringSinkList.h" // errorSinks_: registered on the UI thread, invoked from the automation worker
+#include "StringSinkList.h"  // errorSinks_: registered on the UI thread, invoked from the automation worker
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
