@@ -33,15 +33,25 @@
 //   2. NotDocked_SelectDockedTabIsNoOp (DETERMINISTIC) — a floating window and
 //      an unknown name must both take the early-return path without crashing
 //      and without disturbing the caller's window. No host dependency.
+//   3. DockedSibling_BeginWindowWithToggleRaisesTab — the shared begin of Log,
+//      Bulk Import, Bulk Export, Notifications and MCP Server
+//      (SmatchetWindowExpand::BeginWindowWithToggle) raises its window from
+//      behind a docked sibling when its focus latch is set, and clears the latch
+//      (#2274: the latch used to reach only SetNextWindowFocus / SetWindowFocus,
+//      so the tab stayed behind). Same skip convention as variant 1.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "SmatchetUI.h"
+#include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow::DockNode / TabBar, DockBuilder*
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
+
+extern UiDrawSession g_ui;
 
 namespace {
 
@@ -212,11 +222,117 @@ void RegisterNotDockedVariant(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Variant 3: BeginWindowWithToggle raises its docked tab on a focus request (#2274).
+// ---------------------------------------------------------------------------
+const char* kToggleA = "SmatchetTest DockedTabFocus ToggleA";
+const char* kToggleB = "SmatchetTest DockedTabFocus ToggleB";
+
+ImGuiID ToggleNodeId() { return ImHashStr("SmatchetTest::DockedTabFocusToggleNode"); }
+
+struct ToggleState {
+    bool visible = false;
+    bool openA = true;
+    bool openB = true;
+    bool focusA = false; ///< the window's focus latch, as d.requestLogFocus is for Log
+};
+
+ToggleState g_toggleState;
+
+void DrawToggleWindows(ToggleState& s) {
+    if (!s.visible) {
+        return;
+    }
+    if (SmatchetWindowExpand::BeginWindowWithToggle(g_ui, kToggleA, &s.openA, s.focusA)) {
+        ImGui::TextUnformatted("(toggle A)");
+        ImGui::End();
+    }
+    bool noFocusRequest = false;
+    if (SmatchetWindowExpand::BeginWindowWithToggle(g_ui, kToggleB, &s.openB, noFocusRequest)) {
+        ImGui::TextUnformatted("(toggle B)");
+        ImGui::End();
+    }
+}
+
+void RegisterToggleHelperVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DockedTabFocus", "DockedSibling_BeginWindowWithToggleRaisesTab");
+    t->UserData = &g_toggleState;
+
+    t->GuiFunc = [](ImGuiTestContext* ctx) { DrawToggleWindows(*static_cast<ToggleState*>(ctx->Test->UserData)); };
+
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ToggleState* s = static_cast<ToggleState*>(ctx->Test->UserData);
+        s->visible = true;
+        s->openA = true;
+        s->openB = true;
+        s->focusA = false;
+
+        if ((ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable) == 0) {
+            ctx->LogInfo("skip: docking disabled in this host configuration");
+            s->visible = false;
+            return;
+        }
+
+        const ImGuiID nodeId = ToggleNodeId();
+        ImGui::DockBuilderRemoveNode(nodeId);
+        ImGui::DockBuilderAddNode(nodeId, ImGuiDockNodeFlags_None);
+        ImGui::DockBuilderSetNodeSize(nodeId, ImVec2(400, 300));
+        ImGui::DockBuilderDockWindow(kToggleA, nodeId);
+        ImGui::DockBuilderDockWindow(kToggleB, nodeId);
+        ImGui::DockBuilderFinish(nodeId);
+        // Runs on every exit, including an IM_CHECK failure's early return: the private dock node goes, the
+        // windows stop drawing, and neither window's settings reach the host's real ini file.
+        struct Cleanup {
+            ImGuiID Node;
+            ToggleState* State;
+            ~Cleanup() {
+                ImGui::DockBuilderRemoveNode(Node);
+                State->visible = false;
+                ImGui::ClearWindowSettings(kToggleA);
+                ImGui::ClearWindowSettings(kToggleB);
+                g_ui.windowExpand.FocusRetries.erase(static_cast<unsigned int>(ImHashStr(kToggleA)));
+            }
+        } cleanup{nodeId, s};
+
+        ImGuiTabBar* bar = nullptr;
+        for (int i = 0; i < 60 && bar == nullptr; ++i) {
+            ctx->Yield();
+            bar = TabBarOf(kToggleA);
+        }
+        if (bar == nullptr) {
+            ctx->LogInfo("skip: dock node never realized a tab bar — headless host");
+            return;
+        }
+
+        ImGuiWindow* wa = ImGui::FindWindowByName(kToggleA);
+        ImGuiWindow* wb = ImGui::FindWindowByName(kToggleB);
+        IM_CHECK(wa != nullptr);
+        IM_CHECK(wb != nullptr);
+
+        // B in front: A is the window "behind a sibling" the menu item is asked to raise.
+        bar->NextSelectedTabId = wb->TabId;
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK_EQ(bar->VisibleTabId, wb->TabId);
+
+        // The menu's request: set A's latch and let the helper service it.
+        s->focusA = true;
+        for (int i = 0; i < 4; ++i) {
+            ctx->Yield();
+        }
+        bar = TabBarOf(kToggleA);
+        IM_CHECK(bar != nullptr);
+        IM_CHECK_EQ(bar->VisibleTabId, wa->TabId);
+        IM_CHECK(!s->focusA); // serviced: the latch is cleared, not held
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterDockedTabFocusTests(ImGuiTestEngine* engine) {
     RegisterDockedSiblingVariant(engine);
     RegisterNotDockedVariant(engine);
+    RegisterToggleHelperVariant(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
