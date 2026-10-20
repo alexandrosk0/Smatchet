@@ -426,8 +426,8 @@ class AppController : public IAppThreading,
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink) override;
-    /** Drop all automation log AND error sinks. Call before destroying plugins to avoid dangling `[this]`
-     *  captures. */
+    /** Drop all automation log AND error sinks, waiting for any still running on another thread. Call
+     *  before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
     /// Register a sink that receives Lua error messages (automation runner + setup script

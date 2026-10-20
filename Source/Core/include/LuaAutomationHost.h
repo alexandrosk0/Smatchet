@@ -19,6 +19,7 @@
 #include "StringSinkList.h"
 
 #include <memory>
+#include <string>
 
 class LuaAutomationHost {
   public:
@@ -28,11 +29,16 @@ class LuaAutomationHost {
     /// Called from plugins in `OnEarlyInit` (before `InitLua` completes) and from commands.
     void AddAutomationLogSink(smatchet::StringSinkList::Sink sink);
 
-    /// Drop all sinks. Called before destroying plugins to avoid dangling `[this]` captures.
+    /// Drop all sinks and wait for any still running on another thread. Called before destroying
+    /// plugins, so a `[this]` capture is never called after its plugin is gone.
     void ClearAutomationLogSinks();
 
-    /// The current sinks (never null), for the Lua log writer to iterate on whatever thread it
-    /// runs: the list is immutable once published, so a concurrent Add or Clear cannot change it.
+    /// Send `line` to every sink, on whatever thread the Lua log writer runs. False when there is no
+    /// sink (the caller then writes the line to the app log instead).
+    bool InvokeLogSinks(const std::string& line) const;
+
+    /// The current sinks (never null), for inspection. Callers that run them use InvokeLogSinks, which
+    /// ClearAutomationLogSinks waits for.
     std::shared_ptr<const smatchet::StringSinkList::Sinks> SnapshotLogSinks() const;
 
   private:

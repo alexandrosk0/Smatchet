@@ -298,7 +298,14 @@ TEST_CASE("MainThreadDispatcher: BeginShutdown releases a worker blocked on a qu
     while (dispatcher.QueueLen() == 0 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
-    REQUIRE(dispatcher.QueueLen() == 1u);
+    const bool posted = dispatcher.QueueLen() == 1u;
+    if (!posted) {
+        // Release and join the worker before REQUIRE throws: a joinable std::thread destroyed by the
+        // unwinding would call std::terminate and abort the whole run instead of reporting this case.
+        dispatcher.BeginShutdown();
+        worker.join();
+    }
+    REQUIRE(posted);
     CHECK_FALSE(finished.load(std::memory_order_acquire));
 
     dispatcher.BeginShutdown(); // no drain: the frame loop has stopped

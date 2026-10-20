@@ -269,14 +269,8 @@ void AppController::Impl::InitLuaUi(sol::state& state) {
 
 void AppController::Impl::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
-    // One snapshot: it is immutable, so a sink registered or cleared meanwhile cannot change it.
-    const std::shared_ptr<const smatchet::StringSinkList::Sinks> sinks =
-        luaHost_ ? luaHost_->SnapshotLogSinks() : nullptr;
-    if (sinks && !sinks->empty()) {
-        for (const auto& sink : *sinks) {
-            sink(clean);
-        }
-    } else {
+    // InvokeLogSinks runs one immutable snapshot of the sinks, tracked so ClearAutomationLogSinks waits for it.
+    if (!luaHost_ || !luaHost_->InvokeLogSinks(clean)) {
         LOG_INFO("[LUA] %s", clean.c_str());
     }
 }
@@ -669,13 +663,7 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string bare = std::string(prefix) + detail;
         const std::string decorated = std::string("[ERROR] ") + bare;
-        const std::shared_ptr<const smatchet::StringSinkList::Sinks> sinks =
-            impl_->luaHost_ ? impl_->luaHost_->SnapshotLogSinks() : nullptr;
-        if (sinks && !sinks->empty()) {
-            for (const auto& sink : *sinks) {
-                sink(decorated);
-            }
-        } else {
+        if (!impl_->luaHost_ || !impl_->luaHost_->InvokeLogSinks(decorated)) {
             LOG_ERROR("%s", decorated.c_str());
         }
         errorSinks_.InvokeAll(bare);

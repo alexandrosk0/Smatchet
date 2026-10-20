@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -84,4 +85,51 @@ TEST_CASE("StringSinkList: registration and clearing race invocation without a d
     // The last round ends with a Clear, and every invocation ran against a whole, published list.
     CHECK(list.Snapshot()->empty());
     CHECK_FALSE(list.InvokeAll("done"));
+}
+
+TEST_CASE("StringSinkList::ClearAndWait returns only after a sink running on another thread finishes") {
+    // Teardown order: the host clears the sinks, then destroys the plugins whose `[this]` they capture.
+    // A sink still running on the automation worker must have finished by then.
+    StringSinkList list;
+    std::atomic<bool> inSink(false);
+    std::atomic<bool> release(false);
+    std::atomic<bool> sinkDone(false);
+    list.Add([&](const std::string&) {
+        inSink.store(true, std::memory_order_release);
+        while (!release.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        sinkDone.store(true, std::memory_order_release);
+    });
+    std::thread invoker([&] { list.InvokeAll("line"); });
+    while (!inSink.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    std::atomic<bool> cleared(false);
+    std::thread clearer([&] {
+        list.ClearAndWait();
+        cleared.store(true, std::memory_order_release);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    CHECK_FALSE(cleared.load(std::memory_order_acquire)); // still waiting for the running sink
+    CHECK_FALSE(list.InvokeAll("after clear"));           // but no new invocation reaches the old sinks
+
+    release.store(true, std::memory_order_release);
+    clearer.join();
+    invoker.join();
+    CHECK(cleared.load());
+    CHECK(sinkDone.load()); // the sink had finished before ClearAndWait returned
+}
+
+TEST_CASE("StringSinkList::ClearAndWait from inside a sink does not wait for itself") {
+    StringSinkList list;
+    int calls = 0;
+    list.Add([&](const std::string&) {
+        ++calls;
+        list.ClearAndWait(); // the invocation on this thread is not counted
+    });
+    CHECK(list.InvokeAll("line"));
+    CHECK(calls == 1);
+    CHECK_FALSE(list.InvokeAll("again"));
 }
