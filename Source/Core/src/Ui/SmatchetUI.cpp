@@ -1630,18 +1630,22 @@ bool ApplyReadyFieldCatalogFetch(AppController& app, UiDrawSession& d) {
             if (result.Ok) {
                 // The project the fetch was scoped to keys the snapshot (the project-scoped cache entry carries
                 // Phase-3 component options) and is pinned with the catalog.
-                app.ApplyGridFieldCatalogResult(latch, d.fieldCatalogFetchConfig, result.ProjectKey,
-                                                std::move(result.Fields), std::move(result.Components),
-                                                std::move(result.IssueTypeMeta), std::string(), false);
+                const bool applied = app.ApplyGridFieldCatalogResult(
+                    latch, d.fieldCatalogFetchConfig, result.ProjectKey, std::move(result.Fields),
+                    std::move(result.Components), std::move(result.IssueTypeMeta), std::string(), false);
                 // Push the fetched user list into the AppController cache so JQL
                 // autocomplete can suggest assignees / reporters by display name. A catalog fetch still
                 // succeeds when its user lookup fails (the catalog carries a Warning and no users), so an
-                // empty list keeps the roster seeded from the store and never overwrites the saved one.
+                // empty list keeps the roster seeded from the store and never overwrites the saved one. The
+                // roster belongs to the site, which the check above matched to the focused pane, so it is kept
+                // even when the catalog itself was dropped; the catalog's warning is shown only with its catalog.
                 if (!result.Users.empty()) {
                     app.SetAvailableUsers(std::move(result.Users));
                     app.SaveAvailableUsersForOfflineAsync(result.CacheBackendKey, std::move(result.UsersPayloadJson));
                 }
-                d.fieldCatalogWarning = result.Warning;
+                if (applied && app.IsGridCatalogFetchForFocusedPane(latch)) {
+                    d.fieldCatalogWarning = result.Warning;
+                }
             } else if (result.Error.find("Tracker backend is not initialized") != std::string::npos) {
                 d.fieldCatalogLoading = false;
                 d.fieldCatalogFetchStarted = false;
@@ -1729,8 +1733,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         app.SeedAvailableUsersFromStoreAsync();
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
-        // Latched with the backend StartFieldCatalogFetchAsync latches: the result is applied to this pane, under
-        // this configuration, whatever is focused or configured when it lands (#2328).
+        // Latched with the backend StartFieldCatalogFetchAsync latches: the result is applied to this pane, keyed by
+        // this configuration, or dropped (#2328). Focus moving to another pane of the same site does not redirect
+        // it; one on another site discards it first (ApplyReadyFieldCatalogFetch).
         d.fieldCatalogFetchLatch = app.LatchGridCatalogFetch();
         d.fieldCatalogFetchConfig = fetchCfg;
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);

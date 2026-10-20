@@ -905,8 +905,9 @@ class AppController : public IAppThreading,
     /// UI thread: applies the grid's field-catalog fetch result to the pane `latch` names, the way RefreshFieldCatalog
     /// applies its own: the snapshot is keyed by `fetchCfg` and `projectKey` (the configuration and project the fetch
     /// ran with, not whatever is configured when it lands), the Jira-vs-Plane fixups follow `fetchCfg`'s tracker, and
-    /// the project is pinned with the catalog. Dropped when the pane has switched tracker or site, been retired or had
-    /// its catalog cleared since the latch (#2328). A non-empty `error` takes the failure path for that pane and
+    /// the project is pinned with the catalog. Dropped when `fetchCfg` names another tracker or site than the pane
+    /// runs, or the pane has switched tracker or site, been retired, had its catalog cleared or started a
+    /// RefreshFieldCatalog since the latch (#2328). A non-empty `error` takes the failure path for that pane and
     /// project (restoring its saved catalog when memory is empty). Returns true when a catalog was applied.
     bool ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& latch, const TrackerConfig& fetchCfg,
                                      const std::string& projectKey, std::vector<TrackerField> fields,

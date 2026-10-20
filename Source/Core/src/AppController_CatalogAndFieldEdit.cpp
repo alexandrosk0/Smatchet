@@ -387,7 +387,7 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     const TrackerConfig cfgSnap = guard.Config != nullptr ? *guard.Config : ConfigManager::Load();
     const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
     const bool catalogPlane = backendKey == "Plane";
-    // An unguarded apply (the grid's own fetch) takes the project SetCurrentCatalogProject named for it,
+    // An unguarded apply (SetFieldCatalog) takes the project SetCurrentCatalogProject named for it,
     // consuming it, or else the project of the catalog in memory; either way it keys the snapshot and is
     // pinned with the catalog. Read under the lock: other threads write both.
     CatalogWriteGuard scoped = guard;
@@ -980,6 +980,7 @@ GridCatalogFetchLatch AppController::LatchGridCatalogFetch() {
     latch.Pane = &pane;
     latch.PaneGeneration = pane.backendGeneration_.load();
     latch.CatalogEpoch = pane.fieldCatalog.CatalogEpoch.load();
+    latch.RefreshSeq = pane.fieldCatalog.RefreshSeq.load();
     latch.PaneCacheKey = pane.CacheBackendKeyCopy();
     return latch;
 }
@@ -998,8 +999,22 @@ bool AppController::ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& lat
     }
     GridLiveContext& pane = *latch.Pane;
     GridContextFieldCatalog& cat = pane.fieldCatalog;
+    // The grid fetches with the session configuration, which can name another tracker or site than the pane runs:
+    // a Preferences switch whose backend swap waits for a running sync. Such a fetch asked the pane's backend with
+    // the other tracker's settings, so its result is no catalog of either: drop it. The swap's own catalog refetch
+    // (after the live sync) fetches again with the matching configuration.
+    TrackerConfig paneCfg;
+    if (!ResolvePaneFetchConfig(latch.PaneCacheKey, fetchCfg, projectKey, paneCfg) ||
+        paneCfg.TrackerType != fetchCfg.TrackerType) {
+        LOG_INFO("AppController: grid field catalog fetched for '%s' while its pane runs '%s'; dropped",
+                 smatchet::cache_keys::DescribeCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(fetchCfg))
+                     .c_str(),
+                 smatchet::cache_keys::DescribeCacheBackendKey(latch.PaneCacheKey).c_str());
+        return false;
+    }
     // The same guard RefreshFieldCatalog builds, from what the grid latched at launch: a pane that switched
-    // tracker or site, was retired, or had its catalog cleared since then drops the result.
+    // tracker or site, was retired, or had its catalog cleared since then drops the result, and so does one
+    // whose RefreshFieldCatalog (a draft's project catalog) started after the grid fetch: the newer one wins.
     CatalogWriteGuard guard;
     guard.Generation = &pane.backendGeneration_;
     guard.ExpectedGeneration = latch.PaneGeneration;
@@ -1011,6 +1026,8 @@ bool AppController::ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& lat
     guard.Config = &fetchCfg;
     guard.HasProject = true;
     guard.Project = projectKey;
+    guard.RefreshSeq = &cat.RefreshSeq;
+    guard.ExpectedRefreshSeq = latch.RefreshSeq;
     // UI thread: the snapshot is queued for writing, and a failure with nothing in memory reads it back on the
     // queue's worker and applies the restore here when it lands (as SetFieldCatalog does).
     CatalogSnapshotIo io;
