@@ -127,14 +127,29 @@ TEST_CASE("GuardSpreadsheetFormula also covers LF and the full-width formula lea
 }
 
 TEST_CASE("UnguardSpreadsheetFormula undoes exactly the quote the guard adds") {
-    for (const char* original : {"=1+1", "  @x", "-2+3",
-                                 "\xEF\xBC\x9D"
-                                 "1",
-                                 "-5", "plain", "'already", "", "'"}) {
+    for (const char* original :
+         {"=1+1", "  @x", "-2+3",
+          "\xEF\xBC\x9D"
+          "1",
+          "-5", "plain", "'already", "", "'", "'=x", "''=x", "'@a", "' +1", "'''", "'tis", "'5"}) {
         CAPTURE(original);
         CHECK(UnguardSpreadsheetFormula(GuardSpreadsheetFormula(original)) == original);
     }
     CHECK(UnguardSpreadsheetFormula("'5") == "'5");     // the guard never quotes a number
     CHECK(UnguardSpreadsheetFormula("'tis") == "'tis"); // nor ordinary text
     CHECK(UnguardSpreadsheetFormula("'=x") == "=x");
+}
+
+TEST_CASE("GuardSpreadsheetFormula quotes a value whose own leading quote precedes a formula") {
+    // The value's quote is kept (a spreadsheet shows "'=x") and the guard stays reversible.
+    CHECK(GuardSpreadsheetFormula("'=x") == "''=x");
+    CHECK(GuardSpreadsheetFormula("''@a") == "'''@a");
+    CHECK(GuardSpreadsheetFormula("' +cmd") == "'' +cmd");
+    CHECK(GuardSpreadsheetFormula("' +1") == "' +1"); // "+1" is a plain number
+    CHECK(GuardSpreadsheetFormula("'-5") == "'-5");   // a quote before a plain number is the value's own text
+    CHECK(GuardSpreadsheetFormula("'tis") == "'tis");
+}
+
+TEST_CASE("BuildCsvLine turns tabs into spaces so a paste cannot split the guard from the formula") {
+    CHECK(BuildCsvLine({"\t=cmd", "a\tb"}) == "' =cmd,a b\n");
 }

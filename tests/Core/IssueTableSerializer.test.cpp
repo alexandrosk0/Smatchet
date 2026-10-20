@@ -415,6 +415,20 @@ TEST_CASE("SerializeTickets guards formula cells; ParseDrafts strips the guard a
     }
 }
 
+TEST_CASE("SerializeTickets and ParseDrafts round-trip a value's own leading quote") {
+    for (const char* value : {"'=x", "''=x", "'@a", "' +1", "'tis", "'5"}) {
+        std::vector<CachedTicket> tickets = {MakeTicket("PRJ-1", "summary", value)};
+        for (const Format fmt : {Format::Csv, Format::Tsv}) {
+            CAPTURE(value);
+            CAPTURE(static_cast<int>(fmt));
+            ImportResult r = ParseDrafts(SerializeTickets(tickets, {"summary"}, fmt), fmt, {}, "PRJ", "", "");
+            REQUIRE(r.Rows.size() == 1);
+            REQUIRE(r.Rows[0].Draft.FieldValues.count("summary") == 1);
+            CHECK(r.Rows[0].Draft.FieldValues.at("summary") == value);
+        }
+    }
+}
+
 TEST_CASE("ParseDrafts keeps a quote that the export guard would not have added") {
     // "'tis" and "'5" are the user's own text: the guard never quotes "tis" or "5".
     const std::string csv = "summary,description\n'tis a bug,'5\n";

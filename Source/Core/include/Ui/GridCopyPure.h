@@ -9,6 +9,7 @@
 
 #include "StringUtil.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <set>
 #include <string>
@@ -42,16 +43,21 @@ inline std::vector<std::size_t> ResolveGridRowsToTicketIndices(const std::set<in
     return out;
 }
 
-/// Comma-join of each cell, formula-guarded (GuardSpreadsheetFormula: tracker text that starts like a
-/// formula is pasted as text) and then RFC 4180-quoted (CsvEscapeField), terminated with '\n' (LF, not
-/// CRLF, line endings — spreadsheets and text editors accept both).
+/// Comma-join of each cell for the clipboard: tabs become spaces, the cell is formula-guarded
+/// (GuardSpreadsheetFormula: tracker text that starts like a formula is pasted as text) and then RFC
+/// 4180-quoted (CsvEscapeField); terminated with '\n' (LF, not CRLF, line endings — spreadsheets and
+/// text editors accept both). The tabs go because a spreadsheet splits pasted text on them, quotes or
+/// not: "'\t=cmd" would land as a "'" cell next to a live "=cmd" cell.
 inline std::string BuildCsvLine(const std::vector<std::string>& cells) {
     std::string out;
+    std::string cell;
     for (std::size_t i = 0; i < cells.size(); ++i) {
         if (i != 0) {
             out.push_back(',');
         }
-        out += CsvEscapeField(GuardSpreadsheetFormula(cells[i]));
+        cell = cells[i];
+        std::replace(cell.begin(), cell.end(), '\t', ' ');
+        out += CsvEscapeField(GuardSpreadsheetFormula(cell));
     }
     out.push_back('\n');
     return out;

@@ -137,38 +137,43 @@ inline bool StartsWithSpreadsheetFormulaLead(const std::string& cell, std::size_
     return third == 0x9D || third == 0x8B || third == 0x8D || third == 0xA0;
 }
 
-/// Spreadsheet formula-injection guard for text copied or exported from tracker data (OWASP "CSV
-/// injection"). Excel, LibreOffice and Google Sheets evaluate a cell that starts like a formula
-/// (StartsWithSpreadsheetFormulaLead), so a ticket summary such as `=HYPERLINK("https://evil", "click")`
-/// would turn live when pasted or opened. Such a cell gets a leading single quote, which those
-/// spreadsheets take as "this is text" and do not display. Leading spaces are looked past, since an
-/// importer that trims them would otherwise still see the formula. A plain number ("-5", "+3.25",
-/// "-1e3") is returned unchanged. Apply it to the cell's text before any CSV quoting; RFC 4180 quoting
-/// alone does not stop evaluation. UnguardSpreadsheetFormula undoes it for text read back.
-inline std::string GuardSpreadsheetFormula(const std::string& cell) {
+/// True when GuardSpreadsheetFormula quotes `cell`: after any leading single quotes and then any leading
+/// spaces it starts like a formula (StartsWithSpreadsheetFormulaLead) and is not a plain number. Leading
+/// spaces are looked past since an importer that trims them would still see the formula. A value's own
+/// leading quotes are looked past too, so "'=x" is quoted again ("''=x"): the guard stays reversible
+/// (UnguardSpreadsheetFormula gives "'=x" back) and a spreadsheet shows the value's own quote.
+inline bool NeedsSpreadsheetFormulaGuard(const std::string& cell) {
     std::size_t first = 0;
+    while (first < cell.size() && cell[first] == '\'') {
+        ++first;
+    }
     while (first < cell.size() && cell[first] == ' ') {
         ++first;
     }
-    if (!StartsWithSpreadsheetFormulaLead(cell, first) || IsPlainSpreadsheetNumber(cell.substr(first))) {
-        return cell;
-    }
-    return "'" + cell;
+    return StartsWithSpreadsheetFormulaLead(cell, first) && !IsPlainSpreadsheetNumber(cell.substr(first));
+}
+
+/// Spreadsheet formula-injection guard for text copied or exported from tracker data (OWASP "CSV
+/// injection"). Excel, LibreOffice and Google Sheets evaluate a cell that starts like a formula, so a
+/// ticket summary such as `=HYPERLINK("https://evil", "click")` would turn live when pasted or opened.
+/// Such a cell (NeedsSpreadsheetFormulaGuard) gets a leading single quote, which those spreadsheets take
+/// as "this is text" and do not display; a plain number ("-5", "+3.25", "-1e3") is returned unchanged.
+/// Apply it to the cell's text before any CSV quoting; RFC 4180 quoting alone does not stop evaluation.
+/// UnguardSpreadsheetFormula undoes it for text read back. Limitation (OWASP): Excel drops the quote when
+/// it saves the file as CSV again, so a re-saved file is no longer guarded.
+inline std::string GuardSpreadsheetFormula(const std::string& cell) {
+    return NeedsSpreadsheetFormulaGuard(cell) ? "'" + cell : cell;
 }
 
 /// The inverse of GuardSpreadsheetFormula for a cell read back from a file or paste this app produced
 /// (Bulk Import reading Bulk Export or a grid copy): removes the leading quote only when the guard would
-/// have added exactly that quote to the rest. A value that itself began with "'=" loses its quote too;
-/// that is the price of round-tripping guarded text.
+/// have added exactly that quote to the rest, so Unguard(Guard(v)) == v for every v ("'tis" and "'5"
+/// keep their quote; "''=x" becomes "'=x").
 inline std::string UnguardSpreadsheetFormula(const std::string& cell) {
-    if (cell.empty() || cell[0] != '\'') {
-        return cell;
-    }
-    std::string rest = cell.substr(1);
-    if (GuardSpreadsheetFormula(rest).size() != cell.size()) {
+    if (cell.empty() || cell[0] != '\'' || !NeedsSpreadsheetFormulaGuard(cell.substr(1))) {
         return cell; // the guard would not have quoted the rest, so this quote is the value's own
     }
-    return rest;
+    return cell.substr(1);
 }
 
 // File NAME component of a path (C++14 — no std::filesystem). For user-facing error
