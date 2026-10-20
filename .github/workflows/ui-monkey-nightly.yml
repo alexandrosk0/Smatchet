@@ -205,7 +205,7 @@ jobs:
               echo "- **The walk never executed** (tested=${TESTED:-0}) — filter/registration/env problem, NOT a UI crash."
             else
               echo "- Reproducing seed: \`${SEED:-unknown}\`"
-              echo "- Replay: set \`SMATCHET_UI_MONKEY=1 SMATCHET_UI_MONKEY_SEED=${SEED:-<seed>}\` then \`ui_test.run --name='UiMonkey' --spawn --yes\`"
+              echo "- Replay: set \`SMATCHET_UI_MONKEY=1 SMATCHET_UI_MONKEY_SEED=${SEED:-<seed>}\` then \`ui_test.run --name='UiMonkey' --frames=8000 --timeout=420000 --spawn --yes\`"
             fi
             echo ""
             echo '```'
@@ -250,7 +250,7 @@ jobs:
           Replay: build \`ninja-ui-test-msvc\`, then run under llvmpipe:
           \`\`\`
           SMATCHET_UI_MONKEY=1 SMATCHET_UI_MONKEY_SEED=${SEED:-<seed>} \\
-            ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --spawn --yes
+            ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --frames=8000 --timeout=420000 --spawn --yes
           \`\`\`
 
           See the job summary for the ImGui Test Engine error / assertion. This is Layer 2 of
