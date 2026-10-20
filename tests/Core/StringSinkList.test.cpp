@@ -111,6 +111,11 @@ TEST_CASE("StringSinkList::ClearAndWait returns only after a sink running on ano
         list.ClearAndWait();
         cleared.store(true, std::memory_order_release);
     });
+    // Wait until the clear is visible: before it, an InvokeAll here would run the spinning sink on this
+    // thread, which is the one that releases it, and hang.
+    while (!list.Snapshot()->empty()) {
+        std::this_thread::yield();
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     CHECK_FALSE(cleared.load(std::memory_order_acquire)); // still waiting for the running sink
     CHECK_FALSE(list.InvokeAll("after clear"));           // but no new invocation reaches the old sinks
