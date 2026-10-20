@@ -100,9 +100,10 @@ class StringSinkList {
         ~InFlight() {
             {
                 std::lock_guard<std::mutex> lock(list_.mutex_);
-                if (--list_.inFlight_ == 0) {
-                    list_.idle_.notify_all();
-                }
+                --list_.inFlight_;
+                // Every decrement, not only the last: a ClearAndWait called from inside a sink waits for the
+                // count to fall to its own invocations (inFlight_ <= mine), which is above zero.
+                list_.idle_.notify_all();
             }
             ActiveOnThisThread().pop_back();
         }

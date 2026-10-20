@@ -138,3 +138,48 @@ TEST_CASE("StringSinkList::ClearAndWait from inside a sink does not wait for its
     CHECK(calls == 1);
     CHECK_FALSE(list.InvokeAll("again"));
 }
+
+TEST_CASE("StringSinkList::ClearAndWait from inside a sink wakes when another thread's sink finishes") {
+    // The waiter counts its own invocation, so it waits for the count to fall to 1, not 0: the
+    // invocation finishing on the other thread must wake it. State is shared so a failure (timeout)
+    // can let the stuck thread go without it outliving what it uses.
+    struct State {
+        StringSinkList list;
+        std::atomic<bool> holding{false};
+        std::atomic<bool> release{false};
+        std::atomic<bool> clearReturned{false};
+    };
+    const auto state = std::make_shared<State>();
+    state->list.Add([raw = state.get()](const std::string& message) {
+        if (message == "hold") {
+            raw->holding.store(true, std::memory_order_release);
+            while (!raw->release.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        } else if (message == "clear") {
+            raw->list.ClearAndWait();
+            raw->clearReturned.store(true, std::memory_order_release);
+        }
+    });
+    std::thread holder([state] { state->list.InvokeAll("hold"); });
+    while (!state->holding.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::thread clearer([state] { state->list.InvokeAll("clear"); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    CHECK_FALSE(state->clearReturned.load(std::memory_order_acquire)); // waits for the holding sink
+
+    state->release.store(true, std::memory_order_release);
+    holder.join();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!state->clearReturned.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool woke = state->clearReturned.load(std::memory_order_acquire);
+    if (woke) {
+        clearer.join();
+    } else {
+        clearer.detach(); // stuck in ClearAndWait; it owns `state`, so letting it go is safe
+    }
+    CHECK(woke);
+}
