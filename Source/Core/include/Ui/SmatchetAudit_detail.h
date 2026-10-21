@@ -40,5 +40,15 @@ std::vector<std::size_t> CollectFilteredAuditIndices(const std::vector<nlohmann:
 /** Ceil-divide the filtered count by rows-per-page, clamped to at least one page. */
 int ComputeAuditPageCount(std::size_t filteredCount, int rowsPerPage);
 
+/** Header line of "Copy filtered table (TSV)", newline-terminated; one name per column
+ *  AppendAuditGridRowTsv writes, in the same order. */
+const std::string& AuditGridTsvHeader();
+
+/** Append one audit event as a TSV line (newline-terminated) under AuditGridTsvHeader: time, phase,
+ *  action, OK/FAIL, issue, source, error, then `dataCell` ("-" when empty). Every text cell goes
+ *  through TsvCopyCell, so tabs and line breaks become spaces and text that starts like a spreadsheet
+ *  formula is pasted as text. */
+void AppendAuditGridRowTsv(std::string& out, const nlohmann::json& event, const std::string& dataCell);
+
 } // namespace detail
 } // namespace SmatchetAudit

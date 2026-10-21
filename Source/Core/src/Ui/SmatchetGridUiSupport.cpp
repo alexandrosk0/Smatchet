@@ -663,20 +663,6 @@ bool ImGuiEffectiveKeyShift() { return ImGui::GetIO().KeyShift; }
 
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) { return issueId + "|" + fieldId; }
 
-// Replace newlines, carriage returns, and tabs with spaces for clipboard text format.
-std::string SanitizeClipboardCell(const std::string& value) {
-    std::string out;
-    out.reserve(value.size());
-    for (char ch : value) {
-        if (ch == '\n' || ch == '\r' || ch == '\t') {
-            out.push_back(' ');
-        } else {
-            out.push_back(ch);
-        }
-    }
-    return out;
-}
-
 // Persist the current view's JQL query to history and trigger a backend sync with deferred config write.
 // The configuration is persisted through the coalescing config-save worker to avoid blocking the UI thread.
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory,

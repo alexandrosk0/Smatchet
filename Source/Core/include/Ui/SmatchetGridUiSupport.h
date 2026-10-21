@@ -87,7 +87,6 @@ bool NewIssueDraftHasUserContent(const UiDrawSession& d);
 bool ImGuiEffectiveKeyCtrl();
 bool ImGuiEffectiveKeyShift();
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId);
-std::string SanitizeClipboardCell(const std::string& value);
 /// `mode` Delta (default) downloads only changed tickets; Full forces the whole-view download (Shift+Refresh).
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory,
                          smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
