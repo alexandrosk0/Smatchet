@@ -78,6 +78,104 @@ inline std::string CsvEscapeField(const std::string& s) {
     return out;
 }
 
+/// True when `s` is a plain decimal number a spreadsheet would read as a number: optional sign, digits
+/// with an optional fraction, an optional exponent. Such a cell cannot hold a formula, so
+/// GuardSpreadsheetFormula leaves it alone ("-5" stays a number rather than becoming the text "'-5").
+inline bool IsPlainSpreadsheetNumber(const std::string& s) {
+    std::size_t i = 0;
+    const auto isDigit = [](char c) { return c >= '0' && c <= '9'; };
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+        ++i;
+    }
+    std::size_t digits = 0;
+    while (i < s.size() && isDigit(s[i])) {
+        ++i;
+        ++digits;
+    }
+    if (i < s.size() && s[i] == '.') {
+        ++i;
+        while (i < s.size() && isDigit(s[i])) {
+            ++i;
+            ++digits;
+        }
+    }
+    if (digits == 0) {
+        return false;
+    }
+    if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+            ++i;
+        }
+        const std::size_t exponentStart = i;
+        while (i < s.size() && isDigit(s[i])) {
+            ++i;
+        }
+        if (i == exponentStart) {
+            return false;
+        }
+    }
+    return i == s.size();
+}
+
+/// True when `cell` starts, at `pos`, with a character spreadsheets treat as the start of a formula: '=', '+',
+/// '-', '@', TAB, CR or LF (the OWASP CSV-injection list), or the full-width '＝', '＋', '－', '＠' (U+FF1D,
+/// U+FF0B, U+FF0D, U+FF20 in UTF-8), which some locales' spreadsheets read the same way.
+inline bool StartsWithSpreadsheetFormulaLead(const std::string& cell, std::size_t pos) {
+    if (pos >= cell.size()) {
+        return false;
+    }
+    const char lead = cell[pos];
+    if (lead == '=' || lead == '+' || lead == '-' || lead == '@' || lead == '\t' || lead == '\r' || lead == '\n') {
+        return true;
+    }
+    if (cell.size() - pos < 3 || static_cast<unsigned char>(lead) != 0xEF ||
+        static_cast<unsigned char>(cell[pos + 1]) != 0xBC) {
+        return false;
+    }
+    const unsigned char third = static_cast<unsigned char>(cell[pos + 2]);
+    return third == 0x9D || third == 0x8B || third == 0x8D || third == 0xA0;
+}
+
+/// True when GuardSpreadsheetFormula quotes `cell`: after any leading single quotes and then any leading
+/// spaces it starts like a formula (StartsWithSpreadsheetFormulaLead) and is not a plain number. Leading
+/// spaces are looked past since an importer that trims them would still see the formula. A value's own
+/// leading quotes are looked past too, so "'=x" is quoted again ("''=x"): the guard stays reversible
+/// (UnguardSpreadsheetFormula gives "'=x" back) and a spreadsheet shows the value's own quote.
+inline bool NeedsSpreadsheetFormulaGuard(const std::string& cell) {
+    std::size_t first = 0;
+    while (first < cell.size() && cell[first] == '\'') {
+        ++first;
+    }
+    while (first < cell.size() && cell[first] == ' ') {
+        ++first;
+    }
+    return StartsWithSpreadsheetFormulaLead(cell, first) && !IsPlainSpreadsheetNumber(cell.substr(first));
+}
+
+/// Spreadsheet formula-injection guard for text copied or exported from tracker data (OWASP "CSV
+/// injection"). Excel, LibreOffice and Google Sheets evaluate a cell that starts like a formula, so a
+/// ticket summary such as `=HYPERLINK("https://evil", "click")` would turn live when pasted or opened.
+/// Such a cell (NeedsSpreadsheetFormulaGuard) gets a leading single quote, which those spreadsheets take
+/// as "this is text" and do not display; a plain number ("-5", "+3.25", "-1e3") is returned unchanged.
+/// Apply it to the cell's text before any CSV quoting; RFC 4180 quoting alone does not stop evaluation.
+/// UnguardSpreadsheetFormula undoes it for text read back. Limitation (OWASP): Excel drops the quote when
+/// it saves the file as CSV again, so a re-saved file is no longer guarded.
+inline std::string GuardSpreadsheetFormula(const std::string& cell) {
+    return NeedsSpreadsheetFormulaGuard(cell) ? "'" + cell : cell;
+}
+
+/// The inverse of GuardSpreadsheetFormula for a cell read back from a file or paste this app produced
+/// (Bulk Import reading Bulk Export or a grid copy): removes the leading quote only when the guard would
+/// have added exactly that quote to the rest, so Unguard(Guard(v)) == v for every v ("'tis" and "'5"
+/// keep their quote; "''=x" becomes "'=x").
+inline std::string UnguardSpreadsheetFormula(const std::string& cell) {
+    if (cell.empty() || cell[0] != '\'' || !NeedsSpreadsheetFormulaGuard(cell.substr(1))) {
+        return cell; // the guard would not have quoted the rest, so this quote is the value's own
+    }
+    return cell.substr(1);
+}
+
 // File NAME component of a path (C++14 — no std::filesystem). For user-facing error
 // text: a full path in a toast leaks the local filesystem layout into screenshots.
 inline std::string FileNameOfPath(const std::string& path) {
@@ -186,6 +284,10 @@ inline std::string SanitizeForSpreadsheet(const std::string& s) {
     }
     return out;
 }
+
+/** One cell of a TSV copy that a spreadsheet will receive: tabs and line breaks become spaces (so the cell
+ *  stays one cell), then GuardSpreadsheetFormula. */
+inline std::string TsvCopyCell(const std::string& raw) { return GuardSpreadsheetFormula(SanitizeForSpreadsheet(raw)); }
 
 /// Base64 encode (RFC 4648, standard alphabet, '=' padded). Single source for the repo's
 /// base64 — the tracker Basic-auth header, the MCP envelope path, and the bug-report

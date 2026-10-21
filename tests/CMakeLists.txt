@@ -160,6 +160,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (MainThreadDispatcher.h); the SMATCHET_UI_PERF_SCOPE in Drain() pulls UiPerfMonitor.cpp
         # (ImGui-free), linked just below.
         Core/MainThreadDispatcherConcurrent.test.cpp
+        # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
+        Core/GridCopyPure.test.cpp
         # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
         # register-vs-invoke case is a TSan target. Header-only.
         Core/StringSinkList.test.cpp
