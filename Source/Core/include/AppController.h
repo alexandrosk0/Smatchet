@@ -894,13 +894,6 @@ class AppController : public IAppThreading,
     /// the banner; "Plane" also selects the Plane catalog fix-ups).
     void HandleFieldCatalogError(const std::string& error, bool errorTransient, const std::string& catalogCacheKey,
                                  const std::string& backendKey);
-    /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
-    /// catalog fetch resolves a project from the active-view JQL but applies the result through
-    /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would
-    /// persist under the unscoped ("") key and component options would be lost on next startup.
-    /// Pass the same project key the fetch was scoped to (empty = unscoped). Guarded by
-    /// availableFieldsMutex_.
-    void SetCurrentCatalogProject(const std::string& projectKey);
     /// UI thread, as the grid starts its field-catalog fetch: latches the focused pane, its backend generation,
     /// catalog epoch and cache namespace, for ApplyGridFieldCatalogResult.
     GridCatalogFetchLatch LatchGridCatalogFetch();
