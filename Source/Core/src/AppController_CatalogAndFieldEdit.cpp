@@ -387,17 +387,13 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     const TrackerConfig cfgSnap = guard.Config != nullptr ? *guard.Config : ConfigManager::Load();
     const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
     const bool catalogPlane = backendKey == "Plane";
-    // An unguarded apply (SetFieldCatalog) takes the project SetCurrentCatalogProject named for it,
-    // consuming it, or else the project of the catalog in memory; either way it keys the snapshot and is
-    // pinned with the catalog. Read under the lock: other threads write both.
+    // An unguarded apply (SetFieldCatalog) takes the project of the catalog in memory: it keys the snapshot
+    // and is pinned with the catalog. Read under the lock: other threads write it.
     CatalogWriteGuard scoped = guard;
     if (!scoped.HasProject) {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         scoped.HasProject = true;
-        scoped.Project =
-            cat.hasPendingCatalogProjectKey_ ? cat.pendingCatalogProjectKey_ : cat.currentCatalogProjectKey_;
-        cat.hasPendingCatalogProjectKey_ = false;
-        cat.pendingCatalogProjectKey_.clear();
+        scoped.Project = cat.currentCatalogProjectKey_;
     }
     const std::string& projectKeyForCache = scoped.Project;
     const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, projectKeyForCache);
@@ -871,16 +867,6 @@ std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     const std::string& error, bool errorTransient) {
     SetFieldCatalog(std::move(fields), std::move(components), {}, error, errorTransient);
-}
-
-void AppController::SetCurrentCatalogProject(const std::string& projectKey) {
-    GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
-    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-    // Pinned with the catalog the next SetFieldCatalog applies, not now: the catalog in memory is not
-    // that project's yet.
-    cat.pendingCatalogProjectKey_ = projectKey;
-    cat.hasPendingCatalogProjectKey_ = true;
 }
 
 void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
