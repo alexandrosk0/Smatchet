@@ -289,6 +289,12 @@ inline std::string SanitizeForSpreadsheet(const std::string& s) {
  *  stays one cell), then GuardSpreadsheetFormula. */
 inline std::string TsvCopyCell(const std::string& raw) { return GuardSpreadsheetFormula(SanitizeForSpreadsheet(raw)); }
 
+/** TsvCopyCell, except an empty value becomes the "-" placeholder that table copies show for a blank
+ *  cell. The placeholder is written as is: it is ours, not tracker text, so it needs no guard. */
+inline std::string TsvCopyCellOrDash(const std::string& raw) {
+    return raw.empty() ? std::string("-") : TsvCopyCell(raw);
+}
+
 /// Base64 encode (RFC 4648, standard alphabet, '=' padded). Single source for the repo's
 /// base64 — the tracker Basic-auth header, the MCP envelope path, and the bug-report
 /// attachment encoder all route here; each previously carried its own copy.

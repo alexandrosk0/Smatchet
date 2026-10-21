@@ -4,6 +4,8 @@
 
 #include "Ui/SmatchetAudit_detail.h"
 
+#include "StringUtil.h"
+
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -108,6 +110,28 @@ int ComputeAuditPageCount(std::size_t filteredCount, int rowsPerPage) {
     }
     const std::size_t per = static_cast<std::size_t>(rowsPerPage);
     return static_cast<int>((filteredCount + per - 1) / per);
+}
+
+const std::string& AuditGridTsvHeader() {
+    static const std::string header = "Time\tPhase\tAction\tResult\tIssue\tSource\tError\tDetails\n";
+    return header;
+}
+
+void AppendAuditGridRowTsv(std::string& out, const nlohmann::json& event, const std::string& dataCell) {
+    static const char* const kLeadingKeys[] = {"timestamp_local", "phase", "action"};
+    static const char* const kTrailingKeys[] = {"issue_key", "source", "error"};
+    for (const char* key : kLeadingKeys) {
+        out += TsvCopyCell(JsonStringValue(event, key));
+        out += '\t';
+    }
+    out += event.value("success", false) ? "OK" : "FAIL";
+    for (const char* key : kTrailingKeys) {
+        out += '\t';
+        out += TsvCopyCell(JsonStringValue(event, key));
+    }
+    out += '\t';
+    out += TsvCopyCellOrDash(dataCell);
+    out += '\n';
 }
 
 } // namespace detail
