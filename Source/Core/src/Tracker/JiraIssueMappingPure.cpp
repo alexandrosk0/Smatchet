@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -301,16 +302,24 @@ bool IsWholeDecimalInteger(const std::string& s) {
 
 // The `comment` field's `total` count, or the inline array's size when `total` is absent or unusable. The value is
 // tracker-sent: read it range-checked (ParseJsonIntFieldLoose), since `value("total", int)` converts an out-of-range
-// number with undefined behaviour and throws on a non-number. A string counts only when it is a whole integer: the
-// loose parse would read "2 comments" as 2.
+// number with undefined behaviour and throws on a non-number. A string or float counts only when it is a whole
+// integer: the loose parse would read "2 comments" or 2.5 as 2.
 int JiraCommentTotal(const nlohmann::json& commentObj, const nlohmann::json& commentsArray) {
     const std::size_t inlineCount = commentsArray.is_array() ? commentsArray.size() : 0u;
     const int fallback = inlineCount <= static_cast<std::size_t>((std::numeric_limits<int>::max)())
                              ? static_cast<int>(inlineCount)
                              : (std::numeric_limits<int>::max)();
     const auto it = commentObj.find("total");
-    if (it != commentObj.end() && it->is_string() && !IsWholeDecimalInteger(it->get_ref<const std::string&>())) {
-        return fallback;
+    if (it != commentObj.end()) {
+        if (it->is_string() && !IsWholeDecimalInteger(it->get_ref<const std::string&>())) {
+            return fallback;
+        }
+        if (it->is_number_float()) {
+            const double d = it->get<double>();
+            if (!std::isfinite(d) || std::floor(d) != d) { // a count is never fractional: 2.5 is no total
+                return fallback;
+            }
+        }
     }
     const int total = ParseJsonIntFieldLoose(commentObj, "total", fallback);
     return total >= 0 ? total : fallback;

@@ -289,6 +289,9 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — an unusable comment total f
     CHECK_FALSE(fetched);
     CHECK(mapComments(nlohmann::json(""), inlineOne, fetched) == "1");
     CHECK(mapComments(nlohmann::json("-"), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json(2.5), nlohmann::json::array(), fetched) == "0"); // a count is never fractional
+    CHECK_FALSE(fetched);
+    CHECK(mapComments(nlohmann::json(3.0), nlohmann::json::array(), fetched) == "3"); // a whole float still counts
     CHECK(mapComments(nlohmann::json(nullptr), inlineOne, fetched) == "1");
 }
 
