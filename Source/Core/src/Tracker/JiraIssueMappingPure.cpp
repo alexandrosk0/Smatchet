@@ -6,6 +6,7 @@
 
 #include "ConfigManager.h"
 #include "JiraCommentMappingPure.h"
+#include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
@@ -289,7 +290,9 @@ ResolveJiraCommentThread(const nlohmann::json& rawValue, const std::string& tick
                          const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments) {
     const auto& commentObj = rawValue;
     const auto& commentsArray = commentObj["comments"];
-    const int totalComments = commentObj.value("total", static_cast<int>(commentsArray.size()));
+    // `total` is server data: a float outside int range (1e77) would be undefined behaviour
+    // under `.value<int>()`, and a string would throw. Either now falls back to the array size.
+    const int totalComments = ParseJsonIntFieldLoose(commentObj, "total", static_cast<int>(commentsArray.size()));
     if (commentsArray.is_array() && !commentsArray.empty()) {
         return MapJiraIssueComments(commentsArray);
     }
@@ -332,7 +335,7 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
         // from the `comment` display blob above) so the shared comments cell renders a count.
         const auto& commentsArray = rawValue["comments"];
         ticket.fieldValues["comments"] =
-            std::to_string(rawValue.value("total", static_cast<int>(commentsArray.size())));
+            std::to_string(ParseJsonIntFieldLoose(rawValue, "total", static_cast<int>(commentsArray.size())));
     } else if (IsJiraTimetrackingFieldKey(fieldKey)) {
         ticket.fieldValues[fieldKey] =
             rawValue.is_object() ? FormatTrackerTimetrackingDisplay(rawValue) : NormalizeTrackerFieldValue(rawValue);
