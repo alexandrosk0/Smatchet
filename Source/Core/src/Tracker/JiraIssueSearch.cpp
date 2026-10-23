@@ -70,7 +70,9 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             const int total = ParseJsonIntFieldLoose(commentsJson, "total", static_cast<int>(outComments.size()));
             const int pageCount = static_cast<int>(pageComments.size());
             const int reportedMaxResults = ParseJsonIntFieldLoose(commentsJson, "maxResults", pageCount);
-            startAt += (reportedMaxResults > 0 ? reportedMaxResults : pageCount);
+            // Never step past the page size we asked for: a server-sent INT_MAX here would
+            // overflow `startAt` on the next page.
+            startAt += (reportedMaxResults > 0 && reportedMaxResults <= maxResults ? reportedMaxResults : pageCount);
 
             if (static_cast<int>(outComments.size()) >= total || pageCount == 0) {
                 break;

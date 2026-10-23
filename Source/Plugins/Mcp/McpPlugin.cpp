@@ -17,7 +17,7 @@
 #include "ConfigManager.h"
 #include "Commands/Command.h"
 #include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
-#include "JsonParseUtil.h"          // ParseJsonIntFieldLoose — range-checked int reads of client JSON
+#include "JsonParseUtil.h"         // ParseJsonIntFieldLoose — range-checked int reads of client JSON
 #include "McpJsonRpcPure.h"
 #include "StringUtil.h" // Base64Encode — single-sourced base64 (was duplicated in mcp::pure)
 #include "McpRateLimitPure.h"
