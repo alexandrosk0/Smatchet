@@ -67,9 +67,9 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             const auto& pageComments = commentsJson["comments"];
             std::copy(pageComments.begin(), pageComments.end(), std::back_inserter(outComments));
 
-            const int total = commentsJson.value("total", static_cast<int>(outComments.size()));
+            const int total = ParseJsonIntFieldLoose(commentsJson, "total", static_cast<int>(outComments.size()));
             const int pageCount = static_cast<int>(pageComments.size());
-            const int reportedMaxResults = commentsJson.value("maxResults", pageCount);
+            const int reportedMaxResults = ParseJsonIntFieldLoose(commentsJson, "maxResults", pageCount);
             startAt += (reportedMaxResults > 0 ? reportedMaxResults : pageCount);
 
             if (static_cast<int>(outComments.size()) >= total || pageCount == 0) {

@@ -282,6 +282,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # CommandRegistry lookup vs registration race: FindLocked (UI thread) against Register
         # (a worker); FuzzyMatch + Command join for the registry's alias/fuzzy and result helpers.
         Core/CommandRegistryConcurrency.test.cpp
+        Core/CommandRegistryArgCoercion.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
@@ -1178,6 +1179,7 @@ add_executable(SmatchetTests
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     Core/CommandRegistryConcurrency.test.cpp
+    Core/CommandRegistryArgCoercion.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"

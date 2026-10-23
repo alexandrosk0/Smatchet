@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "TunableLimits.h"
 #include "Json/BoundedJsonParse.h"
+#include "JsonParseUtil.h"
 #include "Logger.h"
 
 #include <cstdio>
@@ -157,7 +158,13 @@ bool CoerceJsonValue(const nlohmann::json& in, ParamType type, nlohmann::json& o
             }
         }
         if (in.is_number_float()) {
-            out = static_cast<long long>(in.get<double>());
+            // Casting a double outside long long's range (or NaN) is undefined behaviour.
+            const double d = in.get<double>();
+            if (!json_parse_util_detail::TruncatesIntoInt64(d)) {
+                outErr = "expected integer (out of range)";
+                return false;
+            }
+            out = static_cast<long long>(d);
             return true;
         }
         outErr = "expected integer";

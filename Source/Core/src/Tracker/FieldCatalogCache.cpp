@@ -123,7 +123,7 @@ bool FieldFromJson(const nlohmann::json& j, TrackerField& out) {
     out.ItemsType = j.value("items_type", std::string());
     out.IsUserType = j.value("is_user_type", false);
     out.IsCustom = j.value("is_custom", false);
-    const int fam = j.value("family", 0);
+    const int fam = ParseJsonIntFieldLoose(j, "family");
     out.Family = static_cast<TrackerFieldFamily>(fam);
     out.AllowedValues.clear();
     const auto av = j.find("allowed_values");
