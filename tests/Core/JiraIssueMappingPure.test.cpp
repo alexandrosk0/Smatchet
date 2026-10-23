@@ -285,6 +285,10 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — an unusable comment total f
     CHECK(mapComments(nlohmann::json(3000000000ULL), inlineOne, fetched) == "1"); // above INT_MAX
     CHECK(mapComments(nlohmann::json(-4), inlineOne, fetched) == "1");
     CHECK(mapComments(nlohmann::json("lots"), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json("2 comments"), nlohmann::json::array(), fetched) == "0"); // not a whole integer
+    CHECK_FALSE(fetched);
+    CHECK(mapComments(nlohmann::json(""), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json("-"), inlineOne, fetched) == "1");
     CHECK(mapComments(nlohmann::json(nullptr), inlineOne, fetched) == "1");
 }
 
