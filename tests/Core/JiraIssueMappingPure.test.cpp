@@ -313,6 +313,54 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — a usable comment total is k
     CHECK(GetField(results[0], "comments") == "2");
 }
 
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — comment total outside int range falls back to the array size") {
+    // Found by fuzz_jira_map: `.value<int>("total")` on 1e77 was undefined behaviour.
+    const nlohmann::json totals[] = {nlohmann::json(1e77), nlohmann::json(-1e77), nlohmann::json(9999999999LL),
+                                     nlohmann::json("not a number")};
+    for (const nlohmann::json& total : totals) {
+        CAPTURE(total.dump());
+        nlohmann::json commentObj;
+        commentObj["comments"] = nlohmann::json::array();
+        commentObj["total"] = total;
+
+        nlohmann::json fields;
+        fields["comment"] = commentObj;
+
+        bool fetchCalled = false;
+        auto lazyFetch = [&](const std::string& /*key*/, nlohmann::json& /*out*/) -> bool {
+            fetchCalled = true;
+            return false;
+        };
+
+        std::vector<CachedTicket> results;
+        AppendCachedTicketFromJiraSearchIssue(MakeIssue("SMAT-8", fields), {"comment"}, lazyFetch, results);
+
+        CHECK_FALSE(fetchCalled);
+        CHECK(results.size() == 1);
+    }
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — numeric-string comment total still triggers the lazy fetch") {
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array();
+    commentObj["total"] = "2";
+
+    nlohmann::json fields;
+    fields["comment"] = commentObj;
+
+    bool fetchCalled = false;
+    auto lazyFetch = [&](const std::string& /*key*/, nlohmann::json& /*out*/) -> bool {
+        fetchCalled = true;
+        return false;
+    };
+
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(MakeIssue("SMAT-9", fields), {"comment"}, lazyFetch, results);
+
+    CHECK(fetchCalled);
+    CHECK(results.size() == 1);
+}
+
 TEST_CASE("AppendCachedTicketFromJiraSearchIssue — ADF doc object stored in fieldRichValues") {
     nlohmann::json adf;
     adf["type"] = "doc";
