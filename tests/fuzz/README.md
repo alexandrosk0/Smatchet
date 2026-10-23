@@ -69,7 +69,11 @@ subset links for `JiraIssueMappingPure` (the `ConfigManager` split TUs, the
 Comments pipeline and the Markdown engines). Their first run found a real bug:
 `ParseJsonIntLoose` cast an out-of-range float board id straight to `int`
 (undefined behaviour); the seed `corpus/jira_field_catalog/board_float_id_overflow`
-keeps it fixed.
+keeps it fixed. A nightly later found the same class in the issue mapper's `comment.total`
+read, which used `json::value("total", int)` (#2363); the seeds
+`corpus/jira_map/comment_total_float_overflow` and `comment_total_float_overflow_2` keep it fixed.
+Read a tracker-sent number with the range-checked `ParseJsonInt*Loose` helpers, never
+`value(key, int)` or an unguarded `get<int>()`.
 
 ## Adding a driver
 
