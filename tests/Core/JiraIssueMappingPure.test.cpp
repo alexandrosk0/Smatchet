@@ -255,6 +255,64 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — comments fetched lazily whe
     CHECK(!GetField(results[0], "comment").empty());
 }
 
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — an unusable comment total falls back to the inline count") {
+    // `total` is tracker-sent. A number outside int's range was converted with undefined behaviour
+    // (fuzz_jira_map, #2363) and a non-number threw; both now fall back to the inline array's size.
+    const auto mapComments = [](const nlohmann::json& total, const nlohmann::json& comments, bool& fetched) {
+        nlohmann::json commentObj;
+        commentObj["comments"] = comments;
+        commentObj["total"] = total;
+        nlohmann::json fields;
+        fields["comment"] = commentObj;
+        fetched = false;
+        const auto fetch = [&fetched](const std::string&, nlohmann::json&) -> bool {
+            fetched = true;
+            return false;
+        };
+        std::vector<CachedTicket> results;
+        AppendCachedTicketFromJiraSearchIssue(MakeIssue("SM-7", fields), {"comment"}, fetch, results);
+        REQUIRE(results.size() == 1);
+        return GetField(results[0], "comments");
+    };
+    bool fetched = false;
+    nlohmann::json one;
+    one["body"] = "Inline";
+    const nlohmann::json inlineOne = nlohmann::json::array({one});
+
+    CHECK(mapComments(nlohmann::json::parse("1e71"), nlohmann::json::array(), fetched) == "0");
+    CHECK_FALSE(fetched);
+    CHECK(mapComments(nlohmann::json::parse("-1e71"), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json(3000000000ULL), inlineOne, fetched) == "1"); // above INT_MAX
+    CHECK(mapComments(nlohmann::json(-4), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json("lots"), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json("2 comments"), nlohmann::json::array(), fetched) == "0"); // not a whole integer
+    CHECK_FALSE(fetched);
+    CHECK(mapComments(nlohmann::json(""), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json("-"), inlineOne, fetched) == "1");
+    CHECK(mapComments(nlohmann::json(2.5), nlohmann::json::array(), fetched) == "0"); // a count is never fractional
+    CHECK_FALSE(fetched);
+    CHECK(mapComments(nlohmann::json(3.0), nlohmann::json::array(), fetched) == "3"); // a whole float still counts
+    CHECK(mapComments(nlohmann::json(nullptr), inlineOne, fetched) == "1");
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — a usable comment total is kept and still drives the lazy fetch") {
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array();
+    commentObj["total"] = "2"; // a numeric string, as some proxies re-encode counts
+    nlohmann::json fields;
+    fields["comment"] = commentObj;
+    bool fetched = false;
+    const auto fetch = [&fetched](const std::string&, nlohmann::json&) -> bool {
+        fetched = true;
+        return false;
+    };
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(MakeIssue("SM-8", fields), {"comment"}, fetch, results);
+    REQUIRE(results.size() == 1);
+    CHECK(fetched);
+    CHECK(GetField(results[0], "comments") == "2");
+}
+
 TEST_CASE("AppendCachedTicketFromJiraSearchIssue — comment total outside int range falls back to the array size") {
     // Found by fuzz_jira_map: `.value<int>("total")` on 1e77 was undefined behaviour.
     const nlohmann::json totals[] = {nlohmann::json(1e77), nlohmann::json(-1e77), nlohmann::json(9999999999LL),

@@ -73,6 +73,8 @@ keeps it fixed. The nightly later found the same class one call up: the comment
 thread read `comment.total` with `.value<int>()`, undefined behaviour for `1e77`;
 it now goes through `ParseJsonIntFieldLoose`, and
 `corpus/jira_map/comment_total_out_of_range` keeps it fixed (#2363).
+Read a tracker-sent number with the range-checked `ParseJsonInt*Loose` helpers, never
+`value(key, int)` or an unguarded `get<int>()`.
 
 ## Adding a driver
 

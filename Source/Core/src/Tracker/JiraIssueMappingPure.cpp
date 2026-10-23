@@ -16,7 +16,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstddef>
 #include <functional>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -283,6 +286,45 @@ bool IsJiraAttachmentFieldKey(const std::string& fieldKey) {
     return fieldKey == "attachment" || fieldKey == "attachments";
 }
 
+// True when `s` is a whole decimal integer: an optional sign, then only digits.
+bool IsWholeDecimalInteger(const std::string& s) {
+    std::size_t i = (!s.empty() && (s[0] == '-' || s[0] == '+')) ? 1u : 0u;
+    if (i == s.size()) {
+        return false;
+    }
+    for (; i < s.size(); ++i) {
+        if (s[i] < '0' || s[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The `comment` field's `total` count, or the inline array's size when `total` is absent or unusable. The value is
+// tracker-sent: read it range-checked (ParseJsonIntFieldLoose), since `value("total", int)` converts an out-of-range
+// number with undefined behaviour and throws on a non-number. A string or float counts only when it is a whole
+// integer: the loose parse would read "2 comments" or 2.5 as 2.
+int JiraCommentTotal(const nlohmann::json& commentObj, const nlohmann::json& commentsArray) {
+    const std::size_t inlineCount = commentsArray.is_array() ? commentsArray.size() : 0u;
+    const int fallback = inlineCount <= static_cast<std::size_t>((std::numeric_limits<int>::max)())
+                             ? static_cast<int>(inlineCount)
+                             : (std::numeric_limits<int>::max)();
+    const auto it = commentObj.find("total");
+    if (it != commentObj.end()) {
+        if (it->is_string() && !IsWholeDecimalInteger(it->get_ref<const std::string&>())) {
+            return fallback;
+        }
+        if (it->is_number_float()) {
+            const double d = it->get<double>();
+            if (!std::isfinite(d) || std::floor(d) != d) { // a count is never fractional: 2.5 is no total
+                return fallback;
+            }
+        }
+    }
+    const int total = ParseJsonIntFieldLoose(commentObj, "total", fallback);
+    return total >= 0 ? total : fallback;
+}
+
 // Resolve the `comment` field's thread, optionally fetching the full comment list when the
 // search payload only carried a total count.
 std::vector<TrackerIssueComment>
@@ -290,9 +332,7 @@ ResolveJiraCommentThread(const nlohmann::json& rawValue, const std::string& tick
                          const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments) {
     const auto& commentObj = rawValue;
     const auto& commentsArray = commentObj["comments"];
-    // `total` is server data: a float outside int range (1e77) would be undefined behaviour
-    // under `.value<int>()`, and a string would throw. Either now falls back to the array size.
-    const int totalComments = ParseJsonIntFieldLoose(commentObj, "total", static_cast<int>(commentsArray.size()));
+    const int totalComments = JiraCommentTotal(commentObj, commentsArray);
     if (commentsArray.is_array() && !commentsArray.empty()) {
         return MapJiraIssueComments(commentsArray);
     }
@@ -333,9 +373,7 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
         }
         // issue-comments PR-B — populate the unified numeric `comments` column (plural, distinct
         // from the `comment` display blob above) so the shared comments cell renders a count.
-        const auto& commentsArray = rawValue["comments"];
-        ticket.fieldValues["comments"] =
-            std::to_string(ParseJsonIntFieldLoose(rawValue, "total", static_cast<int>(commentsArray.size())));
+        ticket.fieldValues["comments"] = std::to_string(JiraCommentTotal(rawValue, rawValue["comments"]));
     } else if (IsJiraTimetrackingFieldKey(fieldKey)) {
         ticket.fieldValues[fieldKey] =
             rawValue.is_object() ? FormatTrackerTimetrackingDisplay(rawValue) : NormalizeTrackerFieldValue(rawValue);
