@@ -5,9 +5,9 @@
 
   "updated": {
     "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
-    "campaign": "2026-07-06",
-    "ci_lanes": "2026-07-06",
-    "open_prs": "2026-07-06"
+    "campaign": "2026-10-23",
+    "ci_lanes": "2026-10-23",
+    "open_prs": "2026-10-23"
   },
 
   "governance": { "loop_mode": "on", "auto_merge": "on" },
@@ -23,8 +23,8 @@
       "evidence": "Blocking <code style=\"font-family:var(--mono);font-size:11px\">bare‑json‑parse‑untrusted</code> lint gate + ranked mining record (#1608 → #1605)." },
     { "status": "landed",      "title": "Mutation testing",
       "evidence": "Pilot <b style=\"color:var(--ok)\">merged</b> (#1626): 68 mutants / 12 TUs → 52 killed, 16 survived; 3 worst survivors strengthened. Plan archived (#1641)." },
-    { "status": "partial",     "title": "Outward‑facing product", "label": "Half shipped",
-      "evidence": "i18n <b style=\"color:var(--ok)\">merged</b> (#1614) + error‑message pass <b style=\"color:var(--ok)\">merged</b> (#1615). AppController service‑extraction (2.8K LOC) pending." },
+    { "status": "landed",      "title": "Outward‑facing product",
+      "evidence": "i18n <b style=\"color:var(--ok)\">merged</b> (#1614) + error‑message pass <b style=\"color:var(--ok)\">merged</b> (#1615). AppController service‑extraction + god‑object decomposition <b style=\"color:var(--ok)\">shipped</b> (plans in docs/plans/shipped/)." },
     { "status": "landed",      "title": "Performance win‑hunting",
       "evidence": "Hunt <b style=\"color:var(--ok)\">shipped</b>: PERF_WIN_HUNT.md + CommandPaletteUi snapshot (#1633, closed audit #33) + AI‑input alloc guard (#1632)." },
     { "status": "landed",      "title": "Fuzz‑surface expansion",
@@ -34,21 +34,19 @@
   ],
 
   "ci_lanes": [
-    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #38"  },
-    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #152" },
-    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #319" },
-    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #27"  },
-    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "Mon"      }
+    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #151" },
+    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "fail",   "when": "run #630" },
+    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #856" },
+    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #136" },
+    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "run #501" }
   ],
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
 
   "open_prs": [
-    { "id": "1646", "state": "ready", "label": "Ready",
-      "title": "Bound the app‑update check response body", "meta": "SECURITY_AUDIT #31 · 8 MiB cap" },
-    { "id": "1645", "state": "ready", "label": "Ready",
-      "title": "Fuzz E2d — locale format‑specifier guard", "meta": "item 05 follow‑on · 13th target" },
-    { "id": "1643", "state": "ready", "label": "Ready",
-      "title": "Backlog B2 2C/2D — Plane mutations single‑attempt", "meta": "docs + in‑code guardrail" }
+    { "id": "2364", "state": "ready", "label": "Ready",
+      "title": "Reconcile the historical-review ledger", "meta": "docs-only · open list is empty" },
+    { "id": "2244", "state": "blocked", "label": "Blocked",
+      "title": "Regenerate _plan-locks.generated.md from refs", "meta": "bot PR · CR waiver labels missing" }
   ],
 
   "governance_list": [
