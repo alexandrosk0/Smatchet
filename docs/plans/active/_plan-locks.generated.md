@@ -8,7 +8,19 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `bucket-e-grid-tests-ci`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/bucket-e-gridsearch-gridpanes-ci`
+- **Started**: 2026-10-16T09:56:35Z
+- **Write set** (6 paths):
+  - `tests/ui/grid_search_apply.test.cpp`
+  - `tests/ui/grid_pane_windows.test.cpp`
+  - `.github/workflows/build-and-test.yml`
+  - `scripts/dev/lib/ui-test-driver.sh`
+  - `.gitignore`
+  - `tests/bats/ui_test_driver_lib.bats`
+- **Notes**: Fix GridSearch/GridPanes bucket-E defects + run them in the fixture CI lane
+
