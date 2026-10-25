@@ -7,7 +7,7 @@
   - PR #2296, head `f30fa442`. Adding two labels at once (`cr-out-of-band`, `cr-disposition:cr-auto-review-disabled`, 18:10 UTC 2026-10-13) fired `perf-pr-fast.yml` twice. Run 38444613130 went on to pass `Detect perf-relevant changes` and `Perf PR-fast (windows-2022)`. Run 38444613295, created a moment later, was cancelled within a second by the workflow's concurrency group.
   - `All checks green` (run 38444613478) failed at 18:10 and again on a manual re-run at 20:33, both times naming only those two checks as `RED … (cancelled)`. Every other check on the head was green.
   - It passed at 21:24 only after the cancelled run 38444613295 was itself re-run (`rerun_workflow_run`) and succeeded.
-- **Status**: open until the host's `agent-layer` pointer carries the layer fix below
+- **Status**: fixed: the layer fix merged as the-unwilling-agentic-bunch#9 (`b60c11c`); the host pointer moves to it in alexandrosk0/Smatchet#2367
 
 ## Correction
 
