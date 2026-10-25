@@ -6,7 +6,7 @@
   "updated": {
     "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
     "campaign": "2026-10-23",
-    "ci_lanes": "2026-10-23",
+    "ci_lanes": "2026-10-25",
     "open_prs": "2026-10-23"
   },
 
@@ -34,10 +34,10 @@
   ],
 
   "ci_lanes": [
-    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #151" },
-    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "fail",   "when": "run #630" },
-    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #856" },
-    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #136" },
+    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #154" },
+    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #638" },
+    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #860" },
+    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #139" },
     { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "run #501" }
   ],
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
