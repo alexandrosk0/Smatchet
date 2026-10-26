@@ -1080,9 +1080,9 @@ class AppController : public IAppThreading,
     /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
     /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` rebuilds the
     /// payload for `resolvedValue` (the field's own shape; no Markdown conversion); `unverified` ("Force Mine")
-    /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
-    /// the conflict state + bases. Returns true when the edit was re-queued; false when it stays
-    /// suspended (see OfflineQueueService::ResolveFieldEditConflict).
+    /// ignores `resolvedValue`, replays the existing queued payload (an estimate edit without its copy of the
+    /// other estimate) and clears the conflict state + bases. Returns true when the edit was re-queued; false when it
+    /// stays suspended (see OfflineQueueService::ResolveFieldEditConflict).
     bool ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 

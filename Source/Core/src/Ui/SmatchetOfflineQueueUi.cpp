@@ -1324,7 +1324,8 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
 }
 
 // Unverified pane for the `unverified` kind, where the server value could not be read. The
-// Force Mine button replays the queued edit as-is; the Discard button hard-deletes the queue
+// Force Mine button replays the queued edit (an estimate edit sends only the edited estimate); the Discard
+// button hard-deletes the queue
 // row and writes an audit entry.
 static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
@@ -1337,7 +1338,7 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
     ImGui::Spacing();
 
     if (ImGui::Button("Force Mine", ImVec2(130, 0))) {
-        // Replay the queued payload verbatim (no value change) and clear the conflict.
+        // Replay the queued edit (no value change) and clear the conflict.
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
         HandleConflictRequeueResult(d, requeued, "Forcing your edit — re-queued for replay.", kConflictNotRequeued);
     }

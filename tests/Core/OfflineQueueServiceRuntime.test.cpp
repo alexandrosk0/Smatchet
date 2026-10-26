@@ -1090,9 +1090,11 @@ TEST_CASE("OfflineQueueServiceRuntime: an estimate edit whose re-fetch fails per
 }
 
 // A suspended estimate edit keeps its queued sibling estimate in the stored row, which may be stale by the
-// time the user resolves the conflict. The resolution clears the captured base but not the estimate
-// payload, so the replay after it re-fetches and sends the tracker's current sibling again.
-TEST_CASE("OfflineQueueServiceRuntime: a resolved estimate conflict replays the tracker's current other estimate") {
+// time the user resolves the conflict. "Use Mine" clears the captured base but not the estimate payload, so
+// the replay after it re-fetches and sends the tracker's current sibling. "Force Mine" drops the sibling
+// instead, so the replay sends the edited estimate alone, which Jira Cloud applies without touching the
+// other (#2332).
+TEST_CASE("OfflineQueueServiceRuntime: a resolved estimate conflict never replays a stale other estimate") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     CachedTicket fresh;
@@ -1115,21 +1117,89 @@ TEST_CASE("OfflineQueueServiceRuntime: a resolved estimate conflict replays the 
     REQUIRE(svc.GetPendingFieldEdits().front().HasMergeConflict);
     CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 
-    SUBCASE("Use Mine") { REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "scalar")); }
-    SUBCASE("Force Mine") { REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "unverified")); }
-    // The stored row still carries the stale 2h sibling.
-    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
-    CHECK(nlohmann::json::parse(
-              svc.GetPendingFieldEdits().front().FieldsPayloadJson)["timetracking"]["remainingEstimate"] == "2h");
+    nlohmann::json expectedSent;
+    SUBCASE("Use Mine") {
+        REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "scalar"));
+        // The stored row still carries the stale 2h sibling; the replay re-fetches and refreshes it.
+        REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+        CHECK(nlohmann::json::parse(
+                  svc.GetPendingFieldEdits().front().FieldsPayloadJson)["timetracking"]["remainingEstimate"] == "2h");
+        expectedSent = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "1h"}}}};
+    }
+    SUBCASE("Force Mine") {
+        REQUIRE(svc.ResolveFieldEditConflict(id, "3h", std::string(), "unverified"));
+        REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+        CHECK(nlohmann::json::parse(svc.GetPendingFieldEdits().front().FieldsPayloadJson) ==
+              nlohmann::json{{"timetracking", {{"originalEstimate", "3h"}}}});
+        expectedSent = {{"timetracking", {{"originalEstimate", "3h"}}}};
+    }
 
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineFieldEdits();
 
     CHECK(svc.GetPendingFieldEdits().empty());
     REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
-    const nlohmann::json sent = deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields;
-    CHECK(sent["timetracking"]["originalEstimate"] == "3h");
-    CHECK(sent["timetracking"]["remainingEstimate"] == "1h");
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields == expectedSent);
+}
+
+// #2332: Force Mine on an estimate edit whose issue cannot be read sends the edited estimate without another
+// re-fetch, instead of asking again after every resolution while the issue stays unreadable.
+TEST_CASE("OfflineQueueServiceRuntime: Force Mine sends an unverifiable estimate edit without a re-fetch" *
+          doctest::test_suite("[high-risk]")) {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->SetFetchIssuesForKeysError(TrackerErrorInvalidRequest("issue not visible", 403));
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    // Queued with a captured base, as a live estimate edit records one (FieldEditPipelineService).
+    const auto id =
+        svc.QueueFieldEditOffline("PROJ-68", "timeestimate", payload.dump(), err, std::string(), "2d", true);
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    REQUIRE(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    const std::size_t fetchesBeforeResolve = deps.BackendImpl->FetchIssuesForKeysCallCount();
+    CHECK(fetchesBeforeResolve >= 1u);
+
+    REQUIRE(svc.ResolveFieldEditConflict(id, "1d", std::string(), "unverified"));
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->FetchIssuesForKeysCallCount() == fetchesBeforeResolve);
+    REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields ==
+          nlohmann::json{{"timetracking", {{"remainingEstimate", "1d"}}}});
+}
+
+// A queued estimate payload that holds only the copy of the other estimate cannot be forced: it would send
+// nothing but that stale copy. The resolution is refused, so the edit stays suspended for the user to discard.
+TEST_CASE("OfflineQueueServiceRuntime: Force Mine refuses an estimate payload without the edited estimate") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->SetFetchIssuesForKeysError(TrackerErrorInvalidRequest("issue not visible", 404));
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = {{"timetracking", {{"remainingEstimate", "1d"}}}};
+    const auto id = svc.QueueFieldEditOffline("PROJ-69", "timeoriginalestimate", payload.dump(), err, std::string());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    REQUIRE(svc.GetPendingFieldEdits().front().HasMergeConflict);
+
+    CHECK_FALSE(svc.ResolveFieldEditConflict(id, std::string(), std::string(), "unverified"));
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    CHECK(nlohmann::json::parse(svc.GetPendingFieldEdits().front().FieldsPayloadJson) == payload);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 }
 
 // The conflict dialog shows the user's queued value for a sprint / estimate edit, not the base.

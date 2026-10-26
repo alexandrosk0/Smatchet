@@ -136,6 +136,28 @@ void FilterRowsToReplayBackendKey(std::vector<RowT>& rows, const std::string& re
     }
     rows.swap(matched);
 }
+
+// The payload a Force Mine ("unverified") resolution stores, in `out`: the queued payload as is, except that an
+// estimate edit loses the copy of the other estimate (TrackerFieldPayloadPure::DropUntouchedEstimate), which
+// could not be re-read. False when an estimate payload holds that copy but no usable edited estimate: forcing it
+// would send only the stale copy, so the edit stays suspended and the user can discard it. Anything that is not
+// an estimate payload is kept verbatim, so resolution never fabricates or loses a value.
+bool ForceMinePayload(const PendingFieldEditRecord& row, std::string& out) {
+    out = row.FieldsPayloadJson;
+    if (TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) == nullptr) {
+        return true;
+    }
+    std::string parseErr;
+    nlohmann::json payload = smatchet::json_safe::ParseBounded(row.FieldsPayloadJson, parseErr);
+    if (!parseErr.empty() || !TrackerFieldPayloadPure::CarriesUntouchedEstimate(row.FieldId, payload)) {
+        return true;
+    }
+    if (!TrackerFieldPayloadPure::DropUntouchedEstimate(row.FieldId, payload)) {
+        return false;
+    }
+    out = payload.dump();
+    return true;
+}
 } // namespace
 
 namespace OfflineFieldEditMergeDetail {
@@ -736,8 +758,9 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
     // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution rebuilds
     // the payload through the production `BuildFieldPayload` builder so structured fields keep
     // their `{"id":...}` / array shape (#854 — a bare display string dead-letters with HTTP 400).
-    // An `unverified` resolution ("Force Mine") keeps the original queued payload unchanged. A
-    // queued sprint / estimate edit is rebuilt in its own shape (sprint id / `timetracking` object).
+    // An `unverified` resolution ("Force Mine") keeps the original queued payload, minus an estimate edit's
+    // copy of the other estimate. A queued sprint / estimate edit is rebuilt in its own shape (sprint id /
+    // `timetracking` object).
     const bool isRichText = (kind != "scalar" && kind != "unverified");
     const bool isUnverified = (kind == "unverified");
     try {
@@ -748,9 +771,18 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
             if (rowIt != existing.end()) {
                 const auto& row = *rowIt;
                 if (isUnverified) {
-                    // Force Mine: replay the original backend-format payload untouched; only the
-                    // conflict flag + bases are cleared by ResolveFieldEditConflict.
-                    deps_.Cache()->ResolveFieldEditConflict(id, row.FieldsPayloadJson);
+                    // Force Mine: replay the original backend-format payload; only the conflict flag +
+                    // bases are cleared by ResolveFieldEditConflict. An estimate edit drops the copy of the
+                    // other estimate it carries, which could not be re-read: the replay then sends only the
+                    // edited estimate, skips the re-fetch (#2332), and never writes that stale copy back.
+                    std::string forced;
+                    if (!ForceMinePayload(row, forced)) {
+                        LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — the queued "
+                                 "estimate payload holds no edited estimate; the edit stays suspended",
+                                 static_cast<long long>(id), row.FieldId.c_str());
+                        return false;
+                    }
+                    deps_.Cache()->ResolveFieldEditConflict(id, forced);
                     return true;
                 }
                 nlohmann::json newPayload;
@@ -1024,10 +1056,10 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
     // captured base is still conflict-checked instead of mistaken for a legacy no-base row.
     const bool hasRichBase = !row.OriginalRichValue.empty();
     const bool hasScalarBase = row.HasOriginalValue;
-    // An estimate edit also carries the OTHER estimate, copied when it was queued; it is re-read from the
-    // tracker below so the replay never writes that stale copy over a change made meanwhile.
-    const bool estimatePayload = TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) != nullptr &&
-                                 fieldsPayload.is_object() && fieldsPayload.contains("timetracking");
+    // An estimate edit usually also carries the OTHER estimate, copied when it was queued; while it does, that
+    // estimate is re-read from the tracker below so the replay never writes the stale copy over a change made
+    // meanwhile. Force Mine drops the copy, so a forced estimate edit replays without the re-read.
+    const bool estimatePayload = TrackerFieldPayloadPure::CarriesUntouchedEstimate(row.FieldId, fieldsPayload);
     if ((!hasRichBase && !hasScalarBase && !estimatePayload) || !fieldsPayload.is_object()) {
         return FieldEditConflictOutcome::Proceed;
     }
@@ -1066,9 +1098,9 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
                  row.FieldId.c_str());
     }
 
-    // An estimate-only edit (no captured base) takes this path too: its payload still carries the
-    // untouched sibling estimate as queued, so replaying it unverified could overwrite a newer server
-    // value. It retries while the failure is transient, then asks the user, like a based edit.
+    // An estimate edit with no captured base takes this path too when its payload carries the untouched
+    // sibling estimate as queued: replaying it unverified could overwrite a newer server value. It retries
+    // while the failure is transient, then asks the user, like a based edit.
     if (!fetchOk || freshTickets.empty()) {
         const bool transient = fetchOk ? true : fetchErrTransient;
         if (transient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
