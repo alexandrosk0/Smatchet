@@ -769,6 +769,13 @@ TEST_CASE("TrackerFieldPayloadPure: RefreshUntouchedEstimate replaces only the e
     CHECK_FALSE(TrackerFieldPayloadPure::RefreshUntouchedEstimate("summary", "1h", payload));
 }
 
+TEST_CASE("TrackerFieldPayloadPure: only an Original Estimate edit may be sent alone") {
+    CHECK(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timeoriginalestimate"));
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timeestimate")); // JRACLOUD-94324
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timespent"));
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("summary"));
+}
+
 TEST_CASE("TrackerFieldPayloadPure: CarriesUntouchedEstimate sees the copy of the estimate not edited") {
     const json both = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
     CHECK(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", both));

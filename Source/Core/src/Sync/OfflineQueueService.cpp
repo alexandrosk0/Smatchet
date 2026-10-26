@@ -138,13 +138,15 @@ void FilterRowsToReplayBackendKey(std::vector<RowT>& rows, const std::string& re
 }
 
 // The payload a Force Mine ("unverified") resolution stores, in `out`: the queued payload as is, except that an
-// estimate edit loses the copy of the other estimate (TrackerFieldPayloadPure::DropUntouchedEstimate), which
-// could not be re-read. False when an estimate payload holds that copy but no usable edited estimate: forcing it
-// would send only the stale copy, so the edit stays suspended and the user can discard it. Anything that is not
-// an estimate payload is kept verbatim, so resolution never fabricates or loses a value.
+// Original Estimate edit loses its copy of the remaining estimate, which could not be re-read, so it replays
+// alone without another re-fetch (see TrackerFieldPayloadPure.h for why only that estimate may be sent alone).
+// A Remaining Estimate edit keeps its copy: it still re-reads the original before sending, so it waits for the
+// issue to be readable again. False when an Original Estimate payload holds that copy but no usable edited
+// estimate: forcing it would send only the stale copy, so the edit stays suspended and the user can discard
+// it. Any other payload is kept verbatim.
 bool ForceMinePayload(const PendingFieldEditRecord& row, std::string& out) {
     out = row.FieldsPayloadJson;
-    if (TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) == nullptr) {
+    if (!TrackerFieldPayloadPure::EstimateEditCanBeSentAlone(row.FieldId)) {
         return true;
     }
     std::string parseErr;
@@ -758,8 +760,8 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
     // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution rebuilds
     // the payload through the production `BuildFieldPayload` builder so structured fields keep
     // their `{"id":...}` / array shape (#854 — a bare display string dead-letters with HTTP 400).
-    // An `unverified` resolution ("Force Mine") keeps the original queued payload, minus an estimate edit's
-    // copy of the other estimate. A queued sprint / estimate edit is rebuilt in its own shape (sprint id /
+    // An `unverified` resolution ("Force Mine") keeps the original queued payload, minus an Original Estimate
+    // edit's copy of the remaining estimate. A queued sprint / estimate edit is rebuilt in its own shape (sprint id /
     // `timetracking` object).
     const bool isRichText = (kind != "scalar" && kind != "unverified");
     const bool isUnverified = (kind == "unverified");
@@ -772,8 +774,8 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                 const auto& row = *rowIt;
                 if (isUnverified) {
                     // Force Mine: replay the original backend-format payload; only the conflict flag +
-                    // bases are cleared by ResolveFieldEditConflict. An estimate edit drops the copy of the
-                    // other estimate it carries, which could not be re-read: the replay then sends only the
+                    // bases are cleared by ResolveFieldEditConflict. An Original Estimate edit drops its copy
+                    // of the remaining estimate, which could not be re-read: the replay then sends only the
                     // edited estimate, skips the re-fetch (#2332), and never writes that stale copy back.
                     std::string forced;
                     if (!ForceMinePayload(row, forced)) {
@@ -1056,10 +1058,14 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
     // captured base is still conflict-checked instead of mistaken for a legacy no-base row.
     const bool hasRichBase = !row.OriginalRichValue.empty();
     const bool hasScalarBase = row.HasOriginalValue;
-    // An estimate edit usually also carries the OTHER estimate, copied when it was queued; while it does, that
-    // estimate is re-read from the tracker below so the replay never writes the stale copy over a change made
-    // meanwhile. Force Mine drops the copy, so a forced estimate edit replays without the re-read.
-    const bool estimatePayload = TrackerFieldPayloadPure::CarriesUntouchedEstimate(row.FieldId, fieldsPayload);
+    // An estimate edit usually also carries the OTHER estimate, copied when it was queued; it is re-read from the
+    // tracker below so the replay never writes that stale copy over a change made meanwhile. A Remaining Estimate
+    // edit always re-reads (it is never sent without the current original); an Original Estimate edit without
+    // the copy (Force Mine dropped it) replays without the re-read.
+    const bool estimatePayload = TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) != nullptr &&
+                                 fieldsPayload.is_object() && fieldsPayload.contains("timetracking") &&
+                                 (!TrackerFieldPayloadPure::EstimateEditCanBeSentAlone(row.FieldId) ||
+                                  TrackerFieldPayloadPure::CarriesUntouchedEstimate(row.FieldId, fieldsPayload));
     if ((!hasRichBase && !hasScalarBase && !estimatePayload) || !fieldsPayload.is_object()) {
         return FieldEditConflictOutcome::Proceed;
     }

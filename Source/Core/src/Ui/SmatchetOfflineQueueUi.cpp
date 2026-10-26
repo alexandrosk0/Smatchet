@@ -1324,7 +1324,7 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
 }
 
 // Unverified pane for the `unverified` kind, where the server value could not be read. The
-// Force Mine button replays the queued edit (an estimate edit sends only the edited estimate); the Discard
+// Force Mine button replays the queued edit (an Original Estimate edit sends only that estimate); the Discard
 // button hard-deletes the queue
 // row and writes an audit entry.
 static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {

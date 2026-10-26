@@ -174,11 +174,17 @@ bool RefreshUntouchedEstimate(const std::string& editedFieldId, const std::strin
 /// the copy replay must re-read from the tracker before sending. False for any other payload.
 bool CarriesUntouchedEstimate(const std::string& editedFieldId, const nlohmann::json& payload);
 
-/// Force Mine on an estimate edit the tracker could not verify: remove the estimate the user did not edit, so
-/// the replay sends only the edited one and never a stale copy of the other. Jira Cloud (the only Jira this
-/// client talks to; its v3 API is Cloud-only) leaves an estimate the request omits unchanged (checked live on a
-/// Cloud site; legacy time-tracking mode was not checked). False, `payload` unchanged, when it is not an estimate
-/// payload or holds no usable edited estimate (the update would be empty).
+/// True when an edit of `fieldId` may be sent without the other estimate: only the Original Estimate. A
+/// remaining-only `timetracking` update can also set the original estimate to the same value on some Jira Cloud
+/// sites (JRACLOUD-94324, open; JRASERVER-30459 on Server), so a Remaining Estimate edit always carries the
+/// original. An original-only update left the remaining estimate unchanged when checked live on a Cloud site
+/// (legacy time-tracking mode not checked).
+bool EstimateEditCanBeSentAlone(const std::string& fieldId);
+
+/// Remove the estimate the user did not edit from a queued estimate payload, so the request sends only the
+/// edited one and never a stale copy of the other. Callers send that only when EstimateEditCanBeSentAlone.
+/// False, `payload` unchanged, when it is not an estimate payload or holds no usable edited estimate (the
+/// update would be empty).
 bool DropUntouchedEstimate(const std::string& editedFieldId, nlohmann::json& payload);
 
 /// The user's queued value for `fieldId` as text for the offline-conflict dialog: the sprint id of a
