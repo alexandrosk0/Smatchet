@@ -868,6 +868,8 @@ bool RefreshUntouchedEstimate(const std::string& editedFieldId, const std::strin
 
 bool EstimateEditCanBeSentAlone(const std::string& fieldId) { return fieldId == "timeoriginalestimate"; }
 
+bool IsTimetrackingPayload(const nlohmann::json& payload) { return SoleTimetrackingObject(payload) != nullptr; }
+
 bool CarriesUntouchedEstimate(const std::string& editedFieldId, const nlohmann::json& payload) {
     const char* const otherField = OtherEstimateFieldId(editedFieldId);
     const nlohmann::json* timetracking = SoleTimetrackingObject(payload);

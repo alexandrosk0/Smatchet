@@ -1213,13 +1213,19 @@ TEST_CASE("OfflineQueueServiceRuntime: Force Mine never sends a Remaining Estima
 }
 
 // A queued Remaining Estimate payload without the original (none was set when it was queued) still re-reads it:
-// if the original was set meanwhile, the replay sends it along rather than risking JRACLOUD-94324.
+// if the original was set meanwhile, the replay sends it along rather than risking JRACLOUD-94324. When the issue
+// still has no original there is none to overwrite, and the edit goes out alone, as a live edit does.
 TEST_CASE("OfflineQueueServiceRuntime: a Remaining Estimate edit queued alone re-reads the original") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     CachedTicket fresh;
     fresh.id = "PROJ-71";
-    fresh.fieldValues["timeoriginalestimate"] = "5h"; // set by a teammate after the edit was queued
+    nlohmann::json expectedSent;
+    SUBCASE("an original set meanwhile is sent along") {
+        fresh.fieldValues["timeoriginalestimate"] = "5h"; // set by a teammate after the edit was queued
+        expectedSent = {{"timetracking", {{"originalEstimate", "5h"}, {"remainingEstimate", "2h"}}}};
+    }
+    SUBCASE("no original: nothing to overwrite") { expectedSent = {{"timetracking", {{"remainingEstimate", "2h"}}}}; }
     deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -1233,12 +1239,12 @@ TEST_CASE("OfflineQueueServiceRuntime: a Remaining Estimate edit queued alone re
 
     CHECK(svc.GetPendingFieldEdits().empty());
     REQUIRE(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
-    CHECK(deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields ==
-          nlohmann::json{{"timetracking", {{"originalEstimate", "5h"}, {"remainingEstimate", "2h"}}}});
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCalls().front().Fields == expectedSent);
 }
 
-// A queued estimate payload that holds only the copy of the other estimate cannot be forced: it would send
-// nothing but that stale copy. The resolution is refused, so the edit stays suspended for the user to discard.
+// A queued Original Estimate payload without a usable edited estimate cannot be forced: it would send nothing of
+// the user's (only a stale copy, or an empty update). The resolution is refused, so the edit stays suspended for
+// the user to discard.
 TEST_CASE("OfflineQueueServiceRuntime: Force Mine refuses an estimate payload without the edited estimate") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
@@ -1246,8 +1252,12 @@ TEST_CASE("OfflineQueueServiceRuntime: Force Mine refuses an estimate payload wi
 
     OfflineQueueService svc(deps);
     std::string err;
-    const nlohmann::json payload = {{"timetracking", {{"remainingEstimate", "1d"}}}};
-    const auto id = svc.QueueFieldEditOffline("PROJ-69", "timeoriginalestimate", payload.dump(), err, std::string());
+    nlohmann::json payload;
+    SUBCASE("only the copy of the other estimate") { payload = {{"timetracking", {{"remainingEstimate", "1d"}}}}; }
+    SUBCASE("a blank edited estimate, no copy") { payload = {{"timetracking", {{"originalEstimate", " "}}}}; }
+    // Queued with a captured base, so a payload without the copy still re-fetches and reaches the dialog.
+    const auto id =
+        svc.QueueFieldEditOffline("PROJ-69", "timeoriginalestimate", payload.dump(), err, std::string(), "1d", true);
     REQUIRE(id > 0);
 
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());

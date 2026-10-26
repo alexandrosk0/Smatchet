@@ -141,9 +141,9 @@ void FilterRowsToReplayBackendKey(std::vector<RowT>& rows, const std::string& re
 // Original Estimate edit loses its copy of the remaining estimate, which could not be re-read, so it replays
 // alone without another re-fetch (see TrackerFieldPayloadPure.h for why only that estimate may be sent alone).
 // A Remaining Estimate edit keeps its copy: it still re-reads the original before sending, so it waits for the
-// issue to be readable again. False when an Original Estimate payload holds that copy but no usable edited
-// estimate: forcing it would send only the stale copy, so the edit stays suspended and the user can discard
-// it. Any other payload is kept verbatim.
+// issue to be readable again. False when an Original Estimate payload holds no usable edited estimate: forcing
+// it would send nothing of the user's (only a stale copy, or an empty update), so the edit stays suspended and
+// the user can discard it. Any other payload is kept verbatim.
 bool ForceMinePayload(const PendingFieldEditRecord& row, std::string& out) {
     out = row.FieldsPayloadJson;
     if (!TrackerFieldPayloadPure::EstimateEditCanBeSentAlone(row.FieldId)) {
@@ -151,7 +151,7 @@ bool ForceMinePayload(const PendingFieldEditRecord& row, std::string& out) {
     }
     std::string parseErr;
     nlohmann::json payload = smatchet::json_safe::ParseBounded(row.FieldsPayloadJson, parseErr);
-    if (!parseErr.empty() || !TrackerFieldPayloadPure::CarriesUntouchedEstimate(row.FieldId, payload)) {
+    if (!parseErr.empty() || !TrackerFieldPayloadPure::IsTimetrackingPayload(payload)) {
         return true;
     }
     if (!TrackerFieldPayloadPure::DropUntouchedEstimate(row.FieldId, payload)) {
@@ -1060,7 +1060,7 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
     const bool hasScalarBase = row.HasOriginalValue;
     // An estimate edit usually also carries the OTHER estimate, copied when it was queued; it is re-read from the
     // tracker below so the replay never writes that stale copy over a change made meanwhile. A Remaining Estimate
-    // edit always re-reads (it is never sent without the current original); an Original Estimate edit without
+    // edit always re-reads (it is sent with the current original, when there is one); an Original Estimate edit without
     // the copy (Force Mine dropped it) replays without the re-read.
     const bool estimatePayload = TrackerFieldPayloadPure::OtherEstimateFieldId(row.FieldId) != nullptr &&
                                  fieldsPayload.is_object() && fieldsPayload.contains("timetracking") &&
