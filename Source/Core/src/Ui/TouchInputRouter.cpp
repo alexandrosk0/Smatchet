@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <memory>
 #include <utility>
 
 namespace smatchet {
@@ -41,7 +42,8 @@ void PostNewFrameHook(ImGuiContext* ctx, ImGuiContextHook* hook) {
 }
 
 void ShutdownHook(ImGuiContext*, ImGuiContextHook* hook) {
-    delete static_cast<TouchInputRouter*>(hook->UserData);
+    // Take back the ownership InstallTouchInputRouter released into the hook; freed on scope exit.
+    std::unique_ptr<TouchInputRouter> owned(static_cast<TouchInputRouter*>(hook->UserData));
     hook->UserData = nullptr;
 }
 
@@ -216,7 +218,7 @@ void TouchInputRouter::PreNewFrame(ImGuiContext& g) {
 
 // Walks ImGui's pending input queue once per frame:
 //  - mouse (non-touch) activity feeds the sizing detector, ends the parked pointer and cancels a
-//    finger gesture in flight (the mouse wins);
+//    finger gesture in flight, because the mouse wins.
 //  - touchscreen position events this router did not add are dropped while gestures are on. They
 //    come from the GLFW backend polling the OS cursor (which Windows moves to the finger) and would
 //    otherwise drag the held-back pointer along with the finger.
@@ -469,7 +471,8 @@ void InstallTouchInputRouter(ImGuiContext* ctx) {
     if (ctx == nullptr || TouchInputRouter::ForContext(ctx) != nullptr) {
         return;
     }
-    AddRouterHooks(ctx, new TouchInputRouter()); // owned by the context; freed in ShutdownHook
+    // The context owns the router from here on: ShutdownHook takes it back into a unique_ptr.
+    AddRouterHooks(ctx, std::make_unique<TouchInputRouter>().release());
 }
 
 void MoveTouchRouterHooksToEnd(ImGuiContext* ctx) {
