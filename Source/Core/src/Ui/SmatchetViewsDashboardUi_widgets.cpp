@@ -13,6 +13,7 @@
 #include "SmatchetUiSession.h"
 #include "Views.h"
 
+#include "Ui/TouchInputRouter.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -88,6 +89,7 @@ void DrawDragHandle(const char* id, int rowIndex, const char* payloadType) {
     const float handleHeight = ImGui::GetFrameHeight();
     ImVec2 cursor = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##handle", ImVec2(handleWidth, handleHeight));
+    smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the row, not the list
     const bool hovered = ImGui::IsItemHovered();
     if (hovered) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

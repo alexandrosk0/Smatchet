@@ -11,6 +11,8 @@
 #include "StandaloneAppBootstrap.h"
 
 #include "StandaloneBoot_detail.h"
+#include "StandaloneTouchBridge.h"
+#include "Ui/TouchInputRouter.h"
 
 #include "AppController.h"
 #include "Dx12Bootstrap.h"
@@ -99,7 +101,6 @@ namespace {
 // StandaloneBoot_detail (de-dup of the dup_audit `duplication` WARN). Local
 // aliases keep the existing call sites readable + behaviour byte-identical.
 using boot_detail::EnsureDirectoryExists;
-using boot_detail::KeypadEnterBridgeCallback;
 using boot_detail::MarkdownFileDropCallback;
 using boot_detail::NormalizeDirectory;
 using boot_detail::PackRgbDropAlpha;
@@ -480,7 +481,7 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
             return false;
         }
         outGlfwBackendInitialized = true;
-        glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
+        InstallStandaloneInputBridges(window);
         int fbW = 0;
         int fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
@@ -505,7 +506,7 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
         return false;
     }
     outGlfwBackendInitialized = true;
-    glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
+    InstallStandaloneInputBridges(window);
     if (!ImGui_ImplOpenGL3_Init(ctx.glslVersion)) {
         err = "ImGui OpenGL3 renderer backend init failed";
         return false;
@@ -575,6 +576,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    smatchet::ui::touch::InstallTouchInputRouter(ImGui::GetCurrentContext());
     SetupImGuiContext();
 
     bool glfwBackendInitialized = false;

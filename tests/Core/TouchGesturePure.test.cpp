@@ -49,9 +49,7 @@ bool HasButton(const std::vector<Action>& actions) {
            0;
 }
 
-Vec2 V(float x, float y) {
-    return MakeVec2(x, y);
-}
+Vec2 V(float x, float y) { return MakeVec2(x, y); }
 
 } // namespace
 

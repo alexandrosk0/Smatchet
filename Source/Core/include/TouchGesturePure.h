@@ -48,18 +48,14 @@ inline Vec2 MakeVec2(float x, float y) {
     return v;
 }
 
-inline float Length(Vec2 v) {
-    return std::sqrt(v.x * v.x + v.y * v.y);
-}
+inline float Length(Vec2 v) { return std::sqrt(v.x * v.x + v.y * v.y); }
 
-inline Vec2 Sub(Vec2 a, Vec2 b) {
-    return MakeVec2(a.x - b.x, a.y - b.y);
-}
+inline Vec2 Sub(Vec2 a, Vec2 b) { return MakeVec2(a.x - b.x, a.y - b.y); }
 
 // Distances are logical pixels and speeds logical px/s; ScaledBy() converts both to physical
 // pixels for a high-DPI host.
 struct GestureConfig {
-    float tapSlopPx = 10.0f;            // movement under this is still a tap / hold
+    float tapSlopPx = 10.0f; // movement under this is still a tap / hold
     float longPressSeconds = kDefaultLongPressSeconds;
     float feedbackDelaySeconds = 0.15f; // the progress ring appears after this much hold
     float doubleTapSeconds = 0.30f;     // matches ImGui's default io.MouseDoubleClickTime
@@ -157,7 +153,8 @@ class VelocityTracker {
         if (denom <= 1e-12) {
             return Vec2();
         }
-        return MakeVec2(static_cast<float>((n * stx - st * sx) / denom), static_cast<float>((n * sty - st * sy) / denom));
+        return MakeVec2(static_cast<float>((n * stx - st * sx) / denom),
+                        static_cast<float>((n * sty - st * sy) / denom));
     }
 
   private:
@@ -226,8 +223,7 @@ class GestureMachine {
     // (long-press, pan delta, fling). `classify(pressPos)` returns a PressClass; it is called at
     // most once per press, never in the same tick as the press itself (so the glue's hover state
     // already reflects the press point).
-    template <class Classify>
-    void Tick(double now, Classify&& classify, std::vector<Action>& out) {
+    template <class Classify> void Tick(double now, Classify&& classify, std::vector<Action>& out) {
         const double prevTick = lastTick_;
         lastTick_ = now;
         std::size_t i = 0;
@@ -337,8 +333,7 @@ class GestureMachine {
     }
 
     // Returns false when the event must wait for the next tick (classification deferred).
-    template <class Classify>
-    bool ProcessRaw(const Raw& r, double now, Classify& classify, std::vector<Action>& out) {
+    template <class Classify> bool ProcessRaw(const Raw& r, double now, Classify& classify, std::vector<Action>& out) {
         switch (r.type) {
         case RawType::Move:
             return ProcessMove(r.pos, now, classify, out);
@@ -352,8 +347,7 @@ class GestureMachine {
         return true;
     }
 
-    template <class Classify>
-    bool ProcessMove(Vec2 p, double now, Classify& classify, std::vector<Action>& out) {
+    template <class Classify> bool ProcessMove(Vec2 p, double now, Classify& classify, std::vector<Action>& out) {
         switch (state_) {
         case GestureState::Idle:
             finger_ = p;

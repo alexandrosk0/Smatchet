@@ -77,6 +77,8 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "CliCommandRunner.h"
 #include "StandaloneAppBootstrap.h"
 #include "StandaloneBoot_detail.h"
+#include "StandaloneTouchBridge.h"
+#include "Ui/TouchInputRouter.h"
 #include "Dx12Bootstrap.h" // StandaloneRenderer + optional DX12 backend (no-op shell off-Windows)
 // AppController holds unique_ptr<> members of these service types; main.cpp's
 // stack instance triggers destructor / noexcept evaluation that requires the
@@ -111,9 +113,9 @@ static void glfw_error_callback(int error, const char* description) {
     ::fprintf(stderr, "GLFW Error %d: %s\n", error, description); // pre-logger-init — LOG_* unavailable
 }
 
-// Keypad-Enter -> Enter bridge lives in StandaloneBoot_detail (shared with the
-// hidden-window bootstrap). Aliased so the glfwSetKeyCallback site stays terse.
-using smatchet::standalone::boot_detail::KeypadEnterBridgeCallback;
+// Keypad-Enter + touchscreen input bridges (StandaloneTouchBridge, shared with the
+// hidden-window bootstrap). Aliased so the install sites stay terse.
+using smatchet::standalone::InstallStandaloneInputBridges;
 // Markdown file-drop -> Plan Docs viewer routing, also shared with the
 // hidden-window bootstrap.
 using smatchet::standalone::boot_detail::MarkdownFileDropCallback;
@@ -516,6 +518,8 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
     // 2. Setup Dear ImGui Context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // Finger gestures (tap / hold / pan); the input bridges below feed it touchscreen events.
+    smatchet::ui::touch::InstallTouchInputRouter(ImGui::GetCurrentContext());
     ImGuiIO& io = ImGui::GetIO();
     static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
     // Schema migration must run before ImGui auto-loads the ini. If we wait for
@@ -549,7 +553,7 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
         // DX12: the GLFW platform backend runs in no-GL ("Other") mode; the
         // renderer backend is the D3D12 swapchain owned by boot.dx12.
         ImGui_ImplGlfw_InitForOther(window, true);
-        glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
+        InstallStandaloneInputBridges(window);
 
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
@@ -570,7 +574,7 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
     }
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
-    glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
+    InstallStandaloneInputBridges(window);
     ImGui_ImplOpenGL3_Init(glsl_version);
     SmatchetLogOpenGLInfo();
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {

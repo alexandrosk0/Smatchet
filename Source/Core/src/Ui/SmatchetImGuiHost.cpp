@@ -46,6 +46,7 @@
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #include "TicketSyncService.h"
+#include "Ui/TouchInputRouter.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "McpPlugin.h"
 #endif
@@ -142,6 +143,9 @@ struct SmatchetImGuiHost::Impl {
     // clock (double-click window, touch long-press) run at the presentation rate instead of real time.
     std::chrono::steady_clock::time_point LastBeginFrameTime;
     bool HasLastBeginFrameTime = false;
+    // Source of the pointer events being forwarded (SetMouseSource). Touchscreen events go to the
+    // context's TouchInputRouter while gestures are on, instead of straight into ImGui.
+    bool PointerIsTouch = false;
     std::atomic<bool> RenderingDraw{false};
     std::atomic<bool> FrameActive{false};
     std::atomic<bool> OptionsSet{false};
@@ -451,6 +455,7 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
         std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
         ImGui::CreateContext();
         ImplData->ImGuiCtx = ImGui::GetCurrentContext();
+        smatchet::ui::touch::InstallTouchInputRouter(ImplData->ImGuiCtx);
     }
     ImGuiIO& io = ImGui::GetIO();
     ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
@@ -809,6 +814,14 @@ void SmatchetImGuiHost::SetMousePosition(float x, float y) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
+    if (ImplData->PointerIsTouch) {
+        smatchet::ui::touch::TouchInputRouter* router =
+            smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext());
+        if (router != nullptr && router->GesturesEnabled()) {
+            router->OnRawMove(x, y);
+            return;
+        }
+    }
     // Event queue (not a direct io.MousePos write) so ImGui keeps press/move ordering and the mouse source.
     ImGui::GetIO().AddMousePosEvent(x, y);
 }
@@ -823,6 +836,14 @@ void SmatchetImGuiHost::SetMouseButton(int button, bool isDown) {
     std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
+    }
+    if (ImplData->PointerIsTouch) {
+        smatchet::ui::touch::TouchInputRouter* router =
+            smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext());
+        if (router != nullptr && router->GesturesEnabled()) {
+            router->OnRawButton(button, isDown);
+            return;
+        }
     }
     // Event queue: a down+up arriving between two frames is no longer collapsed into "never pressed".
     ImGui::GetIO().AddMouseButtonEvent(button, isDown);
@@ -851,6 +872,7 @@ void SmatchetImGuiHost::SetMouseSource(int source) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
     ImGui::GetIO().AddMouseSourceEvent(static_cast<ImGuiMouseSource>(source));
+    ImplData->PointerIsTouch = (source == static_cast<int>(ImGuiMouseSource_TouchScreen));
 }
 
 void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey) {
