@@ -162,8 +162,14 @@ bool Arm(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     ctx->WindowFocus(kWindowRef);
     ctx->Yield();
-    if (Router(ctx) == nullptr || !Router(ctx)->GesturesEnabled()) {
-        ctx->LogWarning("touch router missing or Touch input = Off; nothing to test");
+    // The spawned test instance runs on a fresh config (Touch input = Auto). A missing router or
+    // gestures switched Off would make every case below vacuous, so that is a failure, not a skip.
+    IM_CHECK_NO_RET(Router(ctx) != nullptr);
+    if (Router(ctx) == nullptr) {
+        return false;
+    }
+    IM_CHECK_NO_RET(Router(ctx)->GesturesEnabled());
+    if (!Router(ctx)->GesturesEnabled()) {
         return false;
     }
     ctx->RunFlags |= ImGuiTestRunFlags_EnableRawInputs;
@@ -327,6 +333,14 @@ void RegisterMouseDragDoesNotPan(ImGuiTestEngine* engine) {
         ctx->MouseUp(0);
         ctx->Yield(3);
         IM_CHECK_EQ(g_touch.scrollY, 0.0f);
+
+        // And a plain mouse click still clicks exactly once, with the router idle and not holding
+        // the pointer (its queue scan and source-latch restore must not disturb mouse input).
+        ctx->MouseMoveToPos(g_touch.centers[5]);
+        ctx->MouseClick(0);
+        ctx->Yield(3);
+        IM_CHECK_EQ(g_touch.clicks[5], 1);
+        IM_CHECK(Router(ctx) == nullptr || !Router(ctx)->IsParked());
     };
 }
 

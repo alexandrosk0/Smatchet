@@ -1130,6 +1130,7 @@ static int RunFrameLoop(MainBootState& boot) {
     } else {
         ImGui_ImplOpenGL3_Shutdown();
     }
+    smatchet::standalone::UninstallStandaloneInputBridges(window);
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 

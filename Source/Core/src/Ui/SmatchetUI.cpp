@@ -520,9 +520,8 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
         touchRouter->SetLongPressSeconds(d.cfg.TouchLongPressSeconds);
         touchRouter->SetPixelScale(SmatchetTheme::HostDensityScale());
     }
-    const bool touchTargetsNow =
-        (d.cfg.TouchInput == TouchInputMode::On) ||
-        (d.cfg.TouchInput == TouchInputMode::Auto && touchRouter != nullptr && touchRouter->WantsTouchSizing());
+    // Only hosts that installed the router (desktop) do touch sizing; Android has its own Mobile path.
+    const bool touchTargetsNow = touchRouter != nullptr && touchRouter->WantsTouchSizing();
 
     // Apply density padding — only re-apply when the setting changes. Density writes FramePadding
     // absolutely, so a touch overlay already in place is re-layered on top.

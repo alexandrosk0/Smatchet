@@ -19,6 +19,10 @@ namespace standalone {
 /// after smatchet::ui::touch::InstallTouchInputRouter on the current context.
 void InstallStandaloneInputBridges(GLFWwindow* window);
 
+/// Undo what the touch bridge set on `window` (the Windows press-and-hold property) and drop the
+/// router callback that refers to it. Call before ImGui_ImplGlfw_Shutdown / glfwDestroyWindow.
+void UninstallStandaloneInputBridges(GLFWwindow* window);
+
 } // namespace standalone
 } // namespace smatchet
 

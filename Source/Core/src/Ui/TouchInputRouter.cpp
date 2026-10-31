@@ -3,6 +3,8 @@
 
 #include "Ui/TouchInputRouter.h"
 
+#include "Logger.h"
+
 #include "imgui.h"
 #include "imgui_internal.h" // context hooks, input queue, HoveredWindow/HoveredId, window scroll state
 
@@ -121,8 +123,16 @@ void TouchInputRouter::OnRawMove(float x, float y) {
 void TouchInputRouter::OnRawButton(int button, bool down) {
     // Only the first finger's primary contact drives gestures. Windows' own press-and-hold right
     // click (touch-sourced button 1) is dropped: the router produces the context menu itself.
-    if (button != 0 || down == rawDown_) {
+    if (button != 0) {
         return;
+    }
+    if (down == rawDown_) {
+        if (!down) {
+            return;
+        }
+        // The previous release never arrived (overlay hidden or capture lost mid-gesture). End that
+        // gesture, releasing anything it pressed, before starting this one.
+        machine_.Cancel(actions_);
     }
     rawDown_ = down;
     const Vec2 p = SmatchetTouchGesturePure::MakeVec2(rawX_, rawY_);
@@ -137,8 +147,12 @@ void TouchInputRouter::OnRawButton(int button, bool down) {
 void TouchInputRouter::SetMode(TouchInputMode mode) {
     const bool wasEnabled = GesturesEnabled();
     mode_ = mode;
-    if (wasEnabled != GesturesEnabled() && gesturesChanged_) {
-        gesturesChanged_(GesturesEnabled());
+    if (wasEnabled != GesturesEnabled()) {
+        LOG_INFO("TouchInputRouter: touch gestures %s (touch input = %s)", GesturesEnabled() ? "on" : "off",
+                 touchInputModeToString(mode));
+        if (gesturesChanged_) {
+            gesturesChanged_(GesturesEnabled());
+        }
     }
 }
 
@@ -208,8 +222,13 @@ void TouchInputRouter::PreNewFrame(ImGuiContext& g) {
 //    otherwise drag the held-back pointer along with the finger.
 void TouchInputRouter::ScanQueue(ImGuiContext& g) {
     bool mouseTookOver = false;
+    bool focusLost = false;
     for (int i = 0; i < g.InputEventsQueue.Size; ++i) {
         const ImGuiInputEvent& e = g.InputEventsQueue[i];
+        if (e.Type == ImGuiInputEventType_Focus) {
+            focusLost = focusLost || (e.EventId >= nextScanEventId_ && !e.AppFocused.Focused);
+            continue;
+        }
         if (e.Type != ImGuiInputEventType_MousePos && e.Type != ImGuiInputEventType_MouseButton &&
             e.Type != ImGuiInputEventType_MouseWheel) {
             continue;
@@ -265,8 +284,13 @@ void TouchInputRouter::ScanQueue(ImGuiContext& g) {
                                       }),
                        ownEventIds_.end());
 
-    if (mouseTookOver && !machine_.IsIdle()) {
+    if ((mouseTookOver || focusLost) && !machine_.IsIdle()) {
         machine_.Cancel(actions_);
+    }
+    if (focusLost) {
+        // The window lost focus: a finger release may never arrive, so do not wait for it.
+        rawDown_ = false;
+        parked_ = false;
     }
 }
 
@@ -342,7 +366,7 @@ void TouchInputRouter::ApplyPan(ImGuiContext& g, Vec2 delta) {
             continue;
         }
         ImGuiWindow* w = ImGui::FindWindowByID(panTarget_[axis]);
-        if (w == nullptr || !w->WasActive) {
+        if (w == nullptr || !w->Active) { // Active = submitted last frame (WasActive lags a frame more)
             panTarget_[axis] = 0;
             machine_.OnPanAxisBlocked(axis == 0);
             continue;

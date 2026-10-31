@@ -762,6 +762,7 @@ void Shutdown(BootstrapContext& ctx) {
         } else {
             ImGui_ImplOpenGL3_Shutdown();
         }
+        UninstallStandaloneInputBridges(ctx.window);
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         glfwDestroyWindow(ctx.window);

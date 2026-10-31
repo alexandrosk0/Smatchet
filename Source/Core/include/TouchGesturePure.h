@@ -355,10 +355,11 @@ class GestureMachine {
         Emit(out, ActionType::LeftDown, lastTapPos_);
     }
 
-    // Returns false when the event must wait for the next tick (a decision about the press is
-    // deferred until the glue's hover state has caught up with it).
+    // Returns false when the event must wait for the next tick. Everything after a press waits at
+    // least one tick, so the glue's hover state has caught up with the press point before anything
+    // is decided or sent: a tap's left press, a drag's classification, a double-tap's item check.
     template <class Glue> bool ProcessRaw(const Raw& r, double now, Glue& glue, std::vector<Action>& out) {
-        if (r.type != RawType::Down && doubleTapCandidate_ && state_ == GestureState::Pending && now <= pressTime_) {
+        if (r.type != RawType::Down && state_ == GestureState::Pending && now <= pressTime_) {
             return false;
         }
         switch (r.type) {

@@ -12,6 +12,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "TouchGesturePure.h"
+#include "Ui/TouchInputRouter.h"
 #include "VsyncControl.h"
 
 #include "imgui.h"
@@ -108,7 +109,9 @@ void DrawAppearanceUiModeSection(UiDrawSession& d) {
 void DrawAppearanceTouchSection(UiDrawSession& d) {
     const bool showMode = d.prefsFilter.ShowSetting("appearance.layout_density.touch_input");
     const bool showHold = d.prefsFilter.ShowSetting("appearance.layout_density.touch_long_press");
-    if (!showMode && !showHold) {
+    // Desktop hosts only: Android (no router) handles touch through the Mobile UI mode instead.
+    if ((!showMode && !showHold) ||
+        smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext()) == nullptr) {
         return;
     }
     ImGui::Spacing();

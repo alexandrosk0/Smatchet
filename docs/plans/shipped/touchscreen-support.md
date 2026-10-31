@@ -149,6 +149,8 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - `466efe1ae` · `TouchInput` (Auto / On / Off) and `TouchLongPressSeconds` config, Preferences rows, en/fr strings, config tests.
 - `90c331a7d` · `TouchInputRouter` + hooks, standalone `StandaloneTouchBridge`, Unreal host routing, `SmatchetTheme::ApplyTouchTargetOverlay` through the `drawApplyAppearanceSettings` rebuild gate, drag-surface marks, `UiTestScenario` hook reorder.
 - `459b24e4b` · Bucket-E suite `tests/ui/touch_gestures.test.cpp`; double-tap now requires the same item; router events flagged `AddedByTestEngine`.
+- `5bce111d3` · This plan's post-ship sections + archive; tooling entry for the on-device residue.
+- *(next commit)* · Branch-review fixes: Windows press-and-hold property set only after a real touch (pen keeps its hold-to-right-click) and removed at shutdown; lost-release recovery (repeated press or app focus loss cancels the stuck gesture); every event after a press waits a tick (fast-tap hover fix); touch settings and sizing gated on the router (Android untouched); stronger bucket-E guards; `Active` instead of `WasActive`; localization entry formatted.
 
 ## Deviations from plan
 
@@ -160,12 +162,17 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - **Double-tap needs the same item (added).** The bucket-E suite showed a quick tap on the *neighbouring* row (within 0.3 s / 24 px) snapping onto the first row as a double-click. The machine's glue gained `SameTarget`, decided from ImGui's hovered item one frame after the second press.
 - **Foreign touch position events are dropped.** While gestures are on, touchscreen-sourced position events the router did not queue (GLFW backend cursor polling) are removed so they cannot drag the held-back pointer.
 - **`FramePadding.y` touch minimum is an absolute 6 px × scale** (not ×1.5 of the current value) so the overlay stays idempotent.
+- **Press-and-hold property is lazy (review).** `MicrosoftTabletPenServiceProperty` also governs the pen, which the router does not handle; it is now set only after the first touchscreen event and removed before the window is destroyed (`UninstallStandaloneInputBridges`).
+- **Lost-release recovery (review).** A second press while the router still thinks a finger is down, or an app focus loss, cancels the stuck gesture (releasing anything it pressed).
+- **Touch settings are desktop-only.** The Preferences block and the sizing overlay require an installed router, so Android (no router) keeps its own Mobile-mode handling.
+- **Not done from review (low):** DPI-scaling the gesture thresholds on high-DPI desktops (`HostDensityScale` is 1.0 there), and feeding `io.MouseDoubleClickTime` into the double-tap window. Both are tuning, left for on-device feedback.
 - **Prefs schema coverage tests needed no edit**: both new rows are always drawn, which `prefs_schema_coverage` checks automatically.
 
 ## Verification (actual)
 
-- **Bucket A**: `SmatchetTests.exe` full run 3999/3999 passed before the double-tap change; `TouchGesturePure` + `TouchSizingPure` 28/28 after it (281 assertions). Config round-trip / defaults and `touchInputMode` string tests pass.
-- **Bucket E**: `ui_test.run --name=TouchGestures` 9/9 passed on two consecutive runs (isolated `APPDATA`). Full `--all` run: see the PR body for the result and the baseline comparison of the non-touch failures seen locally.
+- **Bucket A**: `SmatchetTests.exe` full run 4001/4001 passed (53321 assertions) on the final head, including 29 touch gesture / sizing cases and the config + `touchInputMode` tests.
+- **Bucket E**: `ui_test.run --name=TouchGestures` 9/9 on two consecutive runs (isolated `APPDATA`). Full `--all`: 167/171 locally; the 4 failures (`TrackerFirstRun/VerifiedPinClearsOnWindowClose`, `NotificationCenter/OpenViaToastClickRequest_RendersRowsAndClears`, `FuncSizeWindowRender/AuditWindow_RendersAndShowsRefreshButton`, `FuncSizeMainUi/BulkImportWindow_RendersAndShowsLoadFile`) also fail individually on an unmodified develop build (`3964fd78c`) on the same machine, and run before any touch test; develop CI is 162/162, so they are local-environment failures, not regressions.
+- **Code review**: two adversarial `code-review` passes (Unreal commit; whole branch). Blocking findings fixed (pen press-and-hold regression, a clang-format slip); medium findings fixed (lost release, fast-tap hover, vacuous test guards).
 - **Build gate**: `SmatchetStandalone` (ninja-iter-msvc), `SmatchetImGuiHost_DX12` + `SmatchetCore_DX12` (Unreal host libs), `SmatchetTests` (ninja-test-msvc), `SmatchetStandalone` (ninja-ui-test-msvc) — all built clean under strict warnings. The UE plugin module itself was not compiled here (needs the engine build).
 - **clang-format**: `--dry-run --Werror` clean on every touched C++ file.
 - **Perf gate (`priority-grid-scroll`)**: not run locally; left to the PR-fast CI lane.

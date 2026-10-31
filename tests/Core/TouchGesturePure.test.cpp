@@ -79,6 +79,18 @@ TEST_SUITE("TouchGesturePure") {
         CHECK(m.IsIdle());
     }
 
+    TEST_CASE("a tap whose press and release land in one tick is still sent a tick later") {
+        GestureMachine m;
+        m.OnDown(V(40, 40));
+        m.OnUp(V(40, 40));
+        const std::vector<Action> same = TickAs(m, kFrame, PressClass::Pannable);
+        CHECK_FALSE(HasButton(same)); // hover has not caught up with the press point yet
+        const std::vector<Action> next = TickAs(m, 2 * kFrame, PressClass::Pannable);
+        CHECK_EQ(Count(next, ActionType::LeftDown), 1);
+        CHECK_EQ(Count(next, ActionType::LeftUp), 1);
+        CHECK(m.IsIdle());
+    }
+
     TEST_CASE("a pan never presses a button and scrolls by the finger delta") {
         GestureMachine m;
         int calls = 0;

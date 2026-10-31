@@ -68,7 +68,6 @@ class TouchInputRouter {
     void ScanQueue(ImGuiContext& g);
     void Emit(ImGuiContext& g);
     void ApplyPan(ImGuiContext& g, SmatchetTouchGesturePure::Vec2 delta);
-    void CancelGesture(ImGuiContext& g);
     void ApplyConfig();
 
     SmatchetTouchGesturePure::GestureMachine machine_;
