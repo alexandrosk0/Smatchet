@@ -110,10 +110,11 @@ const PrefsSettingDesc kSettings[] = {
      "appearance mobile nav pages tabs"},
     {"appearance.layout_density.mobile_home_page", "appearance.layout_density", "Home page",
      "appearance mobile start page"},
+    // Drawn only where a TouchInputRouter is installed (desktop hosts), hence ConditionalDraw.
     {"appearance.layout_density.touch_input", "appearance.layout_density", "Touch input",
-     "appearance touch touchscreen tablet finger gesture scroll pan long-press tap"},
+     "appearance touch touchscreen tablet finger gesture scroll pan long-press tap", true},
     {"appearance.layout_density.touch_long_press", "appearance.layout_density", "Long-press delay",
-     "appearance touch touchscreen hold long-press context menu right-click"},
+     "appearance touch touchscreen hold long-press context menu right-click", true},
 
     // -- appearance.display -------------------------------------------------
     {"appearance.display.vsync", "appearance.display", "Enable vsync", "appearance vsync frame rate refresh"},

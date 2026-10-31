@@ -25,25 +25,41 @@ using smatchet::ui::touch::TouchInputRouter;
 
 void SyncTabletPressAndHold(GLFWwindow* window, bool disableOsGesture);
 
-// Windows' own press-and-hold right click is switched off only once a touchscreen has actually been
-// used (and while gestures are on). The same window property also governs the PEN, which the router
-// does not handle, so setting it up front would take hold-to-right-click away from pen users on a
-// machine that never sees a finger.
-bool g_touchSeen = false;
+// Windows' own press-and-hold right click is switched off only while a FINGER is the active pointer
+// (and gestures are on). The same window property also governs the PEN, which the router does not
+// handle, so it follows the device in use: set by touch input, cleared by pen input (a pen hovers
+// before it touches down, so the property is gone by the time a pen hold starts). Mouse input leaves
+// it as it is.
+bool g_touchActive = false;
 bool g_gesturesEnabled = true;
+bool g_propertySet = false;
 
-void UpdateTabletPressAndHold(GLFWwindow* window) { SyncTabletPressAndHold(window, g_touchSeen && g_gesturesEnabled); }
+void UpdateTabletPressAndHold(GLFWwindow* window) {
+    const bool want = g_touchActive && g_gesturesEnabled;
+    if (want != g_propertySet) {
+        SyncTabletPressAndHold(window, want);
+        g_propertySet = want;
+    }
+}
+
+// Track which device the current Windows mouse message came from (the backend's WndProc latch).
+void NoteSource(GLFWwindow* window, ImGuiMouseSource source) {
+    if (source == ImGuiMouseSource_TouchScreen || source == ImGuiMouseSource_Pen) {
+        g_touchActive = (source == ImGuiMouseSource_TouchScreen);
+        UpdateTabletPressAndHold(window);
+    }
+}
 
 // The router to feed this finger event, or null when the event is not from a touchscreen or touch
 // gestures are switched off (then the backend handles it exactly as before).
 TouchInputRouter* RouterForTouchEvent(GLFWwindow* window) {
     ImGuiContext* ctx = ImGui::GetCurrentContext();
-    if (ctx == nullptr || ctx->InputEventsNextMouseSource != ImGuiMouseSource_TouchScreen) {
+    if (ctx == nullptr) {
         return nullptr;
     }
-    if (!g_touchSeen) {
-        g_touchSeen = true;
-        UpdateTabletPressAndHold(window);
+    NoteSource(window, ctx->InputEventsNextMouseSource);
+    if (ctx->InputEventsNextMouseSource != ImGuiMouseSource_TouchScreen) {
+        return nullptr;
     }
     TouchInputRouter* router = TouchInputRouter::ForContext(ctx);
     return (router != nullptr && router->GesturesEnabled()) ? router : nullptr;
@@ -129,7 +145,8 @@ void UninstallStandaloneInputBridges(GLFWwindow* window) {
         router->SetGesturesEnabledChangedCallback(nullptr);
     }
     SyncTabletPressAndHold(window, false); // Win32: remove window properties before the window goes
-    g_touchSeen = false;
+    g_propertySet = false;
+    g_touchActive = false;
 }
 
 } // namespace standalone

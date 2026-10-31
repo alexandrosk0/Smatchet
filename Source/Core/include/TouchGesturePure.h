@@ -364,7 +364,7 @@ class GestureMachine {
         }
         switch (r.type) {
         case RawType::Move:
-            return ProcessMove(r.pos, now, glue, out);
+            return ProcessMove(r.pos, glue, out);
         case RawType::Down:
             ProcessDown(r.pos, now, out);
             return true;
@@ -375,7 +375,7 @@ class GestureMachine {
         return true;
     }
 
-    template <class Glue> bool ProcessMove(Vec2 p, double now, Glue& glue, std::vector<Action>& out) {
+    template <class Glue> bool ProcessMove(Vec2 p, Glue& glue, std::vector<Action>& out) {
         switch (state_) {
         case GestureState::Idle:
             finger_ = p;
@@ -385,9 +385,6 @@ class GestureMachine {
             if (Length(Sub(p, pressPos_)) <= config_.tapSlopPx) {
                 finger_ = p;
                 return true; // pointer stays frozen at the press point
-            }
-            if (now <= pressTime_) {
-                return false; // the glue's hover state does not reflect the press yet
             }
             finger_ = p;
             doubleTapCandidate_ = false;

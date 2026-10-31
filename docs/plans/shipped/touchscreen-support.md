@@ -150,7 +150,7 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - `90c331a7d` · `TouchInputRouter` + hooks, standalone `StandaloneTouchBridge`, Unreal host routing, `SmatchetTheme::ApplyTouchTargetOverlay` through the `drawApplyAppearanceSettings` rebuild gate, drag-surface marks, `UiTestScenario` hook reorder.
 - `459b24e4b` · Bucket-E suite `tests/ui/touch_gestures.test.cpp`; double-tap now requires the same item; router events flagged `AddedByTestEngine`.
 - `5bce111d3` · This plan's post-ship sections + archive; tooling entry for the on-device residue.
-- *(next commit)* · Branch-review fixes: Windows press-and-hold property set only after a real touch (pen keeps its hold-to-right-click) and removed at shutdown; lost-release recovery (repeated press or app focus loss cancels the stuck gesture); every event after a press waits a tick (fast-tap hover fix); touch settings and sizing gated on the router (Android untouched); stronger bucket-E guards; `Active` instead of `WasActive`; localization entry formatted.
+- `3b6aa3127` · Branch-review fixes: Windows press-and-hold property no longer set at startup, removed at shutdown; lost-release recovery (repeated press or app focus loss cancels the stuck gesture); every event after a press waits a tick (fast-tap hover fix); touch settings and sizing gated on the router (Android untouched); stronger bucket-E guards; `Active` instead of `WasActive`; localization entry formatted.
 
 ## Deviations from plan
 
@@ -162,11 +162,12 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - **Double-tap needs the same item (added).** The bucket-E suite showed a quick tap on the *neighbouring* row (within 0.3 s / 24 px) snapping onto the first row as a double-click. The machine's glue gained `SameTarget`, decided from ImGui's hovered item one frame after the second press.
 - **Foreign touch position events are dropped.** While gestures are on, touchscreen-sourced position events the router did not queue (GLFW backend cursor polling) are removed so they cannot drag the held-back pointer.
 - **`FramePadding.y` touch minimum is an absolute 6 px × scale** (not ×1.5 of the current value) so the overlay stays idempotent.
-- **Press-and-hold property is lazy (review).** `MicrosoftTabletPenServiceProperty` also governs the pen, which the router does not handle; it is now set only after the first touchscreen event and removed before the window is destroyed (`UninstallStandaloneInputBridges`).
+- **Press-and-hold property follows the device (review).** `MicrosoftTabletPenServiceProperty` also governs the pen, which the router does not handle. It is set by touchscreen input, cleared by pen input (a pen hovers before contact, so a pen hold gets Windows' right click again), and removed before the window is destroyed (`UninstallStandaloneInputBridges`). The very first finger hold of a session may still get the OS behaviour, because the property lands mid-contact; that is part of the on-device residue.
 - **Lost-release recovery (review).** A second press while the router still thinks a finger is down, or an app focus loss, cancels the stuck gesture (releasing anything it pressed).
 - **Touch settings are desktop-only.** The Preferences block and the sizing overlay require an installed router, so Android (no router) keeps its own Mobile-mode handling.
 - **Not done from review (low):** DPI-scaling the gesture thresholds on high-DPI desktops (`HostDensityScale` is 1.0 there), and feeding `io.MouseDoubleClickTime` into the double-tap window. Both are tuning, left for on-device feedback.
-- **Prefs schema coverage tests needed no edit**: both new rows are always drawn, which `prefs_schema_coverage` checks automatically.
+- **Prefs rows are `ConditionalDraw`**: they draw only where a router is installed (desktop); `prefs_schema_coverage` still sees both ids on desktop.
+- **Not done from review (low, rare):** a focus loss and a new finger press landing in the same frame drop that one touch; the boot-failure teardown paths do not call `UninstallStandaloneInputBridges` (only matters if a touch arrived during a failed boot).
 
 ## Verification (actual)
 
