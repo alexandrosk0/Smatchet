@@ -16,20 +16,26 @@ namespace {
 
 constexpr double kFrame = 1.0 / 60.0;
 
-struct ClassifyAs {
+// Stands in for the ImGui glue: a fixed answer for "what does a drag here mean" and for "did the
+// second tap hit the first tap's item".
+struct FakeGlue {
     PressClass cls;
     int* calls;
-    PressClass operator()(Vec2) const {
+    bool sameTarget;
+    PressClass Classify(Vec2) const {
         if (calls) {
             ++*calls;
         }
         return cls;
     }
+    bool SameTarget(Vec2, Vec2) const { return sameTarget; }
 };
 
-std::vector<Action> TickAs(GestureMachine& m, double now, PressClass cls, int* calls = nullptr) {
+std::vector<Action> TickAs(GestureMachine& m, double now, PressClass cls, int* calls = nullptr,
+                           bool sameTarget = true) {
     std::vector<Action> out;
-    m.Tick(now, ClassifyAs{cls, calls}, out);
+    FakeGlue glue{cls, calls, sameTarget};
+    m.Tick(now, glue, out);
     return out;
 }
 
@@ -191,15 +197,34 @@ TEST_SUITE("TouchGesturePure") {
         m.OnUp(V(200, 200));
         TickAs(m, 2 * kFrame, PressClass::Pannable);
 
-        m.OnDown(V(210, 205)); // within the radius, within the time
-        const std::vector<Action> a = TickAs(m, 0.2, PressClass::Pannable);
-        REQUIRE_EQ(a.size(), 2u);
+        m.OnDown(V(210, 205));                                        // within the radius, within the time
+        CHECK_FALSE(HasButton(TickAs(m, 0.2, PressClass::Pannable))); // decided once hover catches up
+        m.OnUp(V(210, 205));                                          // a fast tap: up before the decision
+        const std::vector<Action> a = TickAs(m, 0.2 + kFrame, PressClass::Pannable);
+        REQUIRE_EQ(a.size(), 3u);
         CHECK_EQ(a[0].type, ActionType::MovePointer);
         CHECK_EQ(a[0].pos.x, 200.0f);
         CHECK_EQ(a[1].type, ActionType::LeftDown);
-        CHECK_EQ(m.State(), GestureState::TapThrough);
-        m.OnUp(V(210, 205));
-        CHECK_EQ(Count(TickAs(m, 0.25, PressClass::Pannable), ActionType::LeftUp), 1);
+        CHECK_EQ(a[1].pos.x, 200.0f);
+        CHECK_EQ(a[2].type, ActionType::LeftUp);
+        CHECK(m.IsIdle());
+    }
+
+    TEST_CASE("a quick tap on a neighbouring item is not a double-tap") {
+        GestureMachine m;
+        m.OnDown(V(200, 200));
+        TickAs(m, kFrame, PressClass::Pannable);
+        m.OnUp(V(200, 200));
+        TickAs(m, 2 * kFrame, PressClass::Pannable);
+
+        m.OnDown(V(200, 221)); // next row: close and quick, but another item
+        TickAs(m, 0.1, PressClass::Pannable, nullptr, false);
+        m.OnUp(V(200, 221));
+        const std::vector<Action> a = TickAs(m, 0.1 + kFrame, PressClass::Pannable, nullptr, false);
+        REQUIRE_EQ(a.size(), 2u);
+        CHECK_EQ(a[0].type, ActionType::LeftDown);
+        CHECK_EQ(a[0].pos.y, 221.0f); // clicks the row actually tapped
+        CHECK_EQ(a[1].type, ActionType::LeftUp);
     }
 
     TEST_CASE("a late or distant second tap is an ordinary tap") {

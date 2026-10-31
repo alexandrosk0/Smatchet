@@ -90,6 +90,15 @@ ImGuiMouseSource EventMouseSource(const ImGuiInputEvent& e) {
 
 } // namespace
 
+struct TouchInputRouter::TickGlue {
+    TouchInputRouter& router;
+    ImGuiContext& g;
+    PressClass Classify(Vec2 p) { return router.Classify(g, p); }
+    // A quick second tap is a double-tap only on the item the first tap pressed. HoveredId is still
+    // last frame's here, which (pointer held at the second press point) is the item under it.
+    bool SameTarget(Vec2, Vec2) { return router.lastLeftDownItem_ != 0 && g.HoveredId == router.lastLeftDownItem_; }
+};
+
 TouchInputRouter* TouchInputRouter::ForContext(ImGuiContext* ctx) {
     if (ctx == nullptr) {
         return nullptr;
@@ -180,7 +189,8 @@ void TouchInputRouter::PreNewFrame(ImGuiContext& g) {
 
     ScanQueue(g);
     if (GesturesEnabled()) {
-        machine_.Tick(now_, [this, &g](Vec2 p) { return Classify(g, p); }, actions_);
+        TickGlue glue{*this, g};
+        machine_.Tick(now_, glue, actions_);
     } else if (!machine_.IsIdle()) {
         machine_.Cancel(actions_); // switched Off mid-gesture: release anything already pressed
     }
@@ -282,6 +292,7 @@ void TouchInputRouter::Emit(ImGuiContext& g) {
             parked_ = false;
             break;
         case ActionType::LeftDown:
+            lastLeftDownItem_ = g.HoveredId; // pointer is already at the press point (held there)
             io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
             break;
         case ActionType::LeftUp:
@@ -304,6 +315,16 @@ void TouchInputRouter::Emit(ImGuiContext& g) {
     }
     for (unsigned int id = firstId; id != g.InputEventsNextEventId; ++id) {
         ownEventIds_.push_back(id);
+    }
+    // ImGui's trickle rules can leave part of what was just queued (a tap's release, a drag's first
+    // move) for the next frame. The ImGui test engine erases queued events it did not add at the
+    // start of every frame while it drives input, which would drop those leftovers and leave a button
+    // held. AddedByTestEngine is only read by the test engine (ImGui core ignores it), so flagging
+    // our own events keeps them alive there and changes nothing in the shipping app.
+    for (int i = 0; i < g.InputEventsQueue.Size; ++i) {
+        if (g.InputEventsQueue[i].EventId >= firstId) {
+            g.InputEventsQueue[i].AddedByTestEngine = true;
+        }
     }
     nextScanEventId_ = g.InputEventsNextEventId;
     io.AddMouseSourceEvent(savedSource);

@@ -63,6 +63,7 @@ class TouchInputRouter {
     void PostNewFrame(ImGuiContext& g);
 
   private:
+    struct TickGlue; // adapts this router to GestureMachine::Tick's Classify / SameTarget
     SmatchetTouchGesturePure::PressClass Classify(ImGuiContext& g, SmatchetTouchGesturePure::Vec2 p);
     void ScanQueue(ImGuiContext& g);
     void Emit(ImGuiContext& g);
@@ -85,6 +86,7 @@ class TouchInputRouter {
     double now_ = 0.0;
     unsigned int nextScanEventId_ = 0;
     unsigned int panTarget_[2] = {0, 0}; // ImGuiID of the window scrolled on X / Y
+    unsigned int lastLeftDownItem_ = 0;  // item hovered when the last left press was sent (double-tap)
     float rawX_ = 0.0f;
     float rawY_ = 0.0f;
     float lastMouseX_ = 0.0f;

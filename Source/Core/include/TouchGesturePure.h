@@ -17,8 +17,9 @@
 //   - quick second tap   -> forwarded at the first tap's point so ImGui sees a real double-click
 //   - drag (pannable)    -> PanBy deltas, then an exponential-decay fling after a fast release
 //   - drag (widget)      -> LeftDown at the press point, then the moves (scrollbars, splitters, DnD)
-// Whether a drag pans or goes through to a widget depends on what is under the finger, which only
-// the glue knows: Tick() takes a classifier callback that answers it.
+// Whether a drag pans or goes through to a widget, and whether a quick second tap hit the same item
+// as the first, depend on what is under the finger, which only the glue knows: Tick() takes a glue
+// object that answers both (Classify / SameTarget).
 //
 // Lives at the include/ root beside TouchCellEditGesture.h, which shares kDefaultLongPressSeconds.
 //
@@ -210,6 +211,7 @@ class GestureMachine {
     // that was already sent so ImGui is never left with the left button held.
     void Cancel(std::vector<Action>& out) {
         raw_.clear();
+        doubleTapCandidate_ = false;
         if (state_ == GestureState::DragThrough || state_ == GestureState::TapThrough) {
             Emit(out, ActionType::LeftUp, finger_);
         } else if (state_ == GestureState::Pan || state_ == GestureState::Fling) {
@@ -220,16 +222,19 @@ class GestureMachine {
     }
 
     // Advance to ImGui time `now`: process buffered raw events, then time-driven transitions
-    // (long-press, pan delta, fling). `classify(pressPos)` returns a PressClass; it is called at
-    // most once per press, never in the same tick as the press itself (so the glue's hover state
-    // already reflects the press point).
-    template <class Classify> void Tick(double now, Classify&& classify, std::vector<Action>& out) {
+    // (long-press, pan delta, fling). The glue provides
+    //   PressClass Classify(Vec2 pressPos)      - what a drag starting there means
+    //   bool SameTarget(Vec2 firstTap, Vec2 p)  - does a quick second tap at p hit the first tap's item
+    // Each is asked at most once per press and never in the same tick as the press itself, so the
+    // glue's hover state already reflects the press point.
+    template <class Glue> void Tick(double now, Glue& glue, std::vector<Action>& out) {
         const double prevTick = lastTick_;
         lastTick_ = now;
+        ResolveDoubleTap(now, glue, out);
         std::size_t i = 0;
         for (; i < raw_.size(); ++i) {
-            if (!ProcessRaw(raw_[i], now, classify, out)) {
-                break; // classification deferred to the next tick; keep the rest
+            if (!ProcessRaw(raw_[i], now, glue, out)) {
+                break; // decision deferred to the next tick; keep the rest
             }
         }
         raw_.erase(raw_.begin(), raw_.begin() + static_cast<std::ptrdiff_t>(i));
@@ -332,11 +337,33 @@ class GestureMachine {
         return AxisLock::None;
     }
 
-    // Returns false when the event must wait for the next tick (classification deferred).
-    template <class Classify> bool ProcessRaw(const Raw& r, double now, Classify& classify, std::vector<Action>& out) {
+    // A quick second tap near the first is a double-tap only if it landed on the same item; that is
+    // decided one tick after the press, once the glue's hover state reflects the new point. Then the
+    // press is forwarded at the FIRST tap's point, so ImGui's own (6 px) double-click test passes.
+    template <class Glue> void ResolveDoubleTap(double now, Glue& glue, std::vector<Action>& out) {
+        if (!doubleTapCandidate_ || state_ != GestureState::Pending || now <= pressTime_) {
+            return;
+        }
+        doubleTapCandidate_ = false;
+        if (!glue.SameTarget(lastTapPos_, pressPos_)) {
+            return; // an ordinary press on a neighbouring item
+        }
+        hasLastTap_ = false;
+        state_ = GestureState::TapThrough;
+        finger_ = lastTapPos_;
+        Emit(out, ActionType::MovePointer, lastTapPos_);
+        Emit(out, ActionType::LeftDown, lastTapPos_);
+    }
+
+    // Returns false when the event must wait for the next tick (a decision about the press is
+    // deferred until the glue's hover state has caught up with it).
+    template <class Glue> bool ProcessRaw(const Raw& r, double now, Glue& glue, std::vector<Action>& out) {
+        if (r.type != RawType::Down && doubleTapCandidate_ && state_ == GestureState::Pending && now <= pressTime_) {
+            return false;
+        }
         switch (r.type) {
         case RawType::Move:
-            return ProcessMove(r.pos, now, classify, out);
+            return ProcessMove(r.pos, now, glue, out);
         case RawType::Down:
             ProcessDown(r.pos, now, out);
             return true;
@@ -347,7 +374,7 @@ class GestureMachine {
         return true;
     }
 
-    template <class Classify> bool ProcessMove(Vec2 p, double now, Classify& classify, std::vector<Action>& out) {
+    template <class Glue> bool ProcessMove(Vec2 p, double now, Glue& glue, std::vector<Action>& out) {
         switch (state_) {
         case GestureState::Idle:
             finger_ = p;
@@ -362,7 +389,8 @@ class GestureMachine {
                 return false; // the glue's hover state does not reflect the press yet
             }
             finger_ = p;
-            const PressClass cls = classify(pressPos_);
+            doubleTapCandidate_ = false;
+            const PressClass cls = glue.Classify(pressPos_);
             if (cls == PressClass::Pannable) {
                 state_ = GestureState::Pan;
                 absorbTap_ = false;
@@ -402,14 +430,8 @@ class GestureMachine {
             velocity_ = Vec2();
         }
         finger_ = p;
-        if (!catchingFling && hasLastTap_ && now - lastTapTime_ <= config_.doubleTapSeconds &&
-            Length(Sub(p, lastTapPos_)) <= config_.doubleTapRadiusPx) {
-            hasLastTap_ = false;
-            state_ = GestureState::TapThrough;
-            Emit(out, ActionType::MovePointer, lastTapPos_);
-            Emit(out, ActionType::LeftDown, lastTapPos_);
-            return;
-        }
+        doubleTapCandidate_ = !catchingFling && hasLastTap_ && now - lastTapTime_ <= config_.doubleTapSeconds &&
+                              Length(Sub(p, lastTapPos_)) <= config_.doubleTapRadiusPx;
         state_ = GestureState::Pending;
         pressPos_ = p;
         pressTime_ = now;
@@ -483,6 +505,7 @@ class GestureMachine {
     VelocityTracker velocity_tracker_;
     Vec2 velocity_;
     bool absorbTap_ = false;
+    bool doubleTapCandidate_ = false;
     bool hasLastTap_ = false;
     double lastTapTime_ = 0.0;
     Vec2 lastTapPos_;
