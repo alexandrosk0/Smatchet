@@ -3,7 +3,7 @@
 
 > **Slug**: `touchscreen-support` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why).
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why).
 
 ## Context
 
@@ -13,7 +13,7 @@ Smatchet is mouse-first. On Windows touch laptops / tablets (standalone GLFW bui
 - cannot open any of the ~21 context menus (all right-click only);
 - cannot reach the ~250 hover-only tooltips / help markers;
 - hits tiny targets (14 px scrollbars, `TouchExtraPadding` 0);
-- in Unreal, does nothing at all: `ToImGuiMouseButton` maps `EKeys::Touch1` to -1, so the press is dropped, and the host setters write `io.MousePos` / `io.MouseDown` directly so ImGui never learns the input source.
+- in Unreal, behaves exactly like a mouse: Slate delivers touch as `LeftMouseButton` pointer events (with `IsTouchEvent()` set), and the host setters write `io.MousePos` / `io.MouseDown` directly, so ImGui never learns the input source. *(Corrected during review: the original draft said touch was dropped via `EKeys::Touch1`; Slate's touch `FPointerEvent` constructors set `EffectingButton = LeftMouseButton`, UE 5.7 `Events.h`.)*
 
 The standalone build already reports `io.MouseSource == ImGuiMouseSource_TouchScreen` (the GLFW backend subclasses the WndProc and calls `AddMouseSourceEvent` from `GetMessageExtraInfo()`), but nothing consumes it. Existing touch code (long-press-to-edit in `TouchCellEditGesture.h`, Mobile touch density, the IME bridge) is Android-only.
 
@@ -139,20 +139,35 @@ N/A — no code is extracted; new TUs are additive.
 - Panning inside scrollable tooltips — no action.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squash):
+
+- `af18311db` · wip(plan): this plan.
+- `6fe5778c9` · Unreal host mouse setters move to the ImGui event queue; additive C ABI `SmatchetHost_SetMouseSource`; input processor reports `IsTouchEvent()`; no software cursor while touching.
+- `25877115b` · Review fixes: dead `Touch1` branch removed; host measures the real wall delta between `BeginFrame` calls (the plugin passes a fixed 1/60 s); no position event in front of each wheel notch.
+- `68595683d` · `TouchGesturePure.h` (tap / hold / double-tap / pan / fling / drag-through machine) and `Ui/TouchSizingPure.h` (sizing detector + style overlay), with unit tests.
+- `466efe1ae` · `TouchInput` (Auto / On / Off) and `TouchLongPressSeconds` config, Preferences rows, en/fr strings, config tests.
+- `90c331a7d` · `TouchInputRouter` + hooks, standalone `StandaloneTouchBridge`, Unreal host routing, `SmatchetTheme::ApplyTouchTargetOverlay` through the `drawApplyAppearanceSettings` rebuild gate, drag-surface marks, `UiTestScenario` hook reorder.
+- `459b24e4b` · Bucket-E suite `tests/ui/touch_gestures.test.cpp`; double-tap now requires the same item; router events flagged `AddedByTestEngine`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **One PR instead of two.** Review showed PR 1's premise was wrong (Unreal touch already arrived as a left click), so on its own it only tagged the source; its value is enabling the router, and its test coverage lives with PR 2. The plan-lock is keyed to one branch.
+- **No `Touch1` mapping in Unreal.** Slate builds touch `FPointerEvent`s with `EffectingButton = LeftMouseButton`; the branch could never run.
+- **Unreal frame clock fixed (added).** Both Unreal backends passed a constant 1/60 s, so ImGui time (double-click, long-press) followed the presentation rate. `SmatchetImGuiHost::BeginFrame` now uses the measured wall delta (1 ms..250 ms clamp).
+- **No action pacing in the pure layer.** ImGui's trickle queue (on by default) already spreads a down+up over two frames and delays a touch press until its position is seen; the router relies on it instead.
+- **Router flags its queued events `AddedByTestEngine`.** Under the test engine, trickled leftovers (a tap's release) were erased between frames and left the button held; ImGui core ignores the field.
+- **Double-tap needs the same item (added).** The bucket-E suite showed a quick tap on the *neighbouring* row (within 0.3 s / 24 px) snapping onto the first row as a double-click. The machine's glue gained `SameTarget`, decided from ImGui's hovered item one frame after the second press.
+- **Foreign touch position events are dropped.** While gestures are on, touchscreen-sourced position events the router did not queue (GLFW backend cursor polling) are removed so they cannot drag the held-back pointer.
+- **`FramePadding.y` touch minimum is an absolute 6 px × scale** (not ×1.5 of the current value) so the overlay stays idempotent.
+- **Prefs schema coverage tests needed no edit**: both new rows are always drawn, which `prefs_schema_coverage` checks automatically.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Bucket A**: `SmatchetTests.exe` full run 3999/3999 passed before the double-tap change; `TouchGesturePure` + `TouchSizingPure` 28/28 after it (281 assertions). Config round-trip / defaults and `touchInputMode` string tests pass.
+- **Bucket E**: `ui_test.run --name=TouchGestures` 9/9 passed on two consecutive runs (isolated `APPDATA`). Full `--all` run: see the PR body for the result and the baseline comparison of the non-touch failures seen locally.
+- **Build gate**: `SmatchetStandalone` (ninja-iter-msvc), `SmatchetImGuiHost_DX12` + `SmatchetCore_DX12` (Unreal host libs), `SmatchetTests` (ninja-test-msvc), `SmatchetStandalone` (ninja-ui-test-msvc) — all built clean under strict warnings. The UE plugin module itself was not compiled here (needs the engine build).
+- **clang-format**: `--dry-run --Werror` clean on every touched C++ file.
+- **Perf gate (`priority-grid-scroll`)**: not run locally; left to the PR-fast CI lane.
+- **Plan stress-test (`grill-with-docs`)**: not run — the skill is not available in this harness session.
+- **Manual residue**: real Windows touchscreen (standalone) and Unreal touchscreen. Tracked in `docs/self-improvement/categories/tooling/2026-10-31-touch-gestures-need-on-device-pointer-injection.md` (pointer-injection driver + UE Automation spec).
