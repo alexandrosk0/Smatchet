@@ -300,6 +300,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseMoveEvent(FSlateApplication& Slate
         return false;
     }
 
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
     PushModifierState(MouseEvent);
@@ -316,6 +320,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
         return false;
     }
 
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
     const int32 Button = ToImGuiMouseButton(MouseEvent);
     if (Button >= 0) {
         if (GSmatchetMouseButtonSessionDepth == 0) {
@@ -354,6 +362,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& S
         return false;
     }
 
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
     PushModifierState(MouseEvent);
@@ -379,6 +391,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateAppli
         return false;
     }
 
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
     PushModifierState(MouseEvent);
@@ -407,6 +423,7 @@ bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(FSlateApplicat
     // Wheel deltas feed ImGui io the same way as standalone; table-level routing
     // (e.g. vertical-end horizontal scroll) lives in shared UI code on the host side.
 
+    PushPointerSource(InWheelEvent);
     const FVector2f P = MapPointerToClientLocal(SlateApp, InWheelEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
 
@@ -415,9 +432,26 @@ bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(FSlateApplicat
     return true;
 }
 
+void FSmatchetImGuiInputProcessor::PushPointerSource(const FPointerEvent& PointerEvent) {
+    const bool bTouch = PointerEvent.IsTouchEvent();
+    if (bTouch && !bLoggedFirstTouch) {
+        bLoggedFirstTouch = true;
+        UE_LOG(LogSmatchetImGuiInputProcessor, Log,
+               TEXT("Smatchet: first touch event received (pointer %d) - forwarding as ImGui touchscreen input."),
+               static_cast<int32>(PointerEvent.GetPointerIndex()));
+    }
+    // 0 = ImGuiMouseSource_Mouse, 1 = ImGuiMouseSource_TouchScreen (SmatchetHost_SetMouseSource contract).
+    SmatchetHost_SetMouseSource(Host, bTouch ? 1 : 0);
+}
+
+bool FSmatchetImGuiInputProcessor::IsSecondaryTouch(const FPointerEvent& PointerEvent) {
+    return PointerEvent.IsTouchEvent() && PointerEvent.GetPointerIndex() != 0;
+}
+
 int32 FSmatchetImGuiInputProcessor::ToImGuiMouseButton(const FPointerEvent& MouseEvent) const {
     const FKey Key = MouseEvent.GetEffectingButton();
-    if (Key == EKeys::LeftMouseButton) {
+    // Touch1 is the first finger; Slate reports it as the effecting "button" of touch pointer events.
+    if (Key == EKeys::LeftMouseButton || Key == EKeys::Touch1) {
         return 0;
     }
     if (Key == EKeys::RightMouseButton) {

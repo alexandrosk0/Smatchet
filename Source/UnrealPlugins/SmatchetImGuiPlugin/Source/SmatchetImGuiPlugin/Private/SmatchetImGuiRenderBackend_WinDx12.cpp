@@ -142,8 +142,10 @@ class FWinDx12RenderBackend final : public ISmatchetImGuiRenderBackend {
         // When the game viewport hides the hardware cursor, draw ImGui's sprite so clicks are visible
         // inside the overlay. When the OS cursor is still visible, keep this false to avoid two pointers.
         // BeginFrame made the ImGui context current.
+        // A finger needs no on-screen pointer, so the sprite is skipped while the last input came from touch.
         if (ImGui::GetCurrentContext() != nullptr) {
-            ImGui::GetIO().MouseDrawCursor = bDrawSoftwareCursor;
+            ImGuiIO& Io = ImGui::GetIO();
+            Io.MouseDrawCursor = bDrawSoftwareCursor && Io.MouseSource != ImGuiMouseSource_TouchScreen;
         }
         SmatchetHost_DrawUI(Host);
         if (SmatchetHost_IsInitialized(Host) == 0 || SmatchetHost_IsFrameActive(Host) == 0) {

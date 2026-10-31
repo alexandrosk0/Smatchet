@@ -795,8 +795,8 @@ void SmatchetImGuiHost::SetMousePosition(float x, float y) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MousePos = ImVec2(x, y);
+    // Event queue (not a direct io.MousePos write) so ImGui keeps press/move ordering and the mouse source.
+    ImGui::GetIO().AddMousePosEvent(x, y);
 }
 
 void SmatchetImGuiHost::SetMouseButton(int button, bool isDown) {
@@ -810,8 +810,8 @@ void SmatchetImGuiHost::SetMouseButton(int button, bool isDown) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MouseDown[button] = isDown;
+    // Event queue: a down+up arriving between two frames is no longer collapsed into "never pressed".
+    ImGui::GetIO().AddMouseButtonEvent(button, isDown);
 }
 
 void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
@@ -822,9 +822,21 @@ void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MouseWheelH += wheelX;
-    io.MouseWheel += wheelY;
+    ImGui::GetIO().AddMouseWheelEvent(wheelX, wheelY);
+}
+
+void SmatchetImGuiHost::SetMouseSource(int source) {
+    if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (source < 0 || source >= static_cast<int>(ImGuiMouseSource_COUNT)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
+    if (ImplData->ImGuiCtx) {
+        ImGui::SetCurrentContext(ImplData->ImGuiCtx);
+    }
+    ImGui::GetIO().AddMouseSourceEvent(static_cast<ImGuiMouseSource>(source));
 }
 
 void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey) {
@@ -1287,6 +1299,13 @@ void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, floa
     if (!h)
         return;
     h->AddMouseWheel(wheelX, wheelY);
+}
+
+void SmatchetHost_SetMouseSource(SmatchetImGuiHostHandle host, int source) {
+    auto* h = LookupHost(host);
+    if (!h)
+        return;
+    h->SetMouseSource(source);
 }
 
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey) {
