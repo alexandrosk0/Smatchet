@@ -75,6 +75,12 @@ void TouchBridgeCursorPos(GLFWwindow* window, double x, double y) {
 
 void TouchBridgeMouseButton(GLFWwindow* window, int button, int action, int mods) {
     if (TouchInputRouter* router = RouterForTouchEvent(window)) {
+        // GLFW button events carry no position, and a finger landing where the cursor already is
+        // produces no cursor-move callback, so take the press point from the cursor itself.
+        double x = 0.0;
+        double y = 0.0;
+        glfwGetCursorPos(window, &x, &y);
+        router->OnRawMove(static_cast<float>(x), static_cast<float>(y));
         router->OnRawButton(button, action == GLFW_PRESS);
         return;
     }

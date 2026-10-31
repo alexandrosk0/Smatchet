@@ -252,6 +252,12 @@ class GestureMachine {
             velocity_tracker_.AddSample(now, finger_);
             break;
         case GestureState::Fling: {
+            if (flingJustStarted_) {
+                // The release in this tick already moved the content by the last finger delta; the
+                // glide starts next tick, so the lift does not jump by an extra frame of motion.
+                flingJustStarted_ = false;
+                break;
+            }
             Vec2 disp = FlingStep(velocity_, static_cast<float>(now - prevTick), config_.flingTimeConstant);
             if (Length(velocity_) < config_.flingStopSpeed) {
                 Emit(out, ActionType::PanEnd, finger_);
@@ -479,6 +485,7 @@ class GestureMachine {
                 }
                 velocity_ = v;
                 state_ = GestureState::Fling;
+                flingJustStarted_ = true;
             } else {
                 Emit(out, ActionType::PanEnd, p);
                 state_ = GestureState::Idle;
@@ -504,6 +511,7 @@ class GestureMachine {
     Vec2 velocity_;
     bool absorbTap_ = false;
     bool doubleTapCandidate_ = false;
+    bool flingJustStarted_ = false;
     bool hasLastTap_ = false;
     double lastTapTime_ = 0.0;
     Vec2 lastTapPos_;

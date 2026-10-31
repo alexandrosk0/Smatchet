@@ -322,6 +322,23 @@ TEST_SUITE("TouchGesturePure") {
         CHECK(m.IsIdle());
     }
 
+    TEST_CASE("the release tick moves by the finger delta only; the glide starts next tick") {
+        GestureMachine m;
+        m.OnDown(V(100, 500));
+        TickAs(m, 0.0, PressClass::Pannable);
+        m.OnMove(V(100, 470));
+        TickAs(m, kFrame, PressClass::Pannable);
+        m.OnMove(V(100, 440));
+        TickAs(m, 2 * kFrame, PressClass::Pannable);
+        m.OnUp(V(100, 410));
+        const std::vector<Action> lift = TickAs(m, 3 * kFrame, PressClass::Pannable);
+        REQUIRE_EQ(m.State(), GestureState::Fling);
+        REQUIRE_EQ(Count(lift, ActionType::PanBy), 1);
+        CHECK_EQ(lift[0].delta.y, doctest::Approx(-30.0f)); // just the last finger move
+        const std::vector<Action> glide = TickAs(m, 4 * kFrame, PressClass::Pannable);
+        CHECK_EQ(Count(glide, ActionType::PanBy), 1);
+    }
+
     TEST_CASE("a slow release or a pause before lifting does not fling") {
         GestureMachine m;
         m.OnDown(V(100, 500));
