@@ -151,7 +151,7 @@ ui_test_isolate_home() {
         UI_TEST_HOME="$SMATCHET_UI_TEST_HOME"
         mkdir -p "$UI_TEST_HOME"
         echo "[$tag] user-data dir pinned to $UI_TEST_HOME (kept on exit)"
-        echo "[$tag] profile state (imgui.ini, config) persists across pinned runs — a red here may be"
+        echo "[$tag] profile state (imgui.ini, config, views, panes, SQLite cache) persists across pinned runs — a red here may be"
         echo "[$tag] stale state; re-run unpinned to confirm before believing it."
     else
         UI_TEST_HOME="$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/smatchet-ui-test-$$")"

@@ -28,7 +28,9 @@
 #include "imgui_te_engine.h"
 
 #include <cstdlib>
+#include <memory>
 #include <string>
+#include <vector>
 
 extern UiDrawSession g_ui;
 
@@ -256,6 +258,14 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         }
         const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
         const std::string paneTwoId = g_ui.gridPanes[1].id;
+        // Teardown on every exit path past this point: close pane 2 to restore the min-1 invariant,
+        // so a failure here never leaves a later test booting into two panes.
+        auto closePaneTwo = [&] {
+            if (GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId)) {
+                paneTwo->open = false;
+            }
+            YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+        };
 
         // Let the "+" hand-off settle before moving focus anywhere. The new pane docks as a TAB in
         // the primary's node and re-selects its own tab for selectTabFrames frames, pulling ImGui
@@ -267,6 +277,7 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         });
         IM_CHECK_NO_RET(paneTwoSettled);
         if (!paneTwoSettled) {
+            closePaneTwo();
             return;
         }
 
@@ -279,6 +290,7 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
             YieldUntil(ctx, [&] { return WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str()); });
         IM_CHECK_NO_RET(bothVisible);
         if (!bothVisible) {
+            closePaneTwo();
             return;
         }
 
@@ -287,29 +299,32 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         // accepting a single-frame sighting. Pane 2's context must stay live and keep receiving rows.
         ctx->WindowFocus(primaryAbsRef.c_str());
         const bool nonFocusedVisible = YieldUntilHeld(ctx, [&] {
-            return g_ui.focusedPaneId != paneTwoId && WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str());
+            return g_ui.focusedPaneId == "main" && WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str());
         });
         IM_CHECK_NO_RET(nonFocusedVisible);
+        if (!nonFocusedVisible) {
+            closePaneTwo();
+            return;
+        }
 
-        // The non-focused visible pane's OWN snapshot fills from its live context (the fixture's rows
-        // delivered to pane 2's context via the Slice-3 per-context sync, not the focused pane's).
+        // The non-focused visible pane's rows come from its OWN live context (Slice-3 per-context
+        // sync), not from the snapshot "+" copied off the primary at creation: that copy would fill
+        // GridPane::ticketsSnapshot even if pane 2 never synced. So assert on the AppController
+        // context — sync kicked, a non-empty published snapshot — and that the pane draws exactly it.
         const bool paneTwoGotRows = YieldUntil(ctx, [&] {
-            const auto& rows = g_ui.gridPanes[1].ticketsSnapshot;
-            return rows != nullptr && !rows->empty();
+            const std::shared_ptr<const std::vector<CachedTicket>> live = app->GetPaneTicketsSnapshot(paneTwoId);
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return app->IsPaneSyncLive(paneTwoId) && live != nullptr && !live->empty() && paneTwo != nullptr &&
+                   paneTwo->ticketsSnapshot == live;
         });
         if (!paneTwoGotRows) {
-            ctx->LogError("non-focused visible pane 2 never received ticket rows — Slice-3 per-context "
-                          "live sync (EnsurePaneLiveSyncStarted / TickAllContexts) did not run for it");
-            IM_CHECK(false);
+            ctx->LogError("non-focused visible pane 2 never received ticket rows from its own context — "
+                          "Slice-3 per-context live sync (EnsurePaneLiveSyncStarted / TickAllContexts) did "
+                          "not run for it");
+            IM_CHECK_NO_RET(false);
         }
 
-        // Teardown: close pane 2 to restore the min-1 invariant.
-        for (auto& p : g_ui.gridPanes) {
-            if (p.id == paneTwoId) {
-                p.open = false;
-            }
-        }
-        YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+        closePaneTwo();
     };
 }
 

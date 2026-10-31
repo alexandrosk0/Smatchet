@@ -1871,8 +1871,9 @@ jobs:
             rc=1
             for attempt in $(seq 1 "$attempts"); do
               echo "${driver}: attempt ${attempt}/${attempts}"
-              bash "scripts/dev/${driver}.sh"
-              rc=$?
+              # Actions runs bash with -e: capture the rc instead of letting a failure end the step.
+              rc=0
+              bash "scripts/dev/${driver}.sh" || rc=$?
               # exit 2 = binary missing / build OFF / fixture missing — a config error, never retried.
               if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
                 break
