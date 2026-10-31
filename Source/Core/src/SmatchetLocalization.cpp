@@ -1480,6 +1480,10 @@ const TranslationEntry kEntries[] = {
     {"prefs.uimode.desktop", "Desktop", u8"Bureau"},
     {"prefs.uimode.mobile", "Mobile", u8"Mobile"},
     {"prefs.uimode.auto", "Auto (by width)", u8"Auto (selon la largeur)"},
+    {"prefs.touch.auto", "Auto (bigger targets while touching)",
+     u8"Auto (cibles agrandies pendant l'usage tactile)"},
+    {"prefs.touch.on", "On (always touch-sized)", u8"Activé (toujours dimensionné pour le tactile)"},
+    {"prefs.touch.off", "Off (finger acts as a mouse)", u8"Désactivé (le doigt agit comme une souris)"},
 
     // Sync Audit window Action-filter items (the Result items reuse the pre-existing
     // audit.all / audit.success / audit.failure rows; "Comments" reuses comments.title).

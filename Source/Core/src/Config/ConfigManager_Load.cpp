@@ -201,6 +201,7 @@ void LoadUiEnumFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     cfg.MobileHomePage = j.value("mobileHome", cfg.MobileHomePage);
     cfg.MobileTouchDensity = mobileTouchDensityFromString(j.value("mobileDensity", std::string("comfortable")));
+    cfg.TouchInput = touchInputModeFromString(j.value("touchInput", std::string("auto")));
     ConfigManager::SanitizeMobileNav(cfg);
     cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
 }

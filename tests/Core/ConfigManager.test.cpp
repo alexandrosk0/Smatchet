@@ -509,6 +509,8 @@ TrackerConfig MakeNonDefaultConfig() {
     c.ShowPanel = false;
     c.ShowStatusBar = false;
     c.StatusBarAutoHide = true;
+    c.TouchInput = TouchInputMode::Off;
+    c.TouchLongPressSeconds = 0.8f;
     c.Density = TrackerConfig::UiDensity::Compact;
     c.PanelDockSide = TrackerConfig::PanelPosition::Right;
     c.PrimarySideBarOnRight = false;
@@ -676,6 +678,8 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.ShowPanel == in.ShowPanel);
     CHECK(out.ShowStatusBar == in.ShowStatusBar);
     CHECK(out.StatusBarAutoHide == in.StatusBarAutoHide);
+    CHECK(out.TouchInput == in.TouchInput);
+    CHECK(out.TouchLongPressSeconds == doctest::Approx(in.TouchLongPressSeconds));
     CHECK(out.PrimarySideBarOnRight == in.PrimarySideBarOnRight);
     CHECK(out.UpdateCheckEnabled == in.UpdateCheckEnabled);
     CHECK(out.UpdateIncludePrerelease == in.UpdateIncludePrerelease);
@@ -756,6 +760,9 @@ TEST_CASE("ConfigManager Load of an empty config yields documented struct defaul
     // A config written before the Auto-Hide status-bar mode loads as Always Show.
     CHECK(cfg.ShowStatusBar == def.ShowStatusBar);
     CHECK(cfg.StatusBarAutoHide == false);
+    // A config written before touchscreen support loads with gestures on (Auto) and the default hold.
+    CHECK(cfg.TouchInput == TouchInputMode::Auto);
+    CHECK(cfg.TouchLongPressSeconds == doctest::Approx(def.TouchLongPressSeconds));
     CHECK(cfg.AiModelOpenAi == def.AiModelOpenAi);
     CHECK(cfg.AiModelAnthropic == def.AiModelAnthropic);
     CHECK(cfg.AiReasoningEffort == def.AiReasoningEffort);

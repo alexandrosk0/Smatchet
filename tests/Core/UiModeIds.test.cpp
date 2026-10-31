@@ -140,3 +140,14 @@ TEST_CASE("mobileTouchDensity <-> string + scale factors") {
     CHECK(mobileTouchDensityScale(MobileTouchDensity::Comfortable) >
           mobileTouchDensityScale(MobileTouchDensity::Compact));
 }
+
+TEST_CASE("touchInputMode <-> string round-trips and falls back to Auto") {
+    CHECK(std::string(touchInputModeToString(TouchInputMode::Auto)) == "auto");
+    CHECK(std::string(touchInputModeToString(TouchInputMode::On)) == "on");
+    CHECK(std::string(touchInputModeToString(TouchInputMode::Off)) == "off");
+    CHECK(touchInputModeFromString("auto") == TouchInputMode::Auto);
+    CHECK(touchInputModeFromString("on") == TouchInputMode::On);
+    CHECK(touchInputModeFromString("off") == TouchInputMode::Off);
+    CHECK(touchInputModeFromString("") == TouchInputMode::Auto);
+    CHECK(touchInputModeFromString("ON") == TouchInputMode::Auto);
+}

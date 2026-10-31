@@ -588,6 +588,12 @@ struct TrackerConfig {
     std::string MobileHomePage = "grid";
     // Touch hit-target density preset (drives ScaleAllSizes + font multiplier).
     MobileTouchDensity MobileTouchDensity = MobileTouchDensity::Comfortable;
+    // Desktop touchscreen handling (docs/plans/touchscreen-support.md). Persisted via
+    // j["touchInput"] ("auto" / "on" / "off"); unknown values load as Auto.
+    TouchInputMode TouchInput = TouchInputMode::Auto;
+    // Finger hold time that opens a context menu (seconds). Clamped to 0.3..1.5 where it is used
+    // (SmatchetTouchGesturePure::ClampLongPressSeconds), so a hand-edited value cannot break input.
+    float TouchLongPressSeconds = 0.5f;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.
