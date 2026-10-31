@@ -38,43 +38,14 @@ void DrainAuditReloadFuture(UiDrawSession& d) {
 }
 namespace {
 using SmatchetAudit::detail::ActionMatchesFilter;
+using SmatchetAudit::detail::AppendAuditGridRowTsv;
+using SmatchetAudit::detail::AuditGridTsvHeader;
 using SmatchetAudit::detail::ClampRowsPerPage;
 using SmatchetAudit::detail::CollectFilteredAuditIndices;
 using SmatchetAudit::detail::ComputeAuditPageCount;
 using SmatchetAudit::detail::ContainsNoCasePreLower;
 using SmatchetAudit::detail::JsonStringValue;
 using SmatchetAudit::detail::ResultMatchesFilter;
-// Tabs/newlines break TSV paste into spreadsheets.
-static std::string AuditSanitizeTsvCell(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char ch : s) {
-        if (ch == '\t' || ch == '\n' || ch == '\r') {
-            out.push_back(' ');
-        } else {
-            out.push_back(ch);
-        }
-    }
-    return out;
-}
-static void AppendAuditGridRowTsv(std::string& out, const nlohmann::json& e, const std::string& dataCell) {
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "timestamp_local"));
-    out += '\t';
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "phase"));
-    out += '\t';
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "action"));
-    const bool success = e.value("success", false);
-    out += success ? "OK" : "FAIL";
-    out += '\t';
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "issue_key"));
-    out += '\t';
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "source"));
-    out += '\t';
-    out += AuditSanitizeTsvCell(JsonStringValue(e, "error"));
-    out += '\t';
-    out += AuditSanitizeTsvCell(dataCell.empty() ? std::string("-") : dataCell);
-    out += '\n';
-}
 constexpr auto kAuditFilePollInterval = std::chrono::milliseconds(750);
 
 /** Audit rows may contain arbitrary issue text; strict UTF-8 dump throws — replace invalid sequences instead. */
@@ -272,9 +243,10 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestAuditTrailFocus;
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
-        d.requestAuditTrailFocus = false;
     }
     prepareTopLevelWindow(d, "audit", 920.0f, 520.0f, wantFocus);
+    // Raises the tab when the window is docked behind a sibling (#2274); held while it does not exist yet.
+    d.requestAuditTrailFocus = SmatchetWindowExpand::ServiceDockedFocusRequest(d, "Backend Audit", wantFocus);
     if (!d.auditTrailWindowWasOpen) {
         d.auditTrailWindowWasOpen = true;
         d.auditLastFilePoll = {};
@@ -333,7 +305,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     if (ImGui::Button("Copy filtered table (TSV)")) {
         std::string clip;
         clip.reserve(filteredIndices.size() * 192u + 128u);
-        clip += "Time\tPhase\tAction\tResult\tIssue\tSource\tError\tDetails\n";
+        clip += AuditGridTsvHeader();
         for (const std::size_t eventIndex : filteredIndices) {
             AppendAuditGridRowTsv(clip, events[eventIndex], eventDataJson[eventIndex]);
         }

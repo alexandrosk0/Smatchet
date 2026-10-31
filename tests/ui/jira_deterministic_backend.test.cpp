@@ -73,7 +73,7 @@ static void RegisterJiraDeterministicSyncLoadsIssues(ImGuiTestEngine* engine) {
 
         app->SyncWithBackend();
 
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
         IM_CHECK_NO_RET(syncDone);
 
         const auto tickets = app->GetActiveTickets();
@@ -111,14 +111,14 @@ static void RegisterJiraDeterministicSyncTransportError(ImGuiTestEngine* engine)
 
         // First sync: should succeed and populate cached rows.
         app->SyncWithBackend();
-        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); }));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
 
         const std::size_t cachedCount = app->GetActiveTickets().size();
         IM_CHECK_NO_RET(cachedCount > 0);
 
         // Second sync: transport error scripted — cached rows must survive.
         app->SyncWithBackend();
-        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); }));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
 
         IM_CHECK_NO_RET(app->GetActiveTickets().size() == cachedCount);
 
@@ -131,7 +131,7 @@ static void RegisterJiraDeterministicSyncTransportError(ImGuiTestEngine* engine)
 // ---------------------------------------------------------------------------
 // JiraDeterministicSync_SlowBackendDoesNotFreezeFrames
 // With the basic-grid fixture (sync completes quickly), assert the UI engine
-// advances frames normally while IsStreamingSyncActive() is true. This is a
+// advances frames normally while IsSyncPendingOrActive() is true. This is a
 // sanity gate: if the worker thread blocks the UI thread we would see 0 frames
 // in the loop.
 // ---------------------------------------------------------------------------
@@ -154,14 +154,14 @@ static void RegisterJiraDeterministicSyncSlowBackend(ImGuiTestEngine* engine) {
         // Yield up to 200 frames while sync is active, counting them.
         for (int i = 0; i < 200; ++i) {
             ctx->Yield();
-            if (!app->IsStreamingSyncActive()) {
+            if (!app->IsSyncPendingOrActive()) {
                 break;
             }
             ++framesWhileActive;
         }
 
         // We expect sync to complete — if it didn't, flag it.
-        IM_CHECK_NO_RET(!app->IsStreamingSyncActive());
+        IM_CHECK_NO_RET(!app->IsSyncPendingOrActive());
 
         // Even if sync was instantaneous (0 frames), the test is valid: the
         // worker ran to completion without blocking the UI thread.

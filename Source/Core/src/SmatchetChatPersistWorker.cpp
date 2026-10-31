@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <deque>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -24,6 +25,11 @@ namespace {
 
 constexpr std::size_t kQueueSoftCap = 1024;
 constexpr std::chrono::milliseconds kStopDrainBudget{250};
+// Poll interval while a recreate has the cache withdrawn (null). There is no give-up budget: the
+// withdrawn window spans background-task joins with no time bound, so any fixed budget could drop a
+// chat write the user expects to survive a restart. The queue soft cap bounds memory meanwhile, and
+// Stop interrupts the wait.
+constexpr std::chrono::milliseconds kNullCacheRetryInterval{50};
 
 struct WorkerState {
     std::thread thread;
@@ -32,11 +38,14 @@ struct WorkerState {
     std::deque<Op> queue;
     bool running = false;
     std::atomic<bool> shouldStop{false};
-    // Pointers borrowed from the caller. Cleared on Stop so a late Enqueue racing past
-    // the running check cannot dereference a dead LCM.
-    LocalCacheManager* lcm = nullptr;
+    // Set by Start before the thread launches, cleared by Stop after it joins, so the worker
+    // reads them without the lock. The cache is never held here: `resolveCache` hands out a
+    // fresh strong handle per op, so a cache swap cannot leave the worker on a freed LCM.
+    CacheResolver resolveCache;
     MainThreadDispatcher* dispatcher = nullptr;
     OnAppendCallback onAppend;
+    // Worker-thread only: ops dropped at stop because no cache was live, logged once on exit.
+    std::size_t droppedNoCache = 0;
 
     // State() is a function-local static; this destructor runs during exit()/static
     // teardown. If the worker is still joinable then — e.g. the standalone crash handler's
@@ -45,7 +54,9 @@ struct WorkerState {
     // into a hard process kill that bypasses WER. Signal + join here so abnormal exits tear
     // down cleanly. Join (never detach): WorkerLoop dereferences this very singleton, so it
     // must finish before our members are destroyed. No-ops after a normal Stop() (thread
-    // already moved out + joined, so not joinable).
+    // already moved out + joined, so not joinable). The drain here still calls the resolver,
+    // which captures AppController's `this`: safe because the crash-path std::exit() does not
+    // destroy the (non-static) AppController, the same exposure the old raw LCM pointer had.
     ~WorkerState() {
         {
             std::lock_guard<std::mutex> lk(mtx);
@@ -63,13 +74,14 @@ WorkerState& State() {
     return s;
 }
 
-void ProcessOne(WorkerState& s, Op op) {
-    // Caller already snapshotted these under the lock; revalidate so a concurrent Stop
-    // that nulled the pointers between pop_front and ProcessOne degrades to a drop
-    // instead of a segfault.
-    LocalCacheManager* lcm = s.lcm;
+// Returns false, without touching `op`, when no cache is live (a recreate is between
+// withdrawing the old one and publishing the new one); the caller retries.
+bool ProcessOne(WorkerState& s, const Op& op) {
+    // Latched for this op only: the strong handle keeps the LCM alive across the write even if
+    // the owner swaps it meanwhile, and is released before the next op resolves again.
+    const std::shared_ptr<LocalCacheManager> lcm = s.resolveCache ? s.resolveCache() : nullptr;
     if (!lcm) {
-        return;
+        return false;
     }
     switch (op.kind) {
     case OpKind::Append: {
@@ -92,6 +104,20 @@ void ProcessOne(WorkerState& s, Op op) {
         lcm->TrimChatMessages(op.trimCap);
         break;
     }
+    return true;
+}
+
+// Runs `op`, retrying while the cache is withdrawn, until a cache is published again or Stop
+// is signalled (the op is then dropped and counted in `droppedNoCache`).
+void ProcessWithRetry(WorkerState& s, const Op& op) {
+    while (!ProcessOne(s, op)) {
+        std::unique_lock<std::mutex> lk(s.mtx);
+        if (s.shouldStop.load(std::memory_order_acquire)) {
+            ++s.droppedNoCache;
+            return;
+        }
+        s.cv.wait_for(lk, kNullCacheRetryInterval, [&]() { return s.shouldStop.load(std::memory_order_acquire); });
+    }
 }
 
 void WorkerLoop() {
@@ -102,13 +128,17 @@ void WorkerLoop() {
             std::unique_lock<std::mutex> lk(s.mtx);
             s.cv.wait(lk, [&]() { return s.shouldStop.load(std::memory_order_acquire) || !s.queue.empty(); });
             if (s.queue.empty() && s.shouldStop.load(std::memory_order_acquire)) {
+                if (s.droppedNoCache > 0) {
+                    LOG_WARN("chat_persist: dropped %zu op(s) at stop: no local cache was live", s.droppedNoCache);
+                    s.droppedNoCache = 0;
+                }
                 return;
             }
             op = std::move(s.queue.front());
             s.queue.pop_front();
         }
         try {
-            ProcessOne(s, op);
+            ProcessWithRetry(s, op);
         } catch (const std::exception& ex) {
             LOG_WARN("chat_persist: op kind=%d threw %s", static_cast<int>(op.kind), ex.what());
         } catch (...) {
@@ -119,7 +149,7 @@ void WorkerLoop() {
 
 } // namespace
 
-void Start(LocalCacheManager& lcm, MainThreadDispatcher& dispatcher, OnAppendCallback onAppend) {
+void Start(CacheResolver resolveCache, MainThreadDispatcher& dispatcher, OnAppendCallback onAppend) {
     auto& s = State();
     std::thread launched;
     {
@@ -128,7 +158,7 @@ void Start(LocalCacheManager& lcm, MainThreadDispatcher& dispatcher, OnAppendCal
             LOG_WARN("chat_persist::Start called while already running — ignoring");
             return;
         }
-        s.lcm = &lcm;
+        s.resolveCache = std::move(resolveCache);
         s.dispatcher = &dispatcher;
         s.onAppend = std::move(onAppend);
         s.shouldStop.store(false, std::memory_order_release);
@@ -181,13 +211,18 @@ void Stop() {
         }
         workerToJoin = std::move(s.thread);
         s.running = false;
-        s.lcm = nullptr;
-        s.dispatcher = nullptr;
-        s.onAppend = nullptr;
     }
     s.cv.notify_all();
     if (workerToJoin.joinable()) {
         workerToJoin.join();
+    }
+    // Only after the join: the worker reads these without the lock while it runs. Dropping the
+    // resolver here also releases whatever it captured before the owner destructs.
+    {
+        std::lock_guard<std::mutex> lk(s.mtx);
+        s.resolveCache = nullptr;
+        s.dispatcher = nullptr;
+        s.onAppend = nullptr;
     }
     LOG_INFO("chat_persist: worker stopped");
 }

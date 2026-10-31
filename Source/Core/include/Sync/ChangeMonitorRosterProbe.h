@@ -5,11 +5,13 @@
 
 #include "ITrackerIssueReader.h"
 #include "Logger.h"
+#include "Sync/ChangeMonitorPaneState.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/RefusalIsolatingFetchPure.h"
 #include "TrackerRoster.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -54,6 +56,32 @@ enum class RosterProbeOutcome {
     UseLegacy, ///< The roster was cut short by a cap/deadline, so it cannot prove membership; run the legacy path.
 };
 
+/// What a cycle needs to know about the pane beyond its resident stamps, and what it reports back.
+struct RosterProbeContext {
+    /// Keys an earlier cycle found the tracker refusing: not asked for again until the pane's next reload.
+    const std::unordered_set<std::string>* RefusedKeys = nullptr;
+    /// Resident rows the hierarchy walk owns (WalkOwnedKeys): never reported as "left the view".
+    const std::unordered_set<std::string>* WalkOwned = nullptr;
+    /// Filled by the cycle; the apply hop folds it into the pane's ChangeMonitorPaneState.
+    ChangeProbeCycleNotes* Notes = nullptr;
+};
+
+/// Removes from `diff` the keys the cycle must not act on: remembered refusals leave ToFetch and Added, and
+/// rows the hierarchy walk owns leave Vanished.
+inline void FilterRosterDiff(RosterDiff& diff, const RosterProbeContext& context) {
+    const auto drop = [](std::vector<std::string>& keys, const std::unordered_set<std::string>* skip) {
+        if (skip == nullptr || skip->empty()) {
+            return;
+        }
+        keys.erase(std::remove_if(keys.begin(), keys.end(),
+                                  [skip](const std::string& key) { return skip->find(key) != skip->end(); }),
+                   keys.end());
+    };
+    drop(diff.ToFetch, context.RefusedKeys);
+    drop(diff.Added, context.RefusedKeys);
+    drop(diff.Vanished, context.WalkOwned);
+}
+
 /// One FetchViewRoster call replaces FetchIssuesChangedSince + FetchIssueKeysForView: diffs the roster against
 /// `residentUpdated` (id -> held stamp), downloads only the changed / new bodies and probes the vanished keys.
 /// The roster walk shares the RELOAD's caps (a view the reload would truncate must not grow past that here), so
@@ -61,7 +89,8 @@ enum class RosterProbeOutcome {
 inline RosterProbeOutcome RunRosterProbe(ITrackerIssueReader& reader, const TrackerConfig& cfg, const ViewsStore& views,
                                          const std::unordered_map<std::string, std::string>& residentUpdated,
                                          const std::string& paneId, std::vector<CachedTicket>& outFetched,
-                                         std::vector<MembershipRemovalVerdict>& outVerdicts) {
+                                         std::vector<MembershipRemovalVerdict>& outVerdicts,
+                                         const RosterProbeContext& context = RosterProbeContext()) {
     const std::function<bool()> neverCancel = []() { return false; };
     Result<TrackerRoster, TrackerError> roster = reader.FetchViewRoster(cfg, views, neverCancel);
     if (!roster.has_value()) {
@@ -71,13 +100,20 @@ inline RosterProbeOutcome RunRosterProbe(ITrackerIssueReader& reader, const Trac
     if (!roster.value().Complete) {
         LOG_INFO("ChangeMonitor roster incomplete pane='%s' (%s): using the changed-since path this cycle",
                  paneId.c_str(), roster.value().Warning.c_str());
+        if (context.Notes != nullptr) {
+            context.Notes->RosterIncomplete = true; // later cycles skip the capped walk until the pane reloads
+        }
         return RosterProbeOutcome::UseLegacy;
     }
-    const RosterDiff diff = DiffRosterAgainstResident(roster.value(), residentUpdated);
+    RosterDiff diff = DiffRosterAgainstResident(roster.value(), residentUpdated);
+    FilterRosterDiff(diff, context);
     if (!diff.ToFetch.empty()) {
         std::vector<std::string> keys = diff.ToFetch;
         if (keys.size() > kMaxMonitorBodiesPerCycle) {
             keys.resize(kMaxMonitorBodiesPerCycle);
+            if (context.Notes != nullptr) {
+                context.Notes->BodiesCapped = true;
+            }
         }
         // A refused key (Jira rejects a whole `key in (...)` batch for ONE unreadable ticket) is isolated and
         // skipped; the rows of every other half are kept, so one refused key cannot fail the cycle forever.
@@ -89,13 +125,26 @@ inline RosterProbeOutcome RunRosterProbe(ITrackerIssueReader& reader, const Trac
                 return reader.FetchIssuesForKeysCancellable(cfg, batch, views, cancelled);
             },
             cancelled, keys, budget, refused);
+        if (!bodies.has_value() && IsTrackerRefusal(bodies.error())) {
+            // More refused keys than one cycle can isolate: the keyed downloads cannot succeed, and the refused keys
+            // are not learned, so every cycle would fail the same way. The changed-since path needs no key list.
+            LOG_INFO("ChangeMonitor pane='%s': too many refused keys to isolate (%s): using the changed-since path",
+                     paneId.c_str(), bodies.error().Detail.c_str());
+            if (context.Notes != nullptr) {
+                context.Notes->RosterIncomplete = true;
+            }
+            return RosterProbeOutcome::UseLegacy;
+        }
         if (!bodies.has_value()) {
             LOG_INFO("ChangeMonitor body fetch skipped pane='%s': %s", paneId.c_str(), bodies.error().Detail.c_str());
             return RosterProbeOutcome::Skipped;
         }
         if (!refused.empty()) {
-            LOG_INFO("ChangeMonitor pane='%s': %zu key(s) refused by the tracker, skipped this cycle", paneId.c_str(),
-                     refused.size());
+            LOG_INFO("ChangeMonitor pane='%s': %zu key(s) refused by the tracker, skipped until the pane reloads",
+                     paneId.c_str(), refused.size());
+            if (context.Notes != nullptr) {
+                context.Notes->RefusedKeys.insert(context.Notes->RefusedKeys.end(), refused.begin(), refused.end());
+            }
         }
         // The tracker answers a `key in (...)` request, but a hostile or buggy server can return more rows than
         // were asked for. Only the requested ids may reach the grid, the cache and the pane's owned-id set.
@@ -130,17 +179,20 @@ ComputeMembershipRemovals(ITrackerIssueReader& reader, const TrackerConfig& cfg,
 /// changed-since + keys-only reconcile when the roster is incomplete; `outAddNewRows` says whether rows that
 /// entered the view may be added (roster path only: the legacy path never grew the grid). False = soft failure,
 /// logged; the caller skips the cycle and leaves its anchor alone. The legacy window is measured from the
-/// anchor, which every applied cycle (either path) advances, so a fallback cycle never misses a change.
+/// anchor, which an applied cycle advances unless it reports `BodiesCapped` (a roster cycle that downloaded only
+/// part of a larger backlog keeps the anchor, so a later fall-back to the legacy window still covers the rest).
+/// `context` carries the pane's remembered refusals and the rows the hierarchy walk owns in, and the cycle's notes out.
 inline bool RunChangeProbeCycle(ITrackerIssueReader& reader, const TrackerConfig& cfg, const ViewsStore& views,
                                 bool useRoster, const std::unordered_map<std::string, std::string>& residentUpdated,
                                 const std::vector<std::string>& cachedKeys, std::chrono::seconds window,
                                 const std::vector<std::string>& salientFieldIds, const std::string& paneId,
                                 std::vector<CachedTicket>& outFetched,
-                                std::vector<MembershipRemovalVerdict>& outVerdicts, bool& outAddNewRows) {
+                                std::vector<MembershipRemovalVerdict>& outVerdicts, bool& outAddNewRows,
+                                const RosterProbeContext& context = RosterProbeContext()) {
     outAddNewRows = false;
     if (useRoster) {
         const RosterProbeOutcome outcome =
-            RunRosterProbe(reader, cfg, views, residentUpdated, paneId, outFetched, outVerdicts);
+            RunRosterProbe(reader, cfg, views, residentUpdated, paneId, outFetched, outVerdicts, context);
         if (outcome == RosterProbeOutcome::Skipped) {
             return false;
         }

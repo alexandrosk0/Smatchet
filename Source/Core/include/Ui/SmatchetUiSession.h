@@ -4,11 +4,12 @@
 // there via using-aliases) — NOT the full AppController.h. Keeping the include out stops
 // SmatchetUiSession.h transitively spreading AppController.h into every Ui TU that includes
 // it; TUs that really use AppController methods must (and do) include it directly.
-#include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
-#include "Types/AttachmentTypes.h" // AttachmentDescriptor
-#include "Types/FieldEditTypes.h"  // FieldEditResult
-#include "PendingActionTypes.h"    // PendingActionTarget (the pane a grid edit was made in)
-#include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
+#include "Types/AppUpdateTypes.h"    // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
+#include "Types/AttachmentTypes.h"   // AttachmentDescriptor
+#include "Types/FieldEditTypes.h"    // FieldEditResult
+#include "Types/CatalogFetchTypes.h" // GridCatalogFetchLatch (the grid's catalog fetch, latched at launch)
+#include "PendingActionTypes.h"      // PendingActionTarget (the pane a grid edit was made in)
+#include "Sync/SyncTypes.h"          // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
@@ -30,6 +31,9 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
+#include "AsyncLoadGatePure.h"       // LaunchIntoSlot / TakeFromSlot for the cached-projects read
+#include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
+#include "Ui/CachedProjectsPure.h"   // RemoveForgottenProjects (a stale read must not resurrect a Forget)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -151,8 +155,8 @@ struct FieldCatalogFetchResult {
     bool Ok = false;
     std::string BackendKey;
     /// Project key this catalog was scoped to (resolved from the active-view JQL). The grid
-    /// completion pins it via AppController::SetCurrentCatalogProject() before SetFieldCatalog()
-    /// so the snapshot lands under the project-scoped cache entry that carries component options.
+    /// completion hands it to AppController::ApplyGridFieldCatalogResult, which keys the snapshot by it
+    /// (the project-scoped cache entry carries component options) and pins it with the catalog.
     /// Empty when the JQL resolves no project (unscoped fetch).
     std::string ProjectKey;
     std::vector<TrackerField> Fields;
@@ -302,6 +306,47 @@ struct JqlEditorState {
     size_t jqlNameRewriteFieldsSize = 0;
     bool jqlNameRewriteValid = false;
     bool jqlBufSemanticRewrite = false;
+};
+
+/// Per-edge-panel drag-to-hide / drag-to-reveal state (SmatchetBottomPanelDrag.cpp). One
+/// instance per panel the driver serves (bottom panel, Views column, primary and secondary
+/// side bars). "Extent" is the panel's size along its drag axis: height for the bottom
+/// panel, width for the side columns.
+struct EdgePanelDragState {
+    /// Layout keys of the panel tabs that were open when the panel was hidden, so
+    /// revealing it restores the same tab set (empty -> the bottom panel reveals its Log;
+    /// a side column has no fallback and shows no reveal grip).
+    std::vector<std::string> restoreKeys;
+    /// Panel extent (px) captured at hide time, re-applied on reveal.
+    float restoreExtent = 0.0f;
+    /// Extent (px) to write into the node's SizeRef while the countdown below runs.
+    float pendingExtent = 0.0f;
+    /// Frames left to (re)apply pendingExtent after a reveal — the node is rebuilt
+    /// asynchronously over a couple of frames (same idea as layoutForceDefaultsFrames).
+    int applyFrames = 0;
+    /// ImGuiID of the dock splitter directly before the panel while the user drags it
+    /// (0 when no such drag is live).
+    ImGuiID splitterDragId = 0;
+    /// True while the live splitter drag sits inside the hide band — releasing now hides
+    /// the panel (the release-to-hide overlay hint is up).
+    bool hideArmed = false;
+    /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
+    /// mouse release.
+    bool revealDragActive = false;
+    /// Largest extent the live reveal drag reached — release-in-band only cancels the
+    /// reveal when the drag genuinely opened the panel first (see
+    /// SmatchetBottomPanelDragPure::ShouldCollapseOnRevealRelease).
+    float revealPeakExtent = 0.0f;
+    /// Mouse position along the drag axis at reveal-grip press, for the open-threshold test.
+    float revealDragStart = 0.0f;
+    /// Side columns: mouse position across the drag axis at press, for the
+    /// horizontal-vs-vertical commit test (SmatchetBottomPanelDragPure::RevealDragCommits).
+    float revealDragStartCross = 0.0f;
+    /// Side columns: a press landed in the reveal strip and the drag has not committed yet.
+    bool revealArmed = false;
+    /// Stamp from UiDrawSession::edgePanelCollapseCounter when this panel last hid tabs;
+    /// among coincident reveal grips the most recently collapsed panel wins.
+    unsigned collapseSeq = 0;
 };
 
 struct UiDrawSession {
@@ -493,32 +538,16 @@ struct UiDrawSession {
     /// Per-window "expand over the whole workspace" toggle state (SmatchetWindowExpand.h).
     SmatchetWindowExpand::WindowExpandState windowExpand;
 
-    // --- Bottom-panel drag-to-hide / drag-to-reveal (SmatchetBottomPanelDrag.cpp) ---
-    /// Layout keys of the bottom-panel tabs that were open when the panel was hidden,
-    /// so revealing it restores the same tab set (empty -> the Log is revealed).
-    std::vector<std::string> bottomPanelRestoreKeys;
-    /// Panel height (px) captured at hide time, re-applied on reveal.
-    float bottomPanelRestoreHeight = 0.0f;
-    /// Height (px) to write into the bottom node's SizeRef while the countdown below runs.
-    float bottomPanelPendingHeight = 0.0f;
-    /// Frames left to (re)apply bottomPanelPendingHeight after a reveal — the node is
-    /// rebuilt asynchronously over a couple of frames (same idea as layoutForceDefaultsFrames).
-    int bottomPanelApplyHeightFrames = 0;
-    /// ImGuiID of the dock splitter directly above the bottom panel while the user drags
-    /// it (0 when no such drag is live).
-    ImGuiID bottomPanelSplitterDragId = 0;
-    /// True while the live splitter drag sits inside the hide band — releasing now hides
-    /// the panel (the release-to-hide overlay hint is up).
-    bool bottomPanelHideArmed = false;
-    /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
-    /// mouse release.
-    bool bottomPanelRevealDragActive = false;
-    /// Largest height the live reveal drag reached — release-in-band only cancels the
-    /// reveal when the drag genuinely opened the panel first (see
-    /// SmatchetBottomPanelDragPure::ShouldCollapseOnRevealRelease).
-    float bottomPanelRevealPeakHeight = 0.0f;
-    /// Mouse Y at reveal-grip press, for the open-threshold test.
-    float bottomPanelRevealDragStartY = 0.0f;
+    // --- Edge-panel drag-to-hide / drag-to-reveal (SmatchetBottomPanelDrag.cpp) ---
+    /// Bottom panel (restoreKeys empty -> the Log is revealed on a grip drag).
+    EdgePanelDragState bottomPanelDrag;
+    /// Right-hand columns: Views column, primary / secondary side bars. Each holds the tabbed
+    /// set it hid; they have no fallback, so an empty restoreKeys means no reveal grip.
+    EdgePanelDragState viewsColumnDrag;
+    EdgePanelDragState primarySideBarDrag;
+    EdgePanelDragState secondarySideBarDrag;
+    /// Session-wide collapse counter feeding EdgePanelDragState::collapseSeq.
+    unsigned edgePanelCollapseCounter = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
@@ -655,6 +684,10 @@ struct UiDrawSession {
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
     std::future<FieldCatalogFetchResult> fieldCatalogFuture;
+    /// What fieldCatalogFuture's fetch latched when it started — the pane it is for and the configuration it runs
+    /// with — so its result is applied to that pane under that configuration (#2328).
+    GridCatalogFetchLatch fieldCatalogFetchLatch;
+    TrackerConfig fieldCatalogFetchConfig;
     bool triggerCatalogRefetch = false;
     /// The startup fetch may be skipped once per process (the restored snapshot belongs to the startup tracker).
     bool catalogStartupSkipTried = false;
@@ -742,6 +775,17 @@ struct UiDrawSession {
     /// (these are LRU project lists — a refresh-on-reopen is fine; see plan § Risks).
     std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsSnapshot;
     bool cachedProjectsSnapshotValid = false;
+    /// Unconfirmed edits of the offline queues, indexed for the grid's per-row and per-cell "pending" cue. Rebuilt
+    /// only when one of the two queue snapshots it was built from is replaced (RefreshPendingOverlay).
+    smatchet::sync::PendingOverlay pendingOverlay;
+    std::shared_ptr<const OfflineQueueSnapshot> pendingOverlayQueueSnap;
+    std::shared_ptr<const PendingActionsSnapshot> pendingOverlayActionsSnap;
+    /// The read behind the snapshot runs on a worker in a single slot (AsyncLoadGatePure.h); `Forget` clicks queue
+    /// here and run in the next read, so the file is never written on the UI thread either.
+    std::future<std::vector<FieldCatalogCache::CachedProjectEntry>> cachedProjectsFuture;
+    bool cachedProjectsReadInFlight = false;
+    bool cachedProjectsRereadPending = false;
+    std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsForgetPending;
     /// Open-edge latch for the JQL project-pill popup (#767). False while the popup is closed;
     /// the draw refreshes the snapshot on the frame it transitions to open.
     bool projectPillPopupWasOpen = false;
@@ -1329,18 +1373,82 @@ inline void MarkPrefsDirty(UiDrawSession& d) {
     }
 }
 
+/// Starts the cached-projects read on a worker (Pillar 2: the catalog cache file is parsed off the UI thread). Queued
+/// "Forget" requests run first, on the same worker, so the list that lands already lacks them. UI-thread-only.
+inline void KickCachedProjectsRead(UiDrawSession& d) {
+    std::vector<FieldCatalogCache::CachedProjectEntry> forgets;
+    forgets.swap(d.cachedProjectsForgetPending);
+    std::string launchError;
+    const bool launched = smatchet::async_load::LaunchIntoSlot(
+        d.cachedProjectsFuture, d.cachedProjectsReadInFlight,
+        [forgets]() {
+            return std::async(std::launch::async, [forgets]() {
+                for (const FieldCatalogCache::CachedProjectEntry& e : forgets) {
+                    FieldCatalogCache::ForgetProject(e.projectKey, e.backend, e.endpoint);
+                }
+                return FieldCatalogCache::ListCachedProjects(); // logs and returns empty on any failure
+            });
+        },
+        launchError);
+    if (!launched) {
+        d.cachedProjectsForgetPending = forgets; // not run: the next read tries again
+    }
+}
+
+/// Installs a finished cached-projects read and starts the next one when a reopen or a Forget arrived meanwhile.
+/// UI-thread-only; cheap when nothing is in flight.
+inline void PollCachedProjectsRead(UiDrawSession& d) {
+    if (!d.cachedProjectsReadInFlight || !d.cachedProjectsFuture.valid() ||
+        d.cachedProjectsFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    std::vector<FieldCatalogCache::CachedProjectEntry> rows;
+    std::string error;
+    // The latch clears before get(): a worker exception is rethrown by it (AsyncLoadGatePure.h).
+    if (smatchet::async_load::TakeFromSlot(d.cachedProjectsFuture, d.cachedProjectsReadInFlight, rows, error)) {
+        // A Forget clicked after this read started is still queued and not in the file this read parsed: drop it
+        // here, or the entry comes back until the next read.
+        (void)smatchet::ui::RemoveForgottenProjects(rows, d.cachedProjectsForgetPending);
+        d.cachedProjectsSnapshot = std::move(rows);
+        d.cachedProjectsSnapshotValid = true;
+    }
+    if (d.cachedProjectsRereadPending || !d.cachedProjectsForgetPending.empty()) {
+        d.cachedProjectsRereadPending = false;
+        KickCachedProjectsRead(d);
+    }
+}
+
 /// Snapshot-on-open helper for the cached-project lists (#767/#892). Re-reads
-/// `FieldCatalogCache::ListCachedProjects()` (disk I/O) ONCE on a surface's open-edge so the
-/// per-frame draw reads `d.cachedProjectsSnapshot` instead of hitting disk every frame.
-/// `wasOpenLatch` is the caller's per-surface closed→open edge tracker: pass the latch's
+/// `FieldCatalogCache::ListCachedProjects()` (disk I/O) ONCE on a surface's open-edge, on a worker, so the
+/// per-frame draw reads `d.cachedProjectsSnapshot` instead of hitting disk every frame; the list lands a few
+/// frames after the surface opens (the previous snapshot stays on screen meanwhile).
+/// `wasOpenLatch` is the caller's per-surface closed->open edge tracker: pass the latch's
 /// previous value as `isOpenNow`'s complement so the refresh fires exactly on the transition.
 /// UI-thread-only.
 inline void RefreshCachedProjectsSnapshotOnOpen(UiDrawSession& d, bool isOpenNow, bool& wasOpenLatch) {
+    PollCachedProjectsRead(d);
     if (isOpenNow && !wasOpenLatch) {
-        d.cachedProjectsSnapshot = FieldCatalogCache::ListCachedProjects();
-        d.cachedProjectsSnapshotValid = true;
+        if (d.cachedProjectsReadInFlight) {
+            d.cachedProjectsRereadPending = true; // the running read may predate this open: read again when it lands
+        } else {
+            KickCachedProjectsRead(d);
+        }
     }
     wasOpenLatch = isOpenNow;
+}
+
+/// The Preferences "Forget" button: drops the entry from the snapshot at once and from the file on the next read.
+inline void RequestForgetCachedProject(UiDrawSession& d, const FieldCatalogCache::CachedProjectEntry& entry) {
+    d.cachedProjectsForgetPending.push_back(entry);
+    for (auto it = d.cachedProjectsSnapshot.begin(); it != d.cachedProjectsSnapshot.end(); ++it) {
+        if (it->projectKey == entry.projectKey && it->backend == entry.backend && it->endpoint == entry.endpoint) {
+            d.cachedProjectsSnapshot.erase(it);
+            break;
+        }
+    }
+    if (!d.cachedProjectsReadInFlight) {
+        KickCachedProjectsRead(d);
+    }
 }
 
 extern UiDrawSession g_ui;

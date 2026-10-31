@@ -11,6 +11,22 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Reconcile (2026-10-23) — NOT a batch; the open list is empty
+
+**Reconcile.** `historical-review-ledger-reconcile.sh --reconcile` reported 18 open findings, 0 likely
+superseded, as it did on 2026-08-08. Those 18 rows are not open findings. The script reads every block
+whose header starts with `**STILL OPEN`, and the only two such blocks were retained audit-trail copies:
+the 2026-06-20 list (superseded by the 2026-07-10 pass) and the 2026-07-10 list (all 7 fixed in #1733,
+#1734 and #1736, per "Remediation pass (2026-07-10)"). Spot-checked on develop: the `postmortem-owed.sh`
+dedup regex splits slash-joined trailers, `test-theme-syntax-colors.sh` and
+`test-ui-views-columns-reorder.sh` carry their zero-assertion guards, and README no longer names the old
+build-script path. Both blocks are relabelled "Was open at …", so the parser now finds no open block,
+and the 2026-08-08 note that "every open finding stays open" carries a correction.
+
+**Live open findings.** Batch 26 (the newest sweep) lists all of its findings fixed. Older batches keep
+their advisory MEDIUM/LOW residue ("verify on demand"), as before. The frontier is unchanged: the next
+sweep resumes after Batch 26.
+
 ## Batch 26 — #2180–#2299 + late #2164, #2263, #2288 (95-unit sweep, 2026-10-06) — all fixed
 
 Coverage: **84 PRs as 95 units — 91 reviewed (57 with findings, 34 clean), 4 fully superseded, 0 errored.** Net: **0 CRITICAL, 10 HIGH, 43 MEDIUM, 59 LOW** (112 findings, 43 `userVisible`). **109 are fixed. The host fixes ship in three PRs, split because CodeRabbit skips a PR over 100 files: #2331 (core), #2330 (tooling, CI and docs) and this PR (UI and hosts). The fixes in files that the agent-layer flip (#2321) moved into the `agent-layer/` submodule ship in alexandrosk0/the-unwilling-agentic-bunch#5 (marked *layer PR* below). 3 were already fixed on develop: F32 and F33 by #2319, and F84 by the flip itself (the layer repo ships its own `.gitattributes`).** No Issue was filed for the user-visible ones, because they ship fixed in these PRs (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2299 contiguous for PRs merged as of 2026-10-06; the next sweep resumes from #2300, plus the four PRs still open below the frontier (late-merge rule): #2244, #2279, #2291, #2296.**
@@ -590,6 +606,8 @@ Coverage: **53 reviewed — 0 with findings, 51 clean, 2 fully superseded, 0 err
 **0 of 18 flagged as likely superseded.** Unlike the 2026-07-10 pass, the probes found nothing to
 drop and no manual re-verification was performed, so every open finding stays open. This section
 exists partly to reset the 14-day staleness nudge with an honest dated result.
+_(⚠ Corrected 2026-10-23: those 18 rows were not open. They came from the two retained audit-trail
+blocks whose findings were all fixed by 2026-07-10; see the 2026-10-23 reconcile at the top.)_
 
 **Targeted pass — deliberately NOT numbered as a batch.** This session reviewed the surviving
 product C++ of **4 PRs only** (#1941, #1952, #1954, #1962 — the code-bearing commits in the newest
@@ -694,7 +712,7 @@ still open.**
   (`squash_merge_pr` → `ENQUEUED_SENTINEL`); the enqueue + immediate-merge
   queue-safety paths now genuinely run (was Windows-unresolvable/skipped).
 
-**STILL OPEN (NOT DONE) — re-verified alive at develop 2026-07-10** (all HIGH,
+**Was open at 2026-07-10 — all 7 since FIXED (#1733, #1734, #1736)** (all HIGH,
 internal gate/test/doc debt; no product defect → backlog, not Issues):
 _(⚠ ALL 7 now FIXED — see the "Remediation pass (2026-07-10)" section above; PRs
 #1733 / #1734 / #1736. Retained here for the audit trail.)_
@@ -742,7 +760,7 @@ defects were elevated to GitHub Issues per ADR-0014.
 - **MEDIUM:** #670 (global two-pass `FindJiraTransitionId`), #975 (kick-time
   context captured by pointer), #524 (full-body actionable-count parse).
 
-**STILL OPEN (NOT DONE) — re-verified alive at develop 2026-06-20:**
+**Was open at 2026-06-20 — all since resolved (see the 2026-07-10 passes above):**
 _(⚠ SUPERSEDED by the 2026-07-10 reconcile pass above: #1138/#1158/#1049 and
 #919 are now DONE; the live open list is the 7 findings in that newer section.)_
 

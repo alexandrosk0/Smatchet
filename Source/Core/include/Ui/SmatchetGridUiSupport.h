@@ -87,7 +87,6 @@ bool NewIssueDraftHasUserContent(const UiDrawSession& d);
 bool ImGuiEffectiveKeyCtrl();
 bool ImGuiEffectiveKeyShift();
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId);
-std::string SanitizeClipboardCell(const std::string& value);
 /// `mode` Delta (default) downloads only changed tickets; Full forces the whole-view download (Shift+Refresh).
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory,
                          smatchet::sync::SyncMode mode = smatchet::sync::SyncMode::Delta);
@@ -129,6 +128,24 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode)
 /// (perf.grid_edit_pump command, UI tests); their edits go to the focused pane.
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode);
+
+/// Brings `d.pendingOverlay` up to date with the offline-queue snapshots (in-memory, published by the queue
+/// workers: no SQLite). One shared_ptr load per snapshot per call; the index is rebuilt only when a snapshot was
+/// replaced. UI thread, once per pane window per frame.
+void RefreshPendingOverlay(AppController& app, UiDrawSession& d);
+
+/// Bucket-E probe of the grid's pending-edit cue: the key cell calls `NotePendingRowCueDrawn` when it draws the
+/// "pending" / "not sent" label of a row; a test reads which rows showed it since the last reset. Bounded (the first
+/// 64 distinct keys), UI thread only. Compiled only under SMATCHET_BUILD_UI_TESTS (PUBLIC on ImGuiLib): a
+/// production build has no probe state and the call is an empty inline.
+#if defined(SMATCHET_BUILD_UI_TESTS)
+void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention);
+/// 0 when the row's cue was not drawn since the last reset, 1 for "pending", 2 for "not sent".
+int PendingRowCueDrawnForTests(const std::string& issueKey);
+void ResetPendingRowCuesDrawnForTests();
+#else
+inline void NotePendingRowCueDrawn(const std::string& /*issueKey*/, bool /*needsAttention*/) {}
+#endif
 
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);

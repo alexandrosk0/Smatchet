@@ -100,3 +100,13 @@ TEST_CASE("IsSameVersion needs two known, equal stamps") {
     b.RemoteUpdated.clear();
     CHECK_FALSE(IsSameVersion(a, b)); // unknown never counts as "same"
 }
+
+TEST_CASE("IsSameVersion treats two renderings of one instant as the same version") {
+    TicketSyncMeta a;
+    a.RemoteUpdated = "2024-05-01T10:00:00.000+0000";
+    TicketSyncMeta b;
+    b.RemoteUpdated = "2024-05-01T12:00:00.000+0200";
+    CHECK(IsSameVersion(a, b));
+    b.RemoteUpdated = "2024-05-01T12:00:01.000+0200";
+    CHECK_FALSE(IsSameVersion(a, b));
+}

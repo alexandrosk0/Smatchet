@@ -285,7 +285,7 @@ void RegisterGridHeaderDragAcrossScroll(ImGuiTestEngine* engine) {
         }
         WhisperBannerScope bannerScope;
         app->SyncWithBackend();
-        IM_CHECK_NO_RET(StepUntil(ctx, 600, [&] { return !app->IsStreamingSyncActive(); }));
+        IM_CHECK_NO_RET(StepUntil(ctx, 600, [&] { return !app->IsSyncPendingOrActive(); }));
         ctx->SetRef(kGridWindow);
         if (!FocusGrid(ctx)) {
             IM_CHECK_NO_RET(false);

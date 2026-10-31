@@ -22,6 +22,7 @@
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerFieldCatalog.h"
+#include "ConfigManager.h" // ViewsStore (FetchIssues records the active view id)
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "SmatchetResult.h"
@@ -164,9 +165,13 @@ class FakeTrackerClient : public ITrackerBackend,
 
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* /*configOverride*/ = nullptr,
-                                          const ViewsStore* /*viewsOverride*/ = nullptr,
+                                          const ViewsStore* viewsOverride = nullptr,
                                           std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
                                           TrackerError* outFetchErrorStructured = nullptr) override {
+        {
+            std::lock_guard<std::mutex> lock(fetchIssuesLastRequestMutex_);
+            fetchIssuesLastActiveViewId_ = viewsOverride != nullptr ? viewsOverride->ActiveViewId : std::string();
+        }
         if (NetworkDown()) {
             TrackerError e = network_->MakeError();
             if (outFullSyncCompleted)
@@ -373,6 +378,9 @@ class FakeTrackerClient : public ITrackerBackend,
             onKeyedFetch_();
         }
         keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        if (onKeyedTokenSampled_) {
+            onKeyedTokenSampled_(keyedFetchTokenReportedCancelled_);
+        }
         return result;
     }
     Result<std::vector<CachedTicket>, TrackerError>
@@ -384,6 +392,9 @@ class FakeTrackerClient : public ITrackerBackend,
             onKeyedFetch_();
         }
         keyedFetchTokenReportedCancelled_ = shouldCancel && shouldCancel();
+        if (onKeyedTokenSampled_) {
+            onKeyedTokenSampled_(keyedFetchTokenReportedCancelled_);
+        }
         return result;
     }
 
@@ -725,6 +736,12 @@ class FakeTrackerClient : public ITrackerBackend,
 
     std::size_t ProbeReachabilityCallCount() const { return probeReachabilityCalls_; }
     std::size_t FetchIssuesCallCount() const { return fetchIssuesCalls_; }
+    /// The active view id the most recent FetchIssues call was handed ("" when none): lets a test show which views a
+    /// session fetched with.
+    std::string FetchIssuesLastActiveViewId() const {
+        std::lock_guard<std::mutex> lock(fetchIssuesLastRequestMutex_);
+        return fetchIssuesLastActiveViewId_;
+    }
     std::size_t FetchIssuesForKeysCallCount() const { return fetchIssuesForKeysCalls_; }
     /// Calls that arrived through the cancellable entry points (the service must use these so the
     /// sync's cancel token reaches the HTTP layer), and whether the token handed to the most recent
@@ -735,6 +752,9 @@ class FakeTrackerClient : public ITrackerBackend,
     /// Hook run inside every cancellable keyed fetch, after the scripted result was computed and before
     /// the token is sampled - lets a test cancel the sync "while the request is in flight".
     void SetOnKeyedFetch(std::function<void()> hook) { onKeyedFetch_ = std::move(hook); }
+    /// Runs after every cancellable keyed fetch sampled its token, with the sampled value: lets a test keep what
+    /// the token said after this client is gone (a superseding request replaces the backend).
+    void SetOnKeyedTokenSampled(std::function<void(bool)> hook) { onKeyedTokenSampled_ = std::move(hook); }
     std::size_t FetchChildrenOfKeysCallCount() const { return fetchChildrenOfKeysCalls_; }
     std::size_t BuildCreatePayloadCallCount() const { return buildCreatePayloadCalls_; }
     std::size_t BuildUpdatePayloadCallCount() const { return buildUpdatePayloadCalls_; }
@@ -1103,6 +1123,8 @@ class FakeTrackerClient : public ITrackerBackend,
     std::string fetchError_;
     std::string fetchWarning_;
     std::size_t fetchIssuesCalls_ = 0;
+    mutable std::mutex fetchIssuesLastRequestMutex_;
+    std::string fetchIssuesLastActiveViewId_; // guarded by fetchIssuesLastRequestMutex_
 
     // FetchIssuesStreamed slow paged model (SetSlowStreamedPages); off while count <= 0.
     int slowStreamedPageCount_ = 0;
@@ -1132,6 +1154,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::atomic<std::size_t> fetchChildrenOfKeysCancellableCalls_{0};
     std::atomic<bool> keyedFetchTokenReportedCancelled_{false};
     std::function<void()> onKeyedFetch_;
+    std::function<void(bool)> onKeyedTokenSampled_;
     bool rosterSupported_ = false;
     TrackerRoster roster_;
     TrackerError rosterError_;

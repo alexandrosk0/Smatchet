@@ -108,6 +108,22 @@ std::future<IssueCreateResult> AppController::CreateOrQueueIssueAsync(const Issu
     return LaunchIssueCreate_(draft, std::move(cancel), true);
 }
 
+namespace {
+
+// Update path: drops the draft fields whose value already matches the cached ticket being edited.
+void PruneDraftAgainstTickets(IssueDraft& draft, const std::shared_ptr<const std::vector<CachedTicket>>& snap) {
+    if (!snap) {
+        return;
+    }
+    const std::string key = draft.ExistingIssueKey;
+    const auto tIt = std::find_if(snap->begin(), snap->end(), [&](const CachedTicket& t) { return t.id == key; });
+    if (tIt != snap->end()) {
+        IssueDraftHelpers::PruneUnchangedFields(draft, *tIt);
+    }
+}
+
+} // namespace
+
 std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraft& draft,
                                                                  smatchet::ui::CancelToken cancel,
                                                                  bool queueOnNetworkFailure) {
@@ -125,46 +141,40 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();
 
-    if (ConfigManager::Load().ReadOnlyMode) {
+    // An early refusal: the future is already settled with `message` when this returns.
+    const auto refuse = [&promise, &future](const char* message) {
         IssueCreateResult err;
-        err.Error = "Read-only mode is enabled in Preferences.";
+        err.Error = message;
         promise->set_value(std::move(err));
-        return future;
+        return std::move(future);
+    };
+
+    if (ConfigManager::Load().ReadOnlyMode) {
+        return refuse("Read-only mode is enabled in Preferences.");
     }
 
     // Latch a strong handle for the worker: a live tracker swap (SetBackend) while the create
     // runs would otherwise free the backend under the `mutations` pointer below (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
     if (!backend) {
-        IssueCreateResult err;
-        err.Error = "Tracker backend is not initialized.";
-        promise->set_value(std::move(err));
-        return future;
+        return refuse("Tracker backend is not initialized.");
     }
 
-    LocalCacheManager* cache = Cache.get();
+    // Latched: the worker keeps the cache alive across the create even if a cache recreate withdraws it meanwhile.
+    const std::shared_ptr<LocalCacheManager> cacheOwner = std::atomic_load(&Cache);
+    LocalCacheManager* cache = cacheOwner.get();
     IssueDraft draftCopy = draft;
 
     // Update path: prune fields whose draft value already matches cache so we don't
     // round-trip ADF descriptions (formatting loss), re-run no-op transitions for
     // status, or re-add issues to their current sprint.
     if (!draftCopy.ExistingIssueKey.empty()) {
-        const auto snap = GetActiveTicketsSnapshot();
-        if (snap) {
-            const std::string key = draftCopy.ExistingIssueKey;
-            auto tIt = std::find_if(snap->begin(), snap->end(), [&](const auto& t) { return t.id == key; });
-            if (tIt != snap->end()) {
-                IssueDraftHelpers::PruneUnchangedFields(draftCopy, *tIt);
-            }
-        }
+        PruneDraftAgainstTickets(draftCopy, GetActiveTicketsSnapshot());
     }
 
     ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
-        IssueCreateResult err;
-        err.Error = "Tracker backend does not support issue mutations.";
-        promise->set_value(std::move(err));
-        return future;
+        return refuse("Tracker backend does not support issue mutations.");
     }
 
     // Snapshot the cache namespace on the UI thread — the worker must write the new ticket
@@ -173,8 +183,8 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
 
     // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
     // duration of the worker, per ADR 0012.
-    LaunchBackgroundTask([this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required,
-                          cancel, queueOnNetworkFailure]() {
+    LaunchBackgroundTask([this, promise, backend, mutations, cacheOwner, cache, cacheBackendKey, draftCopy, catalogCopy,
+                          required, cancel, queueOnNetworkFailure]() {
         // Cooperative cancel (WS-A): if the owner abandoned this create (bulk-import
         // `.clear()` / window-close / shutdown) before the worker started, return a
         // benign cancelled result without the network round-trip — and crucially
@@ -190,7 +200,11 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
         if (queueOnNetworkFailure && IsOfflineQueueableFailure(result) && !cancel.IsCancelled() && offlineQueue_) {
             // Pillar 6: unreachable tracker — queue the (pruned) draft for replay, off the UI thread,
             // under the namespace latched at submit.
-            result.QueuedOfflineId = offlineQueue_->QueueCreateOffline(draftCopy, cacheBackendKey);
+            std::string queueRefusal;
+            result.QueuedOfflineId = offlineQueue_->QueueCreateOffline(draftCopy, cacheBackendKey, &queueRefusal);
+            if (result.QueuedOfflineId <= 0 && !queueRefusal.empty()) {
+                result.Error += " " + queueRefusal; // the cache is being recreated: say so, do not just fail
+            }
         }
         // Re-check after the (long) create before the expensive refresh + hydration:
         // a cancel that landed while the create was in flight skips touching `this`
@@ -211,6 +225,11 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
 
 std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
     return offlineQueue_ ? offlineQueue_->QueueCreateOffline(draft) : 0;
+}
+
+std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft, std::string& outError) {
+    outError.clear();
+    return offlineQueue_ ? offlineQueue_->QueueCreateOffline(draft, std::string(), &outError) : 0;
 }
 
 // GetPendingCreateCount / GetDeadPendingCreateCount / GetDeadPendingCreates / GetPendingCreates:

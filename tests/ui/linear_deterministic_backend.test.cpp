@@ -73,7 +73,7 @@ static void RegisterLinearDeterministicSyncLoadsIssues(ImGuiTestEngine* engine) 
 
         app->SyncWithBackend();
 
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
         IM_CHECK_NO_RET(syncDone);
 
         const auto tickets = app->GetActiveTickets();
@@ -115,7 +115,7 @@ static void RegisterLinearDeterministicSyncMapsFields(ImGuiTestEngine* engine) {
         }
 
         app->SyncWithBackend();
-        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); }));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
 
         const auto tickets = app->GetActiveTickets();
         const CachedTicket* lin1 = nullptr;

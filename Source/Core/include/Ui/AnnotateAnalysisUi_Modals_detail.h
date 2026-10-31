@@ -29,14 +29,16 @@ struct AnnotateRowView {
 };
 
 /** RFC-4180-style CSV cell: quoted (with doubled inner quotes) only when the value carries
- *  a comma, quote, or newline. */
+ *  a comma, quote, or newline, after GuardSpreadsheetFormula has given text that starts like a
+ *  formula ('=', '+', '-', '@', ...) a leading single quote so a spreadsheet opens it as text. */
 std::string CsvEscape(const std::string& s);
 
 /** "YYYY-MM-DD..." -> "YYYY/MM/DD"; anything else passes through verbatim. */
 std::string NormalizeDateDisplay(const std::string& raw);
 
-/** Tabs/newlines flattened to spaces so a code snippet cannot break the TSV row shape. */
-std::string SanitizeTsvCell(std::string s);
+/** One TSV clipboard cell: tabs/newlines flattened to spaces so a code snippet cannot break the row
+ *  shape, then GuardSpreadsheetFormula (TsvCopyCell) so a cell pasted into a spreadsheet stays text. */
+std::string SanitizeTsvCell(const std::string& s);
 
 /** Every occurrence of `placeholder` replaced with `replacement` (no recursion into the
  *  replacement text). */
@@ -48,7 +50,7 @@ std::string ReplaceStringPlaceholder(std::string str, const std::string& placeho
 std::string BuildQuickCommentText(const std::string& issueKey, const std::string& templateId,
                                   const AnnotateRowView& row, const std::vector<CommentTemplate>& templates);
 
-/** One clipboard TSV row for a callstack entry (1-based display index first). */
+/** One clipboard TSV row for a callstack entry (1-based display index first; cells sanitized). */
 std::string BuildCallstackRowTsv(const AnnotateRowView& row, std::size_t displayIndex);
 
 /** One clipboard TSV row for an annotated source line (cells sanitized). */

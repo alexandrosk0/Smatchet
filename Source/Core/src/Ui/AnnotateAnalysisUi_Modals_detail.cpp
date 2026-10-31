@@ -22,7 +22,7 @@ bool EmailLocalPartIs(const TrackerUser& user, const std::string& lowerP4User) {
 
 } // namespace
 
-std::string CsvEscape(const std::string& s) { return CsvEscapeField(s); }
+std::string CsvEscape(const std::string& s) { return CsvEscapeField(GuardSpreadsheetFormula(s)); }
 
 std::string NormalizeDateDisplay(const std::string& raw) {
     if (raw.size() >= 10 && raw[4] == '-' && raw[7] == '-') {
@@ -31,14 +31,7 @@ std::string NormalizeDateDisplay(const std::string& raw) {
     return raw;
 }
 
-std::string SanitizeTsvCell(std::string s) {
-    for (char& c : s) {
-        if (c == '\t' || c == '\r' || c == '\n') {
-            c = ' ';
-        }
-    }
-    return s;
-}
+std::string SanitizeTsvCell(const std::string& s) { return TsvCopyCell(s); }
 
 std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder, const std::string& replacement) {
     size_t pos = 0;
@@ -84,8 +77,9 @@ std::string BuildQuickCommentText(const std::string& issueKey, const std::string
 
 std::string BuildCallstackRowTsv(const AnnotateRowView& row, std::size_t displayIndex) {
     std::ostringstream o;
-    o << (displayIndex + 1) << '\t' << row.Function << '\t' << row.Path << ':' << row.Line << '\t' << row.User << '\t'
-      << row.Changelist << '\t' << row.Date;
+    o << (displayIndex + 1) << '\t' << SanitizeTsvCell(row.Function) << '\t'
+      << SanitizeTsvCell(row.Path + ':' + std::to_string(row.Line)) << '\t' << SanitizeTsvCell(row.User) << '\t'
+      << SanitizeTsvCell(row.Changelist) << '\t' << SanitizeTsvCell(row.Date);
     return o.str();
 }
 

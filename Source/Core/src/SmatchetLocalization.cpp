@@ -734,6 +734,10 @@ const TranslationEntry kEntries[] = {
      "-> Local data.",
      u8"Le cache local est indisponible ; cette modification ne peut pas être appliquée. Redémarrez Smatchet ou "
      u8"vérifiez Paramètres -> Préférences -> Données locales."},
+    {"offline.cache_recreating",
+     "The local database is being recreated, so this cannot be queued offline right now. Retry in a moment.",
+     u8"La base de données locale est en cours de recréation : cela ne peut pas être mis en file hors ligne "
+     u8"pour l'instant. Réessayez dans un instant."},
     {"offline.cache_unavailable",
      "Local cache is unavailable, so this edit cannot be queued offline. Restart Smatchet or check Settings -> "
      "Preferences -> Local data.",
@@ -1146,7 +1150,7 @@ const TranslationEntry kEntries[] = {
     {"toast.view_saved", "View saved", u8"Vue enregistrée"},
     {"toast.discarded_changes", "Discarded changes", u8"Modifications annulées"},
     {"toast.view_deleted", "View deleted", u8"Vue supprimée"},
-    {"toast.reverted_layout", "Reverted layout", u8"Disposition rétablie"},
+    {"toast.reverted_layout", "Reverted query", u8"Requête rétablie"},
 
     // Bug report / Lua action / quick comment / bulk import toasts.
     {"toast.bug_report", "Bug report", u8"Rapport de bug"},
@@ -1226,6 +1230,28 @@ const TranslationEntry kEntries[] = {
     {"views.fields.catalog_failed", "Couldn't load the field catalog: %s",
      u8"Impossible de charger le catalogue de champs : %s"},
     {"views.fields.retry", "Retry", u8"Réessayer"},
+    {"grid.pending.queued", "pending", u8"en attente"},
+    {"grid.pending.not_sent", "not sent", u8"non envoyé"},
+    {"grid.pending.queued_tip",
+     "%d local change(s) to this issue are waiting to be sent to the tracker. The values shown are yours. See the "
+     "Offline Queue panel.",
+     u8"%d modification(s) locale(s) de ce ticket attendent d'être envoyées au tracker. Les valeurs affichées "
+     u8"sont les vôtres. Voir le panneau File hors ligne."},
+    {"grid.pending.not_sent_tip",
+     "%d local change(s) to this issue will not be sent by themselves (failed, held for review or in conflict). Open "
+     "the Offline Queue panel to retry, resolve or discard.",
+     u8"%d modification(s) locale(s) de ce ticket ne partiront pas d'elles-mêmes (échec, en attente de revue ou "
+     u8"en conflit). Ouvrez le panneau File hors ligne pour réessayer, résoudre ou abandonner."},
+    {"grid.pending.cell_queued_tip",
+     "This edit is waiting to be sent to the tracker; the value shown is yours. See the Offline Queue panel.",
+     u8"Cette modification attend d'être envoyée au tracker ; la valeur affichée est la vôtre. Voir le "
+     u8"panneau File hors ligne."},
+    {"grid.pending.cell_not_sent_tip",
+     "This edit was not sent and needs attention. Open the Offline Queue panel to retry, resolve or discard it.",
+     u8"Cette modification n'a pas été envoyée et demande votre attention. Ouvrez le panneau File hors "
+     u8"ligne pour réessayer, résoudre ou abandonner."},
+    {"prefs.local_db.recreating", "Recreating the database...", u8"Recréation de la base de données..."},
+    {"views.fields.loading_saved", "Loading saved fields...", u8"Chargement des champs enregistrés..."},
     {"comments.discard_confirm", "Discard the comment you're writing?",
      u8"Abandonner le commentaire en cours de rédaction ?"},
     {"grid.sort.remove_key", "Remove this sort key", u8"Supprimer cette clé de tri"},
@@ -1322,6 +1348,9 @@ const TranslationEntry kEntries[] = {
      u8"La connectivité n'a pas encore été testée."},
     {"panel.release_to_hide", "Release to hide the panel", u8"Relâchez pour masquer le panneau"},
     {"panel.drag_to_open", "Drag up to open the panel", u8"Faites glisser vers le haut pour ouvrir le panneau"},
+    {"panel.release_to_hide_side", "Release to hide the side panel", u8"Relâchez pour masquer le panneau latéral"},
+    {"panel.drag_to_open_side", "Drag left to open the side panel",
+     u8"Faites glisser vers la gauche pour ouvrir le panneau latéral"},
     {"toast.attachment.open", "Open attachment", u8"Ouvrir la pièce jointe"},
     {"attachment.open.url_fallback", "Download failed (%s) - opened \"%s\" in your browser instead.",
      u8"Téléchargement échoué (%s) - « %s » a été ouvert dans votre navigateur à la place."},
@@ -1352,8 +1381,8 @@ const TranslationEntry kEntries[] = {
     {"cmdpalette.parameters", "Parameters:", u8"Paramètres :"},
     {"cmdpalette.run", "Run", u8"Exécuter"},
     {"cmdpalette.hint", "Type a command or search...", u8"Saisissez une commande ou recherchez..."},
-    {"cmdpalette.destructive_hint", "Destructive — hold Shift+Enter to confirm",
-     u8"Destructif — maintenez Maj+Entrée pour confirmer"},
+    {"cmdpalette.destructive_hint", "Destructive — hold Shift and click, or press Shift+Enter",
+     u8"Destructif — maintenez Maj et cliquez, ou appuyez sur Maj+Entrée"},
     {"cmdpalette.footer_hint", "Enter to run · Esc to close · Up/Down to navigate",
      u8"Entrée pour exécuter · Échap pour fermer · Haut/Bas pour naviguer"},
     {"cmdpalette.set_shortcut", "Set shortcut...", u8"Définir le raccourci..."},

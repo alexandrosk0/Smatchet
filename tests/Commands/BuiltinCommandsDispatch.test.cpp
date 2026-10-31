@@ -20,6 +20,7 @@
 #include "ConfigManager.h"        // dump_self path test pins the user-data join
 #include "Diagnostics/SelfDump.h" // dump_self path test installs a stub provider
 #include "Logger.h"               // debug.log_tail round-trip drives the Logger ring directly
+#include "ToolbarConfig.h"        // toolbar-defaults-resolve test
 
 #include <nlohmann/json.hpp>
 
@@ -150,6 +151,32 @@ TEST_CASE("registry — Contains is alias-aware and mirrors FindLocked existence
     CHECK_FALSE(fx.Reg.Contains("nope.not.a.command"));
     CHECK_FALSE(fx.Reg.Contains(""));
     CHECK_FALSE(fx.Reg.HasExact("nope.not.a.command"));
+}
+
+TEST_CASE("toolbar defaults — every default button targets a real command (no dead icons)") {
+    BuiltinsFixture fx;
+    // Handled in the UI layer (SmatchetToolbarUi::DispatchButton), never via the registry.
+    const std::set<std::string> uiPseudo = {"ui.command_palette", "ui.settings", "ui.toolbar_customize"};
+
+    const ToolbarConfig cfg = ToolbarConfig::Default();
+    bool sawViews = false;
+    for (const ToolbarButton& b : cfg.Buttons) {
+        if (b.Kind != ToolbarButtonKind::Command) {
+            continue;
+        }
+        CAPTURE(b.Tooltip);
+        CAPTURE(b.CommandId);
+        if (uiPseudo.count(b.CommandId) == 0) {
+            // A typo'd / renamed id renders the button permanently disabled (ButtonEnabled).
+            CHECK(fx.Reg.HasExact(b.CommandId));
+        }
+        if (b.Tooltip == "Views") {
+            sawViews = true;
+            // The Views icon must OPEN a window: a view.toggle.* reveal, not data-only view.list.
+            CHECK(b.CommandId.rfind("view.toggle.", 0) == 0);
+        }
+    }
+    CHECK(sawViews);
 }
 
 TEST_CASE("builtins — every command with a required param rejects {} before its handler") {

@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -453,7 +454,7 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
             const TicketGridColumn& col = columns[static_cast<size_t>(c)];
             const TrackerField* meta =
                 (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
-            out += SanitizeForSpreadsheet(GetCellRawForCopy(t, col, meta));
+            out += TsvCopyCell(GetCellRawForCopy(t, col, meta));
             if (c < c1)
                 out.push_back('\t');
         }
@@ -556,6 +557,42 @@ bool HasNonWhitespaceChar(const char* text, std::size_t len) {
 
 } // namespace
 
+void RefreshPendingOverlay(AppController& app, UiDrawSession& d) {
+    // Two atomic shared_ptr loads of snapshots the queue workers already published (no SQLite, no lock the worker
+    // holds); the index is rebuilt only when one was replaced.
+    (void)smatchet::sync::RefreshPendingOverlayIfChanged(d.pendingOverlay, d.pendingOverlayQueueSnap,
+                                                         d.pendingOverlayActionsSnap, app.GetOfflineQueueSnapshot(),
+                                                         app.GetPendingActionsSnapshot());
+}
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+namespace {
+std::map<std::string, int>& PendingRowCuesDrawn() {
+    static std::map<std::string, int> drawn;
+    return drawn;
+}
+} // namespace
+
+void NotePendingRowCueDrawn(const std::string& issueKey, bool needsAttention) {
+    std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    const int value = needsAttention ? 2 : 1;
+    const std::map<std::string, int>::iterator it = drawn.find(issueKey);
+    if (it != drawn.end()) {
+        it->second = value;
+    } else if (drawn.size() < 64) {
+        drawn.emplace(issueKey, value);
+    }
+}
+
+int PendingRowCueDrawnForTests(const std::string& issueKey) {
+    const std::map<std::string, int>& drawn = PendingRowCuesDrawn();
+    const std::map<std::string, int>::const_iterator it = drawn.find(issueKey);
+    return it == drawn.end() ? 0 : it->second;
+}
+
+void ResetPendingRowCuesDrawnForTests() { PendingRowCuesDrawn().clear(); }
+#endif // SMATCHET_BUILD_UI_TESTS
+
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {
         return true;
@@ -625,20 +662,6 @@ bool ImGuiEffectiveKeyShift() { return ImGui::GetIO().KeyShift; }
 #endif
 
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) { return issueId + "|" + fieldId; }
-
-// Replace newlines, carriage returns, and tabs with spaces for clipboard text format.
-std::string SanitizeClipboardCell(const std::string& value) {
-    std::string out;
-    out.reserve(value.size());
-    for (char ch : value) {
-        if (ch == '\n' || ch == '\r' || ch == '\t') {
-            out.push_back(' ');
-        } else {
-            out.push_back(ch);
-        }
-    }
-    return out;
-}
 
 // Persist the current view's JQL query to history and trigger a backend sync with deferred config write.
 // The configuration is persisted through the coalescing config-save worker to avoid blocking the UI thread.

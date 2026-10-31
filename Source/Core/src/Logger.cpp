@@ -96,8 +96,9 @@ void Logger::Log(LogLevel level, const std::string& message) {
     // feeds the in-app log viewer (whose contents get copied into bug reports and screenshots),
     // not just the on-disk file. Redacting here also keeps the file-sink guarantee (audit
     // 2026-06-13 LOW) with a single pass instead of one per sink. Call sites that log large
-    // untrusted bodies already pre-redact via RedactHttpBodyForLog; typical LOG_* lines are
-    // short, so the regex cost on the calling thread is negligible.
+    // untrusted bodies already pre-redact via RedactHttpBodyForLog. RedactLogLine is a set of
+    // linear scans that does not throw, so its cost on the calling thread stays small even for a
+    // long unbroken token, and no exception can escape a LOG_* call from here.
     entry.message = smatchet::privacy::RedactLogLine(message);
 
     {

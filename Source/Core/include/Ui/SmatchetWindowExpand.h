@@ -105,6 +105,9 @@ struct WindowExpandState {
     std::vector<unsigned int> SubmittedIds;
     /// Docked toggles collected this frame; drained (and cleared) by EndFrame.
     std::vector<WindowExpandTabBarButton> PendingTabBarButtons;
+    /// BeginWindowWithToggle's per-window focus retry counters, by window name hash: frames a focus
+    /// request has been held because its docked tab could not be selected yet (FocusRequestStaysArmed).
+    std::unordered_map<unsigned int, int> FocusRetries;
 };
 
 /// Call immediately BEFORE ImGui::Begin. Records the submission and applies either
@@ -116,12 +119,21 @@ void BeginWindow(UiDrawSession& d, const char* windowName);
 /// window is docked, in its title bar when it is floating — and applies a click.
 void DrawToggle(UiDrawSession& d);
 
+/// Services a "raise this window" request for a window that may sit behind a sibling dock tab:
+/// selects its tab (SmatchetUI::selectDockedTab — focus alone does not change the selected tab).
+/// Returns true when the request must stay armed for another frame: the window does not exist yet
+/// (its first open), bounded by SmatchetUI::kFocusRequestRetryFrames. False when `wantFocus` is
+/// false. Call before the window's BeginWindow / Begin; `windowName` is Begin's source title.
+bool ServiceDockedFocusRequest(UiDrawSession& d, const char* windowName, bool wantFocus);
+
 /// The standard begin of a closable secondary window: BeginWindow, ImGui::Begin(windowName,
-/// open), then DrawToggle. `focusRequest` is the window's one-shot focus latch: when it is set
-/// and Begin succeeds the window takes focus, and the latch is cleared either way. Returns
-/// false when Begin returned false; End has then already been called and the caller returns
-/// without drawing. Raising a window behind a sibling dock tab needs
-/// SmatchetUI::selectDockedTab as well — focus alone does not change the selected tab.
+/// open), then DrawToggle. `focusRequest` is the window's focus latch: when it is set, a docked
+/// window's tab is selected (SmatchetUI::selectDockedTab — focus alone does not change the
+/// selected tab, so a window behind a sibling would stay hidden) and, if Begin succeeds, the window
+/// takes focus. The latch is cleared once the request is serviced; it stays set for up to
+/// SmatchetUI::kFocusRequestRetryFrames frames while the window does not exist yet (its first
+/// open). Returns false when Begin returned false; End has then already been called and the
+/// caller returns without drawing.
 bool BeginWindowWithToggle(UiDrawSession& d, const char* windowName, bool* open, bool& focusRequest);
 
 /// True when `windowName` is the expanded window. Callable BEFORE its Begin (unlike

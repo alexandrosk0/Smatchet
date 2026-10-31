@@ -1,5 +1,7 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -32,9 +34,36 @@ namespace OfflineFieldEditQueue {
 constexpr int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
 }
 
+/// Set once a LocalCacheManager is fully destroyed, i.e. its SQLite connection is closed. Shared, so an owner that
+/// drops its reference while another thread may hold the last one can wait for that thread's destructor to finish
+/// before it touches the database files (the cache recreate does this before deleting them).
+class LocalCacheCloseSignal {
+  public:
+    void Set() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            closed_ = true;
+        }
+        cv_.notify_all();
+    }
+    /// True once closed; false if `timeout` passes first.
+    bool WaitFor(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(lock, timeout, [this]() { return closed_; });
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool closed_ = false;
+};
+
 class LocalCacheManager : public ISyncCache, public ILookupCache {
   public:
     explicit LocalCacheManager(const std::string& dbPath);
+
+    /// Fires when this manager is fully destroyed (connection closed), on whichever thread drops the last reference.
+    std::shared_ptr<LocalCacheCloseSignal> CloseSignal() const { return closeNotifier_.Signal; }
 
     // Ticket storage is namespaced by `backendKey` (the NormalizeViewsBackendKey output for the
     // owning backend — multi-grid Slice 1b, ADR-0018 decision 4). All ticket methods read/write
@@ -227,6 +256,17 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /// `<db>.corrupt-<ts>`, reopen a fresh DB on the same path, and re-init. A throw here is an
     /// unrecoverable environment fault and propagates.
     void RebuildFreshAfterCorruption(const SQLite::Exception& ex);
+
+    /// Sets CloseSignal() when destroyed. Declared first so it is destroyed last: by then `db` and every prepared
+    /// statement are gone, so the signal means the connection is really closed.
+    struct CloseNotifier {
+        std::shared_ptr<LocalCacheCloseSignal> Signal = std::make_shared<LocalCacheCloseSignal>();
+        CloseNotifier() = default;
+        CloseNotifier(const CloseNotifier&) = delete;
+        CloseNotifier& operator=(const CloseNotifier&) = delete;
+        ~CloseNotifier() { Signal->Set(); }
+    };
+    CloseNotifier closeNotifier_;
 
     /// On-disk cache path, retained so the ctor's corrupt-file rebuild can reopen the
     /// same location after quarantining the bad file. Declared before `db` so it is

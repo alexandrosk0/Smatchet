@@ -148,8 +148,12 @@ reviews:
         `LocalCacheTicketsV2Migration.test.cpp`), the dual-impl
         `SyncCacheContract.test.cpp` real half, and the single
         `OfflineQueueServiceRealCacheSmoke.test.cpp` backstop — do not flag
-        those; DO flag on-disk / networked DB access anywhere, and config
-        writes that skip TestEnvGuard. Scoped to C++ test sources:
+        those. One TU is file-backed by design:
+        `AppControllerCacheRecreate.posix.test.cpp` (SmatchetCommandsTests)
+        exercises the cache recreate, whose subject is deleting and reopening
+        the database FILE, inside a TestEnvGuard temp directory — do not flag
+        its on-disk SQLite either. DO flag on-disk / networked DB access
+        anywhere else, and config writes that skip TestEnvGuard. Scoped to C++ test sources:
         `tests/bats/**` are shell / python integration suites for tooling
         (merge-watcher, merge-gates, lock primitives) that legitimately
         invoke scripts, so the rule does not apply to them.

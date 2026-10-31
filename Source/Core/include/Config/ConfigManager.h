@@ -949,6 +949,10 @@ class ConfigManager {
     /// True when `jsonKey` is a plain integer setting (read through the int field table on load). config.set
     /// uses it to reject a value that is not an integer, instead of writing a string the load would trip over.
     static bool IsIntConfigKey(const std::string& jsonKey);
+    /// True when `jsonKey` is a plain boolean / string setting (read through the bool / string field tables). Like
+    /// IsIntConfigKey: config.set refuses a value of another type instead of writing one the load cannot take.
+    static bool IsBoolConfigKey(const std::string& jsonKey);
+    static bool IsStringConfigKey(const std::string& jsonKey);
     /// Reads a JSON number as an int: an integer must fit an int; a float is accepted only when it is integral and
     /// in range (a hand-edited `60.0` works, `3.5` is refused). False leaves `out` untouched. The one range rule
     /// shared by the config load and config.set.

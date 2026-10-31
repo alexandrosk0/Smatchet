@@ -13,6 +13,7 @@
 #include "GitHubQueryFromJql.h"
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
+#include "JsonParseUtil.h"
 #include "LabelEditDiffPure.h"
 #include "TunableLimits.h"
 #include "Logger.h"
@@ -221,8 +222,8 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
             const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
             if (j.contains("resources") && j["resources"].contains("core")) {
                 const auto& core = j["resources"]["core"];
-                const int limit = core.value("limit", 0);
-                const int remaining = core.value("remaining", 0);
+                const int limit = ParseJsonIntFieldLoose(core, "limit");
+                const int remaining = ParseJsonIntFieldLoose(core, "remaining");
                 oss << " (core " << remaining << "/" << limit << ")";
             }
         } catch (const std::exception&) {

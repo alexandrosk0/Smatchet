@@ -305,13 +305,14 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     // Drop any in-flight bottom-panel gesture state: the default tree has an empty
     // (hidden) bottom panel, so a stale restore set / pending height must not re-apply
     // against the freshly rebuilt nodes. cfg.ShowPanel mirrors the hidden default.
-    d.bottomPanelRestoreKeys.clear();
-    d.bottomPanelRestoreHeight = 0.0f;
-    d.bottomPanelApplyHeightFrames = 0;
-    d.bottomPanelRevealDragActive = false;
-    d.bottomPanelSplitterDragId = 0;
-    d.bottomPanelHideArmed = false;
+    d.bottomPanelDrag = EdgePanelDragState();
+    // Views is reopened by this reset (showViewsDashboard = true above), so the side
+    // panels' gesture state only needs clearing, same as the bottom panel's.
+    d.viewsColumnDrag = EdgePanelDragState();
+    d.primarySideBarDrag = EdgePanelDragState();
+    d.secondarySideBarDrag = EdgePanelDragState();
     d.cfg.ShowPanel = false;
+    d.cfg.ShowPrimarySideBar = true; // the reset reopens Views in its home column
 
     // Immediate-effect reset (no restart). Three coordinated steps:
     //  1. Rebuild the dock-node tree LIVE from the canonical default. ImGui parses the
@@ -423,6 +424,16 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     DrainFutureJoinQuiet(d.initialTicketSyncFuture);
     d.initialTicketSyncLoading = false;
     d.initialTicketSyncStarted = false;
+
+    // The cached-projects read (Preferences / JQL project pill) runs on a worker. Join it, then apply the Forget
+    // clicks still queued for the next read: a quit between the click and that read must not undo them. Shutdown, so
+    // the few small file writes are fine on this thread.
+    DrainFutureJoinQuiet(d.cachedProjectsFuture);
+    d.cachedProjectsReadInFlight = false;
+    for (const FieldCatalogCache::CachedProjectEntry& forgotten : d.cachedProjectsForgetPending) {
+        FieldCatalogCache::ForgetProject(forgotten.projectKey, forgotten.backend, forgotten.endpoint);
+    }
+    d.cachedProjectsForgetPending.clear();
 
     DrainFutureJoinQuiet(d.connectivityRecoveryTicketFetchFuture);
     d.connectivityRecoveryTicketFetchLoading = false;

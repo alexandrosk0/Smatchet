@@ -274,9 +274,12 @@ static void RegisterCreateCommand(CommandRegistry& reg, IAppTicketMutations& app
             draft.IssueTypeName = issueTypeName;
             draft.FieldValues["summary"] = summary;
             if (offline) {
-                const std::int64_t qid = app.QueueCreateOffline(draft);
+                std::string queueRefusal;
+                const std::int64_t qid = app.QueueCreateOffline(draft, queueRefusal);
                 if (qid <= 0) {
-                    return CommandResult::Failure(ErrorCode::HandlerError, "Failed to queue offline create.");
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                                                  queueRefusal.empty() ? std::string("Failed to queue offline create.")
+                                                                       : queueRefusal);
                 }
                 return CommandResult::Success({{"queued", true}, {"offlineId", static_cast<long long>(qid)}});
             }

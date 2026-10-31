@@ -25,8 +25,6 @@ void ClearCatalogInMemoryInto(GridContextFieldCatalog& cat, bool clearUsers) {
             cat.AvailableUsers.clear();
         }
         cat.currentCatalogProjectKey_.clear();
-        cat.hasPendingCatalogProjectKey_ = false;
-        cat.pendingCatalogProjectKey_.clear();
         cat.fieldCatalogEverLoaded_ = false;
         cat.fieldCatalogRestored_ = false;
         cat.LastTrackerFieldCatalogError.clear();

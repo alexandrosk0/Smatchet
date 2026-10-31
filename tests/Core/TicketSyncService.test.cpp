@@ -17,12 +17,14 @@
 #include "../support/FakeTicketSyncDeps.h"
 #include "../support/FakeTrackerClient.h"
 #include "../support/ScriptedTrackerBackendFactory.h"
+#include "../support/TestEnvGuard.h"
 
 #include "AppController.h" // for TrackerIssueFetchPack
 #include "CachedTicketTypes.h"
 #include "ITicketSyncDeps.h"
 #include "TicketSyncService.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/WalkOwnedKeysPure.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
 
@@ -37,6 +39,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using smatchet_tests::FakeTicketSyncDeps;
@@ -2214,32 +2217,123 @@ TEST_CASE("A queued Full survives a later Delta request") {
     CHECK(rig.fake->FetchIssuesCallCount() >= 1);
 }
 
-TEST_CASE("A running Full is not downgraded by a Delta request while its fetch is still running") {
-    DeltaRig rig;
-    rig.Seed({StampedChild("SUB-1", "EPIC-1", "T1")});
-    rig.fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
-    rig.fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
-    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+namespace {
+/// A rig whose first Full session is parked inside its ancestor fetch (the view's rows are on the wire) until
+/// `release` is set, so a test can issue a second request "mid-Full" without relying on timing. The token the parked
+/// fetch sampled once it was released is kept in `firstFetchCancelled`: true means the request superseded the Full.
+struct ParkedFullRig : DeltaRig {
     std::atomic<bool> inFetch{false};
     std::atomic<bool> release{false};
-    rig.fake->SetOnKeyedFetch([&]() {
-        inFetch.store(true);
-        for (int i = 0; i < 2000 && !release.load(); ++i) {
+    std::atomic<bool> firstFetchCancelled{false};
+    std::atomic<int> tokenSamples{0};
+
+    ~ParkedFullRig() { release.store(true); } // a failed REQUIRE must not leave the worker parked
+
+    /// Scripts `fake` (whichever backend is current), starts a Full and waits until its fetch is on the wire.
+    /// Returns the epoch of that Full session.
+    std::uint64_t StartParkedFull() {
+        fake->SetRoster(MakeRoster({{"SUB-1", "T1"}}));
+        fake->SetFetchIssuesResult({StampedChild("SUB-1", "EPIC-1", "T1")}, true);
+        fake->SetFetchIssuesForKeysResult(true, {Stamped("EPIC-1", "T1", "epic")});
+        fake->SetOnKeyedFetch([this]() {
+            inFetch.store(true);
+            for (int i = 0; i < 2000 && !release.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        fake->SetOnKeyedTokenSampled([this](bool cancelled) {
+            if (tokenSamples.fetch_add(1) == 0) {
+                firstFetchCancelled.store(cancelled);
+            }
+        });
+        Sync(smatchet::sync::SyncMode::Full);
+        for (int i = 0; i < 2000 && !inFetch.load(); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-    });
-
-    rig.Sync(smatchet::sync::SyncMode::Full);
-    for (int i = 0; i < 2000 && !inFetch.load(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return svc.SessionEpoch();
     }
-    REQUIRE(inFetch.load()); // the Full fetch is on the wire
-    rig.Sync(smatchet::sync::SyncMode::Delta);
-    release.store(true);
-    REQUIRE(rig.Settle());
 
-    CHECK(rig.svc.LastSessionStats().Mode == "full");
-    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    /// Lets the parked fetch go on and waits until the replacement session (a later epoch) has finished.
+    bool SettleReplacement(std::uint64_t parkedEpoch) {
+        release.store(true);
+        return SpinUntil(
+            svc,
+            [&]() {
+                return !svc.IsActive() && svc.SessionEpoch() > parkedEpoch &&
+                       svc.LastSessionStats().RequestId == svc.SessionEpoch();
+            },
+            /*maxTicks=*/2000);
+    }
+};
+
+/// Hands out a fresh scripted client per Create and remembers the site each was built for.
+class RecordingBackendFactory : public ITrackerBackendFactory {
+  public:
+    std::vector<std::string> Domains;
+    std::unique_ptr<ITrackerBackend> Create(const std::string& kind, const TrackerConfig& cfg) override {
+        Domains.push_back(cfg.Domain);
+        std::unique_ptr<FakeTrackerClient> client(new FakeTrackerClient(kind));
+        client->SetFetchIssuesResult({Stamped("NEW-1", "T1")}, true);
+        return std::move(client);
+    }
+};
+} // namespace
+
+TEST_CASE("A running Full is not downgraded by a Delta request: the replacement session runs as Full") {
+    ParkedFullRig rig;
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load()); // the Full fetch is on the wire
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // the running Full was superseded, not left to finish
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full"); // the queued Delta combined with the Full: sticky
+    CHECK(rig.svc.LastSessionStats().RequestId == parkedEpoch + 1);
+    CHECK(rig.fake->FetchRosterCallCount() == 0); // no Delta session ran
+    CHECK(rig.fake->FetchIssuesCallCount() == 2); // the Full, then its replacement
+}
+
+TEST_CASE("A site switch requested mid-Full supersedes it: the new site's own session starts promptly") {
+    ParkedFullRig rig;
+    RecordingBackendFactory* factory = new RecordingBackendFactory();
+    rig.deps.Factory.reset(factory);
+    rig.deps.SetBackend(std::unique_ptr<ITrackerBackend>(new FakeTrackerClient("Jira")));
+    rig.fake = static_cast<FakeTrackerClient*>(rig.deps.BackendImpl.get());
+    rig.cfg.TrackerType = "Jira";
+    rig.cfg.Domain = "a.example.com";
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load());
+    REQUIRE(factory->Domains.empty()); // site A runs on the client the deps already hold
+
+    TrackerConfig siteB = rig.cfg;
+    siteB.Domain = "b.example.com";
+    rig.svc.SyncWithBackend(&siteB, &rig.views, smatchet::sync::SyncMode::Delta); // "Save & Sync" to another site
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // site A's Full did not keep streaming
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    REQUIRE(factory->Domains.size() == 1);
+    CHECK(factory->Domains[0] == "b.example.com"); // the client was rebuilt for the new site
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].id == "NEW-1"); // and the grid shows site B's rows, not A's
+}
+
+TEST_CASE("A view switch requested mid-Full supersedes it: the new view's own session starts promptly") {
+    ParkedFullRig rig;
+    rig.views.ActiveViewId = "view-a";
+    const std::uint64_t parkedEpoch = rig.StartParkedFull();
+    REQUIRE(rig.inFetch.load());
+    CHECK(rig.fake->FetchIssuesLastActiveViewId() == "view-a");
+
+    ViewsStore viewB = rig.views;
+    viewB.ActiveViewId = "view-b";
+    rig.svc.SyncWithBackend(&rig.cfg, &viewB, smatchet::sync::SyncMode::Delta); // view.activate / header view switch
+    REQUIRE(rig.SettleReplacement(parkedEpoch));
+
+    CHECK(rig.firstFetchCancelled.load()); // view A's Full did not keep streaming
+    CHECK(rig.svc.SessionEpoch() == parkedEpoch + 1);
+    CHECK(rig.fake->FetchIssuesLastActiveViewId() == "view-b"); // the replacement fetched the new view
 }
 
 TEST_CASE("A superseding request waits for the stale-row delete instead of starting over it") {
@@ -2621,4 +2715,1153 @@ TEST_CASE(
     const std::vector<std::pair<std::string, std::string>> expected = {{"Plane|ws", "ABC-1"}, {"Plane|ws", "ABC-2"}};
     CHECK(transitions == expected);
     CHECK(editMeta == expected);
+}
+
+// --- delta-sync review follow-ups: the change monitor's per-pane memory ---------------------------------------
+
+namespace {
+CycleResult RunCycleWithContext(LegacyPathClient& fake, bool useRoster, const std::vector<std::string>& cachedKeys,
+                                const std::unordered_map<std::string, std::string>& resident,
+                                const smatchet::sync::RosterProbeContext& context) {
+    TrackerConfig cfg;
+    ViewsStore views;
+    CycleResult r;
+    r.ok = smatchet::sync::RunChangeProbeCycle(fake, cfg, views, useRoster, resident, cachedKeys,
+                                               std::chrono::seconds(120), {"summary"}, "pane", r.fetched, r.verdicts,
+                                               r.addNewRows, context);
+    return r;
+}
+} // namespace
+
+TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane reloads") {
+    smatchet::sync::ChangeMonitorPaneState state;
+    CHECK(state.ShouldTryRoster(true, true));
+    CHECK_FALSE(state.ShouldTryRoster(false, true)); // the feature switch still wins
+    CHECK_FALSE(state.ShouldTryRoster(true, false)); // and so does a backend that cannot list versions
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    notes.RosterIncomplete = true;
+    notes.RefusedKeys = {"A-7"};
+    state.Absorb(notes);
+    CHECK_FALSE(state.ShouldTryRoster(true, true));
+    CHECK(state.RefusedKeys.count("A-7") == 1);
+
+    state.ResetForReload();
+    CHECK(state.ShouldTryRoster(true, true));
+    CHECK(state.RefusedKeys.empty());
+}
+
+TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
+    smatchet::sync::ChangeMonitorPaneState state;
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    const std::size_t cap = smatchet::sync::ChangeMonitorPaneState::MaxRememberedRefusals();
+    for (std::size_t i = 0; i < cap + 50; ++i) {
+        notes.RefusedKeys.push_back("R-" + std::to_string(i));
+    }
+    state.Absorb(notes);
+    CHECK(state.RefusedKeys.size() == cap);
+}
+
+TEST_CASE("Change monitor cycle: an incomplete roster is reported once, then the pane goes straight to changed-since") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}}, /*complete=*/false));
+    fake.Changed = {Stamped("A-1", "T2")};
+    fake.ViewKeys = {"A-1"};
+    smatchet::sync::ChangeMonitorPaneState state;
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}};
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    CycleResult first = RunCycleWithContext(fake, state.ShouldTryRoster(true, true), {"A-1"}, resident, context);
+    REQUIRE(first.ok);
+    CHECK(notes.RosterIncomplete);
+    CHECK(fake.FetchRosterCallCount() == 1);
+    state.Absorb(notes);
+
+    // The apply hop recorded it: the next cycle skips the capped walk and still runs the legacy path.
+    smatchet::sync::ChangeProbeCycleNotes secondNotes;
+    context.Notes = &secondNotes;
+    CycleResult second = RunCycleWithContext(fake, state.ShouldTryRoster(true, true), {"A-1"}, resident, context);
+    REQUIRE(second.ok);
+    CHECK(fake.FetchRosterCallCount() == 1); // no second roster walk
+    CHECK(fake.ChangedSinceCalls == 2);
+    CHECK_FALSE(secondNotes.RosterIncomplete);
+}
+
+TEST_CASE("Change monitor cycle: a backlog larger than one cycle keeps the anchor, a drained one advances it") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    const std::size_t total = smatchet::sync::kMaxMonitorBodiesPerCycle + 25;
+    std::vector<std::pair<std::string, std::string>> listed;
+    std::vector<CachedTicket> bodies;
+    std::unordered_map<std::string, std::string> resident;
+    std::vector<std::string> keys;
+    for (std::size_t i = 0; i < total; ++i) {
+        const std::string key = "B-" + std::to_string(i);
+        listed.emplace_back(key, "T2");
+        bodies.push_back(Stamped(key, "T2"));
+        resident[key] = "T1";
+        keys.push_back(key);
+    }
+    fake.SetRoster(MakeRoster(listed));
+    fake.SetFetchIssuesForKeysResult(true, bodies);
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult capped = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(capped.ok);
+    CHECK(capped.fetched.size() == smatchet::sync::kMaxMonitorBodiesPerCycle);
+    CHECK(notes.BodiesCapped);
+    CHECK_FALSE(smatchet::sync::ChangeMonitorPaneState::AnchorMayAdvance(notes));
+
+    // The rows already merged now hold the new stamp: the remaining 25 fit in one cycle.
+    for (std::size_t i = 0; i < smatchet::sync::kMaxMonitorBodiesPerCycle; ++i) {
+        resident[keys[i]] = "T2";
+    }
+    smatchet::sync::ChangeProbeCycleNotes drainedNotes;
+    context.Notes = &drainedNotes;
+    const CycleResult drained = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(drained.ok);
+    CHECK(drained.fetched.size() == 25);
+    CHECK_FALSE(drainedNotes.BodiesCapped);
+    CHECK(smatchet::sync::ChangeMonitorPaneState::AnchorMayAdvance(drainedNotes));
+}
+
+TEST_CASE("Change monitor cycle: a refused key is remembered and not asked for again") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T2"}, {"A-2", "T2"}, {"A-3", "T2"}}));
+    fake.SetFetchIssuesForKeysResult(true, {Stamped("A-1", "T2"), Stamped("A-2", "T2"), Stamped("A-3", "T2")});
+    fake.SetFetchIssuesForKeysRefusedKeys({"A-2"});
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-2", "T1"}, {"A-3", "T1"}};
+    const std::vector<std::string> keys = {"A-1", "A-2", "A-3"};
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult first = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(first.ok);
+    CHECK(first.fetched.size() == 2); // the readable rows still load
+    CHECK(notes.RefusedKeys == std::vector<std::string>{"A-2"});
+    const std::size_t callsAfterFirst = fake.FetchIssuesForKeysCallCount();
+    CHECK(callsAfterFirst > 1); // isolating the refusal cost extra requests
+
+    smatchet::sync::ChangeMonitorPaneState state;
+    state.Absorb(notes);
+    smatchet::sync::ChangeProbeCycleNotes secondNotes;
+    context.Notes = &secondNotes;
+    context.RefusedKeys = &state.RefusedKeys;
+    const CycleResult second = RunCycleWithContext(fake, true, keys, resident, context);
+    REQUIRE(second.ok);
+    CHECK(second.fetched.size() == 2);
+    CHECK(fake.FetchIssuesForKeysCallCount() == callsAfterFirst + 1); // one request: no isolation walk
+    std::vector<std::string> asked = fake.FetchIssuesForKeysLastKeys();
+    std::sort(asked.begin(), asked.end());
+    CHECK(asked == std::vector<std::string>{"A-1", "A-3"});
+    CHECK(secondNotes.RefusedKeys.empty());
+}
+
+TEST_CASE("Change monitor cycle: more refused keys than one cycle can isolate switch the pane to changed-since") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    std::vector<std::pair<std::string, std::string>> listed;
+    std::vector<CachedTicket> bodies;
+    std::unordered_map<std::string, std::string> resident;
+    std::vector<std::string> keys;
+    for (int i = 0; i < 40; ++i) {
+        const std::string key = "K-" + std::to_string(i);
+        listed.emplace_back(key, "T2");
+        bodies.push_back(Stamped(key, "T2"));
+        resident[key] = "T1";
+        keys.push_back(key);
+    }
+    fake.SetRoster(MakeRoster(listed));
+    fake.SetFetchIssuesForKeysResult(true, bodies);
+    std::vector<std::string> refusedKeys;
+    for (int i = 1; i < 40; i += 2) {
+        refusedKeys.push_back("K-" + std::to_string(i)); // every other key: far more than the isolation budget
+    }
+    fake.SetFetchIssuesForKeysRefusedKeys(refusedKeys);
+    fake.Changed = {Stamped("K-2", "T2")};
+    fake.ViewKeys = keys;
+
+    smatchet::sync::ChangeProbeCycleNotes notes;
+    smatchet::sync::RosterProbeContext context;
+    context.Notes = &notes;
+    const CycleResult r = RunCycleWithContext(fake, true, keys, resident, context);
+
+    REQUIRE(r.ok);
+    CHECK(notes.RosterIncomplete); // the pane stops trying the keyed downloads until it reloads
+    CHECK(fake.ChangedSinceCalls == 1);
+    CHECK_FALSE(r.addNewRows);
+}
+
+TEST_CASE("Change monitor cycle: rows the hierarchy walk added are not probed as vanished") {
+    LegacyPathClient fake;
+    fake.SetRosterSupported(true);
+    fake.SetRoster(MakeRoster({{"A-1", "T1"}})); // the view lists A-1 only
+    fake.Exists = false;
+    // A-9 is A-1's parent (added by the walk), A-8 is a row that really left the view.
+    const std::unordered_map<std::string, std::string> resident = {{"A-1", "T1"}, {"A-9", "T1"}, {"A-8", "T1"}};
+    const std::unordered_set<std::string> owned = {"A-9"};
+    smatchet::sync::RosterProbeContext context;
+    context.WalkOwned = &owned;
+
+    const CycleResult r = RunCycleWithContext(fake, true, {"A-1", "A-9", "A-8"}, resident, context);
+
+    REQUIRE(r.ok);
+    REQUIRE(r.verdicts.size() == 1);
+    CHECK(r.verdicts[0].issueKey == "A-8");
+    CHECK(fake.Probes == 1);
+}
+
+TEST_CASE("WalkOwnedKeys without a view listing names only the parents a pane holds beside their children") {
+    CachedTicket epic = MakeTicket("E-1", "epic");
+    CachedTicket story = MakeTicket("S-1", "story");
+    story.fieldValues["parent"] = "E-1 - epic";
+    CachedTicket orphan = MakeTicket("O-1", "no relatives");
+    CachedTicket away = MakeTicket("T-1", "parent not held");
+    away.fieldValues["parent"] = "X-1 - elsewhere";
+
+    const std::unordered_set<std::string> owned =
+        smatchet::sync::WalkOwnedKeys({epic, story, orphan, away}, nullptr, &ParentHierarchyPure::ParentKeyOf);
+
+    CHECK(owned == std::unordered_set<std::string>{"E-1"}); // a child may be a view row that left: it stays checkable
+}
+
+TEST_CASE("WalkOwnedKeys with a view listing also owns every row the view's query did not return") {
+    CachedTicket epic = MakeTicket("E-1", "epic");
+    CachedTicket story = MakeTicket("S-1", "story"); // listed by the view, child of the epic
+    story.fieldValues["parent"] = "E-1 - epic";
+    CachedTicket walkChild = MakeTicket("S-2", "walk child"); // loaded by the children walk
+    walkChild.fieldValues["parent"] = "S-1 - story";
+    CachedTicket gone = MakeTicket("G-1", "left the view"); // listed at the last reload, still resident
+    const std::unordered_set<std::string> listed = {"S-1", "G-1"};
+
+    const std::unordered_set<std::string> owned =
+        smatchet::sync::WalkOwnedKeys({epic, story, walkChild, gone}, &listed, &ParentHierarchyPure::ParentKeyOf);
+
+    // E-1 is a parent of a resident row and unlisted; S-2 is unlisted; S-1 is also a parent. G-1 is the one row
+    // the monitor may still report as having left the view.
+    CHECK(owned == std::unordered_set<std::string>{"E-1", "S-1", "S-2"});
+}
+
+TEST_CASE("A completed delta reload publishes the view's own ids, not the hierarchy walk's") {
+    DeltaRig rig;
+    CachedTicket child = Stamped("ABC-1", "T1");
+    child.fieldValues["parent"] = "ABC-9 - epic";
+    rig.Seed({child, Stamped("ABC-9", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}})); // the view lists the child only; the epic is the walk's
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-9", "T1")});
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 1);
+    CHECK(rig.deps.ViewListed == std::vector<std::string>{"ABC-1"});
+}
+
+TEST_CASE("A full reload publishes the ids its query streamed") {
+    DeltaRig rig;
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 1);
+    std::vector<std::string> listed = rig.deps.ViewListed;
+    std::sort(listed.begin(), listed.end());
+    CHECK(listed == std::vector<std::string>{"ABC-1", "ABC-2"});
+}
+
+TEST_CASE("A reload that did not complete publishes no view listing") {
+    DeltaRig rig;
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, /*fullSyncCompleted=*/false);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ViewListedPublishes == 0);
+}
+
+// --- delta-sync review follow-ups: version rendering and the pane's own cached versions -----------------------
+
+TEST_CASE("Delta reload: a pane with none of its own cached versions goes straight to a full fetch") {
+    DeltaRig rig;
+    rig.Seed({Stamped("OTHER-1", "T1"), Stamped("OTHER-2", "T1")}); // a sibling pane's rows share the namespace
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "full");
+    CHECK(stats.FallbackReason.find("no cached ticket versions for this view") != std::string::npos);
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0); // nothing was downloaded as "new" by key
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);        // the streamed full fetch ran instead
+}
+
+TEST_CASE("Delta reload: a stamp re-rendered in another zone is not a change") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "2024-05-01T10:00:00.000+0000")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "2024-05-01T12:00:00.000+0200"}}));
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    const smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.BodiesFetched == 0);
+    CHECK(stats.Unchanged == 1);
+}
+
+// --- delta-sync review follow-ups: the apply drain, rows the cache holds newer, refused keys ------------------
+
+TEST_CASE("The apply drain builds its id map once per session, not once per slice") {
+    DeltaRig rig;
+    std::vector<CachedTicket> rows;
+    for (int i = 0; i < 100; ++i) {
+        rows.push_back(Stamped("K-" + std::to_string(i), "T1"));
+    }
+    rig.fake->SetFetchIssuesResult(rows, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 100);
+    // 100 fetched rows apply 20 per frame: five slices, one map.
+    CHECK(rig.svc.MergeIndexBuilds() == 1);
+}
+
+TEST_CASE("The apply drain rebuilds its id map when another path replaced the roster during the session") {
+    DeltaRig rig;
+    std::vector<CachedTicket> rows;
+    for (int i = 0; i < 40; ++i) {
+        rows.push_back(Stamped("K-" + std::to_string(i), "T1"));
+    }
+    rig.fake->SetFetchIssuesResult(rows, true);
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(SpinUntil(rig.svc, [&]() { return rig.svc.MergeIndexBuilds() >= 1; }));
+    const std::size_t buildsBefore = rig.svc.MergeIndexBuilds();
+
+    {
+        // A refresh from the local cache swaps the roster wholesale (and announces it with a revision bump).
+        std::lock_guard<std::mutex> lock(rig.deps.ActiveTicketsMutexImpl);
+        rig.deps.ActiveTicketsImpl.clear();
+        rig.deps.ActiveTicketsImpl.push_back(Stamped("K-39", "T1", "from the cache"));
+        rig.deps.BumpActiveTicketsRevision();
+    }
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.svc.MergeIndexBuilds() == buildsBefore + 1); // the next slice saw the announced change and rebuilt
+    // No duplicate ids whatever the interleaving.
+    std::unordered_set<std::string> seen;
+    for (const CachedTicket& row : rig.deps.ActiveTicketsImpl) {
+        CHECK(seen.insert(row.id).second);
+    }
+}
+
+TEST_CASE("A fetched row the cache holds newer reaches a pane that did not hold it") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "2024-05-02T10:00:00.000+0000", "cached newer")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "2024-05-01T10:00:00.000+0000"}})); // the roster is behind the cache
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-1", "2024-05-01T10:00:00.000+0000", "fetched older")});
+    REQUIRE(rig.deps.ActiveTicketsImpl.empty()); // a fresh pane
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    // The older fetched copy was not persisted ...
+    CachedTicket stored;
+    REQUIRE(rig.deps.CacheImpl->TryGetTicket("Jira", "ABC-1", stored));
+    CHECK(stored.fieldValues["summary"] == "cached newer");
+    // ... and the pane shows the cached newer copy instead of lacking the row.
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].id == "ABC-1");
+    CHECK(rig.deps.ActiveTicketsImpl[0].fieldValues["summary"] == "cached newer");
+}
+
+TEST_CASE("A row served from the cache at a newer version than the resident one reports the remote change") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T2", "cached at T2")});
+    rig.deps.ActiveTicketsImpl = {Stamped("ABC-1", "T1", "resident at T1")}; // the pane still holds the older copy
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T2"}})); // the cache is current: nothing to download
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == 0);
+    REQUIRE(rig.deps.ActiveTicketsImpl.size() == 1);
+    CHECK(rig.deps.ActiveTicketsImpl[0].fieldValues["summary"] == "cached at T2");
+    CHECK(rig.deps.RemotelyChanged == std::vector<std::string>{"ABC-1"}); // transitions and edit permissions go stale
+}
+
+TEST_CASE("Delta reload: a key the tracker refused is remembered, so later attempts stay delta until a full sync") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    // The streamed fetch still serves the row, at a stamp behind the roster's: the key stays "changed" next time.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1", "from full")}, true);
+
+    rig.Sync(); // first attempt: refused, falls back to the full fetch
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("ABC-2") != std::string::npos);
+    const std::size_t keyedCallsAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+
+    rig.Sync(); // second attempt: the key is skipped, the reload stays delta
+    REQUIRE(rig.Settle());
+    smatchet::sync::SyncSessionStats stats = rig.svc.LastSessionStats();
+    CHECK(stats.Mode == "delta");
+    CHECK(stats.FallbackReason.empty());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedCallsAfterFirst); // it was not asked for again
+    CHECK(rig.CachedCount() == 2);                                          // nothing purged on the way
+    CHECK(stats.Completed); // its cached row stands in: the session is still authoritative
+    CHECK(rig.deps.LastTrackerTicketSyncWarning.find("listed by the tracker") == std::string::npos);
+    bool paneHoldsRefused = false;
+    for (const CachedTicket& row : rig.deps.ActiveTicketsImpl) {
+        paneHoldsRefused = paneHoldsRefused || row.id == "ABC-2";
+    }
+    CHECK(paneHoldsRefused);
+
+    rig.Sync(smatchet::sync::SyncMode::Full); // an explicit full sync forgets the memory
+    REQUIRE(rig.Settle());
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full"); // asked again, refused again, fell back again
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedCallsAfterFirst);
+}
+
+TEST_CASE("Delta reload: a remembered refusal is forgotten once the fallback full fetch serves the key's body") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    // The streamed fetch serves the key's body at the version the roster listed (the one it was refused for).
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T2", "from full")}, true);
+
+    rig.Sync(); // refused, falls back to the full fetch, which serves the body
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.svc.LastSessionStats().FallbackReason.find("ABC-2") != std::string::npos);
+
+    // The keyed endpoint works again and the ticket moves on: the key must be asked for, not skipped as refused.
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T3", "newest")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T3"}}));
+    const std::size_t keyedBefore = rig.fake->FetchIssuesForKeysCallCount();
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedBefore + 1);
+    CHECK(rig.fake->FetchIssuesForKeysLastKeys() == std::vector<std::string>{"ABC-2"});
+}
+
+TEST_CASE("Delta reload: a remembered refusal expires after DeltaSyncMaxRowAgeSec and is tried again") {
+    DeltaRig rig;
+    rig.cfg.DeltaSyncMaxRowAgeSec = 2;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T2"}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", "T2", "fresh")});
+    // The streamed fetch lags the roster (T1 < T2), so the refusal stays remembered after the fallback.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1", "from full")}, true);
+
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    const std::size_t keyedAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+    rig.Sync(); // within the window: skipped, no keyed call
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedAfterFirst);
+
+    rig.deps.ClockOffsetSec += 3; // past DeltaSyncMaxRowAgeSec: the injected clock moves, nothing sleeps
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedAfterFirst); // the refusal was retried
+    std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
+    CHECK(std::find(asked.begin(), asked.end(), "ABC-2") != asked.end());
+}
+
+TEST_CASE("Delta reload: a refused key whose roster version is newer than the refusal is asked for again") {
+    // Real instants: a refusal is only comparable to a roster version that parses.
+    const std::string t1 = "2026-05-01T10:00:00.000+0000";
+    const std::string t2 = "2026-05-01T11:00:00.000+0000";
+    const std::string t3 = "2026-05-01T12:00:00.000+0000";
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", t1), Stamped("ABC-2", t1)});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", t1}, {"ABC-2", t2}}));
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({"ABC-2"});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", t2, "fresh")});
+    // The streamed fetch lags the roster, so the refusal (remembered at t2) stays after the fallback.
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", t1), Stamped("ABC-2", t1, "from full")}, true);
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    const std::size_t keyedAfterFirst = rig.fake->FetchIssuesForKeysCallCount();
+
+    rig.Sync(); // the roster still lists t2: the refusal stands, no keyed call
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() == keyedAfterFirst);
+
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", t1}, {"ABC-2", t3}})); // ABC-2 was edited since the refusal
+    rig.fake->SetFetchIssuesForKeysRefusedKeys({});
+    rig.fake->SetFetchIssuesForKeysResult(true, {Stamped("ABC-2", t3, "edited")});
+    rig.Sync();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchIssuesForKeysCallCount() > keyedAfterFirst); // asked again, not skipped
+    const std::vector<std::string> asked = rig.fake->FetchIssuesForKeysLastKeys();
+    CHECK(std::find(asked.begin(), asked.end(), "ABC-2") != asked.end());
+}
+
+TEST_CASE("TicketSyncService: a saved-views read in flight keeps the pane from retiring") {
+    // The read's worker posts through the deps the pane's context owns; retiring the pane frees them, so
+    // AppController::retireExpiredHiddenContexts_ postpones while HasPendingWork() is true.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({MakeTicket("LATE-1", "late")}, /*fullSyncCompleted=*/true);
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    CHECK_FALSE(svc.HasPendingWork());
+
+    svc.SyncWithBackend(&cfg, nullptr);
+    CHECK(svc.HasPendingWork());
+    CHECK_FALSE(svc.IsActive()); // no sync is running: the status line must not claim one
+
+    deps.RunDeferredTasks(); // the read finishes and posts the start
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK_FALSE(svc.HasPendingWork());
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a saved-views read that outlives its service never touches the deps") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    {
+        TicketSyncService svc(deps);
+        TrackerConfig cfg;
+        cfg.TrackerType = "fake";
+        svc.SyncWithBackend(&cfg, nullptr);
+        REQUIRE(svc.HasPendingWork());
+    } // retired with the read still queued
+    deps.RunDeferredTasks();
+    CHECK(deps.PostsToMainThread == 0); // the deps are the pane context's, possibly gone by now: not reached
+    CHECK(deps.ActiveTicketsImpl.empty());
+}
+
+TEST_CASE("TicketSyncService cache teardown hands the worker out, holds every start back, and lifts on End" *
+          doctest::test_suite("[high-risk]")) {
+    // cache.recreate runs on a worker: BeginCacheTeardown must flag the running sync cancelled, hand its thread to the
+    // caller to join OFF the UI thread, and block new starts (SyncWithBackend drops, TickStreamingApply idles) so
+    // nothing touches the cache until EndCacheTeardown.
+    constexpr std::chrono::milliseconds kPageDelay(100);
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetSlowStreamedPages(/*pages=*/30, kPageDelay);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    bool inFlight = false;
+    for (int i = 0; i < 1000 && !inFlight; ++i) {
+        inFlight = fake->SlowStreamedPagesStarted() >= 1;
+        if (!inFlight) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(inFlight);
+    REQUIRE(svc.IsActive());
+
+    std::thread handedOut = svc.BeginCacheTeardown();
+    CHECK(handedOut.joinable()); // the caller joins it: the service no longer owns the thread
+    CHECK(svc.IsCacheTeardownActive());
+    const int pagesAtTeardown = fake->SlowStreamedPagesStarted();
+
+    // A start request during the teardown does not start (it is recorded and replayed at End), and the apply tick
+    // does nothing.
+    svc.SyncWithBackend(&cfg, &views);
+    svc.TickStreamingApply();
+
+    const auto joinStart = std::chrono::steady_clock::now();
+    handedOut.join();
+    const auto joinElapsed = std::chrono::steady_clock::now() - joinStart;
+    CHECK(joinElapsed < kPageDelay * 10); // cancelled at the next page boundary, not 30 pages later
+    CHECK(fake->SlowStreamedPagesStarted() <= pagesAtTeardown + 1);
+
+    svc.EndCacheTeardown();
+    CHECK_FALSE(svc.IsCacheTeardownActive());
+    // The request made during the teardown is replayed now, not lost (it was a slow 30-page fetch: cancel it).
+    CHECK(svc.IsActive());
+    svc.CancelAndJoinActiveStreamingSync();
+    CHECK_FALSE(svc.IsActive());
+
+    // Syncs start again after the gate lifts.
+    fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("AFTER-1", "after"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService cache teardown with no running sync hands out nothing and still blocks starts") {
+    FakeTicketSyncDeps deps;
+    TicketSyncService svc(deps);
+    std::thread handedOut = svc.BeginCacheTeardown();
+    CHECK_FALSE(handedOut.joinable());
+    CHECK(svc.IsCacheTeardownActive());
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK_FALSE(svc.IsActive()); // dropped, not started
+    svc.EndCacheTeardown();
+    CHECK_FALSE(svc.IsCacheTeardownActive());
+}
+
+TEST_CASE("TicketSyncService: a sync requested during the cache teardown runs once the teardown ends") {
+    // A pane opened mid-recreate kicks its one-shot first sync while the gate is up; dropping it left the pane
+    // empty forever (its kick latch was already set). The request is recorded and EndCacheTeardown replays it.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}, {"ABC-2", "T1"}}));
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    CHECK_FALSE(rig.svc.IsActive()); // held back: nothing started, nothing touched the cache
+    rig.svc.TickStreamingApply();
+    CHECK(rig.fake->FetchRosterCallCount() == 0);
+    CHECK(rig.deps.ActiveTicketsImpl.empty());
+
+    rig.svc.EndCacheTeardown();
+    REQUIRE(rig.Settle());
+    CHECK(rig.fake->FetchRosterCallCount() == 1); // the held-back request ran
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.deps.ActiveTicketsImpl.size() == 2);
+}
+
+TEST_CASE("TicketSyncService: a Full sync held back during the cache teardown is still Full when it runs") {
+    // Full is sticky: a later ordinary refresh in the same window does not downgrade it, in either order.
+    for (const bool fullFirst : {true, false}) {
+        CAPTURE(fullFirst);
+        DeltaRig rig;
+        rig.Seed({Stamped("ABC-1", "T1")});
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+        (void)rig.svc.BeginCacheTeardown();
+        rig.Sync(fullFirst ? smatchet::sync::SyncMode::Full : smatchet::sync::SyncMode::Delta);
+        rig.Sync(fullFirst ? smatchet::sync::SyncMode::Delta : smatchet::sync::SyncMode::Full);
+        CHECK(rig.fake->FetchIssuesCallCount() == 0);
+
+        rig.svc.EndCacheTeardown();
+        REQUIRE(rig.Settle());
+        CHECK(rig.svc.LastSessionStats().Mode == "full");
+        CHECK(rig.fake->FetchIssuesCallCount() == 1); // the whole view was downloaded
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+    }
+}
+
+TEST_CASE("TicketSyncService: an ordinary sync held back during the cache teardown stays a delta") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    rig.Sync();
+    rig.svc.EndCacheTeardown();
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+    CHECK(rig.fake->FetchRosterCallCount() == 1); // two held-back requests replay as one
+}
+
+TEST_CASE("TicketSyncService: a views load that lands during the cache teardown is replayed, not lost") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("LATE-1", "late"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    svc.SyncWithBackend(&cfg, nullptr); // the views file is being read on a worker
+    (void)svc.BeginCacheTeardown();     // the recreate starts meanwhile
+    deps.RunDeferredTasks();            // the read finishes: its post tries to start the sync while the gate is up
+    CHECK_FALSE(svc.IsActive());
+
+    svc.EndCacheTeardown();
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a request held during the recreate rides on the follow-up sync, one Full session runs") {
+    // FinishCacheRecreate_ folds the focused pane's held request into onDone's follow-up (EndCacheTeardown(true)):
+    // replaying it first made the follow-up cancel and restart it (a double download, or a replayed Delta cancelling
+    // the Full). Both orders of the two modes end in exactly one Full session.
+    for (const bool heldIsFull : {false, true}) {
+        CAPTURE(heldIsFull);
+        DeltaRig rig;
+        rig.Seed({Stamped("ABC-1", "T1")});
+        rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+        rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+
+        const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+        (void)rig.svc.BeginCacheTeardown();
+        rig.Sync(heldIsFull ? smatchet::sync::SyncMode::Full : smatchet::sync::SyncMode::Delta);
+        rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+        CHECK(rig.svc.SessionEpoch() == epochBefore); // folded: the held request did not start a session
+        CHECK_FALSE(rig.svc.IsActive());
+
+        rig.Sync(heldIsFull ? smatchet::sync::SyncMode::Delta : smatchet::sync::SyncMode::Full); // onDone's follow-up
+        REQUIRE(rig.Settle());
+        CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+        CHECK(rig.svc.LastSessionStats().Mode == "full");
+        CHECK(rig.fake->FetchIssuesCallCount() == 1); // the view was downloaded once
+        CHECK(rig.fake->FetchRosterCallCount() == 0);
+    }
+}
+
+TEST_CASE("TicketSyncService: a fold nobody consumed does not turn a later refresh into a Full") {
+    // EndCacheTeardown(true) keeps the held request's mode for the follow-up sync. If that follow-up never ran, the
+    // next recreate's BeginCacheTeardown drops the fold, so an ordinary refresh afterwards stays a Delta.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, /*fullSyncCompleted=*/true);
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync(smatchet::sync::SyncMode::Full); // held by the gate
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+    // ...and nothing syncs. A second recreate starts and ends without a held request.
+    (void)rig.svc.BeginCacheTeardown();
+    rig.svc.EndCacheTeardown();
+
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.fake->FetchIssuesCallCount() == 0);
+}
+
+TEST_CASE("TicketSyncService: EndCacheTeardown without a raised gate replays nothing and cancels nothing") {
+    // FinishCacheRecreate_ lists the focused service twice; the second End must not cancel a session the first one
+    // replayed.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    (void)rig.svc.BeginCacheTeardown();
+    rig.Sync();
+    rig.svc.EndCacheTeardown();
+    const std::uint64_t epochAfterReplay = rig.svc.SessionEpoch();
+    rig.svc.EndCacheTeardown(); // the duplicate
+    CHECK(rig.svc.SessionEpoch() == epochAfterReplay);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Completed);
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without views reads them on a worker, then starts the sync") {
+    // Pillar 2: the saved views file is read and parsed off the UI thread; the sync starts from the UI-thread post.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("LATE-1", "late"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    svc.SyncWithBackend(&cfg, nullptr);
+
+    CHECK(deps.BackgroundTasksLaunched == 1);
+    CHECK_FALSE(svc.IsActive()); // nothing started on the calling thread
+
+    deps.RunDeferredTasks(); // the worker reads the views, the post starts the sync
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without views drops the start when the service is gone") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    {
+        TicketSyncService svc(deps);
+        TrackerConfig cfg;
+        cfg.TrackerType = "fake";
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(deps.BackgroundTasksLaunched == 1);
+    } // a pane retired while its views were being read
+    deps.RunDeferredTasks(); // the post finds the service gone and does nothing
+    CHECK(deps.ActiveTicketsImpl.empty());
+}
+
+namespace {
+
+// A Full session parked inside a slow fetch, with a second request queued behind it (Full is sticky, so the queued
+// request is a Full too), as a pane that was busy when a cache recreate began. Returns once the first fetch is
+// on the wire; the epoch is read after the first session started.
+void ParkRunningFullWithQueuedDelta(DeltaRig& rig) {
+    rig.fake->SetSlowStreamedPages(/*pages=*/30, std::chrono::milliseconds(50));
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    bool onTheWire = false;
+    for (int i = 0; i < 1000 && !onTheWire; ++i) {
+        onTheWire = rig.fake->SlowStreamedPagesStarted() >= 1;
+        if (!onTheWire) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(onTheWire);
+    rig.Sync(smatchet::sync::SyncMode::Delta); // queued behind the running session
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService: a sync queued before the recreate rides on the follow-up sync, one Full session runs") {
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+    ParkRunningFullWithQueuedDelta(rig);
+    const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+
+    std::thread handedOut = rig.svc.BeginCacheTeardown();
+    if (handedOut.joinable()) {
+        handedOut.join();
+    }
+    rig.fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+    CHECK(rig.svc.SessionEpoch() == epochBefore); // folded: the queued request started nothing of its own
+    CHECK_FALSE(rig.svc.IsActive());
+
+    rig.Sync(smatchet::sync::SyncMode::Full); // FinishCacheRecreate_'s follow-up
+    REQUIRE(rig.Settle());
+    for (int i = 0; i < 20; ++i) { // a leftover queued request would start its own session on a later tick
+        rig.svc.TickStreamingApply();
+    }
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+}
+
+TEST_CASE("TicketSyncService: a sync queued before the recreate is replayed once on a pane with no follow-up") {
+    // A non-focused pane: EndCacheTeardown replays the request, so the pane is syncing (HasPendingWork) and
+    // RefreshOtherPanesAfterCacheWipe_ does not re-arm a second sync on top of it.
+    DeltaRig rig;
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+    ParkRunningFullWithQueuedDelta(rig);
+    const std::uint64_t epochBefore = rig.svc.SessionEpoch();
+
+    std::thread handedOut = rig.svc.BeginCacheTeardown();
+    if (handedOut.joinable()) {
+        handedOut.join();
+    }
+    rig.fake->SetSlowStreamedPages(0, std::chrono::milliseconds(0));
+    rig.svc.EndCacheTeardown();
+    CHECK(rig.svc.HasPendingWork()); // the replay is running: the re-arm guard sees it
+
+    REQUIRE(rig.Settle());
+    for (int i = 0; i < 20; ++i) {
+        rig.svc.TickStreamingApply();
+    }
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == epochBefore + 1); // exactly one session
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+    CHECK(rig.fake->FetchIssuesCallCount() == 1);
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend without a config reads it on a worker, not on the calling thread") {
+    // The recreate's follow-up and sync.full pass no config: parsing the file on the UI thread cost a frame.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+
+    TrackerConfig onDiskAtCall;
+    onDiskAtCall.TrackerType = "GitHub";
+    ConfigManager::Save(onDiskAtCall);
+
+    TicketSyncService svc(deps);
+    svc.SyncWithBackend(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+    CHECK(deps.BackgroundTasksLaunched == 1);
+    CHECK(svc.HasPendingWork());
+
+    // The file changes while the worker has not run yet: only a read on the worker sees this.
+    TrackerConfig onDiskAtRun;
+    onDiskAtRun.TrackerType = "Plane";
+    ConfigManager::Save(onDiskAtRun);
+
+    deps.RunDeferredTasks();
+    REQUIRE_FALSE(factory->CreatedTypes.empty());
+    CHECK(factory->CreatedTypes.front() == "Plane");
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+namespace {
+
+/// Two panes' worth of config, told apart by the tracker kind the sync builds a client for.
+TrackerConfig ConfigFor(const char* trackerType) {
+    TrackerConfig cfg;
+    cfg.TrackerType = trackerType;
+    return cfg;
+}
+
+/// Runs the parked worker tasks (each reads its files and posts the start), leaving the posts parked.
+void ReadFilesLeavePostsParked(FakeTicketSyncDeps& deps) {
+    deps.DeferPosts = true;
+    deps.RunDeferredTasks();
+}
+
+/// A cached view the tracker reports unchanged: a Delta sync runs as delta, a Full one as full.
+void SeedUnchangedView(DeltaRig& rig) {
+    rig.Seed({Stamped("ABC-1", "T1")});
+    rig.fake->SetRoster(MakeRoster({{"ABC-1", "T1"}}));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1", "from full")}, /*fullSyncCompleted=*/true);
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService: two async requests whose posts land in reverse order, the newer one wins") {
+    // The files reads run on separate threads, so the older request's post can land after the newer one's: applying it
+    // would supersede the newer session and sync the previous view.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    TicketSyncService svc(deps);
+    const TrackerConfig older = ConfigFor("GitHub");
+    const TrackerConfig newer = ConfigFor("Plane");
+    svc.SyncWithBackend(&older, nullptr);
+    svc.SyncWithBackend(&newer, nullptr);
+    ReadFilesLeavePostsParked(deps);
+    REQUIRE(deps.DeferredPosts.size() == 2);
+
+    deps.RunDeferredPosts(/*reverse=*/true); // the newer post lands first
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane"); // the older request did not supersede it with a GitHub client
+    CHECK(svc.SessionEpoch() == 1);
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: an async request followed by a synchronous one, the synchronous one wins") {
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    TicketSyncService svc(deps);
+    const TrackerConfig older = ConfigFor("GitHub");
+    const TrackerConfig newer = ConfigFor("Plane");
+    ViewsStore views;
+    svc.SyncWithBackend(&older, nullptr); // still reading its files
+    svc.SyncWithBackend(&newer, &views);  // starts at once
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane");
+
+    deps.RunDeferredTasks(); // the older read finishes and posts: it finds itself overtaken
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    CHECK(factory->CreatedTypes.size() == 1);
+    CHECK(svc.SessionEpoch() == 1);
+    CHECK_FALSE(svc.HasPendingWork());
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a dropped async Full is kept, so the request that overtook it runs as Full") {
+    DeltaRig rig;
+    SeedUnchangedView(rig); // a Delta would run as delta here, so the mode shows which request won
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    rig.deps.RunDeferredPosts(); // the older post lands first and is dropped; its Full rides on the newer request
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+}
+
+TEST_CASE("TicketSyncService: a Full dropped after the newer request already started is kept for the next one") {
+    DeltaRig rig;
+    SeedUnchangedView(rig);
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the Delta starts first; the Full then finds itself overtaken
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "delta");
+    CHECK(rig.svc.SessionEpoch() == 1);
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta); // the next request carries the Full that was dropped
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend with views but no config reads the config on a worker") {
+    // The shape view.activate, view.refresh_active and view.create pass: (nullptr, &views).
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    auto* factory = static_cast<smatchet_tests::FakeTrackerBackendFactory*>(deps.Factory.get());
+    ConfigManager::Save(ConfigFor("Plane"));
+
+    TicketSyncService svc(deps);
+    ViewsStore views;
+    svc.SyncWithBackend(nullptr, &views);
+    CHECK(deps.BackgroundTasksLaunched == 1); // the config is read off the calling thread
+    CHECK(factory->CreatedTypes.empty());
+    CHECK(svc.HasPendingWork());
+    CHECK_FALSE(svc.IsActive());
+
+    deps.RunDeferredTasks();
+    REQUIRE(factory->CreatedTypes.size() == 1);
+    CHECK(factory->CreatedTypes.front() == "Plane"); // built from the file's config
+    CHECK(SpinUntil(svc, [&]() { return !svc.IsActive() && svc.SessionEpoch() == 1; }));
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a sync that needs a new backend does not start when there is no factory") {
+    // A controller that was never Initialize()d has no backend factory; the sync must not dereference null, and it
+    // must not run against the old tracker either (its issues would be cached under the new tracker's key).
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.Factory.reset();
+    ITrackerBackend* const before = deps.BackendImpl.get();
+    TicketSyncService svc(deps);
+    const TrackerConfig plane = ConfigFor("Plane");
+    ViewsStore views;
+    svc.SyncWithBackend(&plane, &views);
+    CHECK(deps.BackendImpl.get() == before);
+    CHECK(svc.SessionEpoch() == 0); // no session was started
+    CHECK_FALSE(svc.IsActive());
+    CHECK_FALSE(svc.HasPendingWork());
+    CHECK(deps.SyncNotifications.empty()); // no "Syncing" toast for a sync that never ran
+    // The status surface (sync.tracker_status reads the sync warning) says why.
+    CHECK(deps.LastTrackerTicketSyncWarning.find("Sync not started") != std::string::npos);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("Plane") != std::string::npos);
+    CHECK_FALSE(deps.LastTrackerTicketSyncWarningTransient);
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService: a views read whose task is skipped or whose launch throws leaves nothing pending") {
+    // The count of reads in flight is carried by a guard the task owns: a task dropped at shutdown (the real
+    // LaunchBackgroundTask returns without running it) or a launch that throws must not leave HasPendingWork true.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    TicketSyncService svc(deps);
+    const TrackerConfig cfg = ConfigFor("fake");
+
+    SUBCASE("the launch skips the task") {
+        deps.SkipBackgroundTasks = true;
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(deps.BackgroundTasksLaunched == 1);
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+    SUBCASE("the launch throws") {
+        deps.ThrowOnLaunch = true;
+        CHECK_THROWS(svc.SyncWithBackend(&cfg, nullptr));
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+    SUBCASE("a parked task destroyed without running") {
+        deps.DeferBackgroundTasks = true;
+        svc.SyncWithBackend(&cfg, nullptr);
+        CHECK(svc.HasPendingWork());
+        deps.DeferredTasks.clear();
+        CHECK_FALSE(svc.HasPendingWork());
+    }
+}
+
+TEST_CASE(
+    "TicketSyncService: two async Fulls landing in reverse order do not leave a stray Full for the next request") {
+    // The newer Full runs; the older one is dropped. Keeping its Full would turn the unrelated Delta that follows into
+    // a second Full.
+    DeltaRig rig;
+    SeedUnchangedView(rig); // a Delta runs as delta here, a Full as full
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full); // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the newer Full starts; the older then finds itself overtaken
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta);
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 2);
+    CHECK(rig.svc.LastSessionStats().Mode == "delta"); // not a stray second Full
+}
+
+TEST_CASE("TicketSyncService: a Full folded while the teardown gate is up survives a held Delta") {
+    // A dropped Full folds while the gate is up, and a Delta held by the gate arrives at EndCacheTeardown: the
+    // follow-up keeps the Full instead of being overwritten by the Delta.
+    DeltaRig rig;
+    SeedUnchangedView(rig);
+    rig.deps.DeferBackgroundTasks = true;
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Full);  // older
+    rig.svc.SyncWithBackend(&rig.cfg, nullptr, smatchet::sync::SyncMode::Delta); // newer
+    ReadFilesLeavePostsParked(rig.deps);
+    REQUIRE(rig.deps.DeferredPosts.size() == 2);
+
+    (void)rig.svc.BeginCacheTeardown();
+    rig.deps.RunDeferredPosts(/*reverse=*/true); // the Delta is held by the gate; the Full is dropped and folded
+    rig.svc.EndCacheTeardown(/*foldIntoFollowUp=*/true);
+
+    rig.deps.DeferBackgroundTasks = false;
+    rig.deps.DeferPosts = false;
+    rig.Sync(smatchet::sync::SyncMode::Delta); // the recreate's follow-up
+    REQUIRE(rig.Settle());
+    CHECK(rig.svc.SessionEpoch() == 1);
+    CHECK(rig.svc.LastSessionStats().Mode == "full");
+}
+
+TEST_CASE("TicketSyncService: a requested sync counts as pending until the post that starts it has run") {
+    // Between the files read ending and the session starting, IsActive() is false: a caller waiting for the sync to
+    // settle must see HasPendingWork() instead of passing through that gap.
+    smatchet_tests::TestEnvGuard env;
+    FakeTicketSyncDeps deps;
+    deps.DeferBackgroundTasks = true;
+    TicketSyncService svc(deps);
+    const TrackerConfig cfg = ConfigFor("fake");
+    svc.SyncWithBackend(&cfg, nullptr);
+    CHECK(svc.HasPendingWork());
+
+    ReadFilesLeavePostsParked(deps); // the read is over; its post has not run
+    REQUIRE(deps.DeferredPosts.size() == 1);
+    CHECK_FALSE(svc.IsActive());
+    CHECK(svc.HasPendingWork()); // still pending: no gap for a waiter to slip through
+
+    deps.RunDeferredPosts(); // the session starts, and the pending mark drops with the post
+    CHECK(svc.IsActive());
+    CHECK(svc.HasPendingWork());
+    CHECK(SpinUntil(svc, [&]() { return !svc.HasPendingWork(); }));
+    svc.CancelAndJoinActiveStreamingSync();
 }

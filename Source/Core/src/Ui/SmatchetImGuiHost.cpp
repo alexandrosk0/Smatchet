@@ -594,6 +594,10 @@ void SmatchetImGuiHost::Shutdown() {
     // Sinks may capture `this` of plugin instances that are about to be destroyed;
     // drop them before tearing down plugins so any late callers fall back to stdio.
     ImplData->App.ClearAutomationLogSinks();
+    // The host no longer draws, so nothing drains the dispatcher. Release its queued tasks before the
+    // plugins stop: a plugin worker blocked on one of them (a command marshalled to the UI thread in
+    // the last frame) would otherwise keep OnStop's join waiting.
+    ImplData->App.mainThreadDispatcher.BeginShutdown();
 
 #if defined(_WIN32)
     ImplData->Plugins.OnStop();

@@ -11,6 +11,7 @@
 
 #include "AsyncLoadGatePure.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
@@ -459,24 +460,23 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f), ImGuiCond_FirstUseEver);
     const bool wantFocus = d.requestPlanDocViewerFocus;
     if (wantFocus) {
-        // SetNextWindowFocus BEFORE Begin is the only path that activates a docked tab.
-        // Post-Begin SetWindowFocus below is belt-and-braces for floating state.
+        // Raises the window when it floats; a docked tab behind a sibling also needs its tab selected,
+        // which ServiceDockedFocusRequest does (#2274). Post-Begin SetWindowFocus is belt-and-braces.
         ImGui::SetNextWindowFocus();
     }
+    d.requestPlanDocViewerFocus = SmatchetWindowExpand::ServiceDockedFocusRequest(d, "Plan Docs", wantFocus);
     bool open = d.showPlanDocViewer;
     SmatchetWindowExpand::BeginWindow(d, "Plan Docs");
-    if (!ImGui::Begin("Plan Docs", &open)) {
+    // The same title transform ServiceDockedFocusRequest looks the window up by, so the tab is still found once
+    // "Plan Docs" gets a translation.
+    if (!ImGui::Begin(SmatchetLocalization::WindowTitleFromSource("Plan Docs"), &open)) {
         d.showPlanDocViewer = open;
-        if (wantFocus) {
-            d.requestPlanDocViewerFocus = false;
-        }
         ImGui::End();
         return;
     }
     SmatchetWindowExpand::DrawToggle(d);
     if (wantFocus) {
         ImGui::SetWindowFocus();
-        d.requestPlanDocViewerFocus = false;
         LOG_DEBUG("Plan docs window: focused via menu request");
     }
 

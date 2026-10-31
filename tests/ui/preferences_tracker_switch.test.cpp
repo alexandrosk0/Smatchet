@@ -85,8 +85,9 @@ void SwitchTrackerTo(ImGuiTestContext* ctx, AppController* app, const char* trac
     TrackerConfig cfg = ConfigManager::Load();
     cfg.TrackerType = trackerType;
     app->SyncWithBackend(&cfg);
-    // The swap itself is synchronous inside SyncWithBackend; the fetch settles async.
-    IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); }));
+    // No views are passed, so they are read on a worker first; the backend swap and the fetch follow from there. Wait
+    // on the pending request as well as the session: IsStreamingSyncActive() is false until the session starts.
+    IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
 }
 
 } // namespace
@@ -113,7 +114,7 @@ static void RegisterTrackerSwitchSwapsBackend(ImGuiTestEngine* engine) {
 
         // Phase 1 — baseline: the Jira fixture populates the grid.
         app->SyncWithBackend();
-        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); }));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
         IM_CHECK_NO_RET(HasTicket(app->GetActiveTickets(), "SMAT-1"));
         const std::shared_ptr<ITrackerBackend> jiraBackend = app->BackendShared();
         IM_CHECK_NO_RET(jiraBackend != nullptr);

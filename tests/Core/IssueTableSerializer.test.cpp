@@ -283,8 +283,7 @@ TEST_CASE("ParseDrafts Auto: sniffs CSV and TSV correctly") {
 // ===========================================================================
 
 TEST_CASE("ParseDrafts JSON: array of objects") {
-    const std::string json =
-        "[{\"project\":\"PRJ\",\"issuetype\":\"Story\",\"summary\":\"From JSON\"}]";
+    const std::string json = "[{\"project\":\"PRJ\",\"issuetype\":\"Story\",\"summary\":\"From JSON\"}]";
     ImportResult r = ParseDrafts(json, Format::Json, {}, "", "", "");
     CHECK(r.DetectedFormat == Format::Json);
     REQUIRE(r.Rows.size() == 1);
@@ -391,14 +390,64 @@ TEST_CASE("SerializeTickets: Auto format defaults to CSV") {
     CHECK(out.find("key,summary") != std::string::npos);
 }
 
+TEST_CASE("SerializeTickets guards formula cells; ParseDrafts strips the guard again (#2337)") {
+    std::vector<CachedTicket> tickets = {MakeTicket("PRJ-1", "summary", "=HYPERLINK(\"https://evil\",\"x\")")};
+    tickets[0].fieldValues["customfield_1"] = "-5";
+    tickets[0].fieldValues["customfield_2"] = "@SUM(A1)";
+    for (const Format fmt : {Format::Csv, Format::Tsv}) {
+        CAPTURE(static_cast<int>(fmt));
+        const std::string out = SerializeTickets(tickets, {"summary", "customfield_1", "customfield_2"}, fmt);
+        // The formula cells open as text; the plain number stays a number.
+        CHECK(out.find("'=HYPERLINK") != std::string::npos);
+        CHECK(out.find("'@SUM(A1)") != std::string::npos);
+        CHECK(out.find("'-5") == std::string::npos);
+
+        ImportResult r = ParseDrafts(out, fmt, {}, "PRJ", "", "");
+        CHECK(r.Error.empty());
+        REQUIRE(r.Rows.size() == 1);
+        const auto& values = r.Rows[0].Draft.FieldValues;
+        REQUIRE(values.count("summary") == 1);
+        CHECK(values.at("summary") == "=HYPERLINK(\"https://evil\",\"x\")");
+        REQUIRE(values.count("customfield_1") == 1);
+        CHECK(values.at("customfield_1") == "-5");
+        REQUIRE(values.count("customfield_2") == 1);
+        CHECK(values.at("customfield_2") == "@SUM(A1)");
+    }
+}
+
+TEST_CASE("SerializeTickets and ParseDrafts round-trip a value's own leading quote") {
+    for (const char* value : {"'=x", "''=x", "'@a", "' +1", "'tis", "'5"}) {
+        std::vector<CachedTicket> tickets = {MakeTicket("PRJ-1", "summary", value)};
+        for (const Format fmt : {Format::Csv, Format::Tsv}) {
+            CAPTURE(value);
+            CAPTURE(static_cast<int>(fmt));
+            ImportResult r = ParseDrafts(SerializeTickets(tickets, {"summary"}, fmt), fmt, {}, "PRJ", "", "");
+            REQUIRE(r.Rows.size() == 1);
+            REQUIRE(r.Rows[0].Draft.FieldValues.count("summary") == 1);
+            CHECK(r.Rows[0].Draft.FieldValues.at("summary") == value);
+        }
+    }
+}
+
+TEST_CASE("ParseDrafts keeps a quote that the export guard would not have added") {
+    // "'tis" and "'5" are the user's own text: the guard never quotes "tis" or "5".
+    const std::string csv = "summary,description\n'tis a bug,'5\n";
+    ImportResult r = ParseDrafts(csv, Format::Csv, {}, "P", "", "");
+    REQUIRE(r.Rows.size() == 1);
+    CHECK(r.Rows[0].Draft.FieldValues.at("summary") == "'tis a bug");
+    CHECK(r.Rows[0].Draft.FieldValues.at("description") == "'5");
+}
+
 TEST_CASE("ParseDrafts: JSON depth bomb is rejected by the bounded import parse (no deep DOM)") {
     // Import files are user-chosen but often externally-originated bytes, so the JSON import
     // routes through json_safe::ParseBounded with import-sized caps: a deeply-nested payload
     // must come back as a clean ImportResult error, not build a deep DOM whose recursive ~json
     // teardown can overflow the stack.
     std::string bomb;
-    for (int i = 0; i < 300; ++i) bomb += "[";
-    for (int i = 0; i < 300; ++i) bomb += "]";
+    for (int i = 0; i < 300; ++i)
+        bomb += "[";
+    for (int i = 0; i < 300; ++i)
+        bomb += "]";
     const ImportResult r = ParseDrafts(bomb, Format::Json, {}, "PROJ", "10001", "Task");
     CHECK(r.Rows.empty());
     CHECK(r.Error.find("JSON parse error") != std::string::npos);

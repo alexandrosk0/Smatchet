@@ -128,19 +128,19 @@ static std::string BuildDeadLetterRowTsv(const DeadPendingCreate& row) {
     out += '\t';
     out += std::to_string(row.Attempts);
     out += '\t';
-    out += SanitizeClipboardCell(row.TerminalReason.empty() ? std::string("-") : row.TerminalReason);
+    out += TsvCopyCellOrDash(row.TerminalReason);
     out += '\t';
-    out += SanitizeClipboardCell(action.empty() ? std::string("-") : action);
+    out += TsvCopyCellOrDash(action);
     out += '\t';
-    out += SanitizeClipboardCell(stage.empty() ? std::string("-") : stage);
+    out += TsvCopyCellOrDash(stage);
     out += '\t';
-    out += SanitizeClipboardCell(detailCol.empty() ? std::string("-") : detailCol);
+    out += TsvCopyCellOrDash(detailCol);
     out += '\t';
-    out += SanitizeClipboardCell(createdAt);
+    out += TsvCopyCell(createdAt);
     out += '\t';
-    out += SanitizeClipboardCell(archivedAt);
+    out += TsvCopyCell(archivedAt);
     out += '\t';
-    out += SanitizeClipboardCell(row.Payload);
+    out += TsvCopyCell(row.Payload);
     return out;
 }
 
@@ -263,11 +263,11 @@ static std::string BuildPendingQueueRowTsv(const PendingCreate& row) {
     out += '\t';
     out += std::to_string(row.Attempts);
     out += '\t';
-    out += SanitizeClipboardCell(row.LastError.empty() ? std::string("-") : row.LastError);
+    out += TsvCopyCellOrDash(row.LastError);
     out += '\t';
-    out += SanitizeClipboardCell(createdAt);
+    out += TsvCopyCell(createdAt);
     out += '\t';
-    out += SanitizeClipboardCell(row.Payload);
+    out += TsvCopyCell(row.Payload);
     return out;
 }
 
@@ -419,17 +419,17 @@ static std::string BuildPendingFieldEditRowTsv(const PendingFieldEditRecord& row
     out.reserve(160 + row.LastError.size() + row.FieldsPayloadJson.size());
     out += std::to_string(static_cast<long long>(row.Id));
     out += '\t';
-    out += SanitizeClipboardCell(row.IssueKey);
+    out += TsvCopyCell(row.IssueKey);
     out += '\t';
-    out += SanitizeClipboardCell(row.FieldId);
+    out += TsvCopyCell(row.FieldId);
     out += '\t';
     out += std::to_string(row.Attempts);
     out += '\t';
-    out += SanitizeClipboardCell(row.LastError.empty() ? std::string("-") : row.LastError);
+    out += TsvCopyCellOrDash(row.LastError);
     out += '\t';
-    out += SanitizeClipboardCell(createdAt);
+    out += TsvCopyCell(createdAt);
     out += '\t';
-    out += SanitizeClipboardCell(row.FieldsPayloadJson);
+    out += TsvCopyCell(row.FieldsPayloadJson);
     return out;
 }
 
@@ -442,21 +442,21 @@ static std::string BuildDeadFieldEditRowTsv(const DeadPendingFieldEdit& row) {
     out += '\t';
     out += std::to_string(static_cast<long long>(row.OriginalId));
     out += '\t';
-    out += SanitizeClipboardCell(row.IssueKey);
+    out += TsvCopyCell(row.IssueKey);
     out += '\t';
-    out += SanitizeClipboardCell(row.FieldId);
+    out += TsvCopyCell(row.FieldId);
     out += '\t';
     out += std::to_string(row.Attempts);
     out += '\t';
-    out += SanitizeClipboardCell(row.TerminalReason.empty() ? std::string("-") : row.TerminalReason);
+    out += TsvCopyCellOrDash(row.TerminalReason);
     out += '\t';
-    out += SanitizeClipboardCell(row.LastError.empty() ? std::string("-") : row.LastError);
+    out += TsvCopyCellOrDash(row.LastError);
     out += '\t';
-    out += SanitizeClipboardCell(createdAt);
+    out += TsvCopyCell(createdAt);
     out += '\t';
-    out += SanitizeClipboardCell(archivedAt);
+    out += TsvCopyCell(archivedAt);
     out += '\t';
-    out += SanitizeClipboardCell(row.FieldsPayloadJson);
+    out += TsvCopyCell(row.FieldsPayloadJson);
     return out;
 }
 

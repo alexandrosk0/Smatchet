@@ -2,16 +2,17 @@
 
 // TicketSyncMeta — what the delta sync remembers about a cached ticket row: the tracker's
 // "updated" stamp it was fetched at, the field ids it was fetched with, and when (docs/plans/
-// active/delta-sync.md § Phase 2). A rank-0 leaf (includes only CachedTicketTypes.h) so the cache
-// layer, the sync layer and the test fakes share ONE definition of the pure rules below without
-// Persistence reaching up into Sync. Header-only, C++14, no platform headers (builds in the
-// standalone and DX12 targets and in the doctest rig).
+// active/delta-sync.md § Phase 2). A rank-0 leaf (includes only CachedTicketTypes.h and the std-only
+// RemoteVersionPure.h) so the cache layer, the sync layer and the test fakes share ONE definition of the pure rules
+// below without Persistence reaching up into Sync. Header-only, C++14, no platform headers (builds in the standalone
+// and DX12 targets and in the doctest rig).
 //
 // The field list is stored as the list itself, not a hash: panes with different columns share rows,
 // and "does this row carry what MY view needs" is a subset question a hash cannot answer - a hash
 // would make two panes refetch each other's rows forever.
 
 #include "CachedTicketTypes.h"
+#include "Sync/RemoteVersionPure.h"
 #include "TimeNowPure.h"
 
 #include <algorithm>
@@ -122,9 +123,9 @@ inline CachedTicket MergeSameVersionRow(const CachedTicket& existing, const Cach
 }
 
 /// True when a row saved with `incoming` meta over a cached row with `existing` meta is the same
-/// tracker version (both stamps known and equal), i.e. MergeSameVersionRow applies.
+/// tracker version (both stamps known and naming one instant), i.e. MergeSameVersionRow applies.
 inline bool IsSameVersion(const TicketSyncMeta& existing, const TicketSyncMeta& incoming) {
-    return !existing.RemoteUpdated.empty() && existing.RemoteUpdated == incoming.RemoteUpdated;
+    return !existing.RemoteUpdated.empty() && IsSameRemoteVersion(existing.RemoteUpdated, incoming.RemoteUpdated);
 }
 
 } // namespace sync

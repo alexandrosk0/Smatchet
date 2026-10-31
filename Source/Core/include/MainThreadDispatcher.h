@@ -22,7 +22,8 @@
 /// Lifetime contract: the dispatcher is typically a member of `AppController`. Callers MUST
 /// stop posting (via `BeginShutdown()`) and join all worker threads before `~AppController`
 /// runs — `BeginShutdown()` flips a shutdown atom so late posts no-op rather than touching
-/// the about-to-be-destroyed mutex.
+/// the about-to-be-destroyed mutex, and discards whatever is still queued. Hosts call it before
+/// stopping plugins, whose worker pools may be waiting on a queued task.
 /// Bound: `kMaxQueueSize` droppable tasks plus `kMaxCompletionQueueSize` completions. On overflow the
 /// oldest droppable task is dropped, never a completion. Every lost task is counted
 /// (`DroppedTaskCount()`) and logged, at most one line a second per severity. A post never throws:
@@ -46,7 +47,8 @@ class MainThreadDispatcher {
     /// defers the untouched tail to the next frame (Risk #134: the old drain ran the whole queue
     /// unbudgeted, so a burst of decode→upload completions could spike a single frame). Generous
     /// on purpose: a normal frame drains far under it and behaves exactly as before — only a
-    /// genuine spike spreads across frames. Ignored during shutdown so the final drain runs all.
+    /// genuine spike spreads across frames. Ignored once shutdown has begun (the queue is then empty:
+    /// BeginShutdown discards it).
     /// Exposed as a constexpr function (not a static constexpr member): a class-type constexpr
     /// member is ODR-used when bound by reference (here `time_point + duration`), which in C++14
     /// requires an out-of-line definition; MSVC and optimised Clang fold the constant and never
@@ -119,10 +121,27 @@ class MainThreadDispatcher {
         }
     }
 
-    /// Stop accepting new posts. After this returns, all `PostToMainThread` calls become
-    /// no-ops, even if they're already past the early atomic check (re-checked under lock).
-    /// Drain remaining tasks one last time on the UI thread before destruction.
-    void BeginShutdown() { shuttingDown_.store(true, std::memory_order_release); }
+    /// Stop accepting new posts and discard the tasks still queued. After this returns, all
+    /// `PostToMainThread` calls become no-ops, even if they're already past the early atomic check
+    /// (re-checked under lock). Queued tasks are destroyed without running: no frame will drain them
+    /// once shutdown starts, and a worker blocked in `RunOnUiThread` on one of them waits on a promise
+    /// that only the task's destruction breaks. Leaving them queued until the dispatcher's own
+    /// destruction let such a worker hang a join that runs first — the automation worker in
+    /// ~AppController, the MCP pool in the hosts' plugin stop (#2306). Each waiter now gets a
+    /// broken_promise, which RunOnUiThread reports as a shutdown error. The tasks are destroyed
+    /// outside the lock, so a capture whose destructor posts (a no-op now) cannot deadlock.
+    void BeginShutdown() {
+        std::vector<Entry> discarded;
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            shuttingDown_.store(true, std::memory_order_release);
+            discarded.swap(queue_);
+            completionsQueued_ = 0;
+        }
+    }
+
+    /// True once `BeginShutdown()` has run: every later post is a no-op. Safe from any thread.
+    bool HasBegunShutdown() const noexcept { return shuttingDown_.load(std::memory_order_acquire); }
 
     /// Number of tasks drained on the most recent `Drain()` call. Read by
     /// `perf.snapshot` so the per-frame dispatcher load is visible without
@@ -215,11 +234,16 @@ class MainThreadDispatcher {
 
     /// Moves `tasks[first..]` to the front of the queue for the next frame, ahead of anything posted
     /// meanwhile, then applies the caps. False, with nothing moved, when the merged queue cannot be
-    /// allocated; the caller then runs the tail itself. UI thread (Drain) only.
+    /// allocated; the caller then runs the tail itself. Once BeginShutdown has run (on another thread, while
+    /// this drain was over budget) the tail is not requeued: it stays in `tasks` and is destroyed with it when
+    /// Drain returns, outside the lock, like the tasks BeginShutdown discarded. UI thread (Drain) only.
     bool DeferTail(std::vector<Entry>& tasks, std::size_t first) {
         smatchet::DispatcherQueueTrim trim;
         {
             std::lock_guard<std::mutex> lk(mutex_);
+            if (shuttingDown_.load(std::memory_order_relaxed)) { // BeginShutdown stores it under this lock
+                return true;
+            }
             std::vector<Entry> merged;
             try {
                 merged.reserve((tasks.size() - first) + queue_.size());

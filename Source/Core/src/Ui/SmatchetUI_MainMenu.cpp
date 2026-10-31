@@ -23,7 +23,6 @@
 #include "SmatchetBottomPanelDrag.h"
 #include "Ui/StatusBarAutoHidePure.h"
 #include "SmatchetUiSession.h"
-#include "SmatchetViewVisibility.h"
 #include "TicketGridModel.h"
 #include "TrackerGridFieldDisplay.h"
 #if defined(SMATCHET_WITH_WHISPER)
@@ -577,15 +576,32 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
     // recentViews_.Touch ids below are registered view.toggle.* ALIASES of the chrome
     // commands (view.sidebar.* / view.panel.bottom) so the Recently Used Views submenu can
     // re-dispatch them. Status Bar has no backing command, so it is not recorded.
-    if (ImGui::MenuItem("Primary Side Bar", MenuShortcut(ctx, "view.sidebar.primary", "Ctrl+B").c_str(),
-                        d.cfg.ShowPrimarySideBar)) {
-        SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
+    // The side bars route through SmatchetBottomPanelDrag like the Panel item below: hide
+    // remembers + closes the tabs docked in the column(s), show restores them. Primary is the
+    // whole right side (Views column + primary side bar); checkmarks key off LIVE visibility.
+    const bool primaryVisible = SmatchetBottomPanelDrag::IsSideBarVisible(SmatchetBottomPanelDrag::SideBar::Primary);
+    if (ImGui::MenuItem("Primary Side Bar", MenuShortcut(ctx, "view.sidebar.primary", "Ctrl+B").c_str(), primaryVisible,
+                        primaryVisible ||
+                            SmatchetBottomPanelDrag::CanExpandSideBar(d, SmatchetBottomPanelDrag::SideBar::Primary))) {
+        if (primaryVisible) {
+            SmatchetBottomPanelDrag::CollapseSideBar(d, SmatchetBottomPanelDrag::SideBar::Primary);
+        } else {
+            SmatchetBottomPanelDrag::ExpandSideBar(d, SmatchetBottomPanelDrag::SideBar::Primary);
+        }
         recentViews_.Touch("view.toggle.primary_side_bar");
         ConfigManager::Save(d.cfg);
     }
-    if (ImGui::MenuItem("Secondary Side Bar", MenuShortcut(ctx, "view.sidebar.secondary", "Ctrl+Alt+B").c_str(),
-                        d.cfg.ShowSecondarySideBar)) {
-        SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
+    const bool secondaryVisible =
+        SmatchetBottomPanelDrag::IsSideBarVisible(SmatchetBottomPanelDrag::SideBar::Secondary);
+    if (ImGui::MenuItem(
+            "Secondary Side Bar", MenuShortcut(ctx, "view.sidebar.secondary", "Ctrl+Alt+B").c_str(), secondaryVisible,
+            secondaryVisible ||
+                SmatchetBottomPanelDrag::CanExpandSideBar(d, SmatchetBottomPanelDrag::SideBar::Secondary))) {
+        if (secondaryVisible) {
+            SmatchetBottomPanelDrag::CollapseSideBar(d, SmatchetBottomPanelDrag::SideBar::Secondary);
+        } else {
+            SmatchetBottomPanelDrag::ExpandSideBar(d, SmatchetBottomPanelDrag::SideBar::Secondary);
+        }
         recentViews_.Touch("view.toggle.secondary_side_bar");
         ConfigManager::Save(d.cfg);
     }

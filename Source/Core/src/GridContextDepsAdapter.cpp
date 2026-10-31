@@ -37,11 +37,11 @@ GridLiveContext& GridContextDepsAdapter::ctx() const { return ctx_ != nullptr ? 
 
 // ---- IOfflineQueueDeps (and shared with ITicketSyncDeps) ------------------------------
 
-ISyncCache* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
+ISyncCache* GridContextDepsAdapter::Cache() { return std::atomic_load(&app_.Cache).get(); }
 
 // DR6: atomic_load snapshot of the cache shared_ptr so an off-thread caller (QueueCreateOffline)
 // holds it alive across the whole operation while the UI thread swaps it in
-// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic_load reader pattern above.
+// the cache recreate. Mirrors the ADR-0012 Backend atomic_load reader pattern above.
 // LocalCacheManager derives from ISyncCache, so the shared_ptr converts implicitly.
 std::shared_ptr<ISyncCache> GridContextDepsAdapter::CacheShared() { return std::atomic_load(&app_.Cache); }
 
@@ -97,6 +97,8 @@ void GridContextDepsAdapter::LaunchBackgroundTask(std::function<void()> task) {
     app_.LaunchBackgroundTask(std::move(task));
 }
 
+void GridContextDepsAdapter::PostToMainThread(std::function<void()> fn) { app_.PostToMainThread(std::move(fn)); }
+
 void GridContextDepsAdapter::RefreshLocalData() { app_.RefreshLocalData(); }
 
 // Friend access: the checked impl is private on purpose — every checked caller must name the
@@ -116,6 +118,8 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
 
 // Declared in both IOfflineQueueDeps and ITicketSyncDeps; this single override satisfies both.
 std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx().CacheBackendKeyCopy(); }
+
+bool GridContextDepsAdapter::IsCacheRecreating() const { return app_.IsLocalCacheRecreating(); }
 
 std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx().backendGeneration_.load(); }
 
@@ -162,6 +166,10 @@ smatchet::sync::TrackerTrafficSample GridContextDepsAdapter::SampleTrackerTraffi
 void GridContextDepsAdapter::PublishOwnedTicketIds(const std::vector<std::string>& ids) {
     GridLiveContext& c = ctx();
     app_.SetPaneOwnedTicketIds(c.CacheBackendKeyCopy(), c.PaneId, ids);
+}
+
+void GridContextDepsAdapter::PublishViewListedIds(const std::vector<std::string>& ids) {
+    ctx().monitorState.SetViewListing(ids); // UI thread, same discipline as the other monitor bookkeeping
 }
 
 // Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
@@ -217,6 +225,11 @@ void GridContextDepsAdapter::NotifySyncStatus(const std::string& title, const st
 }
 
 void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
+    if (fetchOk) {
+        // A finished reload may have changed the view's size and the tracker's answers: the change monitor tries the
+        // roster again and forgets the keys it saw refused (UI thread, same discipline as the latches below).
+        ctx().monitorState.ResetForReload();
+    }
     if (!fetchOk) {
         // Failed session: re-arm so the next focus switch / visibility kick retries the
         // sync instead of treating the pane as sync-live forever.
@@ -247,6 +260,8 @@ void GridContextDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std
 }
 
 void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRevision.fetch_add(1); }
+
+std::uint64_t GridContextDepsAdapter::ActiveTicketsRevisionNow() const { return ctx().ActiveTicketsRevision.load(); }
 
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
@@ -313,7 +328,7 @@ TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
 
 // HasCache() is a PREDICATE, not the raw Cache* — keeps FieldEditPipelineService SQLite-free
 // (ADR-0020 sync-cache purity). Global state, so reads app_ (matches Cache() above).
-bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
+bool GridContextDepsAdapter::HasCache() const { return std::atomic_load(&app_.Cache) != nullptr; }
 
 PendingActionTarget GridContextDepsAdapter::LatchFocusedPaneTarget() const { return app_.LatchPendingActionTarget(); }
 

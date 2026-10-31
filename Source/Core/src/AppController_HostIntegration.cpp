@@ -198,10 +198,14 @@ void AppController::ClearAutomationLogSinks() {
     if (impl_->luaHost_) {
         impl_->luaHost_->ClearAutomationLogSinks();
     }
+    // The error sinks capture plugins too (LuaConsolePlugin's `[this]`), and the automation worker can still
+    // report a Lua error after the plugins are gone and before ~AppController joins it. Both clears wait for a
+    // sink still running on that worker, so none outlives the plugins destroyed after this returns.
+    errorSinks_.ClearAndWait();
 }
 
 void AppController::AddAutomationErrorSink(std::function<void(const std::string&)> sink) {
-    errorSinks_.push_back(std::move(sink));
+    errorSinks_.Add(std::move(sink));
 }
 
 bool AppController::ConsumeScriptingWindowRequest() { return scriptingWindowOpenRequested_.exchange(false); }

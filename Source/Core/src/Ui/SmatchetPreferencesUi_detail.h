@@ -271,7 +271,7 @@ void DrawQuickCreatePreferencesTab(UiDrawSession& d);
 
 /// General category page: Updates, Language & region, Storage, Local database.
 /// Defined in SmatchetPreferencesUi_General.cpp.
-void DrawGeneralPreferencesTab(SmatchetUI& ui, const IAppMeta& meta, IAppSync& sync, UiDrawSession& d);
+void DrawGeneralPreferencesTab(const IAppMeta& meta, IAppSync& sync, UiDrawSession& d);
 
 void DrawAppearancePreferencesTab(UiDrawSession& d);
 

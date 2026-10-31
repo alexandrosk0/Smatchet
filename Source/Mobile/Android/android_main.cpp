@@ -701,6 +701,10 @@ void TeardownAll(AndroidHostState& s) {
     if (s.coreBooted && s.app && s.pluginHost) {
         s.app->ClearAutomationLogSinks();
         s.app->SetRuntimePluginHost(nullptr);
+        // No frame drains the dispatcher any more: release its queued tasks before OnStop joins the
+        // plugins' worker pools, which may be blocked on one of them (a command marshalled to the UI
+        // thread in the last frame).
+        s.app->mainThreadDispatcher.BeginShutdown();
         s.pluginHost->OnStop();
     }
     // Tear down the app / plugin host FIRST: any final config Save triggered during these resets must

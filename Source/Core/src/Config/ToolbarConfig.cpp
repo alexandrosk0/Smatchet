@@ -81,12 +81,29 @@ ToolbarConfig ToolbarConfig::Default() {
     // (unknown-command-id guard). The sync/refresh button is intentionally omitted
     // until a concrete sync command id is confirmed (plan § sync-button fallback).
     c.Buttons.push_back(MakeCommandButton("magnifying-glass", "Command palette", "ui.command_palette", "{}"));
-    c.Buttons.push_back(MakeCommandButton("list", "Views", "view.list", "{}"));
+    // "Views" opens the Views Dashboard window. It must NOT bind view.list: that command only
+    // returns the view list as data (CLI/MCP), so a click did nothing visible.
+    c.Buttons.push_back(MakeCommandButton("list", "Views", kViewsDashboardCommandId, kViewsDashboardArgsJson));
     c.Buttons.push_back(MakeCommandButton("gear", "Settings", "ui.settings", "{}"));
     c.Buttons.push_back(MakeSeparator());
     c.Buttons.push_back(MakeCommandButton("lock", "Enable read-only", "app.set_readonly", "{\"on\":true}"));
     c.Buttons.push_back(MakeCommandButton("sliders", "Customize toolbar", "ui.toolbar_customize", "{}"));
     return c;
+}
+
+int MigrateLegacyViewsToolbarButton(ToolbarConfig& cfg) {
+    int rewritten = 0;
+    for (ToolbarButton& b : cfg.Buttons) {
+        // Match the exact legacy default (icon + tooltip + command) so a button the user
+        // deliberately re-pointed at view.list with their own label/icon is left alone.
+        if (b.Kind == ToolbarButtonKind::Command && b.CommandId == "view.list" && b.IconName == "list" &&
+            b.Tooltip == "Views") {
+            b.CommandId = kViewsDashboardCommandId;
+            b.ArgsJson = kViewsDashboardArgsJson;
+            ++rewritten;
+        }
+    }
+    return rewritten;
 }
 
 std::vector<ToolbarButton> ResolveEffectiveToolbar(const ToolbarConfig& global,

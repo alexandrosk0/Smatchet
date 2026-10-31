@@ -54,6 +54,15 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
                                  std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
                                  std::int64_t* outSavedUnix = nullptr);
 
+/** TryLoadFieldCatalogSnapshot for a list of candidate keys (most specific first): parses the cache file ONCE and loads
+ *  the first candidate that has a usable snapshot. `outLoadedIndex` is the index of the candidate that loaded;
+ *  `outError` is the last failure when none did. A caller with a scoped key and an unscoped fallback no longer
+ *  re-reads the whole file for the second. */
+bool TryLoadFirstFieldCatalogSnapshot(const std::vector<std::string>& cacheKeys, std::vector<TrackerField>& outFields,
+                                      std::vector<TrackerComponent>& outComponents,
+                                      std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                      std::size_t& outLoadedIndex, std::int64_t* outSavedUnix = nullptr);
+
 /** When the catalog under `cacheKey` was last saved from a live fetch (epoch seconds); 0 when unknown (no entry,
  *  or an entry saved before the stamp existed). A read does not move it. */
 std::int64_t FieldCatalogSnapshotSavedUnix(const std::string& cacheKey);

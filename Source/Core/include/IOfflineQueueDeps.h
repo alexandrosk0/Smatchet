@@ -35,12 +35,12 @@ class IOfflineQueueDeps {
 
     /// Sync/replay-facing local-cache surface (ADR-0020 — `LocalCacheManager` in production;
     /// `FakeSyncCache` in tests). May be null before `Initialize` has wired the cache,
-    /// or after `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
+    /// or after `StartRecreateLocalCacheDatabase` has torn it down. Callers must null-check.
     virtual ISyncCache* Cache() = 0;
 
     /// DR6 latched cache snapshot — a strong handle over the same cache the raw Cache() points
     /// at, so an off-thread caller (QueueCreateOffline runs on a worker) keeps the cache alive
-    /// across its whole operation while the UI thread swaps it in RecreateLocalCacheDatabase.
+    /// across its whole operation while the cache recreate swaps it in StartRecreateLocalCacheDatabase.
     /// Mirrors the ADR-0012 Backend atomic-swap / ReaderShared latched-handle pattern. May be
     /// null (no cache yet). Capture the shared_ptr itself and use it for every deref.
     virtual std::shared_ptr<ISyncCache> CacheShared() = 0;
@@ -66,6 +66,11 @@ class IOfflineQueueDeps {
     /// callable from the replay background task. Shared (same override) with `ITicketSyncDeps`.
     /// Queue-row namespacing itself is Slice 1c — this getter only scopes the ticket tables.
     virtual std::string CacheBackendKey() const = 0;
+
+    /// True while the cache-recreate gate is up (`AppController::IsLocalCacheRecreating`): the database is withdrawn
+    /// (`Cache()` is null) and a fresh one is being set up. Lets an enqueue that finds no cache say "try again in a
+    /// moment" instead of "restart Smatchet". Any thread. Defaults to false.
+    virtual bool IsCacheRecreating() const { return false; }
 
     /// Backend-generation token (issue #1081): bumped on every live backend swap and on
     /// pane-context retirement (see GridLiveContext::backendGeneration_). Replay ticks capture

@@ -28,17 +28,21 @@
 
 #include "ConfigManager.h"
 
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 
 #if defined(_WIN32)
 #include <direct.h>
+#include <process.h> // ::_getpid
 #else
 #include <sys/stat.h> // ::mkdir
-#include <unistd.h>   // ::rmdir
+#include <unistd.h>   // ::rmdir, ::getpid
 #endif
 
 namespace smatchet_tests {
@@ -60,15 +64,28 @@ class TestEnvGuard {
             envTmp = "/tmp";
         const char sep = '/';
 #endif
-        const auto unique =
+        // Unique per guard, not only per clock tick: two guards built back to back (or by parallel test processes)
+        // can read the same clock value, and a shared directory would void the isolation the guard exists for. The
+        // name carries the process id plus a process-wide sequence number, and an existing directory is never
+        // adopted: creation must succeed, or the next name is tried.
+        const auto stamp =
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
                 .count();
-        dir_ = std::string(envTmp) + sep + "smatchet_env_test_" + std::to_string(unique);
-#if defined(_WIN32)
-        ::_mkdir(dir_.c_str());
-#else
-        ::mkdir(dir_.c_str(), 0755);
-#endif
+        const std::string prefix = std::string(envTmp) + sep + "smatchet_env_test_" + std::to_string(CurrentPid()) +
+                                   "_" + std::to_string(stamp) + "_";
+        bool created = false;
+        for (int attempt = 0; attempt < 64 && !created; ++attempt) {
+            dir_ = prefix + std::to_string(NextSequence());
+            if (MakeDir(dir_) == 0) {
+                created = true;
+            } else if (errno != EEXIST) {
+                break; // not a name clash: another name would fail the same way
+            }
+        }
+        if (!created) {
+            throw std::runtime_error("TestEnvGuard: could not create a private test directory under " +
+                                     std::string(envTmp));
+        }
         dirWithSep_ = dir_;
         if (dirWithSep_.back() != sep)
             dirWithSep_.push_back(sep);
@@ -105,6 +122,25 @@ class TestEnvGuard {
     const std::string& DirWithSep() const { return dirWithSep_; }
 
   private:
+    static unsigned long NextSequence() {
+        static std::atomic<unsigned long> sequence{0}; // one per process: in-class definitions are inline
+        return sequence.fetch_add(1, std::memory_order_relaxed);
+    }
+    static long long CurrentPid() {
+#if defined(_WIN32)
+        return static_cast<long long>(::_getpid());
+#else
+        return static_cast<long long>(::getpid());
+#endif
+    }
+    static int MakeDir(const std::string& path) {
+#if defined(_WIN32)
+        return ::_mkdir(path.c_str());
+#else
+        return ::mkdir(path.c_str(), 0755);
+#endif
+    }
+
     std::string dir_;
     std::string dirWithSep_;
 };

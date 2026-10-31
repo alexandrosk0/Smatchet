@@ -39,6 +39,13 @@ TEST_CASE("CsvEscape — quotes only when needed, doubles inner quotes") {
     CHECK(CsvEscape("") == "");
 }
 
+TEST_CASE("CsvEscape — a cell that starts like a formula exports as text (#2337)") {
+    CHECK(CsvEscape("=cmd()") == "'=cmd()");
+    CHECK(CsvEscape("@user") == "'@user");
+    CHECK(CsvEscape("=a,b") == "\"'=a,b\""); // guarded, then quoted for the comma
+    CHECK(CsvEscape("-5") == "-5");          // a plain number stays a number
+}
+
 TEST_CASE("NormalizeDateDisplay — ISO dashes to slashes, everything else verbatim") {
     CHECK(NormalizeDateDisplay("2026-07-01T10:00:00Z") == "2026/07/01");
     CHECK(NormalizeDateDisplay("2026/07/01") == "2026/07/01");
@@ -56,6 +63,21 @@ TEST_CASE("TSV rows — sanitized cells, 1-based display index, stable column or
     CHECK(BuildAnnotatedRowTsv(ln) == "7\t111\talice\t2026/07/01\tif (a b) { }");
 
     CHECK(BuildCallstackRowTsv(SampleRow(), 0) == "1\tFoo::Bar\t//depot/src/foo.cpp:42\tjdoe\t12345\t2026-07-01");
+}
+
+TEST_CASE("TSV rows — a cell that starts like a formula pastes as text (#2337)") {
+    P4AnnotatedLine ln;
+    ln.SourceLine = 3;
+    ln.Changelist = "222";
+    ln.User = "=cmd";
+    ln.Date = "2026/07/02";
+    ln.Code = "-- a Lua comment";
+    CHECK(BuildAnnotatedRowTsv(ln) == "3\t222\t'=cmd\t2026/07/02\t'-- a Lua comment");
+
+    AnnotateRowView row = SampleRow();
+    row.Function = "@evil";
+    row.User = "+1\tx";
+    CHECK(BuildCallstackRowTsv(row, 4) == "5\t'@evil\t//depot/src/foo.cpp:42\t'+1 x\t12345\t2026-07-01");
 }
 
 TEST_CASE("quick-comment templates — configured template wins, builtin fallbacks, placeholders") {

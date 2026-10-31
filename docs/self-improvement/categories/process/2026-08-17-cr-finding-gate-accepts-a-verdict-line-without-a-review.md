@@ -121,6 +121,7 @@ errors came from reasoning about `merge-gates.sh` and CodeRabbit's behaviour wit
 source. That is precisely the failure mode the #2090 ledger records for its own verdicts — *an artifact
 that exists is not an artifact you have read* — reproduced here by the person writing it down.
 
-Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=25; action=check whether any PR carrying an adversarial-code-review line records who reviewed, and whether a lint-rules.d change has shipped on a self-review alone; baseline=0 of N record a reviewer as of 2026-08-17; fired=never
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=25; action=check whether any PR carrying an adversarial-code-review line records who reviewed, and whether a lint-rules.d change has shipped on a self-review alone; baseline=0 of N record a reviewer as of 2026-08-17; fired=2026-10-18
+Follow-up check (2026-10-18): unchanged. 0 of about 25 sampled merged PRs (#2325-#2349 plus 7 lint-rules.d PRs) name a reviewer on their `adversarial-code-review:` line, and #2203's lint change shipped on a self-review per its own line. The entry's fix (a reviewer or run-id field the gate requires) is still open.
 
 Re-scoped 2026-10-04 (backlog-sweep-2026-10): action 4 landed (backlog-sweep PR #2296: in the OSS arm a CodeRabbit error reply after the human ask is a terminal failure naming the re-ask / waiver). Remaining: (1) the verdict line records no reviewer (a reviewer field in verdict_re, synced between check-pr-intent.sh and doc-validation.yml); (2) merge-gates.sh still fast-passes the OSS 'manual review required' skip via cr_review_skipped; (3) no second-pass requirement for gate-logic diffs.

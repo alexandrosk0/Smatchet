@@ -73,10 +73,11 @@ void FinishQueuedNewIssueDraft(UiDrawSession& d, const std::string& okMessage) {
 // The "Queue offline" button: the user chose to queue after a failed create.
 bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::string& okMessage) {
     PrepareNewIssueDraftForSubmit(d);
-    const std::int64_t qid = app.QueueCreateOffline(d.newIssueDraft);
+    std::string queueRefusal;
+    const std::int64_t qid = app.QueueCreateOffline(d.newIssueDraft, queueRefusal);
     if (qid <= 0) {
         d.gridEditSuccess.clear();
-        d.gridEditError = "Failed to queue offline.";
+        d.gridEditError = queueRefusal.empty() ? std::string("Failed to queue offline.") : queueRefusal;
         d.newIssueQueueFallbackVisible = false;
         d.newIssueQueueFallbackError.clear();
         return false;

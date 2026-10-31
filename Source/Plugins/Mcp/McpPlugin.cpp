@@ -17,6 +17,7 @@
 #include "ConfigManager.h"
 #include "Commands/Command.h"
 #include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
+#include "JsonParseUtil.h"         // ParseJsonIntFieldLoose — range-checked int reads of client JSON
 #include "McpJsonRpcPure.h"
 #include "StringUtil.h" // Base64Encode — single-sourced base64 (was duplicated in mcp::pure)
 #include "McpRateLimitPure.h"
@@ -584,7 +585,7 @@ void McpPlugin::DispatchRegistryToolsCall(const std::string& name, const nlohman
     cctx.Source = smatchet::cmd::CommandSource::Mcp;
     cctx.ConfirmedDestructive = arguments.value("__confirm", false);
     cctx.DryRun = arguments.value("__dry_run", false);
-    cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
+    cctx.TimeoutMs = ParseJsonIntFieldLoose(arguments, "__timeout_ms");
     smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
     const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
     const std::string envelopeStr = envelope.dump();
@@ -834,7 +835,7 @@ void McpPlugin::HandleJsonRpcRegistryCall(const std::string& name, const nlohman
     cctx.Source = smatchet::cmd::CommandSource::Mcp;
     cctx.ConfirmedDestructive = args.value("__confirm", false);
     cctx.DryRun = args.value("__dry_run", false);
-    cctx.TimeoutMs = args.value("__timeout_ms", 0);
+    cctx.TimeoutMs = ParseJsonIntFieldLoose(args, "__timeout_ms");
     smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, args, cctx);
     const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
     // MCP `result.content[0].text` carries the envelope as a string —

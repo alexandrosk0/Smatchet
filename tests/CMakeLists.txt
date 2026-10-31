@@ -160,6 +160,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (MainThreadDispatcher.h); the SMATCHET_UI_PERF_SCOPE in Drain() pulls UiPerfMonitor.cpp
         # (ImGui-free), linked just below.
         Core/MainThreadDispatcherConcurrent.test.cpp
+        # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
+        Core/GridCopyPure.test.cpp
+        # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
+        # register-vs-invoke case is a TSan target. Header-only.
+        Core/StringSinkList.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
@@ -189,6 +194,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # allocation-light, so it rides this curated subset — which also gives the
         # Linux ninja-test-linux lane a runnable signal for it, not just Windows.
         Core/LogTailSelect.test.cpp
+        # RedactLogLine scans (#2304) and the callstack format scans (#2311), each checked
+        # against the std::regex code it replaced. Pure and ImGui-free, so the Linux lanes run
+        # them too, not only the Windows rig (where the MSVC 14.51 regex limit was found).
+        Core/TextRedactionScan.test.cpp
+        Core/CallstackParserScan.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
         # --- Sync layer: the ADR-0012 atomic backend-swap race + ADR-0020 ISyncCache
         #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
         #     latched strong handles surviving live swaps); TicketSyncService drives the
@@ -271,6 +282,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # CommandRegistry lookup vs registration race: FindLocked (UI thread) against Register
         # (a worker); FuzzyMatch + Command join for the registry's alias/fuzzy and result helpers.
         Core/CommandRegistryConcurrency.test.cpp
+        Core/CommandRegistryArgCoercion.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
@@ -430,6 +442,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
+        # The worker's cache swap / null-cache retry / Stop cases race the worker thread against
+        # the test thread's atomic_store of the cache, so they run here under TSan too. Needs only
+        # LocalCacheManager (linked above) and the header-only MainThreadDispatcher.
+        Core/SmatchetChatPersistWorker.test.cpp
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
         # Shared AI-client wire plumbing (JoinUrl / ResolveBaseUrlOr / chat messages build).
         # Header-only (Source/Core/include/AiWirePure.h); no extra .cpp source.
@@ -512,6 +528,7 @@ add_executable(SmatchetTests
     Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
+    Core/StringSinkList.test.cpp
     Core/CacheEvictionPolicy.test.cpp
     # SECURITY_AUDIT_2026-06-13 synthesis #9 — pure pre-decode dimension/pixel-budget gate behind
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
@@ -735,6 +752,8 @@ add_executable(SmatchetTests
     Core/IssueDraft.test.cpp
     Core/IssueCreatePipeline.test.cpp
     Core/CallstackParser.test.cpp
+    # Callstack format scans vs the regexes they replaced (#2311) + long-line inputs.
+    Core/CallstackParserScan.test.cpp
     # Function-size decomposition (feat/funcsize-cpp-syntax-highlight) — pure
     # ImGui-free lexers extracted from CppSyntaxHighlight.cpp's draw helpers to
     # bring DrawColoredCppLine / DrawColoredCallstackLine under the 30-branch
@@ -861,6 +880,10 @@ add_executable(SmatchetTests
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
     Core/LocalCacheManagerChat.test.cpp
+    # The chat_persist worker against real in-memory LCMs: it resolves the cache per op, so a
+    # cache recreate (swap + free) is followed and a withdrawn (null) cache is retried, never
+    # dereferenced. Self-gates on SMATCHET_WITH_AI like the chat TU above.
+    Core/SmatchetChatPersistWorker.test.cpp
     Core/BackendAuditTrail.test.cpp
     # security #10 regression guard — the offline-queue create audit copy of the draft must be
     # structurally redacted (RedactJson over the parsed payload) while the enqueued/replayed
@@ -1156,6 +1179,7 @@ add_executable(SmatchetTests
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     Core/CommandRegistryConcurrency.test.cpp
+    Core/CommandRegistryArgCoercion.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"
@@ -1207,6 +1231,8 @@ add_executable(SmatchetTests
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.
     Core/BugReportBody.test.cpp
+    # RedactLogLine scans vs the regex pipeline they replaced (#2304) + long-token inputs.
+    Core/TextRedactionScan.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
@@ -1482,6 +1508,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    # chat_persist worker (Core/SmatchetChatPersistWorker.test.cpp). Self-gates on SMATCHET_WITH_AI;
+    # needs only LocalCacheManager + the header-only MainThreadDispatcher, both linked here.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
@@ -1617,8 +1646,21 @@ add_executable(SmatchetTests
     Core/TicketSyncMeta.test.cpp
     # delta-sync Phase 3 - the pure strategy / fetch-set / full-fetch-threshold decisions (Sync/DeltaSyncPure.h).
     Core/DeltaSyncPure.test.cpp
+    # delta-sync review follow-ups - the apply drain's per-session id -> index map and version-move report
+    # (Sync/ActiveRowMergePure.h) and the local-cache refresh ordering gate (Sync/LocalRefreshGatePure.h).
+    Core/ActiveRowMerge.test.cpp
     # delta-sync Phase 7 - when a saved lookup row may be served without a live fetch (Sync/LookupFreshnessPure.h).
     Core/LookupFreshnessPure.test.cpp
+    # delta-sync follow-up - the saved field catalog is restored off the UI thread (Sync/CatalogRestorePure.h).
+    Core/CatalogRestorePure.test.cpp
+    # delta-sync follow-up - the cache recreate outcome and its refusal wording (Sync/CacheRecreateReportPure.h).
+    Core/CacheRecreateReportPure.test.cpp
+    # delta-sync follow-up - the pending-edit overlay of the grid, built from the queue snapshots (Sync/PendingOverlayPure.h).
+    Core/PendingOverlayPure.test.cpp
+    # delta-sync follow-up - the bounded, expiring memory of the keys a tracker refused on a delta attempt.
+    Core/RefusedKeysPure.test.cpp
+    # delta-sync follow-up - a stale cached-projects read must not bring a forgotten project back.
+    Core/CachedProjectsPure.test.cpp
     Core/LocalCacheTicketSyncMeta.test.cpp
     Core/TicketsMonitorCommand.test.cpp
     # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
@@ -2286,6 +2328,11 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_executable(SmatchetCommandsTests
         Commands/BuiltinCommandsDispatch.test.cpp
         Core/AppControllerFieldCatalog.posix.test.cpp
+        # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
+        # the database file, so this TU opens a real file inside the test env's temp directory.
+        Core/AppControllerCacheRecreate.posix.test.cpp
+        # ~AppController joins tasks launched while shutdown begins (#2308): a stress over the real controller.
+        Core/AppControllerShutdown.posix.test.cpp
     )
     target_include_directories(SmatchetCommandsTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"

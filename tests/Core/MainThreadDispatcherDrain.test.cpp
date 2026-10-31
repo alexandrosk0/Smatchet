@@ -66,11 +66,13 @@ TEST_CASE("MainThreadDispatcher::PostToMainThread no-ops after BeginShutdown") {
     d.PostToMainThread([&]() { ran.fetch_add(100); });
 
     d.Drain();
-    // Only the pre-shutdown task ran. Post-shutdown posts must be silently
-    // dropped — the contract for late-arriving worker posts during AppController
-    // teardown.
-    CHECK(ran.load() == 1);
-    CHECK(d.LastDrainTaskCount() == static_cast<std::size_t>(1));
+    // Nothing ran. Post-shutdown posts are silently dropped — the contract for
+    // late-arriving worker posts during AppController teardown — and the task
+    // queued before BeginShutdown was discarded by it (#2306): no frame drains
+    // once shutdown starts, so a queued task would only strand a worker waiting
+    // on it.
+    CHECK(ran.load() == 0);
+    CHECK(d.LastDrainTaskCount() == static_cast<std::size_t>(0));
 }
 
 TEST_CASE("MainThreadDispatcher::PostToMainThread respects kMaxQueueSize bound") {

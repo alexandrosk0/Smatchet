@@ -54,6 +54,13 @@ class IAppTicketMutations {
                          const std::string& timeRemaining, const std::string& adjustEstimate,
                          const std::string& workDescription, const std::string& startedDate) = 0;
     virtual std::int64_t QueueCreateOffline(const IssueDraft& draft) = 0;
+    /// Same, and says why in `outError` when it returns 0 and the reason is one the user can act on (the local
+    /// cache is being recreated: "retry in a moment"). Empty `outError` on failure means no specific reason.
+    /// Default: no reason (an implementer without a reason to give needs no override).
+    virtual std::int64_t QueueCreateOffline(const IssueDraft& draft, std::string& outError) {
+        outError.clear();
+        return QueueCreateOffline(draft);
+    }
     // CancelToken default mirrored on the AppController override too: concrete-typed callers
     // (AppController_LuaBindings, SmatchetNewIssueDraftUi) use the 1-arg form via static binding.
     virtual std::future<IssueCreateResult>

@@ -24,7 +24,7 @@
 //   2. no token                                        → 401 + WWW-Authenticate
 //   3. wrong token                                     → 401
 //   4. hostile Host (DNS-rebind shape) + VALID token   → 403 (Host gate fires
-//      before the token check — cpp-httplib v0.49 honours a caller-supplied
+//      before the token check — cpp-httplib (v0.49+) honours a caller-supplied
 //      Host header: it only auto-fills when the request has none)
 //   5. hostile Origin + VALID token                    → 403
 //   6. kMaxConcurrentSseConnections (4) streams held   → 5th SSE connect → 503

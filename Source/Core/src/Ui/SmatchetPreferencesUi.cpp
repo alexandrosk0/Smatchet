@@ -657,7 +657,7 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
             ImGui::Text("%s — %s", entry.projectKey.c_str(), timeBuf);
             ImGui::SameLine();
             if (ImGui::SmallButton(forgetLabel)) {
-                FieldCatalogCache::ForgetProject(entry.projectKey, entry.backend, entry.endpoint);
+                RequestForgetCachedProject(d, entry); // the file is written on the next cached-projects read
             }
             ImGui::PopID();
         }
@@ -1277,7 +1277,7 @@ void DrawPrefsSearchReadout(UiDrawSession& d) {
 void SmatchetUI::drawPreferencesCategoryBody(AppController& app, UiDrawSession& d) {
     switch (d.preferencesCategory) {
     case PreferencesCategory::General:
-        DrawGeneralPreferencesTab(*this, app, app, d);
+        DrawGeneralPreferencesTab(app, app, d);
         break;
     case PreferencesCategory::Appearance:
         DrawAppearancePreferencesTab(d);

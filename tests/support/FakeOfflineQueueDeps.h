@@ -88,6 +88,9 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
         return collab ? std::shared_ptr<ITrackerCollaboration>(BackendImpl, collab) : nullptr;
     }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
+    /// Set by a test to model the cache-recreate gate (the test also resets `CacheImpl`, as the withdraw does).
+    bool CacheRecreatingImpl = false;
+    bool IsCacheRecreating() const override { return CacheRecreatingImpl; }
     std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
