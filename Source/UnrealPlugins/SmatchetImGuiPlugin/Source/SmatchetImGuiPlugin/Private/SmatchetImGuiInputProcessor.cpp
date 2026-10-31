@@ -423,10 +423,9 @@ bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(FSlateApplicat
     // Wheel deltas feed ImGui io the same way as standalone; table-level routing
     // (e.g. vertical-end horizontal scroll) lives in shared UI code on the host side.
 
+    // No position event here: the move handler already tracks the pointer, and under ImGui's trickle queue
+    // a position change in front of every wheel notch would defer each notch by a frame while moving.
     PushPointerSource(InWheelEvent);
-    const FVector2f P = MapPointerToClientLocal(SlateApp, InWheelEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
-
     SmatchetHost_AddMouseWheel(Host, 0.0f, InWheelEvent.GetWheelDelta());
     PushModifierState(InWheelEvent);
     return true;
@@ -441,6 +440,7 @@ void FSmatchetImGuiInputProcessor::PushPointerSource(const FPointerEvent& Pointe
                static_cast<int32>(PointerEvent.GetPointerIndex()));
     }
     // 0 = ImGuiMouseSource_Mouse, 1 = ImGuiMouseSource_TouchScreen (SmatchetHost_SetMouseSource contract).
+    // Windows pen input reaches Slate through the touch path too, so a pen reports as touchscreen here.
     SmatchetHost_SetMouseSource(Host, bTouch ? 1 : 0);
 }
 
@@ -450,8 +450,9 @@ bool FSmatchetImGuiInputProcessor::IsSecondaryTouch(const FPointerEvent& Pointer
 
 int32 FSmatchetImGuiInputProcessor::ToImGuiMouseButton(const FPointerEvent& MouseEvent) const {
     const FKey Key = MouseEvent.GetEffectingButton();
-    // Touch1 is the first finger; Slate reports it as the effecting "button" of touch pointer events.
-    if (Key == EKeys::LeftMouseButton || Key == EKeys::Touch1) {
+    // Touch pointer events also arrive here as LeftMouseButton (Slate's touch FPointerEvent constructors
+    // set EffectingButton to it); IsTouchEvent() is what tells them apart (PushPointerSource).
+    if (Key == EKeys::LeftMouseButton) {
         return 0;
     }
     if (Key == EKeys::RightMouseButton) {

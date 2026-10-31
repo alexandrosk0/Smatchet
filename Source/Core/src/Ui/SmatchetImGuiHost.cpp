@@ -138,6 +138,10 @@ struct SmatchetImGuiHost::Impl {
     std::atomic<bool> Initialized{false};
     std::atomic<bool> Initializing{false};
     std::atomic<bool> BuildingFrame{false};
+    // Wall-clock time of the previous BeginFrame. The plugin passes a fixed 1/60 s, which made ImGui's
+    // clock (double-click window, touch long-press) run at the presentation rate instead of real time.
+    std::chrono::steady_clock::time_point LastBeginFrameTime;
+    bool HasLastBeginFrameTime = false;
     std::atomic<bool> RenderingDraw{false};
     std::atomic<bool> FrameActive{false};
     std::atomic<bool> OptionsSet{false};
@@ -688,6 +692,16 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
 
     ImGuiIO& io = ImGui::GetIO();
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
+    // Prefer the measured wall delta so time-based input (double-click, long-press) does not depend on
+    // how often the overlay presents. Clamped: a hidden overlay or a debugger break must not make the
+    // next frame's delta huge, and ImGui asserts on a zero delta.
+    const auto frameNow = std::chrono::steady_clock::now();
+    if (ImplData->HasLastBeginFrameTime) {
+        const float measured = std::chrono::duration<float>(frameNow - ImplData->LastBeginFrameTime).count();
+        io.DeltaTime = (std::min)(0.25f, (std::max)(1.0f / 1000.0f, measured));
+    }
+    ImplData->LastBeginFrameTime = frameNow;
+    ImplData->HasLastBeginFrameTime = true;
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
 
     ImGui::NewFrame();
