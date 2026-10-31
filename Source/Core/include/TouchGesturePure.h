@@ -314,7 +314,8 @@ class GestureMachine {
         out.push_back(a);
     }
 
-    void EmitPanDelta(std::vector<Action>& out) {
+    // Returns true when it moved the content (emitted a non-zero PanBy).
+    bool EmitPanDelta(std::vector<Action>& out) {
         Vec2 d = Sub(finger_, panLast_);
         panLast_ = finger_;
         if (axisLock_ == AxisLock::X) {
@@ -323,12 +324,13 @@ class GestureMachine {
             d.x = 0.0f;
         }
         if (d.x == 0.0f && d.y == 0.0f) {
-            return;
+            return false;
         }
         Action a;
         a.type = ActionType::PanBy;
         a.delta = d;
         out.push_back(a);
+        return true;
     }
 
     AxisLock ChooseAxisLock(Vec2 travel) const {
@@ -468,7 +470,7 @@ class GestureMachine {
             break;
         case GestureState::Pan: {
             finger_ = p;
-            EmitPanDelta(out);
+            const bool releaseMoved = EmitPanDelta(out);
             velocity_tracker_.AddSample(now, p);
             Vec2 v = velocity_tracker_.Estimate(now, config_.velocityWindowSeconds);
             if (axisLock_ == AxisLock::X) {
@@ -485,7 +487,8 @@ class GestureMachine {
                 }
                 velocity_ = v;
                 state_ = GestureState::Fling;
-                flingJustStarted_ = true;
+                // Only a release that already moved the content this tick defers the first glide step.
+                flingJustStarted_ = releaseMoved;
             } else {
                 Emit(out, ActionType::PanEnd, p);
                 state_ = GestureState::Idle;

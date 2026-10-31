@@ -336,7 +336,24 @@ TEST_SUITE("TouchGesturePure") {
         REQUIRE_EQ(Count(lift, ActionType::PanBy), 1);
         CHECK_EQ(lift[0].delta.y, doctest::Approx(-30.0f)); // just the last finger move
         const std::vector<Action> glide = TickAs(m, 4 * kFrame, PressClass::Pannable);
-        CHECK_EQ(Count(glide, ActionType::PanBy), 1);
+        REQUIRE_EQ(Count(glide, ActionType::PanBy), 1);
+        CHECK_LT(glide[0].delta.y, -20.0f); // about one frame of the ~1800 px/s glide, same direction
+        CHECK_GT(glide[0].delta.y, -40.0f);
+    }
+
+    TEST_CASE("a release with no motion since the last tick glides on that same tick") {
+        GestureMachine m;
+        m.OnDown(V(100, 500));
+        TickAs(m, 0.0, PressClass::Pannable);
+        m.OnMove(V(100, 470));
+        TickAs(m, kFrame, PressClass::Pannable);
+        m.OnMove(V(100, 440));
+        TickAs(m, 2 * kFrame, PressClass::Pannable);
+        m.OnUp(V(100, 440)); // lift exactly where the last move left the finger
+        const std::vector<Action> lift = TickAs(m, 3 * kFrame, PressClass::Pannable);
+        REQUIRE_EQ(m.State(), GestureState::Fling);
+        REQUIRE_EQ(Count(lift, ActionType::PanBy), 1); // no stall: the glide step runs now
+        CHECK_LT(lift[0].delta.y, 0.0f);
     }
 
     TEST_CASE("a slow release or a pause before lifting does not fling") {

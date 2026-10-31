@@ -73,14 +73,42 @@ void TouchBridgeCursorPos(GLFWwindow* window, double x, double y) {
     ImGui_ImplGlfw_CursorPosCallback(window, x, y);
 }
 
+// Where the pointer was when the button message being handled was posted, in GLFW client
+// coordinates. On Windows that is GetMessagePos (glfwGetCursorPos would read the cursor NOW, which
+// can be ahead of a press still being processed); elsewhere fall back to the current cursor.
+void PressPointInClient(GLFWwindow* window, float& x, float& y) {
+#if defined(_WIN32)
+    HWND hwnd = glfwGetWin32Window(window);
+    if (hwnd != nullptr) {
+        const DWORD pos = ::GetMessagePos();
+        POINT pt;
+        pt.x = static_cast<short>(LOWORD(pos)); // signed: multi-monitor screens can be negative
+        pt.y = static_cast<short>(HIWORD(pos));
+        if (::ScreenToClient(hwnd, &pt)) {
+            x = static_cast<float>(pt.x);
+            y = static_cast<float>(pt.y);
+            return;
+        }
+    }
+#endif
+    double cx = 0.0;
+    double cy = 0.0;
+    glfwGetCursorPos(window, &cx, &cy);
+    x = static_cast<float>(cx);
+    y = static_cast<float>(cy);
+}
+
 void TouchBridgeMouseButton(GLFWwindow* window, int button, int action, int mods) {
     if (TouchInputRouter* router = RouterForTouchEvent(window)) {
         // GLFW button events carry no position, and a finger landing where the cursor already is
-        // produces no cursor-move callback, so take the press point from the cursor itself.
-        double x = 0.0;
-        double y = 0.0;
-        glfwGetCursorPos(window, &x, &y);
-        router->OnRawMove(static_cast<float>(x), static_cast<float>(y));
+        // produces no cursor-move callback, so a press takes its point from the button message
+        // itself. (A release needs nothing: GLFW reports any move before the button-up.)
+        if (action == GLFW_PRESS) {
+            float x = 0.0f;
+            float y = 0.0f;
+            PressPointInClient(window, x, y);
+            router->OnRawMove(x, y);
+        }
         router->OnRawButton(button, action == GLFW_PRESS);
         return;
     }

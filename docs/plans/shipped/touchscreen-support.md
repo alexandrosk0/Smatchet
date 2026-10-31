@@ -152,6 +152,8 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - `5bce111d3` · This plan's post-ship sections + archive; tooling entry for the on-device residue.
 - `3b6aa3127` · Branch-review fixes: Windows press-and-hold property no longer set at startup, removed at shutdown; lost-release recovery (repeated press or app focus loss cancels the stuck gesture); every event after a press waits a tick (fast-tap hover fix); touch settings and sizing gated on the router (Android untouched); stronger bucket-E guards; `Active` instead of `WasActive`; localization entry formatted.
 - `39e3b149f` · Re-review fixes: press-and-hold property follows the active device (set by touch, cleared by pen); touch Preferences rows `ConditionalDraw`; unreachable timing check removed.
+- `c4b1bc324` · Router ownership via `std::make_unique` / `unique_ptr` (pre-ship no-raw-new lint); comment lint.
+- `ee9060ef8` + follow-up · PR-review (Bugbot) fixes: a touch press takes its point from the button message (`GetMessagePos`) instead of a stale earlier touch point; the first fling step waits a tick only when the release itself moved the content (no extra jump, no stall).
 
 ## Deviations from plan
 
