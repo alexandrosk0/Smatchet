@@ -16,6 +16,7 @@
 #include "imgui.h"
 #include "imgui_te_engine.h"
 #include "imgui_te_context.h"
+#include "Ui/TouchInputRouter.h"
 #endif
 
 #include <algorithm>
@@ -299,6 +300,9 @@ void UiTestScenario::OnStart(IAppScenarioHost& app, const nlohmann::json& args, 
     SmatchetRegisterAllUiTests(engine_);
 
     ImGuiTestEngine_Start(engine_, uiCtx);
+    // The engine drops queued input it did not add in its own NewFramePre hook; the touch router's
+    // synthesized events must be queued after that runs, so re-register the router's hooks last.
+    smatchet::ui::touch::MoveTouchRouterHooksToEnd(uiCtx);
     g_active_engine.store(engine_, std::memory_order_release);
     g_active_app.store(&RequireConcreteController(app), std::memory_order_release);
 

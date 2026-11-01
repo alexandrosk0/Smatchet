@@ -1,6 +1,7 @@
 #include "SmatchetTheme.h"
 
 #include "SmatchetThemeDensity.h"
+#include "Ui/TouchSizingPure.h"
 
 #include <atomic>
 
@@ -881,6 +882,28 @@ void SmatchetTheme::ApplyTouchScale(float scale) {
     if (ShouldApplyDensityScale(scale)) {
         ImGui::GetStyle().ScaleAllSizes(scale);
     }
+}
+
+void SmatchetTheme::ApplyTouchTargetOverlay(float hostScale) {
+    ImGuiStyle& style = ImGui::GetStyle();
+    SmatchetTouchSizingPure::TouchStyleFields f;
+    f.itemSpacingX = style.ItemSpacing.x;
+    f.itemSpacingY = style.ItemSpacing.y;
+    f.touchExtraPaddingX = style.TouchExtraPadding.x;
+    f.touchExtraPaddingY = style.TouchExtraPadding.y;
+    f.scrollbarSize = style.ScrollbarSize;
+    f.grabMinSize = style.GrabMinSize;
+    f.framePaddingY = style.FramePadding.y;
+    f.windowBorderHoverPadding = style.WindowBorderHoverPadding;
+    f.tabCloseButtonMinWidthUnselected = style.TabCloseButtonMinWidthUnselected;
+    const SmatchetTouchSizingPure::TouchStyleFields out =
+        SmatchetTouchSizingPure::ComputeTouchTargetStyle(f, hostScale);
+    style.TouchExtraPadding = ImVec2(out.touchExtraPaddingX, out.touchExtraPaddingY);
+    style.ScrollbarSize = out.scrollbarSize;
+    style.GrabMinSize = out.grabMinSize;
+    style.FramePadding.y = out.framePaddingY;
+    style.WindowBorderHoverPadding = out.windowBorderHoverPadding;
+    style.TabCloseButtonMinWidthUnselected = out.tabCloseButtonMinWidthUnselected;
 }
 
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }

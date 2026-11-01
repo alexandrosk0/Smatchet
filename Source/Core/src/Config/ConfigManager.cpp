@@ -336,6 +336,7 @@ const FieldDesc<float> kFloatFields[] = {
     {"view_field_picker_height", &TrackerConfig::ViewFieldPickerHeight},
     {"views_sidebar_width", &TrackerConfig::ViewsSidebarWidth},
     {"views_fields_split_ratio", &TrackerConfig::ViewsFieldsSplitRatio},
+    {"touch_long_press_seconds", &TrackerConfig::TouchLongPressSeconds},
 };
 
 template <typename T, std::size_t N> std::size_t CountOf(const T (&)[N]) { return N; }

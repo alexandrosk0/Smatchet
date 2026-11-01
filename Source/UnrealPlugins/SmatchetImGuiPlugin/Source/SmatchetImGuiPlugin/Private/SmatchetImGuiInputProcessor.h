@@ -26,6 +26,9 @@ class FSmatchetImGuiInputProcessor : public IInputProcessor {
     /** Call before UnregisterInputPreProcessor so editor tooltips are not left disabled. */
     void EnsureTooltipsRestored();
 
+    /** Call before UnregisterInputPreProcessor: removes the Windows pen tracker (see PushPointerSource). */
+    void DetachPlatformHooks();
+
     virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp, TSharedRef<ICursor> Cursor) override;
     virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override;
     virtual bool HandleKeyUpEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override;
@@ -57,12 +60,22 @@ class FSmatchetImGuiInputProcessor : public IInputProcessor {
     void ComputeModifierState(const FInputEvent& InputEvent, bool& OutCtrl, bool& OutShift, bool& OutAlt,
                               bool& OutSuperKey) const;
     void PushModifierState(const FInputEvent& InputEvent) const;
+    /** Tag the following pointer calls as touch or mouse so ImGui applies its touchscreen handling. */
+    void PushPointerSource(const FPointerEvent& PointerEvent);
+    /** Send a client-local pointer position to ImGui and remember it (the wheel handler compares). */
+    void ForwardPointerPosition(const FVector2f& ClientPos);
+    /** Second and later fingers are ignored (no multi-touch); the event is still consumed. */
+    static bool IsSecondaryTouch(const FPointerEvent& PointerEvent);
     /** True when Ctrl/Alt/Cmd are held — ImGui handles shortcuts; do not inject InputQueueCharacters. */
     bool HasTextInputBlockingModifier(const FKeyEvent& InKeyEvent) const;
 
     SmatchetImGuiHostHandle Host = nullptr;
     bool bSlateTooltipSuppressionActive = false;
     bool bAllowTooltipsBeforeSmatchet = true;
+    bool bLoggedFirstTouch = false;
+    FVector2f LastForwardedPointerPos = FVector2f::ZeroVector;
+    bool bHasForwardedPointerPos = false;
+    bool bPointerIsTouch = false;
 
     /** True while Tick is applying NoCapture / DoNotLock / unlock to game viewports for the overlay. */
     bool bOverlayViewportStompActive = false;

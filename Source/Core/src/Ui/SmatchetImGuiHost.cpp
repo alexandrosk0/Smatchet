@@ -46,6 +46,7 @@
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #include "TicketSyncService.h"
+#include "Ui/TouchInputRouter.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "McpPlugin.h"
 #endif
@@ -138,6 +139,13 @@ struct SmatchetImGuiHost::Impl {
     std::atomic<bool> Initialized{false};
     std::atomic<bool> Initializing{false};
     std::atomic<bool> BuildingFrame{false};
+    // Wall-clock time of the previous BeginFrame. The plugin passes a fixed 1/60 s, which made ImGui's
+    // clock (double-click window, touch long-press) run at the presentation rate instead of real time.
+    std::chrono::steady_clock::time_point LastBeginFrameTime;
+    bool HasLastBeginFrameTime = false;
+    // Source of the pointer events being forwarded (SetMouseSource). Touchscreen events go to the
+    // context's TouchInputRouter while gestures are on, instead of straight into ImGui.
+    bool PointerIsTouch = false;
     std::atomic<bool> RenderingDraw{false};
     std::atomic<bool> FrameActive{false};
     std::atomic<bool> OptionsSet{false};
@@ -447,6 +455,7 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
         std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
         ImGui::CreateContext();
         ImplData->ImGuiCtx = ImGui::GetCurrentContext();
+        smatchet::ui::touch::InstallTouchInputRouter(ImplData->ImGuiCtx);
     }
     ImGuiIO& io = ImGui::GetIO();
     ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
@@ -688,6 +697,16 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
 
     ImGuiIO& io = ImGui::GetIO();
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
+    // Prefer the measured wall delta so time-based input (double-click, long-press) does not depend on
+    // how often the overlay presents. Clamped: a hidden overlay or a debugger break must not make the
+    // next frame's delta huge, and ImGui asserts on a zero delta.
+    const auto frameNow = std::chrono::steady_clock::now();
+    if (ImplData->HasLastBeginFrameTime) {
+        const float measured = std::chrono::duration<float>(frameNow - ImplData->LastBeginFrameTime).count();
+        io.DeltaTime = (std::min)(0.25f, (std::max)(1.0f / 1000.0f, measured));
+    }
+    ImplData->LastBeginFrameTime = frameNow;
+    ImplData->HasLastBeginFrameTime = true;
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
 
     ImGui::NewFrame();
@@ -795,8 +814,16 @@ void SmatchetImGuiHost::SetMousePosition(float x, float y) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MousePos = ImVec2(x, y);
+    if (ImplData->PointerIsTouch) {
+        smatchet::ui::touch::TouchInputRouter* router =
+            smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext());
+        if (router != nullptr && router->GesturesEnabled()) {
+            router->OnRawMove(x, y);
+            return;
+        }
+    }
+    // Event queue (not a direct io.MousePos write) so ImGui keeps press/move ordering and the mouse source.
+    ImGui::GetIO().AddMousePosEvent(x, y);
 }
 
 void SmatchetImGuiHost::SetMouseButton(int button, bool isDown) {
@@ -810,8 +837,16 @@ void SmatchetImGuiHost::SetMouseButton(int button, bool isDown) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MouseDown[button] = isDown;
+    if (ImplData->PointerIsTouch) {
+        smatchet::ui::touch::TouchInputRouter* router =
+            smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext());
+        if (router != nullptr && router->GesturesEnabled()) {
+            router->OnRawButton(button, isDown);
+            return;
+        }
+    }
+    // Event queue: a down+up arriving between two frames is no longer collapsed into "never pressed".
+    ImGui::GetIO().AddMouseButtonEvent(button, isDown);
 }
 
 void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
@@ -822,9 +857,22 @@ void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-    ImGuiIO& io = ImGui::GetIO();
-    io.MouseWheelH += wheelX;
-    io.MouseWheel += wheelY;
+    ImGui::GetIO().AddMouseWheelEvent(wheelX, wheelY);
+}
+
+void SmatchetImGuiHost::SetMouseSource(int source) {
+    if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (source < 0 || source >= static_cast<int>(ImGuiMouseSource_COUNT)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
+    if (ImplData->ImGuiCtx) {
+        ImGui::SetCurrentContext(ImplData->ImGuiCtx);
+    }
+    ImGui::GetIO().AddMouseSourceEvent(static_cast<ImGuiMouseSource>(source));
+    ImplData->PointerIsTouch = (source == static_cast<int>(ImGuiMouseSource_TouchScreen));
 }
 
 void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey) {
@@ -1287,6 +1335,13 @@ void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, floa
     if (!h)
         return;
     h->AddMouseWheel(wheelX, wheelY);
+}
+
+void SmatchetHost_SetMouseSource(SmatchetImGuiHostHandle host, int source) {
+    auto* h = LookupHost(host);
+    if (!h)
+        return;
+    h->SetMouseSource(source);
 }
 
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey) {

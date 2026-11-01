@@ -96,6 +96,7 @@ void SaveEnumFields(nlohmann::json& j, const TrackerConfig& config) {
     j["mobileNav"] = config.MobileNavPages;
     j["mobileHome"] = config.MobileHomePage;
     j["mobileDensity"] = mobileTouchDensityToString(config.MobileTouchDensity);
+    j["touchInput"] = touchInputModeToString(config.TouchInput);
     j["ui_language"] = ConfigManager::NormalizeUiLanguageCode(config.UiLanguage);
 }
 

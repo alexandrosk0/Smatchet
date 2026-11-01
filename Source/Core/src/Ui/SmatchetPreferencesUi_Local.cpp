@@ -11,6 +11,8 @@
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "TouchGesturePure.h"
+#include "Ui/TouchInputRouter.h"
 #include "VsyncControl.h"
 
 #include "imgui.h"
@@ -100,6 +102,48 @@ void DrawAppearanceUiModeSection(UiDrawSession& d) {
     }
     ImGui::SetItemTooltip("Desktop = docking workspace. Mobile = single-column shell with top bar + bottom nav. "
                           "Auto switches by window width.");
+}
+
+// Desktop touchscreen block of Layout & density: Auto / On / Off plus the long-press hold time.
+// The combo index maps 1:1 onto the TouchInputMode enum order (Auto=0/On=1/Off=2).
+void DrawAppearanceTouchSection(UiDrawSession& d) {
+    const bool showMode = d.prefsFilter.ShowSetting("appearance.layout_density.touch_input");
+    const bool showHold = d.prefsFilter.ShowSetting("appearance.layout_density.touch_long_press");
+    // Desktop hosts only: Android (no router) handles touch through the Mobile UI mode instead.
+    if ((!showMode && !showHold) ||
+        smatchet::ui::touch::TouchInputRouter::ForContext(ImGui::GetCurrentContext()) == nullptr) {
+        return;
+    }
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Touchscreen");
+    ImGui::Separator();
+    if (showMode) {
+        const char* modes[] = {SmatchetLocalization::T("prefs.touch.auto", "Auto (bigger targets while touching)"),
+                               SmatchetLocalization::T("prefs.touch.on", "On (always touch-sized)"),
+                               SmatchetLocalization::T("prefs.touch.off", "Off (finger acts as a mouse)")};
+        int current = static_cast<int>(d.cfg.TouchInput);
+        if (ImGui::Combo("Touch input", &current, modes, IM_ARRAYSIZE(modes))) {
+            if (current >= 0 && current <= 2) {
+                d.cfg.TouchInput = static_cast<TouchInputMode>(current);
+                MarkPrefsDirty(d);
+            }
+        }
+        ImGui::SetItemTooltip("Finger gestures: drag to scroll, hold to open the context menu, tap to show a "
+                              "tooltip, double-tap to edit a cell. Off turns the gestures off.");
+    }
+    if (showHold) {
+        float hold = SmatchetTouchGesturePure::ClampLongPressSeconds(d.cfg.TouchLongPressSeconds);
+        ImGui::BeginDisabled(d.cfg.TouchInput == TouchInputMode::Off);
+        if (ImGui::SliderFloat("Long-press delay", &hold, SmatchetTouchGesturePure::kMinLongPressSeconds,
+                               SmatchetTouchGesturePure::kMaxLongPressSeconds, "%.2f s",
+                               ImGuiSliderFlags_AlwaysClamp)) {
+            d.cfg.TouchLongPressSeconds = hold;
+            MarkPrefsDirty(d);
+        }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the slider, not the page
+        ImGui::SetItemTooltip("How long to hold a finger still before the context menu opens.");
+        ImGui::EndDisabled();
+    }
 }
 
 void DrawMobileNavPagesEditor(UiDrawSession& d, std::vector<std::string>& nav);
@@ -264,6 +308,7 @@ void DrawTrackerNotificationsSectionBody(UiDrawSession& d) {
             d.cfg.TicketChangeMonitorIntervalSec = interval;
             MarkPrefsDirty(d);
         }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the slider, not the page
         ImGui::SetItemTooltip("How often to check tracked issues for updates. This refreshes the grid's data and "
                               "(if enabled above) raises a toast. Lower = faster updates, more requests.");
         ImGui::EndDisabled();
@@ -275,6 +320,7 @@ void DrawAppearancePreferencesTab(UiDrawSession& d) {
     SmatchetPreferencesUiDetail::PrefsSection(d, "appearance.layout_density", [&] {
         DrawAppearanceUiModeSection(d);
         DrawAppearanceMobileSection(d);
+        DrawAppearanceTouchSection(d);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "appearance.display", [&] { DrawAppearanceDisplaySection(d); });
 }
