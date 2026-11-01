@@ -21,18 +21,34 @@
 #include <cstddef>
 #include <cstdio>
 #include <string>
-#include <utility>
 
 namespace {
 
+struct GridRowCount {
+    bool show = false;
+    size_t visible = 0; ///< Rows left after the grid search / hidden parents; == total when unfiltered.
+    size_t total = 0;   ///< Every loaded ticket in the pane's snapshot.
+};
+
 // Row count of the active grid. Shown with a single pane, or with several panes
 // when one is focused; with several and none focused, "the" grid is ambiguous.
-static std::pair<bool, size_t> ShouldShowRowCount(const UiDrawSession& d, AppController& app) {
+// Reads the pane's cached sort/filter projection — O(1), never re-filters per frame.
+static GridRowCount ShouldShowRowCount(const UiDrawSession& d, AppController& app) {
+    GridRowCount out;
     if (d.gridPanes.empty() || (d.gridPanes.size() > 1 && d.focusedPaneId.empty())) {
-        return {false, 0};
+        return out;
     }
-    const auto tickets = app.GetActiveTicketsSnapshot();
-    return {true, tickets ? tickets->size() : 0};
+    const GridPane& pane = d.focusedPane();
+    const auto tickets = pane.ticketsSnapshot ? pane.ticketsSnapshot : app.GetActiveTicketsSnapshot();
+    out.show = true;
+    out.total = tickets ? tickets->size() : 0;
+    out.visible = out.total;
+    // Trust the projection only when it was built over a snapshot of this size; while a
+    // debounced rebuild is pending after a sync it describes an older snapshot.
+    if (pane.cachedSortedIndices.size() == out.total && pane.filteredIndices.size() < out.total) {
+        out.visible = pane.filteredIndices.size();
+    }
+    return out;
 }
 
 static const char* ThemeIdName(ThemeId t) {
@@ -199,11 +215,13 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
     const char* themeName = ThemeIdName(d.cfg.Theme);
 
     // Add row count if applicable.
-    const auto rowCountResult = ShouldShowRowCount(d, app);
-    const bool showRowCount = rowCountResult.first;
-    const size_t rowCount = rowCountResult.second;
-    if (showRowCount) {
-        std::snprintf(rightBuf, sizeof(rightBuf), "%zu rows  %dpt  %s", rowCount, d.cfg.FontSizePt, themeName);
+    const GridRowCount rows = ShouldShowRowCount(d, app);
+    const bool filtered = rows.show && rows.visible < rows.total;
+    if (filtered) {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%zu of %zu rows  %dpt  %s", rows.visible, rows.total,
+                      d.cfg.FontSizePt, themeName);
+    } else if (rows.show) {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%zu rows  %dpt  %s", rows.total, d.cfg.FontSizePt, themeName);
     } else {
         std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
     }
@@ -221,11 +239,19 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
     }
     ImGui::TextUnformatted(rightBuf);
     if (::ImGui::IsItemHovered()) {
-        const char* tooltip = showRowCount
-                                  ? "Row count in the focused grid, UI font size and active theme — change appearance "
-                                    "under View > Appearance.\nFrame-rate metrics live in the Performance window."
-                                  : "UI font size and active theme — change them under View > Appearance.\nFrame-rate "
-                                    "metrics live in the Performance window.";
+        const char* tooltip = nullptr;
+        if (filtered) {
+            tooltip = "Rows shown in the focused grid after its search or filter, of all loaded rows.\n"
+                      "UI font size and active theme — change them under View > Appearance.\n"
+                      "Frame-rate metrics live in the Performance window.";
+        } else if (rows.show) {
+            tooltip = "Loaded rows in the focused grid (no search or filter is narrowing them).\n"
+                      "UI font size and active theme — change them under View > Appearance.\n"
+                      "Frame-rate metrics live in the Performance window.";
+        } else {
+            tooltip = "UI font size and active theme — change them under View > Appearance.\n"
+                      "Frame-rate metrics live in the Performance window.";
+        }
         ImGui::SetTooltip("%s", tooltip);
     }
 
