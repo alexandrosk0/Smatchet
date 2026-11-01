@@ -109,7 +109,7 @@ void SmatchetUI::applyGridSearchEnter(AppController& app, UiDrawSession& d, Grid
     // so resolves no users of its own, making that list pure contamination with nothing to
     // gain — the catalog is exactly what this pane knows.
     const std::string query = backend == gs::GridSearchBackend::Jira
-                                  ? jql_user_display::RenderQueryWithAccountIds(input, app.GetAvailableFields(),
+                                  ? jql_user_display::RenderQueryWithAccountIds(input, *app.GetAvailableFields(),
                                                                                 app.GetAvailableUsers(), nullptr)
                                   : input;
     switch (applyQueryToPaneView(app, d, target, query)) {

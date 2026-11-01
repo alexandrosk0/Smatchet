@@ -134,7 +134,7 @@ void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string&
     }
     const std::string text(d.bulkImportTextBuf.data());
     const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
-    d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
+    d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, *app.GetAvailableFields(), fallbackProject,
                                                             d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
     std::vector<std::string> drafts;
     for (const auto& row : d.bulkImportPreview.Rows) {
@@ -187,7 +187,7 @@ std::string BulkImportFormatFailure(AppController& app, const IssueCreateResult&
     if (!r.MissingFieldIds.empty()) {
         msg += " [missing: ";
         std::vector<std::string> names =
-            IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
+            IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, *app.GetAvailableFields());
         msg += JoinStrings(names, ", ");
         msg += "]";
     }

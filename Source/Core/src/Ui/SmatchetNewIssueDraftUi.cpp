@@ -101,7 +101,7 @@ void TrySubmitNewIssueDraft(AppController& app, UiDrawSession& d) {
     if (!d.newIssueMissingFieldIds.empty()) {
         d.gridEditSuccess.clear();
         std::vector<std::string> names =
-            IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
+            IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, *app.GetAvailableFields());
         d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
     } else {
         // Unreachable tracker: the create worker saves the draft to the offline queue (Quality Pillar 6).
@@ -211,7 +211,7 @@ void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const Tracke
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
                 b ? &b->Connectivity() : nullptr, cfg.JqlQuery, lastVisibleTicket->id, std::string());
             d.newIssueDraft =
-                IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
+                IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, *app.GetAvailableFields(), resolvedProject,
                                                     cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
         } else {
             d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
@@ -653,7 +653,8 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
 
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
                             const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
-    const auto& catalog = app.GetAvailableFields();
+    const std::shared_ptr<const std::vector<TrackerField>> catalogSnapshot = app.GetAvailableFields();
+    const std::vector<TrackerField>& catalog = *catalogSnapshot;
 
     PollNewIssueCreateResult(d);
 

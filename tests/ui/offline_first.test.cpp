@@ -168,7 +168,7 @@ static void RegisterOfflineFirstCatalogSurvivesTransportDown(ImGuiTestEngine* en
 
         // Online: the fixture's scripted catalog loads.
         IM_CHECK_NO_RET(app->RefreshFieldCatalog(cfg));
-        IM_CHECK_NO_RET(!app->GetAvailableFields().empty());
+        IM_CHECK_NO_RET(!app->GetAvailableFields()->empty());
         IM_CHECK_NO_RET(app->GetFieldCatalogError().empty());
 
         // Offline: the refresh fails at the transport level...
@@ -177,7 +177,7 @@ static void RegisterOfflineFirstCatalogSurvivesTransportDown(ImGuiTestEngine* en
         IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() >= 1);
 
         // ...but the catalog the user already had survives, with a warning rather than an error.
-        IM_CHECK_NO_RET(!app->GetAvailableFields().empty());
+        IM_CHECK_NO_RET(!app->GetAvailableFields()->empty());
         IM_CHECK_NO_RET(app->GetFieldCatalogError().empty());
         IM_CHECK_NO_RET(app->GetTrackerConnectivityBannerForUi(nullptr).Kind ==
                         TrackerConnectivityBannerForUi::Level::Warning);

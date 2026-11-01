@@ -444,7 +444,7 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
                 // The buffer holds display names on Jira — hand the browser the id-canonical
                 // query (names reverse-mapped) so the search matches what the view runs.
                 app.OpenUrl(app.BuildJqlSearchUrl(d.cfg, TrackerQueryAcp_CanonicalQueryForApply(
-                                                             d.cfg.TrackerType, app.GetAvailableFields(),
+                                                             d.cfg.TrackerType, *app.GetAvailableFields(),
                                                              app.GetAvailableUsers(), d.viewJqlEditor, currentJql)));
             }
         }
@@ -465,7 +465,7 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
             // record (names reverse-mapped to account ids) into the draft, same conversion
             // the editor's Save used to apply once at commit time (BuildUpdatedView, now
             // gone — the draft IS what gets saved, so this must happen on every edit frame).
-            d.viewDraft.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
+            d.viewDraft.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, *app.GetAvailableFields(),
                                                                      app.GetAvailableUsers(), d.viewJqlEditor,
                                                                      std::string(d.viewJqlEditor.buf));
         }
@@ -651,7 +651,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
         d.viewsActiveTab = Tab_Fields;
         ImGui::Spacing();
 
-        const auto& availableFields = app.GetAvailableFields();
+        const std::shared_ptr<const std::vector<TrackerField>> availableFieldsSnapshot = app.GetAvailableFields();
+        const std::vector<TrackerField>& availableFields = *availableFieldsSnapshot;
         DrawFieldsTabCatalogState(app, d, availableFields.empty());
 
         // Per-frame LOCAL working set, derived from d.viewDraft.Columns (the source of
@@ -758,7 +759,8 @@ void SmatchetUI::drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx) {
             columnKeys.push_back(col.Key);
         }
 
-        const auto& availableFields = app.GetAvailableFields();
+        const std::shared_ptr<const std::vector<TrackerField>> availableFieldsSnapshot = app.GetAvailableFields();
+        const std::vector<TrackerField>& availableFields = *availableFieldsSnapshot;
         const float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
         ImGui::BeginChild("##ColumnOrderScroll", ImVec2(0, listHeight), true);
         bool reordered = false;
@@ -837,7 +839,8 @@ void SmatchetUI::drawViewsSortTab(ViewsDashboardDrawCtx& ctx) {
 // drawViewsSortTab under the function-size cap; behaviour-identical.
 void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive) {
     UiDrawSession& d = ctx.d;
-    const auto& availableFields = ctx.app.GetAvailableFields();
+    const std::shared_ptr<const std::vector<TrackerField>> availableFieldsSnapshot = ctx.app.GetAvailableFields();
+    const std::vector<TrackerField>& availableFields = *availableFieldsSnapshot;
 
     // Promote SortSpecs into a parallel column-key list so we can reuse the
     // string-vector drag helper, then write any reorder back at end.
@@ -911,7 +914,8 @@ void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* m
 // out of drawViewsSortTab under the function-size cap; behaviour-identical.
 void SmatchetUI::drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive) {
     UiDrawSession& d = ctx.d;
-    const auto& availableFields = ctx.app.GetAvailableFields();
+    const std::shared_ptr<const std::vector<TrackerField>> availableFieldsSnapshot = ctx.app.GetAvailableFields();
+    const std::vector<TrackerField>& availableFields = *availableFieldsSnapshot;
 
     // + Add sort key (popup picker scoped to current column order).
     if (ImGui::Button("+ Add sort key")) {

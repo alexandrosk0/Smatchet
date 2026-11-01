@@ -686,14 +686,15 @@ std::vector<DeadPendingFieldEdit> OfflineQueueService::GetDeadPendingFieldEdits(
     }
 }
 
-const TrackerField* OfflineQueueService::FindCatalogField(const std::string& fieldId) const {
-    const std::vector<TrackerField>& catalog = deps_.AvailableFields();
+std::shared_ptr<const TrackerField> OfflineQueueService::FindCatalogField(const std::string& fieldId) const {
+    const std::shared_ptr<const std::vector<TrackerField>> catalog = deps_.AvailableFields();
     const auto it =
-        std::find_if(catalog.begin(), catalog.end(), [&](const TrackerField& f) { return f.Id == fieldId; });
-    if (it == catalog.end()) {
+        std::find_if(catalog->begin(), catalog->end(), [&](const TrackerField& f) { return f.Id == fieldId; });
+    if (it == catalog->end()) {
         return nullptr;
     }
-    return &(*it);
+    // Aliasing constructor: the field shares the snapshot's lifetime, so a catalog swap cannot free it.
+    return std::shared_ptr<const TrackerField>(catalog, &(*it));
 }
 
 bool OfflineQueueService::RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json& payload,
@@ -709,7 +710,7 @@ bool OfflineQueueService::RebuildScalarResolutionPayload(const PendingFieldEditR
     // legacy verbatim write is the degraded fallback only when the field schema or the mutations
     // builder is unavailable (so resolution still completes rather than no-ops). A value the builder
     // REJECTS is never written verbatim: for a structured field that shape would dead-letter on replay.
-    const TrackerField* field = FindCatalogField(row.FieldId);
+    const std::shared_ptr<const TrackerField> field = FindCatalogField(row.FieldId);
     const std::shared_ptr<ITrackerIssueMutations> mutations = field ? deps_.MutationsShared() : nullptr;
     if (mutations) {
         Result<nlohmann::json, TrackerError> built =
@@ -770,10 +771,11 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                 }
                 nlohmann::json specialPayload;
                 const TrackerFieldPayloadPure::SpecialPayloadRebuild special =
-                    isRichText ? TrackerFieldPayloadPure::SpecialPayloadRebuild::NotSpecial
-                               : TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(row.FieldId, newPayload,
-                                                                                      FindCatalogField(row.FieldId),
-                                                                                      resolvedValue, specialPayload);
+                    isRichText
+                        ? TrackerFieldPayloadPure::SpecialPayloadRebuild::NotSpecial
+                        : TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(row.FieldId, newPayload,
+                                                                               FindCatalogField(row.FieldId).get(),
+                                                                               resolvedValue, specialPayload);
                 if (special == TrackerFieldPayloadPure::SpecialPayloadRebuild::Unresolvable) {
                     LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — the chosen value is "
                              "not a known sprint or a non-empty estimate; the edit stays suspended",
@@ -1512,7 +1514,7 @@ void OfflineQueueService::TickOfflineCreates() {
         }
         offlineReplayInFlight_ = true;
     }
-    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(deps_.AvailableFields());
+    const std::shared_ptr<const std::vector<TrackerField>> catalogCopy = deps_.AvailableFields();
 
     IOfflineQueueDeps& depsRef = deps_;
     try {

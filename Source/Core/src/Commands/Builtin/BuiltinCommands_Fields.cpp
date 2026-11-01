@@ -28,7 +28,9 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
                                 [&app](const nlohmann::json& args, const CommandContext&) {
                                     const int limit = args.value("limit", 50);
                                     const int offset = args.value("offset", 0);
-                                    const std::vector<TrackerField>& fields = app.GetAvailableFields();
+                                    const std::shared_ptr<const std::vector<TrackerField>> snapshot =
+                                        app.GetAvailableFields();
+                                    const std::vector<TrackerField>& fields = *snapshot;
                                     nlohmann::json items = nlohmann::json::array();
                                     for (const TrackerField& f : fields) {
                                         nlohmann::json one;
@@ -73,7 +75,7 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
                                     const bool ok = app.RefreshFieldCatalog(cfg);
                                     nlohmann::json out;
                                     out["ok"] = ok;
-                                    out["fieldCount"] = static_cast<int>(app.GetAvailableFields().size());
+                                    out["fieldCount"] = static_cast<int>(app.GetAvailableFields()->size());
                                     if (!ok) {
                                         std::string error = app.GetFieldCatalogError();
                                         if (error.empty()) {

@@ -135,9 +135,9 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
     ImGui::Text("Callstack Frames: %zu", ctx.NRow);
     const ImGuiStyle& stBtn = ImGui::GetStyle();
     const float padH = stBtn.FramePadding.x * 2.f;
-    const float callstackViewBtnW = (std::max)(
-        ImGui::CalcTextSize("Show Raw Text").x + padH,
-        (std::max)(ImGui::CalcTextSize("Show Table").x + padH, ImGui::CalcTextSize("Show raw callstack…").x + padH));
+    const float callstackViewBtnW = (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
+                                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
+                                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
     if (!streamlinedHide) {
         ImGui::SameLine();
         PushAnnotateLinkButtonColors(theme);
@@ -1212,9 +1212,10 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
 void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
     ensureSettingsBuffersLoaded();
 
-    MaybeAutoselectCallstackTrackerField(app.GetAvailableFields());
-    MaybeAutoselectLastFoundClTrackerField(app.GetAvailableFields());
-    MaybeAutoselectLastOccurrencesTrackerField(app.GetAvailableFields());
+    const std::shared_ptr<const std::vector<TrackerField>> availableFields = app.GetAvailableFields();
+    MaybeAutoselectCallstackTrackerField(*availableFields);
+    MaybeAutoselectLastFoundClTrackerField(*availableFields);
+    MaybeAutoselectLastOccurrencesTrackerField(*availableFields);
 
     const bool justOpened = !annotateOpenPrev_;
     annotateOpenPrev_ = true;

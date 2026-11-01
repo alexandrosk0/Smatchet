@@ -92,7 +92,9 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     bool CacheRecreatingImpl = false;
     bool IsCacheRecreating() const override { return CacheRecreatingImpl; }
     std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
-    const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
+    std::shared_ptr<const std::vector<TrackerField>> AvailableFields() const override {
+        return std::make_shared<std::vector<TrackerField>>(Fields);
+    }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
                                          const std::string& /*issueTypeName*/) const override {
         return Required;

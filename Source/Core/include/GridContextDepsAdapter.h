@@ -79,7 +79,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override;
     std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override;
     std::shared_ptr<ITrackerCollaboration> CollaborationShared() const override;
-    const std::vector<TrackerField>& AvailableFields() const override;
+    std::shared_ptr<const std::vector<TrackerField>> AvailableFields() const override;
     RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                          const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
