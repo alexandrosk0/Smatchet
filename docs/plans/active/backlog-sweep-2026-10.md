@@ -188,6 +188,6 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
 *In the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+3. *regen the index: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
 
-*Blocked while `docs/plans/INDEX.md` sits in another session's plan-lock write set (`hook-tree-resolution`); the move rides the first follow-up after that lock releases.*
+*Blocked while `docs/plans/INDEX.md` sits in another session's plan-lock write set: first `hook-tree-resolution`, and as of 2026-10-31 `touchscreen-support` (#2370). #2296 has merged, so the move rides the first follow-up after that lock releases.*

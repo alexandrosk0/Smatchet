@@ -56,7 +56,7 @@ authoritative pairing exists outside the body and is never consulted.
 2. **Make the body-edit path marker-preserving.** Any ship-loop step that rewrites a PR
    body (Intent-gate remediation, verdict stamping) must re-read the existing body and
    carry `lock-slug:` / `holds-lock:` forward, or refuse. Cheapest form: a
-   `gh pr edit --body` wrapper under `agents/scripts/core/` that diffs old→new for
+   `gh pr edit --body` wrapper under `agent-layer/agents/scripts/core/` that diffs old→new for
    dropped marker lines.
 3. **Assert at close, not days later.** The closeout sweep already knows the PR number;
    have it verify no `refs/locks/*` names this branch after merge, so the miss surfaces
@@ -71,4 +71,4 @@ available: the gate whose entire job is releasing the lock reports **success** w
 skipping the release — the "gate, don't trust" failure mode this repo files postmortems
 over.
 
-Re-scoped 2026-10-04 (backlog-sweep-2026-10): fixes 1 and 2 landed (backlog-sweep PR #2296: branch-keyed release at close; agents/scripts/core/lib/pr-body-edit.sh refuses a body that drops a lock-slug:/holds-lock: line, and ship-loops.md routes body rewrites through it). Remaining: fix 3, a closeout-sweep assertion that no refs/locks/* names the merged branch.
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): fixes 1 and 2 landed (backlog-sweep PR #2296: branch-keyed release at close; agent-layer/agents/scripts/core/lib/pr-body-edit.sh refuses a body that drops a lock-slug:/holds-lock: line, and ship-loops.md routes body rewrites through it). Remaining: fix 3, a closeout-sweep assertion that no refs/locks/* names the merged branch.

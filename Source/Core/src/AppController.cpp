@@ -286,6 +286,7 @@ AppController::~AppController() {
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
 
     DrainCatalogWorkBeforeShutdown_(); // queued snapshot saves reach the file; the startup restore read is joined
+    FlushTicketSavesBeforeShutdown_(); // the same for UpdateTicket's queued cache writes
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's

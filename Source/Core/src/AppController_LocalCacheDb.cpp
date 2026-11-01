@@ -39,8 +39,8 @@
 
 namespace {
 
-// Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set as soon as one of them is gone, so a
-// caller can tell a wipe that went through partway (a sidecar would not delete) from one that never started.
+// Deletes the database file and its -wal/-shm sidecars, sidecars first. `anyRemoved` is set once the database
+// file itself is gone, so a caller can tell a wipe that removed the rows from one that left them in place.
 VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemoved) {
     anyRemoved = false;
     namespace fs = ghc::filesystem;
@@ -53,7 +53,11 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
         }
     }
     const std::string stem = p.string();
-    const fs::path paths[3] = {p, fs::path(stem + "-wal"), fs::path(stem + "-shm")};
+    // Sidecars first, the database last. A delete that fails part-way then leaves the main file with no
+    // stale -wal beside it, so the caller's reopen at the same path is safe. The other order could pair a
+    // brand-new empty database with the old one's leftover WAL, which SQLite may replay into it on open.
+    // `anyRemoved` means the database itself is gone; removing only a sidecar wipes no rows.
+    const fs::path paths[3] = {fs::path(stem + "-wal"), fs::path(stem + "-shm"), p};
     for (const auto& f : paths) {
         ec.clear();
         if (!fs::exists(f, ec)) {
@@ -68,7 +72,9 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
         if (ec) {
             return VoidResult::Err("Could not remove " + f.string() + ": " + ec.message());
         }
-        anyRemoved = true;
+        if (f == p) {
+            anyRemoved = true;
+        }
     }
     return VoidOk();
 }
@@ -148,6 +154,14 @@ void AppController::DrainCatalogWorkBeforeShutdown_() {
     }
     if (startupCatalogRestoreSlot_.valid()) {
         startupCatalogRestoreSlot_.wait();
+    }
+}
+
+void AppController::FlushTicketSavesBeforeShutdown_() {
+    // Once shuttingDown_ is set, LaunchBackgroundTask drops the queue's drain task, so a save posted just before
+    // quit would never reach SQLite. Bounded like the catalog flush above.
+    if (!ticketSaves_.Flush(std::chrono::seconds(5))) {
+        LOG_WARN("AppController shutdown: a queued ticket cache save did not finish within 5 s.");
     }
 }
 

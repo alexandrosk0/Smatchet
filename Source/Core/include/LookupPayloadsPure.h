@@ -28,8 +28,10 @@ constexpr const char* kEditMetaTypeKind = "editmeta_type";
 constexpr const char* kProjectsKind = "projects";
 constexpr const char* kProjectsKey = "all";
 
-/// Most users one roster row holds: the Jira roster fetch stops at the same bound. User-tunable
-/// (limits::Get().LookupMaxStoredUsers, default 50000), so a function rather than a constant.
+/// Most users one roster row holds. User-tunable (limits::Get().LookupMaxStoredUsers, default 50000), so a
+/// function rather than a constant. The Jira roster fetch has its own cap (jira_users_max_pages pages of
+/// 1000), so a fetched roster can exceed this; the catalog fetch then skips the save rather than store a
+/// prefix (SerializeUsers keeps only the first MaxStoredUsers()).
 std::size_t MaxStoredUsers();
 /// A roster payload above this size is not stored, so every stored row stays parseable.
 constexpr std::size_t kMaxUsersPayloadBytes = 16u * 1024u * 1024u;

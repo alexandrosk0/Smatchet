@@ -648,7 +648,16 @@ JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std:
 Result<std::vector<CachedTicket>, TrackerError>
 JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                            const ViewsStore& viewStore, const CancelCallback& shouldCancel) {
+    bool truncated = false;
+    return FetchChildrenOfKeysReportingTruncation(cfg, parentKeys, viewStore, shouldCancel, truncated);
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchChildrenOfKeysReportingTruncation(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                                   const ViewsStore& viewStore, const CancelCallback& shouldCancel,
+                                                   bool& truncated) {
     using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    truncated = false;
     std::vector<CachedTicket> outTickets;
     std::string outError;
     if (parentKeys.empty()) {
@@ -680,7 +689,8 @@ JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::
     // properly via nextPageToken, independent of how many keys are in the `parent in (...)`
     // clause. kMaxPagesPerBatch bounds worst-case pathological data (one parent-key batch with
     // more than kMaxPagesPerBatch * kPageSize children). Every sync asks the same way, so children
-    // past the cap are not loaded by any sync; hitting it is logged.
+    // past the cap are not loaded by any sync; hitting it is logged and reported through `truncated`, so
+    // the walk keeps the children cached earlier instead of purging them.
     constexpr std::size_t kMaxKeysPerRequest = 40;
     constexpr int kMaxPagesPerBatch = 50;
     constexpr int kPageSize = 100;
@@ -736,6 +746,7 @@ JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::
                 if (newToken.empty()) {
                     LOG_WARN("JiraClient::FetchChildrenOfKeys: page indicates more results but nextPageToken is "
                              "empty. Stopping pagination for this parent-key batch.");
+                    truncated = true;
                     break;
                 }
                 nextPageToken = std::move(newToken);
@@ -743,6 +754,7 @@ JiraClient::FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::
                     LOG_WARN("JiraClient::FetchChildrenOfKeys: hit the %d-page cap for one parent-key batch; "
                              "the remaining children are not loaded.",
                              kMaxPagesPerBatch);
+                    truncated = true;
                 }
             } catch (const std::exception& ex) {
                 LOG_ERROR("JiraClient: fetch-children parse failed: %s", ex.what());

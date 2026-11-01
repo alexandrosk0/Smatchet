@@ -340,8 +340,8 @@ struct TrackerConfig {
     // One-shot migration flag: retry after V2's exact-match miss. V2 only widens the
     // full pre-wheel snapshot and still sets its flag when it skips, so rows that
     // kept just the legacy primary (Ctrl+= / Ctrl+-) never got mouse-wheel. V3
-    // appends missing Defaults() aliases when every existing combo is still in the
-    // shipped set (non-empty). Custom / cleared / missing rows stay untouched.
+    // appends the missing Defaults() aliases to a row that holds only the legacy
+    // primary. Any other row (trimmed, custom, cleared, missing) stays untouched.
     bool MigratedMultiHotkeyZoomV3 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---

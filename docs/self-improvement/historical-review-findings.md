@@ -11,6 +11,69 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 27 — #2300–#2367 + late #2279, #2291, #2296 (55-unit sweep, 2026-10-31) — all fixed but one archive move
+
+Coverage: **55 PRs as 55 units — all reviewed (20 with findings, 30 clean), 5 fully superseded, 0 errored after the tooling fix below.** Net: **0 CRITICAL, 0 HIGH, 10 MEDIUM, 40 LOW** (50 findings, 10 `userVisible`). **49 are fixed in this PR; F38 is fixed except its plan archive, which waits for a live plan-lock.** No Issue was filed for the user-visible ones, because they ship fixed here (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2367 contiguous for PRs merged as of 2026-10-31; the next sweep resumes from #2368, plus #2244 (still open below the frontier).**
+
+**Range.** #2300–#2367 merged into develop (52 PRs; the worklist's authoritative and develop-log counts agree), plus the three late merges Batch 26 left open below its frontier: #2279, #2291 and #2296. #2244 is still open and carries forward. All 55 units ran in a workflow fan-out of opus `code-review` agents over `historical-review-survivors.sh` digests. Five were re-run: the four extractor errors (below) and #2331, whose first review covered only part of its digest. #2296 (212 files) and #2331 re-ran as file-aligned digest chunks (9 and 2), and #2321 from a pre-generated digest. Every finding was re-verified against HEAD while fixing it.
+
+**Tooling fix found by this sweep.** `historical-review-survivors.sh` ran `git blame` on every path a PR touched, and `git blame` on a gitlink (the `agent-layer` submodule pointer) exits 128. Under `pipefail` that aborted the whole digest, so #2296, #2321, #2326 and #2367 first came back as errors with nothing reviewed. The extractor now skips a gitlink like a binary path (new bats case; the pre-fix script exits 128 on it, the fixed one 0). It lives in the agent layer, so the fix ships in the layer PR.
+
+**Headlines.** Offline and sync data loss: a children fetch stopped by Jira's page cap still let the walk purge cached descendants (F46); a ticket save queued just before quit was dropped (F11); a roster over the stored cap was cached as a silent prefix (F25); a part-failed cache wipe could pair a new database with the old WAL (F33); malformed ADF attributes threw out of the offline-queue merge (F3, F4). Gates: the coverage gate exempted a rename of a file CMake names (F47), pre-ship's layer-pin check was silent in its most common stale case (F48), and a selftest checked only itself (F44). The rest is doc drift, most of it paths and line pins the #2321 flip moved under `agent-layer/`.
+
+### Fixed — every `userVisible` finding (10), one line each
+
+The full problem and fix text for all 50 is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl) (`batch: batch-27`, keyed by `pr` + `file` + `line`, with a `disposition` field).
+
+- F1 · #2279 (222bcb8f) · `Source/Core/src/Config/ConfigManager_Load.cpp:527` · **userVisible** — the V3 zoom migration re-added a combo to a row the user trimmed to some defaults; it now widens only a row holding the legacy primary alone (new test).
+- F3 · #2302 (c81d450d) · `Source/Core/src/Ui/AdfToMarkdown.cpp:172` · **userVisible** — ADF inline media read alt/url/id with `value()`, so a non-string attr threw out of AdfToMarkdown and aborted the offline-queue merge; every inline reader now uses a type-safe `StringField`.
+- F4 · #2302 (c81d450d) · `Source/Core/src/Ui/AdfToMarkdown.cpp:138` · **userVisible** — ADF emoji read attrs/shortName/text untyped, the same throw; fixed with the same helper.
+- F11 · #2313 (a6f29cca) · `Source/Core/include/AppController.h:1871` · **userVisible** — a ticket save queued just before quit could be dropped (`LaunchBackgroundTask` refuses work once `shuttingDown_` is set); the destructor now flushes `ticketSaves_` first.
+- F21 · #2336 (89441de5) · `Source/Core/src/Ui/SmatchetGridUiSupport.cpp:178` · **userVisible** — Copy link on a non-focused split pane built the URL from the focused pane's tracker. (Copy link builds a URL only for the focused pane; a per-pane URL needs per-pane config)
+- F22 · #2338 (493df4c4) · `Source/Core/src/Ui/SmatchetFieldViewerModalUi.cpp:112` · **userVisible** — Esc in the field viewer's discard confirm re-opened it instead of keeping the draft.
+- F24 · #2341 (07a1fc14) · `Source/Core/include/Ui/P4ClPreview.h:46` · **userVisible** — the P4 shutdown drain had a fixed 130 s cap while the p4 timeout became tunable to 1 h, so exit could hang; the default now follows the live limit.
+- F25 · #2341 (07a1fc14) · `Source/Core/include/LookupPayloadsPure.h:31` · **userVisible** — a fetched roster larger than `lookup_max_stored_users` was cached as a silent prefix; it is now not saved (the older full row stays) and a warning is logged.
+- F33 · #2346 (ddf92be8) · `Source/Core/src/AppController_LocalCacheDb.cpp:297` · **userVisible** — a part-failed cache wipe could reopen a fresh database next to the old WAL; sidecars are now removed first and the main file last.
+- F46 · #2331 (82d9dd79) · `Source/Core/src/Tracker/JiraIssueSearch.cpp:742` · **userVisible** — a children fetch stopped by Jira's page cap reported a complete walk, so cached descendants past the cap could be stale-purged; it now reports truncation and the walk keeps them (new test).
+
+### Fixed — internal MEDIUM (3)
+
+- F6 · #2309 (9cec7839) · `docs/adr/0026-offline-first-quality-pillar.md:44` — ADR-0026 linked the offline-first plan at its pre-archive path.
+- F13 · #2315 (7cf82d48) · `docs/self-improvement/categories/tooling/2026-10-05-plan-locks-claim-the-generated-plan-index.md:32` — the plan-lock backlog entry proposed the wrong generated lock-file path.
+- F48 · #2321 (07bd2c8d) · `scripts/dev/pre-ship.sh:91` — pre-ship's layer-pin check was silent when the mount never fetched develop's pin; that case now warns (new selftest case).
+
+### Fixed — internal LOW (37), indexed by file
+
+- `.github/workflows/all-checks-green.yml` — 1 LOW — #2296:28 (F43)
+- `Source/Core/include/Sync/TicketSyncService.h` — 1 LOW — #2291:99 (F2)
+- `Source/Core/include/TrackerRoster.h` — 1 LOW — #2342:15 (F29)
+- `Source/Core/include/Ui/SmatchetBottomPanelDrag.h` — 1 LOW — #2339:9 (F23)
+- `Source/Core/src/AttachmentAppUpdateService.cpp` — 1 LOW — #2331:439 (F20)
+- `Source/Core/src/Privacy/TextRedaction.cpp` — 1 LOW — #2356:377 (F35)
+- `Source/Core/src/Ui/AdfToMarkdown.cpp` — 1 LOW — #2302:70 (F5)
+- `Source/Core/src/Ui/SmatchetUI.cpp` — 1 LOW — #2296:330 (F40)
+- `docs/STRUCTURE.md` — 1 LOW — #2321:13 (F49)
+- `docs/high-integrity/offline-calibration.md` — 1 LOW — #2313:84 (F12)
+- `docs/plans/active/backlog-sweep-2026-10.md` — 1 LOW — #2296:191 (F38, partly fixed)
+- `docs/plans/active/delta-sync.md` — 4 LOW — #2342:68 (F26), #2342:98 (F27), #2342:88 (F28), #2346:130 (F34)
+- `docs/plans/active/jira-oauth-browser-login.md` — 3 LOW — #2344:91 (F30), #2344:116 (F31), #2344:68 (F32)
+- `docs/plans/deferred/cursor-vexp-coexistence.md` — 1 LOW — #2321:11 (F50)
+- `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` — 1 LOW — #2296:229 (F39)
+- `docs/plans/shipped/offline-first.md` — 3 LOW — #2309:3167 (F7), #2309:141 (F8), #2309:3162 (F9)
+- `docs/self-improvement/categories/applied.md` — 1 LOW — #2330:259 (F19)
+- `docs/self-improvement/categories/infra/2026-10-05-runner-image-toolset-change-reds-a-push-only-lane.md` — 1 LOW — #2312:13 (F10)
+- `docs/self-improvement/categories/process/2026-08-18-piping-a-gate-into-tail-masks-its-exit-code.md` — 1 LOW — #2296:52 (F37)
+- `docs/self-improvement/categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md` — 1 LOW — #2330:26 (F16, fixed)
+- `docs/self-improvement/categories/tooling/2026-10-05-plan-locks-claim-the-generated-plan-index.md` — 1 LOW — #2315:13 (F15)
+- `docs/self-improvement/postmortems.md` — 2 LOW — #2315:109 (F14), #2330:309 (F17)
+- `scripts/dev/coverage-delta-gate.sh` — 1 LOW — #2296:112 (F47)
+- `scripts/dev/is-exe-fresh.sh` — 1 LOW — #2296:108 (F45)
+- `scripts/dev/verifier-labels.py` — 1 LOW — #2296:5 (F41)
+- `tests/agent-eval/code-review/cr-reads-as-empty-user-catalog.json` — 1 LOW — #2296:60 (F42)
+- `tests/bats/cr_finding_gate.bats` — 1 LOW — #2296:253 (F44)
+- `tools/bug-report-relay/src/index.js` — 1 LOW — #2330:82 (F18)
+- `tools/repo-health/facts.json` — 1 LOW — #2364:46 (F36)
+
 ## Reconcile (2026-10-23) — NOT a batch; the open list is empty
 
 **Reconcile.** `historical-review-ledger-reconcile.sh --reconcile` reported 18 open findings, 0 likely

@@ -164,8 +164,9 @@ Configs that already ran #2276's wheel migration (`migrated_multi_hotkey_zoom_v2
 but still hold only a *partial* default set — the common case is just `Ctrl+=` /
 `Ctrl+-`, which is not an exact match for V2's pre-wheel snapshot — also pick up
 the missing aliases (including mouse-wheel) on the next launch. That retry only
-runs while every existing combo is still one of the shipped defaults; a cleared
-or customised zoom row is left alone.
+runs on a row that holds just the original primary combo. A row you trimmed to
+some of the defaults (for example, without the mouse-wheel combo), and a cleared
+or customised row, are left alone.
 
 If you run an older Smatchet build against the same config file, it reads the first
 combo of each binding and ignores the rest, so shortcuts keep working there. Saving

@@ -287,6 +287,20 @@ _path_repo() {
     [[ "$output" == *"test-light exemption"* ]]
 }
 
+@test "coverage-delta-gate.sh: a move inside one tree of a file CMake names is never exempt" {
+    # Source/Core/CMakeLists.txt drops some translation units from the build by exact name, so renaming one
+    # puts it in the build with no new lines.
+    _path_repo
+    printf 'list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/a.cpp")\n' \
+        > "$FIXREPO/CMakeLists.txt"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm "cmake names a.cpp"
+    git -C "$FIXREPO" branch -f main HEAD
+    git -C "$FIXREPO" mv Source/Core/src/a.cpp Source/Core/src/b.cpp
+    _wph_gate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Source/Core/src/a.cpp -> Source/Core/src/b.cpp"* ]]
+}
+
 @test "coverage-delta-gate.sh: a file renamed into the product trees is never exempt" {
     _path_repo
     git -C "$FIXREPO" mv Source/Core/src/notes.txt Source/Core/src/Mover.cpp

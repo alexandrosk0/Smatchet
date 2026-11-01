@@ -125,6 +125,21 @@ _rename_class() {
     fi
 }
 
+# _named_in_cmake <path> — true when a tracked CMake file names the path's file by name. CMake can drop
+# or add a translation unit by its exact name (list(REMOVE_ITEM ...), an explicit source list), so a
+# rename of such a file can change what is built even inside one tree. A name merely sharing the
+# basename also counts: a false match only makes the rename not exempt, which is the safe side.
+_named_in_cmake() {
+    local name="${1##*/}" f
+    local -a cmake_files=()
+    mapfile -d '' -t cmake_files < <(git ls-files -z -- 'CMakeLists.txt' '*/CMakeLists.txt' '*.cmake' 2>/dev/null)
+    for f in "${cmake_files[@]}"; do
+        # The name as a whole path component: after a slash, whitespace, a quote or a paren.
+        grep -qE -- "(^|[/[:space:]\"'(])${name//./\\.}([[:space:]\"')]|\$)" "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Full-context prefilter: does each changed product file still compile to the same tokens?
 # ---------------------------------------------------------------------------
@@ -3365,7 +3380,8 @@ mapfile -d '' -t CHANGED <"$_GATE_LIST_TMP"
 
 # A file renamed between product trees, or into or out of them (notes.txt -> Foo.cpp,
 # tests/support/Fake.cpp -> Source/Core/src/Fake.cpp), shows no new lines, yet the compilers
-# newly build (or stop building) every line it carries: never exempt. A move inside one tree is.
+# newly build (or stop building) every line it carries: never exempt. A move inside one tree is,
+# unless a CMake file names the old or new file (its build membership then follows the name).
 RENAMED_ACROSS=""
 if ! _gate_diff -z --name-status --diff-filter=R "$MERGE_BASE"...HEAD >"$_GATE_LIST_TMP" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
@@ -3373,7 +3389,9 @@ if ! _gate_diff -z --name-status --diff-filter=R "$MERGE_BASE"...HEAD >"$_GATE_L
 fi
 mapfile -d '' -t _RENAME_FIELDS <"$_GATE_LIST_TMP"
 for ((_ri = 0; _ri + 2 < ${#_RENAME_FIELDS[@]}; _ri += 3)); do
-    if [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != "$(_rename_class "${_RENAME_FIELDS[_ri + 2]}")" ]; then
+    if [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != "$(_rename_class "${_RENAME_FIELDS[_ri + 2]}")" ] ||
+        { [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != none ] &&
+            { _named_in_cmake "${_RENAME_FIELDS[_ri + 1]}" || _named_in_cmake "${_RENAME_FIELDS[_ri + 2]}"; }; }; then
         RENAMED_ACROSS="${_RENAME_FIELDS[_ri + 1]} -> ${_RENAME_FIELDS[_ri + 2]}"
         break
     fi

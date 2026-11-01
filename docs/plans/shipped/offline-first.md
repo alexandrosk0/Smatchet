@@ -138,7 +138,7 @@ User decisions:
     - you would exceed a size cap;
     - you need a file outside the list.
 14. **After merge:** append 3–6 lines under your slice id in `## Implementation log` of
-    `docs/plans/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
+    `docs/plans/shipped/offline-first.md`, covering what shipped, any deviations and the PR link. Use a
     docs-only follow-up commit on your next slice's branch, or on the same PR before merge.
 
 ## Slice index
@@ -170,7 +170,7 @@ catalog is cleared, the grid turns read-only and pending edits are discarded."
 
 | File | Change |
 |---|---|
-| `docs/plans/offline-first.md` | NEW — copy of this plan (first commit `wip(plan): offline-first`) |
+| `docs/plans/shipped/offline-first.md` | NEW — copy of this plan (first commit `wip(plan): offline-first`) |
 | `Source/Core/include/CatalogOfflinePolicyPure.h` | NEW pure header |
 | `Source/Core/src/Tracker/TrackerFieldCatalog.cpp` | classify every failure exit |
 | `Source/Core/include/Tracker/JiraClient.h` | add a defaulted `outClassified` param |
@@ -186,7 +186,7 @@ catalog is cleared, the grid turns read-only and pending edits are discarded."
 
 ### S1 steps
 
-**Step 0 — plan doc (already done).** The planning session committed this file as `wip(plan): offline-first` on the S1 branch. Verify `docs/plans/offline-first.md` exists; do not recreate it. After S1 merges, append to its `## Implementation log` (contract §14).
+**Step 0 — plan doc (already done).** The planning session committed this file as `wip(plan): offline-first` on the S1 branch. Verify `docs/plans/shipped/offline-first.md` exists; do not recreate it. After S1 merges, append to its `## Implementation log` (contract §14).
 
 **Step 1 — create `Source/Core/include/CatalogOfflinePolicyPure.h`** with exactly this content:
 ```cpp
@@ -1792,7 +1792,7 @@ UX Quality Pillar 6 (ADR-0026): blocking `offline-write-bypasses-queue` + `track
 The PR #2234 diff of `TicketFieldEditor.cpp` + `IssueTransitionsCacheService.cpp`: a reviewer must flag the loading-only combo branch and the failure cached as loaded as High.
 
 ### Filed as
-`docs/plans/offline-first.md` (slices S1–S13).
+`docs/plans/shipped/offline-first.md` (slices S1–S13).
 ```
 
 **Step 15 — debt entries.** Create these three files, each in the format of
@@ -3164,7 +3164,7 @@ End to end, after S13. Each slice's own verification is in its PR.
   - The whole-tree `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, down from 35. Each hit is classified in the calibration record.
 - **Windows CI:** `SmatchetTests`, ASan/UBSan and the bucket-E lanes (`JiraDeterministic`, `OfflineFirst` with the two new S13 tests) gate the S13 merge.
 - **Manual (hosts-file block of the tracker, restart offline, reconnect):** not run. It needs a Windows desktop session, which the cloud container does not have. It stays with the user; the checklist is § Manual end-to-end test plan below.
-- **Closeout audit (2026-10-05, `develop` @ `c81d450d`):** every file and symbol the slices name exists; each slice's done-when check holds (no `TODO(#21b`, no "Loading transitions" or "Loading components", Status edits queueable, pending grid edits held under a banner); all 34 planned test suites are registered; `SmatchetTsanTests` (uninstrumented `ninja-test-linux`) passes 822 of 822; the hard `Run offline-first bucket-E` step with its 12 tests is green on `develop`; `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, matching the calibration record. Open follow-ups: the four debt entries this plan filed (`2026-09-24-pending-counts-sqlite-select-per-frame`, `2026-09-24-updateticket-savesticket-on-ui-thread`, `2026-09-24-project-picker-reads-catalog-cache-file-per-frame`, `2026-09-29-bulk-hydration-prefetch-retries-every-frame`), [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270), and the two graduation proposals in `docs/high-integrity/offline-calibration.md`, which wait for the maintainer.
+- **Closeout audit (2026-10-05, `develop` @ `c81d450d`):** every file and symbol the slices name exists; each slice's done-when check holds (no `TODO(#21b`, no "Loading transitions" or "Loading components", Status edits queueable, pending grid edits held under a banner); all 34 planned test suites are registered; `SmatchetTsanTests` (uninstrumented `ninja-test-linux`) passes 822 of 822 (the 823 above included the Windows-only `JiraFakeTrackerFixture.test.cpp`, which this run did not); the hard `Run offline-first bucket-E` step with its 12 tests is green on `develop`; `--scan-offline` reads 0 for both blocking rules and 27 WARN hits, matching the calibration record. Open follow-ups: the two graduation proposals in `docs/high-integrity/offline-calibration.md`, which wait for the maintainer. The four debt entries this plan filed (`2026-09-24-pending-counts-sqlite-select-per-frame`, `2026-09-24-updateticket-savesticket-on-ui-thread`, `2026-09-24-project-picker-reads-catalog-cache-file-per-frame`, `2026-09-29-bulk-hydration-prefetch-retries-every-frame`) were resolved by #2313, and [#2270](https://github.com/alexandrosk0/Smatchet/issues/2270) is closed.
 
 ### Manual end-to-end test plan
 
@@ -3228,7 +3228,7 @@ Run on a Windows desktop against a test Jira project with at least 3 workflow st
 |---|---|---|
 | 22 | Cut the network while a comment, then a worklog, is sending | The comment posts exactly once after reconnect; the worklog shows "needs review" and is never resent blind |
 | 23 | With items queued, switch to another Jira site and back | Held for their own site, never sent to the other; replayed after switching back |
-| 24 | Offline, `debug.grid.edit-burst` (or about 200 edits) | Record frame times; this measures the per-frame queue-count debt |
+| 24 | Offline, `debug.grid.edit-burst` (or about 200 edits) | Record frame times; a regression check that the per-frame queue counts stay off the UI thread (fixed in #2313) |
 | 25 | Stay offline 30+ minutes | No per-frame or per-issue warning spam in the log; memory steady (`perf.memory`) |
 
 **Other trackers (Plane, Linear, GitHub):** spot-check rows 1, 8, 11, 12 and 19. The status combo sends no transitions request there.

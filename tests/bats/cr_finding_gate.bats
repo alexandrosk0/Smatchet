@@ -251,9 +251,18 @@ fallback_desc_wf() {
 }
 
 @test "selftest: an overlong PENDING description is detected" {
+    # Lengthen the real description in a copy of the action, then run the same extraction and the same
+    # 140-char check the test above runs: it must find the line and fail the check.
     d="$(pending_desc_action)"
-    long="${d} and then some extra words that push it well past the GitHub limit"
-    ! [ "${#long}" -le 140 ]
+    [ -n "$d" ]
+    tmp="$BATS_TEST_TMPDIR/overlong-action.yml"
+    pad="$(printf 'x%.0s' $(seq 1 141))"
+    sed "s/^\( *post pending \"\)\(.*\)\"$/\1\2 $pad\"/" "$ACTION" > "$tmp"
+    long="$(ACTION="$tmp" pending_desc_action)"
+    [ "$(printf '%s\n' "$long" | wc -l)" -eq 1 ]
+    [ "$long" != "$d" ]
+    run test "${#long}" -le 140
+    [ "$status" -eq 1 ]
 }
 
 @test "selftest: a workflow with no fallback poster is detected" {

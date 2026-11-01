@@ -108,8 +108,10 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
         bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
         // P2-M3: Esc while an input is being edited only defocuses it (ImGui's own
         // revert-and-deactivate) — it must not also tear down the modal around the draft. Only a
-        // second, unfocused Esc reaches the close path.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput) {
+        // second, unfocused Esc reaches the close path. While the discard confirm is up, Esc is its
+        // "keep writing" (handled inside it), not another close request that re-opens it.
+        const bool discardWasOpen = ImGui::IsPopupOpen(kFieldViewerDiscardPopupId);
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !discardWasOpen) {
             wantClose = true;
         }
         if (!modalOpen) { // title-bar X — same guard as Close/Esc (the local resets next frame)
@@ -131,7 +133,8 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button(s_Viewer.Content->KeepButtonLabel())) {
+            if (ImGui::Button(s_Viewer.Content->KeepButtonLabel()) ||
+                (discardWasOpen && !discardConfirmed && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

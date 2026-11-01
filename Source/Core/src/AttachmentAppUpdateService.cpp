@@ -435,8 +435,9 @@ bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
     const HINSTANCE shellResult = ShellExecuteW(nullptr, L"open", widePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     launchOk = reinterpret_cast<intptr_t>(shellResult) > 32;
     if (!launchOk) {
-        LOG_ERROR("OpenAttachmentInSystemViewer: ShellExecute failed path=%s err=%lu",
-                  TruncateForLog(outFilePath, 300).c_str(), static_cast<unsigned long>(GetLastError()));
+        // ShellExecuteW reports its error through the returned value (<= 32), not GetLastError.
+        LOG_ERROR("OpenAttachmentInSystemViewer: ShellExecute failed path=%s code=%d",
+                  TruncateForLog(outFilePath, 300).c_str(), static_cast<int>(reinterpret_cast<intptr_t>(shellResult)));
     }
 #elif defined(__APPLE__)
     launchOk = LaunchCommandNoShell("open", outFilePath);

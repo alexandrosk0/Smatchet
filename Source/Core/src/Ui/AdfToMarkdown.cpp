@@ -37,6 +37,25 @@ void AppendIndent(std::ostringstream& out, int spaces) {
 // original if-else branch produced — output is byte-for-byte identical (pinned
 // by tests/Core/MarkdownConvert.test.cpp / MarkdownConvertAdf.test.cpp).
 
+// A string field of a server-sent ADF object, or "" when the object or the field has another type.
+// nlohmann value() throws type_error on a present non-string key, and such a throw escapes AdfToMarkdown
+// (it has no catch) and aborts the offline-queue merge.
+std::string StringField(const json& obj, const char* key) {
+    if (!obj.is_object())
+        return std::string();
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string();
+}
+
+// The "attrs" object of an ADF node, or an empty object when it is missing or not an object.
+const json& AttrsOf(const json& node) {
+    static const json kEmpty = json::object();
+    if (!node.is_object())
+        return kEmpty;
+    const auto it = node.find("attrs");
+    return (it != node.end() && it->is_object()) ? *it : kEmpty;
+}
+
 // Collect the emphasis wrappers and link/code state for a text node's `marks`
 // array. `isCode` short-circuits other emphasis (inline code wins).
 void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, std::vector<const char*>& closeWrap,
@@ -44,7 +63,7 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
     if (!node.contains("marks") || !node["marks"].is_array())
         return;
     for (const auto& m : node["marks"]) {
-        const std::string mt = m.value("type", std::string());
+        const std::string mt = StringField(m, "type");
         if (mt == "strong") {
             openWrap.push_back("**");
             closeWrap.push_back("**");
@@ -57,9 +76,7 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
         } else if (mt == "code") {
             isCode = true;
         } else if (mt == "link") {
-            if (m.contains("attrs") && m["attrs"].is_object()) {
-                href = m["attrs"].value("href", std::string());
-            }
+            href = StringField(AttrsOf(m), "href");
         }
     }
 }
@@ -67,8 +84,9 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
 // Inline Markdown output for one run of ADF inline nodes. Plain text is held until the next markup (or
 // Flush) and then escaped as one run: an entity reference split across adjacent text nodes, or across
 // marks that render as nothing (underline, text color), would otherwise re-form in the joined Markdown.
-// Markup ends a run safely: each markup string begins with a character that cannot be part of a
-// reference, or (a card URL) reaches one before any ';'.
+// Markup ends a run safely when it begins with a character that cannot be part of a reference. Markup
+// that may not (an emoji short name, a card URL) goes through MarkupString, which escapes the run as it
+// reads with that markup after it.
 class InlineMdOut {
   public:
     explicit InlineMdOut(std::ostringstream& sink) : md(sink) {}
@@ -76,6 +94,15 @@ class InlineMdOut {
     std::ostringstream& Markup() {
         Flush();
         return md;
+    }
+    void MarkupString(const std::string& markup) {
+        if (!pending.empty() && pending.find('&') != std::string::npos) {
+            std::string escaped;
+            AppendMdTextEscapingEntities(escaped, pending + markup, pending.size());
+            md << escaped;
+            pending.clear();
+        }
+        Markup() << markup;
     }
     void Flush() {
         if (!pending.empty()) {
@@ -135,7 +162,11 @@ void EmitInlineTextNode(const json& node, InlineMdOut& o) {
 void EmitInlineHardBreak(const json&, InlineMdOut& o) { o.Markup() << "  \n"; }
 
 void EmitInlineEmoji(const json& node, InlineMdOut& o) {
-    o.Markup() << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+    std::string name = StringField(AttrsOf(node), "shortName");
+    if (name.empty())
+        name = StringField(node, "text");
+    if (!name.empty())
+        o.MarkupString(name);
 }
 
 void EmitInlineCard(const json& node, InlineMdOut& o) {
@@ -143,33 +174,32 @@ void EmitInlineCard(const json& node, InlineMdOut& o) {
     // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
     // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
     // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        const std::string url = node["attrs"].value("url", std::string());
-        if (!url.empty()) {
-            o.Markup() << url;
-        }
+    const std::string url = StringField(AttrsOf(node), "url");
+    if (!url.empty()) {
+        o.MarkupString(url);
     }
 }
 
 void EmitInlineMention(const json& node, InlineMdOut& o) {
     // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        std::string mtxt = node["attrs"].value("text", std::string());
-        if (mtxt.empty())
-            mtxt = std::string("@") + node["attrs"].value("id", std::string());
-        o.Text(mtxt);
-    }
+    const json& attrs = AttrsOf(node);
+    if (attrs.empty())
+        return;
+    std::string mtxt = StringField(attrs, "text");
+    if (mtxt.empty())
+        mtxt = std::string("@") + StringField(attrs, "id");
+    o.Text(mtxt);
 }
 
 void EmitInlineMedia(const json& node, InlineMdOut& o) {
-    const json attrs = node.value("attrs", json::object());
-    std::string url = attrs.value("url", std::string());
+    const json& attrs = AttrsOf(node);
+    std::string url = StringField(attrs, "url");
     if (url.empty()) {
-        const std::string id = attrs.value("id", std::string());
+        const std::string id = StringField(attrs, "id");
         if (!id.empty())
             url = "attachment:" + id;
     }
-    o.Markup() << "![" << EscapeMdImageAlt(attrs.value("alt", std::string())) << "](" << url << ")";
+    o.Markup() << "![" << EscapeMdImageAlt(StringField(attrs, "alt")) << "](" << url << ")";
 }
 
 using InlineEmitter = void (*)(const json&, InlineMdOut&);
@@ -186,7 +216,7 @@ const std::unordered_map<std::string, InlineEmitter>& InlineEmitters() {
 void EmitInlineText(const json& node, InlineMdOut& o) {
     if (!node.is_object())
         return;
-    const std::string type = node.value("type", std::string());
+    const std::string type = StringField(node, "type");
     const auto& emitters = InlineEmitters();
     const auto it = emitters.find(type);
     if (it != emitters.end()) {
