@@ -9,6 +9,8 @@
 #include "Layout/WidgetPath.h"
 #include "Logging/LogMacros.h"
 #include "Math/UnrealMathUtility.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Slate/SceneViewport.h"
 #include "SmatchetImGuiHostC.h"
@@ -18,6 +20,7 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+#include "Windows/WindowsApplication.h"
 #endif
 #include "imgui.h"
 
@@ -36,6 +39,41 @@ namespace {
  */
 static TWeakPtr<SWindow> GSmatchetMouseCoordWindow;
 static int32 GSmatchetMouseButtonSessionDepth = 0;
+
+#if PLATFORM_WINDOWS
+/**
+ * Slate reports a Windows pen contact as a touch event (WM_POINTER with PT_PEN goes through OnTouchStarted)
+ * and FPointerEvent carries no pen flag. Registered message handlers see the raw WM_POINTER* message before
+ * Slate's deferred dispatch, so this records whether the latest pointer contact came from a pen; the pen
+ * then drives ImGui as a mouse instead of going through the finger gestures.
+ */
+class FSmatchetPenPointerTracker final : public IWindowsMessageHandler {
+  public:
+    virtual bool ProcessMessage(HWND, uint32 Msg, WPARAM WParam, LPARAM, int32&) override {
+        if (Msg == WM_POINTERDOWN || Msg == WM_POINTERUPDATE) {
+            POINTER_INPUT_TYPE Type = PT_POINTER;
+            if (::GetPointerType(GET_POINTERID_WPARAM(WParam), &Type)) {
+                bPenActive = (Type == PT_PEN);
+            }
+        }
+        return false;
+    }
+
+    bool bPenActive = false;
+};
+
+static FSmatchetPenPointerTracker GSmatchetPenPointerTracker;
+static bool GSmatchetPenTrackerRegistered = false;
+
+static FWindowsApplication* GetSlateWindowsApplication() {
+    // -RenderOffScreen runs Slate on an FNullApplication (FWindowsPlatformApplicationMisc::CreateApplication).
+    if (!FSlateApplication::IsInitialized() || FParse::Param(FCommandLine::Get(), TEXT("RenderOffScreen"))) {
+        return nullptr;
+    }
+    const TSharedPtr<GenericApplication> PlatformApp = FSlateApplication::Get().GetPlatformApplication();
+    return static_cast<FWindowsApplication*>(PlatformApp.Get());
+}
+#endif
 
 static void ResetMouseCoordMapping() {
     GSmatchetMouseCoordWindow.Reset();
@@ -65,7 +103,28 @@ FVector2f MapPointerToClientLocal(FSlateApplication& SlateApp, const FPointerEve
 
 } // namespace
 
-FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost) : Host(InHost) {}
+FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost) : Host(InHost) {
+#if PLATFORM_WINDOWS
+    if (!GSmatchetPenTrackerRegistered) {
+        if (FWindowsApplication* WindowsApp = GetSlateWindowsApplication()) {
+            WindowsApp->AddMessageHandler(GSmatchetPenPointerTracker);
+            GSmatchetPenTrackerRegistered = true;
+        }
+    }
+#endif
+}
+
+void FSmatchetImGuiInputProcessor::DetachPlatformHooks() {
+#if PLATFORM_WINDOWS
+    if (GSmatchetPenTrackerRegistered) {
+        if (FWindowsApplication* WindowsApp = GetSlateWindowsApplication()) {
+            WindowsApp->RemoveMessageHandler(GSmatchetPenPointerTracker);
+        }
+        GSmatchetPenTrackerRegistered = false;
+        GSmatchetPenPointerTracker.bPenActive = false;
+    }
+#endif
+}
 
 void FSmatchetImGuiInputProcessor::EnsureTooltipsRestored() {
     ResetMouseCoordMapping();
@@ -300,8 +359,11 @@ bool FSmatchetImGuiInputProcessor::HandleMouseMoveEvent(FSlateApplication& Slate
         return false;
     }
 
-    const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
+    ForwardPointerPosition(MapPointerToClientLocal(SlateApp, MouseEvent));
     PushModifierState(MouseEvent);
     return true;
 }
@@ -316,6 +378,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
         return false;
     }
 
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
     const int32 Button = ToImGuiMouseButton(MouseEvent);
     if (Button >= 0) {
         if (GSmatchetMouseButtonSessionDepth == 0) {
@@ -332,8 +398,7 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
         ++GSmatchetMouseButtonSessionDepth;
     }
 
-    const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    ForwardPointerPosition(MapPointerToClientLocal(SlateApp, MouseEvent));
     // Apply modifier keys before mouse button so ImGui io.KeyCtrl/io.KeyShift match this click
     // (was: button first → io still stale until PushModifierState; grid + widgets read wrong branch).
     PushModifierState(MouseEvent);
@@ -354,8 +419,11 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& S
         return false;
     }
 
-    const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
+    ForwardPointerPosition(MapPointerToClientLocal(SlateApp, MouseEvent));
     PushModifierState(MouseEvent);
 
     const int32 Button = ToImGuiMouseButton(MouseEvent);
@@ -379,8 +447,11 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateAppli
         return false;
     }
 
-    const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    if (IsSecondaryTouch(MouseEvent)) {
+        return true;
+    }
+    PushPointerSource(MouseEvent);
+    ForwardPointerPosition(MapPointerToClientLocal(SlateApp, MouseEvent));
     PushModifierState(MouseEvent);
 
     // Slate routes double-clicks through a separate path from MouseButtonDown. If we do not
@@ -407,16 +478,53 @@ bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(FSlateApplicat
     // Wheel deltas feed ImGui io the same way as standalone; table-level routing
     // (e.g. vertical-end horizontal scroll) lives in shared UI code on the host side.
 
+    // Forward the position only when it moved since the last forwarded event (e.g. the overlay opened under a
+    // still mouse): under ImGui's trickle queue a position change in front of every notch would defer each
+    // notch by a frame while moving.
+    PushPointerSource(InWheelEvent);
     const FVector2f P = MapPointerToClientLocal(SlateApp, InWheelEvent);
-    SmatchetHost_SetMousePosition(Host, P.X, P.Y);
-
+    if (!bHasForwardedPointerPos || P != LastForwardedPointerPos) {
+        ForwardPointerPosition(P);
+    }
     SmatchetHost_AddMouseWheel(Host, 0.0f, InWheelEvent.GetWheelDelta());
     PushModifierState(InWheelEvent);
     return true;
 }
 
+void FSmatchetImGuiInputProcessor::ForwardPointerPosition(const FVector2f& ClientPos) {
+    SmatchetHost_SetMousePosition(Host, ClientPos.X, ClientPos.Y);
+    LastForwardedPointerPos = ClientPos;
+    // The touch router may park ImGui's pointer off-screen after a lift, so a touch position is not
+    // treated as known and the next wheel re-sends its own.
+    bHasForwardedPointerPos = !bPointerIsTouch;
+}
+
+void FSmatchetImGuiInputProcessor::PushPointerSource(const FPointerEvent& PointerEvent) {
+#if PLATFORM_WINDOWS
+    const bool bTouch = PointerEvent.IsTouchEvent() && !GSmatchetPenPointerTracker.bPenActive;
+#else
+    const bool bTouch = PointerEvent.IsTouchEvent();
+#endif
+    if (bTouch && !bLoggedFirstTouch) {
+        bLoggedFirstTouch = true;
+        UE_LOG(LogSmatchetImGuiInputProcessor, Log,
+               TEXT("Smatchet: first touch event received (pointer %d) - forwarding as ImGui touchscreen input."),
+               static_cast<int32>(PointerEvent.GetPointerIndex()));
+    }
+    bPointerIsTouch = bTouch;
+    // 0 = ImGuiMouseSource_Mouse, 1 = ImGuiMouseSource_TouchScreen (SmatchetHost_SetMouseSource contract).
+    // A Windows pen arrives as a touch event too; FSmatchetPenPointerTracker sends it as a mouse.
+    SmatchetHost_SetMouseSource(Host, bTouch ? 1 : 0);
+}
+
+bool FSmatchetImGuiInputProcessor::IsSecondaryTouch(const FPointerEvent& PointerEvent) {
+    return PointerEvent.IsTouchEvent() && PointerEvent.GetPointerIndex() != 0;
+}
+
 int32 FSmatchetImGuiInputProcessor::ToImGuiMouseButton(const FPointerEvent& MouseEvent) const {
     const FKey Key = MouseEvent.GetEffectingButton();
+    // Touch pointer events also arrive here as LeftMouseButton (Slate's touch FPointerEvent constructors
+    // set EffectingButton to it); IsTouchEvent() is what tells them apart (PushPointerSource).
     if (Key == EKeys::LeftMouseButton) {
         return 0;
     }

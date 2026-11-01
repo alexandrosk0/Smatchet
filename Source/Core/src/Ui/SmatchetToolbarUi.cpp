@@ -25,6 +25,7 @@
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetUiSession.h"
+#include "Ui/TouchInputRouter.h"
 #include "imgui.h"
 #include "imgui_internal.h" // BeginViewportSideBar (pins the bar below the menu)
 
@@ -570,6 +571,7 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
         if (ImGui::Selectable(rowLabel.c_str(), selected_ == i)) {
             selected_ = i;
         }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the button
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             ImGui::SetDragDropPayload("SMATCHET_TB_BTN", &i, sizeof(int));
             ImGui::TextUnformatted(rowLabel.c_str());

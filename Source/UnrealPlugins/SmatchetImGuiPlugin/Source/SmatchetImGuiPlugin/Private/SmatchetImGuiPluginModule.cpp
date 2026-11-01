@@ -221,6 +221,7 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
         if (InputProcessor.IsValid() && FSlateApplication::IsInitialized()) {
             InputProcessor->EnsureTooltipsRestored();
+            InputProcessor->DetachPlatformHooks();
             FSlateApplication::Get().UnregisterInputPreProcessor(InputProcessor);
             InputProcessor.Reset();
         }

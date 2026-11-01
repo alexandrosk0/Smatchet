@@ -29,6 +29,7 @@
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
+#include "Ui/TouchInputRouter.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -902,6 +903,7 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
         // Match ImGui::TableHeadersRow(): TableHeader IDs must be unique even when labels repeat.
         ImGui::PushID(hci);
         ImGui::TableHeader(hcol.Label.c_str());
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the column
 
         const TrackerField* hdrMeta =
             (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);

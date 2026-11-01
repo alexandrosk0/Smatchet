@@ -87,6 +87,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
         # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
         Core/StatusBarAutoHidePure.test.cpp
+        # Desktop touchscreen gestures (TouchGesturePure.h: tap / long-press / pan / fling) and
+        # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
+        Core/TouchGesturePure.test.cpp
+        Core/TouchSizingPure.test.cpp
         # Drag-to-paint checkbox gesture (click a checkbox and drag across its neighbours to
         # set the whole run) — header-only, ImGui-free, no threads
         # (SmatchetDragCheckboxPure.h); the ImGui wrapper SmatchetDragCheckbox.h feeds live
@@ -736,6 +740,10 @@ add_executable(SmatchetTests
     # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
     # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
     Core/StatusBarAutoHidePure.test.cpp
+    # Desktop touchscreen gestures + touch-sized hit targets (TouchGesturePure.h,
+    # Ui/TouchSizingPure.h) — header-only, ImGui-free.
+    Core/TouchGesturePure.test.cpp
+    Core/TouchSizingPure.test.cpp
     # Drag-to-paint checkbox gesture behind the checkbox LISTS (Views > Fields today; the
     # multi-select / Labels cell editors are blocked on a debt item): press a row and drag
     # across its neighbours to set

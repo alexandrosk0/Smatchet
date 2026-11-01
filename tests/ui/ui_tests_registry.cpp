@@ -56,6 +56,7 @@ extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* en
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterViewsFieldSelectionTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDragCheckboxPaintTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterTouchGestureTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterUserInfoWindowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
@@ -130,6 +131,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterMobileDesktopLayoutRoundtripTests(engine);
     SmatchetRegisterViewsFieldSelectionTests(engine);
     SmatchetRegisterDragCheckboxPaintTests(engine);
+    SmatchetRegisterTouchGestureTests(engine);
     SmatchetRegisterUserInfoWindowTests(engine);
     SmatchetRegisterKeybindingsEditorRebindTests(engine);
     SmatchetRegisterCommandPaletteInlineTypingTests(engine);
