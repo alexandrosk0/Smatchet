@@ -21,8 +21,19 @@
 #include <cstddef>
 #include <cstdio>
 #include <string>
+#include <utility>
 
 namespace {
+
+// Row count of the active grid. Shown with a single pane, or with several panes
+// when one is focused; with several and none focused, "the" grid is ambiguous.
+static std::pair<bool, size_t> ShouldShowRowCount(const UiDrawSession& d, AppController& app) {
+    if (d.gridPanes.empty() || (d.gridPanes.size() > 1 && d.focusedPaneId.empty())) {
+        return {false, 0};
+    }
+    const auto tickets = app.GetActiveTicketsSnapshot();
+    return {true, tickets ? tickets->size() : 0};
+}
 
 static const char* ThemeIdName(ThemeId t) {
     switch (t) {
@@ -180,29 +191,42 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
         }
     }
 
-    // Right side — font size + theme name. FPS is a developer metric and lives in the
+    // Right side — row count + font size + theme name. FPS is a developer metric and lives in the
     // Performance window (View > Performance), not the always-on status bar.
-    {
-        char rightBuf[128];
-        const char* themeName = ThemeIdName(d.cfg.Theme);
-        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
 
-        // SameLine FIRST: the previous item ended the line, so a bare SetCursorPosX
-        // kept the right-aligned text on a SECOND line below the one-line bar — the
-        // bar's content was two lines tall and wheel-scrollable. Right-align on the
-        // SAME line; when the bar is too narrow the text just clips at the right edge.
-        ImGui::SameLine();
-        const float textW = ::ImGui::CalcTextSize(rightBuf).x;
-        const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;
-        const float xPos = contentMaxX - textW - 4.0f;
-        if (xPos > ::ImGui::GetCursorPosX()) {
-            ::ImGui::SetCursorPosX(xPos);
-        }
-        ImGui::TextUnformatted(rightBuf);
-        if (::ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("UI font size and active theme — change them under View > Appearance.\n"
-                              "Frame-rate metrics live in the Performance window.");
-        }
+    // Build the complete right-side text first so we can right-align it as one unit.
+    char rightBuf[128];
+    const char* themeName = ThemeIdName(d.cfg.Theme);
+
+    // Add row count if applicable.
+    const auto rowCountResult = ShouldShowRowCount(d, app);
+    const bool showRowCount = rowCountResult.first;
+    const size_t rowCount = rowCountResult.second;
+    if (showRowCount) {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%zu rows  %dpt  %s", rowCount, d.cfg.FontSizePt, themeName);
+    } else {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
+    }
+
+    // SameLine FIRST: the previous item ended the line, so a bare SetCursorPosX
+    // kept the right-aligned text on a SECOND line below the one-line bar — the
+    // bar's content was two lines tall and wheel-scrollable. Right-align on the
+    // SAME line; when the bar is too narrow the text just clips at the right edge.
+    ImGui::SameLine();
+    const float textW = ::ImGui::CalcTextSize(rightBuf).x;
+    const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;
+    const float xPos = contentMaxX - textW - 4.0f;
+    if (xPos > ::ImGui::GetCursorPosX()) {
+        ::ImGui::SetCursorPosX(xPos);
+    }
+    ImGui::TextUnformatted(rightBuf);
+    if (::ImGui::IsItemHovered()) {
+        const char* tooltip = showRowCount
+                                  ? "Row count in the focused grid, UI font size and active theme — change appearance "
+                                    "under View > Appearance.\nFrame-rate metrics live in the Performance window."
+                                  : "UI font size and active theme — change them under View > Appearance.\nFrame-rate "
+                                    "metrics live in the Performance window.";
+        ImGui::SetTooltip("%s", tooltip);
     }
 
     ImGui::PopStyleVar();
