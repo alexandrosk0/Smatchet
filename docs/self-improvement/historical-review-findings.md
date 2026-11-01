@@ -11,9 +11,9 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
-## Batch 27 — #2300–#2367 + late #2279, #2291, #2296 (55-unit sweep, 2026-10-31) — all fixed but one archive move
+## Batch 27 — #2300–#2367 + late #2279, #2291, #2296 (55-unit sweep, 2026-10-31) — all fixed
 
-Coverage: **55 PRs as 55 units — all reviewed (20 with findings, 30 clean), 5 fully superseded, 0 errored after the tooling fix below.** Net: **0 CRITICAL, 0 HIGH, 10 MEDIUM, 40 LOW** (50 findings, 10 `userVisible`). **49 are fixed in this PR; F38 is fixed except its plan archive, which waits for a live plan-lock.** No Issue was filed for the user-visible ones, because they ship fixed here (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2367 contiguous for PRs merged as of 2026-10-31; the next sweep resumes from #2368, plus #2244 (still open below the frontier).**
+Coverage: **55 PRs as 55 units — all reviewed (20 with findings, 30 clean), 5 fully superseded, 0 errored after the tooling fix below.** Net: **0 CRITICAL, 0 HIGH, 10 MEDIUM, 40 LOW** (50 findings, 10 `userVisible`). **All 50 are fixed in this PR** (F38's plan archive landed once the `touchscreen-support` plan-lock on `docs/plans/INDEX.md` released). No Issue was filed for the user-visible ones, because they ship fixed here (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2367 contiguous for PRs merged as of 2026-10-31; the next sweep resumes from #2368, plus #2244 (still open below the frontier).**
 
 **Range.** #2300–#2367 merged into develop (52 PRs; the worklist's authoritative and develop-log counts agree), plus the three late merges Batch 26 left open below its frontier: #2279, #2291 and #2296. #2244 is still open and carries forward. All 55 units ran in a workflow fan-out of opus `code-review` agents over `historical-review-survivors.sh` digests. Five were re-run: the four extractor errors (below) and #2331, whose first review covered only part of its digest. #2296 (212 files) and #2331 re-ran as file-aligned digest chunks (9 and 2), and #2321 from a pre-generated digest. Every finding was re-verified against HEAD while fixing it.
 
@@ -54,7 +54,7 @@ The full problem and fix text for all 50 is in [`historical-review-findings-2026
 - `Source/Core/src/Ui/SmatchetUI.cpp` — 1 LOW — #2296:330 (F40)
 - `docs/STRUCTURE.md` — 1 LOW — #2321:13 (F49)
 - `docs/high-integrity/offline-calibration.md` — 1 LOW — #2313:84 (F12)
-- `docs/plans/active/backlog-sweep-2026-10.md` — 1 LOW — #2296:191 (F38, partly fixed)
+- `docs/plans/backlog-sweep-2026-10.md` — 1 LOW — #2296:191 (F38)
 - `docs/plans/active/delta-sync.md` — 4 LOW — #2342:68 (F26), #2342:98 (F27), #2342:88 (F28), #2346:130 (F34)
 - `docs/plans/active/jira-oauth-browser-login.md` — 3 LOW — #2344:91 (F30), #2344:116 (F31), #2344:68 (F32)
 - `docs/plans/deferred/cursor-vexp-coexistence.md` — 1 LOW — #2321:11 (F50)

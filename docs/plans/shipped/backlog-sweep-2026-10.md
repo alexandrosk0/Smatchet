@@ -1,8 +1,9 @@
 # Plan — backlog sweep 2026-10 (fix every entry fixable from a Linux container)
+<!-- plan-date: 2026-10-13 -->
 
 > **Slug**: `backlog-sweep-2026-10` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — one PR, many independent slices (work packages A–I below), developed in parallel worktrees and integrated on one branch.
+> **Status**: `shipped` — archived 2026-11-01 (Historical-review Batch 27, #2372). One PR, many independent slices (work packages A–I below), developed in parallel worktrees and integrated on one branch.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -165,7 +166,7 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
 - **applied.md re-partition** — planned as its own change; it happened in this PR instead, because the develop merge (applied.md is `merge=union`) concatenated the bounded head with this branch's unrotated copy, and rebuilding it ran the fixed rotation, which also re-homed 8 misfiled per-entry blocks. Verified line-for-line: nothing lost or duplicated.
 - **Not done (locked or out of reach)** — AppController.h / .cpp / LocalCacheDb.cpp stayed untouched (`shutdown-cancel-all-pane-syncs` lock): the `PostCompletionToMainThread` override, the shutdown race (#2308) and the guarded grid catalog apply (#2328) wait for that work. Visual-validation files were edited only for data scoping: `SmatchetViewsDashboardUi_widgets.cpp` changes which recent projects the JQL pill lists (rounds 8-9), with no layout, colour or string change. Repo settings (required contexts, secrets) are admin steps.
 - **Agent-layer split** — develop's #2321 moved the agent tooling into the `agent-layer/` submodule mid-flight, so packages A–H (and their review fixes) ship as a layer PR plus a pointer bump here, not in this PR's diff. Host workflows that call new layer scripts (all-checks-green, lock-release-on-close) fail until the bump.
-- **Plan archive** — the `git mv` to `shipped/` waits: `docs/plans/INDEX.md` is in the `hook-tree-resolution` lock's write set.
+- **Plan archive** — the `git mv` to `shipped/` waited while `docs/plans/INDEX.md` sat in other sessions' plan-lock write sets (`hook-tree-resolution`, then `touchscreen-support`); it rode the Historical-review Batch 27 PR (#2372) on 2026-11-01, once both had released.
 - **Catalog banner readers** — the banner strings and `fieldCatalogEverLoaded_` are now written under the catalog mutex on every path, but `AppController.h` / `GridContextDepsAdapter.cpp` still read them unlocked: the reader change waits for the AppController.h lock (with #2328).
 - **Left open** — the pinned-profile seed edge in `ui-test-driver.sh`: low, recorded for a follow-up. (The two pre-existing coverage-gate fail-opens first recorded here, a `'('` character literal inside a wrapped LOG_ call and a column-0 `++x;` read as a `+++` header, are fixed in round 7.)
 - **Coverage gate: behaviour changes** — the exemption now holds only when a file compiles to the same tokens before and after. So a removed statement needs a test delta like an added one (deleting dead code from a live file needs a test or the `tests-out-of-band` label; deleting a whole file stays ungated), and wrapping existing code in a guard the gate cannot decide (`#if _MSC_VER >= 1920`, `#ifdef _WIN32`) is no longer exempt, since it drops the code from some tested build. A pure reformat, which the line classifier gated, is now exempt. From round 10, an added, removed or moved `#include`, using-declaration or forward declaration, and a body moved between a header and a .cpp, also need a test delta or the label.
@@ -190,4 +191,4 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
 3. *regen the index: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
 
-*Blocked while `docs/plans/INDEX.md` sits in another session's plan-lock write set: first `hook-tree-resolution`, and as of 2026-10-31 `touchscreen-support` (#2370). #2296 has merged, so the move rides the first follow-up after that lock releases.*
+*Done 2026-11-01 in #2372, after the `hook-tree-resolution` and `touchscreen-support` (#2370) locks on `docs/plans/INDEX.md` released.*
