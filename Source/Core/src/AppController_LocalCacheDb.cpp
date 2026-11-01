@@ -39,8 +39,14 @@
 
 namespace {
 
-// Deletes the database file and its -wal/-shm sidecars, sidecars first. `anyRemoved` is set once the database
-// file itself is gone, so a caller can tell a wipe that removed the rows from one that left them in place.
+// Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set once the database file itself is
+// gone, so a caller can tell a wipe that removed the rows from one that left them in place.
+//
+// Every file is first moved aside to a `.wipe` name, and a move that fails puts the moved ones back. A file
+// SQLite still holds open cannot be moved on Windows, so the usual failure leaves the database, its WAL and
+// its rows exactly as they were. Only then are the staged files deleted, the database first: if that fails
+// everything is restored, and once it is gone a sidecar that will not delete sits under its `.wipe` name,
+// where a reopen at the original path cannot pick it up.
 VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemoved) {
     anyRemoved = false;
     namespace fs = ghc::filesystem;
@@ -53,28 +59,52 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
         }
     }
     const std::string stem = p.string();
-    // Sidecars first, the database last. A delete that fails part-way then leaves the main file with no
-    // stale -wal beside it, so the caller's reopen at the same path is safe. The other order could pair a
-    // brand-new empty database with the old one's leftover WAL, which SQLite may replay into it on open.
-    // `anyRemoved` means the database itself is gone; removing only a sidecar wipes no rows.
-    const fs::path paths[3] = {fs::path(stem + "-wal"), fs::path(stem + "-shm"), p};
+    const fs::path paths[3] = {p, fs::path(stem + "-wal"), fs::path(stem + "-shm")};
+    std::vector<std::pair<fs::path, fs::path>> staged; // {original, staged}, database first when present
+    const auto restore = [&staged]() {
+        for (const auto& f : staged) {
+            std::error_code rec;
+            fs::rename(f.second, f.first, rec);
+            if (rec) {
+                LOG_WARN("Cache wipe: could not restore %s from %s: %s", f.first.string().c_str(),
+                         f.second.string().c_str(), rec.message().c_str());
+            }
+        }
+    };
     for (const auto& f : paths) {
         ec.clear();
         if (!fs::exists(f, ec)) {
             if (ec) {
                 // A file that cannot be inspected is not known to be gone. Reopening it as the "fresh"
                 // database would mark its one-time migrations done without moving its rows.
+                restore();
                 return VoidResult::Err("Could not inspect " + f.string() + ": " + ec.message());
             }
             continue;
         }
-        fs::remove(f, ec);
+        const fs::path aside(f.string() + ".wipe");
+        fs::rename(f, aside, ec);
         if (ec) {
+            restore();
             return VoidResult::Err("Could not remove " + f.string() + ": " + ec.message());
         }
-        if (f == p) {
-            anyRemoved = true;
+        staged.emplace_back(f, aside);
+    }
+    for (std::size_t i = 0; i < staged.size(); ++i) {
+        ec.clear();
+        fs::remove(staged[i].second, ec);
+        if (!ec) {
+            if (staged[i].first == p) {
+                anyRemoved = true;
+            }
+            continue;
         }
+        if (staged[i].first == p) {
+            restore();
+            return VoidResult::Err("Could not remove " + p.string() + ": " + ec.message());
+        }
+        LOG_WARN("Cache wipe: left %s behind (%s); it is no longer at the database's path.",
+                 staged[i].second.string().c_str(), ec.message().c_str());
     }
     return VoidOk();
 }

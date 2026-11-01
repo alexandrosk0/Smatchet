@@ -1792,7 +1792,7 @@ UX Quality Pillar 6 (ADR-0026): blocking `offline-write-bypasses-queue` + `track
 The PR #2234 diff of `TicketFieldEditor.cpp` + `IssueTransitionsCacheService.cpp`: a reviewer must flag the loading-only combo branch and the failure cached as loaded as High.
 
 ### Filed as
-`docs/plans/shipped/offline-first.md` (slices S1–S13).
+`docs/plans/offline-first.md` (slices S1–S13).
 ```
 
 **Step 15 — debt entries.** Create these three files, each in the format of

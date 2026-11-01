@@ -56,6 +56,27 @@ const json& AttrsOf(const json& node) {
     return (it != node.end() && it->is_object()) ? *it : kEmpty;
 }
 
+// The "content" member of an ADF node, or an empty array when the node is not an object or has none.
+// The walkers check the member's own type, so a non-array value passes through as it is.
+const json& ContentOf(const json& node) {
+    static const json kEmpty = json::array();
+    if (!node.is_object())
+        return kEmpty;
+    const auto it = node.find("content");
+    return it != node.end() ? *it : kEmpty;
+}
+
+// An integer attribute of an ADF node (heading level, list start), or `def` when it is missing or not an
+// integer. Clamped to the 9 digits CommonMark allows a list start, which also keeps the counters from overflowing.
+int IntAttr(const json& node, const char* key, int def) {
+    const json& attrs = AttrsOf(node);
+    const auto it = attrs.find(key);
+    if (it == attrs.end() || !it->is_number_integer())
+        return def;
+    const long long v = it->get<long long>();
+    return static_cast<int>((std::max)(0LL, (std::min)(v, 999999999LL)));
+}
+
 // Collect the emphasis wrappers and link/code state for a text node's `marks`
 // array. `isCode` short-circuits other emphasis (inline code wins).
 void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, std::vector<const char*>& closeWrap,
@@ -236,7 +257,7 @@ void EmitInlineText(const json& node, InlineMdOut& o) {
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
     if (!paraContent.is_array() || paraContent.empty())
         return false;
-    if (paraContent[0].value("type", std::string()) != "text")
+    if (StringField(paraContent[0], "type") != "text")
         return false;
     // A malformed node can have the text type but no string text value. Reading it as a
     // string would raise a JSON type error that escapes the ADF-to-Markdown conversion,
@@ -266,8 +287,8 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
     InlineMdOut o(out);
     bool firstText = true;
     for (const auto& c : paraContent) {
-        if (firstText && c.is_object() && c.value("type", std::string()) == "text") {
-            const std::string t = c.value("text", std::string());
+        if (firstText && c.is_object() && StringField(c, "type") == "text") {
+            const std::string t = StringField(c, "text");
             if (t.size() > kSkip) {
                 json c2 = c;
                 c2["text"] = t.substr(kSkip);
@@ -279,7 +300,7 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
             continue;
         }
         EmitInlineText(c, o);
-        if (c.is_object() && c.value("type", std::string()) == "text")
+        if (c.is_object() && StringField(c, "type") == "text")
             firstText = false;
     }
     o.Flush();
@@ -316,26 +337,24 @@ static std::string MarkdownCellPlainInner(const json& cell, std::vector<std::str
     std::vector<std::string> segments;
     if (cell.contains("content") && cell["content"].is_array()) {
         for (const auto& blk : cell["content"]) {
-            const std::string bt = blk.value("type", std::string());
+            const std::string bt = StringField(blk, "type");
             if (bt == "paragraph") {
-                std::string t = MarkdownCellFlattenInline(blk.value("content", json::array()));
+                std::string t = MarkdownCellFlattenInline(ContentOf(blk));
                 if (!t.empty())
                     segments.push_back(std::move(t));
             } else if (bt == "bulletList" || bt == "orderedList") {
                 const bool ordered = (bt == "orderedList");
-                int order = 1;
-                if (ordered && blk.contains("attrs") && blk["attrs"].is_object())
-                    order = blk["attrs"].value("order", 1);
+                int order = ordered ? IntAttr(blk, "order", 1) : 1;
                 if (blk.contains("content") && blk["content"].is_array()) {
                     for (const auto& li : blk["content"]) {
-                        if (li.value("type", std::string()) != "listItem")
+                        if (StringField(li, "type") != "listItem")
                             continue;
                         std::ostringstream lo;
                         if (li.contains("content") && li["content"].is_array()) {
                             for (const auto& lblk : li["content"]) {
-                                const std::string lt = lblk.value("type", std::string());
+                                const std::string lt = StringField(lblk, "type");
                                 if (lt == "paragraph")
-                                    EmitInlineRun(lblk.value("content", json::array()), lo);
+                                    EmitInlineRun(ContentOf(lblk), lo);
                                 else
                                     dropped.push_back(lt.empty() ? std::string("<unknown>") : lt);
                             }
@@ -368,12 +387,12 @@ static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
         return;
     std::vector<std::vector<std::string>> rows;
     for (const auto& row : table["content"]) {
-        if (row.value("type", std::string()) != "tableRow")
+        if (StringField(row, "type") != "tableRow")
             continue;
         std::vector<std::string> cells;
         if (row.contains("content") && row["content"].is_array()) {
             for (const auto& cell : row["content"]) {
-                const std::string ct = cell.value("type", std::string());
+                const std::string ct = StringField(cell, "type");
                 if (ct == "tableHeader" || ct == "tableCell") {
                     cells.push_back(MarkdownCellPlainInner(cell, s.dropped));
                 }
@@ -439,17 +458,17 @@ void EmitAdfParagraph(const json& node, AdfWalkState& s) {
     AppendIndent(s.out, s.listIndent);
     if (s.insideBlockquote)
         s.out << "> ";
-    EmitInlineRun(node.value("content", json::array()), s.out);
+    EmitInlineRun(ContentOf(node), s.out);
     s.out << "\n\n";
 }
 
 void EmitAdfHeading(const json& node, AdfWalkState& s) {
-    const int level = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("level", 1) : 1;
+    const int level = IntAttr(node, "level", 1);
     const int clamped = (std::max)(1, (std::min)(6, level));
     for (int i = 0; i < clamped; ++i)
         s.out << '#';
     s.out << ' ';
-    EmitInlineRun(node.value("content", json::array()), s.out);
+    EmitInlineRun(ContentOf(node), s.out);
     s.out << "\n\n";
 }
 
@@ -464,7 +483,7 @@ void EmitAdfBulletList(const json& node, AdfWalkState& s) {
 }
 
 void EmitAdfOrderedList(const json& node, AdfWalkState& s) {
-    const int start = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("order", 1) : 1;
+    const int start = IntAttr(node, "order", 1);
     s.listMarkerStack.push_back('1');
     s.orderedCounters.push_back(start - 1);
     EmitAdfChildren(node, s);
@@ -505,12 +524,12 @@ void EmitListItemChildren(const json& node, AdfWalkState& s, bool taskItem) {
     bool first = true;
     const int prevIndent = s.listIndent;
     for (const auto& c : children) {
-        const std::string ct = c.is_object() ? c.value("type", std::string()) : std::string();
+        const std::string ct = c.is_object() ? StringField(c, "type") : std::string();
         if (first && ct == "paragraph") {
             if (taskItem) {
-                EmitParagraphInlineSkipTaskPrefix(c.value("content", json::array()), s.out);
+                EmitParagraphInlineSkipTaskPrefix(ContentOf(c), s.out);
             } else {
-                EmitInlineRun(c.value("content", json::array()), s.out);
+                EmitInlineRun(ContentOf(c), s.out);
             }
             s.out << "\n";
             first = false;
@@ -533,8 +552,8 @@ void EmitAdfListItem(const json& node, AdfWalkState& s) {
     bool taskDone = false;
     if (node.contains("content") && node["content"].is_array() && !node["content"].empty()) {
         const auto& fc = node["content"][0];
-        if (fc.is_object() && fc.value("type", std::string()) == "paragraph") {
-            taskItem = MatchStoredTaskPrefix(fc.value("content", json::array()), &taskDone);
+        if (fc.is_object() && StringField(fc, "type") == "paragraph") {
+            taskItem = MatchStoredTaskPrefix(ContentOf(fc), &taskDone);
         }
     }
     EmitListItemMarker(s, taskItem, taskDone);
@@ -545,7 +564,7 @@ void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
     AppendIndent(s.out, s.listIndent);
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& ch : node["content"]) {
-            if (ch.value("type", std::string()) == "media") {
+            if (StringField(ch, "type") == "media") {
                 InlineMdOut o(s.out);
                 EmitInlineText(ch, o);
                 o.Flush();
@@ -558,10 +577,7 @@ void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
 void EmitAdfTable(const json& node, AdfWalkState& s) { EmitMarkdownTable(node, s); }
 
 void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
-    std::string lang;
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        lang = node["attrs"].value("language", std::string());
-    }
+    const std::string lang = StringField(AttrsOf(node), "language");
     AppendIndent(s.out, s.listIndent);
     s.out << "```" << lang << "\n";
     // Track the last char emitted for THIS block instead of copying the whole accumulated buffer
@@ -571,8 +587,8 @@ void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
     char lastCh = '\n';
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& c : node["content"]) {
-            if (c.is_object() && c.value("type", std::string()) == "text") {
-                const std::string text = c.value("text", std::string());
+            if (c.is_object() && StringField(c, "type") == "text") {
+                const std::string text = StringField(c, "text");
                 if (!text.empty()) {
                     s.out << text;
                     lastCh = text.back();
@@ -628,7 +644,7 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
         return;
     }
     ++s.depth;
-    const std::string type = node.value("type", std::string());
+    const std::string type = StringField(node, "type");
     const auto& handlers = AdfBlockHandlers();
     const auto it = handlers.find(type);
     if (it != handlers.end()) {

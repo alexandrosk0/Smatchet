@@ -238,7 +238,7 @@ make_fixture_repo() {
     cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
     printf 'int foo() { return 1; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
     git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
-    git -C "$FIXREPO" checkout -qb head
+    git -C "$FIXREPO" checkout -qb work
     printf 'int foo() { return 2; }\nint bar() { return 3; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
 }
 
@@ -266,7 +266,7 @@ make_fixture_repo() {
 
 # ---------- coverage-delta-gate.sh: which files count, renames, odd paths ----------
 # _path_repo — a base commit with a product TU and a data file holding code-like text, on branch
-# main; leaves the work tree on branch `head` with nothing changed yet.
+# main; leaves the work tree on branch `work` with nothing changed yet.
 _path_repo() {
     FIXREPO="$(mktemp -d)"
     git -C "$FIXREPO" init -q -b main
@@ -276,7 +276,7 @@ _path_repo() {
     printf 'int foo() { return 1; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
     printf 'int launch() { return 1; }\n' > "$FIXREPO/Source/Core/src/notes.txt"
     git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
-    git -C "$FIXREPO" checkout -qb head
+    git -C "$FIXREPO" checkout -qb work
 }
 
 @test "coverage-delta-gate.sh: a product file moved within the product trees stays exempt" {
@@ -413,7 +413,7 @@ _path_repo() {
 # ==========================================================================
 
 # _wph_repo — a base commit carrying a platform-guarded TU and a header with an
-# inline definition, on branch main; leaves the work tree on branch `head`.
+# inline definition, on branch main; leaves the work tree on branch `work`.
 _wph_repo() {
     FIXREPO="$(mktemp -d)"
     git -C "$FIXREPO" init -q -b main
@@ -427,7 +427,7 @@ _wph_repo() {
         '    if (x > 0) {' '        return x * 2;' '    }' '    return 0;' '}' \
         '}  // namespace ui' > "$FIXREPO/Source/Core/include/h.h"
     git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
-    git -C "$FIXREPO" checkout -qb head
+    git -C "$FIXREPO" checkout -qb work
 }
 
 # _wph_insert_after <file> <line-no> <text> — insert one line after line N.
@@ -515,7 +515,7 @@ _wph_gate() {
 # ==========================================================================
 
 # _ctx_repo <first-block-lines...> — a base TU: the given lines, 40 filler
-# statements, then `void g(int x) { (void)x; }`; leaves the tree on `head`.
+# statements, then `void g(int x) { (void)x; }`; leaves the tree on `work`.
 _ctx_repo() {
     FIXREPO="$(mktemp -d)"
     git -C "$FIXREPO" init -q -b main
@@ -528,7 +528,7 @@ _ctx_repo() {
         printf '%s\n' 'void g(int x) {' '    (void)x;' '}'
     } > "$FIXREPO/Source/Core/src/a.cpp"
     git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
-    git -C "$FIXREPO" checkout -qb head
+    git -C "$FIXREPO" checkout -qb work
 }
 
 # _ctx_edit <sed-expr> — apply one edit plus the untested `launchMissiles(x);`.
