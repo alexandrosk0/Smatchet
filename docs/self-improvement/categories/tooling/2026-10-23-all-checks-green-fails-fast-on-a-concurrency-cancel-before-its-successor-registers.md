@@ -8,7 +8,7 @@
   - Run 39891559599 (#4126) was cancelled by the workflow's concurrency group at 02:48:17; run 39891559948 (#4127) passed `Perf PR-fast (windows-2022)` at 02:48:29.
   - `All checks green` run 39891559984 read the head at 02:48:28, before #4127's check run was listed. It saw only the cancelled one and ended `RED Perf PR-fast (windows-2022) (cancelled)` at once.
   - A plain re-run of the aggregate was the whole recovery: the newest run was already green.
-- **Status**: open
+- **Status**: fixed: the layer fix merged as the-unwilling-agentic-bunch#11 (`43273a6`); the host pointer moves to it in the bump PR that carries this line
 
 ## Why
 
