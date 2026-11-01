@@ -24,6 +24,7 @@
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
+#include "Ui/TouchInputRouter.h"
 #include "Logger.h"
 #include "Sync/CatalogRestorePure.h"
 #include "Sync/LookupFreshnessPure.h"
@@ -516,10 +517,26 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     }
     ::ImGui::GetIO().FontGlobalScale = fontScale;
 
-    // Apply density padding — only re-apply when the setting changes.
+    // Desktop touchscreen router (absent on Android / CLI contexts): push the current settings, then
+    // ask whether hit targets should be touch-sized right now.
+    smatchet::ui::touch::TouchInputRouter* touchRouter =
+        smatchet::ui::touch::TouchInputRouter::ForContext(::ImGui::GetCurrentContext());
+    if (touchRouter != nullptr) {
+        touchRouter->SetMode(d.cfg.TouchInput);
+        touchRouter->SetLongPressSeconds(d.cfg.TouchLongPressSeconds);
+        touchRouter->SetPixelScale(SmatchetTheme::HostDensityScale());
+    }
+    // Only hosts that installed the router (desktop) do touch sizing; Android has its own Mobile path.
+    const bool touchTargetsNow = touchRouter != nullptr && touchRouter->WantsTouchSizing();
+
+    // Apply density padding — only re-apply when the setting changes. Density writes FramePadding
+    // absolutely, so a touch overlay already in place is re-layered on top.
     if (d.cfg.Density != lastAppliedDensity_) {
         lastAppliedDensity_ = d.cfg.Density;
         smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
+        if (lastAppliedTouchTargets_) {
+            SmatchetTheme::ApplyTouchTargetOverlay(SmatchetTheme::HostDensityScale());
+        }
     }
 
     // Panel visibility is driven by the d.show* / cfg.Show* flags that gate each ImGui::Begin call.
@@ -544,7 +561,8 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     const bool themeChanged = (d.cfg.Theme != lastAppliedTheme_);
     const bool modeChanged = (d.effectiveUiMode != lastAppliedEffectiveUiMode_);
     const bool densityChangedInMobile = mobileNow && (d.cfg.MobileTouchDensity != lastAppliedMobileDensity_);
-    if (themeChanged || modeChanged || densityChangedInMobile) {
+    const bool touchTargetsChanged = (touchTargetsNow != lastAppliedTouchTargets_);
+    if (themeChanged || modeChanged || densityChangedInMobile || touchTargetsChanged) {
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
         if (mobileNow) {
@@ -554,6 +572,12 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
             // Desktop restores the user's density spacing onto the (host-base) rebuilt style.
             smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
         }
+        // Touch-sized hit targets go on last: max-semantics, so they only grow what the layers
+        // above left smaller than a finger needs.
+        if (touchTargetsNow) {
+            SmatchetTheme::ApplyTouchTargetOverlay(SmatchetTheme::HostDensityScale());
+        }
+        lastAppliedTouchTargets_ = touchTargetsNow;
         lastAppliedEffectiveUiMode_ = d.effectiveUiMode;
         lastAppliedMobileDensity_ = d.cfg.MobileTouchDensity;
     }

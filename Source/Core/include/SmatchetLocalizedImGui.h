@@ -158,6 +158,12 @@ inline bool SliderInt(const char* label, int* v, int v_min, int v_max, const cha
                               SmatchetLocalization::TranslateSourceAsFormat(format), flags);
 }
 
+inline bool SliderFloat(const char* label, float* v, float v_min, float v_max, const char* format = "%.3f",
+                        ImGuiSliderFlags flags = 0) {
+    return ::ImGui::SliderFloat(SmatchetLocalization::LabelFromSource(label), v, v_min, v_max,
+                                SmatchetLocalization::TranslateSourceAsFormat(format), flags);
+}
+
 inline bool Selectable(const char* label, bool selected = false, ImGuiSelectableFlags flags = 0,
                        const ImVec2& size = ImVec2(0, 0)) {
     return ::ImGui::Selectable(SmatchetLocalization::LabelFromSource(label), selected, flags, size);

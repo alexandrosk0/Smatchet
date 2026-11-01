@@ -97,6 +97,8 @@ void SmatchetHost_RenderDrawData(SmatchetImGuiHostHandle host, int rendererBacke
 void SmatchetHost_SetMousePosition(SmatchetImGuiHostHandle host, float x, float y);
 void SmatchetHost_SetMouseButton(SmatchetImGuiHostHandle host, int button, bool isDown);
 void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, float wheelY);
+// source: 0 = mouse, 1 = touchscreen, 2 = pen (ImGuiMouseSource order). Sticky; send before position/button.
+void SmatchetHost_SetMouseSource(SmatchetImGuiHostHandle host, int source);
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey);
 void SmatchetHost_ApplyKeyChordDown(SmatchetImGuiHostHandle host, int imguiKey, bool ctrl, bool shift, bool alt,
                                     bool superKey);

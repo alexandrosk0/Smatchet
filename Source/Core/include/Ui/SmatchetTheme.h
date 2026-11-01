@@ -110,6 +110,13 @@ void ReassertHostDensityScale(float newScale);
  *  back to the host base); never call with 1/scale. No-op on scale <= 0 / NaN / == 1.0. */
 void ApplyTouchScale(float scale);
 
+/** Desktop touchscreen hit targets (docs/plans/touchscreen-support.md): grow TouchExtraPadding,
+ *  scrollbar / grab size, frame padding height and the resize-border hover band of the LIVE style
+ *  to touch minimums (SmatchetTouchSizingPure::ComputeTouchTargetStyle, scaled by `hostScale`).
+ *  Max-semantics, so it is idempotent and leaves an already roomy style alone; font size is not
+ *  touched. Reverting is the next ApplyStyle rebuild. Call after ApplyStyle + density. */
+void ApplyTouchTargetOverlay(float hostScale);
+
 /** The host-injected UI density scale last set via ApplyUiDensityScale / ReassertHostDensityScale
  *  (1.0 on desktop where the seam is inert; e.g. ~2.6 on a 420-dpi phone). The Auto UI-mode
  *  breakpoint divides the raw `io.DisplaySize.x` (physical surface pixels on the Android EGL host)
