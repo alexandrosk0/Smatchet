@@ -85,6 +85,17 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     # (FAT filesystem, lacking privileges, etc.).
     set(_SMATCHET_SCRIPTS_DST "${CMAKE_BINARY_DIR}/Scripts")
     set(_smatchet_scripts_linked FALSE)
+
+    # Through the junction below, <build>/Scripts/* ARE the tracked scripts/*
+    # files. A build dir inside the checkout that the root .gitignore misses
+    # (e.g. build-iter-v2/) then lists them as new files, and anything that
+    # stages-and-resets or cleans them (git stash -u, GitHub Desktop's
+    # branch-switch stash) deletes the real scripts/ through the link. A `*`
+    # .gitignore at the build root hides the whole tree from git whatever the
+    # directory is called.
+    if(NOT EXISTS "${CMAKE_BINARY_DIR}/.gitignore")
+        file(WRITE "${CMAKE_BINARY_DIR}/.gitignore" "*\n")
+    endif()
     if(NOT CMAKE_CONFIGURATION_TYPES AND EXISTS "${SMATCHET_LUA_SCRIPTS_SRC}")
         if(NOT EXISTS "${_SMATCHET_SCRIPTS_DST}")
             if(WIN32)
