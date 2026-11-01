@@ -64,7 +64,9 @@ class TouchSizingDetector {
 constexpr float kTouchExtraPaddingMaxPx = 6.0f;
 constexpr float kTouchScrollbarSizePx = 20.0f;
 constexpr float kTouchGrabMinSizePx = 20.0f;
-constexpr float kTouchFramePaddingYPx = 6.0f;
+// With a 16 px font and the theme's 6 px item spacing this gives a 40 px tall hit box on a 40 px
+// pitch (the Windows touch-target guidance).
+constexpr float kTouchFramePaddingYPx = 9.0f;
 constexpr float kTouchWindowBorderHoverPaddingPx = 8.0f;
 
 // The subset of ImGuiStyle that sets hit-target size.
