@@ -140,6 +140,7 @@ void DrawAppearanceTouchSection(UiDrawSession& d) {
             d.cfg.TouchLongPressSeconds = hold;
             MarkPrefsDirty(d);
         }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the slider, not the page
         ImGui::SetItemTooltip("How long to hold a finger still before the context menu opens.");
         ImGui::EndDisabled();
     }
@@ -307,6 +308,7 @@ void DrawTrackerNotificationsSectionBody(UiDrawSession& d) {
             d.cfg.TicketChangeMonitorIntervalSec = interval;
             MarkPrefsDirty(d);
         }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the slider, not the page
         ImGui::SetItemTooltip("How often to check tracked issues for updates. This refreshes the grid's data and "
                               "(if enabled above) raises a toast. Lower = faster updates, more requests.");
         ImGui::EndDisabled();

@@ -829,6 +829,19 @@ TEST_CASE("ConfigManager Load clamps quick_create_ctx_log_lines to [1, 300]") {
     }
 }
 
+TEST_CASE("ConfigManager Load treats a non-string touchInput as Auto and keeps later keys") {
+    smatchet_tests::TestEnvGuard env;
+    {
+        std::ofstream o(ConfigManager::GetConfigPath(), std::ios::trunc);
+        o << "{\"read_only_mode\":false,\"touchInput\":null,\"ui_language\":\"fr\"}";
+    }
+
+    ConfigManager::InvalidateCache();
+    const TrackerConfig out = ConfigManager::Load();
+    CHECK(out.TouchInput == TouchInputMode::Auto);
+    CHECK(out.UiLanguage == "fr-FR");
+}
+
 // ---- Limits (Config/TunableLimits.h): tunable caps / timeouts / cache sizes ----
 
 TEST_CASE("Limits table: every default sits inside its own clamp range and matches the struct") {

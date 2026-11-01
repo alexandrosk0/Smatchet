@@ -201,7 +201,11 @@ void LoadUiEnumFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     cfg.MobileHomePage = j.value("mobileHome", cfg.MobileHomePage);
     cfg.MobileTouchDensity = mobileTouchDensityFromString(j.value("mobileDensity", std::string("comfortable")));
-    cfg.TouchInput = touchInputModeFromString(j.value("touchInput", std::string("auto")));
+    // A hand-edited non-string value falls back to Auto instead of throwing past the fields below.
+    const auto touchInputIt = j.find("touchInput");
+    cfg.TouchInput = (touchInputIt != j.end() && touchInputIt->is_string())
+                         ? touchInputModeFromString(touchInputIt->get<std::string>())
+                         : TouchInputMode::Auto;
     ConfigManager::SanitizeMobileNav(cfg);
     cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
 }

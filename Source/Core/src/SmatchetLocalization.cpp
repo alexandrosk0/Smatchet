@@ -1483,6 +1483,16 @@ const TranslationEntry kEntries[] = {
     {"prefs.touch.auto", "Auto (bigger targets while touching)", u8"Auto (cibles agrandies pendant l'usage tactile)"},
     {"prefs.touch.on", "On (always touch-sized)", u8"Activé (toujours dimensionné pour le tactile)"},
     {"prefs.touch.off", "Off (finger acts as a mouse)", u8"Désactivé (le doigt agit comme une souris)"},
+    {"prefs.touch.heading", "Touchscreen", u8"Écran tactile"},
+    {"prefs.touch.input_label", "Touch input", u8"Saisie tactile"},
+    {"prefs.touch.input_help",
+     "Finger gestures: drag to scroll, hold to open the context menu, tap to show a tooltip, double-tap to edit a "
+     "cell. Off turns the gestures off.",
+     u8"Gestes du doigt : faire glisser pour défiler, maintenir pour ouvrir le menu contextuel, toucher pour "
+     u8"afficher une info-bulle, toucher deux fois pour modifier une cellule. Désactivé coupe les gestes."},
+    {"prefs.touch.long_press_label", "Long-press delay", u8"Délai d'appui long"},
+    {"prefs.touch.long_press_help", "How long to hold a finger still before the context menu opens.",
+     u8"Durée pendant laquelle garder le doigt immobile avant l'ouverture du menu contextuel."},
 
     // Sync Audit window Action-filter items (the Result items reuse the pre-existing
     // audit.all / audit.success / audit.failure rows; "Comments" reuses comments.title).

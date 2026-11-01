@@ -154,6 +154,7 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - `39e3b149f` · Re-review fixes: press-and-hold property follows the active device (set by touch, cleared by pen); touch Preferences rows `ConditionalDraw`; unreachable timing check removed.
 - `c4b1bc324` · Router ownership via `std::make_unique` / `unique_ptr` (pre-ship no-raw-new lint); comment lint.
 - `ee9060ef8` + follow-up · PR-review (Bugbot) fixes: a touch press takes its point from the button message (`GetMessagePos`) instead of a stale earlier touch point; the first fling step waits a tick only when the release itself moved the content (no extra jump, no stall).
+- CodeRabbit review fixes: Windows pen input in Unreal goes to ImGui as a mouse (an `IWindowsMessageHandler` reads the `WM_POINTER*` type, since Slate reports pen contacts as touch with no pen flag; skipped under `-RenderOffScreen`, where the platform application is an `FNullApplication`); the Unreal wheel handler forwards the position when it differs from the last one sent; the touch Preferences heading, labels and help are translated to French; the Preferences sliders are touch drag surfaces; a non-string `touchInput` value loads as Auto.
 
 ## Deviations from plan
 
@@ -170,6 +171,9 @@ Branch `claude/touchscreen-support-e7d3ad` (shipped as one PR; SHAs are pre-squa
 - **Touch settings are desktop-only.** The Preferences block and the sizing overlay require an installed router, so Android (no router) keeps its own Mobile-mode handling.
 - **Not done from review (low):** DPI-scaling the gesture thresholds on high-DPI desktops (`HostDensityScale` is 1.0 there), and feeding `io.MouseDoubleClickTime` into the double-tap window. Both are tuning, left for on-device feedback.
 - **Prefs rows are `ConditionalDraw`**: they draw only where a router is installed (desktop); `prefs_schema_coverage` still sees both ids on desktop.
+- **Unreal pen is a mouse (review).** UE 5.7 sends `WM_POINTER` pen contacts through `OnTouchStarted`, so `IsTouchEvent()` alone treats a pen as a finger. The input processor registers an `IWindowsMessageHandler` that records the latest `WM_POINTERDOWN` / `WM_POINTERUPDATE` pointer type; a pen then drives ImGui as a mouse, matching the standalone build. A finger and a pen interleaved within one Slate pump take the later type. Not compiled here (no engine build in this tree); part of the Unreal on-device residue.
+- **Touch-target height left at 6 px frame padding (review, open for the owner).** CodeRabbit asked for a 44 px vertical hit area. With a 16 px font, 6 px `FramePadding.y` and the theme's 6 px `ItemSpacing.y`, a framed control is 28 px tall, its hit box 34 px (3 px `TouchExtraPadding.y` each side), on a 34 px pitch: below the 40 epx Windows touch guidance. 9 px padding would reach 40 px, 11 px would reach 44 px; both make every framed row taller while touch sizing is on. `kTouchFramePaddingYPx` is the single knob.
+- **Slider drag surfaces.** The three Preferences sliders are marked as touch drag surfaces so a finger moves the value instead of panning the page. The date-time editor's `DragInt`s live in `Tracker/` (no `Ui/` includes allowed) and inside a popup, which does not pan.
 - **Not done from review (low, rare):** a focus loss and a new finger press landing in the same frame drop that one touch; the boot-failure teardown paths do not call `UninstallStandaloneInputBridges` (only matters if a touch arrived during a failed boot).
 
 ## Verification (actual)
