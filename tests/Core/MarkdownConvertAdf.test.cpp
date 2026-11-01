@@ -630,4 +630,16 @@ TEST_CASE("AdfToMarkdown: mistyped node fields fall back instead of throwing") {
     huge["attrs"]["order"] = 9223372036854775807LL;
     huge["content"] = json::array({li});
     CHECK_NOTHROW(Adf2Md(AdfDoc(json::array({huge}))));
+
+    // Above INT64_MAX the value is unsigned; it clamps to the 9-digit maximum, not to 0.
+    json hugeUnsigned = huge;
+    hugeUnsigned["attrs"]["order"] = 18446744073709551615ULL;
+    CHECK(Adf2Md(AdfDoc(json::array({hugeUnsigned}))).find("999999999.") != std::string::npos);
+
+    // A text node with a mistyped type keeps its words.
+    json lost;
+    lost["type"] = 5;
+    lost["text"] = "lost";
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({AdfText("kept "), lost}))}))).find("lost") !=
+          std::string::npos);
 }

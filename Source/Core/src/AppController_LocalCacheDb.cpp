@@ -45,8 +45,9 @@ namespace {
 // Every file is first moved aside to a `.wipe` name, and a move that fails puts the moved ones back. A file
 // SQLite still holds open cannot be moved on Windows, so the usual failure leaves the database, its WAL and
 // its rows exactly as they were. Only then are the staged files deleted, the database first: if that fails
-// everything is restored, and once it is gone a sidecar that will not delete sits under its `.wipe` name,
-// where a reopen at the original path cannot pick it up.
+// everything is restored. Once it is gone, a sidecar that will not delete stays under its `.wipe` name, where
+// a reopen at the original path cannot pick it up, and the wipe reports an error naming it (with
+// `anyRemoved` set), since that file can still hold cached data.
 VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemoved) {
     anyRemoved = false;
     namespace fs = ghc::filesystem;
@@ -90,6 +91,7 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
         }
         staged.emplace_back(f, aside);
     }
+    std::string leftovers;
     for (std::size_t i = 0; i < staged.size(); ++i) {
         ec.clear();
         fs::remove(staged[i].second, ec);
@@ -105,6 +107,10 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
         }
         LOG_WARN("Cache wipe: left %s behind (%s); it is no longer at the database's path.",
                  staged[i].second.string().c_str(), ec.message().c_str());
+        leftovers += (leftovers.empty() ? "" : ", ") + staged[i].second.string() + " (" + ec.message() + ")";
+    }
+    if (!leftovers.empty()) {
+        return VoidResult::Err("Removed the database but could not remove " + leftovers + ".");
     }
     return VoidOk();
 }
@@ -335,7 +341,7 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     bool anyRemoved = false;
     const VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
     outcome.Wiped = anyRemoved;
-    if (!removeResult.has_value()) {
+    if (!removeResult.has_value() && !anyRemoved) {
         outcome.Error = removeResult.error();
         try {
             std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(localCacheDbPath_));
@@ -345,7 +351,10 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
         return outcome;
     }
 
-    outcome.Wiped = true; // every cache file is gone from here on, whatever happens to the new database
+    outcome.Wiped = true; // the database is gone from here on, whatever happens to the new one
+    // The database went but a sidecar would not: the new database still gets its one-time stamps below (an
+    // unstamped fresh file would run those migrations against rows written later), and the leftover is reported.
+    const std::string leftover = removeResult.has_value() ? std::string() : removeResult.error();
     std::shared_ptr<LocalCacheManager> fresh;
     try {
         fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
@@ -370,6 +379,7 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     }
     std::atomic_store(&Cache, fresh); // published only once it is fully set up
     outcome.Ok = true;
+    outcome.Warning = leftover;
     return outcome;
 }
 
@@ -410,7 +420,15 @@ void AppController::FinishCacheRecreate_(
                                             // one
     }
     cacheRecreating_.store(false); // down before the follow-up sync starts
-    if (outcome.Ok) {
+    if (outcome.Ok && !outcome.Warning.empty()) {
+        LOG_WARN("AppController: local cache recreated, with a leftover file: %s", outcome.Warning.c_str());
+        SmatchetToastManager::Instance().Push(
+            std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
+            std::string(SmatchetLocalization::T("toast.local_db_recreated_leftover",
+                                                "Local database recreated; refreshing issues. ")) +
+                outcome.Warning,
+            ToastType::Warning, 6000);
+    } else if (outcome.Ok) {
         LOG_INFO("AppController: local cache recreated.");
         SmatchetToastManager::Instance().Push(
             std::string(SmatchetLocalization::T("toast.success", "Success")),

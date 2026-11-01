@@ -129,13 +129,13 @@ _rename_class() {
 # drop or add a translation unit by its exact name (list(REMOVE_ITEM ...), an explicit source list), so a
 # rename of such a file can change what is built even inside one tree. The caller checks the old name at
 # the merge base and the new one at HEAD, so a rename that also drops the old CMake entry still counts.
-# A name merely sharing the basename also counts: a false match only makes the rename not exempt, which
-# is the safe side. Errors fail closed the same way: a grep that cannot run counts as a match.
+# The basename is matched literally, anywhere: CMake separates list items with whitespace or `;` and
+# builds names by concatenation, so any boundary rule misses a form. A name merely containing it also
+# counts: a false match only makes the rename not exempt, which is the safe side. Errors fail closed the
+# same way: a grep that cannot run counts as a match.
 _named_in_cmake() {
     local name="${1##*/}" rc=0
-    # The name as a whole path component: after a slash, whitespace, a quote or a paren.
-    git grep -qE -e "(^|[/[:space:]\"'(])${name//./\\.}([[:space:]\"')]|\$)" "$2" -- \
-        'CMakeLists.txt' '*/CMakeLists.txt' '*.cmake' || rc=$?
+    git grep -qF -e "$name" "$2" -- 'CMakeLists.txt' '*/CMakeLists.txt' '*.cmake' || rc=$?
     [ "$rc" -ne 1 ]
 }
 

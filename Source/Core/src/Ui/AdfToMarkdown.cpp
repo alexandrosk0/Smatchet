@@ -73,8 +73,11 @@ int IntAttr(const json& node, const char* key, int def) {
     const auto it = attrs.find(key);
     if (it == attrs.end() || !it->is_number_integer())
         return def;
+    constexpr long long kMax = 999999999LL;
+    if (it->is_number_unsigned()) // read unsigned first: one above INT64_MAX would wrap negative
+        return static_cast<int>((std::min)(it->get<unsigned long long>(), static_cast<unsigned long long>(kMax)));
     const long long v = it->get<long long>();
-    return static_cast<int>((std::max)(0LL, (std::min)(v, 999999999LL)));
+    return static_cast<int>((std::max)(0LL, (std::min)(v, kMax)));
 }
 
 // Collect the emphasis wrappers and link/code state for a text node's `marks`
@@ -245,13 +248,16 @@ void EmitInlineText(const json& node, InlineMdOut& o) {
         return;
     }
     // Unmapped inline node (status lozenge, inline extension, ...): keep its display text, as the
-    // plain-text flattener does, rather than silently dropping the words.
-    const auto attrs = node.find("attrs");
-    if (attrs != node.end() && attrs->is_object()) {
-        const auto text = attrs->find("text");
-        if (text != attrs->end() && text->is_string())
-            o.Text(text->get_ref<const std::string&>());
+    // plain-text flattener does, rather than silently dropping the words. A node whose `type` is
+    // missing or mistyped but which carries its own string `text` keeps that text too.
+    const std::string display = StringField(AttrsOf(node), "text");
+    if (!display.empty()) {
+        o.Text(display);
+        return;
     }
+    const std::string own = StringField(node, "text");
+    if (!own.empty())
+        o.Text(own);
 }
 
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
