@@ -15,5 +15,5 @@
   and thread it through the Jira/GitHub/Plane/Linear implementations the same way `FetchIssuesStreamed`
   already does, checking it between request chunks. Enumerator to walk: every `FetchIssuesForKeys` override
   under `Source/Core/src/Tracker/*IssueSearch.cpp` implementing `ITrackerIssueReader`.
-  Status: open
+  Status: fixed (verified 2026-11-01). `ITrackerIssueReader::FetchIssuesForKeysCancellable` takes a cancel callback, and the parent walk passes one per hop (cancelled or superseded request id). `JiraClient` overrides it and polls the token inside the HTTP retry/backoff window and between 40-key chunks. GitHub, Plane and Linear keep the forwarding default: none maps a `parent` field, so the parent walk never reaches them, and Plane and Linear fetch keys in one batched request.
   Last-reviewed: 2026-09-07
