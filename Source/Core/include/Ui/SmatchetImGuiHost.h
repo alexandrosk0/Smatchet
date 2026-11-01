@@ -69,6 +69,9 @@ class SmatchetImGuiHost {
     void SetMousePosition(float x, float y);
     void SetMouseButton(int button, bool isDown);
     void AddMouseWheel(float wheelX, float wheelY);
+    /** Tag the pointer events that follow with their device (0 mouse, 1 touchscreen, 2 pen). Sticky until changed;
+     *  call before SetMousePosition / SetMouseButton so ImGui applies its touch handling to them. */
+    void SetMouseSource(int source);
     void SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey);
     /** Atomically apply modifier keys + key-down in one ImGui mutex hold (avoids render-thread NewFrame clearing
      * modifiers). */

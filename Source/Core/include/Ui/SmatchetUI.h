@@ -207,6 +207,8 @@ class SmatchetUI {
     // so the first frame in Desktop is a no-op and the first Mobile flip is detected.
     EffectiveUiMode lastAppliedEffectiveUiMode_ = EffectiveUiMode::Desktop;
     MobileTouchDensity lastAppliedMobileDensity_ = MobileTouchDensity::Comfortable;
+    // Touch-sized hit targets currently layered on the style (SmatchetTheme::ApplyTouchTargetOverlay).
+    bool lastAppliedTouchTargets_ = false;
     RecentViewLru recentViews_;
 
     // Parsed, ready-to-match form of cfg.Keybindings, built by rebuildKeybindingCache.

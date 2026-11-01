@@ -38,6 +38,7 @@
 #include "Ui/SmatchetDestructiveButton.h"
 #include "Sync/CacheRecreateReportPure.h"
 #include "Ui/SmatchetStorageSnapshotPure.h"
+#include "Ui/TouchInputRouter.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -208,6 +209,7 @@ void DrawGeneralLanguageRegionSection(UiDrawSession& d) {
             d.cfg.DateCompactRelativeThresholdDays = threshold;
             MarkPrefsDirty(d);
         }
+        smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag moves the slider, not the page
         ImGui::SetItemTooltip("Days before compact dates switch to absolute.");
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.appearance.date_threshold.help",

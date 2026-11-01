@@ -28,6 +28,11 @@ enum class MobilePage : std::uint8_t { Grid = 0, Views = 1, Log = 2, Settings = 
 // Touch hit-target density preset → ScaleAllSizes / font multiplier.
 enum class MobileTouchDensity : std::uint8_t { Compact = 0, Comfortable = 1 };
 
+// Desktop touchscreen handling (Ui/TouchInputRouter). Auto: finger gestures are always on, and
+// hit targets grow while a touchscreen is in use; On: hit targets stay touch-sized; Off: a finger
+// is treated exactly like a mouse.
+enum class TouchInputMode : std::uint8_t { Auto = 0, On = 1, Off = 2 };
+
 // Auto-mode width hysteresis. Enter Mobile at or below the max-enter width; exit to Desktop at or
 // above the min-exit width; hold the previous decision inside the dead band so a near-breakpoint
 // resize never flaps. Compared against a DPI-independent *logical* width (physical px / density),
@@ -194,4 +199,26 @@ inline float mobileTouchDensityScale(MobileTouchDensity d) {
         return 1.6f;
     }
     return 1.6f;
+}
+
+inline const char* touchInputModeToString(TouchInputMode m) {
+    switch (m) {
+    case TouchInputMode::Auto:
+        return "auto";
+    case TouchInputMode::On:
+        return "on";
+    case TouchInputMode::Off:
+        return "off";
+    }
+    return "auto";
+}
+
+inline TouchInputMode touchInputModeFromString(const std::string& s) {
+    if (s == "on") {
+        return TouchInputMode::On;
+    }
+    if (s == "off") {
+        return TouchInputMode::Off;
+    }
+    return TouchInputMode::Auto;
 }
