@@ -398,12 +398,13 @@ checkrun_payload() {
     printf '%s' "$f"
 }
 
-# cr_run <status> <conclusion|null> <title> [app-slug] [startedAt] -> one CheckRun node
+# cr_run <status> <conclusion|null> <title> [app-slug] [databaseId] [startedAt|null] -> one CheckRun node
 cr_run() {
-    local concl="null"
+    local concl="null" started="\"${6:-2026-11-01T21:01:00Z}\""
     [ "$2" != "null" ] && concl="\"$2\""
-    printf '{"__typename":"CheckRun","name":"CodeRabbit","status":"%s","conclusion":%s,"title":"%s","startedAt":"%s","checkSuite":{"app":{"slug":"%s"}}}' \
-        "$1" "$concl" "$3" "${5:-2026-11-01T21:01:00Z}" "${4:-coderabbitai}"
+    [ "${6:-}" = "null" ] && started=null
+    printf '{"__typename":"CheckRun","databaseId":%s,"name":"CodeRabbit","status":"%s","conclusion":%s,"title":"%s","startedAt":%s,"checkSuite":{"app":{"slug":"%s"}}}' \
+        "${5:-1}" "$1" "$concl" "$3" "$started" "${4:-coderabbitai}"
 }
 
 @test "verdict: a blank-bodied thread reply is NOT a review (the #1996 wedge)" {
@@ -552,9 +553,17 @@ cr_run() {
 
 @test "checkrun: the newest run decides (a re-run in progress is not a stale pass)" {
     setup_jq
-    old="$(cr_run COMPLETED SUCCESS Finished coderabbitai 2026-11-01T20:00:00Z)"
-    new="$(cr_run IN_PROGRESS null Reviewing coderabbitai 2026-11-01T21:00:00Z)"
+    old="$(cr_run COMPLETED SUCCESS Finished coderabbitai 10 2026-11-01T20:00:00Z)"
+    new="$(cr_run IN_PROGRESS null Reviewing coderabbitai 11 2026-11-01T21:00:00Z)"
     f="$(checkrun_payload '[]' "[$new,$old]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a newer queued run with no startedAt still outranks an older SUCCESS" {
+    setup_jq
+    old="$(cr_run COMPLETED SUCCESS Finished coderabbitai 10 2026-11-01T20:00:00Z)"
+    new="$(cr_run QUEUED null Queued coderabbitai 11 null)"
+    f="$(checkrun_payload '[]' "[$old,$new]")"
     [ "$(verdict "$f")" = "unsettled" ]
 }
 
@@ -594,7 +603,7 @@ cr_run() {
 }
 
 @test "checkrun: the GraphQL query asks for CheckRun fields and the app slug" {
-    grep -qF '... on CheckRun{ name status conclusion title startedAt checkSuite{ app{ slug } } }' "$ACTION"
+    grep -qF '... on CheckRun{ databaseId name status conclusion title startedAt checkSuite{ app{ slug } } }' "$ACTION"
 }
 
 @test "verdict: rate-limited SUCCESS beside a blank reply is still not evidence" {
@@ -1227,6 +1236,11 @@ status_pages() {
     export CR_RUN_FIRST_AT
     ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
     [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: the check-run anchor asks for every run and skips a null start" {
+    grep -qF 'check-runs?check_name=CodeRabbit&filter=all&per_page=100' "$ACTION"
+    grep -qF '(.started_at // .completed_at // empty)' "$ACTION"
 }
 
 @test "oss: an ask older than the first CodeRabbit check-run does not count" {

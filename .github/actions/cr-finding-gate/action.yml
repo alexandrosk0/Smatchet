@@ -323,10 +323,12 @@ runs:
             --jq '.[] | select(.context == "CodeRabbit") | .created_at' 2>/dev/null | sort | sed -n 1p) \
             || cr_first_at=""
           # CodeRabbit may post a CheckRun instead of a status; then its first
-          # run on the head is the anchor.
+          # run on the head is the anchor. filter=all keeps a re-run from hiding
+          # the first run (the API defaults to the latest), and a run that never
+          # started falls back to its completion time instead of printing null.
           if [ -z "$cr_first_at" ]; then
-            cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-runs?check_name=CodeRabbit&per_page=100" \
-              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | .started_at' 2>/dev/null | sort | sed -n 1p) \
+            cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-runs?check_name=CodeRabbit&filter=all&per_page=100" \
+              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | (.started_at // .completed_at // empty)' 2>/dev/null | sort | sed -n 1p) \
               || cr_first_at=""
           fi
           while IFS=$'\t' read -r login utype created ts cmt; do
@@ -508,7 +510,7 @@ runs:
                 nodes{ commit{ statusCheckRollup{ contexts(first:100){
                   nodes{ __typename
                     ... on StatusContext{ context state description createdAt }
-                    ... on CheckRun{ name status conclusion title startedAt checkSuite{ app{ slug } } } }
+                    ... on CheckRun{ databaseId name status conclusion title startedAt checkSuite{ app{ slug } } } }
                 } } } }
               }
             }
@@ -601,7 +603,9 @@ runs:
             # terminal manual-review arm as the old OSS status, which names the
             # human move, rather than retry into an unbounded PENDING: nothing
             # re-runs this gate when a CheckRun changes. Every other shape (in
-            # progress, NEUTRAL, CANCELLED, ...) reads PENDING. Only a run from
+            # progress, NEUTRAL, CANCELLED, ...) reads PENDING. The newest run is
+            # the highest databaseId: startedAt is null on a queued run, which
+            # would sort a newer run below an older SUCCESS. Only a run from
             # the coderabbitai app counts: any workflow job can be named
             # "CodeRabbit", and that must not pass this gate.
             cr_ctx=$(printf '%s' "$resp" | jq -r '
@@ -610,7 +614,7 @@ runs:
               | if $sc != null then $sc
                 else ([ $n[] | select(.__typename == "CheckRun" and .name == "CodeRabbit"
                                       and (.checkSuite.app.slug // "") == "coderabbitai") ]
-                      | sort_by(.startedAt // "") | last) as $run
+                      | sort_by(.databaseId // 0) | last) as $run
                 | if $run == null then "ABSENT"
                   elif ($run.status // "") != "COMPLETED" then "PENDING"
                   elif $run.conclusion == "SUCCESS" then "SUCCESS"
@@ -650,7 +654,7 @@ runs:
               | if $sd != null then $sd
                 else ([ $n[] | select(.__typename == "CheckRun" and .name == "CodeRabbit"
                                       and (.checkSuite.app.slug // "") == "coderabbitai") ]
-                      | sort_by(.startedAt // "") | last | (.title // "")) // ""
+                      | sort_by(.databaseId // 0) | last | (.title // "")) // ""
                 end
               ' 2>/dev/null) || cr_desc=""
             # A skipped CheckRun takes the manual-review arm below. The rewrite is
