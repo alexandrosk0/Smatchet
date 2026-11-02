@@ -8,7 +8,7 @@
 
 ## Context
 
-Two layout models collide. The vexp installer (v1.2.x) writes `.cursor/rules` as a **single file**; Smatchet's `setup-harness` cursor adapter needs `.cursor/rules/` to be a **directory** of `.mdc` rules. Today `setup_cursor()` hard-`exit 1` when `.cursor/rules` is a file ([setup-harness.sh:462](../../../agent-layer/agents/scripts/core/setup-harness.sh#L462)). Result: Smatchet's `agents.mdc` never installs, and the five leaf `Source/Core/src/*/AGENTS.md` files are never auto-loaded in Cursor — unlike Claude Code's gitignored `@AGENTS.md` shims from `gen_subsystem_claude_shims()` ([setup-harness.sh:199](../../../agent-layer/agents/scripts/core/setup-harness.sh#L199)).
+Two layout models collide. The vexp installer (v1.2.x) writes `.cursor/rules` as a **single file**; Smatchet's `setup-harness` cursor adapter needs `.cursor/rules/` to be a **directory** of `.mdc` rules. Today `setup_cursor()` hard-`exit 1` when `.cursor/rules` is a file ([`setup_cursor()` in setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh)). Result: Smatchet's `agents.mdc` never installs, and the five leaf `Source/Core/src/*/AGENTS.md` files are never auto-loaded in Cursor — unlike Claude Code's gitignored `@AGENTS.md` shims from `gen_subsystem_claude_shims()` ([`gen_subsystem_claude_shims()` in setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh)).
 
 After this lands: one idempotent `bash agents/scripts/core/setup-harness.sh cursor` run auto-migrates the vexp single-file into `.cursor/rules/vexp.mdc`, installs `agents.mdc`, and emits per-subsystem `subsystem-<ctx>.mdc` shims — with vexp + Smatchet search policies reconciled rather than contradictory.
 
@@ -29,7 +29,7 @@ User-data safety is the gating constraint: migration only fires when vexp delimi
 
 ## Files to modify
 
-1. [agents/scripts/core/setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh) — Slice 1: replace `exit 1` block (L462–467) with `migrate_cursor_rules_file()`; Slice 2: add `gen_subsystem_cursor_mdc()` (mirror `gen_subsystem_claude_shims()` @ L199); call both from `setup_cursor()` (L457).
+1. [agents/scripts/core/setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh) — Slice 1: replace the `.cursor/rules`-is-a-file `exit 1` block in `setup_cursor()` with `migrate_cursor_rules_file()`; Slice 2: add `gen_subsystem_cursor_mdc()` (mirror `gen_subsystem_claude_shims()`); call both from `setup_cursor()`.
 2. `docs/harness/cursor/rules/subsystem-leaf.mdc.tmpl` — **NEW**: glob-scoped pointer template for leaf `AGENTS.md` shims.
 3. [docs/harness/cursor/rules/agents.mdc](../../../agent-layer/docs/harness/cursor/rules/agents.mdc) — Slice 3: add 2–3-line semantic-search-exceptions block citing root `AGENTS.md`.
 4. [docs/harness/cursor/setup.md](../../../agent-layer/docs/harness/cursor/setup.md) — Slice 4: document auto-migration + generated shims + refresh-after-pull + re-install-heals.
@@ -40,7 +40,7 @@ Grep confirmed (2026-06-13): `migrate_cursor_rules_file`, `gen_subsystem_cursor_
 
 ## Existing utilities reused
 
-- `gen_subsystem_claude_shims()` — [setup-harness.sh:199](../../../agent-layer/agents/scripts/core/setup-harness.sh#L199) — registry pattern (`git ls-files 'Source/Core/src/*/AGENTS.md'`) + per-leaf emit + user-modified skip; `gen_subsystem_cursor_mdc()` mirrors it exactly.
+- `gen_subsystem_claude_shims()` — [`gen_subsystem_claude_shims()` in setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh) — registry pattern (`git ls-files 'Source/Core/src/*/AGENTS.md'`) + per-leaf emit + user-modified skip; `gen_subsystem_cursor_mdc()` mirrors it exactly.
 - `copy_template()` — [setup-harness.sh](../../../agent-layer/agents/scripts/core/setup-harness.sh) — skip-if-user-modified contract reused for `vexp.mdc` + `subsystem-*.mdc` regen guard.
 - [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) — same leaf-`AGENTS.md` registry the Claude shims + this generator read.
 

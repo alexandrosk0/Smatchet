@@ -4,7 +4,7 @@
 - **Priority**: P2
 - **Date**: 2026-09-12
 - **Observed on**: PR #2160 (merged `6a1a28115146` 2026-09-06T04:57:59Z with `Plan-lock gate` = failure)
-- **Status**: open
+- **Status**: open (items 1 and 3 shipped; item 2 remains)
 
 ## What happened
 
@@ -23,7 +23,7 @@ crossed, **which** path overlapped, or **why** crossing it was safe.
 The sibling hatch already solved this. `cr-out-of-band` ALONE is deliberately **not** honoured: the
 downgrade additionally requires `$crdisposition` — a `cr-disposition:`-prefixed label OR a
 `cr-disposition:<reason>` marker line in the PR body (`10-gate-filter.sh:76-77`) — and
-merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`) refuses the waiver when that attestation is missing (PR-3
+merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`) refuses the waiver when that attestation is missing (PR-3
 `cr-out-of-band-disposition-trail`). The plan-lock hatch never received the same treatment, so the
 repo enforces an attestation trail for one override and not for the other.
 
@@ -32,7 +32,7 @@ repo enforces an attestation trail for one override and not for the other.
 1. **One label, three unrelated conditions.** `plan-lock-gate.sh` offers the same label for a
    genuine write-set overlap (`:50`), for "lock table unavailable/undetermined … the fail-closed
    gate refuses to pass on an unverifiable lock state" (`:44`), and for an unresolvable base ref
-   (the `origin/${base} does not resolve` error, currently `:104`). A coordinated overlap and a broken lock fetch are cleared by the identical token, and
+   (the `origin/${base} does not resolve` error). A coordinated overlap and a broken lock fetch are cleared by the identical token, and
    afterwards nothing distinguishes them.
 2. **Whole-gate, not per-path.** The downgrade is all-or-nothing. Applied to clear one benign
    collision on a shared append-only doc, it equally waives any *other* overlapping path in the same
@@ -47,15 +47,17 @@ repo enforces an attestation trail for one override and not for the other.
 
 ## Concrete next action
 
+> **2026-10-31 (Batch 27 historical review):** items 1 and 3 have shipped in the layer. `merge-gates.d/10-gate-filter.sh` now requires `$planlockdisposition` beside `plan-lock-out-of-band` (the label alone no longer downgrades), `tests/bats/merge_gates.bats` covers both halves, and `docs/agent-rules/merge-gates.md` documents the hatch. Item 2 is still open: an infra red (`PLAN_LOCK_GATE_INFRA_RE` in `plan-lock-gate.sh`) is cleared by the same label and disposition that attest a coordinated overlap. The line pins below were replaced by the symbols they named.
+
 1. **Require a disposition trail, mirroring the shipped CR pattern.** Stop honouring
    `plan-lock-out-of-band` alone; require a `plan-lock-disposition:`-prefixed label OR a
    `plan-lock-disposition:<reason>` marker line in the PR body naming the lock slug and why crossing
    it is safe. Add `$planlockdisposition` beside `$crdisposition` in
    `merge-gates.d/10-gate-filter.sh`, and refuse the downgrade without it using
-   merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`) as the template.
+   merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`) as the template.
    Enumerator: `grep -nE 'planlock|crdisposition' agents/scripts/core/merge-gates.d/10-gate-filter.sh`.
 2. **Split the infra condition off the coordination condition.** An unverifiable lock state
-   (`plan-lock-gate.sh:44`, and `plan-lock-gate.sh`'s `origin/${base} does not resolve` error, currently `:104`) is an infra failure, not an operator decision; it should not be
+   (`plan-lock-gate.sh:44`, and `plan-lock-gate.sh`'s `origin/${base} does not resolve` error) is an infra failure, not an operator decision; it should not be
    clearable by the token that attests "I coordinated this overlap". Give it its own label, or make
    the disposition reason mandatory-and-distinct on that path.
 3. **Document the hatch** in `docs/agent-rules/merge-gates.md` alongside the others.

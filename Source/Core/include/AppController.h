@@ -1869,7 +1869,8 @@ class AppController : public IAppThreading,
     std::vector<BackgroundWorker> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
     /// UpdateTicket's cache writes, in call order, off the UI thread (Pillar 2). Drains run as background
-    /// tasks, so JoinBackgroundTasks (shutdown, cache recreate) waits for every queued save.
+    /// tasks, so JoinBackgroundTasks (cache recreate) waits for a drain already running. At shutdown the
+    /// destructor flushes the queue before setting shuttingDown_, which would otherwise drop a queued drain.
     smatchet::SerialTaskQueue ticketSaves_{
         [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
     /// The field-catalog snapshot file's writes (and, once restores move here, its reads), in call order, off the
@@ -1977,6 +1978,8 @@ class AppController : public IAppThreading,
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
     /// is waited for (RAII join) rather than left to the member destructor.
     void DrainCatalogWorkBeforeShutdown_();
+    /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
+    void FlushTicketSavesBeforeShutdown_();
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
     /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
     void JoinCacheRecreateWorker_();

@@ -598,3 +598,48 @@ TEST_CASE("AdfToMarkdown: a reference split across adjacent text nodes is escape
     list["content"] = json::array({item});
     CHECK(Adf2Md(AdfDoc(json::array({list}))) == "- [ ] buy \\&amp;lt; milk");
 }
+
+TEST_CASE("AdfToMarkdown: mistyped node fields fall back instead of throwing") {
+    // `json::value()` throws when the key holds another type, which escaped AdfToMarkdown and
+    // aborted the offline-queue merge. Every typed read now falls back to its default.
+    json badType;
+    badType["type"] = 5;
+    badType["text"] = "x";
+    json li;
+    li["type"] = "listItem";
+    li["content"] = json::array({AdfPara(json::array({badType})), 7});
+    json list;
+    list["type"] = "orderedList";
+    list["attrs"]["order"] = "three";
+    list["content"] = json::array({li});
+    json heading;
+    heading["type"] = "heading";
+    heading["attrs"]["level"] = "2";
+    heading["content"] = json::array({AdfText("Title")});
+    json code;
+    code["type"] = "codeBlock";
+    code["attrs"]["language"] = 12;
+    code["content"] = json::array({AdfText("int x;")});
+    std::string md;
+    CHECK_NOTHROW(md = Adf2Md(AdfDoc(json::array({list, heading, code}))));
+    CHECK(md.find("# Title") != std::string::npos);
+    CHECK(md.find("int x;") != std::string::npos);
+
+    json huge;
+    huge["type"] = "orderedList";
+    huge["attrs"]["order"] = 9223372036854775807LL;
+    huge["content"] = json::array({li});
+    CHECK_NOTHROW(Adf2Md(AdfDoc(json::array({huge}))));
+
+    // Above INT64_MAX the value is unsigned; it clamps to the 9-digit maximum, not to 0.
+    json hugeUnsigned = huge;
+    hugeUnsigned["attrs"]["order"] = 18446744073709551615ULL;
+    CHECK(Adf2Md(AdfDoc(json::array({hugeUnsigned}))).find("999999999.") != std::string::npos);
+
+    // A text node with a mistyped type keeps its words.
+    json lost;
+    lost["type"] = 5;
+    lost["text"] = "lost";
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({AdfText("kept "), lost}))}))).find("lost") !=
+          std::string::npos);
+}

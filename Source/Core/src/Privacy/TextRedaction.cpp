@@ -374,8 +374,8 @@ bool IsUuidAt(const std::string& s, std::size_t pos) {
 }
 
 // [0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}  ->  <redacted>
-// Plane API tokens and resource ids have this shape and are shorter than the long-token minStart; the
-// dash layout keeps it from over-redacting arbitrary 36-character text.
+// Plane API tokens and resource ids have this shape and are shorter than the 40-character long-token
+// minimum (RedactLongTokens); the dash layout keeps it from over-redacting arbitrary 36-character text.
 void RedactUuids(std::string& s) {
     SpanRewriter rewriter(s);
     std::size_t i = 0;

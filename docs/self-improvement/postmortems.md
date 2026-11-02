@@ -106,7 +106,7 @@ So while any plan lock that lists `INDEX.md` is open, every other plan archive r
 
 - `lock-claim.sh` and `lock-claim-update.sh` drop them from a write set.
 - `plan-lock-gate.sh` drops them from both the PR's changed files and every lock's write set before it compares.
-- The list lives in `project.config.json` (`docs/plans/INDEX.md`, `docs/plans/_plan-locks.generated.md`).
+- The list lives in `project.config.json` (`docs/plans/INDEX.md`, `docs/plans/active/_plan-locks.generated.md`).
 - Bats: a PR that only regenerates `INDEX.md` stays green against a lock that claims it, and a real overlap in the same PR still fails.
 
 Replayed on #2309, the gate is green and the override is unnecessary.
@@ -306,11 +306,11 @@ The plan-lock hatch is a bare boolean: `merge-gates.d/10-gate-filter.sh:36` read
 red to WARN with no record of which lock was crossed or why that was safe. The repo already solved
 this for the sibling hatch — `cr-out-of-band` alone is explicitly NOT honoured, requiring a
 `cr-disposition:<reason>` label or body marker (`10-gate-filter.sh:76-77`) that
-merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`)
+merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`)
 refuses to proceed without (PR-3 `cr-out-of-band-disposition-trail`). Plan-lock never got the same
 treatment. Compounding it, the same label clears three unrelated conditions (a real write-set
 overlap `:50`, an *unverifiable* lock state `:44`, an unresolvable base ref — the
-`origin/${base} does not resolve` error, currently `:104`), and both places
+`origin/${base} does not resolve` error), and both places
 that could have preserved the reason fail: GitHub strips override labels post-merge, and ADR-0017's
 merge-snapshot ledger has no row for #2160 because the default merge path never writes one. The
 decision is therefore unreconstructible — this entry can say the gate was waived, but not what was
@@ -320,7 +320,7 @@ waived or whether it was right.
 Require a disposition trail for the plan-lock hatch, mirroring the shipped CR pattern: stop honouring
 `plan-lock-out-of-band` alone, and require a `plan-lock-disposition:`-prefixed label or a
 `plan-lock-disposition:<reason>` body marker naming the lock slug and the justification, with
-merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`, currently `:1519`) as the template. Separately, split the unverifiable-lock-state
+merge-gates.sh's PR-3 refusal (`if [ "$cr_disposition" != true ]`) as the template. Separately, split the unverifiable-lock-state
 condition onto its own token so an infra failure cannot be cleared by an operator's "I coordinated
 this" attestation. Regression case in `tests/bats/merge_gates.bats`: a bare `plan-lock-out-of-band`
 must NOT downgrade a red `Plan-lock gate`.

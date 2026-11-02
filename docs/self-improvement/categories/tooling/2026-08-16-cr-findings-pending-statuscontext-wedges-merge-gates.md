@@ -2,8 +2,8 @@
   Details: **(a) The mechanism.** Under block-on-any-red
     (`MERGE_GATES_BLOCK_ALLOWLIST_RE="."`) `$blocking` is *required contexts PLUS
     every non-required non-`advisory` check*
-    ([`10-gate-filter.sh:93-97`](../../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh)).
-    The pending count at `:280-282` then counts any `$blocking` StatusContext in
+    (the `$blocking` definition in [`10-gate-filter.sh`](../../../../agent-layer/agents/scripts/core/merge-gates.d/10-gate-filter.sh)).
+    The pending count then counts any `$blocking` StatusContext in
     `PENDING`/`EXPECTED`. `CR findings (0 actionable)` is **not** one of the 22
     required contexts on `develop`, but it is a non-required non-advisory
     StatusContext, so block-on-any-red pulls it into `$blocking` anyway.
