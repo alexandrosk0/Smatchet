@@ -679,6 +679,8 @@ gh() {
         *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
         *"/check-runs?check_name="*)
             [ -z "${CR_RUN_FIRST_AT:-}" ] || printf '%s\n' "$CR_RUN_FIRST_AT" ;;
+        *"/check-suites?per_page="*)
+            [ -z "${HEAD_SUITE_AT:-}" ] || printf '%s\n' "$HEAD_SUITE_AT" ;;
         *"/commits/${SHA} "*)
             [ -z "${HEAD_COMMITTED_AT:-}" ] || printf '%s\n' "$HEAD_COMMITTED_AT" ;;
         *"/statuses?per_page="*)
@@ -1248,7 +1250,27 @@ status_pages() {
     [ "$status" -eq 1 ]
 }
 
-@test "oss: with no started CodeRabbit run, the head commit date is the anchor" {
+@test "oss: with no started run, the head's first check suite is the anchor" {
+    setup_oss
+    CR_FIRST_AT=
+    HEAD_SUITE_AT=2026-08-17T09:30:00Z
+    export HEAD_SUITE_AT
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: an ask on the previous head does not count, even with an older commit date" {
+    setup_oss
+    CR_FIRST_AT=
+    # Commit made at 09:00 and pushed at 11:00; the ask at 10:00 was for the old head.
+    HEAD_COMMITTED_AT=2026-08-17T09:00:00Z
+    HEAD_SUITE_AT=2026-08-17T11:00:00Z
+    export HEAD_COMMITTED_AT HEAD_SUITE_AT
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: with no check suite readable, the head commit date is the anchor" {
     setup_oss
     CR_FIRST_AT=
     HEAD_COMMITTED_AT=2026-08-17T09:00:00Z
