@@ -7,6 +7,7 @@
 #include "Ui/SmatchetBackendDisplay.h"
 #include "Ui/SmatchetBottomPanelDrag.h"
 #include "Ui/SmatchetBottomPanelDragPure.h"
+#include "Ui/StatusBarRowCountPure.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetThemeIds.h"
@@ -45,31 +46,33 @@ static const char* ThemeIdName(ThemeId t) {
     }
 }
 
-struct GridRowCount {
-    bool show = false;
-    size_t visible = 0; ///< Rows left after the grid search / hidden parents; == total when unfiltered.
-    size_t total = 0;   ///< Every loaded ticket in the pane's snapshot.
-};
+// Row count of the focused grid, from the pane's cached sort/filter projection.
+static StatusBarRowCountPure::Result FocusedGridRowCount(const UiDrawSession& d) {
+    StatusBarRowCountPure::Inputs in;
+    in.paneCount = d.gridPanes.size();
+    in.hasFocusedPane = !d.focusedPaneId.empty();
+    in.backendReachable = d.cfg.BackendHasBeenReachable;
+    if (!d.gridPanes.empty()) {
+        const GridPane& pane = d.focusedPane();
+        in.hasSnapshot = pane.ticketsSnapshot != nullptr;
+        in.loaded = pane.ticketsSnapshot ? pane.ticketsSnapshot->size() : 0;
+        in.sorted = pane.cachedSortedIndices.size();
+        in.filtered = pane.filteredIndices.size();
+    }
+    return StatusBarRowCountPure::Compute(in);
+}
 
-// Row count of the active grid. Shown with a single pane, or with several panes
-// when one is focused; with several and none focused, "the" grid is ambiguous.
-// Reads the pane's cached sort/filter projection — O(1), never re-filters per frame.
-static GridRowCount ShouldShowRowCount(const UiDrawSession& d, AppController& app) {
-    GridRowCount out;
-    if (d.gridPanes.empty() || (d.gridPanes.size() > 1 && d.focusedPaneId.empty())) {
-        return out;
+// "340 rows" / "12 of 340 rows", with separate singular/plural catalog keys.
+static std::string RowCountLabel(const StatusBarRowCountPure::Result& rows) {
+    const int visible = static_cast<int>(rows.visible);
+    const int total = static_cast<int>(rows.total);
+    if (rows.Filtered()) {
+        return total == 1
+                   ? SmatchetLocalization::Format("statusbar.rows_filtered_one", "%d of %d row", visible, total)
+                   : SmatchetLocalization::Format("statusbar.rows_filtered_many", "%d of %d rows", visible, total);
     }
-    const GridPane& pane = d.focusedPane();
-    const auto tickets = pane.ticketsSnapshot ? pane.ticketsSnapshot : app.GetActiveTicketsSnapshot();
-    out.show = true;
-    out.total = tickets ? tickets->size() : 0;
-    out.visible = out.total;
-    // Trust the projection only when it was built over a snapshot of this size; while a
-    // debounced rebuild is pending after a sync it describes an older snapshot.
-    if (pane.cachedSortedIndices.size() == out.total && pane.filteredIndices.size() < out.total) {
-        out.visible = pane.filteredIndices.size();
-    }
-    return out;
+    return total == 1 ? SmatchetLocalization::Format("statusbar.rows_one", "%d row", total)
+                      : SmatchetLocalization::Format("statusbar.rows_many", "%d rows", total);
 }
 
 static const char* ConnectivityLabel(AppController& app) {
@@ -214,14 +217,10 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
     char rightBuf[128];
     const char* themeName = ThemeIdName(d.cfg.Theme);
 
-    // Add row count if applicable.
-    const GridRowCount rows = ShouldShowRowCount(d, app);
-    const bool filtered = rows.show && rows.visible < rows.total;
-    if (filtered) {
-        std::snprintf(rightBuf, sizeof(rightBuf), "%zu of %zu rows  %dpt  %s", rows.visible, rows.total,
-                      d.cfg.FontSizePt, themeName);
-    } else if (rows.show) {
-        std::snprintf(rightBuf, sizeof(rightBuf), "%zu rows  %dpt  %s", rows.total, d.cfg.FontSizePt, themeName);
+    const StatusBarRowCountPure::Result rows = FocusedGridRowCount(d);
+    if (rows.show) {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%s  %dpt  %s", RowCountLabel(rows).c_str(), d.cfg.FontSizePt,
+                      themeName);
     } else {
         std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
     }
@@ -239,20 +238,20 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
     }
     ImGui::TextUnformatted(rightBuf);
     if (::ImGui::IsItemHovered()) {
-        const char* tooltip = nullptr;
-        if (filtered) {
-            tooltip = "Rows shown in the focused grid after its search or filter, of all loaded rows.\n"
-                      "UI font size and active theme — change them under View > Appearance.\n"
-                      "Frame-rate metrics live in the Performance window.";
+        // Each tooltip goes in as the format string so the wrapper can translate it.
+        if (rows.Filtered()) {
+            ImGui::SetTooltip("Rows the focused grid shows after its search, filter or hidden parents, "
+                              "of all loaded rows.\n"
+                              "UI font size and active theme — change them under View > Appearance.\n"
+                              "Frame-rate metrics live in the Performance window.");
         } else if (rows.show) {
-            tooltip = "Loaded rows in the focused grid (no search or filter is narrowing them).\n"
-                      "UI font size and active theme — change them under View > Appearance.\n"
-                      "Frame-rate metrics live in the Performance window.";
+            ImGui::SetTooltip("Loaded rows in the focused grid; nothing is narrowing them.\n"
+                              "UI font size and active theme — change them under View > Appearance.\n"
+                              "Frame-rate metrics live in the Performance window.");
         } else {
-            tooltip = "UI font size and active theme — change them under View > Appearance.\n"
-                      "Frame-rate metrics live in the Performance window.";
+            ImGui::SetTooltip("UI font size and active theme — change them under View > Appearance.\n"
+                              "Frame-rate metrics live in the Performance window.");
         }
-        ImGui::SetTooltip("%s", tooltip);
     }
 
     ImGui::PopStyleVar();
