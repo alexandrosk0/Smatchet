@@ -1,9 +1,10 @@
 <!-- index-summary: stop background tracker traffic when the app sits unfocused + idle — idle-gated connectivity probe, live-success probe push, outage backoff, Unreal focus feed, minimized frame throttle -->
 # Plan — Background-traffic idle gating
+<!-- plan-date: 2026-11-02 -->
 
 > **Slug**: `background-traffic-idle-gating` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -101,18 +102,22 @@ N/A — no extraction; two interval constants move from an anonymous namespace i
 - **Persisted update-check timestamp** (skip the startup check if < 24 h) — low value, no-action for now.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `cb8e0be8c` · wip(plan): this plan.
+- `a40ace972` · feat(connectivity): activity hub, idle-gated probe with explicit-request bypass, live-success probe push, down-streak backoff, Unreal foreground focus feed, command-dispatch activity, minimized frame throttle, tests, backlog entry for the minimized-CPU automation.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Added after code review**: `CommandRegistry::Dispatch` stamps activity (`NoteActivity`), so an agent driving an unfocused window over MCP/CLI/Lua keeps it awake; an explicit probe request (`RequestProbeNow`, or a `SetNextProbeAt` deadline already due) passes the idle gate once.
+- **Changed after code review**: the backoff streak keys on the probe's own result (TransportDown / ServiceUnavailable), not `IsConnectivityDegradedForProbeInterval`, because the sync/catalog warning flags are cleared later in the frame and kept a recovered streak alive.
+- **Deferred (Low)**: `SetNextProbeAt` doubles as the test seam and the TicketSyncService "probe now" signal. Splitting it (the adapter calling `RequestProbeNow`) touches `GridContextDepsAdapter.cpp`, owned by #2375 — follow-up after it merges. Today every non-test caller passes `now` from a transport-failure path.
+- **Deferred (Low)**: a live success on a non-focused pane's backend pushes the focused backend's probe; inherited from the single global connectivity FSM. Follow-up with the per-pane connectivity work.
+- `main.cpp` sits at 1,209 lines, over the advisory 1,200 `tu-line-ceiling` (was 1,191); not blocking.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **Bucket A**: `SmatchetTests` (ninja-test-msvc) full suite 4,015 / 4,015 passed, including 11 new cases (hub predicate + `NoteFrame`/`NoteActivity`, `DegradedProbeInterval`, `NextProbeAfterLiveSuccess`, backoff sequence + reset, streak reset after a real loss, live-success push healthy / not after outage, idle no-launch, explicit request through idle).
+- **Build gate**: `SmatchetStandalone`, `SmatchetCore_DX12`, and `SmatchetImGuiHost_DX12` (the Unreal host TU) build clean with `/WX` on ninja-iter-msvc.
+- **Lint**: `test-lint-rules.sh --diff origin/develop` — the one blocking hit (comment-noise false positive in `AppActivity.h`) fixed; advisory `tu-line-ceiling` WARN remains (see Deviations).
+- **Code review**: `code-review` agent, two rounds — round 1: 0 code Critical/High, 1 process Critical (manual residue), 2 Medium; all fixed; round 2: 0 Critical/High/Medium.
+- **Not run**: live 5-minute idle observation in the running app, the minimized-window CPU measurement (backlog entry), the Unreal editor itself (only the host library is compiled here), `grill-with-docs` (not run — no domain-term changes; recorded as not done).
