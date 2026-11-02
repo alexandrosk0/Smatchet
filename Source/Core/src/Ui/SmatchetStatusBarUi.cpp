@@ -24,6 +24,27 @@
 
 namespace {
 
+static const char* ThemeIdName(ThemeId t) {
+    switch (t) {
+    case ThemeId::ModernDark:
+        return "Modern Dark";
+    case ThemeId::Vs2022Dark:
+        return "VS 2022 Dark";
+    case ThemeId::Vs2022Light:
+        return "VS 2022 Light";
+    case ThemeId::HighContrast:
+        return "High Contrast";
+    case ThemeId::NortonCommander:
+        return "Norton Commander";
+    case ThemeId::ImGuiDefaultDark:
+        return "Classic Bright";
+    case ThemeId::SmatchetDark:
+        return "Smatchet Dark";
+    default:
+        return "Classic Bright";
+    }
+}
+
 struct GridRowCount {
     bool show = false;
     size_t visible = 0; ///< Rows left after the grid search / hidden parents; == total when unfiltered.
@@ -49,27 +70,6 @@ static GridRowCount ShouldShowRowCount(const UiDrawSession& d, AppController& ap
         out.visible = pane.filteredIndices.size();
     }
     return out;
-}
-
-static const char* ThemeIdName(ThemeId t) {
-    switch (t) {
-    case ThemeId::ModernDark:
-        return "Modern Dark";
-    case ThemeId::Vs2022Dark:
-        return "VS 2022 Dark";
-    case ThemeId::Vs2022Light:
-        return "VS 2022 Light";
-    case ThemeId::HighContrast:
-        return "High Contrast";
-    case ThemeId::NortonCommander:
-        return "Norton Commander";
-    case ThemeId::ImGuiDefaultDark:
-        return "Classic Bright";
-    case ThemeId::SmatchetDark:
-        return "Smatchet Dark";
-    default:
-        return "Classic Bright";
-    }
 }
 
 static const char* ConnectivityLabel(AppController& app) {
