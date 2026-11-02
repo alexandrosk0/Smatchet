@@ -324,12 +324,19 @@ runs:
             || cr_first_at=""
           # CodeRabbit may post a CheckRun instead of a status; then its first
           # run on the head is the anchor. filter=all keeps a re-run from hiding
-          # the first run (the API defaults to the latest), and a run that never
-          # started falls back to its completion time instead of printing null.
+          # the first run (the API defaults to the latest). A run that never
+          # started contributes nothing: its completion time can postdate an ask
+          # made while it was queued. With no started run at all, the head
+          # commit's committer date (which predates any run on it) is the
+          # anchor, the same fallback scripts/dev/trigger-coderabbit-review.sh uses.
           if [ -z "$cr_first_at" ]; then
             cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-runs?check_name=CodeRabbit&filter=all&per_page=100" \
-              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | (.started_at // .completed_at // empty)' 2>/dev/null | sort | sed -n 1p) \
+              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | (.started_at // empty)' 2>/dev/null | sort | sed -n 1p) \
               || cr_first_at=""
+          fi
+          if [ -z "$cr_first_at" ]; then
+            cr_first_at=$(gh api "repos/${OWNER}/${REPO}/commits/${SHA}" \
+              --jq '.commit.committer.date // empty' 2>/dev/null) || cr_first_at=""
           fi
           while IFS=$'\t' read -r login utype created ts cmt; do
             if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
