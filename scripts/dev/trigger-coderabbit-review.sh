@@ -100,9 +100,10 @@ EOF
 # count_head_asks <graphql-json> <head-sha> [<anchor>] — human `@coderabbitai review` asks
 # that belong to THIS head: carrying this script's per-head marker, or posted after the
 # head's anchor. The anchor is CodeRabbit's FIRST status on the head (CR posts one on every
-# head, right after the push), else the commit date. It must not be CR's latest status:
-# that moves every time CR updates it — its rate-limit reply to the ask itself, say — and an
-# ask on this head would then stop counting and be posted again. An ask from an earlier
+# head, right after the push), else the head's first check suite, else the commit date. It
+# must not be CR's latest status: that moves every time CR updates it — its rate-limit reply
+# to the ask itself, say — and an ask on this head would then stop counting and be posted
+# again. An ask from an earlier
 # head does not count, or a later head would never get the trigger it needs.
 count_head_asks() {
     printf '%s' "$1" | jq -r --arg h "$2" --arg first "${3:-}" '
@@ -220,6 +221,12 @@ fi
 cr_first_status="$(gh api --paginate "repos/$owner/$repo/commits/$head/statuses?per_page=100" \
     --jq '.[] | select(.context == "CodeRabbit") | .created_at' 2>/dev/null | sort | sed -n 1p)" \
     || cr_first_status=""
+# With no CodeRabbit status, the head's earliest check suite (created at push) is the
+# anchor, as in the CR finding gate: a commit made before an ask on the previous head
+# and pushed after it would let the commit date count that stale ask.
+if [ -z "$cr_first_status" ]; then
+    cr_first_status="$(gh api --paginate "repos/$owner/$repo/commits/$head/check-suites?per_page=100"         --jq '.check_suites[] | (.created_at // empty)' 2>/dev/null | sort | sed -n 1p)"         || cr_first_status=""
+fi
 human_nudge="$(count_head_asks "$data" "$head" "$cr_first_status")"
 if [ "${human_nudge:-0}" -gt 0 ]; then
     echo "INFO: human @coderabbitai review already on PR #$PR for head ${head:0:8} — waiting for CodeRabbit."
