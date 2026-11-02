@@ -25,7 +25,9 @@ Android is already covered: `android_main.cpp` skips the whole frame (and theref
 
 A tiny GLFW-free **activity hub** (`smatchet::activity`, header-only, modelled on `VsyncControl.h`) records, per frame, whether the host window is focused and whether ImGui processed any input event this frame (`ImGuiContext::InputEventsTrail` — covers mouse, keys, wheel, chars, focus, and ImGui Test Engine input). *Background-idle* = a host has reported at least once **and** the window is unfocused **and** the last focused-or-input frame is older than 5 minutes. A host that never reports (Android, headless CLI) is never idle, so nothing regresses where no signal exists.
 
-`ConnectivityMonitorService` consumes it: no new probe launches while background-idle (an in-flight probe is still collected); the elapsed `nextProbeAt_` makes the probe fire on the first active frame. Two schedule changes live in a pure header (`ConnectivityProbeSchedule.h`) so they are unit-testable: (a) a successful live backend request while already healthy pushes `nextProbeAt_` out to `now + 90 s` (the probe only runs when nothing else has talked to the tracker); a degraded prior state does not push, so the recovery latch keeps its current behaviour; (b) consecutive degraded probe results back off 20 → 40 → 80 → 120 s (cap) instead of a flat 20 s, reset on the first healthy result.
+Command dispatch (`CommandRegistry::Dispatch` — palette, MCP, CLI, Lua) also stamps activity, so an agent driving an unfocused window keeps it awake.
+
+`ConnectivityMonitorService` consumes it: no scheduled probe launches while background-idle (an in-flight probe is still collected); the elapsed `nextProbeAt_` makes the probe fire on the first active frame. An explicit request — `RequestProbeNow`, or a `SetNextProbeAt` deadline already due (TicketSyncService after a transport failure) — passes the gate once. Two schedule changes live in a pure header (`ConnectivityProbeSchedule.h`) so they are unit-testable: (a) a successful live backend request while already healthy pushes `nextProbeAt_` out to `now + 90 s` (the probe only runs when nothing else has talked to the tracker); a degraded prior state does not push, so the recovery latch keeps its current behaviour; (b) consecutive down probe results (TransportDown / ServiceUnavailable) back off 20 → 40 → 80 → 120 s (cap) instead of a flat 20 s, reset on the first healthy result or live success. The streak keys on the probe's own result, not the sync/catalog warning flags: those are cleared later in the frame by `ConsumeTrackerConnectivityRecovery`, so they would otherwise keep a recovered streak alive.
 
 Hosts: the standalone loop reports `(GLFW_FOCUSED, trail non-empty)` and throttles a minimized window with `glfwWaitEventsTimeout` (≈30 Hz, so the dispatcher drain and streaming apply keep ticking). The Unreal host (`SmatchetImGuiHost::DrawUI`, Core-side, Windows-only TU) derives focus from "the foreground window belongs to this process" (Win32 `GetForegroundWindow` + `GetWindowThreadProcessId`, the same test as `FPlatformApplicationMisc::IsThisApplicationForeground`) — no plugin, C-ABI, or packaged-header change — and feeds both the hub and `AppController::SetWindowFocused`.
 
@@ -33,7 +35,8 @@ Hosts: the standalone loop reports `(GLFW_FOCUSED, trail non-empty)` and throttl
 
 ## Files to modify
 
-1. `Source/Core/include/AppActivity.h` *(new)* — header-only hub: `NoteFrame(focused, hadInput, now)`, `IsBackgroundIdle(now)`, pure `IsBackgroundIdleAt(...)`, `ResetForTest()`, `kBackgroundIdleAfter = 5 min`. GLFW/ImGui-free (compiles into `SmatchetCore_DX12` and the TSan subset).
+1. `Source/Core/include/AppActivity.h` *(new)* — header-only hub: `NoteFrame(focused, hadInput, now)`, `NoteActivity(now)`, `IsBackgroundIdle(now)`, pure `IsBackgroundIdleAt(...)`, `ResetForTest()`, `kBackgroundIdleAfter = 5 min`. GLFW/ImGui-free (compiles into `SmatchetCore_DX12` and the TSan subset).
+1a. `Source/Core/src/Commands/CommandRegistry.cpp` — `Dispatch` stamps `NoteActivity` (added after code review).
 2. `Source/Core/include/ConnectivityProbeSchedule.h` *(new)* — pure probe-interval helpers: the two existing interval constants move here, plus `DegradedProbeInterval(consecutive)` and `NextProbeAfterLiveSuccess(next, now, wasHealthy, probeInFlight)`.
 3. `Source/Core/include/ConnectivityMonitorService.h` — `consecutiveDegradedProbes_`, `pausedForIdle_` members; `GetNextProbeAt()` test seam beside the existing `SetNextProbeAt`.
 4. `Source/Core/src/ConnectivityMonitorService.cpp` — idle gate in `TickTrackerConnectivityMonitor`; backoff in `ApplyTrackerConnectivityProbeResult`; live-success push in `applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_`; constants come from the new header.
@@ -85,7 +88,7 @@ N/A — no extraction; two interval constants move from an anonymous namespace i
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target; `SmatchetImGuiHost.cpp` is DX12-only).
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: `scripts/dev/test-docs.sh` green.
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: run against `CONTEXT-MAP.md` terms before finalising; outcome recorded in § Verification (actual).
-- **Manual residue**: the minimized-window CPU drop is observed by hand (Task Manager) — deferred automation: a `--spawn` CLI probe that iconifies the window and samples process CPU; backlog entry filed with the PR.
+- **Manual residue**: the minimized-window CPU drop is observed by hand (Task Manager) — deferred automation: a `--spawn` CLI probe that iconifies the window and samples process CPU; backlog entry `docs/self-improvement/categories/tooling/2026-11-02-minimized-frame-throttle-cpu-unautomated.md`.
 
 ## Out of scope (flagged, not designed)
 

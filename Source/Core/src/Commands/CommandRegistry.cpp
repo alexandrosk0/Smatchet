@@ -1,5 +1,7 @@
 #include "Commands/CommandRegistry.h"
 
+#include "AppActivity.h"
+
 #include "Commands/FuzzyMatch.h"
 #include "Commands/ParamBoundsPure.h"
 #include "ConfigManager.h"
@@ -11,6 +13,7 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -303,6 +306,10 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
 
 CommandResult CommandRegistry::Dispatch(const std::string& name, const nlohmann::json& args,
                                         const CommandContext& ctx) {
+    // A command from any source means someone is driving the app, even with its window unfocused
+    // (an agent over MCP/CLI) — keep background-idle gating off (AppActivity.h).
+    smatchet::activity::NoteActivity(std::chrono::steady_clock::now());
+
     // (1) resolve + copy under lock so handler reentrancy is safe.
     Command snapshot;
     bool found = false;
