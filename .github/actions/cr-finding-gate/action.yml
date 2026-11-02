@@ -322,6 +322,13 @@ runs:
           cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/statuses?per_page=100" \
             --jq '.[] | select(.context == "CodeRabbit") | .created_at' 2>/dev/null | sort | sed -n 1p) \
             || cr_first_at=""
+          # CodeRabbit may post a CheckRun instead of a status; then its first
+          # run on the head is the anchor.
+          if [ -z "$cr_first_at" ]; then
+            cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-runs?check_name=CodeRabbit&per_page=100" \
+              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | .started_at' 2>/dev/null | sort | sed -n 1p) \
+              || cr_first_at=""
+          fi
           while IFS=$'\t' read -r login utype created ts cmt; do
             if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
               if [ "$asked" = true ] && { [ -z "$cr_ts" ] || [ "$ts" \> "$cr_ts" ]; }; then
@@ -499,7 +506,9 @@ runs:
               }
               commits(last:1){
                 nodes{ commit{ statusCheckRollup{ contexts(first:100){
-                  nodes{ __typename ... on StatusContext{ context state description createdAt } }
+                  nodes{ __typename
+                    ... on StatusContext{ context state description createdAt }
+                    ... on CheckRun{ name status conclusion title startedAt checkSuite{ app{ slug } } } }
                 } } } }
               }
             }
@@ -578,9 +587,37 @@ runs:
             # review WITH findings is caught by the n>0 branch (CR's chill
             # profile keeps its StatusContext green even with findings, so we
             # never lean on it to detect findings).
+            #
+            # CodeRabbit now reports as a CheckRun named "CodeRabbit" instead of
+            # the StatusContext (observed 2026-11-01 on #2372/#2375/#2376/#2378:
+            # conclusion SUCCESS, title "Finished", and no StatusContext at all).
+            # Reading only the StatusContext saw ABSENT on every head and left
+            # the gate PENDING until "All checks green" timed out red. With no
+            # StatusContext, the newest CodeRabbit CheckRun decides: COMPLETED +
+            # SUCCESS reads SUCCESS, COMPLETED + FAILURE reads FAILURE, and
+            # COMPLETED + SKIPPED reads SKIPPED, which is rewritten below into the
+            # manual-review shape. A skipped run reviewed nothing (#2371,
+            # #2372: every step "Skipped", no reason), so it must take the same
+            # terminal manual-review arm as the old OSS status, which names the
+            # human move, rather than retry into an unbounded PENDING: nothing
+            # re-runs this gate when a CheckRun changes. Every other shape (in
+            # progress, NEUTRAL, CANCELLED, ...) reads PENDING. Only a run from
+            # the coderabbitai app counts: any workflow job can be named
+            # "CodeRabbit", and that must not pass this gate.
             cr_ctx=$(printf '%s' "$resp" | jq -r '
-              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-                | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
+              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? ] as $n
+              | ([ $n[] | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | .[0]) as $sc
+              | if $sc != null then $sc
+                else ([ $n[] | select(.__typename == "CheckRun" and .name == "CodeRabbit"
+                                      and (.checkSuite.app.slug // "") == "coderabbitai") ]
+                      | sort_by(.startedAt // "") | last) as $run
+                | if $run == null then "ABSENT"
+                  elif ($run.status // "") != "COMPLETED" then "PENDING"
+                  elif $run.conclusion == "SUCCESS" then "SUCCESS"
+                  elif $run.conclusion == "SKIPPED" then "SKIPPED"
+                  elif $run.conclusion == "FAILURE" then "FAILURE"
+                  else "PENDING" end
+                end
               ' 2>/dev/null) || cr_ctx="ABSENT"
             cr_ctx="${cr_ctx//[^A-Z]/}"
 
@@ -602,11 +639,27 @@ runs:
             # (#536, #1718, #1724, #1954), so an unrecognised description must
             # keep its existing pass behaviour instead of hanging every PR. CR
             # itself recorded this rule as a repo learning on 2026-08-11.
+            # A CheckRun carries its wording in .title (e.g. "Finished"). The
+            # rate-limited run seen so far is NEUTRAL, which cr_ctx already reads
+            # as PENDING, so the title only matters to the rate-limit guard if
+            # CodeRabbit ever pairs that title with SUCCESS.
             cr_desc=$(printf '%s' "$resp" | jq -r '
-              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-                | select(.__typename == "StatusContext" and .context == "CodeRabbit")
-                | (.description // "") ] | (.[0] // "")
+              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? ] as $n
+              | ([ $n[] | select(.__typename == "StatusContext" and .context == "CodeRabbit")
+                   | (.description // "") ] | .[0]) as $sd
+              | if $sd != null then $sd
+                else ([ $n[] | select(.__typename == "CheckRun" and .name == "CodeRabbit"
+                                      and (.checkSuite.app.slug // "") == "coderabbitai") ]
+                      | sort_by(.startedAt // "") | last | (.title // "")) // ""
+                end
               ' 2>/dev/null) || cr_desc=""
+            # A skipped CheckRun takes the manual-review arm below. The rewrite is
+            # keyed on cr_ctx alone, so a failed cr_desc parse cannot turn a
+            # skipped run into the SUCCESS pass.
+            if [ "$cr_ctx" = "SKIPPED" ]; then
+              cr_ctx="SUCCESS"
+              cr_desc="${cr_desc} (manual review required: CodeRabbit check-run skipped)"
+            fi
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qiE 'rate.?limit|limit reached'; then
               # Not settled: CR has not reviewed this head yet. The poll window
