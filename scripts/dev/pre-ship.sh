@@ -88,11 +88,11 @@ preship_pin_behind_develop() {
     dev_pin="$(git rev-parse -q --verify "origin/develop:agent-layer" 2>/dev/null)" || return 1
     here="$(git -C "$preship_layer_root" rev-parse -q --verify HEAD 2>/dev/null)" || return 1
     [ "$dev_pin" != "$here" ] || return 1
+    # A pin this mount has never fetched cannot be in its history, so the mount is behind it (or
+    # diverged): the common case after merging a develop that bumped the gitlink without running
+    # `git submodule update`. That is exactly when the layer gate may be stale, so it warns.
     if ! git -C "$preship_layer_root" cat-file -e "${dev_pin}^{commit}" 2>/dev/null; then
-        if [ "${SCRIPT_FRESHNESS_VERBOSE:-0}" = "1" ]; then
-            echo "WARN: pre-ship's layer gate logic freshness unverifiable: develop pins agent-layer at ${dev_pin:0:12}, which this mount has not fetched." >&2
-        fi
-        return 1
+        return 0
     fi
     git -C "$preship_layer_root" merge-base --is-ancestor "$dev_pin" "$here" && return 1
     ! git -C "$preship_layer_root" diff --quiet "$dev_pin" "$here" -- "${preship_layer_files[@]}"
@@ -192,7 +192,8 @@ run_selftest() {
     fi
     # 6. The layer-pin staleness check: a mount BEHIND develop's agent-layer pin with
     #    a gate file changed MUST warn; equal, ahead, and behind-by-a-non-gate-file
-    #    must stay quiet. A detector that goes silent is the failure it exists for.
+    #    must stay quiet; a pin the mount never fetched MUST warn. A detector that goes
+    #    silent is the failure it exists for.
     local tmp3 pin_out
     tmp3="$(mktemp -d)"
     # errexit is off inside an `if` condition, so every fixture step is chained
@@ -225,6 +226,13 @@ run_selftest() {
             g commit -qm pinC &&
             git update-ref refs/remotes/origin/develop HEAD &&
             git -C agent-layer checkout -q "$pin_b" || exit 1
+        if preship_pin_behind_develop; then printf 'warn '; else printf 'quiet '; fi
+        # A pin the mount never fetched: a commit made in the layer after the mount was cloned.
+        echo e > ../layer/agents/scripts/project/test-lint-rules.sh &&
+            g -C ../layer commit -qam E &&
+            g update-index --cacheinfo "160000,$(git -C ../layer rev-parse HEAD),agent-layer" &&
+            g commit -qm pinE &&
+            git update-ref refs/remotes/origin/develop HEAD || exit 1
         if preship_pin_behind_develop; then printf 'warn'; else printf 'quiet'; fi
     )"; then
         rm -rf "$tmp3"
@@ -232,8 +240,8 @@ run_selftest() {
         return 1
     fi
     rm -rf "$tmp3"
-    if [ "$pin_out" != "warn quiet quiet quiet" ]; then
-        echo "pre-ship --selftest: FAIL — layer-pin check gave '$pin_out' for behind/equal/ahead/behind-by-a-doc (want 'warn quiet quiet quiet')" >&2
+    if [ "$pin_out" != "warn quiet quiet quiet warn" ]; then
+        echo "pre-ship --selftest: FAIL — layer-pin check gave '$pin_out' for behind/equal/ahead/behind-by-a-doc/unfetched (want 'warn quiet quiet quiet warn')" >&2
         return 1
     fi
     echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python, the layer-pin check warns only when the mount is behind on a gate file."
@@ -815,7 +823,8 @@ fi
 # host's history, so they are checked against the pin instead: CI runs the layer
 # at the gitlink a branch carries, so the layer half of this gate is out of date
 # exactly when this checkout's mount is behind the gitlink on origin/develop (the
-# file-level fetch above has already refreshed it). A mount ahead of that pin is
+# file-level fetch above refreshes the host's origin/develop, not the mount, so a
+# pin the mount has not fetched counts as behind). A mount ahead of that pin is
 # a bump in progress, not staleness. In a standalone layer, or before the flip,
 # the layer is this tree and the original single check applies.
 if command -v warn_if_script_stale >/dev/null 2>&1; then

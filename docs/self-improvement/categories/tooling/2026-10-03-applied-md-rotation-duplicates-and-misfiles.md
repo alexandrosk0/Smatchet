@@ -4,7 +4,7 @@
 - **Priority**: P2
 - **Date**: 2026-10-03
 - **Observed on**: archiving the include-prologue tooling entry with
-  `agents/scripts/core/archive-backlog-entry.sh` (the `dup_audit.py` prologue-filter PR)
+  `agent-layer/agents/scripts/core/archive-backlog-entry.sh` (the `dup_audit.py` prologue-filter PR)
 - **Status**: open
 
 ## What happened
@@ -37,7 +37,7 @@ in. That burns review quota and makes a real loss impossible to spot by eye. The
 are also unreliable to search, because per-entry blocks sit under whichever month preceded them.
 
 The prologue-filter PR worked around it by archiving with a copy of the script outside
-`agents/scripts/core/`: `ROTATE` is resolved next to the script, so the copy skips rotation. It
+`agent-layer/agents/scripts/core/`: `ROTATE` is resolved next to the script, so the copy skips rotation. It
 then ran `test-markdown-links.sh --all` itself.
 
 ## Concrete next action
@@ -50,6 +50,6 @@ then ran `test-markdown-links.sh --all` itself.
 4. Add bats cases next to the existing archive/rotate tests: a per-entry block rotates by its own
    date, and the duplicate-drop never removes an entry whose only copy is in the head.
 
-Re-scoped 2026-10-04 (backlog-sweep-2026-10): the format fix landed (backlog-sweep PR #2296: rotate-applied-md.sh and sort-applied-md.sh share agents/scripts/core/applied_md_lib.py, which splits both entry shapes, files every block by its own date, re-homes misfiled blocks and drops only byte-identical copies; a scratch-copy simulation lost 0 of 602 entries). Remaining: (2) the one-time rotation of the real applied*.md in its own PR with per-month counts (the sweep archived with ARCHIVE_SKIP_ROTATE=1 to keep it separate); (3) archive-backlog-entry.sh's inbound links following an entry into its month partition.
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): the format fix landed (backlog-sweep PR #2296: rotate-applied-md.sh and sort-applied-md.sh share agent-layer/agents/scripts/core/applied_md_lib.py, which splits both entry shapes, files every block by its own date, re-homes misfiled blocks and drops only byte-identical copies; a scratch-copy simulation lost 0 of 602 entries). Remaining: (2) the one-time rotation of the real applied*.md in its own PR with per-month counts (the sweep archived with ARCHIVE_SKIP_ROTATE=1 to keep it separate); (3) archive-backlog-entry.sh's inbound links following an entry into its month partition.
 Status: open
 Last-reviewed: 2026-10-04

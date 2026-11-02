@@ -878,6 +878,31 @@ TEST_CASE("ConfigMigration zoom default-family: custom keys outside Defaults sta
     CHECK_FALSE(zoomIn.HasHotkey("Ctrl+MouseWheelUp"));
 }
 
+TEST_CASE("ConfigMigration zoom default-family: a row trimmed to some defaults stays trimmed") {
+    smatchet_tests::TestEnvGuard env;
+    // V2 already ran, so a pre-wheel keyboard set here is a row the user trimmed (the
+    // wheel combo removed because it clashes with scroll). V3 must not add it back.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,
+        "migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkeys":["Ctrl+=","Ctrl+Shift+=","Ctrl+NumAdd"],"args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkeys":["Ctrl+-","Ctrl+NumSubtract"],"args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 3);
+    CHECK_FALSE(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].HasHotkey("Ctrl+MouseWheelUp"));
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 2);
+}
+
 TEST_CASE("ConfigMigration zoom default-family: flag set on disk skips the append") {
     smatchet_tests::TestEnvGuard env;
     const std::string pre =

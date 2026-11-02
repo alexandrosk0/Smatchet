@@ -7,7 +7,7 @@
     "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
     "campaign": "2026-10-23",
     "ci_lanes": "2026-10-25",
-    "open_prs": "2026-10-23"
+    "open_prs": "2026-10-31"
   },
 
   "governance": { "loop_mode": "on", "auto_merge": "on" },
@@ -43,8 +43,12 @@
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
 
   "open_prs": [
-    { "id": "2364", "state": "ready", "label": "Ready",
-      "title": "Reconcile the historical-review ledger", "meta": "docs-only · open list is empty" },
+    { "id": "2371", "state": "blocked", "label": "Blocked",
+      "title": "Fix GridSearch/GridPanes bucket-E defects and run them in CI", "meta": "merge state BLOCKED" },
+    { "id": "2370", "state": "pending", "label": "In review",
+      "title": "Touchscreen gestures and touch-sized hit targets", "meta": "merge state UNSTABLE · holds the touchscreen-support plan-lock" },
+    { "id": "2368", "state": "pending", "label": "In review",
+      "title": "Force Mine sends an unverifiable estimate edit (#2332)", "meta": "merge state UNSTABLE" },
     { "id": "2244", "state": "blocked", "label": "Blocked",
       "title": "Regenerate _plan-locks.generated.md from refs", "meta": "bot PR · CR waiver labels missing" }
   ],

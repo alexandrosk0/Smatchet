@@ -21,6 +21,9 @@ struct CacheRecreateOutcome {
     bool Ok = false;
     bool Wiped = false;
     std::string Error;
+    /// Set with `Ok`: the new database is in place, but a file of the old one could not be deleted (it was moved
+    /// aside and can still hold cached data). Empty when the wipe removed everything.
+    std::string Warning;
 };
 
 /// Why a recreate cannot start now ("" = it can): no database path is configured, the application is shutting

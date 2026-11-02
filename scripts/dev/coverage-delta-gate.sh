@@ -125,6 +125,20 @@ _rename_class() {
     fi
 }
 
+# _named_in_cmake <path> <rev> — true when a CMake file at <rev> names the path's file by name. CMake can
+# drop or add a translation unit by its exact name (list(REMOVE_ITEM ...), an explicit source list), so a
+# rename of such a file can change what is built even inside one tree. The caller checks the old name at
+# the merge base and the new one at HEAD, so a rename that also drops the old CMake entry still counts.
+# The basename is matched literally, anywhere: CMake separates list items with whitespace or `;` and
+# builds names by concatenation, so any boundary rule misses a form. A name merely containing it also
+# counts: a false match only makes the rename not exempt, which is the safe side. Errors fail closed the
+# same way: a grep that cannot run counts as a match.
+_named_in_cmake() {
+    local name="${1##*/}" rc=0
+    git grep -qF -e "$name" "$2" -- 'CMakeLists.txt' '*/CMakeLists.txt' '*.cmake' || rc=$?
+    [ "$rc" -ne 1 ]
+}
+
 # ---------------------------------------------------------------------------
 # Full-context prefilter: does each changed product file still compile to the same tokens?
 # ---------------------------------------------------------------------------
@@ -3365,7 +3379,8 @@ mapfile -d '' -t CHANGED <"$_GATE_LIST_TMP"
 
 # A file renamed between product trees, or into or out of them (notes.txt -> Foo.cpp,
 # tests/support/Fake.cpp -> Source/Core/src/Fake.cpp), shows no new lines, yet the compilers
-# newly build (or stop building) every line it carries: never exempt. A move inside one tree is.
+# newly build (or stop building) every line it carries: never exempt. A move inside one tree is,
+# unless a CMake file names the old or new file (its build membership then follows the name).
 RENAMED_ACROSS=""
 if ! _gate_diff -z --name-status --diff-filter=R "$MERGE_BASE"...HEAD >"$_GATE_LIST_TMP" 2>/dev/null; then
     echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
@@ -3373,7 +3388,10 @@ if ! _gate_diff -z --name-status --diff-filter=R "$MERGE_BASE"...HEAD >"$_GATE_L
 fi
 mapfile -d '' -t _RENAME_FIELDS <"$_GATE_LIST_TMP"
 for ((_ri = 0; _ri + 2 < ${#_RENAME_FIELDS[@]}; _ri += 3)); do
-    if [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != "$(_rename_class "${_RENAME_FIELDS[_ri + 2]}")" ]; then
+    if [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != "$(_rename_class "${_RENAME_FIELDS[_ri + 2]}")" ] ||
+        { [ "$(_rename_class "${_RENAME_FIELDS[_ri + 1]}")" != none ] &&
+            { _named_in_cmake "${_RENAME_FIELDS[_ri + 1]}" "$MERGE_BASE" ||
+                _named_in_cmake "${_RENAME_FIELDS[_ri + 2]}" HEAD; }; }; then
         RENAMED_ACROSS="${_RENAME_FIELDS[_ri + 1]} -> ${_RENAME_FIELDS[_ri + 2]}"
         break
     fi

@@ -65,7 +65,7 @@ N/A — adds new TUs, extracts nothing.
 - **Pillar 4 (accessibility)**: no UI in this slice.
 - **Pillar 6 (offline-first)**: a failed refresh with a Transport kind keeps cached data and retries later; only `invalid_grant` is surfaced as Auth. Error kinds are never flattened (`tracker-error-kind-collapsed`).
 
-## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
 1. **PR-fast CI** — fires through the existing tracker-sync scenario; the changed path is header construction + base URL, both O(1).
 2. **Pillar 2 static scanner** — N/A: no sync I/O reachable from `ImGui::*`; all network work is on workers.
@@ -88,7 +88,7 @@ N/A — adds new TUs, extracts nothing.
 - **Bucket A (pure-logic, `ninja-test-linux`)**: `JiraOAuthPure.test.cpp` — authorize URL encoding/scopes, state mismatch/missing/error callbacks, token parse (missing fields, huge body, depth bomb), resource selection by domain, skew boundary, base URL; `JiraOAuthSession.test.cpp` — refresh single-flight, rotation persisted before use, `invalid_grant` → Auth, Transport failure keeps old session, with a fake HTTP seam.
 - **Bucket E**: N/A this slice (no UI).
 - **Sanitizer / build gate**: `cmake --build --preset ninja-test-linux`; `posix-core-check` compile gate; dual-target `SmatchetStandalone SmatchetCore_DX12` is **Windows-only and not runnable in this Linux container** — left to CI.
-- **Lint**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
+- **Lint**: `bash agent-layer/agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
 - **Doc validation**: `scripts/dev/test-docs.sh` green.
 - **Plan stress-test — `grill-with-docs`**: run before finalising; outcome recorded in § Deviations.
 - **Credentialled live lane**: `jira-oauth-live-smoke.yml` (nightly + manual, GitHub Actions secrets, see § Files to modify rows 13-14) automates the live Atlassian round trip once a maintainer has created the sandbox OAuth app and set the secrets. That one-time bootstrap (register the app, run `--login`, `gh secret set` ×4, create the Environment) is the only manual residue and is tracked as a `tooling.md` entry next to `2026-08-03-credentialled-setup-smoke`. The container build here cannot run the lane (no credentials, no browser), so it is verified by `actionlint`/YAML parse locally and by the first manual dispatch.
@@ -113,4 +113,4 @@ N/A — adds new TUs, extracts nothing.
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. *flip the § Status header to `shipped`,*
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+3. *regen the index: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*

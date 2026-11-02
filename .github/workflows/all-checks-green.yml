@@ -25,7 +25,7 @@ name: All checks green
 # it computes the same verdict directly, and a red aggregate left behind after the
 # real red is re-run green would otherwise wedge every poll.
 #
-# Always-report rule (docs/agent-rules/ci-required-check-pattern.md): NO `paths:`
+# Always-report rule (agent-layer/docs/agent-rules/ci-required-check-pattern.md): NO `paths:`
 # filter and NO job-level `if:` — a skipped run would publish a `skipped` check
 # run, which branch protection treats as success. If develop moves behind a merge
 # queue, add `merge_group:` handling before requiring this context.

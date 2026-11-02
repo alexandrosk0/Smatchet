@@ -37,7 +37,7 @@ project literal and the boundary can't silently rot.
 | `docs/self-improvement/categories/*` *(entries)* | this project's friction items |
 | `docs/CONTEXT.md`, `docs/adr/` | this project's glossary + decisions |
 | `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/` | project artifacts |
-| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-*.sh`, `test-subsystem-docs.sh`, the git hooks |
+| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-mirror-*.sh`; the git hooks in `scripts/git-hooks/` |
 
 **Agent split rule:** `project/` = an agent whose identity is a project subsystem/feature; `core/` = a generic role (it may *mention* project specifics, but those are config-driven). Note: `p4-janitor` lives in `core/` (generic VCS-maintenance, portable to any project whose `vcs.optional_layer` is `p4`), while `p4-blame` is `project/` (bound to this project's blame UI classes).
 
