@@ -121,6 +121,10 @@ void TouchGuiFunc(ImGuiTestContext* ctx) {
 
 TouchInputRouter* Router(ImGuiTestContext* ctx) { return TouchInputRouter::ForContext(ctx->UiContext); }
 
+// Coarse step for idle waits: the router's timers and fling decay are exact in elapsed time, so
+// waiting in 0.1 s frames asserts the same thing in a sixth of the frames (bucket-E wall-clock).
+constexpr float kIdleStep = 0.1f;
+
 // One frame of 1/60 s of ImGui time.
 void Step(ImGuiTestContext* ctx, int frames = 1) {
     for (int i = 0; i < frames; ++i) {
@@ -213,7 +217,7 @@ void RegisterLongPressOpensMenu(ImGuiTestEngine* engine) {
             return;
         }
         FingerDown(ctx, g_touch.centers[3]);
-        ctx->SleepNoSkip(SmatchetTouchGesturePure::kMaxLongPressSeconds + 0.1f, kStep);
+        ctx->SleepNoSkip(SmatchetTouchGesturePure::kMaxLongPressSeconds + 0.1f, kIdleStep);
         IM_CHECK(g_touch.menuOpened[3]);
         IM_CHECK_EQ(g_touch.clicks[3], 0); // the left button was never sent
         FingerUp(ctx);
@@ -258,7 +262,7 @@ void RegisterFling(ImGuiTestEngine* engine) {
         const float atRelease = g_touch.scrollY;
         ctx->SleepNoSkip(0.3f, kStep);
         IM_CHECK_GT(g_touch.scrollY, atRelease + 50.0f);
-        ctx->SleepNoSkip(3.0f, kStep);
+        ctx->SleepNoSkip(3.0f, kIdleStep);
         const float stopped = g_touch.scrollY;
         Step(ctx, 5);
         IM_CHECK_EQ(g_touch.scrollY, stopped);
@@ -349,7 +353,7 @@ void RegisterMouseDragDoesNotPan(ImGuiTestEngine* engine) {
 // drives sizing explicitly off and then on (and off again at the end) instead of assuming a start
 // state, and it runs last so the earlier tests' taps do not matter.
 void MouseTakesOver(ImGuiTestContext* ctx) {
-    ctx->SleepNoSkip(2.2f, kStep); // past the touch dwell
+    ctx->SleepNoSkip(2.2f, kIdleStep); // past the touch dwell
     ctx->RunFlags &= ~ImGuiTestRunFlags_EnableRawInputs;
     ctx->MouseMoveToPos(g_touch.emptyPoint);
     ctx->MouseClick(0);
