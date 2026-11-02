@@ -677,8 +677,6 @@ setup_nudge() {
 gh() {
     case "$*" in
         *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
-        *"/check-runs?check_name="*)
-            [ -z "${CR_RUN_FIRST_AT:-}" ] || printf '%s\n' "$CR_RUN_FIRST_AT" ;;
         *"/check-suites?per_page="*)
             [ -z "${HEAD_SUITE_AT:-}" ] || printf '%s\n' "$HEAD_SUITE_AT" ;;
         *"/commits/${SHA} "*)
@@ -1233,24 +1231,12 @@ status_pages() {
     [ "$(oss_ask_state)" = none ]
 }
 
-@test "oss: with no CodeRabbit status, the first CodeRabbit check-run is the anchor" {
-    setup_oss
-    CR_FIRST_AT=
-    CR_RUN_FIRST_AT=2026-08-17T09:00:00Z
-    export CR_RUN_FIRST_AT
-    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
-    [ "$(oss_ask_state)" = waiting ]
-}
-
-@test "oss: the check-run anchor asks for every run and skips a null start" {
-    grep -qF 'check-runs?check_name=CodeRabbit&filter=all&per_page=100' "$ACTION"
-    grep -qF '(.started_at // empty)' "$ACTION"
-    # A queued run's completion time could postdate the ask; it must not anchor.
-    run grep -qF '.completed_at' "$ACTION"
+@test "oss: no run time anchors an ask (a run can start after the ask)" {
+    run grep -qE 'check-runs\?check_name|\.started_at|\.completed_at' "$ACTION"
     [ "$status" -eq 1 ]
 }
 
-@test "oss: with no started run, the head's first check suite is the anchor" {
+@test "oss: with no CodeRabbit status, the head's first check suite is the anchor" {
     setup_oss
     CR_FIRST_AT=
     HEAD_SUITE_AT=2026-08-17T09:30:00Z
@@ -1277,15 +1263,6 @@ status_pages() {
     export HEAD_COMMITTED_AT
     ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
     [ "$(oss_ask_state)" = waiting ]
-}
-
-@test "oss: an ask older than the first CodeRabbit check-run does not count" {
-    setup_oss
-    CR_FIRST_AT=
-    CR_RUN_FIRST_AT=2026-08-17T11:00:00Z
-    export CR_RUN_FIRST_AT
-    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
-    [ "$(oss_ask_state)" = none ]
 }
 
 @test "the failed-review state is wired into decide()'s OSS arm as a terminal failure" {

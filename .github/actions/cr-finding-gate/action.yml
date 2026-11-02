@@ -322,22 +322,16 @@ runs:
           cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/statuses?per_page=100" \
             --jq '.[] | select(.context == "CodeRabbit") | .created_at' 2>/dev/null | sort | sed -n 1p) \
             || cr_first_at=""
-          # CodeRabbit may post a CheckRun instead of a status; then its first
-          # run on the head is the anchor. filter=all keeps a re-run from hiding
-          # the first run (the API defaults to the latest). A run that never
-          # started contributes nothing: its completion time can postdate an ask
-          # made while it was queued. With no started run at all, the head's
-          # earliest check suite is the anchor: GitHub creates suites when the
+          # CodeRabbit may post a CheckRun instead of a status. Its run time is
+          # not an anchor: the human ask that trigger-coderabbit-review.sh posts
+          # usually lands before CodeRabbit starts its run, so anchoring on the
+          # run would reject the very ask that started it. The head's earliest
+          # check suite is the anchor instead: GitHub creates suites when the
           # head is pushed, so an ask on the previous head never counts. The
           # committer date is not used for this: a commit made before an ask
           # and pushed after it would let the stale ask count. Only when no
           # suite can be read does the committer date stand in, as in
           # scripts/dev/trigger-coderabbit-review.sh.
-          if [ -z "$cr_first_at" ]; then
-            cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-runs?check_name=CodeRabbit&filter=all&per_page=100" \
-              --jq '.check_runs[] | select((.app.slug // "") == "coderabbitai") | (.started_at // empty)' 2>/dev/null | sort | sed -n 1p) \
-              || cr_first_at=""
-          fi
           if [ -z "$cr_first_at" ]; then
             cr_first_at=$(gh api --paginate "repos/${OWNER}/${REPO}/commits/${SHA}/check-suites?per_page=100" \
               --jq '.check_suites[] | (.created_at // empty)' 2>/dev/null | sort | sed -n 1p) \
