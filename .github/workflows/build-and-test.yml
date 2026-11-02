@@ -1561,14 +1561,21 @@ jobs:
             # 120 s, ~33% headroom. Since #1943, --timeout=<ms> overrides the
             # derived budget on the --spawn path too and is the direct dial if
             # this lane needs more wall-clock without inflating the suite's
-            # frame allowance.
-            # The outer `timeout` stays above the derived deadline so the
-            # harness, not coreutils, reports the failure.
-            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --spawn --yes"
+            # frame allowance. The suite then grew to ~119 s under llvmpipe and
+            # tripped that 120 s deadline (develop run 41318850756), so the
+            # wall-clock is now set directly: --timeout=160000 keeps ~33%
+            # headroom over the measured run.
+            # The outer `timeout` stays above that deadline so the harness, not
+            # coreutils, reports the failure.
+            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes"
             set +e
-            out="$(timeout 300 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --spawn --yes 2>&1)"
+            out="$(timeout 300 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes 2>&1)"
             rc=$?
             set -e
+            # The parent has returned, so any surviving Smatchet.exe is this attempt's
+            # orphaned --spawn child (a deadline trip leaves it running). Reap it so the
+            # next attempt cannot collide with it; a no-op on a clean run.
+            taskkill //F //IM Smatchet.exe //T >/dev/null 2>&1 || true
             printf '%s\n' "$out"
             # Stage THIS attempt's child log (overwrites prior attempts; the last
             # attempt's diagnostic is the one uploaded).
@@ -1874,6 +1881,9 @@ jobs:
               # Actions runs bash with -e: capture the rc instead of letting a failure end the step.
               rc=0
               bash "scripts/dev/${driver}.sh" || rc=$?
+              # The driver's `timeout` kills only the --spawn parent; reap a surviving child so
+              # the next attempt (or driver) cannot collide with it. A no-op on a clean run.
+              taskkill //F //IM Smatchet.exe //T >/dev/null 2>&1 || true
               # exit 2 = binary missing / build OFF / fixture missing — a config error, never retried.
               if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
                 break

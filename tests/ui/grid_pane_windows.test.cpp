@@ -231,9 +231,11 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
 // GridPanes / NonFocusedVisiblePaneReceivesTickets (multi-grid Slice 3)
 //
 // Behaviour (1): a non-focused but VISIBLE pane goes live and receives its own ticket rows
-// (EnsurePaneLiveSyncStarted one-shot kick + TickAllContexts streaming apply). Open a 2nd pane,
-// refocus the primary so pane 2 is non-focused-but-visible, and assert pane 2's OWN ticketsSnapshot
-// fills from its live context — a regression that stopped a visible pane syncing would be silent.
+// (EnsurePaneLiveSyncStarted one-shot kick). Open a 2nd pane, split it to the right of the primary
+// so both windows are on screen, refocus the primary so pane 2 is non-focused-but-visible, and
+// assert pane 2's own AppController context is live with a non-empty snapshot that the pane draws —
+// a regression that stopped a visible pane syncing would be silent. The rows may come from the
+// cache seed, so this proves the kick, not TickAllContexts streaming.
 // ---------------------------------------------------------------------------
 static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "NonFocusedVisiblePaneReceivesTickets");
@@ -251,12 +253,6 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         if (!paneAdded) {
             return;
         }
-        const bool nameReady = YieldUntil(ctx, [&] { return !g_ui.gridPanes[1].cachedWindowName.empty(); });
-        IM_CHECK_NO_RET(nameReady);
-        if (!nameReady) {
-            return;
-        }
-        const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
         const std::string paneTwoId = g_ui.gridPanes[1].id;
         // Teardown on every exit path past this point: close pane 2 to restore the min-1 invariant,
         // so a failure here never leaves a later test booting into two panes.
@@ -264,8 +260,19 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
             if (GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId)) {
                 paneTwo->open = false;
             }
-            YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+            const bool closed = YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+            IM_CHECK_NO_RET(closed);
         };
+        const bool nameReady = YieldUntil(ctx, [&] {
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return paneTwo != nullptr && !paneTwo->cachedWindowName.empty();
+        });
+        IM_CHECK_NO_RET(nameReady);
+        if (!nameReady) {
+            closePaneTwo();
+            return;
+        }
+        const std::string paneTwoName = FindGridPaneById(g_ui.gridPanes, paneTwoId)->cachedWindowName;
 
         // Let the "+" hand-off settle before moving focus anywhere. The new pane docks as a TAB in
         // the primary's node and re-selects its own tab for selectTabFrames frames, pulling ImGui
@@ -311,6 +318,7 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         // sync), not from the snapshot "+" copied off the primary at creation: that copy would fill
         // GridPane::ticketsSnapshot even if pane 2 never synced. So assert on the AppController
         // context — sync kicked, a non-empty published snapshot — and that the pane draws exactly it.
+        // That snapshot may be the cache seed, so this pins the kick, not later streamed applies.
         const bool paneTwoGotRows = YieldUntil(ctx, [&] {
             const std::shared_ptr<const std::vector<CachedTicket>> live = app->GetPaneTicketsSnapshot(paneTwoId);
             const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
@@ -318,9 +326,9 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
                    paneTwo->ticketsSnapshot == live;
         });
         if (!paneTwoGotRows) {
-            ctx->LogError("non-focused visible pane 2 never received ticket rows from its own context — "
-                          "Slice-3 per-context live sync (EnsurePaneLiveSyncStarted / TickAllContexts) did "
-                          "not run for it");
+            ctx->LogError("non-focused visible pane 2 never got ticket rows from its own context — "
+                          "the Slice-3 per-context live-sync kick (EnsurePaneLiveSyncStarted) did not run "
+                          "for it, or the pane is not drawing that context's snapshot");
             IM_CHECK_NO_RET(false);
         }
 
