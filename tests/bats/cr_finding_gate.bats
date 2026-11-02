@@ -340,6 +340,10 @@ verdict() {
     if [ "$n" -eq 0 ]; then
         state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
         desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+        if [ "$state" = "SKIPPED" ]; then
+            state=SUCCESS
+            desc="$desc (manual review required: CodeRabbit check-run skipped)"
+        fi
         if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"; then
             printf 'unsettled'; return
         fi
@@ -392,6 +396,25 @@ setup_jq() {
 }
 
 CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
+
+# checkrun_payload <reviews-json-array> <rollup-nodes-json> -> fixture file path.
+# The head rollup carries only the given nodes (no CodeRabbit StatusContext):
+# the shape CodeRabbit switched to on 2026-11-01.
+checkrun_payload() {
+    local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json"
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"HEAD","reviews":{"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":%s}}}}]}}}}}' \
+        "$1" "$2" > "$f"
+    printf '%s' "$f"
+}
+
+# cr_run <status> <conclusion|null> <title> [app-slug] [databaseId] [startedAt|null] -> one CheckRun node
+cr_run() {
+    local concl="null" started="\"${6:-2026-11-01T21:01:00Z}\""
+    [ "$2" != "null" ] && concl="\"$2\""
+    [ "${6:-}" = "null" ] && started=null
+    printf '{"__typename":"CheckRun","databaseId":%s,"name":"CodeRabbit","status":"%s","conclusion":%s,"title":"%s","startedAt":%s,"checkSuite":{"app":{"slug":"%s"}}}' \
+        "${5:-1}" "$1" "$concl" "$3" "$started" "${4:-coderabbitai}"
+}
 
 @test "verdict: a blank-bodied thread reply is NOT a review (the #1996 wedge)" {
     setup_jq
@@ -503,6 +526,95 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
     [ "$(verdict "$f")" = "not-reviewed" ]
 }
 
+@test "checkrun: a completed SUCCESS CodeRabbit run with no review node passes" {
+    setup_jq
+    # The live #2378 shape: no StatusContext, one CheckRun "Finished".
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SUCCESS Finished)]")"
+    [ "$(verdict "$f")" = "not-reviewed" ]
+}
+
+@test "checkrun: a SKIPPED CodeRabbit run takes the terminal manual-review arm" {
+    setup_jq
+    # The live #2372 merge-head shape: CR skipped, nothing reviewed. Never a pass,
+    # and never an unbounded PENDING either: the arm names the human move.
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
+}
+
+@test "checkrun: an in-progress CodeRabbit run stays unsettled" {
+    setup_jq
+    f="$(checkrun_payload '[]' "[$(cr_run IN_PROGRESS null Reviewing)]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a FAILURE CodeRabbit run fails the gate" {
+    setup_jq
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED FAILURE Failed)]")"
+    [ "$(verdict "$f")" = "cr-failed" ]
+}
+
+@test "checkrun: a run named CodeRabbit from another app does not pass" {
+    setup_jq
+    # Any workflow job can be named "CodeRabbit"; only the coderabbitai app counts.
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SUCCESS Finished github-actions)]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: the newest run decides (a re-run in progress is not a stale pass)" {
+    setup_jq
+    old="$(cr_run COMPLETED SUCCESS Finished coderabbitai 10 2026-11-01T20:00:00Z)"
+    new="$(cr_run IN_PROGRESS null Reviewing coderabbitai 11 2026-11-01T21:00:00Z)"
+    f="$(checkrun_payload '[]' "[$new,$old]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a newer queued run with no startedAt still outranks an older SUCCESS" {
+    setup_jq
+    old="$(cr_run COMPLETED SUCCESS Finished coderabbitai 10 2026-11-01T20:00:00Z)"
+    new="$(cr_run QUEUED null Queued coderabbitai 11 null)"
+    f="$(checkrun_payload '[]' "[$old,$new]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a rate-limited title on a SUCCESS run is not review evidence" {
+    setup_jq
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SUCCESS 'Review rate limited')]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a NEUTRAL rate-limited run is not review evidence" {
+    setup_jq
+    # The live #2370 shape: conclusion NEUTRAL, title "Review rate limited".
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED NEUTRAL 'Review rate limited')]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: a CodeRabbit StatusContext still wins over a CheckRun" {
+    setup_jq
+    sc='{"__typename":"StatusContext","context":"CodeRabbit","state":"PENDING","description":"Review in progress"}'
+    f="$(checkrun_payload '[]' "[$sc,$(cr_run COMPLETED SUCCESS Finished)]")"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "checkrun: the SKIPPED rewrite is in the action, keyed on cr_ctx alone" {
+    grep -qF 'if [ "$cr_ctx" = "SKIPPED" ]; then' "$ACTION"
+    grep -qF 'cr_desc="${cr_desc} (manual review required: CodeRabbit check-run skipped)"' "$ACTION"
+}
+
+@test "checkrun: a SKIPPED run still reaches the manual-review arm if the title is missing" {
+    setup_jq
+    f="$(checkrun_payload '[]' '[{"__typename":"CheckRun","name":"CodeRabbit","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-11-01T21:01:00Z","checkSuite":{"app":{"slug":"coderabbitai"}}}]')"
+    [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
+}
+
+@test "workflow grants checks:read so the token can see CodeRabbit's check-run" {
+    grep -qE '^  checks: read$' "$WF"
+}
+
+@test "checkrun: the GraphQL query asks for CheckRun fields and the app slug" {
+    grep -qF '... on CheckRun{ databaseId name status conclusion title startedAt checkSuite{ app{ slug } } }' "$ACTION"
+}
+
 @test "verdict: rate-limited SUCCESS beside a blank reply is still not evidence" {
     setup_jq
     # The exact live shape: CR rate limited on the head AND a blank thread reply
@@ -574,6 +686,10 @@ setup_nudge() {
 gh() {
     case "$*" in
         *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
+        *"/check-suites?per_page="*)
+            [ -z "${HEAD_SUITE_AT:-}" ] || printf '%s\n' "$HEAD_SUITE_AT" ;;
+        *"/commits/${SHA} "*)
+            [ -z "${HEAD_COMMITTED_AT:-}" ] || printf '%s\n' "$HEAD_COMMITTED_AT" ;;
         *"/statuses?per_page="*)
             if [ -n "${CR_STATUS_PAGES:-}" ]; then
                 local prog="" prev="" a page
@@ -1122,6 +1238,46 @@ status_pages() {
     CR_FIRST_AT=
     ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
     [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: no run time anchors an ask (a run can start after the ask)" {
+    run grep -qE 'check-runs\?check_name|\.started_at|\.completed_at' "$ACTION"
+    [ "$status" -eq 1 ]
+}
+
+@test "oss: with no CodeRabbit status, the head's first check suite is the anchor" {
+    setup_oss
+    CR_FIRST_AT=
+    HEAD_SUITE_AT=2026-08-17T09:30:00Z
+    export HEAD_SUITE_AT
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
+}
+
+@test "oss: an ask on the previous head does not count, even with an older commit date" {
+    setup_oss
+    CR_FIRST_AT=
+    # Commit made at 09:00 and pushed at 11:00; the ask at 10:00 was for the old head.
+    HEAD_COMMITTED_AT=2026-08-17T09:00:00Z
+    HEAD_SUITE_AT=2026-08-17T11:00:00Z
+    export HEAD_COMMITTED_AT HEAD_SUITE_AT
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = none ]
+}
+
+@test "oss: the trigger script uses the same check-suite anchor as the gate" {
+    T="$REPO_ROOT/scripts/dev/trigger-coderabbit-review.sh"
+    grep -qF 'commits/$head/check-suites?per_page=100' "$T"
+    grep -qF ".check_suites[] | (.created_at // empty)" "$T"
+}
+
+@test "oss: with no check suite readable, the head commit date is the anchor" {
+    setup_oss
+    CR_FIRST_AT=
+    HEAD_COMMITTED_AT=2026-08-17T09:00:00Z
+    export HEAD_COMMITTED_AT
+    ask_row alice User 2026-08-17T10:00:00Z '@coderabbitai review'
+    [ "$(oss_ask_state)" = waiting ]
 }
 
 @test "the failed-review state is wired into decide()'s OSS arm as a terminal failure" {
