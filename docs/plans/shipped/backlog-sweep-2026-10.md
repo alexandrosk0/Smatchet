@@ -1,8 +1,9 @@
 # Plan — backlog sweep 2026-10 (fix every entry fixable from a Linux container)
+<!-- plan-date: 2026-10-13 -->
 
 > **Slug**: `backlog-sweep-2026-10` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — one PR, many independent slices (work packages A–I below), developed in parallel worktrees and integrated on one branch.
+> **Status**: `shipped` — one PR, many independent slices (work packages A–I below), developed in parallel worktrees and integrated on one branch (#2296; follow-ups #2343, #2348, #2364, #2366, #2367, #2373).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -190,4 +191,4 @@ N/A — no whale prompt / `AGENTS.md` extraction; AGENTS.md is left untouched (1
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
-*Blocked while `docs/plans/INDEX.md` sits in another session's plan-lock write set (`hook-tree-resolution`); the move rides the first follow-up after that lock releases.*
+Done 2026-11-01, once the `hook-tree-resolution` lock on `docs/plans/INDEX.md` had released: status flipped to `shipped`, file moved to `docs/plans/shipped/`, index regenerated.
