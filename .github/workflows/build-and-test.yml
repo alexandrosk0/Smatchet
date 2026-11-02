@@ -1428,7 +1428,8 @@ jobs:
     needs: windows-msvc
     runs-on: windows-2022
     # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
-    # `timeout 240` under llvmpipe) can exceed 30m on a slow runner — on develop run
+    # up to ~250 s under `timeout 300`: the 160 s --timeout deadline plus the spawn's
+    # ready/dispatch/quit bounds) can exceed 30m on a slow runner — on develop run
     # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
     # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
     # software-GL slow path; stays under the ~45-50 ceiling. Coverage unchanged.
@@ -1881,8 +1882,8 @@ jobs:
               # Actions runs bash with -e: capture the rc instead of letting a failure end the step.
               rc=0
               bash "scripts/dev/${driver}.sh" || rc=$?
-              # The driver's `timeout` kills only the --spawn parent; reap a surviving child so
-              # the next attempt (or driver) cannot collide with it. A no-op on a clean run.
+              # The --spawn parent can return on its own deadline while its child still runs; reap
+              # it so the next attempt (or driver) cannot collide with it. A no-op on a clean run.
               taskkill //F //IM Smatchet.exe //T >/dev/null 2>&1 || true
               # exit 2 = binary missing / build OFF / fixture missing — a config error, never retried.
               if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
