@@ -1256,6 +1256,12 @@ status_pages() {
     [ "$(oss_ask_state)" = none ]
 }
 
+@test "oss: the trigger script uses the same check-suite anchor as the gate" {
+    T="$REPO_ROOT/scripts/dev/trigger-coderabbit-review.sh"
+    grep -qF 'commits/$head/check-suites?per_page=100' "$T"
+    grep -qF ".check_suites[] | (.created_at // empty)" "$T"
+}
+
 @test "oss: with no check suite readable, the head commit date is the anchor" {
     setup_oss
     CR_FIRST_AT=
