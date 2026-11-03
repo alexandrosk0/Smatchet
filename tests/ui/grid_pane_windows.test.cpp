@@ -28,7 +28,9 @@
 #include "imgui_te_engine.h"
 
 #include <cstdlib>
+#include <memory>
 #include <string>
+#include <vector>
 
 extern UiDrawSession g_ui;
 
@@ -38,6 +40,21 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
     for (int i = 0; i < maxFrames; ++i) {
         ctx->Yield();
         if (pred()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Like YieldUntil, but pred() must hold on holdFrames consecutive frames — for focus state, where a
+// one-frame sighting can still be reverted by the host's two-frame focus debounce.
+template <typename Pred>
+bool YieldUntilHeld(ImGuiTestContext* ctx, Pred pred, int holdFrames = 5, int maxFrames = 300) {
+    int held = 0;
+    for (int i = 0; i < maxFrames; ++i) {
+        ctx->Yield();
+        held = pred() ? held + 1 : 0;
+        if (held >= holdFrames) {
             return true;
         }
     }
@@ -214,9 +231,11 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
 // GridPanes / NonFocusedVisiblePaneReceivesTickets (multi-grid Slice 3)
 //
 // Behaviour (1): a non-focused but VISIBLE pane goes live and receives its own ticket rows
-// (EnsurePaneLiveSyncStarted one-shot kick + TickAllContexts streaming apply). Open a 2nd pane,
-// refocus the primary so pane 2 is non-focused-but-visible, and assert pane 2's OWN ticketsSnapshot
-// fills from its live context — a regression that stopped a visible pane syncing would be silent.
+// (EnsurePaneLiveSyncStarted one-shot kick). Open a 2nd pane, split it to the right of the primary
+// so both windows are on screen, refocus the primary so pane 2 is non-focused-but-visible, and
+// assert pane 2's own AppController context is live with a non-empty snapshot that the pane draws —
+// a regression that stopped a visible pane syncing would be silent. The rows may come from the
+// cache seed, so this proves the kick, not TickAllContexts streaming.
 // ---------------------------------------------------------------------------
 static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "NonFocusedVisiblePaneReceivesTickets");
@@ -234,40 +253,86 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
         if (!paneAdded) {
             return;
         }
-        const bool nameReady = YieldUntil(ctx, [&] { return !g_ui.gridPanes[1].cachedWindowName.empty(); });
+        const std::string paneTwoId = g_ui.gridPanes[1].id;
+        // Teardown on every exit path past this point: close pane 2 to restore the min-1 invariant,
+        // so a failure here never leaves a later test booting into two panes.
+        auto closePaneTwo = [&] {
+            if (GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId)) {
+                paneTwo->open = false;
+            }
+            const bool closed = YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+            IM_CHECK_NO_RET(closed);
+        };
+        const bool nameReady = YieldUntil(ctx, [&] {
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return paneTwo != nullptr && !paneTwo->cachedWindowName.empty();
+        });
         IM_CHECK_NO_RET(nameReady);
         if (!nameReady) {
+            closePaneTwo();
             return;
         }
-        const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
-        const std::string paneTwoId = g_ui.gridPanes[1].id;
+        const std::string paneTwoName = FindGridPaneById(g_ui.gridPanes, paneTwoId)->cachedWindowName;
 
-        // Pane 2 takes focus on open; refocus the PRIMARY so pane 2 is non-focused BUT still visible
-        // (both windows Active). Its context must stay live and keep receiving ticket updates.
-        ctx->WindowFocus((std::string("//") + kPrimary).c_str());
-        const bool nonFocusedVisible =
-            YieldUntil(ctx, [&] { return g_ui.focusedPaneId != paneTwoId && WindowIsLive(paneTwoName.c_str()); });
+        // Let the "+" hand-off settle before moving focus anywhere. The new pane docks as a TAB in
+        // the primary's node and re-selects its own tab for selectTabFrames frames, pulling ImGui
+        // focus back with it; a focus move issued inside that window is undone a frame later.
+        const bool paneTwoSettled = YieldUntil(ctx, [&] {
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return paneTwo != nullptr && paneTwo->selectTabFrames == 0 && g_ui.focusedPaneId == paneTwoId &&
+                   WindowIsLive(paneTwoName.c_str());
+        });
+        IM_CHECK_NO_RET(paneTwoSettled);
+        if (!paneTwoSettled) {
+            closePaneTwo();
+            return;
+        }
+
+        // A tab behind the primary is not visible (its Begin returns false), so split pane 2 to the
+        // RIGHT of the primary first: "non-focused but visible" needs both windows on screen at once.
+        const std::string paneTwoAbsRef = std::string("//") + paneTwoName;
+        const std::string primaryAbsRef = std::string("//") + kPrimary;
+        ctx->DockInto(paneTwoAbsRef.c_str(), primaryAbsRef.c_str(), ImGuiDir_Right);
+        const bool bothVisible =
+            YieldUntil(ctx, [&] { return WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str()); });
+        IM_CHECK_NO_RET(bothVisible);
+        if (!bothVisible) {
+            closePaneTwo();
+            return;
+        }
+
+        // Refocus the PRIMARY so pane 2 is non-focused BUT still visible. The host adopts a focus
+        // report only after two consecutive frames, so require the state to HOLD rather than
+        // accepting a single-frame sighting. Pane 2's context must stay live and keep receiving rows.
+        ctx->WindowFocus(primaryAbsRef.c_str());
+        const bool nonFocusedVisible = YieldUntilHeld(ctx, [&] {
+            return g_ui.focusedPaneId == "main" && WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str());
+        });
         IM_CHECK_NO_RET(nonFocusedVisible);
+        if (!nonFocusedVisible) {
+            closePaneTwo();
+            return;
+        }
 
-        // The non-focused visible pane's OWN snapshot fills from its live context (the fixture's rows
-        // delivered to pane 2's context via the Slice-3 per-context sync, not the focused pane's).
+        // The non-focused visible pane's rows come from its OWN live context (Slice-3 per-context
+        // sync), not from the snapshot "+" copied off the primary at creation: that copy would fill
+        // GridPane::ticketsSnapshot even if pane 2 never synced. So assert on the AppController
+        // context — sync kicked, a non-empty published snapshot — and that the pane draws exactly it.
+        // That snapshot may be the cache seed, so this pins the kick, not later streamed applies.
         const bool paneTwoGotRows = YieldUntil(ctx, [&] {
-            const auto& rows = g_ui.gridPanes[1].ticketsSnapshot;
-            return rows != nullptr && !rows->empty();
+            const std::shared_ptr<const std::vector<CachedTicket>> live = app->GetPaneTicketsSnapshot(paneTwoId);
+            const GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId);
+            return app->IsPaneSyncLive(paneTwoId) && live != nullptr && !live->empty() && paneTwo != nullptr &&
+                   paneTwo->ticketsSnapshot == live;
         });
         if (!paneTwoGotRows) {
-            ctx->LogError("non-focused visible pane 2 never received ticket rows — Slice-3 per-context "
-                          "live sync (EnsurePaneLiveSyncStarted / TickAllContexts) did not run for it");
-            IM_CHECK(false);
+            ctx->LogError("non-focused visible pane 2 never got ticket rows from its own context — "
+                          "the Slice-3 per-context live-sync kick (EnsurePaneLiveSyncStarted) did not run "
+                          "for it, or the pane is not drawing that context's snapshot");
+            IM_CHECK_NO_RET(false);
         }
 
-        // Teardown: close pane 2 to restore the min-1 invariant.
-        for (auto& p : g_ui.gridPanes) {
-            if (p.id == paneTwoId) {
-                p.open = false;
-            }
-        }
-        YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+        closePaneTwo();
     };
 }
 
