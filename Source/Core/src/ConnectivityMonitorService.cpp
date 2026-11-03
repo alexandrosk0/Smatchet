@@ -1,6 +1,8 @@
 #include "ConnectivityMonitorService.h"
 
+#include "AppActivity.h"
 #include "CatalogOfflinePolicyPure.h"
+#include "ConnectivityProbeSchedule.h"
 #include "IConnectivityDeps.h"
 
 #include <algorithm>
@@ -20,9 +22,9 @@
 #include "Logger.h"
 
 namespace {
-constexpr auto kTrackerConnectivityProbeAggressiveInterval = std::chrono::seconds{20};
-constexpr auto kTrackerConnectivityProbeRelaxedInterval = std::chrono::seconds{90};
 constexpr auto kOfflineReplayDelayWhileTransportDown = std::chrono::seconds{25};
+// Ceiling for the degraded-probe streak counter; DegradedProbeInterval saturates long before it.
+constexpr int kMaxCountedDegradedProbes = 16;
 } // namespace
 
 ConnectivityMonitorService::ConnectivityMonitorService(IConnectivityDeps& deps) : deps_(deps) {}
@@ -88,6 +90,8 @@ void ConnectivityMonitorService::ApplyTrackerConnectivityProbeResult(const std::
     const TrackerConnectivityState prev = lastState_;
     const TrackerConnectivityState next = MapReachabilityProbeKind(r.Kind);
     lastState_ = next;
+    // A fresh result answers any request that arrived while this probe was in flight.
+    probeRequested_ = false;
     lastDiagnostic_ = r.Diagnostic;
 
     if (prev != next) {
@@ -126,8 +130,20 @@ void ConnectivityMonitorService::ApplyTrackerConnectivityProbeResult(const std::
         PushOfflineReplayTimersDuringTransportOutage(now);
     }
 
-    const auto interval = IsConnectivityDegradedForProbeInterval(next) ? kTrackerConnectivityProbeAggressiveInterval
-                                                                       : kTrackerConnectivityProbeRelaxedInterval;
+    // A down-probe streak backs off (20 s doubling to a 120 s cap) instead of probing a down tracker
+    // every 20 s for the whole outage. The streak counts the probe's own result only: the
+    // sync/catalog warning flags still pick the aggressive interval, but they are cleared later in
+    // the frame (ConsumeTrackerConnectivityRecovery), so they must not keep a recovered streak alive.
+    const bool probeDown =
+        next == TrackerConnectivityState::TransportDown || next == TrackerConnectivityState::ServiceUnavailable;
+    consecutiveDegradedProbes_ = probeDown ? (std::min)(consecutiveDegradedProbes_ + 1, kMaxCountedDegradedProbes) : 0;
+    const std::chrono::seconds interval = IsConnectivityDegradedForProbeInterval(next)
+                                              ? smatchet::DegradedProbeInterval(consecutiveDegradedProbes_)
+                                              : smatchet::kProbeRelaxedInterval;
+    if (probeDown) {
+        LOG_DEBUG("ConnectivityMonitor: probe down %d time(s) in a row; next probe in %lld s",
+                  consecutiveDegradedProbes_, static_cast<long long>(interval.count()));
+    }
     nextProbeAt_ = now + interval;
 }
 
@@ -157,9 +173,22 @@ void ConnectivityMonitorService::TickTrackerConnectivityMonitor(const TrackerCon
         return;
     }
 
-    if (now < nextProbeAt_) {
+    // Unfocused with no input for a while: nobody is looking, so no scheduled probe goes out. The
+    // deadline keeps elapsing, so the first active frame probes immediately. An explicit request
+    // (a live request just failed at the transport level) still goes through.
+    const bool idle = smatchet::activity::IsBackgroundIdle(now);
+    if (idle != pausedForIdle_) {
+        pausedForIdle_ = idle;
+        if (idle) {
+            LOG_INFO("ConnectivityMonitor: app idle in the background; pausing tracker probes.");
+        } else {
+            LOG_INFO("ConnectivityMonitor: app active again; resuming tracker probes.");
+        }
+    }
+    if ((idle && !probeRequested_) || now < nextProbeAt_) {
         return;
     }
+    probeRequested_ = false;
 
     // No explicit auth check here; each backend handles its own config validation in ProbeReachability.
 
@@ -168,7 +197,7 @@ void ConnectivityMonitorService::TickTrackerConnectivityMonitor(const TrackerCon
         // probe runs would otherwise free the backend under the async worker (ADR 0012).
         std::shared_ptr<ITrackerBackend> backend = deps_.FocusedBackendShared();
         if (!backend) {
-            nextProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
+            nextProbeAt_ = now + smatchet::kProbeAggressiveInterval;
             return;
         }
         probeFuture_ =
@@ -176,10 +205,10 @@ void ConnectivityMonitorService::TickTrackerConnectivityMonitor(const TrackerCon
         probeInFlight_ = true;
     } catch (const std::exception& ex) {
         LOG_WARN("TrackerConnectivityProbe: failed to launch: %s", ex.what());
-        nextProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
+        nextProbeAt_ = now + smatchet::kProbeAggressiveInterval;
     } catch (...) {
         LOG_WARN("TrackerConnectivityProbe: failed to launch: unknown exception");
-        nextProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
+        nextProbeAt_ = now + smatchet::kProbeAggressiveInterval;
     }
 }
 
@@ -198,6 +227,12 @@ void ConnectivityMonitorService::applyLiveTrackerReachabilityAfterSuccessfulBack
     if (!deps_.FocusedBackendShared()) {
         return;
     }
+    // Real traffic just proved reachability: while already healthy, the probe has nothing to add
+    // until a full relaxed interval passes without another success.
+    const bool wasHealthy = lastState_.load() == TrackerConnectivityState::AuthenticatedReachable;
+    nextProbeAt_ =
+        smatchet::NextProbeAfterLiveSuccess(nextProbeAt_, std::chrono::steady_clock::now(), wasHealthy, probeInFlight_);
+    consecutiveDegradedProbes_ = 0;
     lastState_ = TrackerConnectivityState::AuthenticatedReachable;
     lastTicketSyncWarning_.clear();
     lastTicketSyncWarningTransient_ = false;

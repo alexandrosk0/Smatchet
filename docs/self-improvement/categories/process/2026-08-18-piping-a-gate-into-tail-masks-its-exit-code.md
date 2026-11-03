@@ -14,7 +14,7 @@ Twice in one session the orchestrator ran a verification command as
 1. `bash scripts/dev/test-all.sh 2>&1 | tail -45` reported **exit 0** on a run whose own
    `AGGREGATE` line said `Failed: 36` and which printed `Missing binary — rebuild and retry`
    (the suite's documented `exit 2`). The 0 was `tail`'s.
-2. `bash agents/scripts/core/check-pr-intent.sh <body> 2>&1 | tail -30` printed
+2. `bash agent-layer/agents/scripts/core/check-pr-intent.sh <body> 2>&1 | tail -30` printed
    `INTENT_EXIT=0` while the checker was reporting a MISSING review verdict.
 
 In case 1 the masked status was one step away from being recorded as a passing
@@ -43,10 +43,10 @@ For any command whose **exit code is the verdict** (gates, test suites, lint run
 
 ## Candidate gate
 
-`agents/scripts/core/` verification wrappers could refuse to be piped when their exit code
+`agent-layer/agents/scripts/core/` verification wrappers could refuse to be piped when their exit code
 is the product — e.g. a `[ -t 1 ] || …` guard is too blunt, but a shared
 `run-gate.sh <script> <logfile>` helper that owns the redirect + `EXIT=` stamp would give
 the orchestrator one correct invocation shape to reach for, and make the masked-status
 form the unusual one.
 
-Re-scoped 2026-10-04 (backlog-sweep-2026-10): the helper landed (backlog-sweep PR #2296: agents/scripts/core/run-gate.sh [--name N] <log> -- <cmd…> writes the full output to the log, appends <NAME>_EXIT=<rc>, prints the verdict lines and exits with the gate's own rc; run_gate.bats). Remaining: point docs/agent-rules/process-rules.md § Cadence and verification at it as the canonical invocation (that file was in another session's plan-lock during the sweep).
+Re-scoped 2026-10-04 (backlog-sweep-2026-10): the helper landed (backlog-sweep PR #2296: agent-layer/agents/scripts/core/run-gate.sh [--name N] <log> -- <cmd…> writes the full output to the log, appends <NAME>_EXIT=<rc>, prints the verdict lines and exits with the gate's own rc; run_gate.bats). Remaining: point agent-layer/docs/agent-rules/process-rules.md § Cadence and verification at it as the canonical invocation (that file was in another session's plan-lock during the sweep).

@@ -506,9 +506,12 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
 // configs are fine (Defaults() already has wheel); existing partial-default
 // configs are not.
 //
-// V3 retries once for rows whose every existing combo is still a member of
-// Defaults() (non-empty subset of the shipped set). Custom keys outside Defaults,
-// empty/cleared rows, and missing rows stay untouched.
+// V3 retries once for a row that holds only the legacy primary (the first combo
+// in Defaults()). It does not touch any other subset of the shipped set: V2 runs
+// first and widens the exact pre-wheel snapshot, so a row with several default
+// aliases but not all of them is one the user trimmed on purpose (dropping the
+// wheel combo because it clashes with scroll, say). Custom keys, empty/cleared
+// rows, and missing rows also stay untouched.
 void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = j.value("migrated_multi_hotkey_zoom_v3", false);
     if (cfg.MigratedMultiHotkeyZoomV3) {
@@ -529,15 +532,8 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
         if (row.Hotkeys.empty()) {
             continue;
         }
-        bool defaultFamily = true;
-        for (const std::string& hk : row.Hotkeys) {
-            if (!def.HasHotkey(hk)) {
-                defaultFamily = false;
-                break;
-            }
-        }
-        if (!defaultFamily) {
-            continue; // customised — leave the user's choice alone
+        if (def.Hotkeys.empty() || row.Hotkeys.size() != 1 || row.Hotkeys[0] != def.Hotkeys[0]) {
+            continue; // customised or trimmed — leave the user's choice alone
         }
         for (const std::string& hk : def.Hotkeys) {
             if (row.AddHotkey(hk)) {

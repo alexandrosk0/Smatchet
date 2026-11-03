@@ -109,6 +109,18 @@ class ITrackerIssueReader {
         return FetchChildrenOfKeys(cfg, parentKeys, views);
     }
 
+    /// FetchChildrenOfKeysCancellable that also sets `truncated` when a page cap (or a missing page token)
+    /// stopped it before the tracker's last page. The children it did not read are not proven gone, so a
+    /// hierarchy walk must not purge cached children on the strength of such a result (Pillar 6). The
+    /// default reads no capped pages, so it is never truncated.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysReportingTruncation(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                           const ViewsStore& views, const CancelCallback& shouldCancel,
+                                           bool& truncated) {
+        truncated = false;
+        return FetchChildrenOfKeysCancellable(cfg, parentKeys, views, shouldCancel);
+    }
+
     // ---- delta-sync roster surface (docs/plans/active/delta-sync.md § Phase 3) ----
 
     /// True when FetchViewRoster is implemented. Callers skip the roster path (and keep today's full

@@ -42,7 +42,8 @@ class ConnectivityMonitorService {
 
     /// Rate-limited background probe; updates connectivity state and recovery latch. Drives the
     /// FSM: collects a finished probe future, or launches a new probe once the next-probe-at
-    /// deadline passes. UI thread, called once per frame.
+    /// deadline passes — unless the app is background-idle (AppActivity.h), in which case the
+    /// launch waits for the first active frame. UI thread, called once per frame.
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
 
     /// Latest reachability from background probe (or after a successful live backend request).
@@ -59,8 +60,12 @@ class ConnectivityMonitorService {
     }
 
     /// UI thread only: probe on the next tick instead of waiting out the interval (a live request
-    /// just failed at the transport level, or a test brought the network back).
-    void RequestProbeNow() { nextProbeAt_ = std::chrono::steady_clock::now(); }
+    /// just failed at the transport level, or a test brought the network back). Goes through even
+    /// while the app is background-idle.
+    void RequestProbeNow() {
+        nextProbeAt_ = std::chrono::steady_clock::now();
+        probeRequested_ = true;
+    }
 
     /// One consolidated banner for field-catalog error/warning, ticket-list cache warning, and an
     /// optional session note (e.g. Views dashboard users-fetch warning). Pure given the catalog /
@@ -93,7 +98,15 @@ class ConnectivityMonitorService {
         lastTicketSyncWarningTransient_ = transient && !message.empty();
     }
     void SetLastState(TrackerConnectivityState state) { lastState_.store(state); }
-    void SetNextProbeAt(std::chrono::steady_clock::time_point at) { nextProbeAt_ = at; }
+    /// A deadline already due is an explicit "probe now" (TicketSyncService after a transport
+    /// failure), so it also passes the background-idle gate like RequestProbeNow.
+    void SetNextProbeAt(std::chrono::steady_clock::time_point at) {
+        nextProbeAt_ = at;
+        if (at <= std::chrono::steady_clock::now()) {
+            probeRequested_ = true;
+        }
+    }
+    std::chrono::steady_clock::time_point GetNextProbeAt() const { return nextProbeAt_; }
 
     /// Push replay timers forward while the transport is down (also called internally by
     /// ApplyProbeResult). Routed through the deps adapter so the null-queue guard lives there.
@@ -126,6 +139,12 @@ class ConnectivityMonitorService {
 
     std::chrono::steady_clock::time_point nextProbeAt_{};
     bool probeInFlight_ = false;
+    /// Degraded probe results in a row — drives the outage backoff; reset by a healthy result.
+    int consecutiveDegradedProbes_ = 0;
+    /// True while new probes are held back because the app sits unfocused + idle (log-on-change).
+    bool pausedForIdle_ = false;
+    /// An explicit probe request pending; bypasses the background-idle gate once.
+    bool probeRequested_ = false;
     std::future<TrackerReachabilityProbeResult> probeFuture_;
     std::atomic<TrackerConnectivityState> lastState_{TrackerConnectivityState::Unknown};
     std::string lastDiagnostic_;

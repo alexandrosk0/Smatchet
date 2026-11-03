@@ -7,7 +7,7 @@ name: Plan-lock cleanup
 # deletes). Two release paths run on every close:
 #   1. Body marker — a single bare `lock-slug: <slug>` line in the PR body
 #      (typically pulled from the PR template) releases that slug.
-#   2. Branch match — agents/scripts/core/lock-release-on-close.sh releases
+#   2. Branch match — agent-layer/agents/scripts/core/lock-release-on-close.sh releases
 #      every lock whose claim.json `branch` equals the PR's head ref. The body
 #      is mutable and the marker is easy to omit, drop in a rewrite, or leave
 #      commented out; the claim itself records the claiming branch (tooling

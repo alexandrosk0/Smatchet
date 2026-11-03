@@ -167,17 +167,21 @@ inline bool HasMdEntityReference(const std::string& text) {
 /// as one is escaped (`\&`), along with every backslash directly before it, which would otherwise pair
 /// with that escape. `text` must be a whole run of plain text: a reference split across two calls with
 /// no markup between them is not seen.
-inline void AppendMdTextEscapingEntities(std::string& out, const std::string& text) {
+/// With `limit`, only text[0, limit) is written, but references are still judged against the whole of
+/// `text`: the rest is markup that will follow it verbatim, and could complete a reference begun in it.
+inline void AppendMdTextEscapingEntities(std::string& out, const std::string& text,
+                                         std::size_t limit = std::string::npos) {
+    limit = std::min(limit, text.size());
     if (text.find('&') == std::string::npos) {
-        out += text;
+        out.append(text, 0, limit);
         return;
     }
-    out.reserve(out.size() + text.size() + 4);
+    out.reserve(out.size() + limit + 4);
     std::size_t i = 0;
-    while (i < text.size()) {
+    while (i < limit) {
         if (text[i] == '\\') {
             std::size_t runEnd = i;
-            while (runEnd < text.size() && text[runEnd] == '\\') {
+            while (runEnd < limit && text[runEnd] == '\\') {
                 ++runEnd;
             }
             const std::size_t run = runEnd - i;

@@ -153,6 +153,13 @@ class JiraClient : public ITrackerBackend,
     FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                    const ViewsStore& viewStore, const CancelCallback& shouldCancel) override;
 
+    /// The children fetch; `truncated` is set when the per-batch page cap or a missing nextPageToken
+    /// stopped a batch before Jira's last page.
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysReportingTruncation(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                           const ViewsStore& viewStore, const CancelCallback& shouldCancel,
+                                           bool& truncated) override;
+
     /// Delta-sync roster: the view's JQL with `fields=updated` only (no bodies, no changelog), paged like the
     /// full fetch. Complete only when every page was read.
     bool SupportsVersionedRoster() const override { return true; }

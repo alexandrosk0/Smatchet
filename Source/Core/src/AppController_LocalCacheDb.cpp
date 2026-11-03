@@ -39,8 +39,15 @@
 
 namespace {
 
-// Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set as soon as one of them is gone, so a
-// caller can tell a wipe that went through partway (a sidecar would not delete) from one that never started.
+// Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set once the database file itself is
+// gone, so a caller can tell a wipe that removed the rows from one that left them in place.
+//
+// Every file is first moved aside to a `.wipe` name, and a move that fails puts the moved ones back. A file
+// SQLite still holds open cannot be moved on Windows, so the usual failure leaves the database, its WAL and
+// its rows exactly as they were. Only then are the staged files deleted, the database first: if that fails
+// everything is restored. Once it is gone, a sidecar that will not delete stays under its `.wipe` name, where
+// a reopen at the original path cannot pick it up, and the wipe reports an error naming it (with
+// `anyRemoved` set), since that file can still hold cached data.
 VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemoved) {
     anyRemoved = false;
     namespace fs = ghc::filesystem;
@@ -54,21 +61,56 @@ VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, bool& anyRemov
     }
     const std::string stem = p.string();
     const fs::path paths[3] = {p, fs::path(stem + "-wal"), fs::path(stem + "-shm")};
+    std::vector<std::pair<fs::path, fs::path>> staged; // {original, staged}, database first when present
+    const auto restore = [&staged]() {
+        for (const auto& f : staged) {
+            std::error_code rec;
+            fs::rename(f.second, f.first, rec);
+            if (rec) {
+                LOG_WARN("Cache wipe: could not restore %s from %s: %s", f.first.string().c_str(),
+                         f.second.string().c_str(), rec.message().c_str());
+            }
+        }
+    };
     for (const auto& f : paths) {
         ec.clear();
         if (!fs::exists(f, ec)) {
             if (ec) {
                 // A file that cannot be inspected is not known to be gone. Reopening it as the "fresh"
                 // database would mark its one-time migrations done without moving its rows.
+                restore();
                 return VoidResult::Err("Could not inspect " + f.string() + ": " + ec.message());
             }
             continue;
         }
-        fs::remove(f, ec);
+        const fs::path aside(f.string() + ".wipe");
+        fs::rename(f, aside, ec);
         if (ec) {
+            restore();
             return VoidResult::Err("Could not remove " + f.string() + ": " + ec.message());
         }
-        anyRemoved = true;
+        staged.emplace_back(f, aside);
+    }
+    std::string leftovers;
+    for (std::size_t i = 0; i < staged.size(); ++i) {
+        ec.clear();
+        fs::remove(staged[i].second, ec);
+        if (!ec) {
+            if (staged[i].first == p) {
+                anyRemoved = true;
+            }
+            continue;
+        }
+        if (staged[i].first == p) {
+            restore();
+            return VoidResult::Err("Could not remove " + p.string() + ": " + ec.message());
+        }
+        LOG_WARN("Cache wipe: left %s behind (%s); it is no longer at the database's path.",
+                 staged[i].second.string().c_str(), ec.message().c_str());
+        leftovers += (leftovers.empty() ? "" : ", ") + staged[i].second.string() + " (" + ec.message() + ")";
+    }
+    if (!leftovers.empty()) {
+        return VoidResult::Err("Removed the database but could not remove " + leftovers + ".");
     }
     return VoidOk();
 }
@@ -148,6 +190,14 @@ void AppController::DrainCatalogWorkBeforeShutdown_() {
     }
     if (startupCatalogRestoreSlot_.valid()) {
         startupCatalogRestoreSlot_.wait();
+    }
+}
+
+void AppController::FlushTicketSavesBeforeShutdown_() {
+    // Once shuttingDown_ is set, LaunchBackgroundTask drops the queue's drain task, so a save posted just before
+    // quit would never reach SQLite. Bounded like the catalog flush above.
+    if (!ticketSaves_.Flush(std::chrono::seconds(5))) {
+        LOG_WARN("AppController shutdown: a queued ticket cache save did not finish within 5 s.");
     }
 }
 
@@ -291,7 +341,7 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     bool anyRemoved = false;
     const VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_, anyRemoved);
     outcome.Wiped = anyRemoved;
-    if (!removeResult.has_value()) {
+    if (!removeResult.has_value() && !anyRemoved) {
         outcome.Error = removeResult.error();
         try {
             std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(localCacheDbPath_));
@@ -301,7 +351,10 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
         return outcome;
     }
 
-    outcome.Wiped = true; // every cache file is gone from here on, whatever happens to the new database
+    outcome.Wiped = true; // the database is gone from here on, whatever happens to the new one
+    // The database went but a sidecar would not: the new database still gets its one-time stamps below (an
+    // unstamped fresh file would run those migrations against rows written later), and the leftover is reported.
+    const std::string leftover = removeResult.has_value() ? std::string() : removeResult.error();
     std::shared_ptr<LocalCacheManager> fresh;
     try {
         fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
@@ -326,6 +379,7 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     }
     std::atomic_store(&Cache, fresh); // published only once it is fully set up
     outcome.Ok = true;
+    outcome.Warning = leftover;
     return outcome;
 }
 
@@ -366,7 +420,15 @@ void AppController::FinishCacheRecreate_(
                                             // one
     }
     cacheRecreating_.store(false); // down before the follow-up sync starts
-    if (outcome.Ok) {
+    if (outcome.Ok && !outcome.Warning.empty()) {
+        LOG_WARN("AppController: local cache recreated, with a leftover file: %s", outcome.Warning.c_str());
+        SmatchetToastManager::Instance().Push(
+            std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
+            std::string(SmatchetLocalization::T("toast.local_db_recreated_leftover",
+                                                "Local database recreated; refreshing issues. ")) +
+                outcome.Warning,
+            ToastType::Warning, 6000);
+    } else if (outcome.Ok) {
         LOG_INFO("AppController: local cache recreated.");
         SmatchetToastManager::Instance().Push(
             std::string(SmatchetLocalization::T("toast.success", "Success")),

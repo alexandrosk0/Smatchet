@@ -1148,6 +1148,32 @@ TEST_CASE("TicketSyncService purges a cached row the completed descendant walk n
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+// A children fetch the backend's page cap stopped did not read every child, so the children it did not
+// return are not proven gone: the walk keeps them rather than stale-purging them.
+TEST_CASE("TicketSyncService keeps cached descendants when the children fetch was truncated") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeChildTicket("STORY-1", "EPIC-1")); // cached by an earlier sync
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchChildrenOfKeysResult(true, std::vector<CachedTicket>()); // STORY-1 is past the cap
+    fake->SetFetchChildrenTruncated(true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    SpinUntil(svc, []() { return false; }, 50); // let any stale purge run to completion
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService keeps cached ancestors when the parent fetch fails") {
     FakeTicketSyncDeps deps;
     deps.CacheImpl->SaveTicket("Jira", MakeTicket("EPIC-9", "cached by an earlier sync"));
