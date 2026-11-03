@@ -86,7 +86,6 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 ## Perf-review-system gates
 
 1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`scripts/dev/perf-scenario-map.json`; `concurrent-sync` is in `scripts/dev/perf-pr-fast-set.json`).
-1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`scripts/dev/perf-scenario-map.json`, read by the `perf-gatekeeper` skill).
 2. **Pillar 2 static scanner** — Phase 4 removes UI-thread SQLite writes; no new sync I/O reachable from `ImGui::*`.
 3. **Dispatcher drain** — does not touch `MainThreadDispatcher::Drain()`.
 4. **Visible-cue harness** — no new > 100 ms stall path.
