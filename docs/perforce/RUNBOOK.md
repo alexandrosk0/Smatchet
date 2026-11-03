@@ -2,7 +2,7 @@
 
 > **Plan**: [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md).
 > **Sibling docs**: [`SETUP.md`](SETUP.md) — first-time bring-up. [`AGENT_FLOWS.md`](AGENT_FLOWS.md) — which verb to use when.
-> **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md)) handles routine maintenance.
+> **Audience**: operator running the Smatchet Perforce server day-to-day. Agents doing routine maintenance (stream GC, released lock counters, stale shelves, verify) follow [`AGENT_FLOWS.md`](AGENT_FLOWS.md) § Janitor pass; this runbook is the server-side and manual layer under it.
 
 The Smatchet `p4d` server is **non-canonical** (git + GitHub remain the ship-line per [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). Losing the depot is annoyance, not data loss — every shipped change lives on GitHub. The runbook below is therefore optimised for "keep agentic-WIP primitives healthy", not "prevent catastrophic data loss".
 
@@ -46,7 +46,7 @@ p4 verify -q //smatchet/...
 
 Output is empty on success. Any `BAD!` line = archive corruption — restore from the most recent good checkpoint (see § Recovery).
 
-`p4-janitor` runs this on its own schedule per [`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) § Verification.
+The agent janitor pass ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § Janitor pass) runs it as its last step; nothing schedules it, so the weekly run is manual unless you add a Scheduled Task for it.
 
 ## Stream + shelve GC
 
@@ -69,7 +69,7 @@ p4 changes -s shelved -u <user>           # what's shelved
 p4 shelve -d -c <CL>                      # delete a single shelf
 ```
 
-`p4-janitor` shipped an end-of-session shelf-prune flow per its agent doc; this runbook covers the manual fallback.
+The janitor pass ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § Janitor pass) lists shelves older than 30 days and whether their client still exists; it deletes only the ones the user approves, with the same `p4 shelve -d`.
 
 ## Recovery from checkpoint
 
@@ -125,6 +125,6 @@ Super stays restricted to the host operator.
 
 ## See also
 
-- [`agent-layer/agents/core/p4-janitor.md`](../../agent-layer/agents/core/p4-janitor.md) — automated maintenance agent.
-- [`agent-layer/agents/core/git-janitor.md`](../../agent-layer/agents/core/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
+- [`AGENT_FLOWS.md`](AGENT_FLOWS.md) § Janitor pass — the agent-run maintenance pass (refusals, dry-run listing, verification).
+- `agent-layer/agents/_shared/skills/git-janitor/SKILL.md` — git-side end-of-session cleanup (the `git-janitor` skill).
 - [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) — the plan this runbook closes a gap on.

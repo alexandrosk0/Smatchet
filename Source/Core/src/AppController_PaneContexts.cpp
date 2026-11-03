@@ -701,8 +701,8 @@ void AppController::TickAllContexts() {
     // classifies visibility by frame recency (see paneFrameClock_).
     ++paneFrameClock_;
     // Shared drain deadline across N panes' streaming applies (plan item 18): each
-    // TicketSyncService::TickStreamingApply is internally budgeted (3 ms / 20 tickets), so N
-    // visible panes applying at once could stack N× on one frame. The deadline bounds the
+    // TicketSyncService::TickStreamingApply is row-capped per frame (20 fetched / 500 cache-served
+    // rows), so N visible panes applying at once could stack N× on one frame. The deadline bounds the
     // total; the ROTATING start order means a deferred context is first in line next frame —
     // the design-addendum § 3.4 verdict (no dispatcher-level round-robin machinery unless the
     // concurrent-sync scenario shows starvation) holds.

@@ -1,3 +1,4 @@
+// Every grid cell commit goes through this pipeline: Source/Core/src/Ui/AGENTS.md § Grid.
 #include "SmatchetGridUiSupport.h"
 
 #include "AppController.h"

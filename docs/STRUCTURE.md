@@ -10,7 +10,7 @@ Reuse guide: [`PORTABILITY.md`](PORTABILITY.md). Plan: [`plans/shipped/agentic-l
 
 **PORTABLE** lives in its own repository, [`the-unwilling-agentic-bunch`](https://github.com/alexandrosk0/the-unwilling-agentic-bunch), mounted here as the git submodule `agent-layer/` (project values still come from this repo's `project.config.json`): `agent-layer/agents/{core,_shared}/`, `agent-layer/agents/scripts/{core,project}/` (the gate scripts, including `test-lint-rules.sh`), `agent-layer/docs/{agent-rules,harness}/`, the self-improvement **framework** (`AGENT_SELF_IMPROVEMENT.md`), the layer's bats suites and fixtures, and the rulebook `agent-layer/AGENTS.md`. Edit them there and bump the gitlink here; a host edit under `agent-layer/` is an edit to the submodule. Three scripts are kept here too as byte-identical mirrors (`scripts/dev/{project-config,test-all,test-docs}.sh`, listed in [`mirrored-paths.txt`](mirrored-paths.txt) and drift-gated) because the host runs them before the mount is checked out.
 
-**PROJECT-SPECIFIC** (stays in this repo): `project.config.json`, the root `AGENTS.md` stub (it imports `agent-layer/AGENTS.md`), `agents/project/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `CONTEXT-MAP.md`, the per-subsystem leaf docs `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md`, `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/` (minus the two layer baselines), `docs/reference/`, the git hooks, and the project-only scripts under `scripts/dev/` (`test-subsystem-docs.sh`, `perf-*`, `p4-*`).
+**PROJECT-SPECIFIC** (stays in this repo): `project.config.json`, the root `AGENTS.md` stub (it imports `agent-layer/AGENTS.md`), `agents/project/workflows/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `CONTEXT-MAP.md`, `docs/area-map.json`, the per-subsystem leaf docs (`Source/**/AGENTS.md`, `Source/Core/src/<ctx>/{CONTEXT,README}.md`), `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/` (minus the two layer baselines), `docs/reference/`, the git hooks, and the project-only scripts under `scripts/dev/` (`test-subsystem-docs.sh`, `perf-*`, `p4-*`).
 
 The single seam for project values is **`project.config.json`** (schema-validated). `scripts/dev/project-config.sh` exports it as `PC_*` shell vars.
 
@@ -21,10 +21,11 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | `/AGENTS.md` | project | stub: the harness entry point, importing `agent-layer/AGENTS.md` | `test-doc-anchors` |
 | `agent-layer/` | portable | the layer submodule ([`the-unwilling-agentic-bunch`](https://github.com/alexandrosk0/the-unwilling-agentic-bunch)); its own CI runs its gates | `agent-layer-integration.yml`, `check-harness-provisioned` |
 | `/CONTEXT-MAP.md` | project | registry of per-subsystem leaf docs + harness-discovery index | `test-subsystem-docs` |
-| `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md` | project | per-subsystem leaf rules / glossary / orientation | `test-subsystem-docs` |
+| `Source/**/AGENTS.md`, `Source/Core/src/<ctx>/{CONTEXT,README}.md` | project | per-subsystem leaf rules / glossary / orientation | `test-subsystem-docs` |
+| `docs/area-map.json` | project | path → area → docs routing (`area:*` Issue labels, PR-bot finding routing) | `coderabbit-triage.py selftest` (docs exist), `sync-issue-labels.sh --check-parity` (label parity) |
 | `/project.config.json` (+ `.schema.json`) | project | the one value table | schema validation (`doc-validation.yml`) |
-| `agent-layer/agents/core/` | portable | generic engineering-role agents | `test-portable-purity`, `test-agent-contract` |
-| `agents/project/` | project | subsystem-bound agents | `test-agent-contract` |
+| `agent-layer/agents/core/` | portable | the three subagents: `architect`, `code-review`, `security-review` | `test-portable-purity`, `test-agent-contract` |
+| `agents/project/workflows/` | project | saved `Workflow` scripts that embed project literals (no agent definitions) | — |
 | `agent-layer/agents/_shared/` | portable | skills, token-tracking, templates | `test-portable-purity` |
 | `agent-layer/docs/agent-rules/` | portable | delegation / merge-gates / ship-loops / process rules | `test-portable-purity`, `test-doc-anchors` |
 | `agent-layer/docs/harness/` | portable | IDE adapters | `test-portable-purity` |
@@ -33,7 +34,8 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | `docs/plans/shipped/` | project | shipped plans (**never renamed** — see below) | `test-plan-index`, `test-plan-ref-integrity` |
 | `docs/plans/deferred/` | project | parked-indefinitely plans (captured design, build only on a named recurrence; `STATUS: DEFERRED` banner) | `test-plan-naming`, `test-plan-ref-integrity` |
 | `docs/plans/INDEX.md` | project | auto-generated shipped-plan index | `test-plan-index` |
-| `docs/guides/` | mixed (per-file `tier:`) | how-to docs (offline-builds, perf-workflow, caveman, agent-token-tracking) + the user-facing guides `cli.md` / `lua.md` / `mcp.md` | `test-portable-purity`, `test-markdown-links` |
+| `docs/guides/` | mixed (per-file `tier:`) | how-to docs (offline-builds, perf-workflow, caveman, agent-token-tracking) + the user-facing guides `cli.md` / `lua.md` / `mcp.md` + the code-review checklist `review-checklist.md` (named by `project.config.json` `docs.review_checklist`) | `test-portable-purity`, `test-markdown-links` |
+| `docs/security/` | project | the app attack-surface map (`attack-surface.md`) + dated security playbooks | `test-markdown-links` |
 | `docs/reference/` | project | dated snapshots / archived refs | — |
 | `docs/{CONTEXT.md,adr,perf,perforce,high-integrity}` | project | glossary, decisions, perf, p4, lint baseline | their own gates |
 | `docs/audits/{SECURITY,CPP_CODE,AGENTIC_INFRA}_AUDIT.md`, `docs/audits/UX_DESIGN_CRITIQUE.md`, `docs/audits/TEST_COVERAGE_GAP_MAP.md`, `docs/audits/MUTATION_PILOT.md` | project | **dated whole-tree audit reports** — one campaign each, `**Date:**` + `**Branch:**` + `**Scope:**` header, findings numbered and cited normatively from production comments (135 `CPP_CODE_AUDIT.md #N` / `SECURITY_AUDIT.md #N` citations across `Source/` and `tests/`) | `test-markdown-links` (link hygiene) · **no content/lifecycle guard** — deliberate, see below |
@@ -71,7 +73,7 @@ A dated snapshot that is *not* a numbered-findings audit (a one-off measurement,
 - A plan → `docs/plans/active/` (shipped → `shipped/`).
 - Agent friction/idea → `docs/self-improvement/categories/<category>.md`.
 - A binding decision → `docs/adr/NNNN-<slug>.md`.
-- A reusable engineering-role agent → the layer repo's `agents/core/` (mounted here as `agent-layer/agents/core/`; edited in the layer repo, then a pointer bump); a subsystem-bound one → `agents/project/`.
+- A reusable engineering-role agent → the layer repo's `agents/core/` (mounted here as `agent-layer/agents/core/`; edited in the layer repo, then a pointer bump). Subsystem rules → that subsystem's leaf `AGENTS.md` (registered in `CONTEXT-MAP.md`, routed by `docs/area-map.json`), not an agent.
 - A project value (path, preset, threshold, label) → `project.config.json` (never hardcode in a portable file).
 - A how-to → `docs/guides/` (+ a `tier:` marker); a dated snapshot → `docs/reference/`.
 - A whole-tree audit campaign with numbered findings → `docs/audits/SCREAMING_CASE.md` (+ a taxonomy row) — see § Naming.

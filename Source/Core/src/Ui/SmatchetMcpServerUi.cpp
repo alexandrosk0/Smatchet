@@ -1,3 +1,4 @@
+// Draws a McpServerStatus snapshot; server logic stays in McpPlugin (Source/Plugins/Mcp/AGENTS.md).
 #include "SmatchetMcpServerUi.h"
 
 #if defined(SMATCHET_WITH_MCP)

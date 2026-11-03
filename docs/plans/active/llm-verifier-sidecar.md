@@ -20,7 +20,7 @@ Add the verifier as a sidecar, not a new merge authority. The workflow judge emi
 2. `scripts/dev/verifier-sidecar.py` — deterministic helper: fine-grained logprob reward (expectation over the A–T score scale, with distribution variance + valid-token mass), repeated-evaluation aggregation with a standard error and confidence interval, SEM-driven adaptive resampling, hard-veto propagation, Bradley-Terry MLE ranking, a full pivot-tournament schedule, and progress tracking. Modes: `aggregate` / `reward` / `track` / `--selftest`.
 3. `docs/agent-rules/verifier-sidecar.md` — operating contract and calibration posture.
 4. `docs/agent-rules/subagent-eval.md` — link the verifier sidecar to the existing advisory eval harness.
-5. `docs/agent-rules/workflow-orchestration.md` — update the workflow summary.
+5. `docs/agent-rules/workflow-fleets.md` — update the workflow summary.
 6. `docs/plans/active/llm-verifier-sidecar.md` — this plan.
 7. `tests/bats/verifier_sidecar.bats` + `scripts/dev/test-verifier-sidecar-bats.sh` — Bucket A coverage (fine-grained reward, veto→block+ranking, O(Nk) pivot budget, progress early-stop, exit-code contract), auto-enrolled by `test-all.sh` and required by the orphan-bats gate.
 
@@ -53,12 +53,12 @@ N/A — the diff does not touch `Source/Core/`.
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: N/A — no C++ test-rig code.
+- **Bucket A (pure-logic ctest, doctest rig)**: N/A — no C++ test-rig code.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: N/A — no UI code.
 - **Bash-driver scenario / screenshot / sanitizer**: `python scripts/dev/verifier-sidecar.py --selftest` plus the bats suite `bash scripts/dev/test-verifier-sidecar-bats.sh` (7 cases, run in CI by the agentic-selftests lane via `test-all.sh`).
 - **Build gate**: skipped — pure docs plus Python helper; no product compile path.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: run `bash scripts/dev/test-docs.sh` if available in the environment.
-- **Plan stress-test — `grill-with-docs` (keep this bullet)**: self-reviewed against `AGENTS.md`, `subagent-eval.md`, and `workflow-orchestration.md`; the key constraint is advisory-only until calibrated.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: self-reviewed against `AGENTS.md`, `subagent-eval.md`, and `workflow-fleets.md`; the key constraint is advisory-only until calibrated.
 - **Manual residue**: none.
 
 ## Out of scope (flagged, not designed)

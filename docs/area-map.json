@@ -1,0 +1,72 @@
+{
+  "_doc": "Path -> area map: the single home for which subsystem owns a file and which doc to read before changing it. Read by the coderabbit-triage skill (route each PR-bot finding: first matching route wins, so specific file patterns precede directory routes) and by issue triage (an area:<x> Issue label -> that route's docs). `python3 agent-layer/agents/scripts/core/coderabbit-triage.py area <path>...` prints the route for a path; its `selftest` validates this file (every doc path exists, area names unique). Every non-null `area` must have a matching area:<x> label in agent-layer/agents/scripts/project/issue-labels.manifest and vice versa (sync-issue-labels.sh --check-parity). `generic_areas` lists area labels that own no path. A route with area null has no Issue label. Paths and docs are relative to the repo root; globs: `**/` = any directories, `*` = within one path segment, `{a,b}` = alternatives. A file no route matches has no owning area: read the nearest leaf AGENTS.md (CONTEXT-MAP.md) and agent-layer/docs/agent-rules/cpp-rules.md.",
+  "routes": [
+    {
+      "area": "p4-annotate",
+      "summary": "Perforce blame / annotate / callstack",
+      "globs": ["**/P4Annotate*", "**/P4ErrorUtil*", "**/AnnotateAnalysisUi*", "**/CppSyntaxHighlight*", "**/CallstackParser*"],
+      "docs": ["Source/Core/include/P4Annotate.h", "Source/Core/include/CallstackParser.h", "Source/Core/src/Ui/AGENTS.md"]
+    },
+    {
+      "area": "mcp-toolsmith",
+      "summary": "MCP server / wire protocol",
+      "globs": ["Source/Plugins/Mcp/**", "**/SmatchetMcpServerUi*", "**/McpServerStatus*"],
+      "docs": ["Source/Plugins/Mcp/AGENTS.md", "docs/guides/mcp.md", "Source/Core/src/Commands/AGENTS.md"]
+    },
+    {
+      "area": "command-system",
+      "summary": "Unified command system (CLI / palette / MCP / Lua / scenarios)",
+      "globs": ["Source/Core/src/Commands/**", "Source/Core/include/Commands/**"],
+      "docs": ["Source/Core/src/Commands/AGENTS.md", "docs/guides/cli.md"]
+    },
+    {
+      "area": "offline-sync",
+      "summary": "SQLite cache / offline queue / sync / audit trail",
+      "globs": ["Source/Core/src/Sync/**", "Source/Core/include/Sync/**", "Source/Core/src/Persistence/**", "Source/Core/include/Persistence/**", "**/*Offline*", "**/PendingAction*"],
+      "docs": ["Source/Core/src/Sync/AGENTS.md", "Source/Core/src/Persistence/AGENTS.md", "Source/Core/src/Persistence/CONTEXT.md"]
+    },
+    {
+      "area": "grid-engine",
+      "summary": "Ticket grid / spreadsheet UI",
+      "globs": ["**/SmatchetGrid*", "**/SmatchetActiveProjectGrid*", "**/SmatchetViewsDashboardUi*", "**/SmatchetFieldRender*", "**/TicketGrid*", "**/SpreadsheetState*", "**/TrackerGridFieldDisplay*", "**/Grid*"],
+      "docs": ["Source/Core/src/Ui/AGENTS.md"]
+    },
+    {
+      "area": "tracker-backend",
+      "summary": "Tracker backends — Jira / Plane / GitHub / Linear clients, HTTP, field catalog / parser",
+      "globs": ["Source/Core/src/Tracker/**", "Source/Core/include/Tracker/**", "**/ITracker*.h", "**/TrackerField*"],
+      "docs": ["Source/Core/src/Tracker/AGENTS.md", "Source/Core/src/Tracker/CONTEXT.md", "Source/Core/src/Tracker/README.md"]
+    },
+    {
+      "area": "lua-binder",
+      "summary": "Lua bindings / automation host / Lua console (binding rules: docs/guides/lua.md § 5 Binding authors)",
+      "globs": ["**/*Lua*", "Source/Plugins/LuaConsole/**", "scripts/**/*.lua"],
+      "docs": ["docs/guides/lua.md", "agent-layer/docs/agent-rules/cpp-rules.md"]
+    },
+    {
+      "area": "unreal-bridge",
+      "summary": "Unreal plugin / DX12 embedding (SMATCHET_EMBEDDED_IN_UNREAL)",
+      "globs": ["Source/UnrealPlugins/**", "**/SmatchetPchCoreDx12.h", "scripts/**/*unreal*", "scripts/**/*UNREAL*"],
+      "docs": ["BUILD.md", "agent-layer/docs/agent-rules/cpp-rules.md", "Source/UnrealPlugins/SmatchetImGuiPlugin/README.md"]
+    },
+    {
+      "area": "ui",
+      "summary": "General UI — theme, layout, widgets, fonts, standalone host",
+      "globs": ["Source/Core/src/Ui/**", "Source/Core/include/Ui/**", "Source/Standalone/**", "**/SmatchetTheme*", "**/SmatchetLocaliz*", "**/SmatchetImConfig.h"],
+      "docs": ["Source/Core/src/Ui/AGENTS.md"]
+    },
+    {
+      "area": null,
+      "summary": "Tests and test scripts",
+      "globs": ["tests/**", "scripts/dev/test-*.sh"],
+      "docs": ["agent-layer/agents/_shared/skills/test-authoring/SKILL.md", "docs/guides/testing-surface.md"]
+    },
+    {
+      "area": "build",
+      "summary": "Build system / CMake / CI / packaging",
+      "globs": ["CMakeLists.txt", "**/CMakeLists.txt", "cmake/**", "CMakePresets.json", "build.sh", ".github/workflows/**"],
+      "docs": ["BUILD.md", "agent-layer/docs/agent-rules/build.md"]
+    }
+  ],
+  "generic_areas": []
+}

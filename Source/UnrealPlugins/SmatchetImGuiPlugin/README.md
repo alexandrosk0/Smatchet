@@ -375,6 +375,26 @@ For the local TestProject smoke rebuild, use:
 bash scripts/dev/local/rebuild-testproject-plugin.sh --release
 ```
 
+## Packaging the Native Libraries
+
+The CMake target `SmatchetPackageUnrealLibs_DX12` (defined in
+`Source/UnrealPlugins/CMakeLists.txt`, Windows only) stages the plugin's native
+payload into `ThirdParty/Smatchet/` (`SMATCHET_UNREAL_THIRDPARTY_DIR`): a curated
+header set under `include/` and the static libraries under
+`lib/Win64/<Debug|Development>/`.
+
+- `SmatchetPackageUnrealLibs_DX12` output must match the library names
+  `SmatchetImGuiPlugin.Build.cs` adds via `PublicAdditionalLibraries`
+  (`AddExistingLib` for required libraries, `AddExistingLibOptional` for the MCP,
+  Lua console and Lua runtime libraries). A library added, renamed or dropped on
+  one side needs the same change on the other: a required library that is not
+  staged fails the Unreal build with a `BuildException`, and an optional one that
+  is not staged is skipped without a message. The `.uplugin` declares only the
+  module and names no libraries.
+- Read the target in `Source/UnrealPlugins/CMakeLists.txt` before changing what
+  it stages. After packaging, compare the `lib/Win64/<config>/` listing with the
+  names in `Build.cs`.
+
 ## Low-Level Native ABI
 
 Game code should use `USmatchetImGuiCommandBridge`. The lower-level C ABI exists

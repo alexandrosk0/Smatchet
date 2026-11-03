@@ -29,7 +29,7 @@ namespace cmd {
 namespace {
 // Stable scope name the SmatchetUI::Draw tail wraps the debounced save in. If
 // the production scope name changes this scenario will silently report 0 saves
-// — perf-detective is expected to catch the mismatch on the next audit.
+// — the next perf audit is expected to catch the mismatch.
 const char* kPrefsSaveScope = "ConfigManager::Save (prefs-debounced)";
 } // namespace
 

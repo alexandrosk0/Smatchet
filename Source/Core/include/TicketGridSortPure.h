@@ -7,6 +7,7 @@
 // they touch nothing but std::string, the field metadata struct, and the already-
 // tested TicketGridDurationSortPure. Splitting them here makes them bucket-A
 // unit-testable; TicketGridModel.h re-includes this header so callers are unchanged.
+// A new field type's sort order goes here, never in draw code: Source/Core/src/Ui/AGENTS.md § Grid.
 
 #include "TrackerFieldSchema.h"
 

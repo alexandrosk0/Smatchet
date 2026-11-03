@@ -21,9 +21,9 @@ Together they could form a **harness self-maintenance suite** that feeds the loo
 
 Three adoption constraints shape the plan:
 
-1. **Form (Smatchet's own rubric).** Per [`docs/agent-rules/AGENT-VS-SKILL.md`](../../../agent-layer/docs/agent-rules/AGENT-VS-SKILL.md), *"Agent when ANY hold: … parallel-dispatch / delegates-out."* The stocktake, rules-distill, and stack-audit concepts all **spawn subagents** → by Smatchet's rubric they are **agent-shaped, not skills**. Only the token-footprint audit (a bounded collector-script read-audit, no subagent spawn, bounded orchestrator context) is cleanly **skill-shaped**. ECC packages all four as skills; Smatchet re-forms them to its own rubric.
+1. **Form (Smatchet's own rubric).** Per [`docs/agent-rules/AGENT-VS-SKILL.md`](../../../agent-layer/docs/agent-rules/AGENT-VS-SKILL.md), *"An agent only where a separate context is the capability (independent review, design); a skill for every bounded procedure the main thread runs."* Broad read-only fan-out runs as a Workflow over the built-in Explore / general-purpose agents, never a new custom agent. The stocktake, rules-distill, and stack-audit concepts all **fan out** → by Smatchet's rubric they are **Workflow-shaped, not custom agents**. Only the token-footprint audit (a bounded collector-script read-audit, no subagent spawn, bounded orchestrator context) is cleanly **skill-shaped**. ECC packages all four as skills; Smatchet re-forms them to its own rubric.
 
-2. **Name collision — avoided by naming.** Smatchet already ships a **`context budget` rule** (`AGENTS.md:174`, `delegation.md:348`) meaning *runtime orchestrator window-fill* — "keep your own context under ~80% utilization, delegate before the last 20%." The ECC `context-budget` skill measures something **different and unrelated**: *static design-time footprint cost*. To avoid two distinct concepts sharing one name, the adopted skill is named **`harness-token-audit`** — `context-budget` stays reserved for the shipped runtime rule. The shared word in ECC's naming is incidental; there is **no** near-twin intent (runtime fill vs design-time footprint are different axes).
+2. **Name collision — avoided by naming.** Smatchet already ships a **`context budget` rule** (`process-rules.md` § Context budget by task class) meaning *runtime orchestrator window-fill* — "keep your own context under ~80% utilization, delegate before the last 20%." The ECC `context-budget` skill measures something **different and unrelated**: *static design-time footprint cost*. To avoid two distinct concepts sharing one name, the adopted skill is named **`harness-token-audit`** — `context-budget` stays reserved for the shipped runtime rule. The shared word in ECC's naming is incidental; there is **no** near-twin intent (runtime fill vs design-time footprint are different axes).
 
 3. **Clean-room + portability.** The tools land in `agents/_shared/skills/` and `agents/core/` — portable dirs under `test-portable-purity`. Because the adoption is clean-room (concept-only, no vendored ECC literals — no `~/.claude/skills/<name>/`, no ECC `rules/` dir assumption, no `origin: ECC`), it introduces **zero** new foreign literals, so portability passes by construction.
 
@@ -33,7 +33,7 @@ Three adoption constraints shape the plan:
 
 **Prove-then-build.** Ship the single cheap, clearly-valuable, subagent-free tool first; gate the three expensive subagent-spawning auditors behind *demonstrated recurring need*. Speculatively building three rarely-run token-heavy auditors is exactly the over-investment the cheap auditor exists to detect — so it goes first and earns the rest.
 
-**Re-form to Smatchet's rubric, don't copy ECC's packaging.** Apply `AGENT-VS-SKILL.md` per item: token-footprint audit → **skill** (`harness-token-audit`, bounded collector read-audit); the three subagent-spawning auditors → **agents** under `agents/core/` when/if built (with optional Claude-only skill aliases later, the dual-publish pattern). This is the first real exercise of the codified rubric — the adoption *demonstrates* it.
+**Re-form to Smatchet's rubric, don't copy ECC's packaging.** Apply `AGENT-VS-SKILL.md` per item: token-footprint audit → **skill** (`harness-token-audit`, bounded collector read-audit); the three fan-out auditors → a skill that drives a saved Workflow over built-in agents (`agents/_shared/workflows/`) when/if built. This is the first real exercise of the codified rubric — the adoption *demonstrates* it.
 
 **Wire to the existing loop, don't parallel it.** The auditor emits into `docs/self-improvement/categories/{process,tooling,infra,…}` using the existing entry format (`AGENT_SELF_IMPROVEMENT.md` § Format — `date · agent · [category] · P<0-3>` + Details + Concrete next action; the substrate is append-only markdown, no schema). The suite is the automated *finder*; the established loop is the *applier*. No second backlog system.
 
@@ -45,15 +45,13 @@ Three adoption constraints shape the plan:
 
 1. `agents/_shared/skills/harness-token-audit/SKILL.md` (new, authored fresh) — scans `AGENTS.md` + `docs/agent-rules/*` + `agents/**` (and the skill/command corpus), reports a per-file token/line-cost table + the top bloat candidates, and emits findings in the self-improvement entry format. Carries the one-line ECC concept credit. Skill-only (no agent twin — bounded, orchestrator-inline, no cross-harness agent discovery needed).
 2. Collector script under `agents/scripts/core/` (new, authored fresh — **not** ECC's `skills/<name>/scripts/` layout) — does the mechanical token/line counting so the skill's orchestrator-context footprint stays bounded (it runs the script + reads a table, not the whole tree). Goes through `test-shell-lint.sh`.
-3. `agents/scripts/core/test-skill-vs-agent-parity.sh` (edit) — add `harness-token-audit` to `SKILL_ONLY_HELPERS` (precedents: `drain-memory`, `author-plan-doc`) so the parity guard doesn't demand a matching `agents/` file.
-4. `AGENTS.md` § Self-improvement loop (edit, one line) — pointer: `harness-token-audit` is the automated static-footprint half of the extraction loop (suggestion-only; the orchestrator still applies). Distinct from the runtime `context budget` rule.
+3. `AGENTS.md` § Self-improvement loop (edit, one line) — pointer: `harness-token-audit` is the automated static-footprint half of the extraction loop (suggestion-only; the orchestrator still applies). Distinct from the runtime `context budget` rule.
 
 ## Existing utilities reused
 
 - `docs/agent-rules/AGENT-VS-SKILL.md` (from the `internal-procedure-skills` plan) — governs the skill-vs-agent form choice; `harness-token-audit` is the skill case, the deferred three are the agent case. This plan is the rubric's first application.
 - `docs/self-improvement/categories/*` + `AGENT_SELF_IMPROVEMENT.md` § Format — the existing backlog + entry format the auditor emits into; no new system, no new schema.
 - `agents/scripts/core/test-portable-purity.sh` + `docs/high-integrity/portable-purity-baseline.txt` — the guard the new files must pass (clean-room ⇒ passes by construction).
-- `agents/scripts/core/test-skill-vs-agent-parity.sh` `SKILL_ONLY_HELPERS` — the registry that exempts a skill-only helper from the agent-twin requirement.
 - `agents/scripts/core/setup-harness.sh` skill loop — auto-wires the new skill.
 - `agents/_shared/token-tracking/` — the per-agent token gauge `harness-token-audit` reports against / complements (runtime accounting vs static footprint).
 - `agents/scripts/core/is-pure-docs-diff.sh` — confirms the diff (`*.md` + `agents/scripts/**`) classifies pure-docs, so build/ctest/perf gates skip.
@@ -87,7 +85,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` under `agents/` + a coll
 ## Verification
 
 - **Bucket A / E**: N/A — no code.
-- **Form check**: `harness-token-audit` lives under `agents/_shared/skills/` and is registered in `SKILL_ONLY_HELPERS`; `test-skill-vs-agent-parity.sh` green.
+- **Form check**: `harness-token-audit` lives under `agents/_shared/skills/` with no agent twin (skills need none).
 - **Portability**: `bash agents/scripts/core/test-portable-purity.sh` introduces no new baseline entries (clean-room ⇒ zero foreign literals).
 - **License**: one-line ECC concept credit present in the skill body; no `NOTICE`, no `origin: ECC` frontmatter.
 - **Audit dry-run**: `harness-token-audit` emits a real per-file token-footprint table over the live tree and produces ≥1 well-formed `docs/self-improvement/categories/<cat>.md` entry (exact § Format shape), **not** a direct `AGENTS.md` write.
@@ -98,7 +96,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` under `agents/` + a coll
 
 ## Out of scope (flagged, not designed) — gated next phases
 
-The three subagent-spawning auditors are **deferred, not cancelled** — each is independently valuable and independently buildable as an `agents/core/` **agent** (per the rubric) **once `harness-token-audit` has demonstrated the adoption pattern earns its keep** (its own first finding may well be "this suite is expensive — run it monthly"):
+The three subagent-spawning auditors are **deferred, not cancelled** — each is independently valuable and independently buildable as a skill-driven **Workflow** (per the rubric) **once `harness-token-audit` has demonstrated the adoption pattern earns its keep** (its own first finding may well be "this suite is expensive — run it monthly"):
 
 - **`agent-stack-audit`** (agent; from ECC `agent-architecture-audit`) — multi-layer diagnostic retargeted to the Smatchet agent fleet + ship-loop + merge-watcher; severity-ranked findings → self-improvement categories.
 - **`harness-stocktake`** (agent; from ECC `skill-stocktake`) — breadth skill/agent-quality audit; **calls** the existing `subagent-eval` (`scripts/dev/agent-eval-run.sh` / `agent-eval-score.py`) where they overlap, doesn't fork it; findings → self-improvement.

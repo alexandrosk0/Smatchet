@@ -6,8 +6,8 @@
 // Pairs with the `historical-code-review` skill + the findings ledger at
 // docs/self-improvement/historical-review-findings.md.
 //
-// PROJECT-SCOPED, not portable: the prompt embeds Smatchet literals (Source/Core,
-// AGENTS.md, the survivor extractor path) so this lives under
+// PROJECT-SCOPED, not portable: the prompt embeds Smatchet literals (the repo
+// name, the review-checklist path, the survivor extractor path) so this lives under
 // agents/project/workflows/ — NOT agent-layer/agents/_shared/workflows/, which
 // test-portable-purity forbids project literals in. setup-harness.sh links BOTH
 // dirs into the gitignored .claude/workflows/, so it still resolves by name:
@@ -112,17 +112,10 @@ function promptFor(pr) {
     ``,
     `STEP 3 — review ONLY the space-marked surviving lines. The digest already carries 3 context lines per hunk — PREFER it. Open a file at HEAD with Read ONLY when you genuinely need wider context, and then Read a WINDOW (offset/limit) around the cited HEAD line range — NEVER read a whole file (whole-file reads bloat the transcript and trigger compaction mid-sweep). You may open files for context, but you must NEVER flag a line outside the surviving set — it is either someone else's code or already gone. Because already-fixed lines are excluded by construction, assume NOTHING here is "already known/fixed": a surviving line is live debt.`,
     ``,
-    `Apply the Smatchet code-review checklist (see AGENTS.md + agent-layer/docs/agent-rules/cpp-rules.md):`,
-    `  • C++14 hard (no string_view/optional/variant/structured-bindings/if-constexpr); must compile MSVC + Clang.`,
-    `  • Logging: LOG_{DEBUG,INFO,WARN,ERROR,TRACE} only — never printf/std::cerr (except the named pre-logger-init / CLI-stdout exceptions).`,
-    `  • RAII: no raw new/delete; unique_ptr+make_unique; const& non-trivial params; move on last use; unique_ptr<T> member in a header needs full T.`,
-    `  • Exceptions: empty catch(...){} = CRITICAL.`,
-    `  • UI-thread (Pillar-1/2): NO sync disk/network/p4/subprocess I/O on the ImGui render path (functions under Ui/ or named Draw*/Render*); >100ms block w/o a cue = CRITICAL. Per-frame heap alloc / re-parse on render path = perf finding.`,
-    `  • Never crash: bounds-checked, no silent UB, graceful degradation.`,
-    `  • No GLFW/OpenGL includes in Source/Core/include headers (DX12 dual-target); no IMGUI_USE_WCHAR32 redefine; no brace-list reassignment for nlohmann.`,
-    `  • Correctness/data-loss bugs (wrong external mutation, dropped/clobbered user edits, migration key mismatches).`,
-    `  • Gate/test scripts that fail-OPEN or false-PASS (e.g. passed=0&&failed=0 exits 0; unanchored exclude tokens; comment-classifier exempting real code).`,
-    `  • Docs: broken cross-refs / moved-script paths / stale line-pins / doc-vs-code drift on a gated literal (allow-lists, ADR/plan status).`,
+    `Apply the Smatchet review criteria. Read each of these ONCE, in full (they are short; the windowed-Read rule above is for source files):`,
+    `  • docs/guides/review-checklist.md — the project's review checklist (fixed severities, change-shape rules, offline-first, UI thread, DRY, hot paths, scripts/gates/docs).`,
+    `  • agent-layer/AGENTS.md § Project rules — the every-edit C++ invariants (C++14, LOG_*, RAII, empty catch(...) = CRITICAL, no GLFW in core headers, …).`,
+    `  • the leaf AGENTS.md of each Source/ directory a surviving line lives in — its "## Invariants" (registry: CONTEXT-MAP.md).`,
     ``,
     `Severity: CRITICAL = crash/data-loss/UI-freeze/security or a blocking gate that lets bad code through. HIGH = serious correctness or a real fail-open. MEDIUM = latent/conditional defect or meaningful drift. LOW = cosmetic/doc/dormant. Skip pure formatting nits.`,
     `userVisible=true ONLY for user-facing product defect / correctness / safety (-> GitHub Issue per ADR-0014); everything internal (tooling, gates, docs, tech-debt) = false.`,

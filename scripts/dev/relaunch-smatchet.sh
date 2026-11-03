@@ -5,8 +5,8 @@
 # Addresses the iter-loop friction documented in
 # docs/self-improvement/categories/tooling.md
 # "Running Smatchet.exe holds the file lock; rebuild link fails until the user
-# kills the window". Standardises the kill-then-build pattern so orchestrator /
-# build-doctor / debug-detective don't re-discover the lock dance per session.
+# kills the window". Standardises the kill-then-build pattern so build fixes and
+# debug loops don't re-discover the lock dance per session.
 #
 # Usage:
 #   bash scripts/dev/relaunch-smatchet.sh                 # iter preset

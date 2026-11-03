@@ -12,7 +12,7 @@
 // the live GraphQL fetcher — only the HTTP source is replaced.
 // Write paths (`UpdateField`, `CreateIssue`, etc.) succeed as no-ops with a
 // structured log line so debug scenarios that drive UI writes against the
-// fake don't crash. The fixture is read-only by design — debug-detective
+// fake don't crash. The fixture is read-only by design — debug-investigation
 // scenarios that mutate are out-of-scope for slice 1.
 
 #include "Tracker/TrackerFixtureBackendBase.h"

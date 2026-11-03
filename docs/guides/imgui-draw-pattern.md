@@ -82,7 +82,7 @@ void FooUi::Draw(AppController& app, UiDrawSession& d) {
    `MARKER_INVENTORY.md` regen**. Where a function has *no* scopes, decompose on
    logical sections and treat any *new* scope as an intentional, inventory-tracked
    addition (regen `docs/perf/MARKER_INVENTORY.md` in that PR). Helper-internal
-   scopes only when `perf-detective` asks for finer resolution.
+   scopes only when a perf investigation needs finer resolution (`docs/guides/perf-workflow.md` § 1. Instrument).
 4. **Window-state extraction.** Persistent `static` locals (filter buffers,
    expanded-row sets, last-selection ids) move into a `<Foo>WindowState` member
    struct on the owning UI object. For Smatchet's singleton windows this is

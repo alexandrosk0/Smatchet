@@ -125,8 +125,8 @@ pre-commit: REFUSING a commit with no code review.
   user-mandated 2026-06-07). Critical/High findings block the commit until
   fixed or explicitly waived.
 
-  1) run the code-review agent / adversarial-code-review skill on the STAGED
-     diff (git diff --cached),
+  1) run the project's code-review subagent (agent-layer/agents/core/code-review.md; not the
+     built-in /code-review) on the STAGED diff (git diff --cached),
   2) fix or waive every Critical/High finding,
   3) record the ack:  bash $review_ack --record --staged
   4) commit again.

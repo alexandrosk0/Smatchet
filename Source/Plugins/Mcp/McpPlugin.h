@@ -1,5 +1,7 @@
 #pragma once
 
+// Agent rules for this plugin: Source/Plugins/Mcp/AGENTS.md.
+
 #include "IPlugin.h"
 #include "McpAuthTokenPure.h"
 #include "SmatchetDefaults.h"

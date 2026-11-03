@@ -1,4 +1,5 @@
 #pragma once
+// Model read by SmatchetMcpServerUi; rules: Source/Plugins/Mcp/AGENTS.md.
 
 #include <string>
 

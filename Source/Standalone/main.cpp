@@ -259,13 +259,13 @@ static void WireUserDataAndLogSink(MainBootState& boot) {
         }
     }
 
-    // Default file-sink wire — addresses the debug-detective backlog entry at
+    // Default file-sink wire — addresses the debug-investigation backlog entry at
     // docs/self-improvement/categories/tooling.md "Smatchet Logger has no
     // console output + no default file sink". Until this default wire shipped,
     // every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself was captured only in
     // the in-memory deque + (unwired in standalone) async file sink; running
     // `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp
-    // stderr. Every debug-detective investigation paid the cost of wiring a
+    // stderr. Every debug investigation paid the cost of wiring a
     // temp file sink mid-investigation; this default removes that tax.
     // Resolution order: SMATCHET_DEBUG_LOG env wins (operator override); else
     // %LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log on Windows / $TMPDIR fallback.
@@ -522,6 +522,7 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
     smatchet::ui::touch::InstallTouchInputRouter(ImGui::GetCurrentContext());
     ImGuiIO& io = ImGui::GetIO();
     static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
+    // Every boot path that sets io.IniFilename runs this migration; list at ConfigManager::kCurrentLayoutSchemaVersion.
     // Schema migration must run before ImGui auto-loads the ini. If we wait for
     // SmatchetUI::Draw (post-first-frame) to migrate, windows are already created
     // at old positions and runtime LoadIniSettingsFromDisk does not re-parent them.
@@ -888,7 +889,7 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     // destroyed by UiTestScenario, which publishes the active pointer
     // through the active-engine accessor. With no UI test running the
     // pointer is null and PostSwap is skipped — zero cost on the
-    // normal frame path. See agents/test-author.md § Bucket E.
+    // normal frame path. See the test-authoring skill § Bucket E.
     if (ImGuiTestEngine* uiTestEngine = SmatchetActiveUiTestEngine()) {
         ImGuiTestEngine_PostSwap(uiTestEngine);
     }

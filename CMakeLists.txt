@@ -424,7 +424,7 @@ option(SMATCHET_BUILD_POSIX_CORE_CHECK "Compile CORE_SOURCES under host Linux cl
 # Slice 7 of docs/design/autonomous-debugging-no-creds.md — production-resident
 # NDJSON helper at tests/_debug/SmatchetAgentDebug.h. OFF in iter/publish
 # (macro expands to ((void)0); zero overhead); ON in debug/asan/ui-test
-# presets so debug-detective can read structured boundary-crossing logs.
+# presets so a debug investigation (debug-instrument skill) can read structured boundary-crossing logs.
 option(SMATCHET_AGENT_DEBUG "Enable the production-resident SmatchetAgentDebug NDJSON helper (slice 7 of autonomous-debugging-no-creds)" OFF)
 if(SMATCHET_BUILD_TESTS)
     option(SMATCHET_BUILD_AGENT_DEBUG_TESTS "Build the SmatchetAgentDebug NDJSON helper doctest" ON)
@@ -637,7 +637,7 @@ smatchet_fetch_status("Fetching nlohmann/json...")
 # libexec/git-core, so the helper `git-sh-setup` can't be found and the clone
 # fails with "Failed to update submodules in: .../json-src". Declaring no
 # submodules sidesteps it entirely. See docs/guides/offline-builds.md
-# § Troubleshooting + agents/core/build-doctor.md § Common causes.
+# § Troubleshooting + BUILD.md § Troubleshooting.
 # Pinned to the exact commit the v3.11.3 lightweight tag resolves to (reproducible
 # builds / supply chain) — same content the floating tag points to today, zero
 # behaviour change. Lightweight tag (points straight at the commit); resolved via:
@@ -665,7 +665,7 @@ smatchet_prepare_cpr()
 # → "Build step for cpr failed: 1". cpr 1.9.2 carries no submodules we link (it
 # FetchContents its own deps; submodules are test-data/CI only), so declaring no
 # submodules sidesteps the doomed wrapper call entirely. See
-# docs/guides/offline-builds.md § Troubleshooting + agents/core/build-doctor.md.
+# docs/guides/offline-builds.md § Troubleshooting + BUILD.md § Troubleshooting.
 FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG f88fd7737de3e640c61703eb57a0fa0ce00c60cd  # cpr 1.9.2
     GIT_SUBMODULES "")
 FetchContent_GetProperties(cpr)
@@ -833,7 +833,7 @@ add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" E
 # Linux build (SMATCHET_BUILD_APP=OFF) still links the threading subset without
 # fetching/building GLFW, Dear ImGui, Lua, sol2, whisper.cpp, or any app target.
 # Default ON — no behavioural change for any existing preset. See the option
-# declaration above + agents/build-doctor.md (hardening #10 / Slice-5 TSan).
+# declaration above + BUILD.md § Troubleshooting (hardening #10 / Slice-5 TSan).
 # ============================================================================
 if(SMATCHET_BUILD_APP)
 
@@ -1299,7 +1299,7 @@ endif() # SMATCHET_BUILD_APP — GUI/app surface (GLFW/ImGui/Lua/whisper/Standal
 
 # Pure-logic doctest rig for Source/Core helpers. Opt-in via SMATCHET_BUILD_TESTS.
 # Standalone + DX12 default builds never link test code. See tests/CMakeLists.txt
-# and agents/test-rig.md.
+# and docs/guides/testing-surface.md § 2.2.
 if(SMATCHET_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

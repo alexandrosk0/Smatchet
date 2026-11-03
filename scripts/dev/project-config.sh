@@ -240,6 +240,9 @@ emit("OVERRIDE_LABELS", mg.get("override_labels", []))
 
 emit("VISUAL_TRIGGER_GLOBS", c.get("visual_validation", {}).get("trigger_globs", []))
 emit("GOLDEN_DIR", c.get("golden", {}).get("artifacts_dir", ""))
+# Host review checklist that test-subsystem-docs.sh check 3 compares the leaf
+# AGENTS.md bullets against, besides agents/core/code-review.md (repo-relative).
+emit("DOCS_REVIEW_CHECKLIST", c.get("docs", {}).get("review_checklist", ""))
 
 h = c.get("harness", {})
 emit("HARNESS_DISCOVERY_MODE", h.get("discovery_mode", ""))

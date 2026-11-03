@@ -150,8 +150,8 @@ jobs:
         run: |
           set -uo pipefail
           # Distinguish a COMPILE break (no instrumented binary was produced) from a
-          # genuine runtime FINDING — a build break routes to build-doctor, not a monkey
-          # finding owner. Ninja emits `FAILED:` / `ninja: build stopped` only on a
+          # genuine runtime FINDING — a build break is fixed per BUILD.md § Troubleshooting,
+          # not triaged as a monkey finding. Ninja emits `FAILED:` / `ninja: build stopped` only on a
           # compile failure (never on a runtime sanitizer report). Same test as
           # sanitizer-nightly.yml.
           build_log="build-monkey-asan.log"
@@ -168,8 +168,8 @@ jobs:
 
           Run: ${RUN_URL}
 
-          See \`build-monkey-asan.log\` in the run for the failing TU. Route to
-          build-doctor, not a monkey-finding owner."
+          See \`build-monkey-asan.log\` in the run for the failing TU. Fix it as a
+          build break (BUILD.md § Troubleshooting), not as a monkey finding."
           else
             title="Monkey nightly found a defect (ASan+UBSan / command-registry)"
             label="bug"

@@ -106,4 +106,4 @@ The PR-6 contract (`kMobileInlineEditBuild`): an inline single-line text edit co
 | VC-PERF real-hw ≤ 6.94 ms / p99 ≤ 10 ms | ☐ | | |
 | VC-16 no stray PUT (rows 1–4) | ☐ | | |
 
-When all five pass on real hardware + emulator as specified, Phase-0 manual acceptance is complete. Anything that fails routes back to the owning subsystem specialist (render → `unreal-bridge`/`ui-host`; perf → `perf-detective`; commit policy → `grid-engine`).
+When all five pass on real hardware + emulator as specified, Phase-0 manual acceptance is complete. Anything that fails routes back to the owning area ([`docs/area-map.json`](../area-map.json)): render → `Source/Core/src/Ui/AGENTS.md` / the Unreal plugin README (`Source/UnrealPlugins/SmatchetImGuiPlugin/README.md`); perf → `docs/guides/perf-workflow.md`; commit policy → `Source/Core/src/Ui/AGENTS.md` § Grid.

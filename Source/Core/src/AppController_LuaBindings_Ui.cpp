@@ -1,3 +1,4 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
 #include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
 #include "LuaAutomationHost.h"

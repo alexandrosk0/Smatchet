@@ -1,7 +1,7 @@
 # Pane stale-delete collision — multi-pane full syncs wipe each other's cache rows
 
 **Status**: active
-**Owner**: orchestrator (Sync subsystem — `offline-sync` scope)
+**Owner**: orchestrator (Sync subsystem — `Source/Core/src/Sync/AGENTS.md`)
 **Tier**: fix
 
 ## Problem

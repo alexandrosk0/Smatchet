@@ -25,7 +25,7 @@
 // This helper only clears the read-only gate. The write itself MUST still be
 // asserted (hard-fail) by the test once its other env gates are met — a silent
 // skip there would re-hide the very regression class this guard exists to expose.
-// See agents/core/test-rig.md (bucket-E write rule).
+// See the test-authoring skill § Bucket E (bucket-E write rule).
 //
 // USAGE
 // -----

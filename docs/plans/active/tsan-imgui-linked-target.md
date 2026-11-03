@@ -88,7 +88,7 @@ The seam approach needs **no** new preset, CMake target, or CI-Mesa wiring (that
 
 ## Out of scope (flagged, not designed)
 
-- Lua automation-worker shutdown (the playbook's #4 / security.md `#13`) — already part-shipped (#1271 cooperative cancel + bounded join); its residual UI-thread-sync tracker call is a tracker-backend follow-up, not this target.
+- Lua automation-worker shutdown (the playbook's #4 / security.md `#13`) — already part-shipped (#1271 cooperative cancel + bounded join); its residual UI-thread-sync tracker call is a Tracker-subsystem follow-up (`Source/Core/src/Tracker/AGENTS.md`), not this target.
 - Promoting any TSan lane to a required merge gate — separate branch-protection decision.
 
 ## Implementation log

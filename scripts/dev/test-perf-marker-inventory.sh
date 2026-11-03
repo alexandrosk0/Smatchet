@@ -8,8 +8,8 @@
 #      `bash scripts/dev/perf-marker-inventory.sh`. Does NOT fail.
 #   2. GATING perf_temp:* leak check — if the REGENERATED inventory lists
 #      any in-flight `perf_temp:*` markers, FAIL with exit 1. Temp markers
-#      must be stripped before merging (perf-instrument / perf-detective /
-#      spike-hunter sessions clean their own markers at end-of-session).
+#      must be stripped before merging (the perf-instrument skill's cleanup
+#      mode strips them at the end of every perf round).
 #
 # #329: the leak check scans FRESHLY-regenerated content, not the committed
 # docs/perf/MARKER_INVENTORY.md — a marker added to the code without

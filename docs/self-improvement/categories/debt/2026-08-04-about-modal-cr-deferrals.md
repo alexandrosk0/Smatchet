@@ -18,7 +18,7 @@
   (2) **`tests/Core/AboutInfo.test.cpp` exercises disk-backed config reads**
       (lines 172, 177, 183, 200). Accepted as a real violation of the `tests/**` path
       instruction that doctest units must not touch on-disk I/O surfaces — the doctest
-      lane is meant to be pure-logic (`test-rig` refuses SQLite/HTTP/ImGui surfaces for
+      lane is meant to be pure-logic (the doctest rig refuses SQLite/HTTP/ImGui surfaces for
       the same reason). It passes today because `GatherAboutInfo` degrades gracefully
       when the config path is absent, which makes it a latent flake on a machine with an
       unexpected config rather than a hard failure.

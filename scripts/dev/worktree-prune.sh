@@ -2,8 +2,8 @@
 # worktree-prune.sh — reap worktrees whose branch's GitHub PR is MERGED. The
 # acting companion to the read-only scripts/dev/git-leftover-audit.sh: it removes
 # only the unambiguously-safe RESIDUE-merged subset, leaving CLOSED / OPEN / WIP /
-# STALE worktrees for a human (git-janitor v5 § Stale-branch-sweep encoded this
-# discipline in prose; this is the re-runnable script — tooling self-improvement
+# STALE worktrees for a human (the git-janitor skill's REFERENCE.md § Stale-branch
+# sweep encodes this discipline in prose; this is the re-runnable script — tooling self-improvement
 # 2026-05-18 / 2026-05-30 / 2026-06-11).
 #
 # DRY-RUN BY DEFAULT — prints what it WOULD reap and exits 0. Pass --apply to

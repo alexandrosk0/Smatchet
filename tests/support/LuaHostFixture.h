@@ -13,7 +13,7 @@
 // sol::state level, so production's sandbox + timeout policy stays the single
 // source of truth and tests assert the contract rather than the implementation.
 //
-// sol2 v2.20.6 + Lua 5.3-as-C++ invariants (agents/lua-binder.md):
+// sol2 v2.20.6 + Lua 5.3-as-C++ invariants (docs/guides/lua.md section 5):
 //   - Include lua via <lua.hpp> (the C++-friendly umbrella) so the SMATCHET
 //     extern "C" patch in luaconf.h applies.
 //   - Install a panic handler that throws — sol2 defaults to abort() on panic,

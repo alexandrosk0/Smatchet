@@ -53,8 +53,8 @@
 
 
 local function render_progress_json(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
-  -- decode_json on a hot Lua path can be costly + can throw a C++ parse_error past the
-  -- protected call on certain malformed inputs (PR #54 follow-up). Prefer string.match;
+  -- decode_json on a hot Lua path is costly (it builds a full table); malformed input
+  -- returns nil plus an error string. Prefer string.match;
   -- only the user-visible "fraction" is needed here.
   if not raw or raw == "" then return false end
   local p = tonumber(raw:match('"progress"%s*:%s*(%-?%d+%.?%d*)')) or 0

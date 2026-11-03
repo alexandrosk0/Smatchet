@@ -57,6 +57,6 @@
         "summary": "The echo names ids only from GetAvailableUsers() + search results; that catalog is empty when FetchUsers fails (warning-only) or after a cache restore, so selecting a user from autocomplete shows no name -- capture the id->name pair from the clicked autocomplete row instead."
       }
     ],
-    "notes": "Ground truth = fix PR #2149 (interaction-time capture of the selected row's name). repoRef 72471174 is #2148's buggy head. The review-checklist rule this case scores lives in agents/core/code-review.md ('Cache-sourced UI output'). A reviewer that only checks the pure transform (well tested) and the memo keying (the two CodeRabbit findings) misses it."
+    "notes": "Ground truth = fix PR #2149 (interaction-time capture of the selected row's name). repoRef 72471174 is #2148's buggy head. The review-checklist rule this case scores lives in docs/guides/review-checklist.md ('Cache-sourced UI output'). A reviewer that only checks the pure transform (well tested) and the memo keying (the two CodeRabbit findings) misses it."
   }
 }

@@ -140,7 +140,7 @@ Dev-process / eval tooling only — no product-runtime code, no `Source/Core/` c
 
 Per `AGENTS.md` § Verification automation. Not C++ — Buckets A/E N/A. Everything is verifiable **without a live agent** via fake-judge + `--fake-runner` fixtures; live smokes are explicitly tracked as deferred-automation residue, not silent.
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: N/A — no `Source/Core/` helper added.
+- **Bucket A (pure-logic ctest, doctest rig)**: N/A — no `Source/Core/` helper added.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI.
 - **Bash-driver / bats per phase**:
   - Phase 0 — `tests/bats/agent_eval_calibrate.bats`: fixture labelled set → asserts κ / correlation values, threshold-proposal output, and the `block`-enforcement exit behaviour in `agent-eval-score.py` (calibrated `block:true` regression fails; uncalibrated WARNs). Deterministic, no LLM.
@@ -160,7 +160,7 @@ Per `AGENTS.md` § Verification automation. Not C++ — Buckets A/E N/A. Everyth
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: this plan **absorbs** `subagent-eval-flywheel.md` (folded into Phase 2, not deferred), so the residue action is a **supersede, not a delete** — mark that file `deferred — superseded`, add a redirect banner, regen the plan index (`test-plan-index.sh --fix`), and repoint the most load-bearing pointer (`docs/agent-rules/subagent-eval.md` line ~5) at this unified plan. Grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, `docs/self-improvement/categories/` for stray `subagent-eval-flywheel` "deferred-as-current" refs and repoint them here. Leave historical references in `docs/plans/shipped/subagent-eval-harness.md` (immutable shipped record) intact.
 
-- **Coverage of the remaining ~28 agents** (`debug-detective`, `perf-detective`, `tracker-backend`, …) — after the orchestrator + `code-review` dimensions prove the pattern; incremental, one agent per follow-up.
+- **Coverage of the remaining agents and skills** (`architect`, `security-review`, the `debug-instrument` skill, the perf skills, …) — after the orchestrator + `code-review` dimensions prove the pattern; incremental, one agent or skill per follow-up.
 - **Online / continuous eval + dashboard (talk maturity Phase 3)** — no-action; on-demand only.
 - **Ambiguous-doc tool-fault class (Phase 4)** — deferred until rate-limit + timeout faults prove the mock layer; named, not designed.
 - **Aggregate single-score-per-agent rollup** — the `weight` field exists in `case-schema.json` reserved for this; the MVP + this plan score per-dimension. Follow-up once calibration trust is established across dimensions.

@@ -5,8 +5,8 @@
 // against that class of leak.
 // Lives in a sibling TU (AiErrorRedact.cpp) — no cpr / cpp-httplib / SQLite
 // includes — so the doctest rig can link it without dragging the HTTP layer.
-// Instance of the Pure-helper TU-split recipe (AGENTS.md § Orchestrator
-// delegation packet).
+// Instance of the pure-helper TU split (author-plan-doc skill § Pre-seal probes,
+// docs/plans/active/_plan-template.md § Files to modify).
 
 #ifndef SMATCHET_AI_ERROR_REDACT_H
 #define SMATCHET_AI_ERROR_REDACT_H

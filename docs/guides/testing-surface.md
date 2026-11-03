@@ -10,8 +10,8 @@ the *shape* (which lanes gate, which are advisory, which voids exist) is stable.
 Refresh the numbers with the [§ Refresh recipe](#7-refresh-recipe) — don't trust a
 stale count, re-run the one-liner.
 
-Related: [`agent-layer/agents/core/test-author.md`](../../agent-layer/agents/core/test-author.md) (the
-5-bucket taxonomy authority), [`quality-pillars.md`](../../agent-layer/docs/agent-rules/quality-pillars.md)
+Related: [`test-authoring` skill](../../agent-layer/agents/_shared/skills/test-authoring/SKILL.md) (the
+5-bucket taxonomy authority, the verification gate and the unit-rig rules), [`quality-pillars.md`](../../agent-layer/docs/agent-rules/quality-pillars.md)
 (the invariants tests defend), [`merge-gates.md`](../../agent-layer/docs/agent-rules/merge-gates.md)
 (how checks become merge-blocking), [`ci-required-check-pattern.md`](../../agent-layer/docs/agent-rules/ci-required-check-pattern.md)
 (why a check is/ isn't *required*).
@@ -47,7 +47,7 @@ remaining step-level mask is bucket-C's per-scenario golden diff. See § 3.
 
 ---
 
-## 2. The 5-bucket taxonomy (authority: `test-author.md`)
+## 2. The 5-bucket taxonomy (authority: `test-authoring` skill § Judgement)
 
 Every verification item maps to one bucket. If it doesn't, the gap is **test
 infrastructure**, never "manual forever."
@@ -57,7 +57,7 @@ infrastructure**, never "manual forever."
 | **A** Headless CLI probe | "fn X returns Y" / Lua outputs Z | `debug.<feature>_test` JSON + bash assert | required (non-UI subset) |
 | **B** Scenario + `perf.snapshot` | "frame ≤ N ms" / "cache hit 100%" | `IScenario` drives N frames, asserts rows | perf-fast subset required |
 | **C** Screenshot diff | "cell renders red" / "icon visible" | PPM sentinel-colour scan vs golden | lane blocks on broken harness; golden-diff verdict advisory (step mask) |
-| **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan/UBSan; exit code = assertion | required (Slice C) |
+| **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan (`ninja-msvc-asan`; every Windows ASan preset is ASan-only, UBSan needs a native-Clang build — [BUILD.md § Stack facts](../../BUILD.md#stack-facts)); exit code = assertion | required (Slice C) |
 | **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness and on per-test failures (llvmpipe-only tests self-skip) |
 
 ### 2.1 Bucket-E traps — docked Preferences + modals
@@ -90,6 +90,65 @@ configured one; pin it with `SMATCHET_UI_TEST_HOME`), hard-fails a stale exe
 an orphaned `--spawn` child cannot wedge the run;
 [`ui_driver_filters.bats`](../../tests/bats/ui_driver_filters.bats) holds every
 `test-ui-*.sh` to it and to a default filter that names a registered test.
+
+### 2.2 Unit rig — doctest facts
+
+The generic rules (one `TEST_CASE` per public function, `CHECK` over `REQUIRE`,
+capture by running, shape-not-literal, append at the end, fakes not adapters) are in
+the `test-authoring` skill § Unit rig. The project facts they apply to:
+
+- **Target and switch.** `SmatchetTests` (`add_executable` in
+  [`tests/CMakeLists.txt`](../../tests/CMakeLists.txt), `main` in `tests/test_main.cpp`,
+  doctest pinned via FetchContent) builds only when `SMATCHET_BUILD_TESTS=ON`. The
+  option is OFF by default; `ninja-test-*`, `ninja-debug-*`, `ninja-msvc-asan`,
+  `ninja-publish-msvc` and `ninja-publish-msvc-arm64` turn it on (`CMakePresets.json`;
+  the Linux test/TSan/fuzzer presets turn it on too but build only their own subset
+  targets). The other ASan presets leave it off — pass `-DSMATCHET_BUILD_TESTS=ON`, as CI
+  does. The app targets never link test code.
+  doctest is the only unit framework (no GoogleTest, no Catch2).
+- **Explicit test list, globbed production sources.** The production targets collect
+  `Source/Core/src/**/*.cpp` with `file(GLOB_RECURSE … CONFIGURE_DEPENDS)` in
+  `Source/Core/CMakeLists.txt`, so a new production TU needs no CMake edit.
+  `SmatchetTests` instead lists every test `.cpp` and every production `.cpp` it links
+  (a curated per-test link closure), so a new pure helper needs BOTH its source and its
+  test added there. Registration by glob is unsafe here (`process-rules.md` § "GLOB
+  auto-registration of `tests/Core/*.test.cpp` is UNSAFE").
+- **False-green guard.** Configure FATALs when a `tests/Core/*.test.cpp` or
+  `tests/Plugins/*/*.test.cpp` on disk is referenced nowhere in `tests/CMakeLists.txt`;
+  `agent-layer/agents/scripts/core/check-test-list.sh` is the fast local mirror for `tests/Core`.
+- **Parallel appends.** `tests/CMakeLists.txt` carries `merge=union` in `.gitattributes`;
+  append each new entry at the END of its list so parallel test PRs union cleanly.
+- **Fakes, not adapters.** `SmatchetTests` does not compile `AppController.cpp`, so a
+  production adapter such as `GridContextDepsAdapter.cpp` (a `*Deps` interface
+  implemented against a live `AppController&`) fails the link with unresolved
+  `AppController::*` symbols. Use the fakes in [`tests/support`](../../tests/support)
+  (`FakeOfflineQueueDeps`, `FakeTicketSyncDeps`, `FakeFieldEditDeps`,
+  `FakeConnectivityDeps`, `FakeEditMetaDeps`, `FakeSyncCache`, `FakeTrackerClient`). A test
+  that needs a real headless `AppController` goes in `SmatchetCommandsTests` (Linux,
+  `SMATCHET_BUILD_POSIX_CORE_CHECK=ON`, links the whole-core archive), where
+  `AppControllerCacheRecreate.posix.test.cpp` uses the adapter legitimately.
+- **SQLite-free sync tests.** The service-test TUs and deps fakes in
+  `_smatchet_pure_sync_test_files` (`tests/CMakeLists.txt`) must not construct
+  `LocalCacheManager` or include `LocalCacheManager.h` / `SqliteMemFixture.h`; configure
+  FATALs if they do. They reach the cache through `FakeSyncCache` (ADR-0020).
+- **Scope: prefer pure units; heavier surfaces use `tests/support` fixtures and loopback
+  HTTP fixtures.** `SmatchetTests` links ImGuiLib, SQLiteCpp, cpr and cpp-httplib, so a
+  database path uses `SqliteMemFixture.h` (in-memory) or `TempDbFile.h` (file-backed,
+  corruption cases), and an HTTP path uses `JiraCatalogHttpFixture.h` /
+  `AiHttpFixture.h` / `HttpRequestCapture.h` (in-process loopback server). Widget
+  interaction and dock layout are bucket E (`tests/ui`); Lua binding glue is
+  `SmatchetLuaTests` (`tests/Lua`, `LuaHostFixture.h`); untrusted-byte parsers also get a
+  `tests/fuzz` target. Pure decision logic inside a heavy subsystem is lifted into a
+  small header first — `OfflineQueueReplayPolicy.h` (the replay-attempt cap) is the model.
+- **Other doctest targets.** `SmatchetLuaTests` (`tests/Lua`), `SmatchetCommandsTests`
+  (above), and the curated ImGui-free subset `SmatchetTsanTests`, built by
+  `ninja-tsan-linux` (under TSan) and by `ninja-test-linux`
+  (`SMATCHET_CORE_TEST_SUBSET=ON`, no sanitizer).
+- **Run.** `cmake --build --preset ninja-test-msvc --target SmatchetTests`, then
+  `ctest --preset ninja-test-msvc` from the repo root (equivalent:
+  `cd build/ninja-test-msvc && ctest --output-on-failure`, the form CI uses). In a Linux
+  container: `cmake --preset ninja-test-linux && cmake --build --preset ninja-test-linux
+  && ctest --preset ninja-test-linux`.
 
 ---
 
@@ -283,7 +342,7 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
   debug repro-loop fixtures). **[planned]** — tooling.md:505-507 + plan
   [`subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md).
 - Widen the perf-fast subset, or add a "touched-scenario-not-in-fast-set ⇒ run it"
-  rule to the [`perf-gatekeeper`](../../agent-layer/agents/core/perf-gatekeeper.md) diff→scenario map.
+  rule to the [diff→scenario map](../../scripts/dev/perf-scenario-map.json) the `perf-gatekeeper` skill reads.
   **[planned, narrower]** — applied.md:265 + the "8 of 15 scenarios" retrofit follow-up.
 
 ---

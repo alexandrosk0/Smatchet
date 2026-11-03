@@ -176,7 +176,7 @@ AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& gith
     info.Build.BuildTag = "standalone";
 #endif
     // Compiled state, not a runtime probe — the agent-debug NDJSON facility has
-    // no always-on call site by design (a debug-detective places scopes per
+    // no always-on call site by design (a debug investigation places scopes per
     // investigation), so an empty/absent agent-debug dir is the EXPECTED state of
     // a working instrumented build. This field is what tells a validator whether
     // the define actually reached the compiler; without it the two failure modes

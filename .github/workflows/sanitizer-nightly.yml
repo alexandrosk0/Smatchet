@@ -148,7 +148,7 @@ jobs:
           Run: ${RUN_URL}
 
           See the build log (\`build-clang-asan.log\`) in the run for the failing TU.
-          Route to build-doctor, not a sanitizer-finding owner."
+          Fix it as a build break (BUILD.md § Troubleshooting), not as a sanitizer finding."
           else
             title="Sanitizer nightly HARNESS BREAK (ninja-clang-asan job failed outside the compile, not a sanitizer finding)"
             body="The nightly clang-cl build on \`develop\` (job \`sanitizer-nightly\`,
@@ -158,7 +158,7 @@ jobs:
 
           Run: ${RUN_URL}
 
-          Route to build-doctor, not a sanitizer-finding owner."
+          Fix it as a broken harness (BUILD.md § Troubleshooting), not as a sanitizer finding."
           fi
           label="build-break"
           # De-dup: reuse the single open issue with this exact title if present.
@@ -286,7 +286,7 @@ jobs:
           Run: ${RUN_URL}
 
           See the build log (\`build-msvc-asan.log\`) in the run for the failing TU.
-          Route to build-doctor, not a sanitizer-finding owner."
+          Fix it as a build break (BUILD.md § Troubleshooting), not as a sanitizer finding."
           elif grep -a -qs 'ERROR: AddressSanitizer' "$rig_log"; then
             title="Sanitizer nightly failed (MSVC ASan report)"
             label="bug"
@@ -320,7 +320,7 @@ jobs:
 
           Run: ${RUN_URL}
 
-          Route to build-doctor, not a sanitizer-finding owner."
+          Fix it as a broken harness (BUILD.md § Troubleshooting), not as a sanitizer finding."
           fi
           # De-dup: reuse the single open issue with this exact title if present.
           existing=$(gh issue list --state open --label "$label" --search "$title in:title" \

@@ -11,7 +11,7 @@
 //   * Snapshot + restore `g_ui.showAnnotateAnalysis` (open / close the panel).
 //   * Run N frames with the panel open so SmatchetUI::Draw's annotate branch
 //     accumulates UiPerfMonitor rows.
-//   * Emit `rows[]` so `perf-gatekeeper` can read it.
+//   * Emit `rows[]` so the perf gate (scripts/dev/perf-compare.py) can read it.
 // What it doesn't do (and is explicitly deferred to the backlog follow-up):
 //   * Seed `callstackBuf` with a fake callstack — needs the AppController
 //     fake-callstack injection seam named in tooling.md line 180.
@@ -63,7 +63,7 @@ class AnnotateOpenEntryTabScenario : public IScenario {
         nlohmann::json out;
         out["frames"] = frames_;
         // 144 Hz frame budget — pillar 1 target. The scenario doesn't fail
-        // hard on overshoot (perf-gatekeeper compares vs baseline); the
+        // hard on overshoot (perf-compare.py compares vs baseline); the
         // target is recorded so the row table is self-describing.
         out["target_mean_ms"] = 6.94;
         out["rows"] = std::move(rowsJson);

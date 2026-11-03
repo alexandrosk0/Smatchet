@@ -79,7 +79,7 @@ Resolves each missing tool to a package on the host's native manager (winget / M
 - `ninja-iter-clang`: fast standalone iteration (`RelWithDebInfo`)
 - `ninja-debug-clang`: full standalone debug (`Debug`)
 - `ninja-test-clang`: doctest rig (`RelWithDebInfo`)
-- `ninja-clang-asan`: ASAN + UBSan
+- `ninja-clang-asan`: ASAN via clang-cl (ASan only on Windows — see § Troubleshooting)
 
 ## Common Workflows
 
@@ -124,13 +124,6 @@ cmake --build --preset ninja-debug-msvc
 ```
 
 Unreal plugin iteration:
-
-```bash
-cmake --preset ninja-iter-unreal-msvc
-cmake --build --preset ninja-iter-unreal-msvc
-```
-
-Unreal plugin debug:
 
 ```bash
 cmake --preset ninja-iter-unreal-msvc
@@ -250,6 +243,49 @@ belong in the user preset file.
 `SmatchetPackageUnrealLibs_DX12` packages the DX12-compatible core library,
 ImGui, and public headers into
 `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` for Unreal Build Tool
-consumption.
+consumption. What it stages must match the libraries `SmatchetImGuiPlugin.Build.cs`
+links (a missing required lib fails with `BuildException`, a missing optional one is
+skipped silently); the rule and the post-packaging check are in
+[`SmatchetImGuiPlugin/README.md` § Packaging the Native Libraries](Source/UnrealPlugins/SmatchetImGuiPlugin/README.md#packaging-the-native-libraries).
+
+## Troubleshooting
+
+How to fix a build break (ask for the preset, reproduce with it, one-sentence root cause, minimum diff, never silence warnings) is the agent layer's [`build.md` § Fix discipline](agent-layer/docs/agent-rules/build.md); this section holds the Smatchet facts and the known causes to check first.
+
+### Stack facts
+
+Verify against `CMakePresets.json` and the root `CMakeLists.txt` if in doubt.
+
+- **Compilers and linkers.** MSVC presets (`_smatchet-msvc-base`) pin `cl.exe` and `link.exe`. Clang presets (`_smatchet-clang-base`) use `clang-cl` for the MSVC ABI and leave the linker to CMake. The native Linux clang presets (`_smatchet-clang-linux-base`) link with `ld.lld` when it sits next to the compiler, else BFD `ld`; `SMATCHET_NO_LLD=1` opts out.
+- **Iter vs publish.** `ninja-iter-msvc` is RelWithDebInfo with the PCH on (`SMATCHET_USE_PCH`) and `compile_commands.json` exported. `ninja-publish-msvc` is Release with LTO (`SMATCHET_ENABLE_LTO=ON`), no PCH, the static CRT (`SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME=ON`), the test rig built so ctest can gate publish, and the Unreal ThirdParty output dir.
+- **Warnings.** `SMATCHET_ENABLE_STRICT_WARNINGS` (default `ON`: `/W4` or `-Wall -Wextra`) applies to first-party targets only; the base presets force `SMATCHET_WARNINGS_AS_ERRORS=ON`. Never lower either to get a build green.
+- **Dependencies.** FetchContent, each pinned to a commit SHA: nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ghc::filesystem, GLFW, sol2, whisper.cpp and Dear ImGui (root `CMakeLists.txt`), doctest (`tests/CMakeLists.txt`), imgui_test_engine (`cmake/ImGuiTestEngine.cmake`). Lua 5.3.6 is a sha256-pinned tarball download, not FetchContent. Sources live in `.fetchcontent-src/` (the `FETCHCONTENT_BASE_DIR` default), shared by every preset in one checkout; local configures skip the FetchContent update step (`FETCHCONTENT_UPDATES_DISCONNECTED=ON`), CI does not.
+- **Test rig.** `SMATCHET_BUILD_TESTS` (default `OFF`) builds the doctest rig under `tests/`; it is `ON` in the `ninja-test-*`, `ninja-debug-*`, `ninja-msvc-asan`, `ninja-publish-msvc` and Linux test presets. Run it with `ctest --preset <name>`.
+- **Sanitizers.** `cmake/Sanitizers.cmake` reads the single-valued `SMATCHET_SANITIZER` (`asan` | `tsan` | `msan` | `fuzzer` | `off`) and adds its flags `PRIVATE` to `SmatchetStandalone`, `SmatchetCore_DX12`, the test executables and the fuzz targets, so vendored deps stay uninstrumented. Presets: `ninja-msvc-asan` (MSVC `/fsanitize=address`, Debug, builds and instruments the doctest rig via `SMATCHET_SANITIZE_TESTS`); `ninja-clang-asan` and `ninja-ui-test-asan-{msvc,clang}` (ASan; the UI-test pair adds the bucket-E surface); `ninja-tsan-linux` (TSan over the curated ImGui-free threading subset, `SmatchetTsanTests`); `ninja-fuzzer-linux` (libFuzzer). On Windows every ASan lane is **ASan only**: `clang-cl` takes the MSVC branch of `smatchet_apply_sanitizers()`, so UBSan (`-fsanitize=undefined`) is applied only by the native Linux Clang branch. MSVC warns and ignores `tsan`. MSan has no preset: `-DSMATCHET_SANITIZER=msan` fails configure unless the compiler is Clang, and LLVM ships MSan runtimes for Linux only.
+
+### Common causes — check first
+
+- **Compiles under iter, fails under publish with an undeclared identifier or type.** Publish builds without the PCH, so a header that `Source/Core/include/SmatchetPch.h` supplied under iter is missing from the TU. Add the include to the TU; don't add it to the PCH.
+- **Unreal links stale or wrong-configuration libs after a preset switch.** Every preset packages into the same `SMATCHET_UNREAL_THIRDPARTY_DIR` (`lib/Win64/Debug` for Debug, `lib/Win64/Development` otherwise), so the libs Unreal sees come from whichever preset last ran `SmatchetPackageUnrealLibs_DX12`. Re-run that target from the preset you mean to ship. Clearing the output safely: [`build.md` § Clearing the Unreal build](agent-layer/docs/agent-rules/build.md).
+- **clang-tidy findings that don't match the code you build.** The lint hook reads `build/ninja-iter-clang/compile_commands.json` when it exists, else `build/ninja-iter-msvc/` (for `tests/` sources, `ninja-test-clang`, else `ninja-test-msvc`). A stale clang tree feeds old defines and include paths; reconfigure it, or delete it so the hook falls back.
+- **Breaks only with Lua or MCP off** (the light build, `ninja-publish-light-msvc`, the Lua-off variant). With `SMATCHET_WITH_LUA_AUTOMATION=OFF` the sol2 binding TUs (`AppController_LuaBindings*.cpp`) leave the build, and `AppController_LuaStubs.cpp` must stub every `AppController::` method they define; MCP-only code must sit under `#if SMATCHET_WITH_MCP`. Change bindings and stubs in the same diff. Reproduce the Lua-off variant through the preset: `cmake --preset ninja-iter-msvc -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF`, then `cmake --build build/lua-off-check --target SmatchetStandalone` (the git-janitor skill's regression gate runs this feature-OFF variant after end-of-session merges). A bare `cmake -B … -G Ninja` picks the compiler on `PATH`; under plain `clang++` the MSVC-only `/ENTRY:mainCRTStartup` override in `Source/Standalone/CMakeLists.txt` is skipped and the `WIN32_EXECUTABLE` link fails on an undefined `WinMain`.
+- **After a FetchContent pin bump: configure fails with `Requested git ref ... is not present locally`, or headers come from the old version** (missing macros, ABI mismatch). Local configures don't update an already-populated `.fetchcontent-src/<dep>-src`. Reconfigure once with `-DFETCHCONTENT_UPDATES_DISCONNECTED=OFF`, or `rm -rf .fetchcontent-src/<dep>-*` and reconfigure. Never `git pull` inside a dep tree; FetchContent owns it.
+- **`.fetchcontent-src` subbuild "CMakeCache.txt directory … is different" errors, or `git-sh-setup: file not found` on a cold clone.** See [docs/guides/offline-builds.md § Troubleshooting](docs/guides/offline-builds.md#troubleshooting). The `git-sh-setup` failure is fixed at the source (`GIT_SUBMODULES ""` on every git declare, and `scripts/dev/with-msvc-env.sh` restores Git's exec path after vcvars64); it recurs only for a configure that bypasses the wrapper.
+- **MSVC C4003 / C2589 on `std::numeric_limits<T>::max()` or `min()`.** The `windows.h` `max`/`min` macros reached a TU built without `NOMINMAX` (the Core-impl targets define it on Windows; other targets may not). Write `(std::numeric_limits<T>::max)()`.
+- **A sanitized exe dies at launch with "DLL not found".** That is the ASan runtime (`clang_rt.asan_dynamic-<arch>.dll`) missing from `PATH`, not a build break. Launch from the MSVC environment (`scripts/dev/with-msvc-env.sh`); for a `clang-cl` build, add LLVM's `lib/clang/<major>/lib/windows` to `PATH`.
+- **TSan on Windows.** MSVC has no TSan. Use `ninja-tsan-linux` on Linux, after installing the Clang TSan runtime ([`build.md` § TSan on Linux](agent-layer/docs/agent-rules/build.md)).
+- **Lint `gcc` exits 1 with no output at all.** The lint toolchain (gcc, cppcheck, clang-tidy, clang-format) comes from MSYS2 UCRT64 at `C:\msys64\ucrt64\bin` (override: `SMATCHET_TOOLCHAIN_BIN`; lint only, MSYS2 builds are retired), and `cc1plus.exe` cannot load its DLLs unless that dir is on `PATH`. The lint hooks prepend it; a new wrapper that invokes the lint gcc must prepend it too.
+
+## Rename scope
+
+A rename or find-and-replace sweeps every tree below, and the old symbol must then return zero hits across all of them (rules: [`process-rules.md` § Mechanical edits](agent-layer/docs/agent-rules/process-rules.md)):
+
+- **C++**: `Source/Core/{include,src}/`, `Source/Standalone/`, `Source/Plugins/`, `Source/UnrealPlugins/` (including the `*.Build.cs` files), `Source/Mobile/`, `tests/`.
+- **Lua**: `scripts/*.lua` (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`, `LuaRecorderFuzz.lua`).
+- **Docs**: `README.md`, `BUILD.md`, `AGENTS.md`, the subsystem leaf `Source/**/AGENTS.md`, `docs/guides/cli.md`, `docs/guides/lua.md`, `docs/guides/mcp.md`.
+- **Localization**: `Source/Core/src/SmatchetLocalization.cpp` (`kEntries[]`) together with the `T(key, fallback)` call sites — change the English column and the call-site fallback in the same diff.
+- **CMake**, only when the symbol is a target or option name: `CMakeLists.txt`, every component `Source/**/CMakeLists.txt` and `tests/**/CMakeLists.txt`, `cmake/*.cmake`, `CMakePresets.json`.
+
+Then run one `git grep -nw '<old-symbol>' -- ':!*/ThirdParty/*'` over the whole tree to catch scripts, CI workflows and test fixtures the list misses.
 
 <!-- ship-loop validation: 2026-05-27 -->

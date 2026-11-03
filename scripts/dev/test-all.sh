@@ -3,7 +3,7 @@
 #
 # Discovers tests by glob across scripts/dev/ + agents/scripts/{core,project}/
 # (each root included only if present); test-*.sh, excludes self.
-# Each test script must follow the test-author bash conventions:
+# Each test script must follow the test-script conventions:
 #   - set -euo pipefail
 #   - exits 0 on all-pass, 1 on assertion failure, 2 on missing binary/build.
 #   - prints a final "Passed: N  Failed: M" line (regex-extracted here).
@@ -114,7 +114,7 @@ CI_SKIP_RE='(test-p4-dual-vcs|test-doctor|test-plan-index|test-docs|test-guard-h
 #   test-harness-provisioned-bats        scripts/dev/doctor.sh
 #   test-preship-review-artifact-bats    scripts/dev/pre-ship.sh
 #   test-verifier-preship-wiring-bats    scripts/dev/pre-ship.sh + scripts/dev/verifier-*.py
-#   test-subsystem-docs                  CONTEXT-MAP.md + Source/Core/src/*/AGENTS.md
+#   test-subsystem-docs                  CONTEXT-MAP.md + the Source/ leaf AGENTS.md files
 #   test-agent-build-facts               CMakePresets.json
 #   test-autonomous-debug-loop           a cmake + cl.exe product build
 #   test-dead-export-audit               Source/Core/include/** (cross-TU exports)
@@ -288,7 +288,7 @@ for script in "${TESTS[@]}"; do
     # in CI; they exit 0 and are genuinely passing).
     SUMMARY=$(echo "$OUT" | grep -E 'Passed: [0-9]+ +Failed: [0-9]+' | tail -n 1 || true)
     if [ -z "$SUMMARY" ]; then
-        # No parseable count. The test-author contract makes exit 0 the
+        # No parseable count. The test-script convention makes exit 0 the
         # authoritative all-pass signal (many checks print `… PASS — …` with no
         # numeric tally), so treat exit 0 as a pass and only a non-zero exit as a
         # real failure.

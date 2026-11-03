@@ -1,3 +1,4 @@
+// Field-edit write path (SubmitFieldEditOrQueue): rules in Source/Core/src/Sync/AGENTS.md § Invariants.
 #include "AppController.h"
 #include "CatalogOfflinePolicyPure.h"
 #include "GridContextFieldCatalogOps.h"

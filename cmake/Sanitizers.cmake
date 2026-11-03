@@ -2,17 +2,18 @@
 # on the SMATCHET_SANITIZER cache variable.
 #
 # Default behaviour is a no-op (SMATCHET_SANITIZER unset or "off"). Sanitizer
-# presets in CMakePresets.json set the cache variable; debug-detective picks
-# a preset per investigation type.
+# presets in CMakePresets.json set the cache variable; a debug investigation
+# picks one per bug class (debug-instrument skill, REFERENCE.md § Crash).
 #
 # Compiler matrix (verify if symptoms arise):
 #   asan / ubsan : MSVC /fsanitize=address (ASAN-only; UBSAN not available).
-#                  Clang -fsanitize=address,undefined (full suite).
-#                  CI uses both ninja-msvc-asan and ninja-clang-asan.
+#                  clang-cl takes the MSVC branch, so it is ASAN-only too.
+#                  Native Clang -fsanitize=address,undefined (full suite).
+#                  CI uses both ninja-msvc-asan and ninja-clang-asan (clang-cl).
 #                  Legacy MinGW/MSYS2 GCC does NOT ship ASAN/UBSAN runtimes;
 #                  smatchet_verify_mingw_gcc_sanitizer_runtimes() catches that.
-#   tsan         : MSVC does NOT support TSAN. TSAN CI job deferred until
-#                  a Linux runner is available.
+#   tsan         : MSVC-ABI compilers (MSVC, clang-cl) warn and ignore it.
+#                  Linux lane: ninja-tsan-linux (tsan-linux-nightly.yml).
 #   msan         : Clang-only. We hard-fail here if the active compiler
 #                  is not Clang.
 #   fuzzer       : Clang-only (libFuzzer). Native-clang Linux lane only
@@ -21,14 +22,14 @@
 #                  coverage AND links libFuzzer's main() (which drives each
 #                  fuzz target's LLVMFuzzerTestOneInput). See tests/fuzz/.
 #
-# Hard rules (mirrored in agents/build-doctor.md § Stack):
+# Hard rules (mirrored in BUILD.md § Stack facts):
 #   * Two sanitizers must not coexist in one build (ASan + TSan, ASan + MSan
 #     are mutually exclusive at link/runtime). SMATCHET_SANITIZER is a single
 #     string, not a list.
 #   * Flags are PRIVATE so vendored FetchContent deps stay untainted.
-#   * Sanitizer runtime DLLs / .so files (libasan, libtsan, libubsan,
-#     libclang_rt.msan) must be on PATH at launch time — debug-launch
-#     failure with "DLL not found" usually means a missing runtime.
+#   * On Windows the ASan runtime DLL (clang_rt.asan_dynamic-<arch>.dll;
+#     MinGW: libasan / libubsan / libtsan) must be on PATH at launch time —
+#     debug-launch failure with "DLL not found" usually means a missing runtime.
 
 function(smatchet_apply_sanitizers tgt)
     if(NOT TARGET "${tgt}")

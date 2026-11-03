@@ -171,8 +171,7 @@ void RegisterExitEmptyUnchangedNoCommit(ImGuiTestEngine* engine) {
 // suggestions popup; the splice routes the printable chars into the buffer and closes it). The
 // commit gesture is Enter (EnterReturnsTrue) — the deterministic submit for the duration widget,
 // whose focus self-management makes a synthetic pure-focus-loss commit unreliable in the headless
-// engine (see the residue note in the test-author report: focus-loss-commit for duration is the
-// one uncovered gesture).
+// engine (see the residue NOTE at the end of this file).
 void RegisterChangeThenCommit(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "DurationInlineEdit", "TypeIntoEmptyThenCommit_CommitsOnce");
     t->UserData = &g_state;
@@ -270,7 +269,7 @@ void RegisterUnchangedExistingValueNoCommit(ImGuiTestEngine* engine) {
     };
 }
 
-// NOTE on the two duration gestures NOT covered as bucket-E here (see test-author residue report):
+// NOTE on the two duration gestures NOT covered as bucket-E here:
 //   - Pure FOCUS-LOSS commit of a *changed* duration value, and
 //   - In-place EDIT (backspace/replace) of an existing duration value,
 // both fight the duration widget's per-frame focus self-management (needRepositionAndFocus +
