@@ -866,6 +866,31 @@ bool RefreshUntouchedEstimate(const std::string& editedFieldId, const std::strin
     return true;
 }
 
+bool EstimateEditCanBeSentAlone(const std::string& fieldId) { return fieldId == "timeoriginalestimate"; }
+
+bool IsTimetrackingPayload(const nlohmann::json& payload) { return SoleTimetrackingObject(payload) != nullptr; }
+
+bool CarriesUntouchedEstimate(const std::string& editedFieldId, const nlohmann::json& payload) {
+    const char* const otherField = OtherEstimateFieldId(editedFieldId);
+    const nlohmann::json* timetracking = SoleTimetrackingObject(payload);
+    return otherField != nullptr && timetracking != nullptr &&
+           timetracking->contains(TimetrackingKeyForEstimateField(otherField));
+}
+
+bool DropUntouchedEstimate(const std::string& editedFieldId, nlohmann::json& payload) {
+    const char* const editedKey = TimetrackingKeyForEstimateField(editedFieldId);
+    const nlohmann::json* timetracking = SoleTimetrackingObject(payload);
+    if (editedKey == nullptr || timetracking == nullptr) {
+        return false;
+    }
+    const auto edited = timetracking->find(editedKey);
+    if (edited == timetracking->end() || !edited->is_string() || TrimCopy(edited->get<std::string>()).empty()) {
+        return false;
+    }
+    payload["timetracking"].erase(TimetrackingKeyForEstimateField(OtherEstimateFieldId(editedFieldId)));
+    return true;
+}
+
 SpecialPayloadRebuild RebuildSpecialQueuedPayload(const std::string& fieldId, const nlohmann::json& queued,
                                                   const TrackerField* field, const std::string& resolvedValue,
                                                   nlohmann::json& out) {
