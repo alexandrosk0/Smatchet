@@ -37,6 +37,49 @@ void AppendIndent(std::ostringstream& out, int spaces) {
 // original if-else branch produced — output is byte-for-byte identical (pinned
 // by tests/Core/MarkdownConvert.test.cpp / MarkdownConvertAdf.test.cpp).
 
+// A string field of a server-sent ADF object, or "" when the object or the field has another type.
+// nlohmann value() throws type_error on a present non-string key, and such a throw escapes AdfToMarkdown
+// (it has no catch) and aborts the offline-queue merge.
+std::string StringField(const json& obj, const char* key) {
+    if (!obj.is_object())
+        return std::string();
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string();
+}
+
+// The "attrs" object of an ADF node, or an empty object when it is missing or not an object.
+const json& AttrsOf(const json& node) {
+    static const json kEmpty = json::object();
+    if (!node.is_object())
+        return kEmpty;
+    const auto it = node.find("attrs");
+    return (it != node.end() && it->is_object()) ? *it : kEmpty;
+}
+
+// The "content" member of an ADF node, or an empty array when the node is not an object or has none.
+// The walkers check the member's own type, so a non-array value passes through as it is.
+const json& ContentOf(const json& node) {
+    static const json kEmpty = json::array();
+    if (!node.is_object())
+        return kEmpty;
+    const auto it = node.find("content");
+    return it != node.end() ? *it : kEmpty;
+}
+
+// An integer attribute of an ADF node (heading level, list start), or `def` when it is missing or not an
+// integer. Clamped to the 9 digits CommonMark allows a list start, which also keeps the counters from overflowing.
+int IntAttr(const json& node, const char* key, int def) {
+    const json& attrs = AttrsOf(node);
+    const auto it = attrs.find(key);
+    if (it == attrs.end() || !it->is_number_integer())
+        return def;
+    constexpr long long kMax = 999999999LL;
+    if (it->is_number_unsigned()) // read unsigned first: one above INT64_MAX would wrap negative
+        return static_cast<int>((std::min)(it->get<unsigned long long>(), static_cast<unsigned long long>(kMax)));
+    const long long v = it->get<long long>();
+    return static_cast<int>((std::max)(0LL, (std::min)(v, kMax)));
+}
+
 // Collect the emphasis wrappers and link/code state for a text node's `marks`
 // array. `isCode` short-circuits other emphasis (inline code wins).
 void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, std::vector<const char*>& closeWrap,
@@ -44,7 +87,7 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
     if (!node.contains("marks") || !node["marks"].is_array())
         return;
     for (const auto& m : node["marks"]) {
-        const std::string mt = m.value("type", std::string());
+        const std::string mt = StringField(m, "type");
         if (mt == "strong") {
             openWrap.push_back("**");
             closeWrap.push_back("**");
@@ -57,9 +100,7 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
         } else if (mt == "code") {
             isCode = true;
         } else if (mt == "link") {
-            if (m.contains("attrs") && m["attrs"].is_object()) {
-                href = m["attrs"].value("href", std::string());
-            }
+            href = StringField(AttrsOf(m), "href");
         }
     }
 }
@@ -67,8 +108,9 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
 // Inline Markdown output for one run of ADF inline nodes. Plain text is held until the next markup (or
 // Flush) and then escaped as one run: an entity reference split across adjacent text nodes, or across
 // marks that render as nothing (underline, text color), would otherwise re-form in the joined Markdown.
-// Markup ends a run safely: each markup string begins with a character that cannot be part of a
-// reference, or (a card URL) reaches one before any ';'.
+// Markup ends a run safely when it begins with a character that cannot be part of a reference. Markup
+// that may not (an emoji short name, a card URL) goes through MarkupString, which escapes the run as it
+// reads with that markup after it.
 class InlineMdOut {
   public:
     explicit InlineMdOut(std::ostringstream& sink) : md(sink) {}
@@ -76,6 +118,15 @@ class InlineMdOut {
     std::ostringstream& Markup() {
         Flush();
         return md;
+    }
+    void MarkupString(const std::string& markup) {
+        if (!pending.empty() && pending.find('&') != std::string::npos) {
+            std::string escaped;
+            AppendMdTextEscapingEntities(escaped, pending + markup, pending.size());
+            md << escaped;
+            pending.clear();
+        }
+        Markup() << markup;
     }
     void Flush() {
         if (!pending.empty()) {
@@ -135,7 +186,11 @@ void EmitInlineTextNode(const json& node, InlineMdOut& o) {
 void EmitInlineHardBreak(const json&, InlineMdOut& o) { o.Markup() << "  \n"; }
 
 void EmitInlineEmoji(const json& node, InlineMdOut& o) {
-    o.Markup() << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+    std::string name = StringField(AttrsOf(node), "shortName");
+    if (name.empty())
+        name = StringField(node, "text");
+    if (!name.empty())
+        o.MarkupString(name);
 }
 
 void EmitInlineCard(const json& node, InlineMdOut& o) {
@@ -143,33 +198,32 @@ void EmitInlineCard(const json& node, InlineMdOut& o) {
     // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
     // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
     // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        const std::string url = node["attrs"].value("url", std::string());
-        if (!url.empty()) {
-            o.Markup() << url;
-        }
+    const std::string url = StringField(AttrsOf(node), "url");
+    if (!url.empty()) {
+        o.MarkupString(url);
     }
 }
 
 void EmitInlineMention(const json& node, InlineMdOut& o) {
     // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        std::string mtxt = node["attrs"].value("text", std::string());
-        if (mtxt.empty())
-            mtxt = std::string("@") + node["attrs"].value("id", std::string());
-        o.Text(mtxt);
-    }
+    const json& attrs = AttrsOf(node);
+    if (attrs.empty())
+        return;
+    std::string mtxt = StringField(attrs, "text");
+    if (mtxt.empty())
+        mtxt = std::string("@") + StringField(attrs, "id");
+    o.Text(mtxt);
 }
 
 void EmitInlineMedia(const json& node, InlineMdOut& o) {
-    const json attrs = node.value("attrs", json::object());
-    std::string url = attrs.value("url", std::string());
+    const json& attrs = AttrsOf(node);
+    std::string url = StringField(attrs, "url");
     if (url.empty()) {
-        const std::string id = attrs.value("id", std::string());
+        const std::string id = StringField(attrs, "id");
         if (!id.empty())
             url = "attachment:" + id;
     }
-    o.Markup() << "![" << EscapeMdImageAlt(attrs.value("alt", std::string())) << "](" << url << ")";
+    o.Markup() << "![" << EscapeMdImageAlt(StringField(attrs, "alt")) << "](" << url << ")";
 }
 
 using InlineEmitter = void (*)(const json&, InlineMdOut&);
@@ -186,7 +240,7 @@ const std::unordered_map<std::string, InlineEmitter>& InlineEmitters() {
 void EmitInlineText(const json& node, InlineMdOut& o) {
     if (!node.is_object())
         return;
-    const std::string type = node.value("type", std::string());
+    const std::string type = StringField(node, "type");
     const auto& emitters = InlineEmitters();
     const auto it = emitters.find(type);
     if (it != emitters.end()) {
@@ -194,19 +248,22 @@ void EmitInlineText(const json& node, InlineMdOut& o) {
         return;
     }
     // Unmapped inline node (status lozenge, inline extension, ...): keep its display text, as the
-    // plain-text flattener does, rather than silently dropping the words.
-    const auto attrs = node.find("attrs");
-    if (attrs != node.end() && attrs->is_object()) {
-        const auto text = attrs->find("text");
-        if (text != attrs->end() && text->is_string())
-            o.Text(text->get_ref<const std::string&>());
+    // plain-text flattener does, rather than silently dropping the words. A node whose `type` is
+    // missing or mistyped but which carries its own string `text` keeps that text too.
+    const std::string display = StringField(AttrsOf(node), "text");
+    if (!display.empty()) {
+        o.Text(display);
+        return;
     }
+    const std::string own = StringField(node, "text");
+    if (!own.empty())
+        o.Text(own);
 }
 
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
     if (!paraContent.is_array() || paraContent.empty())
         return false;
-    if (paraContent[0].value("type", std::string()) != "text")
+    if (StringField(paraContent[0], "type") != "text")
         return false;
     // A malformed node can have the text type but no string text value. Reading it as a
     // string would raise a JSON type error that escapes the ADF-to-Markdown conversion,
@@ -236,8 +293,8 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
     InlineMdOut o(out);
     bool firstText = true;
     for (const auto& c : paraContent) {
-        if (firstText && c.is_object() && c.value("type", std::string()) == "text") {
-            const std::string t = c.value("text", std::string());
+        if (firstText && c.is_object() && StringField(c, "type") == "text") {
+            const std::string t = StringField(c, "text");
             if (t.size() > kSkip) {
                 json c2 = c;
                 c2["text"] = t.substr(kSkip);
@@ -249,7 +306,7 @@ static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostr
             continue;
         }
         EmitInlineText(c, o);
-        if (c.is_object() && c.value("type", std::string()) == "text")
+        if (c.is_object() && StringField(c, "type") == "text")
             firstText = false;
     }
     o.Flush();
@@ -286,26 +343,24 @@ static std::string MarkdownCellPlainInner(const json& cell, std::vector<std::str
     std::vector<std::string> segments;
     if (cell.contains("content") && cell["content"].is_array()) {
         for (const auto& blk : cell["content"]) {
-            const std::string bt = blk.value("type", std::string());
+            const std::string bt = StringField(blk, "type");
             if (bt == "paragraph") {
-                std::string t = MarkdownCellFlattenInline(blk.value("content", json::array()));
+                std::string t = MarkdownCellFlattenInline(ContentOf(blk));
                 if (!t.empty())
                     segments.push_back(std::move(t));
             } else if (bt == "bulletList" || bt == "orderedList") {
                 const bool ordered = (bt == "orderedList");
-                int order = 1;
-                if (ordered && blk.contains("attrs") && blk["attrs"].is_object())
-                    order = blk["attrs"].value("order", 1);
+                int order = ordered ? IntAttr(blk, "order", 1) : 1;
                 if (blk.contains("content") && blk["content"].is_array()) {
                     for (const auto& li : blk["content"]) {
-                        if (li.value("type", std::string()) != "listItem")
+                        if (StringField(li, "type") != "listItem")
                             continue;
                         std::ostringstream lo;
                         if (li.contains("content") && li["content"].is_array()) {
                             for (const auto& lblk : li["content"]) {
-                                const std::string lt = lblk.value("type", std::string());
+                                const std::string lt = StringField(lblk, "type");
                                 if (lt == "paragraph")
-                                    EmitInlineRun(lblk.value("content", json::array()), lo);
+                                    EmitInlineRun(ContentOf(lblk), lo);
                                 else
                                     dropped.push_back(lt.empty() ? std::string("<unknown>") : lt);
                             }
@@ -338,12 +393,12 @@ static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
         return;
     std::vector<std::vector<std::string>> rows;
     for (const auto& row : table["content"]) {
-        if (row.value("type", std::string()) != "tableRow")
+        if (StringField(row, "type") != "tableRow")
             continue;
         std::vector<std::string> cells;
         if (row.contains("content") && row["content"].is_array()) {
             for (const auto& cell : row["content"]) {
-                const std::string ct = cell.value("type", std::string());
+                const std::string ct = StringField(cell, "type");
                 if (ct == "tableHeader" || ct == "tableCell") {
                     cells.push_back(MarkdownCellPlainInner(cell, s.dropped));
                 }
@@ -409,17 +464,17 @@ void EmitAdfParagraph(const json& node, AdfWalkState& s) {
     AppendIndent(s.out, s.listIndent);
     if (s.insideBlockquote)
         s.out << "> ";
-    EmitInlineRun(node.value("content", json::array()), s.out);
+    EmitInlineRun(ContentOf(node), s.out);
     s.out << "\n\n";
 }
 
 void EmitAdfHeading(const json& node, AdfWalkState& s) {
-    const int level = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("level", 1) : 1;
+    const int level = IntAttr(node, "level", 1);
     const int clamped = (std::max)(1, (std::min)(6, level));
     for (int i = 0; i < clamped; ++i)
         s.out << '#';
     s.out << ' ';
-    EmitInlineRun(node.value("content", json::array()), s.out);
+    EmitInlineRun(ContentOf(node), s.out);
     s.out << "\n\n";
 }
 
@@ -434,7 +489,7 @@ void EmitAdfBulletList(const json& node, AdfWalkState& s) {
 }
 
 void EmitAdfOrderedList(const json& node, AdfWalkState& s) {
-    const int start = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("order", 1) : 1;
+    const int start = IntAttr(node, "order", 1);
     s.listMarkerStack.push_back('1');
     s.orderedCounters.push_back(start - 1);
     EmitAdfChildren(node, s);
@@ -475,12 +530,12 @@ void EmitListItemChildren(const json& node, AdfWalkState& s, bool taskItem) {
     bool first = true;
     const int prevIndent = s.listIndent;
     for (const auto& c : children) {
-        const std::string ct = c.is_object() ? c.value("type", std::string()) : std::string();
+        const std::string ct = c.is_object() ? StringField(c, "type") : std::string();
         if (first && ct == "paragraph") {
             if (taskItem) {
-                EmitParagraphInlineSkipTaskPrefix(c.value("content", json::array()), s.out);
+                EmitParagraphInlineSkipTaskPrefix(ContentOf(c), s.out);
             } else {
-                EmitInlineRun(c.value("content", json::array()), s.out);
+                EmitInlineRun(ContentOf(c), s.out);
             }
             s.out << "\n";
             first = false;
@@ -503,8 +558,8 @@ void EmitAdfListItem(const json& node, AdfWalkState& s) {
     bool taskDone = false;
     if (node.contains("content") && node["content"].is_array() && !node["content"].empty()) {
         const auto& fc = node["content"][0];
-        if (fc.is_object() && fc.value("type", std::string()) == "paragraph") {
-            taskItem = MatchStoredTaskPrefix(fc.value("content", json::array()), &taskDone);
+        if (fc.is_object() && StringField(fc, "type") == "paragraph") {
+            taskItem = MatchStoredTaskPrefix(ContentOf(fc), &taskDone);
         }
     }
     EmitListItemMarker(s, taskItem, taskDone);
@@ -515,7 +570,7 @@ void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
     AppendIndent(s.out, s.listIndent);
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& ch : node["content"]) {
-            if (ch.value("type", std::string()) == "media") {
+            if (StringField(ch, "type") == "media") {
                 InlineMdOut o(s.out);
                 EmitInlineText(ch, o);
                 o.Flush();
@@ -528,10 +583,7 @@ void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
 void EmitAdfTable(const json& node, AdfWalkState& s) { EmitMarkdownTable(node, s); }
 
 void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
-    std::string lang;
-    if (node.contains("attrs") && node["attrs"].is_object()) {
-        lang = node["attrs"].value("language", std::string());
-    }
+    const std::string lang = StringField(AttrsOf(node), "language");
     AppendIndent(s.out, s.listIndent);
     s.out << "```" << lang << "\n";
     // Track the last char emitted for THIS block instead of copying the whole accumulated buffer
@@ -541,8 +593,8 @@ void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
     char lastCh = '\n';
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& c : node["content"]) {
-            if (c.is_object() && c.value("type", std::string()) == "text") {
-                const std::string text = c.value("text", std::string());
+            if (c.is_object() && StringField(c, "type") == "text") {
+                const std::string text = StringField(c, "text");
                 if (!text.empty()) {
                     s.out << text;
                     lastCh = text.back();
@@ -598,7 +650,7 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
         return;
     }
     ++s.depth;
-    const std::string type = node.value("type", std::string());
+    const std::string type = StringField(node, "type");
     const auto& handlers = AdfBlockHandlers();
     const auto it = handlers.find(type);
     if (it != handlers.end()) {

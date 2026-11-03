@@ -384,6 +384,15 @@ class FakeTrackerClient : public ITrackerBackend,
         return result;
     }
     Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeysReportingTruncation(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                           const ViewsStore& views, const CancelCallback& shouldCancel,
+                                           bool& truncated) override {
+        Result<std::vector<CachedTicket>, TrackerError> result =
+            FetchChildrenOfKeysCancellable(cfg, parentKeys, views, shouldCancel);
+        truncated = fetchChildrenTruncated_;
+        return result;
+    }
+    Result<std::vector<CachedTicket>, TrackerError>
     FetchChildrenOfKeysCancellable(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
                                    const ViewsStore& views, const CancelCallback& shouldCancel) override {
         ++fetchChildrenOfKeysCancellableCalls_;
@@ -962,6 +971,9 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchChildrenOfKeysError_ = error;
         fetchChildrenOfKeysStructuredError_ = TrackerError::Ok();
     }
+    /// Script the children fetch as stopped by a page cap: FetchChildrenOfKeysReportingTruncation reports
+    /// `truncated` while still returning the scripted rows.
+    void SetFetchChildrenTruncated(bool truncated) { fetchChildrenTruncated_ = truncated; }
     /// Script the failure with a realistic kind (mirrors SetFetchIssuesForKeysError).
     void SetFetchChildrenOfKeysError(TrackerError error) {
         fetchChildrenOfKeysOk_ = false;
@@ -1152,6 +1164,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t fetchChildrenOfKeysCalls_ = 0;
     std::atomic<std::size_t> fetchIssuesForKeysCancellableCalls_{0};
     std::atomic<std::size_t> fetchChildrenOfKeysCancellableCalls_{0};
+    bool fetchChildrenTruncated_ = false;
     std::atomic<bool> keyedFetchTokenReportedCancelled_{false};
     std::function<void()> onKeyedFetch_;
     std::function<void(bool)> onKeyedTokenSampled_;

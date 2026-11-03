@@ -234,6 +234,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`shutdown-cancel-all-pane-syncs`](shipped/shutdown-cancel-all-pane-syncs.md) | 2026-10-04 | Plan — cancel every pane's streaming sync before joining any |
 | [`backlog-sweep-2026-10`](shipped/backlog-sweep-2026-10.md) | 2026-10-13 | Plan — backlog sweep 2026-10 (fix every entry fixable from a Linux container) |
 | [`touchscreen-support`](shipped/touchscreen-support.md) | 2026-10-31 | Plan — Touchscreen support (standalone + Unreal) |
+| [`background-traffic-idle-gating`](shipped/background-traffic-idle-gating.md) | 2026-11-02 | stop background tracker traffic when the app sits unfocused + idle — idle-gated connectivity probe, live-success probe push, outage backoff, Unreal focus feed, minimized frame throttle |
 <!-- END auto-plan-index -->
 
 ### Notes

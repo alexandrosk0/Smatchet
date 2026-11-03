@@ -170,11 +170,13 @@ void DrawKeyCellCopyMenuItems(AppController* app, UiDrawSession* ui, const std::
                               const CachedTicket* row, const GridKeyCellMenuCtx* keyMenu) {
     // The URL is built only while the popup is open. The row's own cached url (only Linear writes
     // fieldValues["url"]; its BuildBrowseUrl returns "" by design) wins first: it is bound to the
-    // clicked row, while BuildIssueBrowseUrl uses the focused pane's backend, which can differ in
-    // split view. With neither, the item is drawn disabled.
+    // clicked row. BuildIssueBrowseUrl uses the focused pane's backend and the session config, which
+    // describe a different tracker when this row is in another pane of a split view, so it is used only
+    // for the focused pane's rows: a link to the wrong tracker is worse than none. With no URL, the item
+    // is drawn disabled.
     if (app && ui && !issueKey.empty()) {
         std::string url = row ? row->GetFieldValue("url") : std::string();
-        if (url.empty()) {
+        if (url.empty() && ui->pane().focused) {
             url = app->BuildIssueBrowseUrl(ui->cfg, issueKey);
         }
         if (ImGui::MenuItem("Copy link", nullptr, false, !url.empty())) {

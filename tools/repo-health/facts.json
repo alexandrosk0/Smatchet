@@ -6,8 +6,8 @@
   "updated": {
     "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
     "campaign": "2026-10-23",
-    "ci_lanes": "2026-10-25",
-    "open_prs": "2026-10-23"
+    "ci_lanes": "2026-11-03",
+    "open_prs": "2026-11-03"
   },
 
   "governance": { "loop_mode": "on", "auto_merge": "on" },
@@ -34,17 +34,27 @@
   ],
 
   "ci_lanes": [
-    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #154" },
-    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #638" },
-    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #860" },
-    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #139" },
-    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "run #501" }
+    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #162" },
+    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #652" },
+    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #882" },
+    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #147" },
+    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "run #523" }
   ],
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
 
   "open_prs": [
-    { "id": "2364", "state": "ready", "label": "Ready",
-      "title": "Reconcile the historical-review ledger", "meta": "docs-only · open list is empty" },
+    { "id": "2382", "state": "ready", "label": "Open",
+      "title": "Backfill merge snapshots for #2379, #2378, #2372", "meta": "ledger · docs-only" },
+    { "id": "2381", "state": "ready", "label": "Open",
+      "title": "Bump the github-actions group (3 updates)", "meta": "dependabot" },
+    { "id": "2375", "state": "ready", "label": "Open",
+      "title": "GetAvailableFields returns a copy-on-write snapshot", "meta": "catalog · product fix" },
+    { "id": "2374", "state": "ready", "label": "Open",
+      "title": "Merge snapshots for #2370 and #2376", "meta": "ledger · docs-only" },
+    { "id": "2371", "state": "ready", "label": "Open",
+      "title": "Fix GridSearch/GridPanes bucket-E defects; run them in CI", "meta": "bucket-E · test + CI" },
+    { "id": "2368", "state": "ready", "label": "Open",
+      "title": "Force Mine sends an unverifiable estimate edit", "meta": "offline · fixes #2332" },
     { "id": "2244", "state": "blocked", "label": "Blocked",
       "title": "Regenerate _plan-locks.generated.md from refs", "meta": "bot PR · CR waiver labels missing" }
   ],

@@ -96,8 +96,9 @@ class TicketSyncService {
     /// each. A one-pass loop leaves the later workers un-cancelled while it waits on the earlier
     /// ones, so they start further requests and teardown costs up to one HTTP timeout PER pane;
     /// two passes let every worker unwind concurrently, bounding the total to about one timeout.
-    /// Null entries and duplicates are skipped. Used by `~AppController` and
-    /// `StartRecreateLocalCacheDatabase`.
+    /// Null entries and duplicates are skipped. Used by `~AppController` (through
+    /// CancelAndJoinAllPaneStreamingSyncs); the cache recreate flags its syncs itself and joins them on
+    /// its own worker.
     static void CancelAndJoinAll(const std::vector<TicketSyncService*>& services);
 
     /// TEST-ONLY SEAM: no production caller. Production applies fetches through the streaming path
@@ -211,8 +212,9 @@ class TicketSyncService {
         std::vector<CachedTicket> Unchanged;
         std::vector<CachedTicket> Changed;
         std::vector<std::string> Refused;
-        /// A key the roster listed as present came back with neither a row nor a refusal: the walk cannot
-        /// be authoritative (nothing may be purged on its strength).
+        /// A key the roster listed as present came back with neither a row nor a refusal, or a children
+        /// fetch stopped at the backend's page cap: the walk cannot be authoritative (nothing may be purged
+        /// on its strength).
         bool Incomplete = false;
     };
     struct DeltaWork; // the roster, the fetch set and the rows of one delta attempt (defined in the .cpp)

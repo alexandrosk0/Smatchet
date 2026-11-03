@@ -38,7 +38,7 @@ project literal and the boundary can't silently rot.
 | `docs/self-improvement/categories/*` *(entries)* | this project's friction items |
 | `docs/CONTEXT.md`, `docs/adr/` | this project's glossary + decisions |
 | `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/` | project artifacts |
-| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-*.sh`, `test-subsystem-docs.sh`, the git hooks |
+| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-mirror-*.sh`; the git hooks in `scripts/git-hooks/` |
 
 **Agent split rule:** `core/` = a generic role (it may *mention* project specifics, but those are config-driven); project subsystem knowledge goes in leaf `AGENTS.md` files and guides, not in agents. Perforce maintenance is a host doc ([`docs/perforce/AGENT_FLOWS.md`](perforce/AGENT_FLOWS.md) § Janitor pass), not an agent: its depot paths and counter names are this project's.
 

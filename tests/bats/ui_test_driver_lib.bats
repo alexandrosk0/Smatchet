@@ -36,7 +36,7 @@ setup() {
     ORPHANS="$FIX/orphans"
     export ORPHANS
     : > "$ORPHANS"
-    unset SMATCHET_UI_TEST_HOME SMATCHET_ALLOW_STALE_EXE SMATCHET_USER_DATA SMATCHET_UPDATE_CHECK
+    unset SMATCHET_UI_TEST_HOME SMATCHET_ALLOW_STALE_EXE SMATCHET_USER_DATA SMATCHET_UPDATE_CHECK SMATCHET_DB_PATH
     command -v timeout >/dev/null 2>&1 || skip "coreutils timeout not on PATH"
 }
 
@@ -65,7 +65,7 @@ _py() {
 _mk_env_stub() {
     cat > "$1" <<'EOF'
 #!/usr/bin/env bash
-env | grep -E '^(SMATCHET_USER_DATA|SMATCHET_UPDATE_CHECK|LOCALAPPDATA|APPDATA|XDG_CONFIG_HOME)=' \
+env | grep -E '^(SMATCHET_USER_DATA|SMATCHET_UPDATE_CHECK|SMATCHET_DB_PATH|LOCALAPPDATA|APPDATA|XDG_CONFIG_HOME)=' \
     | sort > "${STUB_ENV_OUT:-/dev/null}.$$"
 printf '%s\n' '{"ok":true,"command":"ui_test.run","data":{"passed":3,"failed":0,"tested":3,"log":"ok"}}'
 exit 0
@@ -132,6 +132,23 @@ EOF
     grep -qx "SMATCHET_USER_DATA=$home" "$FIX"/env.*
     grep -qx "SMATCHET_UPDATE_CHECK=0" "$FIX"/env.*
     ! grep -q "LOCALAPPDATA=$home" "$FIX"/env.* || return 1
+}
+
+@test "isolate_home points the SQLite cache into the throwaway dir, over a caller's SMATCHET_DB_PATH" {
+    _mk_env_stub "$FIX/stub"
+    cat > "$FIX/drv.sh" <<'EOF'
+. "$LIB"
+ui_test_isolate_home
+STUB_ENV_OUT="$FIX/env" "$FIX/stub" >/dev/null
+echo "HOME_DIR=$UI_TEST_HOME"
+EOF
+    SMATCHET_DB_PATH="$FIX/developer-real-cache.sqlite" run bash "$FIX/drv.sh"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    local home
+    home="$(sed -n 's/^HOME_DIR=//p' <<<"$output")"
+    [ -n "$home" ]
+    grep -qx "SMATCHET_DB_PATH=$home/Smatchet_LocalCache.sqlite" "$FIX"/env.*
 }
 
 @test "isolate_home --seed writes the configured-profile seed" {

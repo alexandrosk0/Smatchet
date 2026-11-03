@@ -90,6 +90,9 @@ CommandResult CacheRecreateOutcomeToResult(const smatchet::sync::CacheRecreateOu
     out["triggered"] = true;
     out["completed"] = true;
     out["wiped"] = outcome.Wiped;
+    if (!outcome.Warning.empty()) {
+        out["warning"] = outcome.Warning;
+    }
     return CommandResult::Success(std::move(out));
 }
 

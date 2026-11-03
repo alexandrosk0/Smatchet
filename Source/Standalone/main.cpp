@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -40,6 +41,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 
 // ImGui Core and Backends
 #include "imgui.h"
+#include "imgui_internal.h" // ImGuiContext::InputEventsTrail (per-frame activity sample)
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "SmatchetImGuiFonts.h"
@@ -72,6 +74,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // Smatchet Core Headers (Safe C++14 includes)
 #include "ConfigManager.h"
 #include "VsyncControl.h"
+#include "AppActivity.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CliCommandRunner.h"
@@ -794,6 +797,17 @@ static void MaybePrimeCrashReport() {
     LOG_WARN("Crash reporter: previous run crashed (%s) — opening pre-filled bug report.", ci.Reason.c_str());
 }
 
+// Poll input/window events. A minimized window presents nothing, so nothing paces the loop (DX12
+// skips Present at 0x0; a minimized GL swap need not wait for vsync): wait at ~30 Hz instead,
+// which still ticks dispatcher drains and streaming sync applies.
+static void PumpPlatformEvents(GLFWwindow* window) {
+    if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
+        glfwWaitEventsTimeout(1.0 / 30.0);
+    } else {
+        glfwPollEvents();
+    }
+}
+
 // Render exactly one frame: poll events, apply any pending font reload, run the
 // redaction-font swap window, build + draw the ImGui frame via the SEH-guarded
 // bridge, clear with the active theme background, render the draw data, and
@@ -805,8 +819,7 @@ static void MaybePrimeCrashReport() {
 // post-swap screenshot capture (the original ordering).
 static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppController& smatchetApp,
                            PluginHost& pluginHost, const ImVec4& clear_color, MainBootState& boot, int syncInterval) {
-    // Poll and handle events (inputs, window resize, etc.)
-    glfwPollEvents();
+    PumpPlatformEvents(window);
 
     if (SmatchetCheckAndApplyFontReload()) {
         // GL owns its font texture as a backend device object; the DX12 backend
@@ -1060,7 +1073,8 @@ static int RunFrameLoop(MainBootState& boot) {
             // Feed the OS window-focus signal to the ticket-change monitor (plan item 17): a
             // backgrounded window stops polling for changes. GLFW_FOCUSED is cheap and valid
             // every frame; the no-signal default on the AppController side is true.
-            smatchetApp.SetWindowFocused(glfwGetWindowAttrib(window, GLFW_FOCUSED) != 0);
+            const bool windowFocused = glfwGetWindowAttrib(window, GLFW_FOCUSED) != 0;
+            smatchetApp.SetWindowFocused(windowFocused);
 
             const bool liveVsync = smatchet::vsync::Enabled();
             const int syncInterval = liveVsync ? 1 : 0;
@@ -1074,6 +1088,10 @@ static int RunFrameLoop(MainBootState& boot) {
 
             const bool redactThisFrame =
                 RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color, boot, syncInterval);
+
+            // Background-idle sample (AppActivity.h); the trail is this frame's input, test-engine included.
+            smatchet::activity::NoteFrame(windowFocused, ImGui::GetCurrentContext()->InputEventsTrail.Size > 0,
+                                          std::chrono::steady_clock::now());
 
             // Fire the env-gated autostart scenario once, after the first frame.
             MaybeStartAutorunScenario(smatchetApp, autorunScenarioStarted);

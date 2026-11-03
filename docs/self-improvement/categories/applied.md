@@ -143,7 +143,7 @@ Last-reviewed: 2026-10-06
 ## What happened
 
 `deviation-overdue` reads markers one line at a time (`DEV_RE='SMATCHET_DEVIATION\((.*)\)'` in
-`agents/scripts/project/lint-rules.d/00-common.sh`). When a marker's reason wraps onto following
+`agent-layer/agents/scripts/project/lint-rules.d/00-common.sh`). When a marker's reason wraps onto following
 comment lines, the `revisit=` field sits on a continuation line the rule never parses, so the marker
 never expires: the fail-open direction. Eleven wrapped markers dated 2026-09-30 / 2026-10-01 were
 past due without any gate noticing; the renewal rewrote them as single-line markers. Wrapped markers
@@ -256,7 +256,7 @@ protected them.
 ## What happened
 
 `deviation-overdue` reads markers one line at a time (`DEV_RE='SMATCHET_DEVIATION\((.*)\)'` in
-`agents/scripts/project/lint-rules.d/00-common.sh`). When a marker's reason wraps onto following
+`agent-layer/agents/scripts/project/lint-rules.d/00-common.sh`). When a marker's reason wraps onto following
 comment lines, the `revisit=` field sits on a continuation line the rule never parses, so the marker
 never expires: the fail-open direction. Eleven wrapped markers dated 2026-09-30 / 2026-10-01 were
 past due without any gate noticing; the renewal rewrote them as single-line markers. Wrapped markers

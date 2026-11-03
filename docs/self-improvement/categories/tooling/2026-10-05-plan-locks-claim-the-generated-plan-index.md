@@ -10,7 +10,7 @@
 
 ## What happened
 
-`docs/plans/INDEX.md` is generated. `bash agents/scripts/core/test-plan-index.sh --fix` rewrites it from the plan tiers, and the required `test-plan-index` check fails any PR whose `INDEX.md` does not match `docs/plans/{active,deferred,shipped}/`. So every PR that adds, archives or moves a plan must change it.
+`docs/plans/INDEX.md` is generated. `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix` rewrites it from the plan tiers, and the required `test-plan-index` check fails any PR whose `INDEX.md` does not match `docs/plans/{active,deferred,shipped}/`. So every PR that adds, archives or moves a plan must change it.
 
 A plan lock's write set lists the plan's own lifecycle paths, and plan locks routinely list `docs/plans/INDEX.md` too, because the owning session will archive its plan at the end. `plan-lock-gate.sh` compares paths only. While any one such lock is open, every other PR that touches a plan reads red on `Plan-lock gate`. Its only way through is an override, or waiting for an unrelated plan to finish.
 
@@ -29,7 +29,7 @@ Treat generated paths as never lockable:
 - `lock-claim.sh` and `lock-claim-update.sh` drop them from a write set and say so.
 - `plan-lock-gate.sh` drops them from both the PR's changed files and every lock's write set before it compares.
 
-Keep the list in `project.config.json` (for example `plan_locks.generated_paths: ["docs/plans/INDEX.md", "docs/plans/_plan-locks.generated.md"]`), so the portable scripts read it rather than hard-code it. Bats coverage:
+Keep the list in `project.config.json` (for example `plan_locks.generated_paths: ["docs/plans/INDEX.md", "docs/plans/active/_plan-locks.generated.md"]`), so the portable scripts read it rather than hard-code it. Bats coverage:
 
 - a lock claiming `INDEX.md` does not redden a PR that only regenerates it;
 - a real overlap elsewhere in the same PR still does.

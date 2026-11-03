@@ -105,7 +105,7 @@ while [ $# -gt 0 ]; do
         --exe=*) EXE="${1#--exe=}"; shift ;;
         --src) SRC_DIRS+=("$2"); shift 2 ;;
         --src=*) SRC_DIRS+=("${1#--src=}"); shift ;;
-        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
         *) echo "is-exe-fresh: unknown arg: $1" >&2; exit 0 ;;
     esac
 done

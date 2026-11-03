@@ -769,6 +769,56 @@ TEST_CASE("TrackerFieldPayloadPure: RefreshUntouchedEstimate replaces only the e
     CHECK_FALSE(TrackerFieldPayloadPure::RefreshUntouchedEstimate("summary", "1h", payload));
 }
 
+TEST_CASE("TrackerFieldPayloadPure: only an Original Estimate edit may be sent alone") {
+    CHECK(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timeoriginalestimate"));
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timeestimate")); // JRACLOUD-94324
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("timespent"));
+    CHECK_FALSE(TrackerFieldPayloadPure::EstimateEditCanBeSentAlone("summary"));
+}
+
+TEST_CASE("TrackerFieldPayloadPure: CarriesUntouchedEstimate sees the copy of the estimate not edited") {
+    const json both = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    CHECK(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", both));
+    CHECK(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeestimate", both));
+
+    const json editedOnly = {{"timetracking", {{"originalEstimate", "3h"}}}};
+    CHECK_FALSE(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", editedOnly));
+    CHECK(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeestimate", editedOnly));
+
+    CHECK_FALSE(TrackerFieldPayloadPure::CarriesUntouchedEstimate("summary", both));
+    CHECK_FALSE(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", json{{"summary", "x"}}));
+    CHECK_FALSE(TrackerFieldPayloadPure::CarriesUntouchedEstimate(
+        "timeoriginalestimate", json{{"timetracking", {{"remainingEstimate", "2h"}}}, {"summary", "x"}}));
+    CHECK_FALSE(
+        TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", json{{"timetracking", "3h"}}));
+    CHECK_FALSE(TrackerFieldPayloadPure::CarriesUntouchedEstimate("timeoriginalestimate", json::array()));
+}
+
+TEST_CASE("TrackerFieldPayloadPure: DropUntouchedEstimate keeps only the edited estimate") {
+    json payload = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    CHECK(TrackerFieldPayloadPure::DropUntouchedEstimate("timeoriginalestimate", payload));
+    CHECK(payload == json{{"timetracking", {{"originalEstimate", "3h"}}}});
+    CHECK(TrackerFieldPayloadPure::DropUntouchedEstimate("timeoriginalestimate", payload)); // idempotent
+    CHECK(payload == json{{"timetracking", {{"originalEstimate", "3h"}}}});
+
+    json remaining = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    CHECK(TrackerFieldPayloadPure::DropUntouchedEstimate("timeestimate", remaining));
+    CHECK(remaining == json{{"timetracking", {{"remainingEstimate", "2h"}}}});
+
+    // Without a usable edited estimate the update would be empty: the payload is left as it is.
+    for (const json& kept : {json{{"timetracking", {{"remainingEstimate", "2h"}}}},
+                             json{{"timetracking", {{"originalEstimate", " "}, {"remainingEstimate", "2h"}}}},
+                             json{{"timetracking", {{"originalEstimate", 3}, {"remainingEstimate", "2h"}}}},
+                             json{{"summary", "x"}}, json{{"timetracking", "3h"}}, json::array()}) {
+        json copy = kept;
+        CHECK_FALSE(TrackerFieldPayloadPure::DropUntouchedEstimate("timeoriginalestimate", copy));
+        CHECK(copy == kept);
+    }
+    json notEstimate = {{"timetracking", {{"originalEstimate", "3h"}, {"remainingEstimate", "2h"}}}};
+    CHECK_FALSE(TrackerFieldPayloadPure::DropUntouchedEstimate("summary", notEstimate));
+    CHECK(notEstimate["timetracking"].size() == 2u);
+}
+
 TEST_CASE("TrackerFieldPayloadPure: an estimate edit sends both estimates") {
     const auto original =
         TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timeoriginalestimate", "3d", "1d", "4h");

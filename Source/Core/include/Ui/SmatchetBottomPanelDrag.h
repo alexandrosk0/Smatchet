@@ -6,10 +6,11 @@
 // registered tab docked in it (Views, Assistant, bottom windows dragged in; grid panes
 // stay and keep the panel visible) - and a slim grab strip along the far edge (the bottom
 // of the work area / the right edge of the column's parent split) reveals the remembered
-// tab set again by dragging back. The side columns are driven only by Tick; Collapse and
-// Expand below are the programmatic entry points for the bottom panel, behind the
-// View > Panel menu toggle and the view.panel.bottom command, so every surface shares
-// one remember-the-open-tabs + remember-the-height mechanism.
+// tab set again by dragging back. The side columns are driven by Tick plus the
+// CollapseSideBar / ExpandSideBar entry points (View > Appearance and the view.sidebar.*
+// commands); Collapse and Expand are the programmatic entry points for the bottom panel,
+// behind the View > Panel menu toggle and the view.panel.bottom command, so every surface
+// shares one remember-the-open-tabs + remember-the-height mechanism.
 
 struct UiDrawSession;
 
