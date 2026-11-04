@@ -198,9 +198,10 @@ done
 # Fake mode derives findings from the case's expectedFindings (deterministic).
 # Real mode parses each trial's raw output: one finding per bullet under the
 # code-review severity headings (## Critical / High / Medium / Low / Nits),
-# falling back to a per-line file:line citation scan only when the output has
-# no code-review contract heading (a severity heading, ## Verified clean,
-# ## Outcome, ...). runMeta.parserByTrial records which parser ran.
+# falling back to a per-line file:line citation scan only when no severity
+# heading is present. Neither parser counts citations in the contract's
+# evidence sections (## Verified clean, ## Outcome, ## Self-improvement,
+# ## Session context append). runMeta.parserByTrial records which parser ran.
 MODE="real"
 if [[ "$HARNESS" == "fake-runner" ]]; then MODE="fake"; fi
 
@@ -243,25 +244,28 @@ SEVERITY_HEADINGS = {
     "nits": "low",
     "info": "info",
 }
-# The contract's non-severity sections. Any of them marks the output as
-# contract-shaped too: a clean review is `## Verified clean` + `## Outcome:`
-# with no severity heading, and its evidence citations must not fall through
-# to the citation scan as findings.
+# The contract's evidence sections. Their citations are never findings, in
+# either parser: a clean review is "no findings" + `## Verified clean` +
+# `## Outcome:` with no severity heading, and its Verified-clean citations
+# must not reach the citation scan.
 CONTRACT_SECTION = re.compile(
     r'^(?:verified clean|outcome\b.*|session context append|self-improvement)$')
 HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
 FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
 BULLET = re.compile(r'^ *(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$')
 THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
-# A cite-free bullet that only says its section is empty ("- None",
-# "- No critical findings.", "- Nothing to report", "- None: the diff is
-# clean") is not a finding; counting it would break finding_count on a clean
-# (0-finding) case. Anchored on the marker words, so "- No bounds check on
-# idx" still counts.
+# A bullet whose leading clause only says its section is empty ("- None",
+# "- No critical findings.", "- None: the diff is clean", "- No findings
+# (checked a.cpp:12)") is not a finding; counting it would break finding_count
+# on a clean (0-finding) case. The marker must be the whole first clause (end
+# of line or a separator after it), so "- None of the callers holds mLock" and
+# "- Nothing releases the handle" still count. Matched on the bullet's first
+# line only, so "- None" with an indented reason is a marker too.
 NONE_MARKER = re.compile(
-    r'^[\s*_`(\[]*(?:none|n/a|nothing'
+    r'^[\s*_`(\[]*(?:none(?:\s+found)?|n/a|nothing(?:\s+(?:to\s+report|found))?'
     r'|no(?:\s+(?:critical|high|medium|low|nits?|other|further|genuine|correctness|real))*'
-    r'\s+(?:findings?|issues?|bugs?|problems?))(?![A-Za-z0-9])', re.IGNORECASE)
+    r'\s+(?:findings?|issues?|bugs?|problems?)(?:\s+found)?)'
+    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])', re.IGNORECASE)
 
 def _heading_key(title):
     """Lowercased title without emphasis, a trailing count `(2)` or a dash
@@ -276,35 +280,41 @@ def _indent(line):
     return len(line) - len(line.lstrip(' '))
 
 def _finding_from_bullet(severity, parts):
-    text = re.sub(r'\s+', ' ', ' '.join(parts)).strip()
-    m = CITE.search(text)
-    if m is None and NONE_MARKER.match(text):
+    if NONE_MARKER.match(parts[0]):
         return None
+    text = re.sub(r'\s+', ' ', ' '.join(parts)).strip()
     f = {"severity": severity, "summary": text[:SUMMARY_CAP] or "parsed from output"}
+    m = CITE.search(text)
     if m:
         f["file"] = m.group(1)
         f["line"] = int(m.group(2))
     return f
 
 def parse_heading_findings(text):
-    """Returns (saw_contract_heading, findings).
+    """Returns (saw_severity_heading, findings, non_evidence_lines).
 
     A bullet starts at an indent no deeper than the open bullet's; deeper
     lines (wrapped text, nested bullets, indented fences) continue it. A blank
     line keeps the bullet open; an unindented non-bullet line, a thematic
-    break or any heading (0-3 spaces of indent) closes it. Fenced code is
+    break or a heading closes it. A `#` line indented to the open bullet's
+    content column is wrapped bullet text, not a heading. Fenced code is
     opaque: a `## High` inside a fence is not a heading.
+
+    non_evidence_lines are the lines outside the contract's evidence sections,
+    for the citation fallback.
     """
     saw = False
-    severity = None          # severity of the current section, None = skipped section
-    cur = None               # (indent, [text parts]) of the open bullet
+    severity = None          # severity of the current section, None = not a severity section
+    evidence = False         # inside a CONTRACT_SECTION
+    cur = None               # (indent, content column, [text parts]) of the open bullet
     fence = None             # (char, length) of the open fence
     findings = []
+    free = []
 
     def close():
         nonlocal cur
         if cur is not None and severity is not None:
-            f = _finding_from_bullet(severity, cur[1])
+            f = _finding_from_bullet(severity, cur[2])
             if f is not None:
                 findings.append(f)
         cur = None
@@ -317,18 +327,23 @@ def parse_heading_findings(text):
                     and stripped == m.group(1):
                 fence = None
             elif cur is not None and stripped:
-                cur[1].append(stripped)
+                cur[2].append(stripped)
+            if not evidence:
+                free.append(line)
             continue
         if not stripped:
             continue
+        ind = _indent(line)
         hm = HEADING.match(line)
-        if hm:
+        if hm and (cur is None or ind < cur[1]):
             close()
             key = _heading_key(hm.group(1))
             severity = SEVERITY_HEADINGS.get(key)
-            saw = saw or severity is not None or CONTRACT_SECTION.match(key) is not None
+            evidence = severity is None and CONTRACT_SECTION.match(key) is not None
+            saw = saw or severity is not None
             continue
-        ind = _indent(line)
+        if not evidence:
+            free.append(line)
         continues = cur is not None and ind > cur[0]
         fm = FENCE.match(line)
         if fm:
@@ -342,21 +357,22 @@ def parse_heading_findings(text):
         bm = BULLET.match(line)
         if bm and not continues:
             close()
-            cur = (ind, [bm.group(1)])
+            cur = (ind, bm.start(1), [bm.group(1)])
         elif continues:
-            cur[1].append(stripped)
+            cur[2].append(stripped)
         else:
             close()          # unindented prose ends the bullet; not a finding
     close()
-    return saw, findings
+    return saw, findings, free
 
 # -- citations parser (fallback) ---------------------------------------------
-# For output with no code-review contract heading: one info finding per line
-# citing file:line. Coarse (it counts evidence lines, not findings), so it runs
-# only when the headings parser has nothing to key on.
-def parse_citation_findings(text):
+# For output with no severity heading: one info finding per line citing
+# file:line, outside the contract's evidence sections. Coarse (it counts
+# citing lines, not findings), so it runs only when the headings parser has
+# nothing to key on.
+def parse_citation_findings(lines):
     out = []
-    for line in text.splitlines():
+    for line in lines:
         m = CITE.search(line)
         if not m:
             continue
@@ -370,10 +386,10 @@ def parse_citation_findings(text):
 
 def parse_findings(text):
     """Returns (parser_name, findings)."""
-    saw, findings = parse_heading_findings(text)
+    saw, findings, free = parse_heading_findings(text)
     if saw:
         return "headings", findings
-    return "citations", parse_citation_findings(text)
+    return "citations", parse_citation_findings(free)
 
 trials = []
 parsers = []

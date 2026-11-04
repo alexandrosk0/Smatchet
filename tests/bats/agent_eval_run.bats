@@ -150,6 +150,16 @@ print("parser=%s" % d["runMeta"]["parserByTrial"][0])
 PY
 }
 
+# parse_review — runs the review text on stdin through the real-mode runner
+# against $CASE and prints findings_of for the result.
+parse_review() {
+    local review="$WORK/review-stdin.md"
+    cat > "$review"
+    make_stub_exe "$review"
+    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$WORK/parsed.json" >/dev/null
+    findings_of "$WORK/parsed.json"
+}
+
 @test "real mode: severity headings parse one finding per bullet, evidence and clean sections skipped" {
     review="$WORK/review.md"
     cat > "$review" <<'REVIEW'
@@ -199,9 +209,11 @@ low Source/Core/src/secrets/Store.h 12
 parser=headings" ]
 }
 
-@test "real mode: empty severity sections yield zero findings, not a citation scan" {
-    review="$WORK/clean.md"
-    cat > "$review" <<'REVIEW'
+# Each output shape below is tested in both directions: a review whose
+# findings must all count, and one whose bullets must all be dropped.
+
+@test "real mode: empty-section markers under severity headings yield zero findings" {
+    run parse_review <<'REVIEW'
 ## Critical
 - No critical findings.
 
@@ -210,7 +222,10 @@ No findings.
 
 ## Medium
 - None: the diff is clean.
+- None
   The shift loop stays in bounds.
+- None — the loop at Source/Core/include/SmatchetUI.h:410 is bounds-safe.
+- No findings (checked Source/Core/include/SmatchetUI.h:415).
 
 ## Low / Nits
 - Nothing to report.
@@ -221,32 +236,26 @@ No findings.
 
 ## Outcome: applied
 REVIEW
-    make_stub_exe "$review"
-    out="$WORK/r.json"
-    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$out"
-    run findings_of "$out"
     [ "$status" -eq 0 ]
     [ "$output" = "parser=headings" ]
 }
 
-@test "real mode: a cite-free bullet that is not an empty-section marker still counts" {
-    review="$WORK/nocite.md"
-    cat > "$review" <<'REVIEW'
+@test "real mode: cite-free findings that start like an empty-section marker still count" {
+    run parse_review <<'REVIEW'
 ## High
+- None of the three callers holds mLock before calling Flush().
+- Nothing releases the DPAPI handle on the early-return path.
 - No bounds check on idx before the shift loop.
 REVIEW
-    make_stub_exe "$review"
-    out="$WORK/r.json"
-    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$out"
-    run findings_of "$out"
     [ "$status" -eq 0 ]
     [ "$output" = "high None None
+high None None
+high None None
 parser=headings" ]
 }
 
 @test "real mode: decorated and indented headings still open and close sections" {
-    review="$WORK/decorated.md"
-    cat > "$review" <<'REVIEW'
+    run parse_review <<'REVIEW'
 ## **High** (1)
 - Source/Core/src/secrets/Store.cpp:120 — secret lost on re-save.
  ## Verified clean
@@ -254,19 +263,52 @@ parser=headings" ]
 ## Low / Nits — 1
 - Source/Core/src/secrets/Store.h:12 — stale comment.
 REVIEW
-    make_stub_exe "$review"
-    out="$WORK/r.json"
-    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$out"
-    run findings_of "$out"
     [ "$status" -eq 0 ]
     [ "$output" = "high Source/Core/src/secrets/Store.cpp 120
 low Source/Core/src/secrets/Store.h 12
 parser=headings" ]
 }
 
+@test "real mode: a # line at a bullet's content column is wrapped text, not a heading" {
+    run parse_review <<'REVIEW'
+## High
+- a.cpp:1 — real finding
+  # shell prompt line inside a wrapped bullet
+- b.cpp:2 — second
+## Verified clean
+- c.cpp:3
+REVIEW
+    [ "$status" -eq 0 ]
+    [ "$output" = "high a.cpp 1
+high b.cpp 2
+parser=headings" ]
+}
+
+@test "real mode: no severity heading scans citations outside the evidence sections" {
+    run parse_review <<'REVIEW'
+## Findings
+- [P1] Plaintext PAT erased before encrypt succeeds — Source_Core/src/ConfigManager.cpp:374
+
+Finding 2 (LOW) — Source_Core/src/ConfigManager.cpp:390
+
+## Verified clean
+- Source_Core/src/ConfigManager.cpp:380 mcp_auth_token guard is correct.
+
+## Outcome: applied
+
+## Self-improvement
+- Checklist could name Source_Core/src/ConfigManager.cpp:374 style erase-before-encrypt paths.
+REVIEW
+    [ "$status" -eq 0 ]
+    [ "$output" = "info Source_Core/src/ConfigManager.cpp 374
+info Source_Core/src/ConfigManager.cpp 390
+parser=citations" ]
+}
+
 @test "real mode: a clean review with no severity heading scores finding_count 1.0 on a 0-finding case" {
     # The contract's clean shape: "no findings" + ## Verified clean + ## Outcome.
-    # Its evidence citations must not fall through to the citation scan.
+    # No severity heading, so the citation scan runs, but it must skip the
+    # Verified-clean evidence citations.
     clean_case="$REPO_ROOT/tests/agent-eval/code-review/cr-recentlru-false-positive.json"
     review="$WORK/clean-noseverity.md"
     cat > "$review" <<'REVIEW'
@@ -285,7 +327,7 @@ REVIEW
     bash "$RUNNER" "$clean_case" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$head"
     run findings_of "$head"
     [ "$status" -eq 0 ]
-    [ "$output" = "parser=headings" ]
+    [ "$output" = "parser=citations" ]
 
     cat > "$WORK/judge.py" <<'JUDGE'
 import json, sys
