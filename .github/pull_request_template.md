@@ -27,6 +27,15 @@
 adversarial-code-review: N findings, <disposition> (head=<sha>)
 adversarial-code-review: n/a — <reason the diff is trivial> (head=<sha>)
 -->
+<!-- REQUIRED ONLY when the diff touches the review-enforcement surface (gate and hook
+     scripts, scripts/dev/, scripts/git-hooks/, .github/, harness hooks,
+     project.config.json, the agent-layer pointer): uncomment and fill in the review by
+     someone OTHER than the author (a separate review-agent run given only the diff, a
+     review bot, or a person; self is rejected). The `Independent review (enforcement
+     surface)` check enforces it. `bash agent-layer/agents/scripts/core/record-review-verdict.sh
+     --independent "<reviewer>; N findings, <disposition>"` prints it head-bound.
+independent-review: <reviewer>; N findings, <disposition> (head=<sha>)
+-->
 
 
 ## Coverage gate override (optional — read if your PR touches `Source/Core/src/*.cpp` without adding tests)
