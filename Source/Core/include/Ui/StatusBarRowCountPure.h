@@ -40,7 +40,8 @@ inline Result Compute(const Inputs& in) {
     r.visible = in.loaded;
     if (in.sorted == 0 || in.sorted > in.loaded) {
         // No projection yet, or one left over from a larger snapshot: the grid's loading /
-        // error states return before the rebuild, so the stale sort list keeps its old size.
+        // error states return before the rebuild, and a shrinking streaming sync waits out the
+        // rebuild debounce, so the stale sort list keeps its old size.
         return r;
     }
     // While a debounced rebuild lags a streaming sync, the grid still draws the old

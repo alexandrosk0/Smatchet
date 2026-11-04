@@ -241,7 +241,7 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
         // Each tooltip goes in as the format string so the wrapper can translate it.
         if (rows.Filtered()) {
             ImGui::SetTooltip("Rows the focused grid shows after its search, filter or hidden parents, "
-                              "of all loaded rows.\n"
+                              "of the grid's rows.\n"
                               "UI font size and active theme — change them under View > Appearance.\n"
                               "Frame-rate metrics live in the Performance window.");
         } else if (rows.show) {
