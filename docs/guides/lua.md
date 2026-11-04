@@ -391,3 +391,39 @@ To ensure application stability, Smatchet enforces the following rules on all Lu
     - Ticket context-menu actions, global quick actions (**Scripts & Actions** -> **Tools & Actions**), MCP tool callbacks, and automation window Lua windows use **100,000 instructions** per invocation (same hook as setup-style runs).
     - Ticket processing (`process_ticket`) and UI rendering handlers are limited to **10,000 instructions**.
     If a script exceeds this limit (e.g., via `while true do end`), it will be immediately aborted and an error will be printed to the Lua Console.
+
+---
+
+## 5. Binding authors (C++)
+
+This section is for contributors changing the C++ side of the Lua surface. The binding sources sit in `Source/Core/src/`, which has no subsystem `AGENTS.md`, so these are their rules; the first line of each binding source points here.
+
+### File map
+
+| File | Holds |
+| :--- | :--- |
+| `AppController_LuaBindings.cpp` | State setup, the sandbox and timeout hook, `mcp.register_tool` parsing |
+| `AppController_LuaBindingsCore.cpp` | The ImGui-free glues on `ILuaBindingHost` (testable with a fake host) |
+| `AppController_LuaBindings_{Ui,Ai,Tickets,Draw}.cpp` | The `ui` / `ai` / ticket glues and the `draw` recorder + replay |
+| `AppController_LuaStubs.cpp` | No-op stubs that link when Lua is compiled out |
+| `LuaAutomationHost.cpp` | Automation log and error sinks |
+| `Source/Core/include/Lua/LuaHookGuard.h` | The RAII instruction-count hook (`kLuaHookInstructionBudget`) |
+
+`Source/Core/CMakeLists.txt` compiles the six `AppController_LuaBindings*.cpp` sources only when `SMATCHET_WITH_LUA_AUTOMATION` is ON and `AppController_LuaStubs.cpp` only when it is OFF.
+
+### Rules
+
+- **Stub parity follows where the `AppController` method is defined, not the glue.** A public `AppController` method declared outside the Lua gate but defined in a binding source needs a matching stub in `AppController_LuaStubs.cpp` and its name in `ExpectedLuaPublicSurface()` in `tests/Lua/LuaStubsCompile.test.cpp`, or the Lua-OFF build fails to link. A glue that calls an always-on method defined in an always-compiled TU (`AppController_AiContext.cpp`: `AddAiContext`, `ClearAiContext`, `PromptAi`, kept ungated so the glue is stable across Lua ON/OFF) needs no stub, and neither does a method declared inside the `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` block (its callers are gated too). Don't add a no-op mirror the build does not need.
+- **Keep the sandbox and the hook on.** Scripts run in the sandboxed library set with the instruction-count hook installed (`LuaHookGuard`; the restrictions and budgets are in § 4). Never disable either, even for a test.
+- **No per-frame Lua on a hot path.** Per-frame Lua dispatch was measured at about 390 µs per grid cell against about 5 µs for a replayed recording (`docs/plans/shipped/lua-recorded-cmd-list.md`). Don't expose a binding that runs per cell per frame unless the user accepts that cost; use the recorder path (`register_field_display_cached`), and write the per-frame trade-off in a comment at any binding that is hot anyway.
+- **Parse untrusted JSON bounded.** A binding that parses a string from Lua goes through `smatchet::json_safe::ParseBounded` (as `decode_json` and `mcp.register_tool`'s `parameters_json` do) and returns the error string to Lua; never a bare `nlohmann::json::parse`, never a throw across the sol2 boundary.
+- **sol2 v2.20.6 limits.** A usertype member function (a `draw` recorder method) takes plain arguments only: sol2 rejects a member-function pointer whose first parameter is `sol::this_state`, so a member reports misuse by throwing `std::runtime_error`, which sol2's protected call surfaces as a Lua error. Free glue functions may take `sol::this_state` (see `AppController_LuaBindingsCore.cpp`). `state.new_usertype<T>(name, ...)` takes the name plus alternating method-name / member-pointer pairs, with no `sol::no_constructor` sentinel. Use `sol::optional<T>` for nullable arguments and `sol::protected_function` to store callbacks.
+- **Lua 5.3 is compiled as C++.** The root `CMakeLists.txt` sets `LANGUAGE CXX` on the Lua sources so a `luaL_error` unwinds through C++ destructors (what makes `LuaHookGuard` crash-safe), and patches `luaconf.h` at configure time with `extern "C"` linkage (`SMATCHET_LUA_EXTERN_C_PATCH`) so the mangled names still match sol2's `lua.hpp` callers. Don't drop either half; include Lua through `<lua.hpp>` or `sol/sol.hpp`.
+- **Keep the user references in step.** A change to the binding surface updates this guide (§ 2) and, for hooks, the top comment block of `scripts/SmatchetHooks.lua`, which is the user-facing hook reference.
+
+### Smoke recipe
+
+1. Build the Lua-ON app: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`.
+2. Check the Lua-OFF side: `cmake --preset posix-core-check` then `cmake --build --preset posix-core-check` (Linux, compiles the stubs without linking), or configure as the CI ASan lanes do (`cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF`) and build that preset to link the stubs.
+3. Exercise the binding: `Smatchet.exe cmd debug.lua_eval --code="return 1 + 1" --yes`, or `bash scripts/dev/test-lua-error-log.sh` for the log and error sinks. The sandbox, timeout and stub-sentinel tests live in `tests/Lua/` (built with `SMATCHET_BUILD_LUA_TESTS=ON`).
+4. Report the binding name and signature, the stub (or why none is needed), and any per-frame trade-off comment.

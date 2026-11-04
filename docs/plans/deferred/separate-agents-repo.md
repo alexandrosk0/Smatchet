@@ -1,5 +1,7 @@
 # Separate `agents/` into a standalone repo
 
+> **Note (2026-11-02):** the `agent-layer/` submodule ([ADR-0025](../../adr/0025-agent-surface-extraction-submodule.md)) delivered this extraction in a different shape, and the layer has since retired every agent except `architect`, `code-review` and `security-review`; their procedures live in skills, rule docs and the subsystem leaf `AGENTS.md` files. The agent lists below record the roster when this plan was written.
+
 ## Context
 
 `agents/` (26 agent definitions + `_shared/` skills, templates, token-tracking — ~42 files, ~5,000 LOC) is currently tracked inside the Smatchet repo. The content is increasingly reusable across projects: the workflow patterns in `code-review`, `security-review`, `mechanic`, `architect`, `handoff-implementer`, `pr-iterator`, and the entire skills + token-tracking machinery are generic. Today every project that wants the same loop has to copy-paste these files and drift independently.

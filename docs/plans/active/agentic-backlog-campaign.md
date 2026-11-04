@@ -76,7 +76,7 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 **B9 · git hygiene tooling**
 28. `scripts/dev/git-leftover-audit.sh` (new) — read-only loss/residue map keyed on `gh pr` state vs `origin/develop`.
 29. `scripts/dev/worktree-prune.sh` (new) — ff-pull + delete `[gone]` branches per worktree; refuse on dirty.
-30. `agents/core/git-janitor.md` + `--light` periodic merged-only prune.
+30. the git-janitor skill (`agents/_shared/skills/git-janitor/`) + `--light` periodic merged-only prune.
 
 **B10 · Docs/process one-liners** (pure-docs, one PR)
 31. `AGENTS.md` + `docs/agent-rules/*` + `docs/plans/active/_plan-template.md` + agent prompts — ~12 forcing-rule edits (enumerated in § Risks/non-goals member list).

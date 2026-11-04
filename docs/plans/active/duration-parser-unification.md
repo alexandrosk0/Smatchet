@@ -113,7 +113,7 @@ Diff touches `Source/Core/` — declaring each:
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `tests/Core/DurationParsePure.test.cpp` is the primary gate. Fixtures must cover every clause of § The parser contract:
+- **Bucket A (pure-logic ctest, doctest rig)**: `tests/Core/DurationParsePure.test.cpp` is the primary gate. Fixtures must cover every clause of § The parser contract:
   - decimals (`"2.5h"` → 9000, `"0.5h"` → 1800), multi-unit (`"3h 30m"`, `"3h30m"`), mixed decimal + multi-unit (`"1.5h 30m"`)
   - rounding (`"0.25m"` → 15, `"1.005h"` → 3618), and that it is integer-scaled, not floating point
   - rejects: second decimal point (`"1.2.3h"`), decimal on a bare number (`"1.5"`), valid-prefix-plus-junk (`"3h 30m left"`), pure garbage (`"a b c"`, `"~"`, `"..."`)

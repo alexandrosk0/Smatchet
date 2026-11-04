@@ -69,7 +69,7 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
     }
 }
 
-constexpr std::size_t kFetchedRowsPerFrame = 20;    // rows saved to SQLite per frame (3 ms budget)
+constexpr std::size_t kFetchedRowsPerFrame = 20;    // fetched rows merged per frame (the worker persisted them)
 constexpr std::size_t kUnchangedRowsPerFrame = 500; // cache-served rows: memory-only, so a bigger slice
 
 // Merges one frame's rows into the in-memory roster (smatchet::sync::MergeRowsIntoActive: fresh rows always replace,
@@ -449,7 +449,7 @@ void TicketSyncService::TickStreamingApply() {
         return;
     }
 
-    // 3. Process incoming streaming ticket batches in-memory and write to SQLite with budget.
+    // 3. Merge incoming streaming ticket batches in memory, row-capped per frame (the worker persisted them).
     DrainPendingStreamingBatches();
 
     // 4. When the worker finished and the queue is drained, finalise the session.

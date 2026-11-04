@@ -1,10 +1,11 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
 #include "AppController.h"
 
 // Phase E (AI assistant) note: the `ai.*` Lua glues live entirely inside
-// `AppController_LuaBindings.cpp` (the SMATCHET_WITH_LUA_AUTOMATION=ON TU) and
+// `AppController_LuaBindings_Ai.cpp` (a SMATCHET_WITH_LUA_AUTOMATION=ON TU) and
 // resolve through `__smatchet_app_ui` to call `AppController::AddAiContext` /
 // `ClearAiContext` / `PromptAi`. Those AppController members are **always-on**
-// stubs defined in `AppController.cpp` (gated only on the implementation side
+// stubs defined in `AppController_AiContext.cpp` (gated only on the implementation side
 // via `#if defined(SMATCHET_WITH_AI)`), compiled unconditionally in both Lua
 // modes. The OFF / DX12 build therefore needs no `ai.*`-specific entry here.
 // Sentinel: `tests/Lua/LuaStubsCompile.test.cpp` continues to enforce the

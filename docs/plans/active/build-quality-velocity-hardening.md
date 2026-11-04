@@ -100,7 +100,7 @@ Sprint 1 (the first PR or two — split along seams if the diff exceeds the per-
 2. [`CMakeLists.txt:564`](../../../CMakeLists.txt) — route the sol2 + cpr/ghc/luaconf patches through the helper; SHA-pin cpr/sqlitecpp/sol2 (#1).
 3. [`Source/Core/src/Sync/OfflineQueueService.cpp:666`](../../../Source/Core/src/Sync/OfflineQueueService.cpp) — reset the latch under the schedule mutex before the null-Mutations return (#16).
 4. [`Source/Core/src/Tracker/PlaneIssueMutation.cpp:327`](../../../Source/Core/src/Tracker/PlaneIssueMutation.cpp) — add the `// catch-all-ok:` marker (#37).
-5. A DX12 host TU ([`Source/Core/src/Ui/SmatchetImGuiHost.cpp`](../../../Source/Core/src/Ui/SmatchetImGuiHost.cpp), confirmed to include `imgui.h`) — `static_assert(sizeof(ImWchar)==4)` (#23). Route via `unreal-bridge`.
+5. A DX12 host TU ([`Source/Core/src/Ui/SmatchetImGuiHost.cpp`](../../../Source/Core/src/Ui/SmatchetImGuiHost.cpp), confirmed to include `imgui.h`) — `static_assert(sizeof(ImWchar)==4)` (#23). Route via the unreal-bridge area docs (`Source/UnrealPlugins/SmatchetImGuiPlugin/README.md`, `cpp-rules.md` § Dual-target).
 6. [`Source/Core/include/AppController.h:40`](../../../Source/Core/include/AppController.h) — delete the dead `JiraClient.h` include (#3).
 7. [`project.config.json:91`](../../../project.config.json) — fix the visual-validation glob (#4).
 8. [`tests/CMakeLists.txt:12`](../../../tests/CMakeLists.txt) — glob-vs-list configure assert (#5).
@@ -130,7 +130,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 
 **Fires** — Sprint-1 #16/#23/#3 and all of Sprint-2's structural items touch `Source/Core/`.
 
-1. **PR-fast CI** — the header/pImpl slices (#2/#19/#20) touch the `AppController` / `Command` hub → scenario **`idle`** (`command-palette-fuzzy` is bucket-C-only — requires `--screenshotPath` — per `agents/core/perf-gatekeeper.md` § Curated diff → scenario map); a slice that also touches grid files adds `priority-grid-scroll`. The Sprint-1 bug fixes are off any hot path.
+1. **PR-fast CI** — the header/pImpl slices (#2/#19/#20) touch the `AppController` / `Command` hub → scenario **`idle`** (`command-palette-fuzzy` is bucket-C-only — requires `--screenshotPath` — per `scripts/dev/perf-scenario-map.json` `screenshotOnly`); a slice that also touches grid files adds `priority-grid-scroll`. The Sprint-1 bug fixes are off any hot path.
 2. **Pillar 2 static scanner** — no new sync-I/O reachable from `ImGui::*` is added by any slice.
 3. **Dispatcher drain** — bug #16 touches `OfflineQueueService` replay scheduling, not `MainThreadDispatcher::Drain()`; no change.
 4. **Visible-cue bucket-E harness** — no new > 100 ms sync-stall code path.
@@ -149,7 +149,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: bug #16 — a `TickOfflineFieldEdits` test with null `Mutations()` asserting a later tick is not latched out; #5/#15/#24 each ship a `--selftest`/bats case proving the gate fails on bad input and passes on good.
+- **Bucket A (pure-logic ctest, doctest rig)**: bug #16 — a `TickOfflineFieldEdits` test with null `Mutations()` asserting a later tick is not latched out; #5/#15/#24 each ship a `--selftest`/bats case proving the gate fails on bad input and passes on good.
 - **Bucket E (ImGui Test Engine)**: #12 adds boot-open-assert-widget smokes for the 8 uncovered windows.
 - **Bash-driver scenario / screenshot / sanitizer**: #11/#13 wire the per-PR UBSan + perf gate; #1 — a CI smoke asserting the sol2 metatable token is present after configure.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) on every Source/Core slice — the #23 `static_assert` must compile in both worlds.
@@ -163,7 +163,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 
 - Any language/std swap (vlang, C++17/20) — the rejected premise.
 - The backlog/accept tier (#26/#40/#34/#35/#36) — ride-along, no dedicated work.
-- Applying the four staged bug fixes — separate subsystem PRs (`offline-sync`, `tracker-backend`, `unreal-bridge`, `build-doctor`).
+- Applying the four staged bug fixes — separate subsystem PRs (Sync, Tracker, Unreal bridge, build).
 - The raw 40-finding audit JSON + per-bug fix specs — session scratch, not committed; this plan inlines the actionable subset.
 - The 4 developer-owned `SmatchetPreferencesUi*` / UI WIP files — untouched.
 

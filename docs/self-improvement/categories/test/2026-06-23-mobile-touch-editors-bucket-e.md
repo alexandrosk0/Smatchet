@@ -23,7 +23,7 @@ The full behavioural matrix is still manual:
 Hand-verifying five editors × {open, commit, discard} per slice is slow and non-deterministic (IME timing,
 screenshot scaling). The pure seams (`ShouldOpenCellEditorByLongPress`, `ShouldCommitTouchPopupEdit`,
 `ShouldCloseTouchPopupEdit`) are already unit-tested; the gap is the **ImGui glue** that wires them —
-which `test-rig` refuses (ImGui surface). That is exactly bucket-E (ImGui Test Engine) territory.
+which the doctest rig refuses (ImGui surface). That is exactly bucket-E (ImGui Test Engine) territory.
 
 ## Action plan
 

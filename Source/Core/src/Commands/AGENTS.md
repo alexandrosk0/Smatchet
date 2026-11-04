@@ -2,7 +2,7 @@
 
 Scoped rules for `Source/Core/src/Commands/` (the unified command system: CLI + Palette + MCP + Lua + Scenarios). Global rules stay in the root [`AGENTS.md`](../../../../AGENTS.md). Design: [`docs/plans/shipped/command-system-plan.md`](../../../../docs/plans/shipped/command-system-plan.md).
 
-This is a **strict lint zone** (root `AGENTS.md` § Tiered enforcement zones).
+This is a **strict lint zone** (`agent-layer/docs/agent-rules/cpp-rules.md` § Tiered enforcement).
 
 ## Invariants
 
@@ -14,3 +14,10 @@ This is a **strict lint zone** (root `AGENTS.md` § Tiered enforcement zones).
 ## Before you edit
 
 - A new command = one `CommandRegistry` registration + its handler; the Palette, CLI, MCP schema, and Lua binding pick it up from the registry. Adding a config key or scenario step routes through the same registry contract.
+- **Pick the file.** A general command goes in its category bucket `Builtin/BuiltinCommands_<Category>.cpp`, whose `Register<Category>Commands` the thin dispatcher `BuiltinCommands.cpp` calls in a fixed order (first-seen wins, so don't reorder it). Saved-view CRUD (`view.*`) lives in `ViewCommands.cpp`, panes (`pane.*`) in `PaneCommands.cpp`, window toggles (`view.toggle.*`) in `ViewToggleCommands.cpp`. A scripted flow is a scenario: `Scenarios/<Name>Scenario.cpp`, its factory registered in `Scenarios/SmatchetScenarioRegistry.cpp`, run by `scenario.run --name=<name>`.
+- **Write `Summary` and `Params` first.** MCP publishes `Command::Summary` verbatim as the tool description and builds the tool's `inputSchema` from `Params` (`Command::BuildJsonSchema`: each `ParamSpec`'s type, description, default, enum, required). Write both for an LLM reader, since a wrong spec is a wrong MCP tool. `Description` carries the returns shape and examples (`commands.help`, CLI `--help`). Tool-surface rules: [`Source/Plugins/Mcp/AGENTS.md`](../../../Plugins/Mcp/AGENTS.md).
+- **A feature-gated command still builds with its flag OFF.** A command that needs `SMATCHET_WITH_MCP` or `SMATCHET_WITH_LUA_AUTOMATION` either gates its registration (`view.toggle.mcp_server` in `ViewToggleCommands.cpp`) or registers in every build and returns a structured `HandlerError` from the `#else` branch (`debug.lua_eval` in `Builtin/BuiltinCommands_Debug.cpp`). Lua-only `AppController` methods it calls need their stubs: [`docs/guides/lua.md`](../../../../docs/guides/lua.md) § 5.
+- **User-facing text goes through `SmatchetLocalization::T(key, englishFallback)`** (`SmatchetLocalization.h`; its `Label` / `WindowTitle` / `Format` siblings for ImGui labels, window titles and format strings) — never `Loc(...)`, `Translate(...)` or a new wrapper. That covers the palette chrome, toasts and labels; `Command::Title`, `Summary` and `Params` stay plain English (MCP publishes `Summary` and `Params` verbatim). Keep the fallback and the table in step: `agent-layer/docs/agent-rules/cpp-rules.md` § Localization.
+- **Scenarios never make a live HTTP call.** A command that reaches the network is left out of scenario steps, or the scenario runs against a fixture backend (`Tracker/*FixtureBackend`).
+- **Keep the user docs in step.** User-facing commands are documented in `docs/guides/cli.md` (Command catalogue), `docs/guides/lua.md` (`commands` module) and `docs/guides/mcp.md` (Built-in Tools); update the ones the change touches.
+- **Smoke recipe.** With a build running and MCP on: `Smatchet.exe cmd commands.help --name=<command> --pretty` shows the schema MCP publishes; run the command from one surface (`Smatchet.exe cmd <command> ...`, with `--dry-run` first for a mutator), and name every surface it appears on (CLI / palette / MCP / Lua / scenario). Then `bash scripts/dev/test-command-contract.sh`, which runs the `command-contract-sweep` scenario over every registered command's error-envelope contract.

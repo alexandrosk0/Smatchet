@@ -7,7 +7,7 @@
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob; also run by
 # scripts/dev/test-docs.sh / doc-validation.yml (the linter gates doc shapes).
 #
-# Exit codes follow the test-author convention:
+# Exit codes follow the test-script convention (scripts/dev/test-all.sh header):
 #   0 — every unittest scenario passed
 #   1 — at least one failed
 #   2 — no working python on PATH

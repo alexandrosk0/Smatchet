@@ -63,7 +63,7 @@ done
 
 # The standalone agent-layer probe (plan agent-surface-extraction-repo row 9b) —
 # see HOST_ONLY_STEPS below. Source/ under the host tree is the same probe
-# test-all.sh's LAYER_HOST_SUT_RE and test-agent-contract.sh's host_content_present() use.
+# test-all.sh's LAYER_HOST_SUT_RE uses.
 HOST_TREE="${PROJECT_ROOT:-$ROOT}"
 LAYER_STANDALONE=0
 if [ ! -d "$HOST_TREE/Source" ]; then

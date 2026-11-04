@@ -532,6 +532,7 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     ImGuiIO& io = ImGui::GetIO();
 
     s.iniPath = ConfigManager::GetImGuiSettingsPath();
+    // Every boot path that sets io.IniFilename runs this migration; list at ConfigManager::kCurrentLayoutSchemaVersion.
     {
         TrackerConfig bootCfg = ConfigManager::Load();
         if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {

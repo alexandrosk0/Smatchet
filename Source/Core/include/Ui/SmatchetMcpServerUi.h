@@ -1,4 +1,5 @@
 #pragma once
+// Draws a McpServerStatus snapshot; server logic stays in McpPlugin (Source/Plugins/Mcp/AGENTS.md).
 
 struct TrackerConfig;
 class AppController;

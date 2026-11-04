@@ -1,0 +1,21 @@
+# MCP plugin — agent rules
+
+Scoped rules for `Source/Plugins/Mcp/` (the static MCP server plugin: JSON-RPC and REST over HTTP/SSE, `tools/list` + `tools/call`, auth and rate limiting). Global rules stay in the root [`AGENTS.md`](../../../AGENTS.md). User-facing reference: [`docs/guides/mcp.md`](../../../docs/guides/mcp.md). How a command becomes a tool: [`Source/Core/src/Commands/AGENTS.md`](../../Core/src/Commands/AGENTS.md).
+
+This is a **strict lint zone** (`agent-layer/docs/agent-rules/cpp-rules.md` § Tiered enforcement).
+
+## Invariants
+
+- **Tools come from the registry, not from this directory.** `tools/list` publishes each `CommandRegistry` command as `name`, `Summary` as `description` and `BuildJsonSchema()` as `inputSchema`, plus the Lua tools registered through `mcp.register_tool` and the opt-in `run_lua` entry; `tools/call` dispatches into the registry or the Lua callback. A new tool is a registered command (or a Lua tool), never a handler with its own logic here.
+- **Every route authorizes first.** Each route handler calls `Authorize` before it does anything else (`X-Smatchet-Token`, compared in constant time), and both `tools/call` entry points (REST and JSON-RPC) take a token from `AllowToolsCall` before dispatching.
+- **A registry command's failure reaches the client as the command envelope.** Registry dispatch on either route, the unknown-command fallback and the REST rate limit carry `{"ok":false,"error":{"code":...}}` in `content[0].text`, over HTTP 200 on REST (`DispatchRegistryToolsCall`, `RestToolsCallWithinRateLimit`, `HandleJsonRpcRegistryCall`). The other failure paths keep their own shapes: REST body-parse, catch-all and Lua / `run_lua` errors return MCP `isError` with HTTP 4xx/5xx, the JSON-RPC rate limit and Lua errors return JSON-RPC `error` objects, and `Authorize` answers 401/403 in plain text. A new failure path uses the shape of the route it sits on; it never adds another one.
+- **The plugin is static and compiled out when MCP is off.** It builds only under `SMATCHET_WITH_MCP` (Standalone; `SMATCHET_WITH_MCP_UNREAL` is OFF, so Unreal packages ship without it) as the static `SmatchetPlugin_Mcp`, started through `PluginHost` — no `dlopen` / `LoadLibrary`. A call into MCP from code outside this directory sits under `#if defined(SMATCHET_WITH_MCP)` so the OFF build links.
+- **The UI shows the server; it does not run it.** `SmatchetMcpServerUi` (`Source/Core/src/Ui/`) draws a `McpServerStatus` snapshot it reads through `PluginHost`; routes, lifecycle and restart decisions (`NeedsRestart`) stay in `McpPlugin`. No server logic in the UI layer.
+
+## Before you edit
+
+- **A tool description is read by an LLM.** MCP clients show `description` verbatim to the model choosing a tool, so write a command's `Summary` and each param's description for that reader, and update them (and any example in `docs/guides/mcp.md`) whenever the schema changes.
+- **Nothing validates a schema, so check it yourself.** Malformed Lua `parameters_json` degrades to an empty schema with only a `LOG_DEBUG`, and a well-formed but invalid JSON Schema is published as-is; either way clients break or drop the tool silently. Read the published entry back from `tools/list` after a change.
+- **File map.** `McpPlugin.{h,cpp}` holds routes, auth and the server thread; `McpJsonRpcPure.{h,cpp}` the JSON-RPC parsing and envelope builders; `McpAuthTokenPure.h` and `McpRateLimitPure.h` the pure token and token-bucket logic. The pure files are doctest-covered under `tests/Plugins/Mcp/`.
+- **Smoke recipe.** Build `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` (MCP is Standalone only). With the app running and MCP enabled, list the tools with `curl -s -H "X-Smatchet-Token: <token>" http://127.0.0.1:42360/mcp/tools/list` and confirm the new or changed entry, or read one through the CLI (which attaches over MCP): `Smatchet.exe cmd commands.help --name=<command> --pretty`. Auth regressions: `bash scripts/dev/test-spawn-mcp-default-auth.sh` and `bash scripts/dev/test-ui-mcp-live-http-auth.sh` (bucket E). Report the tool name, the schema diff, the command it bridges to, and the `docs/guides/mcp.md` update.
+- **Keep the user guide in step.** A change to the tool surface, routes, auth or settings updates `docs/guides/mcp.md`.

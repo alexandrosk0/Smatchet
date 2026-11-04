@@ -99,7 +99,7 @@ Replace re-inlined helper copies with calls to the canonical header helper (base
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: full doctest rig green each commit (`ninja-test-*` preset for the platform; `ninja-test-linux` in a Linux container); parser suites pass unchanged; new doctests for sanitizer-table coverage + consent gate.
+- **Bucket A (pure-logic ctest, doctest rig)**: full doctest rig green each commit (`ninja-test-*` preset for the platform; `ninja-test-linux` in a Linux container); parser suites pass unchanged; new doctests for sanitizer-table coverage + consent gate.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: existing UI suites only — no new bucket-E coverage needed (no UI behavior change); theme roundtrip covered by the bash drivers below.
 - **Bash-driver scenario / screenshot / sanitizer**: `bash scripts/dev/test-theme-roundtrip.sh` + `bash scripts/dev/test-theme-syntax-colors.sh` after commit 1; sanitizer preset build after every commit of the wave (covers commit 2's `ConfigManager` sanitizer-coverage change and commit 4's service extraction alike).
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).

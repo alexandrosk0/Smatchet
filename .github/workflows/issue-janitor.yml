@@ -1,10 +1,11 @@
 name: Issue janitor (advisory)
 
 # Periodic GitHub Issue triage (issue-triage protocol, ADR-0014). Runs
-# issue-sweep.sh --dry-run over open Issues and prints verdicts + the
-# [issue-propose] top-P0/P1 line to the job log. ADVISORY: it does NOT mutate
-# Issues (no --apply) — relabel/close stay a human-or-issue-janitor-agent
-# decision (never auto-close a human Issue from a cron). Weekly + manual.
+# issue-sweep.sh with no flag (dry-run is its default) over open Issues and
+# prints verdicts + the [issue-propose] top-P0/P1 line to the job log. ADVISORY: it does NOT mutate
+# Issues (no --apply) — relabel/close stay a human decision or a session's
+# triage pass (agent-layer/docs/agent-rules/issue-triage.md § Triage cadence);
+# never auto-close a human Issue from a cron. Weekly + manual.
 
 on:
   schedule:
@@ -46,7 +47,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: issue-sweep --dry-run (verdicts + [issue-propose])
+      - name: issue-sweep dry run (verdicts + [issue-propose])
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -291,6 +291,7 @@ void ConfigureGlfwWindowHints(BootstrapContext& ctx) {
 void SetupImGuiContext() {
     ImGuiIO& io = ImGui::GetIO();
     static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
+    // Every boot path that sets io.IniFilename runs this migration; list at ConfigManager::kCurrentLayoutSchemaVersion.
     {
         TrackerConfig bootCfg = ConfigManager::Load();
         if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {

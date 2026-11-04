@@ -560,7 +560,8 @@ if ra_is_substantive branch "$base_ref"; then
     cat <<EOF
 pre-ship: CODE REVIEW REQUIRED — substantive diff ($RA_SUBSTANTIVE_REASON).
   fingerprint: $(ra_fingerprint branch "$base_ref")
-  Dispatch the code-review agent NOW, concurrently with the stages below. It writes
+  Dispatch the project's code-review subagent (agent-layer/agents/core/code-review.md) NOW,
+  concurrently with the stages below. It writes
   .review-findings.json stamped with that fingerprint; the ack then refuses without it.
   Record afterwards:  bash scripts/dev/pre-ship.sh --ack-review $base_ref
 EOF
@@ -684,7 +685,8 @@ preship_require_findings() {
         cat >&2 <<EOF
 pre-ship: FAIL — no code-review artifact found (.review-findings.json).
   An ack with no review behind it is a keystroke, not a review.
-  1) run the code-review agent on the diff vs $base_ref,
+  1) run the project's code-review subagent (agent-layer/agents/core/code-review.md) on the
+     diff vs $base_ref — the built-in /code-review command writes no artifact,
   2) it writes .review-findings.json stamped with the fingerprint from
      bash scripts/dev/pre-ship.sh --review-fingerprint $base_ref
   (Emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1 — logged, discouraged.)
@@ -762,7 +764,9 @@ elif [ "$review_substantive" -eq 1 ]; then
 pre-ship: FAIL — substantive C++ diff ($reason) requires a code review before push.
   No current review ack found (.review-ack ${have_fp:+is stale}${have_fp:-missing}).
   1) ensure the change is committed / final,
-  2) run the code-review skill or agent on the diff vs $base_ref,
+  2) run the project's code-review subagent (agent-layer/agents/core/code-review.md) on the
+     diff vs $base_ref; it writes .review-findings.json. The harness's built-in
+     /code-review command does not write that file,
   3) record it:  bash scripts/dev/pre-ship.sh --ack-review${base_ref:+ $base_ref}
   (Trivial/emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1 — logged, discouraged.)
 EOF

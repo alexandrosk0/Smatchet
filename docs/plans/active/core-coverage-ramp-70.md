@@ -12,14 +12,14 @@ Intended outcome: *after this lands, measured `Source/Core` line coverage clears
 
 ## Approach
 
-Two-phase, test-first. **Phase A — add tests to the biggest gaps.** Read the per-package `line-rate` from a `coverage.yml` run's `coverage.xml` artifact to target the lowest-covered strict-zone units, and author `test-rig` unit tests until the global measured rate clears 70% with a stable ≥2pt headroom. **Phase B — flip the threshold** (one line each) in `project.config.json` § coverage `threshold` 65→70 and `coverage.yml` `--threshold 65`→`70`, and remove `coverage-out-of-band` from the class once the backend-impl surface clears the floor.
+Two-phase, test-first. **Phase A — add tests to the biggest gaps.** Read the per-package `line-rate` from a `coverage.yml` run's `coverage.xml` artifact to target the lowest-covered strict-zone units, and author doctest unit tests (`test-authoring` skill § Unit rig) until the global measured rate clears 70% with a stable ≥2pt headroom. **Phase B — flip the threshold** (one line each) in `project.config.json` § coverage `threshold` 65→70 and `coverage.yml` `--threshold 65`→`70`, and remove `coverage-out-of-band` from the class once the backend-impl surface clears the floor.
 
 The backend-impl slice (`backend-impl-coverage-recovery`) is the highest-leverage Phase-A target: extend the scripted-HTTP fixture pattern in `tests/support/JiraCatalogHttpFixture.h` to the search / mutation / user-meta paths of `JiraClient` (the catalog fixture currently exercises catalog endpoints only), then to Plane/GitHub impl TUs as they get linked. Trade-off: the threshold flip is gated on a *measured* number from the Windows job — do not flip on a projected or locally-estimated figure, or the gate red-bars `develop`.
 
 ## Files to modify
 
 1. `tests/support/JiraCatalogHttpFixture.h` — extend the scripted-httplib fixture to cover search/mutation/user-meta request paths (not just catalog endpoints).
-2. `tests/Core/*.test.cpp` (new, per lowest-covered unit) — `test-rig`-authored cases on the units the `coverage.xml` artifact flags as the biggest gaps; register each in `tests/CMakeLists.txt` (source + test TU, mirroring the existing `Core/*Pure.test.cpp` rows).
+2. `tests/Core/*.test.cpp` (new, per lowest-covered unit) — new doctest cases on the units the `coverage.xml` artifact flags as the biggest gaps; register each in `tests/CMakeLists.txt` (source + test TU, mirroring the existing `Core/*Pure.test.cpp` rows).
 3. `project.config.json` — § coverage `threshold` 65 → 70 (Phase B only, after measured ≥70).
 4. `.github/workflows/coverage.yml` — `--threshold 65` → `70` at the blocking capture step (Phase B only).
 5. `docs/plans/coverage-threshold-graduation.md` — one-line § Implementation-log append recording the flip date + measured rate (PR-only edit of a shipped plan).
@@ -54,7 +54,7 @@ N/A — this plan adds test TUs and flips two config numbers; it extracts/splits
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: the new `tests/Core/*.test.cpp` green under `cmake --build --preset ninja-test-msvc && ctest --output-on-failure`.
+- **Bucket A (pure-logic ctest, doctest rig)**: the new `tests/Core/*.test.cpp` green under `cmake --build --preset ninja-test-msvc && ctest --output-on-failure`.
 - **Bucket E**: N/A — no UI/screenshot surface.
 - **Bash-driver scenario / screenshot / sanitizer**: N/A.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) — confirms the new fixture/test TUs don't break the app build.

@@ -48,7 +48,7 @@ Grouped by phase (list > 10 entries).
 12. `scripts/dev/test-all.sh` (edit) — invoke `test-kit-manifest.sh` in the doc-validation group.
 
 **Phase B — purity to zero:**
-13. `agents/core/*.md` + `agents/_shared/**` (edit, sweep) — replace project literals (`Smatchet`, `Source/Core`, `SMATCHET_*`, `ITrackerClient`, build presets) with `project.config.json`-sourced placeholders or generic phrasing; burn down `portable-purity-baseline.txt`. Mechanical, `mechanic`-agent shaped; per-file, reviewable.
+13. `agents/core/*.md` + `agents/_shared/**` (edit, sweep) — replace project literals (`Smatchet`, `Source/Core`, `SMATCHET_*`, `ITrackerClient`, build presets) with `project.config.json`-sourced placeholders or generic phrasing; burn down `portable-purity-baseline.txt`. Mechanical (`process-rules.md` § Mechanical edits); per-file, reviewable.
 14. `docs/high-integrity/portable-purity-baseline.txt` (shrinks each sweep PR) — the burn-down ledger.
 15. `agents/scripts/core/test-portable-purity.sh` (edit) — add `--count` (print baseline size) for burn-down tracking + a `--strict` zero-tolerance mode that fails on ANY leakage (graduation switch, flipped once baseline empties).
 16. `docs/PORTABILITY.md` (edit) — document the version/manifest/release model + the "purity-baseline = 0 before publish" bar.

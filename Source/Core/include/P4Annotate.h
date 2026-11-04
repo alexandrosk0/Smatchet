@@ -11,6 +11,35 @@
 #include <unordered_map>
 #include <vector>
 
+/**
+ * Perforce annotate: `p4 annotate` / `describe` / `changes` / `users` through the local `p4`
+ * executable (there is no client library). Rules for this header and P4Annotate.cpp:
+ *
+ * - One spawn site. Every Perforce call goes through P4RunCommand, which consults
+ *   cfg.P4RunOverride (the zero-credential test seam, ADR-0009) before its single
+ *   SubprocessCapture::Run. Never add a second spawn (another Run, system(), popen) or call p4
+ *   from anywhere else; the absolute lint rule `p4-single-spawn` checks both counts.
+ * - P4RunCommand blocks for a server round trip: call it from a worker thread, never the UI
+ *   thread (it warns through UiThreadAffinity when it is).
+ * - Failures stay visible. A failed spawn or non-zero exit becomes an Error / Err built with
+ *   FormatP4CommandError (P4ErrorUtil.h), which keeps p4's own stderr so the user can fix the
+ *   login, workspace or depot path. Never swallow it.
+ * - Describe through the cache. Changelist details come from P4ChangelistDescribeCache
+ *   (thread-safe, bounded LRU), never from a `p4 describe` per annotated line. A failure other
+ *   than "no such changelist" is retried after kLookupRetryAfterSeconds, never cached as final.
+ * - P4LineAnnotate::Approximate marks a line answered by the `p4 changes -m 1` fallback, and
+ *   LineSnippet is export context (Jira comment, AI). How the views render both:
+ *   Source/Core/src/Ui/AGENTS.md § Annotate views and syntax highlight
+ * - A new annotate field goes in P4LineAnnotate / P4AnnotatedLine / P4ChangelistDetails and is
+ *   filled in the matching parse step (the pure helpers in P4AnnotateParse.h).
+ *
+ * Tests: the pure parsers in tests/Core/P4AnnotateParse.test.cpp; zero-credential end-to-end
+ * runs install tests/support/FakeP4Runner.h on AnnotateAnalysisConfig::P4RunOverride with the
+ * fixtures in tests/fixtures/p4/ (tests/Core/P4AnnotateE2E.test.cpp, P4DescribeCacheE2E.test.cpp).
+ * Production leaves P4RunOverride empty. Before calling a change done, also run it against a real
+ * depot file: login and workspace-mapping problems only show against a live server.
+ */
+
 struct P4LineAnnotate {
     std::string Changelist;
     std::string User;

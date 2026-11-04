@@ -2,7 +2,7 @@
 
 Scoped rules for `Source/Core/src/Persistence/` (SQLite-backed local cache, audit trail, field-edit audit source). Global rules stay in the root [`AGENTS.md`](../../../../AGENTS.md).
 
-This is a **strict lint zone** (root `AGENTS.md` § Tiered enforcement zones).
+This is a **strict lint zone** (`agent-layer/docs/agent-rules/cpp-rules.md` § Tiered enforcement).
 
 ## Invariants
 
@@ -16,3 +16,6 @@ This is a **strict lint zone** (root `AGENTS.md` § Tiered enforcement zones).
 ## Before you edit
 
 - The cache owns `CachedTicket` (the in-memory + on-disk issue row) and `PendingCreate` / `PendingFieldEditRecord` (offline-queue payloads). Tracker reads/writes these; Sync replays them. A schema touch here ripples to both — check `Source/Core/src/Tracker/` and `Source/Core/src/Sync/`.
+- **A cached ticket has two storage axes.** `CachedTicket::fieldValues` maps a field id to its display string; the parallel `fieldRichValues` maps the same id to rich content (ADF JSON or HTML). On disk they are `ticket_field_values_v2` and `ticket_field_rich_values_v2`. A new cached field type uses one of them; don't invent a third storage axis.
+- **A new queue table mirrors the existing ones.** Prefer a new `kind` in `pending_actions` (Invariants). A genuinely new queue copies the `pending_creates` / `pending_field_edits` shape: `id`, the payload, `backend_key`, `attempts`, `last_error`, `created_at`, plus a `<table>_dead` twin carrying `dead_id`, `original_id`, `archived_at` and `terminal_reason`. Later columns go in through `AddColumnIfMissing`.
+- **A change the additive rule forbids needs an approved plan.** Dropping, renaming or retyping a column, or changing a primary key, needs an approved § Interface contracts entry in the active plan that names the versioned step (the `tickets_v2` family is the precedent: a new table set, the legacy tables left on disk unused). Without one, stop and ask the user.

@@ -91,7 +91,7 @@ below by **(frequency × cost × fix safety)**.
   escalate-when-unvalidatable charter, a change whose correctness the available gate can't confirm
   is not shipped blind. **Scoped follow-up:** cache only the non-`components` path (the common case),
   OR add the bucket-E display-correctness assertion first, then cache all paths. Routed to
-  `grid-engine` / `tracker-backend`.
+  the main thread, per `Source/Core/src/Ui/AGENTS.md` § Grid / `Source/Core/src/Tracker/AGENTS.md`.
 
 ### B2 — unconditional per-frame `std::string::assign` in the AI input (the #1600 class) · PR THIS SESSION
 

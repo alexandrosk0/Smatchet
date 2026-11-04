@@ -1,3 +1,5 @@
+// Queue delegators plus the live create launcher (LaunchIssueCreate_); new queue logic goes in the
+// services. Rules: Source/Core/src/Sync/AGENTS.md (Before you edit).
 #include "AppController.h"
 #include "ITrackerIssueMutations.h" // fan-in Phase 2: AppController.h fwd-decls it now; this TU calls Mutations() methods.
 

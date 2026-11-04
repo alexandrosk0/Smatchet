@@ -10,7 +10,7 @@
 # (`--depth`) the PR base ref + the delta gates checkout fetch-depth: 0. Emits
 # the canonical `Passed: N  Failed: M` line that test-all.sh greps for.
 #
-# Exit codes follow the test-author convention:
+# Exit codes follow the test-script convention (scripts/dev/test-all.sh header):
 #   0 — every bats test passed
 #   1 — at least one bats test failed
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools lists the install)

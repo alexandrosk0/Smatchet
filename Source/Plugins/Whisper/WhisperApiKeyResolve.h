@@ -5,7 +5,7 @@
 // Pure: no I/O, no globals, no SMATCHET_WITH_WHISPER gate, no third-party deps.
 // The TU lives under Source/Plugins/Whisper/ because the rule is owned by the Whisper
 // feature, but the function is tested by the doctest rig directly (per the
-// pure-helper TU-split recipe in AGENTS.md § Delegation packet).
+// pure-helper TU split in the author-plan-doc skill § Pre-seal probes).
 // Inputs are the three relevant fields straight off ConfigManager — the caller
 // (WhisperPlugin / WhisperApiClient) is responsible for converting
 // `cfg.AiProviderKind` to its canonical lowercase string ("openai" /

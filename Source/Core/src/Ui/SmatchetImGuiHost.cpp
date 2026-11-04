@@ -480,6 +480,7 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
     // LoadIniSettingsFromDisk does not re-parent them. Load cfg, compare schema,
     // force-write the hardcoded default + persist new schema, then let ImGui
     // pick up the fresh file via io.IniFilename.
+    // Every boot path that sets io.IniFilename runs this migration; list at ConfigManager::kCurrentLayoutSchemaVersion.
     {
         TrackerConfig bootCfg = ConfigManager::Load();
         if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {

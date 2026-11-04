@@ -166,7 +166,6 @@ agents/scripts/core/test-setup-harness.sh	docs/plans/	agents/,docs/agent-rules/,
 agents/scripts/core/test-shell-lint-bats.sh	-	AGENTS.md	layer-only
 agents/scripts/core/test-shell-lint.sh	docs/plans/,docs/self-improvement/	agents/,docs/harness/	dual
 agents/scripts/core/test-skill-load-log.sh	-	agents/	layer-only
-agents/scripts/core/test-skill-vs-agent-parity.sh	-	agents/	layer-only
 agents/scripts/core/test-small-helper-audit-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-small-helper-audit.sh	Source/	agents/	dual
 agents/scripts/core/test-unwatched-pr-nudge-bats.sh	-	AGENTS.md,agents/	layer-only

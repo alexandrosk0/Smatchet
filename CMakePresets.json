@@ -199,8 +199,8 @@
             "inherits": [
                 "_smatchet-clang-base"
             ],
-            "displayName": "Ninja Debug + Clang AddressSanitizer + UBSan",
-            "description": "ASAN + UBSan via Clang. Full sanitizer suite including UBSan (which MSVC lacks). Uses RelWithDebInfo — clang-cl ASAN requires release CRT (/MD); Debug (/MDd) is incompatible.",
+            "displayName": "Ninja Debug + Clang AddressSanitizer",
+            "description": "ASAN via clang-cl. ASAN only: clang-cl takes the MSVC branch of cmake/Sanitizers.cmake, so UBSan is not applied. Uses RelWithDebInfo — clang-cl ASAN requires release CRT (/MD); Debug (/MDd) is incompatible.",
             "binaryDir": "${sourceDir}/build/ninja-clang-asan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -214,8 +214,8 @@
             "inherits": [
                 "_smatchet-clang-base"
             ],
-            "displayName": "Ninja UI Tests + Clang AddressSanitizer + UBSan",
-            "description": "Bucket-E ImGui Test Engine surface (SMATCHET_BUILD_UI_TESTS=ON) under Clang ASan+UBSan. RelWithDebInfo — clang-cl ASAN requires the release CRT (/MD); Debug (/MDd) is incompatible. Home of the MCP-Lua fresh-state race regression (tests/ui/mcp_lua_fresh_state_race.test.cpp).",
+            "displayName": "Ninja UI Tests + Clang AddressSanitizer",
+            "description": "Bucket-E ImGui Test Engine surface (SMATCHET_BUILD_UI_TESTS=ON) under clang-cl ASan (ASan only, like ninja-clang-asan). RelWithDebInfo — clang-cl ASAN requires the release CRT (/MD); Debug (/MDd) is incompatible. Home of the MCP-Lua fresh-state race regression (tests/ui/mcp_lua_fresh_state_race.test.cpp).",
             "binaryDir": "${sourceDir}/build/ninja-ui-test-asan-clang",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",

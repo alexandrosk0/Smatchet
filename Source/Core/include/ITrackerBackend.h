@@ -1,5 +1,7 @@
 #pragma once
 
+// Widening this contract needs an approved plan entry; rules: Source/Core/src/Tracker/AGENTS.md (Before you edit).
+
 class ITrackerIssueReader;
 class ITrackerConnectivity;
 class ITrackerFieldCatalog;

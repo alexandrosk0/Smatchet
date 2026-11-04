@@ -132,7 +132,7 @@ N/A — this plan extracts/splits nothing; it adds new TUs and small edits.
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `EngineContextFormat.test.cpp` (per-toggle filtering,
+- **Bucket A (pure-logic ctest, doctest rig)**: `EngineContextFormat.test.cpp` (per-toggle filtering,
   log truncation edges, malformed/empty snapshot → empty, actor cap); `KeybindingsConfig.test.cpp`
   default-row parity; `ConfigMigration.test.cpp` seed-once idempotence (user deletion respected);
   `ConfigManager.test.cpp` round-trip + clamp; `BuiltinCommandsDispatch.test.cpp` registration +

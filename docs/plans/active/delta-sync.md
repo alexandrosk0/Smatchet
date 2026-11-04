@@ -4,7 +4,7 @@
 >
 > **Status**: `active` — implemented locally as seven stacked branches (`feat/delta-sync-p1-races` … `-p7-lookups`); Phase 0 (live-Jira spike) is an open item.
 >
-> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family. Routed to: tracker-backend, offline-sync, command-system, grid-engine.
+> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family. Leaf rules: `Source/Core/src/{Tracker,Sync,Commands,Ui}/AGENTS.md` (grid: Ui § Grid).
 
 ## Context
 
@@ -85,7 +85,7 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 ## Perf-review-system gates
 
-1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`agent-layer/agents/core/perf-gatekeeper.md` map).
+1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`scripts/dev/perf-scenario-map.json`; `concurrent-sync` is in `scripts/dev/perf-pr-fast-set.json`).
 2. **Pillar 2 static scanner** — Phase 4 removes UI-thread SQLite writes; no new sync I/O reachable from `ImGui::*`.
 3. **Dispatcher drain** — does not touch `MainThreadDispatcher::Drain()`.
 4. **Visible-cue harness** — no new > 100 ms stall path.
@@ -100,7 +100,7 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `ctest --preset ninja-test-msvc -R "DeltaSync|RemoteVersion|TicketSyncService|SyncCacheContract|LocalCacheTicketSyncMeta|JiraIssueSearchHttp|JiraIssueMappingPure|SyncEmptyFullSyncGuard|ConfigManager|KeyedLookupCache|FieldCatalogCache"` plus the full suite.
+- **Bucket A (pure-logic ctest, doctest rig)**: `ctest --preset ninja-test-msvc -R "DeltaSync|RemoteVersion|TicketSyncService|SyncCacheContract|LocalCacheTicketSyncMeta|JiraIssueSearchHttp|JiraIssueMappingPure|SyncEmptyFullSyncGuard|ConfigManager|KeyedLookupCache|FieldCatalogCache"` plus the full suite.
 - **Request counts**: `JiraCatalogHttpFixture` counter — a second delta reload is 1 roster page and 0 body requests; Full equals today's count.
 - **Live check** (needs a real Jira — Phase 0): `Smatchet.exe cmd sync.full --yes`, then `sync.incremental` twice; `sync.stats` shows `mode=delta`, `bodiesFetched=0`; edit one issue, rerun, `bodiesFetched=1`.
 - **Races**: `sync.incremental` over MCP under the sanitizer build; `concurrent-sync` scenario flat or better.

@@ -164,11 +164,11 @@ pause to re-confirm before the gating-policy slices (C, B) that affect all sessi
   Then harden the open path: `PRAGMA integrity_check` + rebuild-from-empty fallback
   + `SQLITE_BUSY` storm handling beyond the existing 5 s `busy_timeout`. Product
   change in `Source/Core/src/Persistence/` → **perf-gate section required** in its
-  plan. Routes to `offline-sync` specialist.
+  plan. Follows `Source/Core/src/Sync/AGENTS.md` and `Source/Core/src/Persistence/AGENTS.md`.
 - **J — Perf-fast widen.** Retrofit `rows[]` emission on the 8 of 15 scenarios that
   don't emit them (applied.md:265 — prereq), then either widen the PR-fast subset or
-  add a "touched-scenario-not-in-fast-set ⇒ run it" rule to the `perf-gatekeeper`
-  diff→scenario map. Plan: which 8, the `rows[]` retrofit pattern, the gatekeeper
+  add a "touched-scenario-not-in-fast-set ⇒ run it" rule to the
+  `scripts/dev/perf-scenario-map.json` diff→scenario map (`alsoRunTouchedScenario` covers local runs). Plan: which 8, the `rows[]` retrofit pattern, the gatekeeper
   rule. **Perf-gate section required.**
 - **F — Mutation-smoke gate.** Either a flip-and-rerun mutation smoke on the hottest
   pure files (expose no-op assertions) or upgrade the `Test-delta gate` to require a
