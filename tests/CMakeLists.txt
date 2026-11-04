@@ -87,6 +87,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
         # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
         Core/StatusBarAutoHidePure.test.cpp
+        # Status bar grid row count ("N rows" / "X of N rows") — ImGui-free header-only.
+        Core/StatusBarRowCountPure.test.cpp
         # Desktop touchscreen gestures (TouchGesturePure.h: tap / long-press / pan / fling) and
         # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
         Core/TouchGesturePure.test.cpp
@@ -740,6 +742,8 @@ add_executable(SmatchetTests
     # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
     # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
     Core/StatusBarAutoHidePure.test.cpp
+    # Status bar grid row count (StatusBarRowCountPure.h) — ImGui-free header-only.
+    Core/StatusBarRowCountPure.test.cpp
     # Desktop touchscreen gestures + touch-sized hit targets (TouchGesturePure.h,
     # Ui/TouchSizingPure.h) — header-only, ImGui-free.
     Core/TouchGesturePure.test.cpp

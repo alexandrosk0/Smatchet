@@ -7,6 +7,7 @@
 #include "Ui/SmatchetBackendDisplay.h"
 #include "Ui/SmatchetBottomPanelDrag.h"
 #include "Ui/SmatchetBottomPanelDragPure.h"
+#include "Ui/StatusBarRowCountPure.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetThemeIds.h"
@@ -17,6 +18,7 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdio>
@@ -43,6 +45,42 @@ static const char* ThemeIdName(ThemeId t) {
     default:
         return "Classic Bright";
     }
+}
+
+// Row count of the focused grid, from the pane's cached sort/filter projection.
+static StatusBarRowCountPure::Result FocusedGridRowCount(const UiDrawSession& d) {
+    StatusBarRowCountPure::Inputs in;
+    in.paneCount = d.gridPanes.size();
+    in.hasFocusedPane = !d.focusedPaneId.empty();
+    in.backendReachable = d.cfg.BackendHasBeenReachable;
+    if (!d.gridPanes.empty()) {
+        const GridPane& pane = d.focusedPane();
+        in.hasSnapshot = pane.ticketsSnapshot != nullptr;
+        in.loaded = pane.ticketsSnapshot ? pane.ticketsSnapshot->size() : 0;
+        in.sorted = pane.cachedSortedIndices.size();
+        in.filtered = pane.filteredIndices.size();
+        if (in.sorted > in.loaded) {
+            // Only while a shrinking sync waits out the rebuild debounce: count the retained rows
+            // the grid's prune keeps (indices inside the snapshot), not every stale index.
+            in.filtered =
+                static_cast<std::size_t>(std::count_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
+                                                       [&in](std::size_t idx) { return idx < in.loaded; }));
+        }
+    }
+    return StatusBarRowCountPure::Compute(in);
+}
+
+// "340 rows" / "12 of 340 rows", with separate singular/plural catalog keys.
+static std::string RowCountLabel(const StatusBarRowCountPure::Result& rows) {
+    const int visible = static_cast<int>(rows.visible);
+    const int total = static_cast<int>(rows.total);
+    if (rows.Filtered()) {
+        return total == 1
+                   ? SmatchetLocalization::Format("statusbar.rows_filtered_one", "%d of %d row", visible, total)
+                   : SmatchetLocalization::Format("statusbar.rows_filtered_many", "%d of %d rows", visible, total);
+    }
+    return total == 1 ? SmatchetLocalization::Format("statusbar.rows_one", "%d row", total)
+                      : SmatchetLocalization::Format("statusbar.rows_many", "%d rows", total);
 }
 
 static const char* ConnectivityLabel(AppController& app) {
@@ -180,26 +218,45 @@ static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
         }
     }
 
-    // Right side — font size + theme name. FPS is a developer metric and lives in the
+    // Right side — row count + font size + theme name. FPS is a developer metric and lives in the
     // Performance window (View > Performance), not the always-on status bar.
-    {
-        char rightBuf[128];
-        const char* themeName = ThemeIdName(d.cfg.Theme);
-        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
 
-        // SameLine FIRST: the previous item ended the line, so a bare SetCursorPosX
-        // kept the right-aligned text on a SECOND line below the one-line bar — the
-        // bar's content was two lines tall and wheel-scrollable. Right-align on the
-        // SAME line; when the bar is too narrow the text just clips at the right edge.
-        ImGui::SameLine();
-        const float textW = ::ImGui::CalcTextSize(rightBuf).x;
-        const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;
-        const float xPos = contentMaxX - textW - 4.0f;
-        if (xPos > ::ImGui::GetCursorPosX()) {
-            ::ImGui::SetCursorPosX(xPos);
-        }
-        ImGui::TextUnformatted(rightBuf);
-        if (::ImGui::IsItemHovered()) {
+    // Build the complete right-side text first so we can right-align it as one unit.
+    char rightBuf[128];
+    const char* themeName = ThemeIdName(d.cfg.Theme);
+
+    const StatusBarRowCountPure::Result rows = FocusedGridRowCount(d);
+    if (rows.show) {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%s  %dpt  %s", RowCountLabel(rows).c_str(), d.cfg.FontSizePt,
+                      themeName);
+    } else {
+        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
+    }
+
+    // SameLine FIRST: the previous item ended the line, so a bare SetCursorPosX
+    // kept the right-aligned text on a SECOND line below the one-line bar — the
+    // bar's content was two lines tall and wheel-scrollable. Right-align on the
+    // SAME line; when the bar is too narrow the text just clips at the right edge.
+    ImGui::SameLine();
+    const float textW = ::ImGui::CalcTextSize(rightBuf).x;
+    const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;
+    const float xPos = contentMaxX - textW - 4.0f;
+    if (xPos > ::ImGui::GetCursorPosX()) {
+        ::ImGui::SetCursorPosX(xPos);
+    }
+    ImGui::TextUnformatted(rightBuf);
+    if (::ImGui::IsItemHovered()) {
+        // Each tooltip goes in as the format string so the wrapper can translate it.
+        if (rows.Filtered()) {
+            ImGui::SetTooltip("Rows the focused grid shows after its search, filter or hidden parents, "
+                              "of the grid's rows.\n"
+                              "UI font size and active theme — change them under View > Appearance.\n"
+                              "Frame-rate metrics live in the Performance window.");
+        } else if (rows.show) {
+            ImGui::SetTooltip("Loaded rows in the focused grid; nothing is narrowing them.\n"
+                              "UI font size and active theme — change them under View > Appearance.\n"
+                              "Frame-rate metrics live in the Performance window.");
+        } else {
             ImGui::SetTooltip("UI font size and active theme — change them under View > Appearance.\n"
                               "Frame-rate metrics live in the Performance window.");
         }
