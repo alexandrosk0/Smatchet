@@ -4,7 +4,7 @@
 - **Priority**: P1
 - **Date**: 2026-08-17
 - **Observed on**: PR #2090 — `adversarial-code-review: 4 findings, all fixed` went green; an independent pass afterwards found 11, six of them defects in the diff
-- **Status**: open
+- **Status**: open — action 3 (second review for gate-logic diffs) landed 2026-11-04; actions 1 and 2 remain
 
 ## What happened
 
@@ -125,3 +125,10 @@ Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=25; action=ch
 Follow-up check (2026-10-18): unchanged. 0 of about 25 sampled merged PRs (#2325-#2349 plus 7 lint-rules.d PRs) name a reviewer on their `adversarial-code-review:` line, and #2203's lint change shipped on a self-review per its own line. The entry's fix (a reviewer or run-id field the gate requires) is still open.
 
 Re-scoped 2026-10-04 (backlog-sweep-2026-10): action 4 landed (backlog-sweep PR #2296: in the OSS arm a CodeRabbit error reply after the human ask is a terminal failure naming the re-ask / waiver). Remaining: (1) the verdict line records no reviewer (a reviewer field in verdict_re, synced between check-pr-intent.sh and doc-validation.yml); (2) merge-gates.sh still fast-passes the OSS 'manual review required' skip via cr_review_skipped; (3) no second-pass requirement for gate-logic diffs.
+
+Action 3 landed 2026-11-04 (the-unwilling-agentic-bunch#17, host pointer bump plus the host `independent-review.yml` job):
+- A PR that touches the review-enforcement surface (`RA_ENFORCEMENT_GLOBS`) must carry an `independent-review: <reviewer>; N findings… (head=<sha>)` line. That surface covers `agents/scripts/core/**`, `agents/scripts/project/**` (so `lint-rules.d/**`), `scripts/dev/**`, `scripts/git-hooks/**`, `.github/**`, harness hooks, `project.config.json` and, in this repo, the `agent-layer` pointer.
+- The line must name a reviewer other than the PR author; self, placeholders and the PR author's login are rejected.
+- The line is bound to the PR head, and it is enforced by `Independent review (enforcement surface)` in both repos.
+- Same honest limit as the verdict line: it proves a claim was recorded for the head, not that the review ran.
+- Remaining: (1) and (2) above.
