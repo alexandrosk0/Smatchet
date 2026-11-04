@@ -34,6 +34,105 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-03 · PR #2380, #2368, #2371 · direct merges past a red `All checks green (block-on-any-red)` and a never-green `CR findings (0 actionable)`, because neither is a required context
+
+### What escaped
+Three PRs were merged directly within five minutes on 2026-11-03, by the shared `alexandrosk0` login. None had an override label, an auto-merge request or a merge-snapshot row (`safe-merge.sh` always writes one), so none went through the merge-gate poller.
+
+| PR | merged (UTC) | head | `All checks green` at merge | `CR findings (0 actionable)` at merge |
+|---|---|---|---|---|
+| #2380 | 00:17:34 | `c52ceeb58` | failure (2026-11-02 22:44: "still pending after 10200s — a timeout is red") | pending since 2026-11-02 19:57 ("awaiting CodeRabbit on current head") |
+| #2368 | 00:21:56 | `0aa2d7310` | failure (2026-10-26 02:34: `RED CR findings (0 actionable) (failure)`) | failure since 2026-10-26 ("OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band") |
+| #2371 | 00:22:37 | `772a5b854` | failure (2026-11-02 08:45, the same 10200 s timeout) | pending since 2026-11-02 19:59 |
+
+On #2380 and #2371 the `CodeRabbit` check run was `neutral` and no review existed. On all three, the CodeRabbit review gate never reached a verdict on the merged head, so the code shipped without the review the gate exists to require. No product defect has been traced to these merges so far.
+
+### Root cause
+GitHub allowed each merge because every one of the 22 `branch_protection.required_contexts` was green (`enforce_admins` is on, so an admin bypass was not involved). Two names that carried the red are not in that set:
+
+- **`All checks green (block-on-any-red)`.** The aggregate was built as the arm-path-independent backstop for exactly this case: a merge that does not go through `safe-merge.sh` (`merge-gates.md` § Sanctioned non-admin merge path). It only binds once it is a required context. The open P1 entry that added it ([`infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md)) shipped the workflow in #2296, and left its last step, adding the context to branch protection, for the maintainer. Its 2026-10-18 follow-up found no escape yet; these are the first three.
+- **`CR findings (0 actionable)`.** The required check run is `CR finding gate`, which concludes green while the status context it posts stays pending or failure. That is hole (b) of the 2026-08-19 #2127 entry ("close the name gap"), which was never applied.
+
+Direct `gh pr merge N --squash` (no `--auto`) is outside `guard-auto-merge-arm.sh` by design, so only branch protection can stop this path.
+
+### Preventing gate
+**Make `All checks green (block-on-any-red)` a required context, live.**
+1. Add it to `project.config.json` § `branch_protection.required_contexts`.
+2. Land that on a green develop tip.
+3. Re-run `bash agent-layer/agents/scripts/core/setup-branch-protection.sh`.
+4. Confirm it with `gh api repos/alexandrosk0/Smatchet/branches/develop/protection/required_status_checks --jq '.contexts'`.
+
+It is a superset of the `CR findings` name gap, because the aggregate already reds on a red or still-pending `CR findings` context and applies the `*-out-of-band` downgrades. Replayed on these three heads, the required aggregate is red at each merge time, so GitHub refuses all three.
+
+Its preconditions were met: the workflow has no `paths:` filter and reports on every PR, including `docs/self-improvement/**`-only ones. Applied 2026-11-03 with the maintainer's OK, on a green develop tip (`158060025`): live protection now lists 23 contexts including the aggregate, and #2387 carries the config edit. Filed by updating the existing entry, not as a new one.
+
+### Eval case
+None — not agent-reviewable. The gap is a required-context set in branch protection; no reviewable diff contains it.
+
+### Filed as
+[`categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md) (raised P1 → P0, then applied the same day; config in #2387)
+
+## 2026-11-03 · PR #2370, #2376, #2378, #2379, #2372 · override: `cr-out-of-band` because CodeRabbit does not auto-review this repository
+
+### What escaped
+Five PRs merged through the gate poller (`GATES_PASSED` merge-snapshot rows) with `cr-out-of-band` and a `cr-disposition:` label:
+
+| PR | merged (UTC) | disposition | CodeRabbit on the head |
+|---|---|---|---|
+| #2370 | 2026-11-01 14:43:38 | `cr-disposition:rate-limit-acked` | check run `neutral`, no review |
+| #2376 | 2026-11-02 00:57:38 | `cr-disposition:cr-statuscontext-moved-to-checkrun` | check run `success`, no review |
+| #2378 | 2026-11-02 20:24:40 | `cr-disposition:incremental-no-review-emitted` | check run `success`, no review |
+| #2379 | 2026-11-02 19:32:59 | `cr-disposition:incremental-no-review-emitted` | check run `success`, no review |
+| #2372 | 2026-11-02 23:11:58 | `cr-disposition:incremental-no-review-emitted` (with `plan-lock-out-of-band`, next entry) | check run `success`, no review |
+
+The detector also reported #2370 and #2376 as `cr-context-not-green: PENDING` when it ran from a checkout without #2374's snapshot rows. Those lines were wrong, and the shape is a detector bug (below).
+
+### Root cause
+- **The gate cannot get a verdict.** The repository has fewer than 10 stars, so CodeRabbit does not review on its own, and on four heads it concluded its check run `success` without posting a review. `merge-gates.sh` read that as `STALE_UNKNOWN` and blocked, so each merge needed a waiver. The waivers were correct: a `success` CodeRabbit check run on the head means it found nothing to say. The poller simply could not read that signal.
+- **A post-merge relabel re-ran the CR gate.** On #2370 and #2376 the labels came off 27 s and 25 s after the merge (`unlabeled` events at 14:44:05 and 00:58:03). Each removal re-ran `CR finding gate`, which posted a new `pending` `CR findings` context on the merged head at 14:47:47 and 01:01:13. `postmortem-owed.sh` field 9 reads the latest `CR findings` context with no `mergedAt` filter, unlike field 7, which keeps only runs that existed at the merge. A checkout that lacks the snapshot row then reports a pending context that did not exist at the merge.
+
+### Preventing gate
+**For the four clean-check-run waivers:** the-unwilling-agentic-bunch#16, already open (`fix(merge-gates): a clean CodeRabbit check run on the head passes the CR gate`). It makes `merge-gates.sh` pass the CR gate on a completed `success` `CodeRabbit` check run on the head, at least 60 s old. That is the #2376, #2378, #2379 and #2372 shape, which then needs no label. It also sets the default stale re-review nudge to 0.
+
+**For #2370 (rate-limited, `neutral`):** none — override legitimate (CodeRabbit is rate-limited and does not auto-review here; the only remedy is enabling auto-review on the account, a human action named in the 2026-08-19 #2127 entry).
+
+**Detector companion:** `postmortem-owed.sh` field 9 keeps only `CR findings` contexts created at or before `mergedAt`, the same as field 7. It also gets a bats case: a merged head whose only post-merge context is `pending`, after a `success` at the merge, is not flagged.
+
+### Eval case
+None — not agent-reviewable. These are a review-bot integration gap and a detector query bug; no reviewed diff contains them.
+
+### Filed as
+- the-unwilling-agentic-bunch#16 (gate; open, user-gated merge)
+- [`categories/tooling/2026-11-03-postmortem-owed-reads-cr-context-after-the-merge.md`](categories/tooling/2026-11-03-postmortem-owed-reads-cr-context-after-the-merge.md) (P3, detector)
+
+## 2026-11-03 · PR #2372 · override: `plan-lock-out-of-band` over the live `fieldcatalog-snapshot` lock, with the holder's agreement
+
+### What escaped
+`fix: historical review Batch 27` (#2372) merged 2026-11-02T23:11:58Z as `95c01777c` (head `815fc273c`), crossing a red `Plan-lock gate`. It overlapped four files in `fieldcatalog-snapshot`, held by `claude/peaceful-babbage-8bbbcf` (PR #2375): `AppController.h`, `SmatchetGridUiSupport.cpp`, `SmatchetUI.cpp` and `docs/plans/active/delta-sync.md`.
+
+The PR body carries `plan-lock-disposition: fieldcatalog-snapshot — …`. It records three things:
+- the maintainer approved the crossing on 2026-11-01;
+- the lock holder agreed to #2372 landing first;
+- #2372's edits there touch no field-catalog code: a declaration and a comment in `AppController.h`, the focused-pane copy-link fix, the roster cap, and stale names in the plan doc.
+
+#2375 has since merged develop over them.
+
+### Root cause
+Both statements below are true at once:
+- The red was correct by the gate's own rule: `plan-lock-gate.sh` compares paths, and the lock claims whole files.
+- The red protected nothing: the overlapping edits were in disjoint hunks, and the holder knew and agreed.
+
+This is the path-only overlap class from the 2026-10-06 #2313 entry, its fifth occurrence.
+
+### Preventing gate
+None — override legitimate (maintainer-approved, holder-agreed, disposition recorded in the PR body). The class's gate is already filed: [`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (settle a pushed lock's overlap by `git merge-tree`, not by path). This entry is one more data point for it.
+
+### Eval case
+None — not agent-reviewable (a lock-granularity gate decision, not a code defect).
+
+### Filed as
+[`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (existing, P2)
+
 ## 2026-10-06 · PR #2313 · override: `plan-lock-out-of-band` over a live lock whose three overlapping files merged clean in disjoint hunks
 
 ### What escaped
