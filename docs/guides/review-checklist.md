@@ -15,7 +15,7 @@ These classes have a fixed severity. Everything else follows the reviewer's seve
 | A verification step that needs human eyes (§ Verification residue) | Critical |
 | A DRY refactor whose shared helper couples two otherwise-independent subsystems (Pillar 5) | Critical |
 | Offline: a loading-only render while cached data exists; a write lost offline or sent to another pane's tracker; a `TrackerError` flattened without its `Transport` kind (Pillar 6) | High |
-| New UI output that reads an app-owned cache or catalog and shows nothing (no text, no cue) when that cache is legitimately empty (a warning-only fetch failure, a cache restored without the list), unless the diff states that empty state as intended (§ Cache-sourced UI output) | High |
+| New UI output that reads an app-owned cache or catalog and shows nothing (no text, no cue) when that cache is legitimately empty (a warning-only fetch failure, a cache restored without the list), unless the diff or its stated intent (PR body, commit message, linked plan) names that empty state as intended; a failed lookup still needs the Ui leaf's unknown/unavailable cue (§ Cache-sourced UI output) | High |
 | A network-backed change with no offline test (Pillar 6) | Medium |
 
 **`hard_veto`** (verifier verdicts, `review-ack.sh --verdict`, the pre-merge judge): set `hard_veto=true` for a security issue, a deterministic-gate failure or a project-invariant breach — that, and only that, blocks the commit or push; the continuous score stays advisory until calibrated. Do not set a veto you do not believe, and do not withhold one you do: the veto is trusted precisely because it costs you something to report.
