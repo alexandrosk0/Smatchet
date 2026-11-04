@@ -196,7 +196,10 @@ done
 
 # -- assemble result JSON ----------------------------------------------------
 # Fake mode derives findings from the case's expectedFindings (deterministic).
-# Real mode parses file:line citations out of each trial's raw output.
+# Real mode parses each trial's raw output: one finding per bullet under the
+# code-review severity headings (## Critical / High / Medium / Low / Nits),
+# falling back to a per-line file:line citation scan only when no severity
+# heading is present. runMeta.parserByTrial records which parser ran.
 MODE="real"
 if [[ "$HARNESS" == "fake-runner" ]]; then MODE="fake"; fi
 
@@ -222,8 +225,119 @@ def fake_findings():
     return out
 
 CITE = re.compile(r'([A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]+):(\d+)')
+SUMMARY_CAP = 200
 
-def parse_findings(text):
+# -- headings parser ---------------------------------------------------------
+# The code-review agent's output contract (agent-layer/agents/core/code-review.md
+# § Output format): one finding per bullet under `## Critical` / `## High` /
+# `## Medium` / `## Low / Nits`. Every other section (`## Verified clean`,
+# `## Outcome: ...`, `## Self-improvement`, ...) cites evidence, not findings,
+# and is skipped. Keys are normalised titles (see _heading_key).
+SEVERITY_HEADINGS = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low / nits": "low",
+    "low": "low",
+    "nits": "low",
+}
+HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
+FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+BULLET = re.compile(r'^ *(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$')
+THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
+# A bullet that only says the section is empty ("- None", "- _n/a_") is not a
+# finding; counting it would break finding_count on a clean (0-finding) case.
+NONE_MARKER = re.compile(
+    r'^[\s*_`(\[]*(?:none|n/?a|nothing|no (?:findings?|issues?)|none found|nothing found)'
+    r'[\s.*_`)\]]*$', re.IGNORECASE)
+
+def _heading_key(title):
+    t = re.sub(r'\s*/\s*', ' / ', title.strip().lower())
+    return re.sub(r'\s+', ' ', t).rstrip(':').strip()
+
+def _indent(line):
+    return len(line) - len(line.lstrip(' '))
+
+def _finding_from_bullet(severity, parts):
+    text = re.sub(r'\s+', ' ', ' '.join(parts)).strip()
+    if NONE_MARKER.match(text):
+        return None
+    f = {"severity": severity, "summary": text[:SUMMARY_CAP] or "parsed from output"}
+    m = CITE.search(text)
+    if m:
+        f["file"] = m.group(1)
+        f["line"] = int(m.group(2))
+    return f
+
+def parse_heading_findings(text):
+    """Returns (saw_severity_heading, findings).
+
+    A bullet starts at an indent no deeper than the open bullet's; deeper
+    lines (wrapped text, nested bullets, indented fences) continue it. A blank
+    line keeps the bullet open; an unindented non-bullet line, a thematic
+    break or any heading closes it. Fenced code is opaque: a `## High` inside
+    a fence is not a heading.
+    """
+    saw = False
+    severity = None          # severity of the current section, None = skipped section
+    cur = None               # (indent, [text parts]) of the open bullet
+    fence = None             # (char, length) of the open fence
+    findings = []
+
+    def close():
+        nonlocal cur
+        if cur is not None and severity is not None:
+            f = _finding_from_bullet(severity, cur[1])
+            if f is not None:
+                findings.append(f)
+        cur = None
+
+    for line in text.expandtabs(4).splitlines():
+        stripped = line.strip()
+        if fence is not None:
+            m = FENCE.match(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] \
+                    and stripped == m.group(1):
+                fence = None
+            elif cur is not None and stripped:
+                cur[1].append(stripped)
+            continue
+        if not stripped:
+            continue
+        ind = _indent(line)
+        continues = cur is not None and ind > cur[0]
+        fm = FENCE.match(line)
+        if fm:
+            fence = (fm.group(1)[0], len(fm.group(1)))
+            if not continues:
+                close()
+            continue
+        if not continues:
+            hm = HEADING.match(line)
+            if hm:
+                close()
+                severity = SEVERITY_HEADINGS.get(_heading_key(hm.group(1)))
+                saw = saw or severity is not None
+                continue
+            if THEMATIC_BREAK.match(line):
+                close()
+                continue
+        bm = BULLET.match(line)
+        if bm and not continues:
+            close()
+            cur = (ind, [bm.group(1)])
+        elif continues:
+            cur[1].append(stripped)
+        else:
+            close()          # unindented prose ends the bullet; not a finding
+    close()
+    return saw, findings
+
+# -- citations parser (fallback) ---------------------------------------------
+# For output with no severity heading: one info finding per line citing
+# file:line. Coarse (it counts evidence lines, not findings), so it runs only
+# when the headings parser has nothing to key on.
+def parse_citation_findings(text):
     out = []
     for line in text.splitlines():
         m = CITE.search(line)
@@ -233,11 +347,19 @@ def parse_findings(text):
             "file": m.group(1),
             "line": int(m.group(2)),
             "severity": "info",
-            "summary": line.strip()[:200] or "parsed from output",
+            "summary": line.strip()[:SUMMARY_CAP] or "parsed from output",
         })
     return out
 
+def parse_findings(text):
+    """Returns (parser_name, findings)."""
+    saw, findings = parse_heading_findings(text)
+    if saw:
+        return "headings", findings
+    return "citations", parse_citation_findings(text)
+
 trials = []
+parsers = []
 if mode == "fake":
     ff = fake_findings()
     for i in range(trials_n):
@@ -246,10 +368,13 @@ if mode == "fake":
             "output": "FAKE RUN for %s (trial %d)" % (case["caseId"], i),
             "findings": ff,
         })
+        parsers.append("reference")
 else:
     for i, path in enumerate(sys.argv[1:]):
         text = open(path, encoding="utf-8").read()
-        trials.append({"index": i, "output": text, "findings": parse_findings(text)})
+        parser, findings = parse_findings(text)
+        trials.append({"index": i, "output": text, "findings": findings})
+        parsers.append(parser)
 
 result = {
     "schemaVersion": 1,
@@ -257,7 +382,10 @@ result = {
     "agent": case["agent"],
     "promptRoot": os.environ["AE_PROMPT_ROOT"],
     "harness": os.environ["AE_HARNESS"],
-    "runMeta": {"trialsRequested": trials_n},
+    # parserByTrial[i] names how trials[i].findings were produced: "headings"
+    # (code-review severity sections), "citations" (fallback scan) or
+    # "reference" (fake mode, from the case's expectedFindings).
+    "runMeta": {"trialsRequested": trials_n, "parserByTrial": parsers},
     "case": case,
     "trials": trials,
 }
