@@ -76,10 +76,20 @@ endif()
 # root's .gitignore hides the whole tree from git whatever the directory is
 # called. It is written on every configure, Lua on or off, because a junction
 # from an earlier Lua-on configure outlives the option being turned off.
+# An in-source build's binary dir is the checkout root, whose .gitignore is
+# tracked: a `*` there would hide the whole repo, so skip the rule then.
+get_filename_component(_smatchet_binary_real "${CMAKE_BINARY_DIR}" REALPATH)
+get_filename_component(_smatchet_source_real "${CMAKE_SOURCE_DIR}" REALPATH)
+if(WIN32)
+    string(TOLOWER "${_smatchet_binary_real}" _smatchet_binary_real)
+    string(TOLOWER "${_smatchet_source_real}" _smatchet_source_real)
+endif()
 set(_smatchet_build_gitignore "${CMAKE_BINARY_DIR}/.gitignore")
 set(_smatchet_ignore_all "")
 set(_smatchet_ignore_prefix "")
-if(EXISTS "${_smatchet_build_gitignore}")
+if(_smatchet_binary_real STREQUAL _smatchet_source_real)
+    set(_smatchet_ignore_all TRUE)
+elseif(EXISTS "${_smatchet_build_gitignore}")
     file(STRINGS "${_smatchet_build_gitignore}" _smatchet_ignore_all REGEX "^[*][ \t\r]*$")
     # Start the rule on its own line when the file lacks a trailing newline.
     file(READ "${_smatchet_build_gitignore}" _smatchet_gitignore_text)
