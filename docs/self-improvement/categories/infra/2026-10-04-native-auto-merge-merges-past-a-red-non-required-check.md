@@ -1,7 +1,7 @@
 # Native auto-merge waits only on required contexts, so every arm path except `safe-merge.sh` merges past a red non-required check
 
 - **Category**: infra
-- **Priority**: P1
+- **Priority**: P0 (raised from P1 on 2026-11-03: three escapes, see Recurrence below)
 - **Date**: 2026-10-04
 - **Observed on**: PR #2286 (merged `b4e71bec` 2026-10-04T01:59:46Z; `Bucket-E UI tests (Mesa headless GL)` had been **failure** since 01:56:45Z). Same class as PRs #1406, #1414, #1415, #1438 and #1566 (`postmortems.md` 2026-06-19, 2026-06-20 and 2026-06-27 entries).
 - **Status**: open
@@ -71,3 +71,9 @@ Triggered-follow-up: when=pr-count:base=develop;since=2026-10-04;n=20; action=ch
 Follow-up check (2026-10-18): partly. The aggregate `All checks green (block-on-any-red)` shipped in #2296 and runs on every PR, but it is not in `project.config.json` § `branch_protection.required_contexts`, so GitHub does not wait for it (#2342 merged 33s before its aggregate finished). Sampled merges #2342 and #2349 had no non-advisory check red or pending at the merge head; no new escape found. Still to do: make it a required context (a branch-protection change, the maintainer's call).
 
 Re-scoped 2026-10-04 (backlog-sweep-2026-10): the aggregate workflow 'All checks green (block-on-any-red)' and the PreToolUse arm guard landed (backlog-sweep PR #2296; the poller skips the aggregate so a stale red never wedges it). Remaining (admin): add the context to project.config.json branch_protection.required_contexts and re-apply with setup-branch-protection.sh on a green develop tip (add merge_group handling first if a merge queue is ever enabled). Until then the aggregate is informational.
+
+## Recurrence (2026-11-03)
+
+The escape this entry predicted happened three times in five minutes, through a direct `gh pr merge N --squash` that does not arm auto-merge and so is outside the arm guard. #2380 (00:17:34Z), #2368 (00:21:56Z) and #2371 (00:22:37Z) merged with `All checks green (block-on-any-red)` red and `CR findings (0 actionable)` pending or failed. There was no override label and no merge-snapshot row. GitHub allowed each because all 22 required contexts were green.
+
+A required aggregate refuses all three: it was red on each head before its merge. The remaining step is unchanged: add the context to `branch_protection.required_contexts`, then re-apply with `setup-branch-protection.sh` on a green develop tip and confirm it live. Ledger: `postmortems.md` 2026-11-03 "#2380, #2368, #2371".
