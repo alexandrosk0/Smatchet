@@ -1331,6 +1331,21 @@ const TranslationEntry kEntries[] = {
     {"statusbar.rows_many", "%d rows", u8"%d lignes"},
     {"statusbar.rows_filtered_one", "%d of %d row", u8"%d sur %d ligne"},
     {"statusbar.rows_filtered_many", "%d of %d rows", u8"%d sur %d lignes"},
+    {"statusbar.rows_tip_filtered",
+     "Rows the focused grid shows after its search, filter or hidden parents, of the grid's rows.\n"
+     "UI font size and active theme — change them under View > Appearance.\n"
+     "Frame-rate metrics live in the Performance window.",
+     u8"Lignes affichées par la grille active après sa recherche, son filtre ou ses parents masqués, "
+     u8"sur les lignes de la grille.\n"
+     u8"Taille de police de l'interface et thème actif — modifiez-les dans Affichage > Apparence.\n"
+     u8"Les mesures de fréquence d'images se trouvent dans la fenêtre Performances."},
+    {"statusbar.rows_tip_loaded",
+     "Loaded rows in the focused grid; nothing is narrowing them.\n"
+     "UI font size and active theme — change them under View > Appearance.\n"
+     "Frame-rate metrics live in the Performance window.",
+     u8"Lignes chargées dans la grille active ; rien ne les restreint.\n"
+     u8"Taille de police de l'interface et thème actif — modifiez-les dans Affichage > Apparence.\n"
+     u8"Les mesures de fréquence d'images se trouvent dans la fenêtre Performances."},
     {"statusbar.conn.online.tip", "Connected and authenticated to the tracker backend.",
      u8"Connecté et authentifié auprès du backend de suivi."},
     {"statusbar.conn.auth_error.tip",

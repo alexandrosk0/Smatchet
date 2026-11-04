@@ -45,11 +45,13 @@ TEST_CASE("StatusBarRowCountPure: a search matching nothing reads 0 of total") {
     CHECK(r.total == 340);
 }
 
-TEST_CASE("StatusBarRowCountPure: no projection yet shows the loaded total") {
-    const Result r = Compute(OnePane(340, 0, 0));
-    CHECK(r.show);
-    CHECK_FALSE(r.Filtered());
-    CHECK(r.total == 340);
+TEST_CASE("StatusBarRowCountPure: rows with no projection yet hide the count") {
+    // A streaming sync delivered rows inside the rebuild debounce; the grid draws none yet.
+    CHECK_FALSE(Compute(OnePane(340, 0, 0)).show);
+
+    const Result empty = Compute(OnePane(0, 0, 0));
+    CHECK(empty.show);
+    CHECK(empty.total == 0);
 }
 
 TEST_CASE("StatusBarRowCountPure: a projection lagging a sync reports what the grid draws") {
@@ -67,9 +69,15 @@ TEST_CASE("StatusBarRowCountPure: a projection from a larger snapshot is ignored
     CHECK_FALSE(emptied.Filtered());
     CHECK(emptied.total == 0);
 
+    // A shrinking sync: the grid still draws the retained filtered rows, pruned to the snapshot.
     const Result shrunk = Compute(OnePane(100, 340, 12));
-    CHECK_FALSE(shrunk.Filtered());
+    CHECK(shrunk.Filtered());
+    CHECK(shrunk.visible == 12);
     CHECK(shrunk.total == 100);
+
+    const Result shrunkUnfiltered = Compute(OnePane(100, 340, 340));
+    CHECK_FALSE(shrunkUnfiltered.Filtered());
+    CHECK(shrunkUnfiltered.total == 100);
 }
 
 TEST_CASE("StatusBarRowCountPure: hidden when the grid is ambiguous or not showing rows") {

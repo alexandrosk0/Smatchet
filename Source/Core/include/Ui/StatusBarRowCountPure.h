@@ -15,7 +15,7 @@ struct Inputs {
     bool hasSnapshot = false;      ///< The focused pane has a ticket snapshot to count.
     std::size_t loaded = 0;        ///< Tickets in that snapshot.
     std::size_t sorted = 0;        ///< Size of the pane's sort projection (cachedSortedIndices).
-    std::size_t filtered = 0;      ///< Rows the grid draws (filteredIndices).
+    std::size_t filtered = 0;      ///< Rows the grid draws (filteredIndices inside the snapshot).
 };
 
 struct Result {
@@ -35,13 +35,23 @@ inline Result Compute(const Inputs& in) {
     if (!in.backendReachable || !in.hasSnapshot) {
         return r;
     }
+    if (in.sorted == 0 && in.loaded > 0) {
+        // Rows arrived but the debounced rebuild has not built a projection yet, so the grid
+        // draws none: no count beats a total the grid does not show.
+        return r;
+    }
     r.show = true;
     r.total = in.loaded;
     r.visible = in.loaded;
-    if (in.sorted == 0 || in.sorted > in.loaded) {
-        // No projection yet, or one left over from a larger snapshot: the grid's loading /
-        // error states return before the rebuild, and a shrinking streaming sync waits out the
-        // rebuild debounce, so the stale sort list keeps its old size.
+    if (in.sorted == 0) {
+        return r;
+    }
+    if (in.sorted > in.loaded) {
+        // A projection left over from a larger snapshot: a shrinking streaming sync waits out
+        // the rebuild debounce, and the loading / error states (empty snapshot) return before
+        // the rebuild. The grid prunes filteredIndices to the snapshot each frame and draws what
+        // is left; the driver then passes only the indices inside the snapshot as `filtered`.
+        r.visible = in.filtered < in.loaded ? in.filtered : in.loaded;
         return r;
     }
     // While a debounced rebuild lags a streaming sync, the grid still draws the old
