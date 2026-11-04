@@ -199,11 +199,22 @@ low Source/Core/src/secrets/Store.h 12
 parser=headings" ]
 }
 
-@test "real mode: a severity heading with no bullets yields zero findings, not a citation scan" {
+@test "real mode: empty severity sections yield zero findings, not a citation scan" {
     review="$WORK/clean.md"
     cat > "$review" <<'REVIEW'
+## Critical
+- No critical findings.
+
 ## High
 No findings.
+
+## Medium
+- None: the diff is clean.
+  The shift loop stays in bounds.
+
+## Low / Nits
+- Nothing to report.
+- _n/a_
 
 ## Verified clean
 - Source/Core/src/secrets/Store.cpp:60 releases on every path.
@@ -216,6 +227,77 @@ REVIEW
     run findings_of "$out"
     [ "$status" -eq 0 ]
     [ "$output" = "parser=headings" ]
+}
+
+@test "real mode: a cite-free bullet that is not an empty-section marker still counts" {
+    review="$WORK/nocite.md"
+    cat > "$review" <<'REVIEW'
+## High
+- No bounds check on idx before the shift loop.
+REVIEW
+    make_stub_exe "$review"
+    out="$WORK/r.json"
+    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$out"
+    run findings_of "$out"
+    [ "$status" -eq 0 ]
+    [ "$output" = "high None None
+parser=headings" ]
+}
+
+@test "real mode: decorated and indented headings still open and close sections" {
+    review="$WORK/decorated.md"
+    cat > "$review" <<'REVIEW'
+## **High** (1)
+- Source/Core/src/secrets/Store.cpp:120 — secret lost on re-save.
+ ## Verified clean
+- Source/Core/src/secrets/Store.cpp:60 releases on every path.
+## Low / Nits — 1
+- Source/Core/src/secrets/Store.h:12 — stale comment.
+REVIEW
+    make_stub_exe "$review"
+    out="$WORK/r.json"
+    bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$out"
+    run findings_of "$out"
+    [ "$status" -eq 0 ]
+    [ "$output" = "high Source/Core/src/secrets/Store.cpp 120
+low Source/Core/src/secrets/Store.h 12
+parser=headings" ]
+}
+
+@test "real mode: a clean review with no severity heading scores finding_count 1.0 on a 0-finding case" {
+    # The contract's clean shape: "no findings" + ## Verified clean + ## Outcome.
+    # Its evidence citations must not fall through to the citation scan.
+    clean_case="$REPO_ROOT/tests/agent-eval/code-review/cr-recentlru-false-positive.json"
+    review="$WORK/clean-noseverity.md"
+    cat > "$review" <<'REVIEW'
+No findings: the shift loop is bounds-safe.
+
+## Verified clean
+- Bounds: Source/Core/include/SmatchetUI.h:410 stops at size() - 1.
+- Ordering: Source/Core/include/SmatchetUI.h:415 moves the hit to the front.
+
+## Outcome: applied
+REVIEW
+    make_stub_exe "$review"
+    base="$WORK/base.json"
+    head="$WORK/head.json"
+    bash "$RUNNER" "$clean_case" --prompt-root="$REPO_ROOT" --fake-runner --out="$base"
+    bash "$RUNNER" "$clean_case" --prompt-root="$REPO_ROOT" --exe="$STUB" --out="$head"
+    run findings_of "$head"
+    [ "$status" -eq 0 ]
+    [ "$output" = "parser=headings" ]
+
+    cat > "$WORK/judge.py" <<'JUDGE'
+import json, sys
+json.load(sys.stdin)
+print(json.dumps({"score": 0.9}))
+JUDGE
+    jpath="$WORK/judge.py"
+    if command -v cygpath >/dev/null 2>&1; then jpath="$(cygpath -m "$jpath")"; fi
+    run "$PY" "$SCORER" "$base" "$head" --policy "$POLICY" --judge-cmd "$PY $jpath"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"| \`finding_count\` | objective | 1.000 | 1.000 |"* ]]
+    [[ "$output" == *"No regressions."* ]]
 }
 
 @test "real mode: heading-less output falls back to the per-line citation scan" {
