@@ -75,7 +75,8 @@
       "Mobile — POSIX core compile gate (Linux clang)",
       "Mobile — Android NDK arm64-v8a (.so configure+link)",
       "Mobile — Android APK (Gradle assembleDebug arm64-v8a)",
-      "C++ lint (catch-all + cppcheck)"
+      "C++ lint (catch-all + cppcheck)",
+      "All checks green (block-on-any-red)"
     ],
     "required_checks_app_id": 15368,
     "required_review_count": 0,
