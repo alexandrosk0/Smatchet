@@ -8,7 +8,18 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `status-bar-row-count`
+
+- **Owner**: `orchestrator`
+- **Branch**: `feat/status-bar-row-count`
+- **Started**: 2026-11-01T15:01:34Z
+- **Updated**: 2026-11-02T13:09:10Z
+- **Write set** (5 paths):
+  - `Source/Core/src/Ui/SmatchetStatusBarUi.cpp`
+  - `Source/Core/include/Ui/StatusBarRowCountPure.h`
+  - `tests/Core/StatusBarRowCountPure.test.cpp`
+  - `tests/CMakeLists.txt`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+
