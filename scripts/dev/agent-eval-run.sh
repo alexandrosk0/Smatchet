@@ -260,14 +260,16 @@ THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
 # not it cites code, and must be followed by end of line or a separator:
 #   head:  "no [qualifiers] findings|issues|bugs|problems|concerns" (whole
 #          word, so "No issue-type check" is prose) or "none|nothing|n/a";
-#   tail:  optional "identified|found|noted|observed|reported|flagged",
-#          "to report|flag|note", "at|in|for this severity|category|...",
+#   tail:  optional verb "identified|found|noted|observed|reported|flagged"
+#          or "to report|flag|note", then optional scope "at|in|for this|the
+#          severity|category|section|...|diff|change|patch|PR|hunk|code" or
 #          "that meet(s) the bar".
 # So "- No issues identified.", "- No critical or high findings.", "- None at
-# this severity", "- None — a.h:410 is safe" and "- No findings (checked
-# a.cpp:12)" are markers, while "- No issue key is validated before a.cpp:210",
-# "- None of the callers holds mLock" and "- Nothing releases the handle" are
-# findings. "issue" is a domain noun here (tracker issues), hence the closed tail.
+# this severity", "- No issues found in this diff.", "- None — a.h:410 is
+# safe" and "- No findings (checked a.cpp:12)" are markers, while "- No issue
+# key is validated before a.cpp:210", "- None of the callers holds mLock" and
+# "- Nothing releases the handle" are findings. "issue" is a domain noun here
+# (tracker issues), hence the closed tail.
 _EMPTY_QUALIFIER = (r'(?:critical|high|medium|low|nits?|info|other|further|new|additional'
                     r'|genuine|correctness|real|actionable|blocking'
                     r'|(?:critical|high|medium|low)-(?:severity|priority))')
@@ -278,8 +280,9 @@ NONE_MARKER = re.compile(
     r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)(?![\w-])'
     r'|none|nothing|n/a)'
     r'(?:\s+(?:identified|found|noted|observed|reported|flagged'
-    r'|to\s+(?:report|flag|note)'
-    r'|(?:at|in|for)\s+this\s+(?:severity|category|section|level|tier)'
+    r'|to\s+(?:report|flag|note)))?'
+    r'(?:\s+(?:(?:at|in|for)\s+(?:this|the)\s+(?:severity|category|section|level|tier'
+    r'|diff|change|changes|changeset|patch|pr|hunk|code|changed\s+code)'
     r'|that\s+meets?\s+the\s+bar))?'
     r'[\s*_`)\]]*(?:$|[.:;,!(—–-])', re.IGNORECASE)
 
