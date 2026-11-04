@@ -10,7 +10,7 @@
 
 Layer `agent-layer/agents/core/code-review.md` (version 10), process step 4, walks each row of the checklist's `## Severity in this project` table against the lines the diff adds, changes or removes. A matched row is a finding "unless the row's own text names an exception". Two rows of `docs/guides/review-checklist.md` kept part of their rule only in the section their `(§ …)` points to:
 
-- **The empty-cache High row** had lost its "unless intended and stated" exception. That is the root cause the code-review eval found.
+- **The empty-cache High row** had lost its "unless intended and stated" exception. That was one cause the code-review eval found; the other was reviewers skipping the Read-first files.
 - **The human-eyes verification Critical row** kept both its scope and its exception in § Verification residue. The scope is the test plan, PR body and linked plan, which are not diff lines. The exception is a bucket-E follow-up already tracked in the backlog.
 
 Read literally, the walk then files a false Critical on the tracked bucket-E case, which blocks the ack, or it falsely clears a residue that sits only in the PR body. Smatchet#2393 moved both rows' scope and exception inline. Nothing stops the next new row from repeating the pattern.
