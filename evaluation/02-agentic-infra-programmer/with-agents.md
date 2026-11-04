@@ -101,7 +101,7 @@ loop delegates to read-only investigators (`architect`, `code-review`,
 (`build-doctor`, `test-author`, `git-janitor`). Each carries YAML frontmatter
 with a **closed capability-tag set**, `triggers:`, `complexity`, `read-only`
 flag, `version:`, and `harness-hints.<harness>:` (e.g. `model: opus, effort:
-high`). The split rationale (`delegation.md` § Why split) is **context
+high`). The split rationale (the former Why-split section of `delegation.md`) is **context
 isolation as the primary token lever** — `build-doctor` never loads
 `Source/Core` headers — bigger than per-model price differences.
 

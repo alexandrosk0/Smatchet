@@ -1,4 +1,4 @@
-// LocalCacheManager's ticket_sync_meta table (docs/plans/active/delta-sync.md § Phase 2) - the SQLite
+// LocalCacheManager's ticket_sync_meta table (docs/plans/active/delta-sync.md § Phases (phase 2)) - the SQLite
 // specifics the dual-impl SyncCacheContract cannot see: the table is a separate additive table that
 // survives a reopen (the one file-backed case here: a reopen needs the same bytes, which :memory: cannot give), a
 // ticket save does not reset it (tickets_v2 is INSERT OR REPLACE), a delete takes the meta with it in the same
@@ -121,8 +121,8 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         CHECK(rows.size() == 2u);
     }
 
-    // SaveTicketsWithSyncMeta's version guard (docs/plans/active/delta-sync.md § Review follow-ups): a late or
-    // reordered save must never roll a stored row back to an older tracker version.
+    // SaveTicketsWithSyncMeta's version guard (docs/plans/active/delta-sync.md § Review follow-up decisions): a late
+    // or reordered save must never roll a stored row back to an older tracker version.
     TEST_CASE("an older row does not overwrite a newer stored one") {
         SqliteMemFixture fx;
         LocalCacheManager& cache = fx.Ref();
@@ -186,8 +186,8 @@ TEST_SUITE("LocalCacheTicketSyncMeta") {
         CHECK(cache.GetTicketSyncMeta("K").at("A-1").RemoteUpdated == newer);
     }
 
-    // Wedge repair (docs/plans/active/delta-sync.md § Review follow-ups): a stored stamp ahead of the tracker's
-    // later real stamps must not block every refetch of the row forever.
+    // Wedge repair (docs/plans/active/delta-sync.md § Review follow-up decisions): a stored stamp ahead of the
+    // tracker's later real stamps must not block every refetch of the row forever.
     TEST_CASE("a Full sync (overwriteOlder) replaces a row whose stored stamp is later") {
         SqliteMemFixture fx;
         LocalCacheManager& cache = fx.Ref();

@@ -5,9 +5,9 @@
 # WHY: the smatchet-merge-watcher is a SEPARATE daemon process. When it merges a
 # PR — or parks a RED PR in BLOCKED/triage — it does NOT signal the Claude session
 # that registered it (its halt prompts target SmatchetToastManager, "not back to
-# this session"; ship-loops.md § post-ship option 3). So a session that registered
-# a PR and committed to *reporting the outcome* is blind to a red check unless it
-# polls. Run this UNDER the harness Monitor tool (each stdout line becomes a
+# this session"; ship-loops.md § Post-ship turn-end protocol, option 3). So a
+# session that registered a PR and committed to *reporting the outcome* is blind
+# to a red check unless it polls. Run this UNDER the harness Monitor tool (each stdout line becomes a
 # notification) — or run_in_background — to close that blind spot.
 #
 # Usage:

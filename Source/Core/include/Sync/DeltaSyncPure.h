@@ -1,7 +1,7 @@
 #pragma once
 
 // DeltaSyncPure - the decisions of the delta reload, free of I/O so every branch is unit-testable
-// (docs/plans/active/delta-sync.md § Phase 3). Header-only, C++14, no platform headers; compiles in
+// (docs/plans/active/delta-sync.md § Phases (phase 3)). Header-only, C++14, no platform headers; compiles in
 // the standalone and DX12 targets and in the doctest rig. The version/field rules shared with the
 // cache layer live in TicketSyncMeta.h (re-exported here).
 

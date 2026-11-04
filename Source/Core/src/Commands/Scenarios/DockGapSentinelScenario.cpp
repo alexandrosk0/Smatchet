@@ -2,7 +2,7 @@
 // completion plan). Drives the standalone window to a known steady dock layout
 // for a small warm-up window, then triggers `debug.window.screenshot` against
 // the user-supplied output path. The bash driver (scripts/dev/test-screenshot-
-// diff.sh) compares the captured PPM against tests/golden/dock_gap_sentinel.ppm
+// diff.sh) compares the captured PNG against tests/golden/dock-gap-sentinel.png
 // with per-channel L∞ ≤ 4 tolerance — any new dock gap, palette shift, or
 // shell-chrome regression breaks the diff. Goldens regenerate on first run if
 // absent (bootstrap mode).
@@ -17,8 +17,8 @@
 // does very little — it lets the dock settle for a small warm-up window
 // (default 8 frames), then sets the existing debug.window.screenshot request
 // flags on UiDrawSession so Source/Standalone/main.cpp's post-swap handler
-// writes the PPM at the user-supplied output path. The bash driver compares
-// the PPM against tests/golden/dock_gap_sentinel.ppm.
+// writes the PNG at the user-supplied output path. The bash driver compares
+// the PNG against tests/golden/dock-gap-sentinel.png.
 // Why a scenario and not a one-shot CLI: capturing the screenshot requires
 // the renderer to have already drawn the steady-state dock chrome. A bare
 // `cmd debug.window.screenshot` against a freshly-spawned exe races the
@@ -94,7 +94,7 @@ class DockGapSentinelScenario : public IScenario {
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot AFTER the warm-up frames have rendered.
         // Source/Standalone/main.cpp's post-swap handler will consume the
-        // request and write the PPM. On DX12 the request flag has no
+        // request and write the PNG. On DX12 the request flag has no
         // consumer; we still report what we asked for so the bash driver
         // can detect the platform gap.
         // Keep the pink clear-color armed on the captured frame too: OnFinish runs

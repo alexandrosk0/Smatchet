@@ -1,6 +1,6 @@
 #pragma once
 
-// Worker half of the change monitor's ROSTER path (docs/plans/active/delta-sync.md § Phase 6). Header-only and
+// Worker half of the change monitor's ROSTER path (docs/plans/active/delta-sync.md § Phases (phase 6)). Header-only and
 // free of AppController state so it is unit-testable against a fake reader.
 
 #include "ITrackerIssueReader.h"

@@ -1,5 +1,5 @@
 // TicketSyncMeta — bucket-A coverage for the pure rules the delta sync stores beside each cached row
-// (Source/Core/include/TicketSyncMeta.h, docs/plans/active/delta-sync.md § Phase 2): building the meta
+// (Source/Core/include/TicketSyncMeta.h, docs/plans/active/delta-sync.md § Phases (phase 2)): building the meta
 // from a fetched row, the "does this row carry what my view needs" subset check, and the same-version
 // merge that keeps two panes' columns from erasing each other.
 

@@ -56,7 +56,7 @@ infrastructure**, never "manual forever."
 |---|---|---|---|
 | **A** Headless CLI probe | "fn X returns Y" / Lua outputs Z | `debug.<feature>_test` JSON + bash assert | required (non-UI subset) |
 | **B** Scenario + `perf.snapshot` | "frame ≤ N ms" / "cache hit 100%" | `IScenario` drives N frames, asserts rows | perf-fast subset required |
-| **C** Screenshot diff | "cell renders red" / "icon visible" | PPM sentinel-colour scan vs golden | lane blocks on broken harness; golden-diff verdict advisory (step mask) |
+| **C** Screenshot diff | "cell renders red" / "icon visible" | PNG sentinel-colour scan vs golden | lane blocks on broken harness; golden-diff verdict advisory (step mask) |
 | **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan (`ninja-msvc-asan`; every Windows ASan preset is ASan-only, UBSan needs a native-Clang build — [BUILD.md § Stack facts](../../BUILD.md#stack-facts)); exit code = assertion | required (Slice C) |
 | **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness and on per-test failures (llvmpipe-only tests self-skip) |
 

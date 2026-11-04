@@ -162,8 +162,8 @@ Order by leverage (highest first):
    output to match Investigator (`## Hypotheses` → `## Evidence` → ...).
    Recommend grilling via `grill-with-docs` skill first.
 7. **H11** — trigger keyword collisions. Audit every agent's `triggers:`
-   frontmatter against `docs/agent-rules/delegation.md` § Trigger
-   auto-activation table. Disambiguate (drop dup keys, or add explicit
+   frontmatter against the trigger auto-activation table (since retired from
+   `docs/agent-rules/delegation.md`). Disambiguate (drop dup keys, or add explicit
    heuristic notes in the prompts).
 8. **Eval-punch-list item 7** (~1 h) — skill ↔ agent parity gate. Belongs
    in `test-agent-contract.sh` extension above (item 3).

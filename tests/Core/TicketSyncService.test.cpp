@@ -1988,8 +1988,8 @@ void SyncFetchedRowOverStored(FakeTicketSyncDeps& deps, const std::string& store
 
 } // namespace
 
-// Version-guard wedge repair (docs/plans/active/delta-sync.md § Review follow-ups): a stored stamp ahead of the
-// tracker's real ones must not drop every refetch of the row forever.
+// Version-guard wedge repair (docs/plans/active/delta-sync.md § Review follow-up decisions): a stored stamp ahead
+// of the tracker's real ones must not drop every refetch of the row forever.
 TEST_CASE("A Full sync overwrites a row whose stored stamp is later than the fetched one") {
     FakeTicketSyncDeps deps;
     SyncFetchedRowOverStored(deps, "2024-05-02T10:00:00.000+0000", smatchet::sync::SyncMode::Full);

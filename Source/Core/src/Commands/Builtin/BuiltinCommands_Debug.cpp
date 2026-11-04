@@ -514,7 +514,7 @@ static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, IMainThreadPo
 }
 
 // --- debug.window.screenshot ------------------------------------------------
-// Sets a transient flag + path; the main loop polls and writes PNG/PPM.
+// Sets a transient flag + path; the main loop polls and writes a PNG.
 // Standalone-only; on Unreal/DX12 the flag is set but never consumed.
 static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, IMainThreadPoster& poster) {
     Command c =
@@ -547,7 +547,7 @@ static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, IMainThre
                         });
                     });
     c.Params = {
-        PString("path", "Output file path (PNG if extension is .png, PPM otherwise).", /*required*/ true),
+        PString("path", "Output file path (always written as PNG, whatever the extension).", /*required*/ true),
     };
     c.Idempotent = false;
     reg.Register(std::move(c));

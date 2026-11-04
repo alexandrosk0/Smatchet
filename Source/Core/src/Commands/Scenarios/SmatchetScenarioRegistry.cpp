@@ -83,7 +83,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // Phase 7 bucket-C screenshot-diff scenarios (test-suite-expansion-
     // completion plan). Each scenario drives the UI to a known steady state,
     // then triggers debug.window.screenshot so the bash driver can diff the
-    // captured PPM against tests/golden/<name>.ppm.
+    // captured PNG against tests/golden/<name>.png.
     runner.RegisterFactory("dock-gap-sentinel", []() { return ::MakeDockGapSentinelScenario(); });
     runner.RegisterFactory("command-palette-fuzzy", []() { return ::MakeCommandPaletteFuzzyScenario(); });
     // code-syntax-coloring — bucket-C golden for the multi-language code-block

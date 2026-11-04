@@ -1,7 +1,7 @@
 #pragma once
 
 // TrackerRoster - the lightweight "which tickets are in this view, and at what version" answer a
-// backend can give without downloading ticket bodies (docs/plans/active/delta-sync.md § Phase 3).
+// backend can give without downloading ticket bodies (docs/plans/active/delta-sync.md § Phases (phase 3)).
 // A rank-0 leaf: the reader interface (ITrackerIssueReader.h) and the pure delta-sync rules
 // (Sync/DeltaSyncPure.h) share it without either including the other. Backend-agnostic by design -
 // a key and an opaque version stamp, no Jira types. Header-only, C++14, no platform headers.

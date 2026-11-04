@@ -1,8 +1,8 @@
 #pragma once
 
 // ActiveRowMergePure - merging one frame's rows into a pane's in-memory roster (docs/plans/active/delta-sync.md
-// § Phase 3). The roster is looked up through an id -> index map; the map lives for a whole sync session instead
-// of being rebuilt for every slice of the apply drain, and is rebuilt only when the roster changed behind it.
+// § Phases (phase 3)). The roster is looked up through an id -> index map; the map lives for a whole sync session
+// instead of being rebuilt for every slice of the apply drain, and is rebuilt only when the roster changed behind it.
 // Header-only, C++14, no platform headers; the caller holds the roster's lock.
 
 #include "CachedTicketTypes.h"

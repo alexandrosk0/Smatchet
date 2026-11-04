@@ -1,7 +1,7 @@
 name: Dependabot auto-merge
 
 # Arm auto-merge for Dependabot PRs the SANCTIONED way (operator decision:
-# "auto-merge when green", routed via safe-merge.sh per ship-loops.md § Sanctioned
+# "auto-merge when green", routed via safe-merge.sh per merge-gates.md § Sanctioned
 # non-admin merge path). A bare `gh pr merge --auto` is FORBIDDEN here: it waits
 # only on branch-protection REQUIRED contexts, so it can land past a RED
 # non-required block-allowlist check (Coverage / Sanitizer / Perf) — the #923
