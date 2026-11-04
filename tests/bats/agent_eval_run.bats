@@ -240,6 +240,10 @@ No findings.
 - No new findings.
 - None that meet the bar.
 - **None**
+- No high or medium findings.
+- No new or additional issues.
+- None reported.
+- Nothing to note.
 
 ## Verified clean
 - Source/Core/src/secrets/Store.cpp:60 releases on every path.
@@ -250,7 +254,7 @@ REVIEW
     [ "$output" = "parser=headings" ]
 }
 
-@test "real mode: cite-free findings that start like an empty-section marker still count" {
+@test "real mode: findings that start like an empty-section marker still count" {
     run parse_review <<'REVIEW'
 ## High
 - None of the three callers holds mLock before calling Flush().
@@ -258,6 +262,11 @@ REVIEW
 - No bounds check on idx before the shift loop.
 - No other caller checks the return value of Protect().
 - Nothing in the destructor frees the buffer.
+- No issue key is validated before the PATCH at Source/Core/src/JiraClient.cpp:210.
+- No issue-type check before Source/Core/src/JiraClient.cpp:240 dereferences it.
+- No problem details are logged when Source/Core/src/Replay.cpp:88 drops a write.
+- No bug-tracker id reaches Source/Core/src/PlaneClient.cpp:55.
+- No findings-cache invalidation after Source/Core/src/Grid.cpp:300.
 REVIEW
     [ "$status" -eq 0 ]
     [ "$output" = "high None None
@@ -265,6 +274,11 @@ high None None
 high None None
 high None None
 high None None
+high Source/Core/src/JiraClient.cpp 210
+high Source/Core/src/JiraClient.cpp 240
+high Source/Core/src/Replay.cpp 88
+high Source/Core/src/PlaneClient.cpp 55
+high Source/Core/src/Grid.cpp 300
 parser=headings" ]
 }
 

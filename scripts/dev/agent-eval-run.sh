@@ -256,30 +256,32 @@ BULLET = re.compile(r'^ *(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$')
 THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
 # A bullet whose leading clause only says its section is empty is not a
 # finding; counting it would break finding_count on a clean (0-finding) case.
-# Two shapes, matched on the bullet's first line whether or not it cites code:
-#   * "no [qualifiers] findings|issues|bugs|problems|concerns ...": any
-#     trailing text ("- No issues identified.", "- No critical or high
-#     findings.", "- No findings (checked a.cpp:12)");
-#   * "none|nothing|n/a" + an optional closed-list tail ("identified", "to
-#     flag", "at this severity", "that meet the bar"), then end of line or a
-#     separator ("- None: the diff is clean", "- None — a.h:410 is safe").
-# Open-ended prose findings still count: "- None of the callers holds mLock",
-# "- Nothing releases the handle", "- No bounds check on idx".
+# The marker is a closed phrase, matched on the bullet's first line whether or
+# not it cites code, and must be followed by end of line or a separator:
+#   head:  "no [qualifiers] findings|issues|bugs|problems|concerns" (whole
+#          word, so "No issue-type check" is prose) or "none|nothing|n/a";
+#   tail:  optional "identified|found|noted|observed|reported|flagged",
+#          "to report|flag|note", "at|in|for this severity|category|...",
+#          "that meet(s) the bar".
+# So "- No issues identified.", "- No critical or high findings.", "- None at
+# this severity", "- None — a.h:410 is safe" and "- No findings (checked
+# a.cpp:12)" are markers, while "- No issue key is validated before a.cpp:210",
+# "- None of the callers holds mLock" and "- Nothing releases the handle" are
+# findings. "issue" is a domain noun here (tracker issues), hence the closed tail.
 _EMPTY_QUALIFIER = (r'(?:critical|high|medium|low|nits?|info|other|further|new|additional'
                     r'|genuine|correctness|real|actionable|blocking'
                     r'|(?:critical|high|medium|low)-(?:severity|priority))')
 NONE_MARKER = re.compile(
-    r'^[\s*_`(\[]*(?:'
-    r'no(?:\s+' + _EMPTY_QUALIFIER +
+    r'^[\s*_`(\[]*'
+    r'(?:no(?:\s+' + _EMPTY_QUALIFIER +
     r'(?:\s*(?:,|/|\bor\b|\band\b)\s*' + _EMPTY_QUALIFIER + r')*)?'
-    r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)\b'
-    r'|(?:none|nothing|n/a)'
+    r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)(?![\w-])'
+    r'|none|nothing|n/a)'
     r'(?:\s+(?:identified|found|noted|observed|reported|flagged'
     r'|to\s+(?:report|flag|note)'
     r'|(?:at|in|for)\s+this\s+(?:severity|category|section|level|tier)'
     r'|that\s+meets?\s+the\s+bar))?'
-    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])'
-    r')', re.IGNORECASE)
+    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])', re.IGNORECASE)
 
 def _heading_key(title):
     """Lowercased title without emphasis, a trailing count `(2)` or a dash
