@@ -254,18 +254,32 @@ HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
 FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
 BULLET = re.compile(r'^ *(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$')
 THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
-# A bullet whose leading clause only says its section is empty ("- None",
-# "- No critical findings.", "- None: the diff is clean", "- No findings
-# (checked a.cpp:12)") is not a finding; counting it would break finding_count
-# on a clean (0-finding) case. The marker must be the whole first clause (end
-# of line or a separator after it), so "- None of the callers holds mLock" and
-# "- Nothing releases the handle" still count. Matched on the bullet's first
-# line only, so "- None" with an indented reason is a marker too.
+# A bullet whose leading clause only says its section is empty is not a
+# finding; counting it would break finding_count on a clean (0-finding) case.
+# Two shapes, matched on the bullet's first line whether or not it cites code:
+#   * "no [qualifiers] findings|issues|bugs|problems|concerns ...": any
+#     trailing text ("- No issues identified.", "- No critical or high
+#     findings.", "- No findings (checked a.cpp:12)");
+#   * "none|nothing|n/a" + an optional closed-list tail ("identified", "to
+#     flag", "at this severity", "that meet the bar"), then end of line or a
+#     separator ("- None: the diff is clean", "- None — a.h:410 is safe").
+# Open-ended prose findings still count: "- None of the callers holds mLock",
+# "- Nothing releases the handle", "- No bounds check on idx".
+_EMPTY_QUALIFIER = (r'(?:critical|high|medium|low|nits?|info|other|further|new|additional'
+                    r'|genuine|correctness|real|actionable|blocking'
+                    r'|(?:critical|high|medium|low)-(?:severity|priority))')
 NONE_MARKER = re.compile(
-    r'^[\s*_`(\[]*(?:none(?:\s+found)?|n/a|nothing(?:\s+(?:to\s+report|found))?'
-    r'|no(?:\s+(?:critical|high|medium|low|nits?|other|further|genuine|correctness|real))*'
-    r'\s+(?:findings?|issues?|bugs?|problems?)(?:\s+found)?)'
-    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])', re.IGNORECASE)
+    r'^[\s*_`(\[]*(?:'
+    r'no(?:\s+' + _EMPTY_QUALIFIER +
+    r'(?:\s*(?:,|/|\bor\b|\band\b)\s*' + _EMPTY_QUALIFIER + r')*)?'
+    r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)\b'
+    r'|(?:none|nothing|n/a)'
+    r'(?:\s+(?:identified|found|noted|observed|reported|flagged'
+    r'|to\s+(?:report|flag|note)'
+    r'|(?:at|in|for)\s+this\s+(?:severity|category|section|level|tier)'
+    r'|that\s+meets?\s+the\s+bar))?'
+    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])'
+    r')', re.IGNORECASE)
 
 def _heading_key(title):
     """Lowercased title without emphasis, a trailing count `(2)` or a dash
@@ -341,6 +355,8 @@ def parse_heading_findings(text):
             severity = SEVERITY_HEADINGS.get(key)
             evidence = severity is None and CONTRACT_SECTION.match(key) is not None
             saw = saw or severity is not None
+            if not evidence:
+                free.append(line)    # "### 1. a.cpp:374 — ..." is a finding for the fallback
             continue
         if not evidence:
             free.append(line)

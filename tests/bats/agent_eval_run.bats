@@ -230,6 +230,16 @@ No findings.
 ## Low / Nits
 - Nothing to report.
 - _n/a_
+- No findings in this category.
+- No issues identified.
+- None identified.
+- None at this severity.
+- No high-severity findings.
+- No critical or high findings.
+- Nothing to flag.
+- No new findings.
+- None that meet the bar.
+- **None**
 
 ## Verified clean
 - Source/Core/src/secrets/Store.cpp:60 releases on every path.
@@ -246,9 +256,13 @@ REVIEW
 - None of the three callers holds mLock before calling Flush().
 - Nothing releases the DPAPI handle on the early-return path.
 - No bounds check on idx before the shift loop.
+- No other caller checks the return value of Protect().
+- Nothing in the destructor frees the buffer.
 REVIEW
     [ "$status" -eq 0 ]
     [ "$output" = "high None None
+high None None
+high None None
 high None None
 high None None
 parser=headings" ]
@@ -291,6 +305,9 @@ parser=headings" ]
 
 Finding 2 (LOW) — Source_Core/src/ConfigManager.cpp:390
 
+### 3. Source_Core/src/ConfigManager.cpp:402 — same pattern for plane_api_key
+If ProtectSecretForConfig fails, the only copy of the key is lost.
+
 ## Verified clean
 - Source_Core/src/ConfigManager.cpp:380 mcp_auth_token guard is correct.
 
@@ -302,6 +319,7 @@ REVIEW
     [ "$status" -eq 0 ]
     [ "$output" = "info Source_Core/src/ConfigManager.cpp 374
 info Source_Core/src/ConfigManager.cpp 390
+info Source_Core/src/ConfigManager.cpp 402
 parser=citations" ]
 }
 
