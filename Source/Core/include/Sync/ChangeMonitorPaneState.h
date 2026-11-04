@@ -1,7 +1,7 @@
 #pragma once
 
 // ChangeMonitorPaneState - what the change monitor remembers about one pane between its cycles
-// (docs/plans/active/delta-sync.md § Phase 6). UI-thread-only bookkeeping, held by GridLiveContext and cleared
+// (docs/plans/active/delta-sync.md § Phases (phase 6)). UI-thread-only bookkeeping, held by GridLiveContext and cleared
 // when the pane's next reload finishes. Header-only, C++14, standard library only, so the context header can
 // include it without pulling the reader interface in.
 

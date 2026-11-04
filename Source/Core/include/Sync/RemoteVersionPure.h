@@ -4,7 +4,7 @@
 //
 // A ticket's `updated` field is the version the delta sync diffs against and the stamp a
 // late-arriving change probe is judged by: a probe row that is OLDER than the row already held
-// must never replace it (docs/plans/active/delta-sync.md § Phase 1). Header-only, SQLite-free and
+// must never replace it (docs/plans/active/delta-sync.md § Phases (phase 1)). Header-only, SQLite-free and
 // platform-free (C++14, no OS headers) so it compiles in the standalone and DX12 targets and in
 // the doctest rig.
 //

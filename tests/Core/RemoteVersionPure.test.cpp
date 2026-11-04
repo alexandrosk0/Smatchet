@@ -1,5 +1,5 @@
 // RemoteVersionPure — bucket-A coverage for the tracker "updated" stamp parser/comparator
-// (Source/Core/include/Sync/RemoteVersionPure.h, docs/plans/active/delta-sync.md § Phase 1).
+// (Source/Core/include/Sync/RemoteVersionPure.h, docs/plans/active/delta-sync.md § Phases (phase 1)).
 // Header-only and pure: no AppController, no HTTP.
 
 #include <doctest/doctest.h>

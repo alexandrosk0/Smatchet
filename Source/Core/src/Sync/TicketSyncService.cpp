@@ -1660,7 +1660,7 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
     }
 }
 
-// ---- Delta reload (docs/plans/active/delta-sync.md § Phase 3) ---------------------------------------
+// ---- Delta reload (docs/plans/active/delta-sync.md § Phases (phase 3)) ------------------------------
 
 namespace {
 /// Ticket downloads of one delta attempt, in refusal-isolating batches (a key the tracker refuses is

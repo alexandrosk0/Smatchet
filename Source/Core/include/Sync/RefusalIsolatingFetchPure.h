@@ -2,7 +2,7 @@
 
 // RefusalIsolatingFetchPure - the key-batch download that survives one unreadable ticket. Shared by the
 // delta sync's hierarchy / delta hops and the change monitor's roster body fetch
-// (docs/plans/active/delta-sync.md § Phase 3, § Phase 6). Header-only, C++14, no platform headers.
+// (docs/plans/active/delta-sync.md § Phases (phases 3 and 6)). Header-only, C++14, no platform headers.
 
 #include "CachedTicketTypes.h"
 #include "SmatchetResult.h"

@@ -1,5 +1,5 @@
 // DeltaSyncPure - bucket-A coverage for the delta reload's decisions (Source/Core/include/Sync/
-// DeltaSyncPure.h, docs/plans/active/delta-sync.md § Phase 3): which strategy runs, which rows are
+// DeltaSyncPure.h, docs/plans/active/delta-sync.md § Phases (phase 3)): which strategy runs, which rows are
 // downloaded, when a mostly-changed view falls back to a full fetch, and how queued requests combine.
 
 #include <doctest/doctest.h>

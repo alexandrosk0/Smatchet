@@ -25,7 +25,7 @@ Re-verified the 6 deferred rows against `develop` @ HEAD (branch `claude/backlog
 - **PR-18** (pink-clear dock-gap): shipped — `DockGapSentinelScenario.cpp` arms the magenta `(255,0,255)` clear; `tests/bats/bucket_lane_launch_smoke.bats` asserts the zero-pink-pixel scan.
 - **PR-9 follow-up** (case-8 self-activation): shipped — `SMATCHET_UITEST_WITH_LOCAL_CACHE` opt-in wired in `UiTestScenario.cpp` + `AppController_LocalCacheDb.cpp`.
 
-Still genuinely open: **PR-14** (threshold still `65` in `project.config.json` + `coverage.yml`), **PR-19** (only a Slate-backbuffer log line exists; no `CopyResource`→readback→PPM path — needs an Unreal/DX12 build env), **PR-21** (`resolvePaneCatalog`/`ChoosePaneCatalogSource` absent from the tree).
+Still genuinely open: **PR-14** (threshold still `65` in `project.config.json` + `coverage.yml`), **PR-19** (only a Slate-backbuffer log line exists; no `CopyResource`→readback→PNG path — needs an Unreal/DX12 build env), **PR-21** (`resolvePaneCatalog`/`ChoosePaneCatalogSource` absent from the tree).
 
 This revision was verified before publish:
 
@@ -204,7 +204,7 @@ Each block: **Files** (the scripts/TUs to touch) · **Approach** · **Verify** �
 
 ### PR-18..23 — Standalone
 - **PR-18 pink-clear**: `requestClearColor{R,G,B,A}` on `UiDrawSession` + restore-after-frame consumer in `main.cpp`; extend `DockGapSentinelScenario` + a bash `CountPixels(img,255,0,255,8)==0` hard assertion. *(ui)*
-- **PR-19 DX12 readback**: `CopyResource` backbuffer→readback heap + memcpy to a PPM writer in `Source/UnrealPlugins/SmatchetImGuiPlugin/`. *(unreal-bridge)*
+- **PR-19 DX12 readback**: `CopyResource` backbuffer→readback heap + a RowPitch-aware RGB pack (BGRA→RGB, alpha dropped) to a PNG writer in `Source/UnrealPlugins/SmatchetImGuiPlugin/`. *(unreal-bridge)*
 - **PR-20 redirect no-follow**: doctest/integration — tracker request vs an in-process server issuing cross-host 30x; assert `MakeTrackerRedirectPolicy` no-follow AND Authorization not re-sent cross-host. *(tracker-backend / security)*
 - **PR-21 per-pane catalog**: populate each pane context's `fieldCatalog` independently (seed cross-backend from `FieldCatalogCache` at `EnsurePaneContextLive` + per-pane first-sync into the CONTEXT), then re-land `resolvePaneCatalog` + `ChoosePaneCatalogSource` read routing. *(grid-engine)*
 - **PR-22 portable + daemon**: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys (shrink `portable-purity-baseline.txt` toward zero); audit other daemons (merge-watcher / while-True pollers) for unguarded per-iteration bodies + `subprocess.run(timeout=)` sites with no guard. *(build / agentic-infra)*

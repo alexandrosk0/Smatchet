@@ -1226,7 +1226,7 @@ struct UiDrawSession {
     int requestWindowHeight = 0;
 
     /// Transient request from `debug.window.screenshot` — standalone polls this each frame and,
-    /// when set, reads the GL framebuffer and writes a PNG/PPM to requestScreenshotPath.
+    /// when set, reads the GL framebuffer and writes a PNG to requestScreenshotPath.
     /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
     bool requestScreenshot = false;
     std::string requestScreenshotPath;

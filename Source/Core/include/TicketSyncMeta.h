@@ -2,7 +2,7 @@
 
 // TicketSyncMeta — what the delta sync remembers about a cached ticket row: the tracker's
 // "updated" stamp it was fetched at, the field ids it was fetched with, and when (docs/plans/
-// active/delta-sync.md § Phase 2). A rank-0 leaf (includes only CachedTicketTypes.h and the std-only
+// active/delta-sync.md § Phases (phase 2)). A rank-0 leaf (includes only CachedTicketTypes.h and the std-only
 // RemoteVersionPure.h) so the cache layer, the sync layer and the test fakes share ONE definition of the pure rules
 // below without Persistence reaching up into Sync. Header-only, C++14, no platform headers (builds in the standalone
 // and DX12 targets and in the doctest rig).

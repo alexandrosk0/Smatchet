@@ -1,6 +1,6 @@
 #pragma once
 
-// SyncMode - how a streaming sync should fetch (docs/plans/active/delta-sync.md § Phase 3).
+// SyncMode - how a streaming sync should fetch (docs/plans/active/delta-sync.md § Phases (phase 3)).
 // Rank-0 leaf shared by the app-sync facet (Interfaces/IAppSync.h), the sync service and the UI.
 
 namespace smatchet {

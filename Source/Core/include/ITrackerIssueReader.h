@@ -121,7 +121,7 @@ class ITrackerIssueReader {
         return FetchChildrenOfKeysCancellable(cfg, parentKeys, views, shouldCancel);
     }
 
-    // ---- delta-sync roster surface (docs/plans/active/delta-sync.md § Phase 3) ----
+    // ---- delta-sync roster surface (docs/plans/active/delta-sync.md § Phases (phase 3)) ----
 
     /// True when FetchViewRoster is implemented. Callers skip the roster path (and keep today's full
     /// fetch) on a backend that answers false - the default.

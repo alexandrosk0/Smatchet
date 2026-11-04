@@ -3,7 +3,7 @@
   `Source/Core/src/Ui/SmatchetAboutUi.cpp` is invisible to automated verification:
   `tests/golden/` holds only code-syntax-coloring, command-palette-fuzzy, dock-gap-sentinel and
   the four user-info PNGs, and no `tests/ui/*.test.cpp` opens the modal. That is what fired the
-  ship-loop visual-validation exception (`docs/agent-rules/ship-loops.md` § exception 5) and put a
+  ship-loop visual-validation exception (`docs/agent-rules/ship-loops.md` § Visual-validation exception) and put a
   human in the loop for a two-line guard change.
 
   Two fixes landed with zero CI coverage:

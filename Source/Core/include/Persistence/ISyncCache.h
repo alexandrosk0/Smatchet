@@ -36,7 +36,7 @@ class ISyncCache {
     virtual std::vector<CachedTicket> GetAllTickets(const std::string& backendKey) = 0;
     virtual std::vector<std::string> GetAllTicketIds(const std::string& backendKey) = 0;
 
-    // --- Delta-sync metadata (docs/plans/active/delta-sync.md § Phase 2) -------------------
+    // --- Delta-sync metadata (docs/plans/active/delta-sync.md § Phases (phase 2)) ----------
     // The tracker version each cached row was fetched at. Non-pure with conservative defaults, so an
     // implementation that does not store it (a fake, a future backend) simply reports "unknown" and the
     // sync falls back to a full fetch.

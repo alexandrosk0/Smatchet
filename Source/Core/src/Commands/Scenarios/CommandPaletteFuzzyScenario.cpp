@@ -1,7 +1,7 @@
 // CommandPaletteFuzzyScenario — Phase 7 bucket-C verification. Opens the
 // command palette with a fixed filter substring (default "scenario.") and
 // snaps the popup's pixel state via debug.window.screenshot. The diff against
-// tests/golden/command_palette_fuzzy.ppm catches regressions in palette
+// tests/golden/command-palette-fuzzy.png catches regressions in palette
 // placement, font metrics, popup chrome, and fuzzy-match highlighting.
 // The scenario uses the UiDrawSession::requestCommandPaletteOpen flag pair
 // so it never has to reach into SmatchetUI's private commandPalette_ member.
@@ -11,8 +11,8 @@
 // palette open + pre-filtered through the UiDrawSession::requestCommandPalette*
 // flag pair (consumed in SmatchetUI::Draw on the next frame). After a small
 // warm-up window the scenario triggers `debug.window.screenshot` so the post-
-// swap handler writes a PPM the bash driver can diff against
-// tests/golden/command_palette_fuzzy.ppm.
+// swap handler writes a PNG the bash driver can diff against
+// tests/golden/command-palette-fuzzy.png.
 
 #include "Commands/Scenarios/IScenario.h"
 
@@ -99,7 +99,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Same capture-trigger pattern as DockGapSentinelScenario — the post-
-        // swap handler in Source/Standalone/main.cpp will write the PPM
+        // swap handler in Source/Standalone/main.cpp will write the PNG
         // after the next SwapBuffers.
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;

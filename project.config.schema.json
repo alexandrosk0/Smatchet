@@ -277,7 +277,7 @@
     "review-panel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Review-panel roster (docs/agent-rules/review-panels.md § Roster). Read by agents/scripts/core/run-review.sh: one leg per (harness, model); the launcher passes <flag> <id> and names the output file <prefix>review-<round>-<harness>-<tag>.md.",
+      "description": "Review-panel roster (docs/agent-rules/review-panels.md § The launcher owns the naming). Read by agents/scripts/core/run-review.sh: one leg per (harness, model); the launcher passes <flag> <id> and names the output file <prefix>review-<round>-<harness>-<tag>.md.",
       "required": ["harnesses"],
       "properties": {
         "_doc": { "type": "string" },

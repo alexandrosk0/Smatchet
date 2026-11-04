@@ -4,7 +4,8 @@ name: Agent-layer integration
 # agent-surface-extraction-repo, row 12b). A pointer bump changes only the
 # gitlink, so without this lane it would merge on whatever the gitlink path
 # happens to trigger. It proves the pinned layer resolves from a clean checkout,
-# provisions the harness through it, and runs the host's delta gates through it.
+# provisions the harness through it, runs the host's delta gates through it, and,
+# on a pull_request, that the pin is a commit on the layer's develop.
 # The whole host suite already runs through the submodule on every PR
 # (agentic-selftests.yml), so it is not repeated here.
 
@@ -15,6 +16,7 @@ on:
       - 'agent-layer'
       - '.gitmodules'
       - '.github/workflows/agent-layer-integration.yml'
+      - 'scripts/dev/check-layer-pin.sh'
   workflow_dispatch:
 
 concurrency:
@@ -69,3 +71,13 @@ jobs:
 
       - name: Host doc checks through the submodule
         run: bash scripts/dev/test-docs.sh
+
+      # Layer PRs squash-merge, so a pin on a layer branch commit points at history the
+      # layer's develop never contains. Fail-closed on a pull_request: exit 1 (pin off
+      # develop) and exit 2 (the pin cannot be verified, e.g. the fetch failed) both fail
+      # this step. It runs last so the steps above still report on a red pin, and it is
+      # skipped on workflow_dispatch: a dispatch run validates a WIP draft pin on a layer
+      # branch SHA, which is off develop by design and still needs the evidence above.
+      - name: The pin is on the layer's develop
+        if: github.event_name == 'pull_request'
+        run: bash scripts/dev/check-layer-pin.sh

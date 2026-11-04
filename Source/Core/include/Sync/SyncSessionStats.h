@@ -1,7 +1,7 @@
 #pragma once
 
 // SyncSessionStats — what one streaming-sync session cost (docs/plans/active/delta-sync.md
-// § Phase 1). Filled by TicketSyncService at session end, logged once, and exposed read-only
+// § Phases (phase 1)). Filled by TicketSyncService at session end, logged once, and exposed read-only
 // through the `sync.stats` command so a reload's request count, bytes and fallback reason can be
 // checked without reading logs. Plain data: header-only, no OS or SQLite headers (C++14, builds in
 // the standalone and DX12 targets).

@@ -153,7 +153,7 @@ void InitTicketsV2Schema(SQLite::Database& db) {
             "field_key TEXT NOT NULL, "
             "field_value TEXT, "
             "PRIMARY KEY(backend_key, ticket_id, field_key))");
-    // Delta-sync version metadata (docs/plans/active/delta-sync.md § Phase 2). A SEPARATE table, not a
+    // Delta-sync version metadata (docs/plans/active/delta-sync.md § Phases (phase 2)). A SEPARATE table, not a
     // column on tickets_v2: ticket saves are INSERT OR REPLACE, which would reset an added column on every
     // save. A missing row means "unknown version" - the ticket is simply refetched - so no migration flag.
     // `fields` is the newline-joined sorted list of field ids the row was fetched with.
