@@ -68,6 +68,39 @@ if(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
     target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME=1)
 endif()
 
+# Through the Scripts junction made below, <build>/Scripts/* ARE the tracked
+# scripts/* files. A build dir inside the checkout that the root .gitignore
+# misses (e.g. build-iter-v2/) then lists them as new files, and anything that
+# stages-and-resets or cleans them (git stash -u, GitHub Desktop's branch-switch
+# stash) deletes the real scripts/ through the link. A `*` rule in the build
+# root's .gitignore hides the whole tree from git whatever the directory is
+# called. It is written on every configure, Lua on or off, because a junction
+# from an earlier Lua-on configure outlives the option being turned off.
+# An in-source build's binary dir is the checkout root, whose .gitignore is
+# tracked: a `*` there would hide the whole repo, so skip the rule then.
+get_filename_component(_smatchet_binary_real "${CMAKE_BINARY_DIR}" REALPATH)
+get_filename_component(_smatchet_source_real "${CMAKE_SOURCE_DIR}" REALPATH)
+if(WIN32)
+    string(TOLOWER "${_smatchet_binary_real}" _smatchet_binary_real)
+    string(TOLOWER "${_smatchet_source_real}" _smatchet_source_real)
+endif()
+set(_smatchet_build_gitignore "${CMAKE_BINARY_DIR}/.gitignore")
+set(_smatchet_ignore_all "")
+set(_smatchet_ignore_prefix "")
+if(_smatchet_binary_real STREQUAL _smatchet_source_real)
+    set(_smatchet_ignore_all TRUE)
+elseif(EXISTS "${_smatchet_build_gitignore}")
+    file(STRINGS "${_smatchet_build_gitignore}" _smatchet_ignore_all REGEX "^[*][ \t\r]*$")
+    # Start the rule on its own line when the file lacks a trailing newline.
+    file(READ "${_smatchet_build_gitignore}" _smatchet_gitignore_text)
+    if(NOT _smatchet_gitignore_text STREQUAL "" AND NOT _smatchet_gitignore_text MATCHES "\n$")
+        set(_smatchet_ignore_prefix "\n")
+    endif()
+endif()
+if(NOT _smatchet_ignore_all)
+    file(APPEND "${_smatchet_build_gitignore}" "${_smatchet_ignore_prefix}*\n")
+endif()
+
 if(SMATCHET_WITH_LUA_AUTOMATION)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
         set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
@@ -85,6 +118,7 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     # (FAT filesystem, lacking privileges, etc.).
     set(_SMATCHET_SCRIPTS_DST "${CMAKE_BINARY_DIR}/Scripts")
     set(_smatchet_scripts_linked FALSE)
+
     if(NOT CMAKE_CONFIGURATION_TYPES AND EXISTS "${SMATCHET_LUA_SCRIPTS_SRC}")
         if(NOT EXISTS "${_SMATCHET_SCRIPTS_DST}")
             if(WIN32)
