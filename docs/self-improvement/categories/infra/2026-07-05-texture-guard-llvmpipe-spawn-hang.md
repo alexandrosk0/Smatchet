@@ -18,7 +18,7 @@
   failures over the same window — they carry retry-on-collapse + a lane-integrity
   sentinel that fail-closes on a missing sentinel; texture-guard has neither).
 
-  Suspected cause (unconfirmed — needs debug-detective): the forced-fault render
+  Suspected cause (unconfirmed — needs a debug-instrument investigation): the forced-fault render
   path (`SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION=ON`, the 3 #1122 fault states —
   atlas-grow orphan / EGL-context-loss re-arm / rearm-disabled) deadlocks or
   live-locks under the software-GL (llvmpipe) backend on Windows, so the scenario's

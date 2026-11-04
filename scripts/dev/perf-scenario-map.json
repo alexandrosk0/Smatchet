@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "description": "Curated diff -> perf scenario map. Read by the perf-gatekeeper skill (PR-time targeted perf check), by the orchestrator's slice-boundary perf auto-run (process-rules.md § Perf slice-boundary auto-run) and by the end-of-session orphan-scenario sweep (a scenario named here is curated, never an orphan). Matching: a touched repo-relative path matches a rule when Python fnmatch.fnmatchcase(path, glob) holds for any of the rule's globs (`*` also crosses `/`). The union of every matched rule's scenarios runs once each. A touched first-party source path that matches no rule runs `fallback` and is reported as a map gap. A rule with alsoRunTouchedScenario adds every scenario the diff adds or edits (its registered Name()). The CI gate (.github/workflows/perf-pr-fast.yml) does not read this file: it runs the fixed set in scripts/dev/perf-pr-fast-set.json. Every scenario named here must be registered in Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp.",
+  "fallback": "idle",
+  "rules": [
+    {
+      "area": "grid render and edit",
+      "globs": [
+        "Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp",
+        "Source/Core/src/Ui/SmatchetGrid*.cpp",
+        "Source/Core/src/SmatchetGrid*.cpp",
+        "Source/Core/src/TicketGridModel.cpp"
+      ],
+      "scenarios": ["priority-grid-scroll", "cell-edit-burst"]
+    },
+    {
+      "area": "command palette and fuzzy match",
+      "globs": [
+        "Source/Core/src/Commands/CommandPaletteUi.cpp",
+        "Source/Core/src/Commands/CommandRegistry.cpp",
+        "Source/Core/src/Commands/FuzzyMatch.cpp"
+      ],
+      "scenarios": ["idle"],
+      "note": "command-palette-fuzzy is screenshot-only (see screenshotOnly), so this area measures through idle."
+    },
+    {
+      "area": "AI assistant panel and chat persistence",
+      "globs": [
+        "Source/Core/src/Ui/SmatchetAiAssistantUi.cpp",
+        "Source/Core/src/AiAssistantController.cpp",
+        "Source/Core/src/SmatchetChatPersistWorker.cpp",
+        "Source/Core/src/Ui/MarkdownPreviewRender.cpp"
+      ],
+      "scenarios": ["ai-chat-history-render", "idle"],
+      "note": "ai-chat-history-render is registered only when SMATCHET_WITH_AI is ON; on a build without it, run idle and report the scenario as unavailable."
+    },
+    {
+      "area": "theme and text-editor palette",
+      "globs": [
+        "Source/Core/src/Ui/SmatchetTheme.cpp",
+        "Source/Core/src/Ui/SmatchetThemedTextEditorPalette.cpp"
+      ],
+      "scenarios": ["idle"],
+      "note": "theme-switch-roundtrip is screenshot-only (see screenshotOnly), so this area measures through idle."
+    },
+    {
+      "area": "attachment preview",
+      "globs": ["Source/Core/src/Ui/SmatchetAttachmentPreviewUi.cpp"],
+      "scenarios": ["attachment-preview-open"]
+    },
+    {
+      "area": "long-text field editor and markdown preview",
+      "globs": [
+        "Source/Core/src/TicketFieldEditor.cpp",
+        "Source/Core/src/Ui/MarkdownPreviewRender.cpp"
+      ],
+      "scenarios": ["long-text-open-large-adf"]
+    },
+    {
+      "area": "preferences window (slider-drag save debounce)",
+      "globs": ["Source/Core/src/Ui/SmatchetPreferencesUi*.cpp"],
+      "scenarios": ["preferences-slider-drag"]
+    },
+    {
+      "area": "main-thread dispatcher (runs every frame)",
+      "globs": [
+        "Source/Core/include/MainThreadDispatcher.h",
+        "Source/Core/include/MainThreadDispatcherDrain.h"
+      ],
+      "scenarios": ["idle"]
+    },
+    {
+      "area": "scenarios and their registry",
+      "globs": [
+        "Source/Core/src/Commands/Scenarios/*Scenario.cpp",
+        "Source/Core/include/Commands/Scenarios/*.h",
+        "Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+      ],
+      "scenarios": ["idle"],
+      "alsoRunTouchedScenario": true
+    }
+  ],
+  "screenshotOnly": [
+    {
+      "scenario": "command-palette-fuzzy",
+      "routeTo": "idle",
+      "reason": "Bucket-C screenshot scenario: fails to start without --screenshotPath and emits no rows[], so perf-baseline.sh cannot capture a baseline for it."
+    },
+    {
+      "scenario": "theme-switch-roundtrip",
+      "routeTo": "idle",
+      "reason": "Bucket-C screenshot scenario: fails to start without --screenshotPath and emits no rows[], so perf-baseline.sh cannot capture a baseline for it."
+    },
+    {
+      "scenario": "dock-gap-sentinel",
+      "routeTo": "idle",
+      "reason": "Bucket-C screenshot scenario: fails to start without --screenshotPath and emits no rows[], so perf-baseline.sh cannot capture a baseline for it."
+    }
+  ]
+}

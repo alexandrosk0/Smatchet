@@ -356,10 +356,9 @@ const TrackerFieldCatalogIndex& SmatchetUI::resolvePaneCatalog(AppController& ap
     // steady-state re-renders hit the cached index with zero allocation, so never per cell.
     const std::uint64_t rev = app.GetPaneFieldCatalogRevision(pane.id);
     if (!pane.cachedPaneCatalogValid || !pane.cachedPaneCatalogIndex || pane.cachedPaneCatalogRevision != rev) {
-        // Own the fields COPY so the index's raw TrackerField* stay valid (the index points
-        // INTO this vector — GetPaneAvailableFields returns a value, not a live reference).
-        pane.cachedPaneCatalogFields =
-            std::make_shared<const std::vector<TrackerField>>(app.GetPaneAvailableFields(pane.id));
+        // Hold the catalog snapshot so the index's raw TrackerField* stay valid (the index points
+        // INTO this immutable vector; a catalog swap publishes a new one instead of rewriting it).
+        pane.cachedPaneCatalogFields = app.GetPaneAvailableFields(pane.id);
         pane.cachedPaneCatalogIndex = std::make_shared<const TrackerFieldCatalogIndex>(*pane.cachedPaneCatalogFields);
         pane.cachedPaneCatalogRevision = rev;
         pane.cachedPaneCatalogValid = true;

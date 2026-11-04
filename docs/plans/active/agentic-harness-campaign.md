@@ -35,7 +35,7 @@ solo-merge-review-gate ── independent (re-scoped: codify-only)
 ## Approach — sequenced waves
 
 **Wave 1 (autonomous, this campaign): the clean trio.** Dependency-leading, fully verifiable locally, no external deps, no judgment gate.
-1. `agent-charter-altitude` — 2 doc edits (AGENTS.md § Operating principles preamble ≤15 lines + `delegation.md` § Context budget ≤8 lines). Feeds #6.
+1. `agent-charter-altitude` — 2 doc edits (AGENTS.md § Operating principles preamble ≤15 lines + `process-rules.md` § Context budget by task class ≤8 lines). Feeds #6.
 2. `internal-procedure-skills` — lift `AGENT-VS-SKILL.md` from the shipped plan + add the `author-plan-doc` skill (skill-only → `SKILL_ONLY_HELPERS`). **Keystone — unblocks #6.**
 3. `solo-merge-review-gate` (re-scoped) — `setup-branch-protection.sh` + `branch_protection` config block + ADR; rewrite the child plan's stale § Context; the live-apply is a maintainer-run confirmation.
 

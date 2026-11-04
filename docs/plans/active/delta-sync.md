@@ -4,7 +4,7 @@
 >
 > **Status**: `active` — implemented locally as seven stacked branches (`feat/delta-sync-p1-races` … `-p7-lookups`); Phase 0 (live-Jira spike) is an open item.
 >
-> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family. Routed to: tracker-backend, offline-sync, command-system, grid-engine.
+> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family. Leaf rules: `Source/Core/src/{Tracker,Sync,Commands,Ui}/AGENTS.md` (grid: Ui § Grid).
 
 ## Context
 
@@ -65,7 +65,7 @@ Grouped by phase; the plan's full file list is the git diff of each branch.
 
 ## Existing utilities reused
 
-- `FetchKeysIsolatingRefusals` (`Sync/TicketSyncService.cpp`) — refusal isolation for the changed-body fetch.
+- `FetchKeysIsolatingRefusals` (`Sync/RefusalIsolatingFetchPure.h`, shared with the change monitor) — refusal isolation for the changed-body fetch.
 - `JiraRunSearchPageLoop` (`Tracker/JiraIssueSearch.cpp`) — roster paging.
 - `RunOnUiThreadAsCommandResult` (`Commands/MainThreadDispatch.h`) — command thread hop.
 - `ShouldSkipMassDeletionOnEmptyFullSync` — empty-roster guard.
@@ -85,7 +85,7 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 ## Perf-review-system gates
 
-1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`agents/core/perf-gatekeeper.md` map).
+1. **PR-fast CI** — scenario most directly exercising the path: the sync/concurrent-sync scenario (`scripts/dev/perf-scenario-map.json`; `concurrent-sync` is in `scripts/dev/perf-pr-fast-set.json`).
 2. **Pillar 2 static scanner** — Phase 4 removes UI-thread SQLite writes; no new sync I/O reachable from `ImGui::*`.
 3. **Dispatcher drain** — does not touch `MainThreadDispatcher::Drain()`.
 4. **Visible-cue harness** — no new > 100 ms stall path.
@@ -95,12 +95,12 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 - Data copied from other issues (parent summary, link status, sprint, display names) does not move `updated`: mitigated by `DeltaSyncMaxRowAgeSec` (default 6 h) forcing a refetch of old rows.
 - Comment edits/deletes may not move `updated` on every Jira instance: Phase 0 must confirm; until then the max-row-age bound limits staleness.
-- Roster page size and `kJiraMaxRosterPages` use conservative defaults (`maxResults=100`) until Phase 0 measures real limits.
+- The roster page size (`search_guards::kJiraRosterPageSize`) and its page cap (`JiraCaps()`) use conservative defaults (`maxResults=100`) until Phase 0 measures real limits.
 - Non-goal: Plane/GitHub roster support (they keep the old path via `SupportsVersionedRoster() == false`).
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `ctest --preset ninja-test-msvc -R "DeltaSync|RemoteVersion|TicketSyncService|SyncCacheContract|LocalCacheTicketSyncMeta|JiraIssueSearchHttp|JiraIssueMappingPure|SyncEmptyFullSyncGuard|ConfigManager|KeyedLookupCache|FieldCatalogCache"` plus the full suite.
+- **Bucket A (pure-logic ctest, doctest rig)**: `ctest --preset ninja-test-msvc -R "DeltaSync|RemoteVersion|TicketSyncService|SyncCacheContract|LocalCacheTicketSyncMeta|JiraIssueSearchHttp|JiraIssueMappingPure|SyncEmptyFullSyncGuard|ConfigManager|KeyedLookupCache|FieldCatalogCache"` plus the full suite.
 - **Request counts**: `JiraCatalogHttpFixture` counter — a second delta reload is 1 roster page and 0 body requests; Full equals today's count.
 - **Live check** (needs a real Jira — Phase 0): `Smatchet.exe cmd sync.full --yes`, then `sync.incremental` twice; `sync.stats` shows `mode=delta`, `bodiesFetched=0`; edit one issue, rerun, `bodiesFetched=1`.
 - **Races**: `sync.incremental` over MCP under the sanitizer build; `concurrent-sync` scenario flat or better.
@@ -111,7 +111,7 @@ N/A — nothing is extracted from an over-cap file; new logic lands in new pure 
 
 ## Out of scope
 
-- **Phase 0 (open item)** — a spike against a live Jira instance: measure the page size for `fields=updated&maxResults=5000` versus `fields=key`; whether `updated` changes on comment edit and delete; read-after-write consistency. Its results set the roster page cap and the max row age. Until then: roster `maxResults=100`, named constant `kJiraMaxRosterPages`, `DeltaSyncMaxRowAgeSec` 21600.
+- **Phase 0 (open item)** — a spike against a live Jira instance: measure the page size for `fields=updated&maxResults=5000` versus `fields=key`; whether `updated` changes on comment edit and delete; read-after-write consistency. Its results set the roster page cap and the max row age. Until then: roster `maxResults=100`, named constant the roster page cap (`JiraCaps()`), `DeltaSyncMaxRowAgeSec` 21600.
 - Plane / GitHub / Linear roster implementations — follow-up per backend.
 
 ## Review follow-up decisions
@@ -127,7 +127,7 @@ The Phase 3-7 review follow-ups that needed a product or design decision are dec
   - *Moved.* (1) `TicketSyncService::SyncWithBackend` with no views override (the `sync.*` commands, the cache-recreate follow-up) read and parsed `smatchet_views.json` on the UI thread: it now loads them on a worker and starts the sync from a UI-thread post, guarded by an `alive_` token against a retired pane (`ITicketSyncDeps::PostToMainThread`), and counted in `TicketSyncService::HasPendingWork()` so the pane is not retired (its context owns the deps the worker posts through) while the read runs. (2) The startup `RefreshLocalData()` (a full-table SQLite read in `InitFieldCatalog`) is `RefreshLocalDataAsync()`. (3) `ListCachedProjects()` on the open edge of the Preferences Tracker tab and the JQL project pill, and the Preferences "Forget" button's `ForgetProject()` file write, run on a worker in a single slot (`RefreshCachedProjectsSnapshotOnOpen` / `RequestForgetCachedProject`); a read that lands after a Forget drops the forgotten entry (`RemoveForgottenProjects`), and at exit the read is joined and the still-queued Forgets are applied (`DrainUiDrawSessionFuturesBeforeAppTeardown`). (4) Race hardening that the worker-side cache swap needs: every plain `Cache` read that was checked and then dereferenced is now one `atomic_load` latch (the AI chat load, the offline-create worker, the probe-row persist and delete, the pane seed read, the ticket prefetch, `GridContextDepsAdapter::Cache()` / `HasCache()`).
   - *Already off-thread, checked.* The change monitor (probe fetch, `persistProbeRows_`, `dropUnheldCacheRows_` deletes), the comments modal (saved thread parsed on the load worker, seed from the in-memory snapshot), the lookups (`LoadProjectList`, the saved components read run inside `RunKeyedFetch` workers), the pane seed read in `EnsurePaneLiveSyncStarted`.
   - *Left on purpose.* (a) The streaming apply and the stale-row deletion in `TickStreamingApply` write to SQLite on the UI thread in 3 ms / 20-ticket frame budgets: that is the documented apply design (the in-memory merge and the cache write must stay ordered with the grid snapshot), and moving it is a redesign of the apply FSM, not a sweep item. (b) `TicketSyncService` joins a *finished* sync worker on the UI thread (`StartPendingSyncIfIdle`, `StartStreamingSync`); the join is instant because the worker has already left. (c) `TrySkipStartupCatalogFetch` parses the view's JQL for a project on the UI thread: a pure string parse (Plane, whose resolver can call the network, is skipped by design).
-  - *Findings outside the scope (not changed).* `chat_persist::Start(*Cache, ...)` (`AppController_Init.cpp`) keeps a raw `LocalCacheManager&` for the process lifetime, so after any cache recreate (old or new path) the AI chat persist worker writes through a dangling reference; it needs the latched `shared_ptr` or a re-bind. `AppController::GetAvailableFields()` returns a reference into the catalog without its lock while workers can write it (`RefreshFieldCatalog`).
+  - *Findings outside the scope (not changed).* (The `chat_persist::Start` half of this note is fixed: it now takes a provider lambda that reads the live `Cache`.) ~~`AppController::GetAvailableFields()` returns a reference into the catalog without its lock while workers can write it (`RefreshFieldCatalog`).~~ Resolved by the field-catalog snapshot fix (lock `fieldcatalog-snapshot`): the catalog is a copy-on-write `shared_ptr<const std::vector<TrackerField>>` swapped under its mutex, and `GetAvailableFields()` returns that snapshot.
 - **Session stats are approximate (kept as is).** `sync.stats` samples a shared tracker traffic counter, so two panes syncing at once cross-count requests and bytes. Decision: accept and say so. The `sync.stats` command description and `docs/guides/cli.md` call the request and byte numbers approximate; there is no per-session attribution.
 - **`LookupCacheTtlSec` stays 0 (off).** A picker opened online, or reopened after an outage, reloads live (the offline-first contract). No Preferences control, no non-zero default.
 - **`ApplyIssueFetchPack` is a documented test-only seam.** `TicketSyncService::ApplyIssueFetchPack` stays (its header says it has no production caller and that production applies through the streaming path); the unused `AppController::ApplyIssueFetchPack` passthrough was deleted. No test was removed.

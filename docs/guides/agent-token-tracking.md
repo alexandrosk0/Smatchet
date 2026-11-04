@@ -22,13 +22,13 @@ Skip **A** (agent self-report) — agents guess ±30%; B's transcript-derived nu
 Schema (one line per subagent completion):
 
 ```json
-{"ts":"2026-05-13T22:34:56Z","session":"<id>","agent":"perf-detective","model":"opus","model_full":"claude-opus-4-7-20260501","in":12340,"out":2103,"cache_create":4200,"cache_read":18200,"duration_ms":42118}
+{"ts":"2026-05-13T22:34:56Z","session":"<id>","agent":"code-review","model":"opus","model_full":"claude-opus-4-7-20260501","in":12340,"out":2103,"cache_create":4200,"cache_read":18200,"duration_ms":42118}
 ```
 
 Fields:
 - `ts` — ISO-8601 UTC; the moment the subagent stopped.
 - `session` — Claude Code session id (groups calls within one user session).
-- `agent` — subagent `name` field (e.g. `perf-detective`). Falls back to `unknown` if Claude Code does not pass it.
+- `agent` — subagent `name` field (e.g. `code-review`). Falls back to `unknown` if Claude Code does not pass it.
 - `model` — model family (`opus`, `sonnet`, `haiku`, or `unknown`) parsed from the full transcript model id.
 - `model_full` — full model id from the first assistant message when available; used for version-specific pricing.
 - `in` / `out` — total `input_tokens` / `output_tokens` summed across all assistant messages in the subagent transcript.
@@ -104,10 +104,10 @@ Logic:
    Session 2026-05-13 (4h 22m, 11 agent calls)
 
    Agent              Model    Calls   In       Out     Cache    Est. USD
-   perf-detective     opus     2       24.0k    4.2k    36.4k    $0.21
-   spike-hunter       opus     1       8.1k     1.4k    12.0k    $0.07
-   command-system     sonnet   4       18.0k    3.2k    52.0k    $0.05
-   mechanic           haiku    3       9.5k     1.1k    14.0k    $0.01
+   code-review        opus     2       24.0k    4.2k    36.4k    $0.21
+   architect          opus     1       8.1k     1.4k    12.0k    $0.07
+   general-purpose    sonnet   4       18.0k    3.2k    52.0k    $0.05
+   Explore            haiku    3       9.5k     1.1k    14.0k    $0.01
    ...
    Total                              59.6k    9.9k    114.4k    $0.34
 

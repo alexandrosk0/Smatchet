@@ -5,8 +5,9 @@
 ## agrees with them instead of suggesting C++17 features, GLFW headers in
 ## shared core, etc.
 ##
-## Triage + routing of CodeRabbit feedback into Smatchet subsystem agents
-## is owned by `agent-layer/agents/core/coderabbit-triage.md`.
+## Triage + routing of CodeRabbit feedback (override rules; path -> area via
+## docs/area-map.json) is owned by the coderabbit-triage skill:
+## `agent-layer/agents/_shared/skills/coderabbit-triage/SKILL.md`.
 
 language: en-US
 early_access: false
@@ -115,9 +116,10 @@ reviews:
         (144 Hz target).
     - path: 'Source/Plugins/Mcp/**'
       instructions: |
-        MCP wire protocol = JSON-RPC. Tool schemas live in `Source/Plugins/Mcp/`
-        and `SmatchetMcpServerUi`. Tools added here must also flow through
-        `CommandRegistry` — flag direct registration.
+        MCP wire protocol = JSON-RPC. Tools and their schemas come from
+        `CommandRegistry` (`BuildJsonSchema()`) or Lua `mcp.register_tool` —
+        flag a tool handler with its own logic here. Rules:
+        `Source/Plugins/Mcp/AGENTS.md`.
     - path: 'Source/Core/src/AppController_Lua*.cpp'
       instructions: |
         `AppController_LuaBindings.cpp` (ON) and `AppController_LuaStubs.cpp`
@@ -169,26 +171,6 @@ reviews:
         `SmatchetTsanTests` subset; `ConfigManager.test` belongs in
         `SmatchetTests` only. Bucket-E is UI-only — do NOT remove them
         from those lists.
-    - path: 'agents/**/*.md'
-      instructions: |
-        Agent definitions (`agents/project/*.md` here; the portable
-        `agents/core/*.md` live in the agent-layer/ submodule) carry a
-        YAML frontmatter block whose capability list is spelled `capabilities:`
-        (a YAML list) — NOT `capability-tags`, `capability_tags`, or `tags`. Do
-        NOT flag the frontmatter as "missing a capabilities/capability-tags
-        field" when `capabilities:` is present under a different-but-correct
-        name; the field IS there. The capability set is CLOSED (the
-        capability-tag → tool mapping lives in
-        `agent-layer/docs/harness/capability-adapter.md`) — do NOT suggest adding new
-        capability tags, renaming the field, or "standardising" it to
-        `capability-tags`. The optional `harness-hints.<harness>:` blocks
-        (e.g. `harness-hints.claude:`) are INTENTIONAL per-harness routing
-        metadata (model selection, MCP tool lists) — harnesses ignore unknown
-        blocks, so do NOT flag them as unknown/unsupported keys. The top-level
-        `model:` key is likewise INTENTIONAL — it mirrors
-        `harness-hints.claude-code.model` (the Claude Code native routing
-        wire; parity enforced by `test-agent-contract.sh` check 15) — do NOT
-        flag it as redundant with the hint or suggest removing either copy.
     - path: 'docs/plans/**'
       instructions: |
         Plan docs live in THREE tiers — `docs/plans/active/<slug>.md` (in

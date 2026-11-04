@@ -1,3 +1,4 @@
+// Grid and tracker banners reach the user as toasts only through here: Source/Core/src/Ui/AGENTS.md § Grid.
 #include "SmatchetGridUiSupport.h"
 
 #include "AppController.h"

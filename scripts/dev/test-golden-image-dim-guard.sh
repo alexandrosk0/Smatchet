@@ -12,7 +12,7 @@
 # honest images at/under the 16384 cap, and rejects just over it. The CLI emits
 # the canonical `Passed: N  Failed: M` line this script forwards for test-all.sh.
 #
-# Exit codes (test-author convention):
+# Exit codes (test-script convention, scripts/dev/test-all.sh header):
 #   0 — every case passed
 #   1 — at least one case failed
 #   2 — g++ missing (cannot build the one-TU helper)

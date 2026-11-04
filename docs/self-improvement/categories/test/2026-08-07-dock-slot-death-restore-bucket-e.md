@@ -11,7 +11,7 @@
   — is uncovered by automation and was verified only by reasoning about
   `DockBuilderGetNode` semantics plus the review's read of `imgui.cpp`.
 
-  Suggested shape, for `test-author`:
+  Suggested shape (`test-authoring` skill):
   1. Boot with the default layout, assert `DockBuilderGetNode(0x0A) != nullptr`.
   2. Undock every tab in the bottom panel (ImGui Test Engine `ItemDragAndDrop` on
      each tab out to a free viewport point, or `DockBuilderRemoveNode(0x0A)`

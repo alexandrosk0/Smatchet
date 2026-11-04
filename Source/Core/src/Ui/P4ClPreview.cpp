@@ -6,6 +6,7 @@
 #include "Ui/P4ClPreview.h"
 
 #include "Logger.h"
+#include "TunableLimits.h"    // p4_process_timeout_ms: the default shutdown drain follows it
 #include "OfflineFirstPure.h" // kLookupRetryAfterSeconds — when a shown failure is asked again
 
 #include "imgui.h"
@@ -180,6 +181,9 @@ void DrainForShutdown(std::chrono::milliseconds timeout) {
     // ClPreviewState Meyers singleton's destructor at static-destruction time with zero
     // diagnostic. See the header doc comment for why the default timeout value makes
     // this a real bound (not just a shorter wait before the same eventual block).
+    if (timeout.count() <= 0) {
+        timeout = std::chrono::milliseconds(static_cast<long long>(smatchet::limits::Get().P4ProcessTimeoutMs) + 10000);
+    }
     if (S().HoverFut.valid() && S().HoverFut.wait_for(timeout) != std::future_status::ready) {
         LOG_WARN("P4ClPreview: shutdown drain timed out (%lld ms) waiting on hover CL '%s' describe fetch",
                  static_cast<long long>(timeout.count()), S().HoverCl.c_str());

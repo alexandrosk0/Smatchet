@@ -88,7 +88,7 @@ the 121-file reference blast radius and de-risk the migration.
   § Self-improvement loop, `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
   § Format / § Workflow, every `agents/*.md` agent prompt's `## Self-improvement`
   guidance, `docs/agent-rules/process-rules.md`, and the `gate-escape-postmortem`
-  + `drain-memory` skills that file category entries. Mechanical, `mechanic`-shaped,
+  + `drain-memory` skills that file category entries. Mechanical (`process-rules.md` § Mechanical edits),
   but wide — do it as a focused sweep with a grep checklist, not by memory.
 - The apply/archive flow (entry → `applied.md`) is unchanged in shape: a per-file
   entry is `git mv`'d / appended into the union-merged `applied.md` then the source

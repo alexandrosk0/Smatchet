@@ -69,7 +69,7 @@ void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& 
     }
 }
 
-constexpr std::size_t kFetchedRowsPerFrame = 20;    // rows saved to SQLite per frame (3 ms budget)
+constexpr std::size_t kFetchedRowsPerFrame = 20;    // fetched rows merged per frame (the worker persisted them)
 constexpr std::size_t kUnchangedRowsPerFrame = 500; // cache-served rows: memory-only, so a bigger slice
 
 // Merges one frame's rows into the in-memory roster (smatchet::sync::MergeRowsIntoActive: fresh rows always replace,
@@ -449,7 +449,7 @@ void TicketSyncService::TickStreamingApply() {
         return;
     }
 
-    // 3. Process incoming streaming ticket batches in-memory and write to SQLite with budget.
+    // 3. Merge incoming streaming ticket batches in memory, row-capped per frame (the worker persisted them).
     DrainPendingStreamingBatches();
 
     // 4. When the worker finished and the queue is drained, finalise the session.
@@ -1618,7 +1618,8 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
         HopRows hopRows = std::move(fetched.value());
         NoteRefusedKeys(summary, hopRows.Refused, "issue(s) in the children walk");
         if (hopRows.Incomplete) {
-            MarkHierarchyWalkIncomplete(summary, "some child issue(s) listed by the tracker were not returned");
+            MarkHierarchyWalkIncomplete(summary, "some child issue(s) were not returned (a missing row, or "
+                                                 "the tracker's page cap stopped the fetch)");
         }
 
         std::vector<CachedTicket> newUnchanged;
@@ -2016,10 +2017,17 @@ TicketSyncService::FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsSt
 
     std::vector<std::string> refused;
     int budget = RefusalSplitBudget(keys.size());
+    bool truncated = false; // a children batch stopped by the backend's page cap
     Result<std::vector<CachedTicket>, TrackerError> fetched = FetchKeysIsolatingRefusals(
         [&](const std::vector<std::string>& batch) {
-            return childrenOfKeys ? backend->FetchChildrenOfKeysCancellable(cfgCopy, batch, viewsCopy, cancelled)
-                                  : backend->FetchIssuesForKeysCancellable(cfgCopy, batch, viewsCopy, cancelled);
+            if (!childrenOfKeys) {
+                return backend->FetchIssuesForKeysCancellable(cfgCopy, batch, viewsCopy, cancelled);
+            }
+            bool batchTruncated = false;
+            Result<std::vector<CachedTicket>, TrackerError> children =
+                backend->FetchChildrenOfKeysReportingTruncation(cfgCopy, batch, viewsCopy, cancelled, batchTruncated);
+            truncated = truncated || (children.has_value() && batchTruncated);
+            return children;
         },
         cancelled, keys, budget, refused);
     if (!fetched.has_value()) {
@@ -2027,5 +2035,6 @@ TicketSyncService::FetchHierarchyHop(const TrackerConfig& cfgCopy, const ViewsSt
     }
     rows.Changed = std::move(fetched.value());
     rows.Refused = std::move(refused);
+    rows.Incomplete = truncated;
     return HopResult::Ok(std::move(rows));
 }

@@ -6,6 +6,22 @@
 #include <string>
 #include <vector>
 
+/**
+ * Callstack parsing for annotate analysis. Rules:
+ *
+ * - PathRemaps: ApplyPathRemaps replaces the LONGEST matching FromPrefix (a later rule wins a
+ *   tie), compared byte for byte, so Windows paths match case-sensitively as the user typed them.
+ *   Before changing the matching, check every ApplyPathRemaps caller and
+ *   tests/Core/CallstackParser.test.cpp: Windows path semantics break easily.
+ * - Ignore keywords: FrameMatchesIgnoreKeywords is a case-insensitive substring test over RawLine,
+ *   Function and FilePath. Frames are filtered with it in the analysis worker, never in draw code.
+ * - A new callstack format is a new Match*Format matcher in CallstackParser.cpp, tried from
+ *   TryParsePathLinePair on the raw line text (kept as RawLine); keep it a linear scan (no
+ *   std::regex), with a case in tests/Core/CallstackParser.test.cpp or CallstackParserScan.test.cpp.
+ *
+ * How the annotate views use these: Source/Core/src/Ui/AGENTS.md § Annotate views and syntax highlight
+ */
+
 struct ParsedCallstackFrame {
     std::string RawLine;
     std::string Function;

@@ -805,7 +805,15 @@ class AppController : public IAppThreading,
     std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
     static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
-    const std::vector<TrackerField>& GetAvailableFields() const override { return fieldCatalog().AvailableFields; }
+    /// The focused catalog as an immutable snapshot: the pointer is copied under the catalog mutex, so a catalog
+    /// fetch, snapshot restore or backend switch landing on a worker thread swaps in a new generation instead of
+    /// rewriting the one the caller holds. Keep the returned pointer alive for as long as anything reads the
+    /// vector — never bind `*GetAvailableFields()` in a range-for or to a reference that outlives the statement.
+    std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields() const override {
+        const GridContextFieldCatalog& cat = fieldCatalog(); // latch once (Pillar 3)
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        return cat.AvailableFields;
+    }
     /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
     /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
     std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }
@@ -1080,9 +1088,9 @@ class AppController : public IAppThreading,
     /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
     /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` rebuilds the
     /// payload for `resolvedValue` (the field's own shape; no Markdown conversion); `unverified` ("Force Mine")
-    /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
-    /// the conflict state + bases. Returns true when the edit was re-queued; false when it stays
-    /// suspended (see OfflineQueueService::ResolveFieldEditConflict).
+    /// ignores `resolvedValue`, replays the existing queued payload (an Original Estimate edit without its copy
+    /// of the remaining estimate) and clears the conflict state + bases. Returns true when the edit was re-queued;
+    /// false when it stays suspended (see OfflineQueueService::ResolveFieldEditConflict).
     bool ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
@@ -1558,12 +1566,11 @@ class AppController : public IAppThreading,
     /// True once the pane context's OWN catalog has been populated (seed or fetch). While
     /// false the read-routing must use the focused catalog (the pane context is still empty).
     bool IsPaneFieldCatalogPopulated(const std::string& paneId) const;
-    /// Snapshot COPY of the pane context's AvailableFields (mutex-guarded copy — the focused
-    /// GetAvailableFields returns a bare reference, but a non-focused context's catalog may be
-    /// rewritten off-thread by its fetch worker, so callers get a copy to build a
-    /// TrackerFieldCatalogIndex from safely). Falls back to a copy of the focused catalog when
-    /// the pane has no populated context.
-    std::vector<TrackerField> GetPaneAvailableFields(const std::string& paneId) const;
+    /// Immutable snapshot of the pane context's AvailableFields (the pointer is copied under the
+    /// catalog mutex; the context's fetch worker swaps in a new generation rather than rewriting
+    /// this one, so a TrackerFieldCatalogIndex built from it stays valid while the snapshot is
+    /// held). Falls back to the focused catalog's snapshot when the pane has no populated context.
+    std::shared_ptr<const std::vector<TrackerField>> GetPaneAvailableFields(const std::string& paneId) const;
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
     void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
@@ -1796,16 +1803,16 @@ class AppController : public IAppThreading,
     // WarmIssueTypeEditMetaWorker moved into EditMetaCacheService (god-object decomposition
     // Phase 1). Accessed via `editMeta_`; the public delegators below preserve the prior surface.
 
-    // Take the caller's already-latched catalog (#823): fieldCatalog() re-resolves
-    // focusedContextPtr_ per call, so re-resolving inside the helper could insert the synthetic
-    // field into a different context than the caller populated. Caller passes its latch.
-    void EnsureCatalogHistoryField(GridContextFieldCatalog& cat);
-    void EnsureCatalogCommentsField(GridContextFieldCatalog& cat);
+    // Synthetic-column fixups (#823) on a catalog that is not published yet: the published
+    // AvailableFields is an immutable snapshot, so the caller fixes up its own vector and then
+    // publishes it in one swap under the catalog mutex.
+    void EnsureCatalogHistoryField(std::vector<TrackerField>& fields);
+    void EnsureCatalogCommentsField(std::vector<TrackerField>& fields);
     // issue-comments fix (#1291) — erase Jira's legacy system `comment` field (ADF blob) from the
     // catalog so it stops duplicating the synthetic `comments` count column in the Fields picker.
-    // Same latched-catalog contract as the Ensure* helpers above. The blob survives in per-ticket
+    // Same unpublished-vector contract as the Ensure* helpers above. The blob survives in per-ticket
     // fieldValues["comment"] (Jira mapper, catalog-independent) for the Comments-cell hover tooltip.
-    void EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat);
+    void EraseCatalogLegacyCommentField(std::vector<TrackerField>& fields);
     // TryBuildFieldEditPayloadForNetwork + SubmitFieldEditCtx + the three SubmitFieldEdit branch
     // helpers (Sprint/Timetracking/Regular) moved into FieldEditPipelineService (god-object
     // decomposition Phase 2). Accessed via `fieldEdit_`; the public delegators above preserve the
@@ -1869,7 +1876,8 @@ class AppController : public IAppThreading,
     std::vector<BackgroundWorker> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
     /// UpdateTicket's cache writes, in call order, off the UI thread (Pillar 2). Drains run as background
-    /// tasks, so JoinBackgroundTasks (shutdown, cache recreate) waits for every queued save.
+    /// tasks, so JoinBackgroundTasks (cache recreate) waits for a drain already running. At shutdown the
+    /// destructor flushes the queue before setting shuttingDown_, which would otherwise drop a queued drain.
     smatchet::SerialTaskQueue ticketSaves_{
         [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
     /// The field-catalog snapshot file's writes (and, once restores move here, its reads), in call order, off the
@@ -1977,6 +1985,8 @@ class AppController : public IAppThreading,
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
     /// is waited for (RAII join) rather than left to the member destructor.
     void DrainCatalogWorkBeforeShutdown_();
+    /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
+    void FlushTicketSavesBeforeShutdown_();
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
     /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
     void JoinCacheRecreateWorker_();

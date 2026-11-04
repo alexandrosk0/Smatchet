@@ -328,7 +328,7 @@ static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const Tra
         result.Error = error;
         return;
     }
-    const auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(fetchCfg, projectKey);
+    auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(fetchCfg, projectKey);
     result.Ok = static_cast<bool>(catalogResult);
     if (!result.Ok) {
         result.Error = catalogResult.error().Detail;
@@ -341,8 +341,14 @@ static void FetchGridFieldCatalogInto(FieldCatalogFetchResult& result, const Tra
     result.IssueTypeMeta = std::move(catalog.IssueTypeMeta);
     result.Users = std::move(catalog.Users);
     result.Warning = std::move(catalog.Warning);
-    // Serialized here, off the UI thread, for the offline copy of the roster (Pillar 6).
-    if (!result.Users.empty()) {
+    // Serialized here, off the UI thread, for the offline copy of the roster (Pillar 6). The fetch and the
+    // stored row have separate caps (jira_users_max_pages, lookup_max_stored_users), and SerializeUsers keeps
+    // only a prefix past the stored cap. A partial roster is never saved: the older full row stays instead.
+    if (result.Users.size() > smatchet::lookup::MaxStoredUsers()) {
+        LOG_WARN("SmatchetUI: user roster (%zu users) is over lookup_max_stored_users (%zu); not saving it for "
+                 "offline use",
+                 result.Users.size(), smatchet::lookup::MaxStoredUsers());
+    } else if (!result.Users.empty()) {
         result.UsersPayloadJson = smatchet::lookup::SerializeUsers(result.Users);
         if (result.UsersPayloadJson.empty()) {
             LOG_WARN("SmatchetUI: user roster too large to save for offline use (%zu users)", result.Users.size());
@@ -895,9 +901,14 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             gridFrameCtx_.catalogRevision = catalogRev;
             gridFrameCtx_.viewsRevision = viewsRev;
             gridFrameCtx_.activeViewId = avId;
-            gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(app.GetAvailableFields());
+            // The index holds raw pointers into the catalog vector, so the frame context owns the snapshot it
+            // was built from. The snapshot is swapped in after the index: the previous one is released only
+            // once the index built from it is gone.
+            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+            gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(*catalog);
             gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)
                                        : std::vector<TicketGridColumn>();
+            gridFrameCtx_.catalogFields = std::move(catalog);
         }
     }
 }
@@ -1606,7 +1617,8 @@ namespace {
 // when it expires.
 void TrySkipStartupCatalogFetch(AppController& app, UiDrawSession& d, const ViewDefinition* skipView) {
     std::vector<std::string> catalogIds;
-    for (const TrackerField& f : app.GetAvailableFields()) {
+    const std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+    for (const TrackerField& f : *catalog) {
         catalogIds.push_back(f.Id);
     }
     const std::int64_t nowUnix = TimeNowPure::NowUnixSeconds();

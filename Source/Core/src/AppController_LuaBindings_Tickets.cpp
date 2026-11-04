@@ -1,3 +1,4 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
 #include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
 #include "GridLiveContext.h"
@@ -213,9 +214,10 @@ bool AppController::Impl::FindFieldById(const PendingActionTarget& target, const
     }
     const GridContextFieldCatalog& catalog = ctx->fieldCatalog;
     std::lock_guard<std::mutex> lock(catalog.availableFieldsMutex_);
-    const auto it = std::find_if(catalog.AvailableFields.begin(), catalog.AvailableFields.end(),
+    const std::vector<TrackerField>& fields = *catalog.AvailableFields;
+    const auto it = std::find_if(fields.begin(), fields.end(),
                                  [&fieldId](const TrackerField& field) { return field.Id == fieldId; });
-    if (it == catalog.AvailableFields.end()) {
+    if (it == fields.end()) {
         return false;
     }
     out = *it;
@@ -312,7 +314,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
     }
     const bool offline = LuaTruthy(offlineObj);
 
-    LuaMergeIssueCreateSpec(draft, std::move(spec), app_.fieldCatalog().AvailableFields);
+    LuaMergeIssueCreateSpec(draft, std::move(spec), *app_.GetAvailableFields());
 
     sol::table result = sv.create_table();
 

@@ -1,3 +1,5 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
+
 // AppController_LuaBindingsCore.cpp -- ImGui-free portion of the Lua bindings.
 //
 // Hosts `smatchet::lua::InitLuaCore` plus the 11 glue functions whose receiver

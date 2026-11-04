@@ -58,7 +58,7 @@ Per `AGENTS.md` § UX Pillars.
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
-1. **PR-fast CI** — **N/A for steady-state**: the changed path is a one-shot, user-triggered capture, not a per-frame scenario in the curated map (`agents/core/perf-gatekeeper.md` § map). No steady-state scenario exercises it; the font-atlas bake is one-time at font-load.
+1. **PR-fast CI** — **N/A for steady-state**: the changed path is a one-shot, user-triggered capture, not a per-frame scenario in the curated map (`scripts/dev/perf-scenario-map.json`). No steady-state scenario exercises it; the font-atlas bake is one-time at font-load.
 2. **Pillar 2 static scanner** — no new sync I/O reachable from `ImGui::*`; capture/encode stays off the UI thread. No `PILLAR2_WORKER_ONLY` annotation needed.
 3. **Dispatcher drain** — does not touch `MainThreadDispatcher::Drain()`.
 4. **Visible-cue bucket-E harness** — adds no new sync-stall code path > 100 ms.
@@ -80,7 +80,7 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
 Per `AGENTS.md` § Verification automation.
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: run-length normalisation helper (slice 2) — assert equal-length inputs of differing text map to indistinguishable run-length buckets; Redaction-font selection / U+2588 fallback decision logic.
+- **Bucket A (pure-logic ctest, doctest rig)**: run-length normalisation helper (slice 2) — assert equal-length inputs of differing text map to indistinguishable run-length buckets; Redaction-font selection / U+2588 fallback decision logic.
 - **Bucket E (ImGui Test Engine, `ninja-ui-test-msvc`)**: render a frame with redaction pushed → assert the captured target contains no readable glyph runs (all-block); golden screenshot-diff of a known panel; assert the *presented* frame is never the redacted one (slice 1 — flash gone).
 - **Bash-driver scenario / screenshot**: `bug.report --dry-run` headless capture → pixel/heuristic scan of the output PNG asserting no non-block text glyphs; verify downscale + texture-region blur (slice 3) on a fixture containing texture-baked text.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target — mandatory given slice 1's GL/DX12 divergence).

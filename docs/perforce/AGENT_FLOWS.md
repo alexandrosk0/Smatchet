@@ -17,7 +17,7 @@ Concern-oriented summary of which side owns which agentic-WIP primitive — abso
 | Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash agent-layer/agents/scripts/project/p4-task-stream.sh <agent-id>` |
 | Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
 | Submit subagent work as PR | (manual) | `bash agent-layer/agents/scripts/project/p4-task-stream-to-pr.sh <id> <title>` |
-| Stale-stream GC | (cron via `agent-layer/agents/core/git-janitor.md`) | `agent-layer/agents/core/p4-janitor.md` + `agent-layer/agents/scripts/project/p4-task-stream-gc.sh` |
+| Stale-workspace GC | `scripts/dev/worktree-prune.sh`, or the `git-janitor` skill's stale-branch sweep (`agent-layer/agents/_shared/skills/git-janitor/`) | § Janitor pass (`agent-layer/agents/scripts/project/p4-task-stream-gc.sh`) |
 | Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
 | Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
 | GitHub → p4d backup mirror | (canonical — GitHub) | `//repo/smatchet` graph depot via Git Connector (one-way, non-authoritative — [`MIRROR.md`](MIRROR.md)) |
@@ -313,3 +313,68 @@ Companion to [`AGENTS.md`](../../AGENTS.md) § Destructive git ops in shared wor
 `p4 revert` on a newly-added file removes the file from the workspace AND from the pending CL. `p4 obliterate` is admin-only and destroys submitted history — coordinate explicitly before invoking it.
 
 `p4 unshelve -f` overwrites the current workspace state with shelf content, blowing away any in-flight uncommitted edits. Pair it with step 3 (shelve current state first) before resort.
+
+## Janitor pass
+
+Off-loop maintenance of the p4d named by `P4PORT`: purge stale task streams, drop released plan-lock counters, list stale shelves, verify the archive. A session runs it when asked ("p4 cleanup", "stale task streams", "shelve sweep", "p4 verify", "perforce maintenance") or when the git-side cleanup reports a stranded shelf or task stream. It is idempotent and safe to run by hand; nothing schedules it (the checkpoint task in [`RUNBOOK.md`](RUNBOOK.md) is the only p4 cron). Out of scope: anything on the git side (the `git-janitor` skill, `agent-layer/agents/_shared/skills/git-janitor/SKILL.md`) and submit / integrate / promote, which only `p4-task-stream-to-pr.sh` does, run by the orchestrator.
+
+### Hard refusals
+
+- **`p4 obliterate`** — never. It destroys file history at the depot level; a CL that has to vanish goes to the user.
+- **Force-deleting a stream with pending CLs** — never. The GC script's pending-CL check is binding: surface the stream and skip it.
+- **Touching `//smatchet/main`** — never. The pass works on task streams, lock counters and shelves only; mainline changes arrive through reviewed submits and the promote flow.
+- **A destructive step without a dry run first** — refused. Every destructive pass starts with `--dry-run` (or the listing form below), and the user reviews that output before anything is applied.
+- **Guessing the server** — `P4PORT` / `P4USER` unset stops the pass with a pointer to [`SETUP.md`](SETUP.md) § Smoke test from Brick (the GC script's `${P4PORT:?}` guard exits non-zero for the same reason).
+
+### Standard pass
+
+Every step below only reads; the apply commands follow.
+
+```bash
+: "${P4PORT:?set P4PORT (SETUP.md § Smoke test from Brick)}" "${P4USER:?set P4USER}"
+
+# 1. Inventory: the report's pre-flight snapshot.
+p4 -ztag info
+p4 streams '//smatchet/task-*'
+p4 counters -e 'smatchet_lock_*'
+p4 changes -s shelved -m 100
+p4 changes -s pending
+
+# 2. Task streams older than 14 days whose clients hold no pending CL.
+bash agent-layer/agents/scripts/project/p4-task-stream-gc.sh --older-than-days 14 --dry-run
+
+# 3. Shelves older than 30 days, with whether the owning client still exists.
+now=$(date +%s)
+p4 changes -s shelved -m 100 | while read -r _ cl _ day _ who _; do
+    age=$(( (now - $(date -d "$day" +%s)) / 86400 ))
+    client=${who#*@}
+    [ "$age" -gt 30 ] || continue
+    gone=""; [ -n "$(p4 clients -e "$client")" ] || gone=", client gone"
+    echo "STALE shelf $cl (${age}d, client ${client}${gone})"
+done
+
+# 4. Released plan-locks: a state counter at 0 with no _meta sibling.
+p4 counters -e 'smatchet_lock_*' | awk -F' = ' '$1 !~ /_meta$/ && $2 == "0" {print $1}' |
+while read -r c; do
+    if [ -n "$(p4 counters -e "${c}_meta")" ]; then echo "SKIP $c (released, _meta left behind)"
+    else echo "WOULD DROP counter $c"; fi
+done
+
+# 5. Archive integrity: silent on success, BAD! / MISSING! on damage.
+p4 verify -q //smatchet/...
+```
+
+Lock counters carry no timestamp, so the counter step has no age check: a released lock (state `0`, no `_meta`) is safe to drop at any age, because the next `lock-claim.sh` bootstraps a missing counter. A `0` counter whose `_meta` survived is a release whose cleanup failed — surface it, do not drop it. A held lock (`1`) is never touched.
+
+Apply, after the user reviews the listing:
+
+- streams: re-run `p4-task-stream-gc.sh --older-than-days 14` without `--dry-run`;
+- counters: `p4 counter -d <name>` for each `WOULD DROP` line;
+- shelves: `p4 shelve -d -c <CL>` for each CL the user approves (then `p4 change -d <CL>` when the CL is empty); a shelf owned by another client needs that client or `-f` as a super user, so leave it to the user.
+
+### Report and verification
+
+- **Pre-flight** — the step-1 inventory, so drift is visible across passes.
+- **Mutations applied** — what was purged (in dry-run: would be), with the reason; each apply command's exit status; everything a safety check skipped (pending CLs, dry run only, missing env), with the reason.
+- **Verification** — `p4 verify -q //smatchet/...` after the pass (damage → [`RUNBOOK.md`](RUNBOOK.md) § Recovery from checkpoint), plus a fresh `p4 streams` + `p4 counters` listing that shows each delete landed.
+- **Residue for the user** — refused obliterate requests, streams kept for pending CLs (submit or revert the CL first), env gaps, archive damage; `none` when empty.

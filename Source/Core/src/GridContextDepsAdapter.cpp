@@ -83,8 +83,10 @@ ITrackerConnectivity* GridContextDepsAdapter::BackendConnectivity() {
 
 // Per-context (multi-grid Slice 3): the catalog moved into GridLiveContext, so replay /
 // sync paths read THIS context's catalog — not whichever pane happens to be focused.
-const std::vector<TrackerField>& GridContextDepsAdapter::AvailableFields() const {
-    return ctx().fieldCatalog.AvailableFields;
+std::shared_ptr<const std::vector<TrackerField>> GridContextDepsAdapter::AvailableFields() const {
+    const GridContextFieldCatalog& cat = ctx().fieldCatalog;
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    return cat.AvailableFields;
 }
 
 RequiredFieldSet GridContextDepsAdapter::GetRequiredFieldSet(const std::string& projectKey,

@@ -57,8 +57,8 @@ Advisory step in `.github/workflows/build-and-test.yml`
 (`continue-on-error: true`) until 2026-05-30. Soak-period reasoning:
 GitHub Actions `windows-2022` runners may lack a usable GL context for
 `--spawn` UI sessions; we collect two consecutive weeks of clean runs
-before flipping to blocking. Backlog entry filed for
-`build-doctor` to wire mesa / ANGLE-D3D11 if the gap proves persistent.
+before flipping to blocking. Backlog entry filed to wire mesa /
+ANGLE-D3D11 if the gap proves persistent.
 
 ## Regenerating after an intentional UI change
 

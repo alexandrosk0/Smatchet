@@ -18,6 +18,15 @@ Why this change. The problem or need it addresses. What prompted it (incident, u
 
 The recommended approach in 1-3 paragraphs. Not the alternatives — only the one you're proposing. If a non-obvious trade-off shaped the choice, name it in one sentence (deeper rationale → ADR).
 
+## Interface contracts
+
+The exact deltas to shared interfaces, or `N/A — <reason>` when none change. The `architect` agent writes this section for a cross-cutting design; every other plan fills it the same way.
+
+- **What to name**: methods on `ITrackerBackend` and its six role interfaces (`ITrackerIssueReader`, `ITrackerConnectivity`, `ITrackerFieldCatalog`, `ITrackerIssueMutations`, `ITrackerCollaboration`, `ITrackerActivity`); `RegisterCommand({...})` entries; sol2 bindings in `AppController_LuaBindings*.cpp` and their `AppController_LuaStubs.cpp` stubs; MCP tool schemas; per-backend view storage; config, cache and SQLite formats. Backend-specific code stays inside the concrete client (`Source/Core/src/Tracker/AGENTS.md`).
+- **Plumbing, hop by hop**: for every `X → Y → Z` path the change flows through, name the signature, struct member or typedef arity at each hop, and call out any channel that must widen. Never write "plumb from context".
+- **The chokepoint, not the upstream caller**: for a cross-cutting signature change, count the direct callers of the changed surface; with zero or near zero, the change site is the binding adapter or facade shim that Lua, MCP and UI route through — list that shim in § Files to modify.
+- Read the real header under `Source/Core/include/` before naming a contract; command, view-storage and tracker abstractions have established shapes.
+
 ## Files to modify
 
 Numbered list. Each entry: `path:line` link + one-line per-file rationale. Group by subsystem when the list runs past ~10 entries.
@@ -26,6 +35,11 @@ Before you add a row here:
 - **Grep before naming a new TU.** Before listing a new `<Foo>.{h,cpp}`, run `rg -l '<Foo>' Source/Core/` to confirm it doesn't already exist under that name or a synonym — pure helpers routinely already shipped under a different name, and a parallel duplicate is expensive to unwind.
 - **Anchor the dual-target build to the gated files.** If the diff touches `SMATCHET_WITH_*` source-list gating, name the specific files and anchor `cmake --build … --target SmatchetStandalone SmatchetCore_DX12` to them (don't rely on the generic § Verification line alone).
 - **Inline a not-yet-merged sibling's shape.** If a slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include that pattern's intended shape (3–5 lines of code or a fixture-name list) inline here, so the implementing agent doesn't have to invent it.
+- **Name files that exist.** Glob every production `.h` / `.cpp` the plan names; a renamed or moved file costs the implementer a cross-walk per phase.
+- **CMake wiring.** Core `.cpp` files are picked up by `file(GLOB_RECURSE CORE_SOURCES …)` in `Source/Core/CMakeLists.txt` — no list edit. A new `tests/{Core,Plugins}/**/*.test.cpp` must be added to `add_executable(SmatchetTests …)` in `tests/CMakeLists.txt`; configure FATALs on an unlisted test. For every `add_library(<X> INTERFACE)` the plan adds, name the `target_link_libraries(<consumer> … <X>)` that consumes it.
+- **Splitting a monolithic `.cpp`** (the `AnnotateAnalysisUi*.cpp` shape): state the closure rule ("everything `<target-fn>` calls that is not already in another TU goes to `<bucket>`") and copy every non-self include of the original into the new internal header.
+- **Pure-helper TU split** (a unit whose pure helpers sit in an anonymous namespace of a `.cpp` that pulls cpr / httplib / SQLite / ImGui / GLFW / Unreal headers): pre-authorise `Source/Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for a parser) in the write set; the helpers move into a named namespace (`smatchet::<area>::pure` as in `McpJsonRpcPure` and `AiEndpointSanitize`, or the unit's own as in `P4AnnotateParse`), the original `.cpp` keeps its call sites through `using` declarations inside its anonymous namespace, and the new TU includes none of those headers (grep-guard it). Precedents: `IssueCreatePipelineHelpers`, `P4AnnotateParse`, `McpJsonRpcPure`, `AiEndpointSanitize`, `ILuaBindingHost` + `AppController_LuaBindingsCore`.
+- **Symbol and CMake-variable tables** go under a `### File-level changes` subsection with `Symbol` / `CMake variable` columns, so `bash agent-layer/agents/scripts/core/plan-doc-table-probe.sh <plan>` can check every row before the plan is sealed.
 
 ## Existing utilities reused
 
@@ -54,7 +68,7 @@ Per `AGENTS.md` § UX Pillars (1 Performance, 2 UI-never-freezes, 3 Never-crash,
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. For each gate, declare: **fires** (one-line how) or **N/A** (one-line reason). No restating mechanics — link out for the canonical text.
 
-1. **PR-fast CI** — name the scenario most directly exercising the changed path. Map: `agents/core/perf-gatekeeper.md` § Curated diff → scenario map. Subset declared in `scripts/dev/perf-pr-fast-set.json`.
+1. **PR-fast CI** — name the scenario most directly exercising the changed path. Map: [`scripts/dev/perf-scenario-map.json`](../../../scripts/dev/perf-scenario-map.json) (read by the `perf-gatekeeper` skill). Subset declared in `scripts/dev/perf-pr-fast-set.json`.
 2. **Pillar 2 static scanner** — any new sync-I/O reachable from `ImGui::*`? If yes, worker-thread plan + `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotation.
 3. **Dispatcher drain** — touches `MainThreadDispatcher::Drain()`?
 4. **Visible-cue bucket-E harness** — adds a new sync-stall code path > 100 ms?
@@ -68,17 +82,35 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. For each gate, declar
 
 Bulleted. Each risk: one-line description + mitigation or "accepted (reason)." Non-goals: what this plan explicitly does not do, so a reviewer doesn't ask why X is missing.
 
+Check at least: save-format breaks (views, config, the SQLite cache — schema changes are additive-only); backend leakage into the shared tracker interfaces; Unreal vs standalone divergence (`SMATCHET_EMBEDDED_IN_UNREAL`, `SMATCHET_WITH_MCP`, `SMATCHET_WITH_LUA_AUTOMATION`); localization key churn; MCP wire-format changes; dual-target compile failures (`SmatchetCore_DX12` also compiles `Source/Core/`). A latency or size budget on a `std::regex` path (a ReDoS sentinel, say) is pinned only after a 256 B / 512 B / 1 KiB / 2 KiB probe on the standard library of every toolchain that compiles that code (MSVC for Windows; clang for the Linux and Android lanes).
+
+## Implementation handoff
+
+Slices in order, or `N/A — single slice, <owner>`. Per slice:
+
+- **Owner subsystem** — the leaf `AGENTS.md` directory that governs it (registry: `CONTEXT-MAP.md`).
+- **Write set** — the files the slice may touch; everything else is out of scope.
+- **Pre-resolved invariant decisions** — each leaf invariant or interface contract the slice could collide with, and the option chosen.
+- **Inline inventory** — the exact symbol / literal matches (`<file>:<line>:<role>`) the implementer needs, so nobody re-derives them.
+- **Order** — what must land first and why.
+
+A slice that spans two subsystems is split, or the reason it must stay together is stated.
+
 ## Verification
 
 Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: …
+- **Bucket A (pure-logic doctest, `test-authoring` skill § Unit rig)**: …
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: …
 - **Bash-driver scenario / screenshot / sanitizer**: …
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates the doc-validation steps — anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint; defer to the script, don't hardcode the sub-step list here). A red doc-validation job blocks merge even though non-required.
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome. Required for every plan — do not delete.
 - **Manual residue**: if any verification step ends up manual, name the deferred-automation action plan + add a `docs/self-improvement/categories/tooling.md` entry. No silent residue.
+
+## Open questions
+
+Specific questions the author could not settle, each with who answers it (user / owner subsystem / a probe), or `None`. "What should the API look like?" is not specific.
 
 ## Out of scope (flagged, not designed)
 

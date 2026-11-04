@@ -340,8 +340,8 @@ struct TrackerConfig {
     // One-shot migration flag: retry after V2's exact-match miss. V2 only widens the
     // full pre-wheel snapshot and still sets its flag when it skips, so rows that
     // kept just the legacy primary (Ctrl+= / Ctrl+-) never got mouse-wheel. V3
-    // appends missing Defaults() aliases when every existing combo is still in the
-    // shipped set (non-empty). Custom / cleared / missing rows stay untouched.
+    // appends the missing Defaults() aliases to a row that holds only the legacy
+    // primary. Any other row (trimmed, custom, cleared, missing) stays untouched.
     bool MigratedMultiHotkeyZoomV3 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---
@@ -776,10 +776,17 @@ struct AnnotateAnalysisConfig {
 
 class ConfigManager {
   public:
-    // Bump when the default dock layout changes incompatibly. SmatchetUI::Draw
-    // detects LayoutSchemaVersion < kCurrentLayoutSchemaVersion on first launch
-    // after upgrade, resets imgui.ini, then persists the new version so the
-    // migration runs exactly once.
+    // Bump when the default dock layout changes incompatibly. On the first launch after an
+    // upgrade the migration (LayoutSchemaVersion < this -> WriteDefaultImGuiSettingsFile, then
+    // persist the new version, so it runs exactly once) must run in EVERY boot path that sets
+    // io.IniFilename, before that assignment and before the first ImGui::NewFrame():
+    // BootSetupImGui (Source/Standalone/main.cpp), SetupImGuiContext
+    // (Source/Standalone/StandaloneAppBootstrap.cpp), InitImGuiFirstTime
+    // (Source/Mobile/Android/android_main.cpp) and SmatchetImGuiHost::Initialize via
+    // initImGuiContextAndBackend (Source/Core/src/Ui/SmatchetImGuiHost.cpp). A new boot path
+    // copies the same block; a path without it ships the stale layout.
+    // SmatchetUI::drawInitConfigOnce keeps only a post-first-frame fallback reset. Docking
+    // rules: Source/Core/src/Ui/AGENTS.md § Docking.
     // Bumped to 2: schema-1 imgui.ini was corrupted by the old prepareTopLevelWindow bug
     // (SetNextWindowPos kicked panels out of dock nodes). Forces a one-shot reset so the
     // fixed layout + SetNextWindowDockID fallbacks pick up correctly.

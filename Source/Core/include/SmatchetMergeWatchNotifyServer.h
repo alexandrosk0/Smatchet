@@ -10,8 +10,8 @@
 // merge-watcher daemon's in-app toast notifications.
 // Contract:
 // - Binds 127.0.0.1 ONLY (hard-coded; no env override). Bug here = local RCE
-//   via toast injection — see agents/security-review.md
-//   § smatchet-merge-watcher localhost HTTP endpoint.
+//   via toast injection — see agent-layer/docs/agent-rules/security-surface.md
+//   § Merge-watcher notify endpoint.
 // - Accepts POST /merge-watch/notify with JSON body
 //   {pr: int, state: string, message: string, pr_url: string}.
 // - Validates payload server-side; rejects 400 on missing/oversized fields.

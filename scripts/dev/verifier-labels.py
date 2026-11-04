@@ -2,7 +2,7 @@
 # scripts/dev/verifier-labels.py — turn recorded verifier runs into a labelled
 # calibration set for verifier-calibrate.py, by pairing each run with the merge
 # outcome of the PR it scored. Pure Python 3 stdlib, deterministic, offline.
-# Docs: docs/agent-rules/verifier-sidecar.md § Calibration.
+# Docs: agent-layer/docs/agent-rules/verifier-sidecar.md § Calibration.
 #
 # WHY (tooling.md `verifier-calibration-traces-never-collected`): the verifier's
 # continuous score can only graduate from advisory to blocking once

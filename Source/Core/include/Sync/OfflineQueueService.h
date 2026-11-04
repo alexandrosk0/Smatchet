@@ -226,9 +226,10 @@ class OfflineQueueService {
                                                        FieldEditReplayTally& tally);
 
     /// Look up a tracker field by id in the live catalog (`deps_.AvailableFields()`). Returns null
-    /// when the field is unknown (legacy/retired field or empty catalog). Used by scalar
+    /// when the field is unknown (legacy/retired field or empty catalog). The result shares the
+    /// catalog snapshot's lifetime, so a concurrent catalog swap cannot free it. Used by scalar
     /// conflict-resolution (#854) to rebuild the structured payload via the production builder.
-    const TrackerField* FindCatalogField(const std::string& fieldId) const;
+    std::shared_ptr<const TrackerField> FindCatalogField(const std::string& fieldId) const;
     /// ResolveFieldEditConflict's `scalar` rebuild: `resolvedValue` in the field's own payload shape, into
     /// `payload`. False (payload untouched) when the field's builder rejects the value — the edit stays
     /// suspended rather than replaying a shape the tracker would reject.

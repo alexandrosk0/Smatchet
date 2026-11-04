@@ -46,6 +46,10 @@ on:
 permissions:
   contents: read
   statuses: write
+  # CodeRabbit reports as a check-run. Without checks:read the token sees no
+  # CheckRun nodes in statusCheckRollup and the check-runs REST call fails,
+  # so the gate would read ABSENT on every head.
+  checks: read
   # The auto-nudge POSTs one `@coderabbitai review` / `full review` comment
   # (once per head, budget-capped — see maybe_nudge_review in the action).
   #

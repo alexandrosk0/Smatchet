@@ -26,12 +26,14 @@
 #include <vector>
 
 #include "imgui.h"
+#include "imgui_internal.h" // ImGuiContext::InputEventsTrail (per-frame activity sample)
 #include "Logger.h"
 #include "imgui_impl_dx12.h"
 #include "SmatchetImGuiFonts.h"
 #endif
 
 // Smatchet core components (needed for the pImpl state).
+#include "AppActivity.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Diagnostics/EngineHostContext.h"
@@ -130,6 +132,20 @@ void StoreCompletedHostCommandResult(std::unordered_map<std::uint64_t, std::stri
         completed.erase(oldId);
     }
 }
+
+#if defined(_WIN32)
+// Unreal hands the host no focus signal. "The foreground window belongs to this process" is the
+// same test FPlatformApplicationMisc::IsThisApplicationForeground runs on Windows.
+bool IsThisProcessForeground() {
+    const HWND foreground = ::GetForegroundWindow();
+    if (foreground == nullptr) {
+        return false;
+    }
+    DWORD pid = 0;
+    ::GetWindowThreadProcessId(foreground, &pid);
+    return pid == ::GetCurrentProcessId();
+}
+#endif
 
 } // namespace
 
@@ -464,6 +480,7 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
     // LoadIniSettingsFromDisk does not re-parent them. Load cfg, compare schema,
     // force-write the hardcoded default + persist new schema, then let ImGui
     // pick up the fresh file via io.IniFilename.
+    // Every boot path that sets io.IniFilename runs this migration; list at ConfigManager::kCurrentLayoutSchemaVersion.
     {
         TrackerConfig bootCfg = ConfigManager::Load();
         if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
@@ -736,6 +753,16 @@ void SmatchetImGuiHost::DrawUI() {
 
     ImGuiIO& io = ImGui::GetIO();
     SyncImGuiIoModifierFlagsFromKeys(io);
+
+#if defined(_WIN32)
+    // Gates the ticket-change monitor like the standalone GLFW_FOCUSED feed, and samples
+    // background-idle for the connectivity probe (AppActivity.h). Before Draw, so this frame's
+    // monitor tick sees it.
+    const bool appForeground = IsThisProcessForeground();
+    ImplData->App.SetWindowFocused(appForeground);
+    smatchet::activity::NoteFrame(appForeground, ImGui::GetCurrentContext()->InputEventsTrail.Size > 0,
+                                  std::chrono::steady_clock::now());
+#endif
 
     ImplData->Ui.Draw(ImplData->App);
     ImplData->Plugins.OnDraw(ImplData->App);

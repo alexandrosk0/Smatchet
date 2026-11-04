@@ -85,7 +85,7 @@ N/A — the diff touches no `Source/Core/` production code. The only `Source/` i
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: N/A — no C++ change.
+- **Bucket A (pure-logic ctest, doctest rig)**: N/A — no C++ change.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI change.
 - **Bash-driver scenario / screenshot / sanitizer**: N/A.
 - **Build gate**: N/A — no compiled source touched. (Stated explicitly rather than omitted, per the template's forcing function.)

@@ -19,7 +19,7 @@ project literal and the boundary can't silently rot.
 
 | Path | Notes |
 |---|---|
-| `agents/core/` | generic engineering roles; read project specifics from `project.config.json` |
+| `agents/core/` | the three generic subagents (`architect`, `code-review`, `security-review`); read project specifics from `project.config.json` |
 | `agents/_shared/` | skills, token-tracking, templates — zero project coupling |
 | `docs/agent-rules/` | delegation / merge-gates / ship-loops / process rules; values come from config |
 | `docs/harness/` | IDE adapter setup (claude-code / codex / cursor) |
@@ -32,14 +32,15 @@ project literal and the boundary can't silently rot.
 | Path | Notes |
 |---|---|
 | `project.config.json` (+ schema) | **the one file a reuser rewrites** |
-| `agents/project/` | subsystem-bound agents (tracker, grid, lua, mcp, offline-sync, unreal, p4-blame, command-system) — replace with the new project's subsystems |
+| `agents/project/workflows/` | saved `Workflow` scripts that embed project literals — replace with the new project's own |
+| leaf `Source/**/AGENTS.md`, `CONTEXT-MAP.md`, `docs/area-map.json`, `docs/guides/` | subsystem rules, the leaf registry, path → area → docs routing, and procedures — re-author for the new project's subsystems |
 | `docs/plans/` | this project's plans (active + shipped) + the auto-index |
 | `docs/self-improvement/categories/*` *(entries)* | this project's friction items |
 | `docs/CONTEXT.md`, `docs/adr/` | this project's glossary + decisions |
 | `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/` | project artifacts |
-| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-*.sh`, `test-subsystem-docs.sh`, the git hooks |
+| project-only scripts | `scripts/dev/`: `perf-baseline.sh`, `p4-mirror-*.sh`; the git hooks in `scripts/git-hooks/` |
 
-**Agent split rule:** `project/` = an agent whose identity is a project subsystem/feature; `core/` = a generic role (it may *mention* project specifics, but those are config-driven). Note: `p4-janitor` lives in `core/` (generic VCS-maintenance, portable to any project whose `vcs.optional_layer` is `p4`), while `p4-blame` is `project/` (bound to this project's blame UI classes).
+**Agent split rule:** `core/` = a generic role (it may *mention* project specifics, but those are config-driven); project subsystem knowledge goes in leaf `AGENTS.md` files and guides, not in agents. Perforce maintenance is a host doc ([`docs/perforce/AGENT_FLOWS.md`](perforce/AGENT_FLOWS.md) § Janitor pass), not an agent: its depot paths and counter names are this project's.
 
 ## Adoption checklist
 
@@ -48,7 +49,7 @@ project literal and the boundary can't silently rot.
 3. Copy the mirrored scripts (`project-config.sh`, `test-all.sh`, `test-docs.sh`) from the layer into `scripts/dev/` and list them in `docs/mirrored-paths.txt`.
 4. Add a root `AGENTS.md` stub that imports `agent-layer/AGENTS.md`.
 5. Run `bash agent-layer/agents/scripts/core/setup-harness.sh <harness>`, then `check-harness-provisioned.sh`, which fails on an empty or incomplete mount.
-6. Author the new project's `agents/project/` subsystem agents.
+6. Author the new project's subsystem rules as leaf `AGENTS.md` files (registered in `CONTEXT-MAP.md`) and its path → area routing in `docs/area-map.json`.
 7. Verify agent discovery on each supported harness (Claude Code + Codex).
 
 Layer changes are made in the layer repo and reach a host as a gitlink bump (`chore(agent-layer): bump to <sha>`).

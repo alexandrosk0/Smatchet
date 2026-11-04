@@ -2,7 +2,7 @@
 
 > **Slug**: `dx12-backbuffer-readback-screenshot` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — from `docs/plans/backlog-pr-roadmap.md` PR-19 (`dx12-backbuffer-readback-screenshot-diff`). Owner: unreal-bridge. **Hardware-gated**: authoring and verification need an Unreal/DX12 build environment (not available in a Linux web session). Related: `docs/plans/dx12-standalone-win-arm64.md`.
+> **Status**: `active` — from `docs/plans/backlog-pr-roadmap.md` PR-19 (`dx12-backbuffer-readback-screenshot-diff`). Owner: unreal-bridge area (`Source/UnrealPlugins/SmatchetImGuiPlugin/README.md`). **Hardware-gated**: authoring and verification need an Unreal/DX12 build environment (not available in a Linux web session). Related: `docs/plans/dx12-standalone-win-arm64.md`.
 
 ## Context
 

@@ -55,6 +55,7 @@ Smatchet_LocalCache.sqlite-shm
 imgui.ini
 smatchet_config.json
 smatchet_views.json
+smatchet_panes.json
 smatchet_backend_audit.jsonl
 smatchet_field_catalog_cache.json
 
@@ -84,12 +85,12 @@ skills-lock.json
 # read by the orchestrator at gh pr create time to fill the PR `## Intent`.
 .session-intent/
 
-# Per-run coderabbit-triage temp dumps (see agents/coderabbit-triage.md)
+# Per-run coderabbit-triage temp dumps (agent-layer/agents/_shared/skills/coderabbit-triage/REFERENCE.md § Fetch)
 .triage-reviews.json
 .triage-review-comments.json
 .triage-issue-comments.json
 
-# Per-investigation debug-detective artifacts (see agents/debug-detective.md).
+# Per-investigation debug artifacts (agent-layer/agents/_shared/skills/debug-instrument/SKILL.md § NDJSON helper).
 # Directory contents gitignored EXCEPT the production-resident slice-7 helper.
 # (Distinct from the per-investigation template — see plan-doc § Coexistence.)
 debug-*.log
@@ -112,6 +113,11 @@ backlog/RICH_TEXT_EDITING_V3_PLAN.md
 screenshot_*
 smatchet_config.json.lock
 smatchet_backend_audit.jsonl.lock
+# ScopedFileLock sidecars of the other user-data files: written beside them in the working
+# directory whenever a process runs with no user-data dir resolved.
+smatchet_views.json.lock
+smatchet_panes.json.lock
+imgui.ini.lock
 .progress.log
 *.pyc
 
@@ -129,11 +135,12 @@ smatchet_backend_audit.jsonl.lock
 .github/copilot-instructions.md
 
 # Per-subsystem Claude Code shims: setup-harness.sh generates a one-line
-# CLAUDE.md (@AGENTS.md) beside each Source/Core/src/<ctx>/AGENTS.md so Claude
-# Code lazy-loads the leaf rules (it reads nested CLAUDE.md, not nested
+# CLAUDE.md (@AGENTS.md) beside each leaf AGENTS.md below Source/ (a
+# Source/Core/src/<ctx>/ context or a plugin dir such as Source/Plugins/Mcp/) so
+# Claude Code lazy-loads the leaf rules (it reads nested CLAUDE.md, not nested
 # AGENTS.md). The committed tree stays AGENTS.md-only; the shim is local adapter
 # output. See AGENTS.md § Subsystem guides + CONTEXT-MAP.md § Harness discovery.
-Source/Core/src/**/CLAUDE.md
+Source/**/CLAUDE.md
 
 # pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack) + the review
 # artifact the code-review agent writes beside it (also diff-fingerprint-pinned).

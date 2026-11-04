@@ -250,17 +250,12 @@
     "docs": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "taxonomy_exceptions": { "type": "array", "items": { "type": "string" } } }
-    },
-    "subsystems": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["name", "agents"],
-        "properties": {
-          "name": { "type": "string" },
-          "agents": { "type": "array", "items": { "type": "string" } }
+      "properties": {
+        "taxonomy_exceptions": { "type": "array", "items": { "type": "string" } },
+        "review_checklist": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative path to the project's code-review checklist. The layer's code-review and security-review agents read it on every review; test-subsystem-docs.sh check 3 fails a leaf AGENTS.md rule restated in it, and fails when the file is missing."
         }
       }
     },
@@ -271,7 +266,7 @@
       "description": "Project agent registry + agent-prompt size budgets (agent_size_audit.py). The size_*/contract_*/sink_warn caps are delta-gated line budgets over the agentic docs; see reduce-agent-prompt-bloat Slice 0.",
       "properties": {
         "_doc": { "type": "string" },
-        "enabled_project": { "type": "array", "items": { "type": "string" } },
+        "enabled_project": { "type": "array", "items": { "type": "string" }, "description": "Names of the agents/project/*.md agents this project enables; empty when the project ships none (subsystem knowledge lives in the leaf AGENTS.md files instead)." },
         "size_budget_lines": { "type": "integer", "minimum": 1, "description": "Hard cap (BLOCKS) for the agent-prompt class (agents/core, agents/project)." },
         "size_warn_lines": { "type": "integer", "minimum": 1, "description": "Soft-warn line count for the agent-prompt class (advisory)." },
         "contract_budget_lines": { "type": "integer", "minimum": 1, "description": "Hard cap (BLOCKS) for AGENTS.md (the every-session contract)." },

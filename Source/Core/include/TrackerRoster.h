@@ -12,8 +12,9 @@
 struct TrackerRosterEntry {
     /// Ticket key/id as the tracker names it.
     std::string Key;
-    /// The tracker's last-updated stamp for the ticket, verbatim and opaque: it is only ever compared
-    /// for equality with the stamp stored beside the cached row. Empty = the tracker did not say.
+    /// The tracker's last-updated stamp for the ticket, verbatim. It is compared with the stamp stored
+    /// beside the cached row as a parsed instant (Sync/RemoteVersionPure.h), falling back to text
+    /// equality when either does not parse. Empty = the tracker did not say.
     std::string Updated;
 };
 

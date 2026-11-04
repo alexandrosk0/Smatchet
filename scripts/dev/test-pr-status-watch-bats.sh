@@ -8,7 +8,7 @@
 # notify-on-state helper that closes the merge-watcher-is-silent blind spot).
 # Emits the canonical `Passed: N  Failed: M` line that test-all.sh greps for.
 #
-# Exit codes follow the test-author convention:
+# Exit codes follow the test-script convention (scripts/dev/test-all.sh header):
 #   0 — every bats test passed
 #   1 — at least one bats test failed
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools lists the install)

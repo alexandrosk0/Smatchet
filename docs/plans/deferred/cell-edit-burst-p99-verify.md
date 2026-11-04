@@ -36,7 +36,7 @@ Phase 2 (only if real-HW confirms) — scoped from the profile, expected candida
 - `scripts/dev/perf-run.sh` + `scripts/dev/perf-compare.py` + `perf-median.py` — the measurement harness.
 - `docs/perf/regression-policy.json` — the per-scenario ceiling already set.
 - `SMATCHET_UI_PERF_SCOPE` markers (via the `perf-instrument` skill) — for Phase-2 profiling.
-- `perf-detective` / `perf-measure` agents — own the Phase-2 hypothesis→profile→validate loop if it triggers.
+- `docs/guides/perf-workflow.md` (§ The loop / § Spikes) with the `perf-measure` skill — the Phase-2 hypothesis→profile→validate loop if it triggers.
 
 ## UX Pillar callouts
 

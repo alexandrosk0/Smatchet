@@ -35,7 +35,7 @@ This revision was verified before publish:
 
 ## Approach
 
-Cluster the open entries by **subsystem + owning specialist** (per the delegation tables in `docs/agent-rules/delegation.md`), not by category file — entries that touch the same code/scripts ship and review together. Sequence so shared infrastructure precedes its consumers: the bucket-E harness fixes (PR-9) before the bucket-E scenario PRs (PR-10/11); the sanctioned merge wrapper (PR-1) before the rest of the merge-gate hardening. P3 entries are siblings of P2 clusters and fold into the matching PR rather than spawning their own.
+Cluster the open entries by **subsystem + owning area** (the areas in `docs/area-map.json`, plus `build`, `tests`, `tooling` and `agentic-infra` for non-product work), not by category file — entries that touch the same code/scripts ship and review together. Sequence so shared infrastructure precedes its consumers: the bucket-E harness fixes (PR-9) before the bucket-E scenario PRs (PR-10/11); the sanctioned merge wrapper (PR-1) before the rest of the merge-gate hardening. P3 entries are siblings of P2 clusters and fold into the matching PR rather than spawning their own.
 
 This is a **batching map with per-group implementation seeds** — each PR group still gets its own plan doc (or a lightweight ship-loop) when picked up, but the § Implementation detail block below gives the owning agent the files-to-touch, approach, and verification hook so it starts from a concrete spec, not a slug. Rows carry the backlog slug so the owner can pull full git-cited evidence from `docs/self-improvement/categories/`.
 
@@ -45,7 +45,7 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 ## Existing utilities reused
 
-- `docs/agent-rules/delegation.md` — the subsystem-specialist → owner mapping each PR row cites.
+- `docs/area-map.json` — the path → area mapping each PR row's owner cites.
 - `docs/self-improvement/categories/*.md` — the open-entry source rows (slug-referenced per PR group).
 - `agents/scripts/project/test-lint-rules.sh`, `agents/scripts/core/comment_audit.py`, `agents/scripts/core/test-plan-index.sh`, `agents/scripts/core/merge-gates.sh`, `agents/scripts/core/merge-watcher.py` — the most-touched scripts across the merge/lint/plan clusters.
 
@@ -59,7 +59,7 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 | PR-2 CodeRabbit handling | `cr-review-skipped-pure-docs-auto-downgrade`, `cr-rate-limit-code-pr-auto-pause`, `coderabbit-current-head-helper`, `coderabbit-plan-ref-convention-path-instruction` | shipped #1504 |
 | PR-3 Merge-watcher robustness | `merge-snapshot-ledger-uncommitted-loss-risk`, `merge-watcher-triage-attempts-unbounded`, `merge-watcher-agent-notify`, `merge-gate-absence-blind-nonrequired-allowlist`, `bucket-lane-status-broken-sentinel-auditable` | shipped #1505 |
 
-### Lint / gate authoring (owner: build-doctor)
+### Lint / gate authoring (owner: build)
 
 | PR | Members | Status |
 |---|---|---|
@@ -67,14 +67,14 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 | PR-5 New strict-zone lint rules | `ban-bare-json-parse-on-untrusted-ingress`, `concurrency-correctness-no-headless-test-home`, `function-size-audit-grandfather-blind`, `fail-open-meta-gate-authoring-check` | shipped #1510 (TSan leg deferred) |
 | PR-6 Gate FP fixes + lint-hook tests | `lint-syntax-both-pch-version-drift-fp`, `fuzz-target-include-closure-unresolved-invisible`, `lint-hook-deferred-drain-4-tests` | shipped #1506 |
 
-### Plan-doc / index tooling (owner: mechanic)
+### Plan-doc / index tooling (owner: tooling)
 
 | PR | Members | Status |
 |---|---|---|
 | PR-7 plan-index robustness | `shallow-clone-corrupts-git-log-date-generators`, `test-plan-index-shallow-clone-corrupts-date-sort`, `plan-index-fix-wrong-cwd-silent-noop`, `test-plan-index-fix-shipped-date-placeholder`, `markdown-links-local-passes-ci-fails-after-plan-archive` | shipped #1502 |
 | PR-8 Plan-staleness gates | `archive-staleness-check`, `plan-doc-postship-closeout-stale-active-gate`, `extraction-sizing-step`, `historical-review-ledger-staleness` | shipped #1511 |
 
-### Bucket-E test coverage (owner: test-rig / subsystem)
+### Bucket-E test coverage (owner: tests / subsystem area)
 
 | PR | Members | Status |
 |---|---|---|
@@ -85,7 +85,7 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 | PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | shipped 6/7 (#1793/#1790/#1810/#1794/#1795 + description-tooltip) — **residue: `user-info-window-bucket-e-coverage` (open)** |
 | PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | shipped #1796/#1799/#1821 (all 5 scenarios) |
 
-### AI / assistant subsystem (owner: tracker-backend / test-rig)
+### AI / assistant subsystem (owner: tracker-backend / tests)
 
 | PR | Members | Status |
 |---|---|---|
@@ -96,21 +96,21 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Members | Owner | Status |
 |---|---|---|---|
-| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | shipped #1854 — 49 JiraClient HTTP-fixture tests lifted measured line coverage 67%→71%; threshold flipped 65→70 (measured headroom) |
-| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | **open** (re-verified 2026-07-14: threshold still `65`) — flip needs measured headroom; add tests first |
-| PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build-doctor | shipped #1516 |
-| PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | git-janitor | shipped #1512 |
+| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | tests | shipped #1854 — 49 JiraClient HTTP-fixture tests lifted measured line coverage 67%→71%; threshold flipped 65→70 (measured headroom) |
+| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | tests | **open** (re-verified 2026-07-14: threshold still `65`) — flip needs measured headroom; add tests first |
+| PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build | shipped #1516 |
+| PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | agentic-infra | shipped #1512 |
 | PR-17 Ship-loop discipline rules (docs) | `not-started-status-verified-against-merged-code`, `review-before-commit-hardening`, `adversarial-rca-before-coding`, `security-review-plan-time-trust-boundary`, `ship-time-issue-elevation-check`, `exe-auto-launch-diff-trigger`, `ci-config-slice-dup-preflight` | docs | shipped #1508 |
 
 ### Standalone subsystem items
 
 | PR | Member | Owner | Status |
 |---|---|---|---|
-| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | shipped — `DockGapSentinelScenario` magenta clear + `bucket_lane_launch_smoke.bats` zero-pink assertion |
+| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui | shipped — `DockGapSentinelScenario` magenta clear + `bucket_lane_launch_smoke.bats` zero-pink assertion |
 | PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | **open** (re-verified 2026-07-14: no readback path present) — needs Unreal/DX12 build environment (visual) |
 | PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | shipped #1517 |
 | PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | shipped #1856 — per-context catalog population + `resolvePaneCatalog`/`ChoosePaneCatalogSource` re-landed; dual-target+LIGHT+lint PASS; visual validation pending. Residue: backend `ResolveDisplayValue` per-pane routing (follow-up) |
-| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | shipped #1514 (bounded de-smatchetify) |
+| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build / agentic-infra | shipped #1514 (bounded de-smatchetify) |
 | PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | shipped #1507 |
 
 ## Implementation detail (per PR group)
@@ -133,7 +133,7 @@ Each block: **Files** (the scripts/TUs to touch) · **Approach** · **Verify** �
 - **Verify**: bats — same-head re-poll while exhausted doesn't increment; broken-lane→WARN fixture. **Depends**: none.
 
 ### PR-4 — Comment-noise + new-file lint reflex
-- **Files**: `agents/scripts/core/comment_audit.py`; `build_and_run.ps1` (or new `verify.ps1`); `docs/agent-rules/process-rules.md`; C++-writing subagent prompts (`agents/core/offline-sync.md`, `test-rig.md`, `build-doctor.md`, `mechanic.md`, `debug-detective.md`); optional `docs/harness/claude-code/hooks/` per-edit hook.
+- **Files**: `agents/scripts/core/comment_audit.py`; `build_and_run.ps1` (or new `verify.ps1`); `docs/agent-rules/process-rules.md`; C++-writing guidance (`docs/agent-rules/cpp-rules.md`, `docs/agent-rules/build.md`, the subsystem leaf `AGENTS.md` files, the `debug-instrument` and `test-authoring` skills); optional `docs/harness/claude-code/hooks/` per-edit hook.
 - **Approach**: relax `comment_audit.py` cut-blank so a single bare `//` between two non-blank comment lines of the same block is an allowed intra-block separator (+ `--selftest` fixture). `build_and_run.ps1 -BuildOnly` (or a `verify.ps1` wrapper) runs `comment_audit.py --diff` + `test-lint-rules.sh --diff` after a successful build. Add "run `test-lint-rules.sh --diff origin/develop` before push" to the subagent prompts + a new-file delta-lint reflex in `process-rules.md` § Cadence (or a pre-ship new-file detector). Residual `agent-headers` (a)+(c): comment-noise gotchas in the prompts + a per-edit hook running `comment_audit.py` on just-written files.
 - **Verify**: `comment_audit.py --selftest` green on the new intra-block fixture; bats on the wrapper. **Depends**: none.
 
@@ -193,21 +193,21 @@ Each block: **Files** (the scripts/TUs to touch) · **Approach** · **Verify** �
 - **Verify**: fresh-configure smoke + the cache-path assertion red on a planted drift. **Depends**: none.
 
 ### PR-16 — Worktree / session-registry + branch-edit guards
-- **Files**: `agents/core/git-janitor.md` + its registry-sweep script; `docs/agent-rules/process-rules.md`; `.gitattributes`; tests/CMakeLists glob registration.
+- **Files**: `agents/_shared/skills/git-janitor/` + its registry-sweep script (`agents/scripts/core/git-janitor.sh`); `docs/agent-rules/process-rules.md`; `.gitattributes`; tests/CMakeLists glob registration.
 - **Approach**: wire the git-janitor registry sweep to call `sr_prune_dead_stale` over EVERY worktree's `.active-sessions/` + port-forward authoritative-pid liveness into the planned `guard.mjs`. Pre-Edit check (process-rules) confirming the checked-out branch isn't a merged-PR / behind-develop on the target file. `.gitattributes` `tests/CMakeLists.txt merge=union` + GLOB auto-registration (new test needs no CMakeLists edit) + prefer free fns over `SmatchetUI` members + one-PR-per-worktree discipline.
 - **Verify**: bats on the registry sweep; `.gitattributes` union verified on a synthetic conflict. **Depends**: none.
 
 ### PR-17 — Ship-loop discipline rules (docs)
-- **Files**: `docs/agent-rules/ship-loops.md`, `merge-gates.md`, `process-rules.md`, `issue-triage.md`, `agents/core/debug-detective.md`; `issue-sweep.sh`.
-- **Approach**: a batch of doc rules — verify status against merged code before claiming not-started/shipped/stale; explicit code-review-pass step between fix and commit (+ Stop-hook reminder); adversarial RCA pass before committing P0/crash fixes (debug-detective); security-review at PLAN time on trust-boundary designs; ship-time Issue-elevation marker grep in `issue-sweep.sh`; exe-auto-launch diff trigger on `Source/Core/src/Ui` touch; CI-config-slice dup-preflight checklist.
+- **Files**: `docs/agent-rules/ship-loops.md`, `merge-gates.md`, `process-rules.md`, `issue-triage.md`, `agents/_shared/skills/debug-instrument/SKILL.md`; `issue-sweep.sh`.
+- **Approach**: a batch of doc rules — verify status against merged code before claiming not-started/shipped/stale; explicit code-review-pass step between fix and commit (+ Stop-hook reminder); adversarial RCA pass before committing P0/crash fixes (debug-instrument skill § 11); security-review at PLAN time on trust-boundary designs; ship-time Issue-elevation marker grep in `issue-sweep.sh`; exe-auto-launch diff trigger on `Source/Core/src/Ui` touch; CI-config-slice dup-preflight checklist.
 - **Verify**: doc-validation; bats on the `issue-sweep.sh` elevation grep. **Depends**: none (pure docs; ship in slices if the diff is large).
 
 ### PR-18..23 — Standalone
-- **PR-18 pink-clear**: `requestClearColor{R,G,B,A}` on `UiDrawSession` + restore-after-frame consumer in `main.cpp`; extend `DockGapSentinelScenario` + a bash `CountPixels(img,255,0,255,8)==0` hard assertion. *(ui-host)*
+- **PR-18 pink-clear**: `requestClearColor{R,G,B,A}` on `UiDrawSession` + restore-after-frame consumer in `main.cpp`; extend `DockGapSentinelScenario` + a bash `CountPixels(img,255,0,255,8)==0` hard assertion. *(ui)*
 - **PR-19 DX12 readback**: `CopyResource` backbuffer→readback heap + memcpy to a PPM writer in `Source/UnrealPlugins/SmatchetImGuiPlugin/`. *(unreal-bridge)*
 - **PR-20 redirect no-follow**: doctest/integration — tracker request vs an in-process server issuing cross-host 30x; assert `MakeTrackerRedirectPolicy` no-follow AND Authorization not re-sent cross-host. *(tracker-backend / security)*
 - **PR-21 per-pane catalog**: populate each pane context's `fieldCatalog` independently (seed cross-backend from `FieldCatalogCache` at `EnsurePaneContextLive` + per-pane first-sync into the CONTEXT), then re-land `resolvePaneCatalog` + `ChoosePaneCatalogSource` read routing. *(grid-engine)*
-- **PR-22 portable + daemon**: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys (shrink `portable-purity-baseline.txt` toward zero); audit other daemons (issue-janitor/p4-janitor/while-True pollers) for unguarded per-iteration bodies + `subprocess.run(timeout=)` sites with no guard. *(build-doctor / agentic-infra)*
+- **PR-22 portable + daemon**: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys (shrink `portable-purity-baseline.txt` toward zero); audit other daemons (merge-watcher / while-True pollers) for unguarded per-iteration bodies + `subprocess.run(timeout=)` sites with no guard. *(build / agentic-infra)*
 - **PR-23 subagent-eval calibration**: live code-review smoke result JSON + a judge-vs-human calibration loop with BLOCK thresholds. *(agentic-infra)*
 
 ## P3 entries (73) — fold into matching P2 PR

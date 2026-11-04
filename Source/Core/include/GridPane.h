@@ -139,10 +139,9 @@ struct GridPane {
     /// (SmatchetUI::resolvePaneCatalog) and rebuilt only when the pane's OWN context catalog
     /// revision changes — never per cell (Pillar 1).
     /// LIFETIME: TrackerFieldCatalogIndex stores raw `const TrackerField*` INTO the fields
-    /// vector it was built from (see TicketGridModel.cpp ctor). The focused path passes a
-    /// reference to the long-lived focused catalog, but GetPaneAvailableFields returns a COPY
-    /// (thread-safety — a non-focused context's catalog may be rewritten off-thread). So the
-    /// pane must OWN that copy alongside the index: cachedPaneCatalogFields holds the backing
+    /// vector it was built from (see TicketGridModel.cpp ctor). GetPaneAvailableFields returns an
+    /// immutable catalog snapshot (a catalog fetch swaps in a new one off-thread rather than
+    /// rewriting it). So the pane must OWN that snapshot alongside the index: cachedPaneCatalogFields holds the backing
     /// vector, cachedPaneCatalogIndex points into it. Both are shared_ptr<const> (NOT
     /// unique_ptr): GridPane is value-COPIED (pane duplicate, vector push_back in
     /// UiDrawSession::focusedPane), and shared_ptr keeps the fields alive for any transient copy

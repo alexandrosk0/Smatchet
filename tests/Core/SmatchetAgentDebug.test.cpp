@@ -2,7 +2,7 @@
 // for the production-resident NDJSON helper at tests/_debug/SmatchetAgentDebug.h.
 //
 // Cases V7.1..V7.5 from the plan's verification table. V7.6 (hot-path budget
-// probe) deferred to a follow-up perf-detective PR per the slice charter.
+// probe) deferred to a follow-up perf change per the slice charter.
 
 // Force SMATCHET_AGENT_DEBUG ON in this TU so the macro expands to a real
 // Emit() call regardless of preset. The header's compile-out path is exercised

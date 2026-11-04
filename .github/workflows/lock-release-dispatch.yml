@@ -1,7 +1,7 @@
 name: Plan-lock release (dispatch)
 
 # Releases ONE refs/locks/<slug> on demand, running as github-actions — the
-# identity the plan-locks ruleset (agents/scripts/core/setup-locks-ruleset.sh)
+# identity the plan-locks ruleset (agent-layer/agents/scripts/core/setup-locks-ruleset.sh)
 # lets delete refs/locks/*. It exists for the lock no PR close will ever
 # release: one claimed by a branch that was never pushed, or never opened a PR.
 # A non-admin agent's `lock-release.sh` gets HTTP 403 from that ruleset, and

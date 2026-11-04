@@ -1,3 +1,4 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
 #include "LuaAutomationHost.h"
 
 #include <utility>

@@ -1,0 +1,77 @@
+name: Independent review
+
+# A pull request that edits the review-enforcement surface must record a review by
+# someone other than its author: an `independent-review: <reviewer>; N findings, …
+# (head=<sha>)` line in the PR body, bound to the PR head (agent-layer
+# docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5). The surface is
+# RA_ENFORCEMENT_GLOBS in agent-layer/agents/scripts/core/lib/review-ack.sh; in this
+# repo it includes the `agent-layer` gitlink, so a layer pointer move, which swaps
+# every gate script at once, needs the line too. A pull request off the surface
+# passes without it.
+#
+# Like the verdict line, this proves a claim was recorded for the head, not that the
+# review ran. It runs the PR's own copy of the checker (the PR's agent-layer pointer).
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: independent-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  independent-review:
+    name: Independent review (enforcement surface)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (agent layer only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          # The checker is layer content: cone mode keeps the root files and the
+          # agent-layer gitlink; `submodules: recursive` fills the mount.
+          submodules: recursive
+          sparse-checkout: agent-layer
+
+      - name: Require an independent review when the enforcement surface changed
+        # The PR body, file names and author are untrusted input: they reach the
+        # script through files and the environment, never through ${{ }} expansion
+        # in the script text.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          files="$RUNNER_TEMP/changed-files.txt"
+          # One row per changed file: its path and, for a rename, its old path, so
+          # moving a gate script off the surface still counts as touching it.
+          rows="$RUNNER_TEMP/changed-files.tsv"
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$rows"
+          listed="$(wc -l < "$rows")"
+          { cut -f1 "$rows"; cut -f2 "$rows" | grep -v '^$' || true; } > "$files"
+          echo "Changed files: $CHANGED_FILES (listed $listed)"
+          # The files API stops at 3000 entries; an incomplete list could hide a surface file.
+          if [ "$listed" -lt "$CHANGED_FILES" ]; then
+            echo "::error::The PR files API listed $listed of $CHANGED_FILES changed files, so the enforcement-surface check cannot see them all. Split the PR."
+            exit 1
+          fi
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          bash agent-layer/agents/scripts/core/check-pr-intent.sh --independent-review \
+            --changed-files "$files" "$RUNNER_TEMP/pr-body.md"

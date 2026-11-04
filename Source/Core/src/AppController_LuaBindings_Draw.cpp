@@ -1,3 +1,5 @@
+// Binding-author rules for this file: docs/guides/lua.md section 5 (Binding authors).
+
 // AppController_LuaBindings_Draw.cpp
 // Split from AppController_LuaBindings.cpp (original lines 1484–2590).
 // Contains: LuaDrawList method bodies, ReplayCmdList, and the AppController

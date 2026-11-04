@@ -1,10 +1,10 @@
 // LuaStubsCompile.test.cpp — drift sentinel for the binding ↔ stub pair.
 //
-// Production rule (AGENTS.md § Project rules): "Lua bindings split:
+// Production rule (agent-layer/docs/agent-rules/cpp-rules.md § Optional plugins): "Lua bindings split:
 // `AppController_LuaBindings.cpp` (on) ↔ `AppController_LuaStubs.cpp` (off) —
-// keep in sync." When `SMATCHET_WITH_LUA_AUTOMATION=0`, CMakeLists.txt:545-551
+// keep in sync." When `SMATCHET_WITH_LUA_AUTOMATION=OFF`, Source/Core/CMakeLists.txt
 // swaps the bindings TU out for the stubs TU; a missing or signature-drifted
-// stub causes a link failure in the SmatchetCore_DX12 / no-Lua iter build.
+// stub breaks the Lua-OFF builds (posix-core-check, the CI ASan lanes).
 //
 // This file CANNOT link `AppController_LuaStubs.cpp` directly: the stubs
 // `#include "AppController.h"`, which transitively pulls LocalCacheManager,
@@ -12,14 +12,13 @@
 // binary defeats the small-binary isolation. Instead the sentinel takes a
 // textual approach: enumerate every public Lua-related method by string +
 // arity-shape and assert the set is non-empty. The actual signature-drift gate
-// remains the SmatchetCore_DX12 build under the slice's gate #4 (the
-// production no-Lua mode compiles for real when iter-msys2 builds DX12).
+// remains those Lua-OFF builds, where the production no-Lua mode compiles for real.
 //
 // What this sentinel BUYS: a single doctest case that fails loudly with the
 // list of expected stub names if a future contributor renames the public Lua
 // surface in a binding without updating the stub mirror — the case reads as a
 // checklist. What it does NOT buy: signature-mismatch detection (that lives in
-// the DX12 link gate, run by the orchestrator).
+// the Lua-OFF CI builds).
 
 #include <doctest/doctest.h>
 

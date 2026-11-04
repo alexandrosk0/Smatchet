@@ -92,9 +92,9 @@ graduation to blocking is a deliberate future decision (`--blocking` exists).
 The ceiling is the human's number: tune or disable (0) in config.
 
 The second cost lever is **per-agent model tiering**
-([`delegation.md § Model tiering`](agent-layer/docs/agent-rules/delegation.md)): each
-agent pins a `model:` tier (opus / sonnet / haiku) matched to its task class
-instead of inheriting the session model.
+([`delegation.md § Model tiering`](agent-layer/docs/agent-rules/delegation.md)): the three
+agents pin `model: opus` at high effort instead of inheriting the session
+model; a cheaper model is chosen only by an explicit spawn for mechanical work.
 
 ## Scope of this charter
 

@@ -2,7 +2,7 @@
 
 > **Slug**: `per-pane-catalog-value-read-routing` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — from `docs/plans/backlog-pr-roadmap.md` PR-21 (`per-pane-catalog-value-read-routing`). Owner: grid-engine. Behaviour change on the grid value-read path → needs bucket-E / visual validation to land.
+> **Status**: `active` — from `docs/plans/backlog-pr-roadmap.md` PR-21 (`per-pane-catalog-value-read-routing`). Owner: grid-engine area (`Source/Core/src/Ui/AGENTS.md` § Grid). Behaviour change on the grid value-read path → needs bucket-E / visual validation to land.
 
 ## Context
 
@@ -21,7 +21,7 @@ Trade-off: this is a hot-path change (grid cell formatting runs every frame per 
 1. `Source/Core/src/AppController_PaneContexts.cpp` — `EnsurePaneContextLive`: seed the new context's `fieldCatalog` from `FieldCatalogCache` for the pane's backend; route first-sync into the context's catalog.
 2. `Source/Core/include/GridLiveContext.h` — ensure the per-pane context carries its own `fieldCatalog` (confirm/extend) as the read-routing source of truth.
 3. `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp` + `Source/Core/src/Ui/SmatchetGridPaneWindows.cpp` — point the value-read/format call sites at `resolvePaneCatalog(paneId)` instead of the focused/default catalog.
-4. New `resolvePaneCatalog` / `ChoosePaneCatalogSource` (in `AppController_CatalogAndFieldEdit.cpp` or a small grid-engine helper — grep to avoid a duplicate) — the resolution + source-selection policy.
+4. New `resolvePaneCatalog` / `ChoosePaneCatalogSource` (in `AppController_CatalogAndFieldEdit.cpp` or a small grid helper — grep to avoid a duplicate) — the resolution + source-selection policy.
 5. `Source/Core/include/Tracker/FieldCatalogCache.h` consumers — reuse the existing cache API for the cross-backend seed; do not add a parallel cache.
 
 ## Existing utilities reused
@@ -63,7 +63,7 @@ Fires — the diff touches `Source/Core/src/Ui/` grid draw + `AppController` pan
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: a unit test for `ChoosePaneCatalogSource` / `resolvePaneCatalog` fallback policy (pane-with-catalog → own; pane-without → focused/default) as a pure function over context state.
+- **Bucket A (pure-logic ctest, doctest rig)**: a unit test for `ChoosePaneCatalogSource` / `resolvePaneCatalog` fallback policy (pane-with-catalog → own; pane-without → focused/default) as a pure function over context state.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: a two-pane cross-backend fixture asserting each pane formats a backend-specific field against its own catalog (the behaviour-change proof).
 - **Bash-driver scenario / screenshot / sanitizer**: `side-by-side-2-grid` perf scenario green vs baseline; screenshot diff on a cross-backend two-pane grid.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).

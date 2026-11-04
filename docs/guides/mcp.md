@@ -132,3 +132,9 @@ If you are building a custom integration or debugging, the following endpoints a
 - **Server won't start**: Ensure the port (default `42360`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Automation** -> **Agent Bridge (MCP)...**) for error messages.
 - **Connection Refused**: Check your firewall settings. If the client is on the same machine, ensure it's trying to connect to `127.0.0.1` and not your external IP (unless LAN access is enabled).
 - **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have used **Save and Reload Hooks** in **Automation -> Scripts & Actions...** (`SmatchetHooks.lua`).
+
+---
+
+## 8. Changing the server (contributors)
+
+A new tool is a registered command (see [`Source/Core/src/Commands/AGENTS.md`](../../Source/Core/src/Commands/AGENTS.md)) or a Lua tool (section 4); its description reaches the client's model verbatim. The rules for C++ changes to the server, its file map and the smoke recipe are in [`Source/Plugins/Mcp/AGENTS.md`](../../Source/Plugins/Mcp/AGENTS.md). A change to the tool surface, routes, auth or settings updates this guide.
