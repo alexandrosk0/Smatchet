@@ -4,7 +4,7 @@
 - **Priority**: P0 (raised from P1 on 2026-11-03: three escapes, see Recurrence below)
 - **Date**: 2026-10-04
 - **Observed on**: PR #2286 (merged `b4e71bec` 2026-10-04T01:59:46Z; `Bucket-E UI tests (Mesa headless GL)` had been **failure** since 01:56:45Z). Same class as PRs #1406, #1414, #1415, #1438 and #1566 (`postmortems.md` 2026-06-19, 2026-06-20 and 2026-06-27 entries).
-- **Status**: open
+- **Status**: applied 2026-11-03: `All checks green (block-on-any-red)` is a live required context on develop (23 contexts, checked with `gh api …/protection/required_status_checks`); the config side lands in #2387
 
 ## What happened
 
@@ -76,4 +76,4 @@ Re-scoped 2026-10-04 (backlog-sweep-2026-10): the aggregate workflow 'All checks
 
 The escape this entry predicted happened three times in five minutes, through a direct `gh pr merge N --squash` that does not arm auto-merge and so is outside the arm guard. #2380 (00:17:34Z), #2368 (00:21:56Z) and #2371 (00:22:37Z) merged with `All checks green (block-on-any-red)` red and `CR findings (0 actionable)` pending or failed. There was no override label and no merge-snapshot row. GitHub allowed each because all 22 required contexts were green.
 
-A required aggregate refuses all three: it was red on each head before its merge. The remaining step is unchanged: add the context to `branch_protection.required_contexts`, then re-apply with `setup-branch-protection.sh` on a green develop tip and confirm it live. Ledger: `postmortems.md` 2026-11-03 "#2380, #2368, #2371".
+A required aggregate refuses all three: it was red on each head before its merge. Applied the same day with the maintainer's OK: `setup-branch-protection.sh` re-run on a green develop tip (`158060025`), the live list confirmed at 23 contexts, and the config edit in #2387. Ledger: `postmortems.md` 2026-11-03 "#2380, #2368, #2371".

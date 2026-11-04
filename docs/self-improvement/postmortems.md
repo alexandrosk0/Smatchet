@@ -64,13 +64,13 @@ Direct `gh pr merge N --squash` (no `--auto`) is outside `guard-auto-merge-arm.s
 
 It is a superset of the `CR findings` name gap, because the aggregate already reds on a red or still-pending `CR findings` context and applies the `*-out-of-band` downgrades. Replayed on these three heads, the required aggregate is red at each merge time, so GitHub refuses all three.
 
-Its preconditions are already met: the workflow has no `paths:` filter and reports on every PR, including `docs/self-improvement/**`-only ones. It is a branch-protection change on the live repo, so it is the maintainer's to apply. It is filed by raising the existing entry to P0, not as a new one.
+Its preconditions were met: the workflow has no `paths:` filter and reports on every PR, including `docs/self-improvement/**`-only ones. Applied 2026-11-03 with the maintainer's OK, on a green develop tip (`158060025`): live protection now lists 23 contexts including the aggregate, and #2387 carries the config edit. Filed by updating the existing entry, not as a new one.
 
 ### Eval case
 None — not agent-reviewable. The gap is a required-context set in branch protection; no reviewable diff contains it.
 
 ### Filed as
-[`categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md) (raised P1 → P0, recurrence section added)
+[`categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md`](categories/infra/2026-10-04-native-auto-merge-merges-past-a-red-non-required-check.md) (raised P1 → P0, then applied the same day; config in #2387)
 
 ## 2026-11-03 · PR #2370, #2376, #2378, #2379, #2372 · override: `cr-out-of-band` because CodeRabbit does not auto-review this repository
 
