@@ -111,13 +111,13 @@ static void DrawAnnotateFromCallstackMenuIfAny(AppController* app, UiDrawSession
     if (!app || !ui || !row || issueKey.empty()) {
         return;
     }
-    if (!AnnotateRowHasNonEmptyCallstackField(app->GetAvailableFields(), *row)) {
+    if (!AnnotateRowHasNonEmptyCallstackField(*app->GetAvailableFields(), *row)) {
         return;
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Annotate...")) {
         // pane(): the pane whose window hosts this right-click popup (Slice 2).
-        OpenAnnotateAnalysisForGridIssue(app->GetAvailableFields(), ui->showAnnotateAnalysis, ui->pane().gridState,
+        OpenAnnotateAnalysisForGridIssue(*app->GetAvailableFields(), ui->showAnnotateAnalysis, ui->pane().gridState,
                                          issueKey);
     }
 }

@@ -1322,7 +1322,7 @@ void SmatchetUI::drawPreferencesConnectionsTab(AppController& app, UiDrawSession
     drawPreferencesIntegrationsTab(app, d);
 #endif
     SmatchetPreferencesUiDetail::PrefsSection(d, "connections.perforce", [&] {
-        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Perforce, app.GetAvailableFields(),
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Perforce, *app.GetAvailableFields(),
                                           app, d.prefsFilter);
     });
     drawPreferencesUserInfoTab(d);
@@ -1330,17 +1330,18 @@ void SmatchetUI::drawPreferencesConnectionsTab(AppController& app, UiDrawSession
 
 /// Annotate: what stayed behind after the Perforce block moved to Connections.
 void SmatchetUI::drawPreferencesAnnotateTab(AppController& app, UiDrawSession& d) {
+    const std::shared_ptr<const std::vector<TrackerField>> availableFields = app.GetAvailableFields();
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.analysis", [&] {
-        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Analysis, app.GetAvailableFields(),
-                                          app, d.prefsFilter);
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Analysis, *availableFields, app,
+                                          d.prefsFilter);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.field_mapping", [&] {
-        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::FieldMapping,
-                                          app.GetAvailableFields(), app, d.prefsFilter);
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::FieldMapping, *availableFields, app,
+                                          d.prefsFilter);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.colors", [&] {
-        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Colors, app.GetAvailableFields(),
-                                          app, d.prefsFilter);
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Colors, *availableFields, app,
+                                          d.prefsFilter);
     });
 }
 

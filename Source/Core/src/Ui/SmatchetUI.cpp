@@ -901,9 +901,14 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             gridFrameCtx_.catalogRevision = catalogRev;
             gridFrameCtx_.viewsRevision = viewsRev;
             gridFrameCtx_.activeViewId = avId;
-            gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(app.GetAvailableFields());
+            // The index holds raw pointers into the catalog vector, so the frame context owns the snapshot it
+            // was built from. The snapshot is swapped in after the index: the previous one is released only
+            // once the index built from it is gone.
+            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+            gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(*catalog);
             gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)
                                        : std::vector<TicketGridColumn>();
+            gridFrameCtx_.catalogFields = std::move(catalog);
         }
     }
 }
@@ -1612,7 +1617,8 @@ namespace {
 // when it expires.
 void TrySkipStartupCatalogFetch(AppController& app, UiDrawSession& d, const ViewDefinition* skipView) {
     std::vector<std::string> catalogIds;
-    for (const TrackerField& f : app.GetAvailableFields()) {
+    const std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+    for (const TrackerField& f : *catalog) {
         catalogIds.push_back(f.Id);
     }
     const std::int64_t nowUnix = TimeNowPure::NowUnixSeconds();

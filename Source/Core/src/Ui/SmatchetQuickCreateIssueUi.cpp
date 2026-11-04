@@ -96,7 +96,8 @@ void SeedOnOpen(AppController& app, UiDrawSession& d) {
         // (the create payload builder resolves names server-side where possible).
         d.quickCreateDraft.IssueTypeId.clear();
         d.quickCreateDraft.IssueTypeName = d.quickCreateArgIssueType;
-        for (const TrackerField& f : app.GetAvailableFields()) {
+        const std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+        for (const TrackerField& f : *catalog) {
             if (f.Id != "issuetype") {
                 continue;
             }
@@ -184,7 +185,8 @@ void OnSubmit(AppController& app, UiDrawSession& d) {
         d.quickCreateDraft, app.GetRequiredFieldSet(d.quickCreateDraft.ProjectKey, d.quickCreateDraft.IssueTypeId,
                                                     d.quickCreateDraft.IssueTypeName));
     if (!missing.empty()) {
-        const std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(missing, app.GetAvailableFields());
+        const std::vector<std::string> names =
+            IssueDraftHelpers::MapFieldIdsToNames(missing, *app.GetAvailableFields());
         d.quickCreateError = "Missing required fields: " + JoinStrings(names, ", ");
         d.quickCreateQueueOffered = true;
         return;
@@ -232,8 +234,10 @@ void DrawIssueTypeRow(AppController& app, UiDrawSession& d) {
     ImGui::TextUnformatted(SmatchetLocalization::T("quickcreate.type", "Type"));
     ImGui::SameLine(110.0f);
     ImGui::SetNextItemWidth(-FLT_MIN);
+    // typeField points into this snapshot, so it is held for the rest of the draw.
+    const std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
     const TrackerField* typeField = nullptr;
-    for (const TrackerField& f : app.GetAvailableFields()) {
+    for (const TrackerField& f : *catalog) {
         if (f.Id == "issuetype") {
             typeField = &f;
             break;

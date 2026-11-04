@@ -79,7 +79,7 @@ std::string ResolvePaneCacheKey(const std::string& paneBackendKey) {
 std::vector<std::string> ResolveSalientFieldIds(GridLiveContext& ctx) {
     std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
     const std::vector<smatchet::SalientFieldRole> roster =
-        smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
+        smatchet::ResolveSalientRoster(*ctx.fieldCatalog.AvailableFields);
     std::vector<std::string> ids;
     ids.reserve(roster.size());
     for (std::size_t i = 0; i < roster.size(); ++i) {
@@ -272,7 +272,8 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
     // Issue #1457: hold the map mutex across the resolve-or-emplace so the User Info worker's
     // snapshot-find cannot observe a half-rebalanced tree. UI thread only, so the body is the
     // sole writer; the lock only excludes the worker's brief snapshot read. O(log n) map ops plus
-    // a bounded same-backend catalog copy under the lock — no I/O, no Pillar-2 block.
+    // a bounded same-backend catalog seed under the lock (the field list is a shared immutable
+    // snapshot; the other catalog vectors are copied) — no I/O, no Pillar-2 block.
     std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
     if (it == gridContexts_.end()) {
@@ -291,10 +292,10 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
         if (!siteKey.empty()) {
             ctx->SetCacheBackendKey(siteKey);
         }
-        // Same-backend seed: copy the default context's catalog so a duplicated / same-backend
-        // pane renders dropdown-eligible cells immediately (one-time, pane-show — off any per
-        // cell or steady-state path). Cross-backend panes start empty and fill via the focused
-        // backend-switch catalog refetch.
+        // Same-backend seed: share the default context's field snapshot and copy the rest of its
+        // catalog so a duplicated / same-backend pane renders dropdown-eligible cells immediately
+        // (one-time, pane-show — off any per cell or steady-state path). Cross-backend panes start
+        // empty and fill via the focused backend-switch catalog refetch.
         GridLiveContext& defaultCtx = *gridContexts_.find(kDefaultPaneId)->second;
         if (!siteKey.empty() && siteKey == defaultCtx.CacheBackendKeyCopy()) {
             std::lock_guard<std::mutex> srcLock(defaultCtx.fieldCatalog.availableFieldsMutex_);
@@ -574,12 +575,14 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         return;
     }
     const bool restored = !restoredWarning.empty();
+    std::size_t fieldCount = 0;
     {
         std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
-        if (restored && !ctx.fieldCatalog.AvailableFields.empty()) {
+        if (restored && !ctx.fieldCatalog.AvailableFields->empty()) {
             return; // a saved catalog never replaces the one the pane already has
         }
-        ctx.fieldCatalog.AvailableFields = std::move(fields);
+        fieldCount = fields.size();
+        ctx.fieldCatalog.AvailableFields = std::make_shared<std::vector<TrackerField>>(std::move(fields));
         ctx.fieldCatalog.AvailableComponents = std::move(components);
         ctx.fieldCatalog.AvailableIssueTypeMeta = std::move(issueTypeMeta);
         // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch,
@@ -595,8 +598,7 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
     // same-backend staleness invalidation path).
     ctx.fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
     LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' populated own catalog (%zu fields%s).",
-             paneId.c_str(), static_cast<size_t>(ctx.fieldCatalog.AvailableFields.size()),
-             restored ? ", from the saved snapshot" : "");
+             paneId.c_str(), fieldCount, restored ? ", from the saved snapshot" : "");
 }
 
 GridLiveContext& AppController::paneContextOrFocused_(const std::string& paneId) {
@@ -670,19 +672,18 @@ bool AppController::IsPaneFieldCatalogPopulated(const std::string& paneId) const
     return cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_;
 }
 
-std::vector<TrackerField> AppController::GetPaneAvailableFields(const std::string& paneId) const {
+std::shared_ptr<const std::vector<TrackerField>>
+AppController::GetPaneAvailableFields(const std::string& paneId) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     if (it != gridContexts_.end()) {
         const GridContextFieldCatalog& cat = it->second->fieldCatalog;
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
         if (cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_) {
-            return cat.AvailableFields; // copy under the lock — the fetch worker may rewrite it
+            return cat.AvailableFields; // snapshot under the lock — the fetch worker swaps, never rewrites
         }
     }
-    // No populated per-pane catalog: copy the focused catalog (same data the shared read used).
-    const GridContextFieldCatalog& focused = fieldCatalog();
-    std::lock_guard<std::mutex> lk(focused.availableFieldsMutex_);
-    return focused.AvailableFields;
+    // No populated per-pane catalog: the focused catalog's snapshot (same data the shared read used).
+    return GetAvailableFields();
 }
 
 void AppController::SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
@@ -928,7 +929,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     std::vector<smatchet::SalientFieldRole> roster;
     {
         std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
-        roster = smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
+        roster = smatchet::ResolveSalientRoster(*ctx.fieldCatalog.AvailableFields);
     }
     std::vector<CachedTicket> prev;
     {
@@ -1097,9 +1098,10 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
             // Husk hygiene: the retired context stays alive for latched readers (graveyard
             // below), but must not retain a fully-populated field catalog — that would grow
             // unboundedly over show/hide cycles. Clear under the catalog mutex so a worker
-            // that latched this context's catalog sees empty (not freed) containers.
+            // that latched this context's catalog sees empty (not freed) containers; a reader
+            // still holding the old field snapshot keeps it alive until it lets go.
             std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
-            std::vector<TrackerField>().swap(ctx.fieldCatalog.AvailableFields);
+            ctx.fieldCatalog.AvailableFields = std::make_shared<std::vector<TrackerField>>();
             std::vector<TrackerComponent>().swap(ctx.fieldCatalog.AvailableComponents);
             std::vector<TrackerIssueTypeCreateMeta>().swap(ctx.fieldCatalog.AvailableIssueTypeMeta);
             std::vector<TrackerUser>().swap(ctx.fieldCatalog.AvailableUsers);

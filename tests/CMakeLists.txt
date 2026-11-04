@@ -213,6 +213,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     <cpr/cpr.h>. Tests construct via header-only fakes
         #     (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP.
         Core/GridLiveContext.test.cpp
+        # GridContextFieldCatalog's copy-on-write AvailableFields: readers snapshot under the catalog
+        # mutex and iterate lock-free while a writer swaps generations. Header-only (GridLiveContext.h).
+        Core/AppControllerFieldCatalogLock.test.cpp
         Core/TicketSyncService.test.cpp
         Core/JiraBackendInstancesPure.test.cpp
         Core/CacheBackendKeyPure.test.cpp

@@ -17,7 +17,7 @@ void ClearCatalogInMemoryInto(GridContextFieldCatalog& cat, bool clearUsers) {
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         // SMATCHET_DEVIATION(rule=offline-cache-cleared; reason=site or backend switch only, not a failed fetch: the previous site's catalog must not show under this one, and the saved snapshot (never written here) restores this site's catalog when its fetch starts, offline included; owner=offline-sync; revisit=2027-09-30)
-        cat.AvailableFields.clear();
+        cat.AvailableFields = std::make_shared<std::vector<TrackerField>>();
         cat.AvailableComponents.clear();
         cat.AvailableIssueTypeMeta.clear();
         if (clearUsers) {

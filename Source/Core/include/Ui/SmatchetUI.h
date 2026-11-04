@@ -64,6 +64,9 @@ struct GridFrameContext {
     std::uint64_t catalogRevision = 0;
     std::uint64_t viewsRevision = 0;
     std::string activeViewId;
+    /// The catalog snapshot catalogIndex was built from: the index stores raw TrackerField pointers into it, so
+    /// it must outlive the index. Declared before it so it is destroyed after it.
+    std::shared_ptr<const std::vector<TrackerField>> catalogFields;
     std::unique_ptr<TrackerFieldCatalogIndex> catalogIndex;
     std::vector<TicketGridColumn> columns;
 };

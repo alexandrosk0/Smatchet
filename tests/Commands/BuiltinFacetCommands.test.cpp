@@ -393,7 +393,9 @@ struct FakeFields : IAppFields {
         summary.Type = "string";
         Fields = {prio, summary};
     }
-    const std::vector<TrackerField>& GetAvailableFields() const override { return Fields; }
+    std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields() const override {
+        return std::make_shared<std::vector<TrackerField>>(Fields);
+    }
     const TrackerField* FindFieldById(const std::string& fieldId) const override {
         for (const TrackerField& f : Fields) {
             if (f.Id == fieldId) {

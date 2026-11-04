@@ -604,7 +604,7 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
                 gb ? &gb->Connectivity() : nullptr, activeViewQuery, lastVisibleTicket->id, std::string());
             d.newIssueDraft =
-                IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
+                IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, *app.GetAvailableFields(), resolvedProject,
                                                     d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName, inheritIds);
         } else {
             d.newIssueDraft = app.BuildDraftFromLastTicket(d.cfg);

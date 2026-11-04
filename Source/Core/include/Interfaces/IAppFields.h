@@ -21,7 +21,13 @@
 // through IAppFields& take the vtable slot, and there are none in a draw loop. This matches the
 // IAppTicketData::GetActiveTicketsSnapshot / IAppSync::GetFieldCatalogError trade-off, not the
 // inlined-hot-getter case the Pillar-1 exclusion protects.
+//
+// GetAvailableFields returns an immutable snapshot (shared_ptr to const), not a reference: worker
+// threads replace the catalog (fetch, snapshot restore, backend switch), and a held snapshot is what
+// keeps the vector a caller iterates alive across that swap. Per call: one uncontended lock and one
+// refcount bump, never a catalog copy.
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,7 +38,7 @@ class IAppFields {
   public:
     virtual ~IAppFields() = default;
 
-    virtual const std::vector<TrackerField>& GetAvailableFields() const = 0;
+    virtual std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields() const = 0;
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
     virtual bool RefreshFieldCatalog(const TrackerConfig& cfg) = 0;
     virtual const std::string& GetFieldCatalogError() const = 0;

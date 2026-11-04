@@ -81,9 +81,9 @@ class IOfflineQueueDeps {
     virtual std::uint64_t BackendGeneration() const = 0;
 
     /// Catalog of tracker fields used by `TickOfflineCreates` to build `IssueCreatePipeline`
-    /// input. Returned by const-ref so the caller can snapshot via `std::make_shared<...>`
-    /// before spawning the background worker.
-    virtual const std::vector<TrackerField>& AvailableFields() const = 0;
+    /// input. An immutable snapshot (never null): the background worker captures it as-is, and a
+    /// concurrent catalog swap publishes a new generation instead of rewriting this one.
+    virtual std::shared_ptr<const std::vector<TrackerField>> AvailableFields() const = 0;
 
     /// Required-field set resolution. Used by `TickOfflineCreates` to validate the queued
     /// draft against per-project createmeta before replaying. Mirrors

@@ -294,7 +294,9 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     TrackerQueryAcpCallbackUserData jqlCb{};
     jqlCb.session = &d;
     jqlCb.editor = &st;
-    jqlCb.fields = &app.GetAvailableFields();
+    // jqlCb outlives this statement (the input-text callback reads it), so hold the catalog snapshot here.
+    const std::shared_ptr<const std::vector<TrackerField>> fieldsSnapshot = app.GetAvailableFields();
+    jqlCb.fields = fieldsSnapshot.get();
     jqlCb.users = &app.GetAvailableUsers();
     jqlCb.suggestBuild = &jqlSuggestBuild;
     jqlCb.meta = &jqlMeta;
@@ -379,7 +381,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     // ids (TrackerQueryAcp_CanonicalQueryForApply) so the wire/disk query stays id-canonical.
     if (smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType) == smatchet::tracker::kBackendJira && !jqlInputHot &&
         !st.jqlAcpApplyReplace) {
-        TrackerQueryAcp_ApplyUserNamesToBuffer(app.GetAvailableFields(), app.GetAvailableUsers(), st);
+        TrackerQueryAcp_ApplyUserNamesToBuffer(*app.GetAvailableFields(), app.GetAvailableUsers(), st);
     }
 
     // Project pill beneath the query bar — pick a single project scope for the active view.

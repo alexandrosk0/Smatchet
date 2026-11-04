@@ -57,16 +57,10 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
         /*legacyFallback*/ std::string());
-    // DR6: SetFieldCatalog mutates AvailableFields on a background worker; copy under the
-    // guard (latched once) rather than passing the live vector by reference into a call that
-    // outlives the read — an unguarded read risks a torn / reallocated-out-from-under UAF.
-    const GridContextFieldCatalog& cat = fieldCatalog();
-    std::vector<TrackerField> availableFieldsCopy;
-    {
-        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        availableFieldsCopy = cat.AvailableFields;
-    }
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, availableFieldsCopy, resolvedProject, cfg.DefaultIssueTypeId,
+    // DR6: SetFieldCatalog swaps AvailableFields on a background worker; hold the snapshot taken
+    // under the guard for the whole call so the vector it reads cannot be freed under it.
+    const std::shared_ptr<const std::vector<TrackerField>> availableFields = GetAvailableFields();
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, *availableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
 
@@ -130,15 +124,9 @@ std::future<IssueCreateResult> AppController::LaunchIssueCreate_(const IssueDraf
                                                                  smatchet::ui::CancelToken cancel,
                                                                  bool queueOnNetworkFailure) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
-    // DR6: copy AvailableFields under its guard — SetFieldCatalog reassigns the vector on a
-    // background worker, so an unguarded copy-construct can read a half-reassigned / reallocated
-    // source.
-    const GridContextFieldCatalog& cat = fieldCatalog();
-    std::shared_ptr<std::vector<TrackerField>> catalogCopy;
-    {
-        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        catalogCopy = std::make_shared<std::vector<TrackerField>>(cat.AvailableFields);
-    }
+    // DR6: take the catalog snapshot under its guard — SetFieldCatalog swaps in a new immutable
+    // generation on a background worker, so the worker below keeps reading the one captured here.
+    const std::shared_ptr<const std::vector<TrackerField>> catalogCopy = GetAvailableFields();
     const RequiredFieldSet required = GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();

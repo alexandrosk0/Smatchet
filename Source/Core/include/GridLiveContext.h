@@ -47,7 +47,11 @@ struct GridContextFieldCatalog {
     std::atomic<int> errorRestoresInFlight{0};
     /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
     mutable std::mutex availableFieldsMutex_;
-    std::vector<TrackerField> AvailableFields;
+    /// Copy-on-write and never null: a published catalog generation is immutable. Writers build a new
+    /// vector off-lock and swap this pointer under the mutex; readers copy the pointer under it
+    /// (AppController::GetAvailableFields) and iterate with no lock held, so a concurrent swap can neither
+    /// free nor reallocate the vector a reader still holds.
+    std::shared_ptr<const std::vector<TrackerField>> AvailableFields = std::make_shared<std::vector<TrackerField>>();
     std::vector<TrackerComponent> AvailableComponents;
     std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
     /// Last-fetched user catalog (see AppController::GetAvailableUsers for semantics).
