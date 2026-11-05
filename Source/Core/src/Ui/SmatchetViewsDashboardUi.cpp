@@ -378,7 +378,13 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
         }
     }
 
-    // Action buttons on a separate row below the title for a more compact header.
+    // Action buttons on a separate row below the title for a more compact header. The commit action
+    // comes first and the destructive one last; tests/ui/views_editor_header.test.cpp pins the order.
+    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
+                                  "Apply changes and sync issues (Ctrl+Enter).")) {
+        ctx.applyAndSync();
+    }
+    ImGui::SameLine();
     const bool disableDiscard = !dirty;
     if (disableDiscard) {
         ImGui::BeginDisabled();
@@ -388,11 +394,6 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     }
     if (disableDiscard) {
         ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
-                                  "Apply changes and sync issues (Ctrl+Enter).")) {
-        ctx.applyAndSync();
     }
     ImGui::SameLine();
     const bool disableDelete = (store.Views.size() <= 1);
