@@ -189,6 +189,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/SyncCacheContract.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
@@ -838,6 +839,12 @@ add_executable(SmatchetTests
     Core/LocalCacheIdentityRekey.test.cpp
     Core/LocalCacheManagerLookup.test.cpp
     Core/LocalCacheManagerLookupPersist.test.cpp
+    # The history of issues that left a view: reason + listing pure logic, and the service over in-memory SQLite.
+    Core/LeftViewReasonPure.test.cpp
+    Core/LeftViewHistoryService.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/LeftViewHistoryService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/LeftViewReasonPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/ViewListingDiffPure.cpp"
     Core/LocalCacheManagerPendingActionsPersist.test.cpp
     # Slice G Phase 1 (testing-surface.md §6 Gap 6, plan slice-g-db-corruption.md) —
     # characterizes today's corrupt/truncated cache-file-on-open behaviour: the ctor's
@@ -1518,6 +1525,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"

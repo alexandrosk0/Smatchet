@@ -9,6 +9,7 @@
 #include "SmatchetResult.h"
 #include "TrackerError.h"
 #include "TrackerRoster.h"
+#include "TrackerFieldChange.h"
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
@@ -222,6 +223,15 @@ class ITrackerIssueReader {
     /// returning false on 404.
     virtual Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) {
         return Result<bool, TrackerError>::Ok(true);
+    }
+
+    /// The field changes the tracker's history records for `issueKeys`, for explaining why an issue left a view.
+    /// One batched read where the tracker allows it; `shouldCancel` is honoured inside the request. The default is
+    /// the safe empty answer for a backend with no history to read: the caller compares rows instead.
+    virtual Result<std::vector<TrackerFieldChange>, TrackerError>
+    FetchIssueFieldChanges(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*issueKeys*/,
+                           const CancelCallback& /*shouldCancel*/) {
+        return Result<std::vector<TrackerFieldChange>, TrackerError>::Ok({});
     }
 
     virtual std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,

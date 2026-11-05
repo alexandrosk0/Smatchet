@@ -28,10 +28,16 @@
 
 struct TrackerConfig; // pointer param — fwd-decl (concrete callers hold the full definition)
 struct ViewsStore;    // pointer param — fwd-decl
+namespace smatchet {
+class LeftViewHistoryService;
+}
 
 class IAppSync {
   public:
     virtual ~IAppSync() = default;
+
+    /// The history of issues that left a view; UI thread. Null where there is none (test fakes, before Initialize).
+    virtual smatchet::LeftViewHistoryService* LeftViewHistory() { return nullptr; }
 
     virtual void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                                  const ViewsStore* viewsOverride = nullptr) = 0;

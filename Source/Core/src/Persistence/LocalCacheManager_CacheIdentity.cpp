@@ -24,7 +24,8 @@ const char* const kCacheTables[] = {"tickets_v2", "ticket_field_values_v2", "tic
 // Queue tables: rows are keyed by an auto-increment id, so a plain UPDATE never collides. Queued writes are
 // never dropped here.
 const char* const kQueueTables[] = {"pending_field_edits",  "pending_field_edits_dead", "pending_creates",
-                                    "pending_creates_dead", "pending_actions",          "pending_actions_dead"};
+                                    "pending_creates_dead", "pending_actions",          "pending_actions_dead",
+                                    "left_view_history"};
 
 std::size_t RekeyRows(SQLite::Database& db, const std::string& sql, const std::string& to, const std::string& from) {
     SQLite::Statement st(db, sql);

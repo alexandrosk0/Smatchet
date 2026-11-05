@@ -1416,6 +1416,27 @@ const TranslationEntry kEntries[] = {
     {"notifCenter.count_many", "%d notifications", u8"%d notifications"},
     {"notifCenter.empty", "No notifications yet.", u8"Aucune notification pour le moment."},
 
+    // Issues-that-left-a-view window.
+    {"leftView.window", "Issues That Left Views###LeftViewHistory", u8"Tickets sortis des vues###LeftViewHistory"},
+    {"leftView.menu", "Issues That Left Views", u8"Tickets sortis des vues"},
+    {"leftView.empty", "No issue has left a view yet.", u8"Aucun ticket n'a encore quitté une vue."},
+    {"leftView.empty_filter", "No row matches the filter.", u8"Aucune ligne ne correspond au filtre."},
+    {"leftView.filter", "Filter", u8"Filtrer"},
+    {"leftView.open_details", "Open details", u8"Ouvrir les détails"},
+    {"leftView.open_browser", "Open in browser", u8"Ouvrir dans le navigateur"},
+    {"leftView.copy_key", "Copy key", u8"Copier la clé"},
+    {"leftView.copy_link", "Copy link", u8"Copier le lien"},
+    {"leftView.dismiss", "Dismiss", u8"Retirer"},
+    {"leftView.close_details", "Close details", u8"Fermer les détails"},
+    {"leftView.retry", "Retry", u8"Réessayer"},
+    {"leftView.col_left", "Left", u8"Sortie"},
+    {"leftView.col_key", "Key", u8"Clé"},
+    {"leftView.col_summary", "Summary", u8"Résumé"},
+    {"leftView.col_view", "View", u8"Vue"},
+    {"leftView.col_domain", "Domain", u8"Domaine"},
+    {"leftView.col_reason", "Reason", u8"Raison"},
+    {"leftView.col_by", "By", u8"Par"},
+
     // Icon picker modal (toolbar editor).
     {"iconPicker.title", "Pick Icon", u8"Choisir une icône"},
     {"iconPicker.search_hint", "Search icons...", u8"Rechercher des icônes..."},

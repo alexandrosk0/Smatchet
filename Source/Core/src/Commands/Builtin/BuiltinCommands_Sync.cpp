@@ -7,7 +7,9 @@
 #include "Commands/IMainThreadPoster.h"
 #include "Commands/MainThreadDispatch.h" // RunOnUiThreadAsCommandResult
 
+#include "CacheBackendKeyPure.h"
 #include "Interfaces/IAppSync.h" // fan-in: sync.* depends on the narrow IAppSync facet, not the full AppController.h.
+#include "LeftViewHistoryService.h"
 #include "Sync/CacheRecreateReportPure.h"
 #include "Sync/SyncMode.h"
 #include "Sync/SyncSessionStats.h"
@@ -16,6 +18,7 @@
 #include <nlohmann/json.hpp>   // this sync command TU uses nlohmann::json directly.
 
 #include <chrono>
+#include <cstddef>
 #include <future>
 #include <memory>
 #include <string>
@@ -26,6 +29,63 @@ namespace smatchet {
 namespace cmd {
 
 using builtin_detail::MakeCommand;
+
+namespace {
+
+// In LeftViewReasonKind order; a value from a newer build's table reads as pending.
+const char* LeftViewReasonKindName(LeftViewReasonKind kind) {
+    static const char* const kNames[] = {"deleted",         "query_field_changed", "other_field_changed",
+                                         "no_change_found", "unavailable",         "not_checked",
+                                         "pending"};
+    const std::size_t index = static_cast<std::size_t>(kind);
+    return index < sizeof(kNames) / sizeof(kNames[0]) ? kNames[index] : "pending";
+}
+
+// left_view.list: what the Left View window shows, for scripts and tests. Reads the snapshot; no tracker request.
+void RegisterLeftViewListCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
+    Command c = MakeCommand("left_view.list", "Issues that left a view, newest first, with the reason each one left.",
+                            [&app, &poster](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                                const int limit =
+                                    args.is_object() && args.contains("limit") && args["limit"].is_number_integer()
+                                        ? args["limit"].get<int>()
+                                        : -1;
+                                return RunOnUiThreadAsCommandResult(poster, [&app, limit]() {
+                                    nlohmann::json rows = nlohmann::json::array();
+                                    const LeftViewHistoryService* history = app.LeftViewHistory();
+                                    if (history != nullptr) {
+                                        for (const LeftViewRecord& row : history->Rows()) {
+                                            if (limit >= 0 && static_cast<int>(rows.size()) >= limit) {
+                                                break;
+                                            }
+                                            nlohmann::json one;
+                                            one["id"] = row.id;
+                                            one["issueKey"] = row.issueKey;
+                                            one["summary"] = row.summary;
+                                            one["kind"] = row.kind == LeftViewKind::Deleted ? "deleted" : "left_view";
+                                            one["reasonKind"] = LeftViewReasonKindName(row.reasonKind);
+                                            one["reason"] = row.reason;
+                                            one["author"] = row.author;
+                                            one["viewId"] = row.viewId;
+                                            one["viewName"] = row.viewName;
+                                            one["domain"] = cache_keys::DescribeCacheBackendKey(row.backendKey);
+                                            one["browseUrl"] = row.browseUrl;
+                                            one["leftAtUnixSec"] = row.leftAtUnixSec;
+                                            one["listedAtUnixSec"] = row.listedAtUnixSec;
+                                            rows.push_back(std::move(one));
+                                        }
+                                    }
+                                    nlohmann::json out;
+                                    out["rows"] = std::move(rows);
+                                    return CommandResult::Success(std::move(out));
+                                });
+                            });
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = false;
+    reg.Register(std::move(c));
+}
+
+} // namespace
 
 namespace {
 
@@ -337,6 +397,7 @@ void RegisterSyncStatsCommand(CommandRegistry& reg, IAppSync& app, IMainThreadPo
 } // namespace
 
 void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app, IMainThreadPoster& poster) {
+    RegisterLeftViewListCommand(reg, app, poster);
     RegisterSyncIncrementalCommand(reg, app, poster);
     RegisterSyncFullCommand(reg, app, poster);
     RegisterCacheRecreateCommand(reg, app, poster);

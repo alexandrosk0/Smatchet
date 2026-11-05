@@ -14,13 +14,17 @@ The user settled the design in `AskUserQuestion`: history kept in SQLite; one do
 
 ## Approach
 
-**Two capture points, one record path.** The change monitor already reports departures (`applyChangeProbeOnMainThread_`, `plan.residentRemovals`). A full reload does not, and its roster convergence cannot be used because it also drops rows a sibling pane's query admitted (`ConvergeActiveTicketsToSessionKeepSet`). The accurate signal is the view listing (`ChangeMonitorPaneState::ViewListed`, the ids the view's own query returned): old listing minus new listing, only when the query is unchanged. Listings are saved in `lookup_cache` (new kind `view_listing`), so the first reload after a launch can report what left overnight. The monitor path removes what it recorded from the listing, so a later reload cannot record it twice.
+**Two capture points, one record path.** The change monitor already reports departures (`applyChangeProbeOnMainThread_`, `plan.residentRemovals`). A full reload does not, and its roster convergence cannot be used because it also drops rows a sibling pane's query admitted (`ConvergeActiveTicketsToSessionKeepSet`). The accurate signal is the view listing, the ids the view's own query returned: old listing minus new listing, only when the query is unchanged, less anything the pane still holds through the hierarchy walk.
+
+Listings are saved in `lookup_cache` (new kind `view_listing`), **keyed by view id alone**: pane ids are recycled, and two panes on one view must report a departure once. That also lets the first reload after a launch report what left overnight. A departure and the listing that proves it commit in one transaction on one serial queue, before any tracker call, so reads and writes cannot interleave and a quit during the lookup loses only the reason.
+
+**Query identity.** The session's own `cfgCopy.JqlQuery` and active view, latched in `StartStreamingSync`, not `lastSyncedJql`, which focused syncs do not update and which is stale after a grid search or view switch. The monitor records a departure only when the probe ran the query the view's last reload answered and that reload listed the key; anything else keeps today's toast and stays out of the history. A recorded key leaves the pane's owned ids, or a local refresh would bring the row back.
 
 **Reason.** A worker builds it after the departure, never delaying the monitor cycle:
 
 1. `ITrackerIssueReader::FetchIssueFieldChanges` (new, default empty; Jira overrides with one `search/jql?expand=changelog` request for the batch) gives dated, attributed from/to changes.
 2. Keys with no changelog entry fall back to `FetchIssuesForKeys` and a diff of the fresh row against the last-known row.
-3. `BuildLeftViewReason` (pure) prefers changes to fields the view's query names. A change to a field the query does not name is labelled as possibly related. If nothing changed it says so rather than guessing. An unreachable tracker gives "Reason unavailable".
+3. `BuildLeftViewReason` (pure) prefers changes to fields the view's query names. A change to a field the query does not name is labelled as possibly related. If nothing changed it reads "Left view (cause unknown)", and an issue the tracker will not return reads "Deleted or no longer visible"; neither guesses. A failed request gives "Reason unavailable".
 
 **Storage and UI.** `LeftViewHistoryService` owns an in-memory newest-first snapshot for the UI thread; SQLite runs on workers. The window talks only to the service, so no new `AppController.h` includer is added.
 
@@ -30,11 +34,12 @@ The user was told the reason needs "same request count, larger responses". It ke
 
 - **`ITrackerIssueReader`**: add `virtual Result<std::vector<TrackerFieldChange>, TrackerError> FetchIssueFieldChanges(const TrackerConfig&, const std::vector<std::string>& issueKeys)`, default `Ok({})`. `TrackerFieldChange { issueKey, fieldId, fieldLabel, fromValue, toValue, author, changedAt }` is backend-agnostic. `JiraClient` overrides it; other backends keep the default and use the snapshot diff.
 - **SQLite (additive)**: new table `left_view_history(id INTEGER PRIMARY KEY AUTOINCREMENT, backend_key, pane_id, view_id, view_name, issue_key, summary, kind, reason, reason_detail_json, author, browse_url, last_known_json, left_at)`, index on `left_at`. Added to the rekey table list in `LocalCacheManager_CacheIdentity.cpp`.
-- **`lookup_cache`**: new kind `view_listing`; `cache_key` = pane id + view id; payload `{ "jql": ..., "ids": [...] }`.
-- **`ITicketSyncDeps`**: add `OnViewListingCompleted(const std::vector<std::string>& ids)`, called from `TicketSyncService::PublishViewListing` on a complete, non-empty reload. It replaces the direct `PublishViewListedIds` use for this purpose; the adapter forwards to `AppController`.
+- **`lookup_cache`**: new kind `view_listing`; `cache_key` = view id (`backend_key` already scopes the site); payload `{ "jql": ..., "ids": [...] }`.
+- **`ITicketSyncDeps`**: add `OnViewListingCompleted(const ViewListingCompletion&)`, carrying the session's config, query, view id and name, listed ids, kept ids and dropped rows. Called from `TicketSyncService::PublishViewListing` on a complete, non-empty reload, after `PublishViewListedIds`; the adapter forwards to `AppController`.
+- **`IAppSync`**: add `virtual smatchet::LeftViewHistoryService* LeftViewHistory()`, default null, so `left_view.list` needs no new `AppController.h` includer.
 - **Plumbing, monitor path**: `applyChangeProbeOnMainThread_` → `recordMonitorDepartures_(ctx, paneId, prev, plan)` → `LeftViewHistoryService::Record(LeftViewCapture)` → worker → `LocalCacheManager::AppendLeftViewRows` → main thread → snapshot insert.
 - **Plumbing, reload path**: `TicketSyncService::PublishViewListing` → `ITicketSyncDeps::OnViewListingCompleted` → `GridContextDepsAdapter` → `AppController::onViewListingCompleted_` → `DepartedFromListing` (pure) → same `Record`.
-- **Commands**: `view.toggle.left_view_history` (alias `left_view_history`) and read-only `left_view.list` (JSON; CLI / MCP / Lua via the registry). Documented in `docs/guides/cli.md`.
+- **Commands**: `view.toggle.left_view_history` and read-only `left_view.list` (JSON; CLI / MCP / Lua via the registry). Documented in `docs/guides/cli.md`.
 - **Tunable limits**: `LeftViewHistoryMaxRows` (`left_view_history_max_rows`, 1000, 10..100000) and `LeftViewReasonMaxKeys` (`left_view_reason_max_keys`, 100, 1..1000).
 - **Toast**: `SmatchetToastManager::Push` gains an overload that runs the row action on a body click, so a left-view toast opens the window.
 
@@ -49,14 +54,15 @@ The user was told the reason needs "same request count, larger responses". It ke
 5. `Source/Core/include/Ui/LeftViewHistoryPure.h`: row filter and time label.
 6. `Source/Core/include/Ui/SmatchetLeftViewHistoryUi.h`, `Source/Core/src/Ui/SmatchetLeftViewHistoryUi.cpp`: window and details view.
 7. `Source/Core/src/AppController_LeftViewHistory.cpp`: capture glue and service wiring.
-8. `tests/Core/LeftViewReasonPure.test.cpp`, `tests/Core/ViewListingDiffPure.test.cpp`, `tests/Core/LeftViewHistoryPure.test.cpp`, `tests/Core/LeftViewHistoryStore.test.cpp`, `tests/ui/left_view_history.test.cpp`.
+8. `Source/Core/include/LeftViewRecord.h`, `Source/Core/include/TrackerFieldChange.h`: plain shared types.
+9. `tests/Core/LeftViewReasonPure.test.cpp`, `tests/Core/LeftViewHistoryService.test.cpp`, `tests/ui/left_view_history.test.cpp`.
 
 ### Changed
 
 - **Tracker**: `Source/Core/include/ITrackerIssueReader.h`, `Source/Core/include/Tracker/JiraClient.h`, `Source/Core/src/Tracker/JiraIssueSearch.cpp`, `Source/Core/src/Tracker/JiraChangelogDeltaPure.{h,cpp}` (all-fields sibling of `DeltasFromIssueJson`).
 - **Sync**: `Source/Core/src/Sync/TicketSyncService.cpp`, `Source/Core/include/Sync/ChangeMonitorPaneState.h` (`NoteViewRowsLeft`), `ITicketSyncDeps`.
-- **Persistence**: `Source/Core/include/LocalCacheManager.h`, `LocalCacheManager.cpp` (`InitSchema`), `LocalCacheManager_CacheIdentity.cpp`.
-- **App**: `Source/Core/include/AppController.h`, `Source/Core/src/AppController_PaneContexts.cpp`, `Source/Core/src/GridContextDepsAdapter.cpp`.
+- **Persistence**: `Source/Core/include/Persistence/LocalCacheManager.h`, `Source/Core/src/Persistence/LocalCacheManager.cpp` (`InitSchema`), `LocalCacheManager_CacheIdentity.cpp`.
+- **App**: `Source/Core/include/AppController.h`, `Source/Core/include/Interfaces/IAppSync.h`, `Source/Core/src/AppController.cpp`, `AppController_Init.cpp`, `AppController_LocalCacheDb.cpp`, `AppController_PaneContexts.cpp`, `GridContextDepsAdapter.cpp`.
 - **Ui**: `SmatchetUiSession.h`, `SmatchetUI.cpp`, `SmatchetUI_MainMenu.cpp`, `SmatchetBottomPanelDrag.cpp`, `SmatchetToast.{h,cpp}`, `SmatchetTicketChangeNotifications.cpp`, `SmatchetLocalization.cpp`.
 - **Commands / config**: `ViewToggleCommands.cpp`, a builtin command TU for `left_view.list`, `Config/TunableLimits.h`, `KeybindingsConfig.cpp` if the toggle list needs it, `docs/guides/cli.md`.
 - **Build**: `tests/CMakeLists.txt`.
@@ -68,7 +74,8 @@ The user was told the reason needs "same request count, larger responses". It ke
 - `FetchIssuesForKeys` (`ITrackerIssueReader.h:79`): fresh row for the snapshot diff.
 - `DescribeCacheBackendKey` (`Config/CacheBackendKeyPure.h`): the Domain column; never shows the account hash.
 - `SmatchetLocalization`, `SmatchetWindowExpand::BeginWindowWithToggle`, `DataFreshnessCue`: window shell and cue, as in `SmatchetNotificationCenterUi.cpp`.
-- `LocalCacheManager::SaveLookup` / `LoadLookups`: saved listings.
+- `LocalCacheManager::TryGetLookup`: saved listings; the write joins the departures' transaction.
+- `SerialTaskQueue` (`AppController.h` `ticketSaves_` precedent): cache work in call order.
 
 ## Extraction sizing (when this plan EXTRACTS or SPLITS code/docs)
 
@@ -78,7 +85,7 @@ N/A — nothing is extracted; new TUs are new behaviour.
 
 - **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: the window uses `ImGuiListClipper` and a filtered index rebuilt only when the revision or filter changes; closed window costs nothing.
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: every SQLite and HTTP call runs on a worker; the UI reads the snapshot only.
-- **Pillar 3 (never crash)**: worker bodies catch `std::exception`; JSON goes through `json_safe::ParseBounded`; a stale post after a cache recreate is dropped by generation check.
+- **Pillar 3 (never crash)**: worker bodies catch `std::exception`; JSON goes through `json_safe::ParseBounded`; a stale post after a cache recreate is dropped by a generation counter the service moves in `ResetForCacheRecreate`. Jobs latch `Cache` per task and never across a tracker call, or a recreate would fail waiting on the holder; tracker calls cancel on shutdown and recreate.
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: standard table navigation, em-based widths, theme tokens only.
 - **Pillar 6 (offline-first)**: the history renders from disk with no network. Details show the saved values with a freshness cue; a failed fetch keeps them. No request while offline.
 
@@ -93,7 +100,8 @@ N/A — nothing is extracted; new TUs are new behaviour.
 ## Risks / non-goals
 
 - **False departures.** A changed query, a backend swap, a truncated search or an empty result must never record. Mitigation: `DepartedFromListing` requires the same query and a complete, non-empty listing; pure tests pin each case.
-- **Double recording.** Monitor and reload could both report one departure. Mitigation: `NoteViewRowsLeft` and a saved-listing refresh on the monitor path.
+- **Double recording.** Monitor, reload and a second pane on the view could each report one departure. Mitigation: the saved listing is the single record of what is still listed, and only keys removed from it are recorded, on one serial queue.
+- **Existing monitor bug, not fixed here.** A probe can run a stale query after a view switch and erase real rows, with a false toast. The history guard keeps those out of the history, but the grid behaviour is unchanged. Reported as a follow-up.
 - **Mass departure** (sprint rollover). Reason lookups stop at `LeftViewReasonMaxKeys`; remaining rows say the reason was not checked. Rows are trimmed to `LeftViewHistoryMaxRows`.
 - **Comparison limits.** Non-Jira trackers can only compare fields the view fetched, so a query on an unfetched field reads "no field change found". Accepted and stated in the row text.
 - **Multi-domain panes.** Monitor and fetch use the existing pane config, so the open multiple-domains bug applies here too. Not fixed here.
@@ -110,13 +118,13 @@ Pre-resolved: reads for details go through the service with no fetch while offli
 
 ## Verification
 
-- **Bucket A**: `LeftViewReasonPure` (changed-field match, not-named label, no-change, unavailable, deleted, author pick, caps), `ViewListingDiffPure` (query change, empty, first listing), `LeftViewHistoryPure`, all-fields changelog parser, `LeftViewHistoryStore` against a temp SQLite file (append, newest-first load, trim, delete, clear).
-- **Bucket E**: `tests/ui/left_view_history.test.cpp`: seed the service, open via the command, assert row order and reason, dismiss, two-step clear, offline details.
+- **Bucket A**: `LeftViewReasonPure` (changed-field match, not-named label, no-change, author pick, caps), `ViewListingDiffPure` (query change, empty, first listing, walk-held rows), `LeftViewHistoryPure`, all-fields changelog parser, and `LeftViewHistoryService` over in-memory SQLite with a scripted reader (baseline, record once across monitor / reload / second pane, restart, trim, dismiss, clear, deleted, unavailable, lookup cap, details states).
+- **Bucket E**: `bash scripts/dev/test-ui-left-view-history.sh` runs `tests/ui/left_view_history.test.cpp` against the mock Jira fixture `tests/fixtures/jira_backend/left-view-history.json` in an isolated profile: real sync → listing diff → SQLite → reason → window, then details, dismiss and clear.
 - **Bash-driver scenario / screenshot / sanitizer**: `Smatchet.exe cmd left_view.list --pretty` returns JSON.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Doc validation**: the canonical `scripts/dev/test-docs.sh` suite green.
 - **Plan stress-test — `grill-with-docs`**: run against this plan before ship; record the outcome here.
-- **Manual residue**: live-tracker confirmation that a real Jira transition produces the expected reason. Bucket A covers the parser against fixture JSON; the live check is for the user, because no credentials are available to agents.
+- **Manual residue**: a live Jira transition produces the expected reason, and the window's look with real rows. Bucket A covers the parser against fixture JSON and every state against a scripted reader; the live and visual checks are for the user (visual-validation exception), because no credentials are available to agents. The bucket-E case asserts the rows but not how they look.
 
 ## Open questions
 
