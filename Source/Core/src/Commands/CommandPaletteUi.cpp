@@ -259,10 +259,12 @@ void CommandPaletteUi::Draw(AppController& app) {
     if (!open_)
         return;
 
-    // Center the modal.
-    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600.f, 420.f), ImGuiCond_Always);
+    // Center the modal, clamped to the viewport so a small window cannot push its edges (and the
+    // Cancel button on the top row) off screen.
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2((std::min)(600.f, viewport->Size.x), (std::min)(420.f, viewport->Size.y)),
+                             ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.97f);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
@@ -290,7 +292,14 @@ void CommandPaletteUi::Draw(AppController& app) {
             "%s", SmatchetLocalization::Format("cmdpalette.scope", "Showing %s commands only", categoryLabel_.c_str()));
     }
 
-    // Filter text input.
+    // Filter text input, narrowed only when the Cancel button beside it would not otherwise fit.
+    const char* cancelLabel = SmatchetLocalization::T("common.cancel", "Cancel");
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float rowStartX = ImGui::GetCursorPosX();
+    const float rowWidth = ImGui::GetContentRegionAvail().x;
+    const float cancelWidth = ImGui::CalcTextSize(cancelLabel).x + style.FramePadding.x * 2.0f;
+    ImGui::SetNextItemWidth(
+        (std::max)(1.0f, (std::min)(ImGui::CalcItemWidth(), rowWidth - cancelWidth - style.ItemSpacing.x)));
     const bool filterChanged =
         ImGui::InputTextWithHint("##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."),
                                  filterBuf_, sizeof(filterBuf_));
@@ -301,6 +310,16 @@ void CommandPaletteUi::Draw(AppController& app) {
     // Arg-form mode.
     if (argFormStep_ >= 0) {
         drawArgForm();
+        ImGui::End();
+        return;
+    }
+
+    // Cancel sits above the list, so neither a long result list nor a short window can push it out
+    // of reach. Same exit as Escape; returning here also stops Enter on the keyboard-focused button
+    // from running the selected command in handleListNavigation below.
+    ImGui::SameLine(rowStartX + rowWidth - cancelWidth);
+    if (ImGui::Button(cancelLabel)) {
+        Close();
         ImGui::End();
         return;
     }
@@ -349,7 +368,11 @@ void CommandPaletteUi::handleListNavigation(const ImGuiIO& io) {
 // Scrollable command-list child. Owns its own BeginChild/EndChild pair. Destructive rows render in
 // the warning colour and require Shift to dispatch on click.
 void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
-    const float listH = 300.f;
+    // Shrink below the default height in a short window so the hint line under the list stays
+    // visible: the space it needs is the separator above it plus the item spacing on either side.
+    const float hintH = ImGui::GetStyle().ItemSpacing.y * 2.0f + 1.0f + ImGui::GetTextLineHeight();
+    const float listH =
+        (std::max)(ImGui::GetFrameHeight(), (std::min)(300.f, ImGui::GetContentRegionAvail().y - hintH));
     ImGui::BeginChild("##cmdlist", ImVec2(0, listH), false);
     for (int i = 0; i < static_cast<int>(filtered_.size()); ++i) {
         const Command& c = filtered_[i];
