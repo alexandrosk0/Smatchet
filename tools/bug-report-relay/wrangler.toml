@@ -19,7 +19,7 @@ ASSETS_REPO = ""
 # back to ASSETS_REPO, then REPO. A minidump carries every application thread's stack
 # memory and the loaded-module list, so the Worker REFUSES to upload one unless
 # the destination repo is private (see `isDumpRepoPrivate` in src/index.js).
-DUMPS_REPO = ""
+DUMPS_REPO = "alexandrosk0/private-dumps-repo"
 
 # --- Abuse protection -------------------------------------------------------
 # Rate limits enforced INSIDE the Worker, so they ship with the code and apply on
