@@ -558,6 +558,53 @@ static void CaptureHeaderDragColumnOrder(UiDrawSession& d, Views& viewState,
     d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
 }
 
+// Take the header menu's column off the pane's own view and autosave it like a header drag. Panes
+// showing the same view share its column list, so they all lose the column. The editor draft loses
+// it too (draft and rebase ancestor both, so the removal reads as neither a user edit nor a change
+// to adopt): rebasing alone would keep the column in a draft holding other pending column edits, and
+// their Apply would bring it back.
+static void RemoveHeaderMenuColumnFromPaneView(UiDrawSession& d, Views& viewState, GridPane& pane,
+                                               ViewDefinition& view) {
+    const std::string& key = pane.headerMenuColumnKey;
+    if (!RemoveViewColumn(key, view)) {
+        return;
+    }
+    if (d.viewDraftId == view.Id) {
+        RemoveViewColumn(key, d.viewDraft);
+        RemoveViewColumn(key, d.viewDraftBase);
+    }
+    if (view.Id == viewState.GetStore().ActiveViewId) {
+        d.cfg.SelectedFields = view.Fields; // what a Fields-tab Apply leaves here for the next sync
+    }
+    // The rectangle addresses columns by index, and every column after the removed one shifts. The
+    // edit state may name the removed field.
+    pane.gridState.RectSel.Clear();
+    pane.gridState.ClearEditing();
+    viewState.BumpRevision();
+    d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+}
+
+// Appends "Remove column from view" to ImGui's default header menu (Size column to fit, Size all
+// columns to fit, Reset order), which a plain right-click opens. Call right after the header row's
+// TableNextRow: that is what submits the default items, so this lands below them, and the frame
+// that opens the menu has not reached here yet, so ImGui's auto-resize measures the whole menu.
+// Offered only on the pane's own view: a fallback-resolved pane (cross-backend, its view not in the
+// loaded bucket) renders columns it cannot edit. Returns true when the item was clicked.
+static bool DrawHeaderRemoveColumnMenuItem(const GridPane& pane, const ViewDefinition* paneView) {
+    ImGuiTable* table = ImGui::GetCurrentTable();
+    if (table == nullptr || !ImGui::TableBeginContextMenuPopup(table)) {
+        return false;
+    }
+    bool clicked = false;
+    if (paneView != nullptr && paneView->Id == pane.viewId &&
+        CanRemoveViewColumn(*paneView, pane.headerMenuColumnKey)) {
+        ImGui::Separator();
+        clicked = ImGui::MenuItem(SmatchetLocalization::T("views.remove_column", "Remove column from view"));
+    }
+    ImGui::EndPopup();
+    return clicked;
+}
+
 } // namespace
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -861,6 +908,9 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
             }
         }
         ImGui::EndTable();
+        if (ctx.removeHeaderMenuColumn && ctx.activeViewForGrid != nullptr) {
+            RemoveHeaderMenuColumnFromPaneView(d, ViewState, ctx.pane, *ctx.activeViewForGrid);
+        }
     }
     ImGui::PopStyleVar();
 }
@@ -868,7 +918,7 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
 void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
-    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+    const ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
     const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
@@ -896,6 +946,7 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     ctx.requestedColumnWidths = std::move(colWidths);
     ImGui::TableSetupScrollFreeze(1, 1);
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+    ctx.removeHeaderMenuColumn = DrawHeaderRemoveColumnMenuItem(ctx.pane, activeViewForGrid);
     for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
         ImGui::TableSetColumnIndex(hci);
         const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
@@ -903,6 +954,10 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
         // Match ImGui::TableHeadersRow(): TableHeader IDs must be unique even when labels repeat.
         ImGui::PushID(hci);
         ImGui::TableHeader(hcol.Label.c_str());
+        // The same test TableHeader just used to open its context menu on this column.
+        if (ImGui::IsPopupOpenRequestForItem(ImGuiPopupFlags_None, ImGui::GetItemID())) {
+            ctx.pane.headerMenuColumnKey = hcol.Key;
+        }
         smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the column
 
         const TrackerField* hdrMeta =

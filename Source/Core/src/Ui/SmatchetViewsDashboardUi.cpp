@@ -678,6 +678,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputTextWithHint("##ViewFieldSearch", "Search field id or name", d.fieldSearchBuf,
                                      sizeof(d.fieldSearchBuf));
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("views.remove_column_hint",
+                                                              "(right-click a column to remove it from the view)"));
 
             const CategorizedFields categorized = CategorizeAvailableFields(availableFields, d.fieldSearchBuf);
             const std::vector<const TrackerField*>& visibleFields = categorized.visible;

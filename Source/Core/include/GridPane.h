@@ -132,6 +132,10 @@ struct GridPane {
     /// (including a pure width or sort edit, or an unrelated catalog change), which must NOT
     /// discard an in-progress or just-settled header drag.
     std::vector<std::string> lastDrawnColumnKeys;
+    /// Key of the column whose header last opened ImGui's table context menu, latched on the open.
+    /// The menu's Remove action targets this key and not ImGui's column index, because an index
+    /// names a different column as soon as the column set changes under the open menu.
+    std::string headerMenuColumnKey;
 
     /// Per-pane field-catalog index for read routing (per-pane-catalog-value-read-routing).
     /// A non-focused cross-backend pane resolves its cell option labels / display names
