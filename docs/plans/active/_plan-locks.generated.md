@@ -8,7 +8,36 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (2 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `clang-cl-ubsan-lanes`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/clang-cl-ubsan`
+- **Started**: 2026-11-09T13:54:44Z
+- **Updated**: 2026-11-09T14:26:20Z
+- **Write set** (15 paths):
+  - `cmake/Sanitizers.cmake`
+  - `CMakePresets.json`
+  - `.github/workflows/build-and-test.yml`
+  - `.github/workflows/sanitizer-nightly.yml`
+  - `tests/Core/CancelToken.test.cpp`
+  - `tests/Core/CallstackParser.test.cpp`
+  - `tests/Core/BulkImportAbandonNonBlocking.test.cpp`
+  - `tests/Core/UserInfoActivityCancelUaf.test.cpp`
+  - `tests/Core/LocalCacheManagerChat.test.cpp`
+  - `tests/Core/StubAiClientCancel.test.cpp`
+  - `tests/Core/SubprocessCapture.test.cpp`
+  - `docs/self-improvement/categories/infra/2026-10-03-clang-cl-sanitizer-lanes-apply-asan-only.md`
+  - `docs/plans/active/clang-cl-ubsan-lanes.md`
+  - `tests/support/StubAiClient.h`
+  - `BUILD.md`
+
+### `ui-monkey-nightly-extras`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/ui-monkey-nightly-extras`
+- **Started**: 2026-11-09T13:58:50Z
+- **Write set** (1 paths):
+  - `.github/workflows/ui-monkey-nightly.yml`
+
