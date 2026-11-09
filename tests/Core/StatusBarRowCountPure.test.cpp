@@ -81,10 +81,10 @@ TEST_CASE("StatusBarRowCountPure: a projection from a larger snapshot is ignored
 }
 
 TEST_CASE("StatusBarRowCountPure: stale filtered indices past the snapshot are not counted") {
-    const std::vector<std::size_t> indices = {3, 50, 99, 150, 210, 339};
+    const std::vector<std::size_t> indices = {3, 50, 99, 100, 150, 210, 339};
     // Projection matches the snapshot: every index is drawn.
-    CHECK(DrawnFilteredRows(indices, 340, 340) == 6);
-    // Snapshot shrank to 100 inside the debounce: the grid prunes 150, 210 and 339.
+    CHECK(DrawnFilteredRows(indices, 340, 340) == 7);
+    // Snapshot shrank to 100 inside the debounce: the grid prunes 100, 150, 210 and 339.
     CHECK(DrawnFilteredRows(indices, 340, 100) == 3);
 
     // Every retained index is stale: the grid draws nothing, so the bar reads 0 of 100.
