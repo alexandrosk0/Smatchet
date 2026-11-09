@@ -12,25 +12,20 @@ name: Sanitizer nightly
 #
 #   sanitizer-nightly      ninja-clang-asan (clang-cl). Build only — the Clang
 #                          warning set over the Whisper-off / Lua-off feature
-#                          shape, app instrumented. It executes nothing.
+#                          shape, app instrumented with ASan + UBSan. It
+#                          executes nothing.
 #   sanitizer-nightly-rig  ninja-msvc-asan (cl.exe). Builds the SmatchetTests
 #                          doctest rig instrumented with ASan and RUNS it. This
 #                          is the job that executes code under a sanitizer.
 #
-# Why the rig does not run in the clang job: with the flags
-# cmake/Sanitizers.cmake passes today, an exe instrumented by clang-cl does not
-# survive every C++ exception path against the MSVC runtime — a rethrow caught
-# in the same function aborts inside VCRUNTIME140.dll, and the instrumented rig
-# dies seconds in with an execute fault inside MSVCP140.dll. One codegen flag
-# cures the small reproduction (see the backlog entry below); until that is
-# proven on the whole rig, the rig runs under cl.exe's ASan, which has no such
-# problem — the per-PR "Sanitizer (ASAN via MSVC)" job runs it the same way.
+# The clang job stays build-only here; the per-PR "Sanitizer (UBSan via Clang)"
+# job builds and RUNS the rig instrumented under clang-cl. That became possible once
+# cmake/Sanitizers.cmake passed /clang:-fsanitize-address-use-after-return=never:
+# without it a clang-cl-instrumented exe aborted on a C++ rethrow inside
+# VCRUNTIME140.dll / MSVCP140.dll.
 #
-# What is sanitized: ASan only, in both jobs. MSVC has no UBSan, and clang-cl is
-# an MSVC-style driver, so cmake/Sanitizers.cmake takes its MSVC branch
-# (/fsanitize=address) for it too, whatever the preset and job names say.
-# Both points are tracked in
-# docs/self-improvement/categories/infra/2026-10-03-clang-cl-sanitizer-lanes-apply-asan-only.md.
+# What is sanitized: ASan in the rig job (MSVC has no UBSan); ASan + UBSan in the
+# clang job, from the clang-cl arm of smatchet_apply_sanitizers().
 #
 # A lane like this goes hollow quietly: a `ctest` over a configure that
 # registered no test prints "No tests were found!!!" and exits 0 — a green run

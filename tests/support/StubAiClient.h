@@ -131,9 +131,10 @@ class StubAiClient : public IAiClient {
                     // StubAiClientCancel.test.cpp (#1280). OpenCppCoverage sets NO
                     // __SANITIZE_ADDRESS__ macro, so we key off the coverage build's
                     // own -DSMATCHET_COVERAGE signal (wired in .github/workflows/
-                    // coverage.yml). The CONTENT/behaviour assertions (CancelObserved,
+                    // coverage.yml) — and off SMATCHET_ASAN, the sanitized rig's same
+                    // overhead. The CONTENT/behaviour assertions (CancelObserved,
                     // partial stream, error path) stay intact in every build.
-#if defined(SMATCHET_COVERAGE)
+#if defined(SMATCHET_COVERAGE) || defined(SMATCHET_ASAN)
                     const auto ackBudgetMs = script_.CancelAcknowledgedWithinMs * 8;
 #else
                     const auto ackBudgetMs = script_.CancelAcknowledgedWithinMs;
