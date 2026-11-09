@@ -89,7 +89,7 @@ void AppController::initLeftViewHistory_() {
     deps.OnReloadDepartures = [this](const std::vector<smatchet::LeftViewRecord>& rows) { onReloadDepartures_(rows); };
     deps.LoadViews = [](const TrackerConfig& cfg) { return ConfigManager::LoadViewsOrBootstrap(cfg); };
     deps.OpenUrl = [this](const std::string& url) { OpenUrl(url); };
-    leftViewHistory_.reset(new smatchet::LeftViewHistoryService(std::move(deps)));
+    leftViewHistory_ = std::make_unique<smatchet::LeftViewHistoryService>(std::move(deps));
     leftViewHistory_->Load();
 }
 

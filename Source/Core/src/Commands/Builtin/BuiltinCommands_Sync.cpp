@@ -36,7 +36,7 @@ namespace {
 const char* LeftViewReasonKindName(LeftViewReasonKind kind) {
     static const char* const kNames[] = {"deleted",         "query_field_changed", "other_field_changed",
                                          "no_change_found", "unavailable",         "not_checked",
-                                         "pending"};
+                                         "pending",         "not_visible"};
     const std::size_t index = static_cast<std::size_t>(kind);
     return index < sizeof(kNames) / sizeof(kNames[0]) ? kNames[index] : "pending";
 }

@@ -246,7 +246,7 @@ LeftViewReason UnavailableReason() {
 
 LeftViewReason NotVisibleReason() {
     LeftViewReason reason;
-    reason.kind = LeftViewReasonKind::Unavailable;
+    reason.kind = LeftViewReasonKind::NotVisible;
     reason.text = "Deleted or no longer visible";
     return reason;
 }

@@ -89,7 +89,8 @@ class LeftViewHistoryService {
 
     /// A complete reload of the view finished. `listed` is what the query returned, `stillHeld` what the pane keeps
     /// through the hierarchy walk, and `lastKnown` the rows the reload dropped. Records what left, if the saved
-    /// listing answered the same query; otherwise this listing is only a baseline.
+    /// listing answered the same query; otherwise this listing is only a baseline. Rows of this site whose reason
+    /// could not be read are looked up again, since the site answered.
     void RecordListing(const LeftViewCapture& capture, std::vector<std::string> listed,
                        std::unordered_set<std::string> stillHeld, std::vector<LeftViewDeparture> lastKnown);
     /// The change monitor found departures. Only keys the saved listing still names are recorded, so two panes on
@@ -129,6 +130,9 @@ class LeftViewHistoryService {
     void CommitDepartures_(const std::shared_ptr<const LeftViewCapture>& capture, std::vector<LeftViewRecord> rows,
                            std::vector<LookupJob> jobs, const std::string& listingJson,
                            std::int64_t listingSavedAtUnixSec, std::uint64_t generation, bool notifyAsReload);
+    void LaunchLookups_(const std::shared_ptr<const LeftViewCapture>& capture, std::vector<LookupJob> jobs,
+                        std::uint64_t generation);
+    void RetryUnavailable_(const LeftViewCapture& capture);
     void RunLookups_(const std::shared_ptr<const LeftViewCapture>& capture, const std::vector<LookupJob>& jobs,
                      std::uint64_t generation);
     void SettleUnavailable_(const std::vector<LookupJob>& jobs, std::uint64_t generation);

@@ -79,7 +79,7 @@ TEST_SUITE("LeftViewReasonPure") {
 
     TEST_CASE("an issue the tracker will not return is never called deleted without a 404") {
         CHECK(NotVisibleReason().text == "Deleted or no longer visible");
-        CHECK(NotVisibleReason().kind == LeftViewReasonKind::Unavailable);
+        CHECK(NotVisibleReason().kind == LeftViewReasonKind::NotVisible);
         CHECK(DeletedReason().kind == LeftViewReasonKind::Deleted);
     }
 

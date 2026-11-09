@@ -189,7 +189,7 @@ void DrawRow(const smatchet::LeftViewRecord& row, WindowState& state, PendingRow
 
 void SetupColumns() {
     const float em = ::ImGui::GetFontSize();
-    ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, em * 9.0f);
+    ImGui::TableSetupColumn("Left at", ImGuiTableColumnFlags_WidthFixed, em * 9.0f);
     ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, em * 6.0f);
     ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableSetupColumn("View", ImGuiTableColumnFlags_WidthFixed, em * 8.0f);

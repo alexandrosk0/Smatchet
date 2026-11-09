@@ -19,6 +19,7 @@ enum class LeftViewReasonKind {
     Unavailable = 4,       ///< The issue could not be read.
     NotChecked = 5,        ///< Over the per-batch lookup limit, so no request was spent on it.
     Pending = 6,           ///< Recorded; the lookup has not finished.
+    NotVisible = 7,        ///< The tracker answered without it: deleted, or no longer readable by this account.
 };
 
 struct LeftViewRecord {

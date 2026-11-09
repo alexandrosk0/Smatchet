@@ -1429,7 +1429,7 @@ const TranslationEntry kEntries[] = {
     {"leftView.dismiss", "Dismiss", u8"Retirer"},
     {"leftView.close_details", "Close details", u8"Fermer les détails"},
     {"leftView.retry", "Retry", u8"Réessayer"},
-    {"leftView.col_left", "Left", u8"Sortie"},
+    {"leftView.col_left", "Left at", u8"Sorti le"},
     {"leftView.col_key", "Key", u8"Clé"},
     {"leftView.col_summary", "Summary", u8"Résumé"},
     {"leftView.col_view", "View", u8"Vue"},

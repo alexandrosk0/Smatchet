@@ -115,7 +115,7 @@ extern "C" void SmatchetRegisterLeftViewHistoryTests(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(history->Details().recordId == finishedId);
         IM_CHECK_NO_RET(ctx->ItemExists("Close details"));
 
-        // Dismiss one row, then the two-step clear, through the buttons a user presses.
+        // Dismiss one row through the service, then the two-step clear through the buttons a user presses.
         const std::size_t before = history->Rows().size();
         history->Dismiss(finishedId);
         ctx->Yield(2);

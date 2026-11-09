@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -29,6 +30,7 @@ class ScriptedReader : public ITrackerIssueReader {
     bool rowsFail = false;
     bool existsAnswer = true;
     int historyCalls = 0;
+    std::string historyRefusesKey; ///< A batch naming this key is refused whole, as Jira does for a hidden issue.
 
     std::vector<CachedTicket> FetchIssues(bool*, const TrackerConfig*, const ViewsStore*, std::string*, std::string*,
                                           TrackerError*) override {
@@ -42,9 +44,21 @@ class ScriptedReader : public ITrackerIssueReader {
         return Result<std::vector<CachedTicket>, TrackerError>::Ok(rows);
     }
     Result<std::vector<TrackerFieldChange>, TrackerError>
-    FetchIssueFieldChanges(const TrackerConfig&, const std::vector<std::string>&, const CancelCallback&) override {
+    FetchIssueFieldChanges(const TrackerConfig&, const std::vector<std::string>& keys, const CancelCallback&) override {
         ++historyCalls;
-        return Result<std::vector<TrackerFieldChange>, TrackerError>::Ok(history);
+        for (const std::string& key : keys) {
+            if (!historyRefusesKey.empty() && key == historyRefusesKey) {
+                return Result<std::vector<TrackerFieldChange>, TrackerError>::Err(
+                    TrackerErrorInvalidRequest("key in (...) names an issue that cannot be read", 400));
+            }
+        }
+        std::vector<TrackerFieldChange> answered;
+        for (const TrackerFieldChange& change : history) {
+            if (std::find(keys.begin(), keys.end(), change.issueKey) != keys.end()) {
+                answered.push_back(change);
+            }
+        }
+        return Result<std::vector<TrackerFieldChange>, TrackerError>::Ok(answered);
     }
     Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig&, const std::string&) override {
         return Result<bool, TrackerError>::Ok(existsAnswer);
@@ -258,6 +272,72 @@ TEST_SUITE("LeftViewHistoryService") {
         rig.service->RecordListing(rig.Capture(), {"A"}, {}, {Row("B", "Open")});
         REQUIRE(rig.service->Rows().size() == 1);
         CHECK(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::Unavailable);
+    }
+
+    TEST_CASE("an unavailable reason is asked again once the site answers a reload") {
+        Rig rig;
+        rig.service->RecordListing(rig.Capture(), {"A", "B"}, {}, {});
+        rig.reader->rowsFail = true;
+        rig.service->RecordListing(rig.Capture(), {"A"}, {}, {Row("B", "Open")});
+        REQUIRE(rig.service->Rows().size() == 1);
+        REQUIRE(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::Unavailable);
+
+        rig.reader->rowsFail = false;
+        rig.reader->rows.push_back(Fresh("B", "Done"));
+        rig.service->RecordListing(rig.Capture(), {"A"}, {}, {});
+        REQUIRE(rig.service->Rows().size() == 1);
+        CHECK(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::QueryFieldChanged);
+        CHECK(rig.service->Rows()[0].reason == "Status: Open -> Done");
+        const std::vector<LeftViewRecord> stored = rig.cache->LoadLeftViewRows(10);
+        REQUIRE(stored.size() == 1);
+        CHECK(stored[0].reasonKind == LeftViewReasonKind::QueryFieldChanged);
+    }
+
+    TEST_CASE("no retry while offline, and none for an issue the tracker answered without") {
+        Rig rig;
+        rig.service->RecordListing(rig.Capture(), {"A", "B", "C"}, {}, {});
+        rig.reader->rowsFail = true;
+        rig.service->RecordListing(rig.Capture(), {"A", "C"}, {}, {Row("B", "Open")});
+        rig.offline = true;
+        const int callsOffline = rig.reader->historyCalls;
+        rig.service->RecordListing(rig.Capture(), {"A", "C"}, {}, {});
+        CHECK(rig.reader->historyCalls == callsOffline);
+        CHECK(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::Unavailable);
+
+        rig.offline = false;
+        rig.reader->rowsFail = false; // answers without C: not visible, a settled answer
+        rig.service->RecordListing(rig.Capture(), {"A"}, {}, {Row("C", "Open")});
+        const LeftViewRecord* c = nullptr;
+        for (const LeftViewRecord& row : rig.service->Rows()) {
+            c = row.issueKey == "C" ? &row : c;
+        }
+        REQUIRE(c != nullptr);
+        CHECK(c->reasonKind == LeftViewReasonKind::NotVisible);
+        const int callsSettled = rig.reader->historyCalls;
+        rig.service->RecordListing(rig.Capture(), {"A"}, {}, {});
+        CHECK(rig.reader->historyCalls == callsSettled);
+    }
+
+    TEST_CASE("a hidden issue in the batch does not cost the others their history") {
+        Rig rig;
+        rig.service->RecordListing(rig.Capture(), {"A", "B", "C"}, {}, {});
+        TrackerFieldChange change;
+        change.issueKey = "B";
+        change.fieldId = "status";
+        change.fieldLabel = "status";
+        change.fromValue = "Open";
+        change.toValue = "Done";
+        change.author = "Alice";
+        rig.reader->history.push_back(change);
+        rig.reader->historyRefusesKey = "C";
+        rig.service->RecordListing(rig.Capture(), {"A"}, {}, {Row("B", "Open"), Row("C", "Open")});
+        const LeftViewRecord* b = nullptr;
+        for (const LeftViewRecord& row : rig.service->Rows()) {
+            b = row.issueKey == "B" ? &row : b;
+        }
+        REQUIRE(b != nullptr);
+        CHECK(b->author == "Alice");
+        CHECK(b->reasonKind == LeftViewReasonKind::QueryFieldChanged);
     }
 
     TEST_CASE("lookups stop at the limit, and the rest say so") {

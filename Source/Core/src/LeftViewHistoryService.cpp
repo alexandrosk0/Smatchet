@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <map>
 #include <unordered_map>
 #include <utility>
 
@@ -146,6 +147,7 @@ void LeftViewHistoryService::RecordListing(const LeftViewCapture& capture, std::
     }
     const std::shared_ptr<const LeftViewCapture> shared = std::make_shared<const LeftViewCapture>(capture);
     const std::uint64_t generation = generation_;
+    RetryUnavailable_(*shared);
     io_.Post([this, shared, listed = std::move(listed), stillHeld = std::move(stillHeld),
               lastKnown = std::move(lastKnown), generation]() {
         /* PILLAR2_WORKER_ONLY */ // est-latency: one lookup read plus one transaction - off the UI thread
@@ -300,11 +302,17 @@ void LeftViewHistoryService::CommitDepartures_(const std::shared_ptr<const LeftV
         }
         ++revision_;
     });
+    LaunchLookups_(capture, std::move(jobs), generation);
+}
+
+void LeftViewHistoryService::LaunchLookups_(const std::shared_ptr<const LeftViewCapture>& capture,
+                                            std::vector<LookupJob> jobs, std::uint64_t generation) {
     if (jobs.empty()) {
         return;
     }
     // A separate worker: tracker calls must not stall the cache queue, and must not hold the cache handle.
-    const std::shared_ptr<const std::vector<LookupJob>> shared = std::make_shared<const std::vector<LookupJob>>(jobs);
+    const std::shared_ptr<const std::vector<LookupJob>> shared =
+        std::make_shared<const std::vector<LookupJob>>(std::move(jobs));
     try {
         deps_.Launch([this, capture, shared, generation]() {
             /* PILLAR2_WORKER_ONLY */ // est-latency: one to two batched tracker reads - off the UI thread
@@ -321,6 +329,44 @@ void LeftViewHistoryService::CommitDepartures_(const std::shared_ptr<const LeftV
     }
 }
 
+void LeftViewHistoryService::RetryUnavailable_(const LeftViewCapture& capture) {
+    // A reason that could not be read is not final (Pillar 6): a completed reload proves this site answers again,
+    // so ask once more. Bounded like any batch; rows the tracker answered for (NotVisible) are not asked again.
+    if (!capture.reader || deps_.IsOffline()) {
+        return;
+    }
+    const std::size_t maxLookups = static_cast<std::size_t>((std::max)(0, deps_.MaxReasonKeys()));
+    std::map<std::string, std::vector<LookupJob>> jobsByQuery; // a lookup ranks changes against its row's query
+    std::size_t count = 0;
+    for (LeftViewRecord& row : rows_) {
+        if (count >= maxLookups) {
+            break;
+        }
+        if (row.reasonKind != LeftViewReasonKind::Unavailable || row.backendKey != capture.backendKey) {
+            continue;
+        }
+        LookupJob job;
+        job.id = row.id;
+        job.issueKey = row.issueKey;
+        job.needsExistenceProbe = true;
+        job.lastKnown = LastKnownFieldsFromJson(row.lastKnownJson);
+        job.sinceMs = SinceMsFor(job.lastKnown, row.listedAtUnixSec);
+        row.reasonKind = LeftViewReasonKind::Pending; // in memory only: the stored row stays retryable
+        row.reason = kPendingReasonText;
+        jobsByQuery[row.query].push_back(std::move(job));
+        ++count;
+    }
+    if (count == 0) {
+        return;
+    }
+    ++revision_;
+    for (auto& entry : jobsByQuery) {
+        std::shared_ptr<LeftViewCapture> forQuery = std::make_shared<LeftViewCapture>(capture);
+        forQuery->query = entry.first;
+        LaunchLookups_(forQuery, std::move(entry.second), generation_);
+    }
+}
+
 void LeftViewHistoryService::RunLookups_(const std::shared_ptr<const LeftViewCapture>& capture,
                                          const std::vector<LookupJob>& jobs, std::uint64_t generation) {
     // No request while offline (Pillar 6): the retry window would only delay the same answer.
@@ -328,16 +374,23 @@ void LeftViewHistoryService::RunLookups_(const std::shared_ptr<const LeftViewCap
         SettleUnavailable_(jobs, generation);
         return;
     }
-    const std::function<bool()> cancelled = deps_.ShouldCancel;
+    const std::function<bool()> cancelled = deps_.ShouldCancel ? deps_.ShouldCancel : []() { return false; };
     std::vector<std::string> keys;
     keys.reserve(jobs.size());
     for (const LookupJob& job : jobs) {
         keys.push_back(job.issueKey);
     }
 
-    // History first: it is dated and attributed. Any failure falls through to comparing rows.
+    // History first: it is dated and attributed. Any failure falls through to comparing rows. A batch naming a
+    // deleted or hidden key is refused whole, so the refusals are isolated and the other keys keep their history.
     std::unordered_map<std::string, std::vector<TrackerFieldChange>> historyByKey;
-    auto history = capture->reader->FetchIssueFieldChanges(capture->cfg, keys, cancelled);
+    int historyBudget = sync::RefusalSplitBudget(keys.size());
+    std::vector<std::string> historyRefused;
+    auto history = sync::FetchItemsIsolatingRefusals<TrackerFieldChange>(
+        [&](const std::vector<std::string>& batch) {
+            return capture->reader->FetchIssueFieldChanges(capture->cfg, batch, cancelled);
+        },
+        cancelled, keys, historyBudget, historyRefused);
     if (history.has_value()) {
         for (TrackerFieldChange& change : history.value()) {
             historyByKey[change.issueKey].push_back(std::move(change));
@@ -361,7 +414,7 @@ void LeftViewHistoryService::RunLookups_(const std::shared_ptr<const LeftViewCap
 
     std::unordered_map<std::string, CachedTicket> freshByKey;
     bool rowsAnswered = needRow.empty();
-    if (!needRow.empty() && !(cancelled && cancelled())) {
+    if (!needRow.empty() && !cancelled()) {
         const ViewsStore views = deps_.LoadViews(capture->cfg);
         int budget = sync::RefusalSplitBudget(needRow.size());
         std::vector<std::string> refused;
@@ -397,7 +450,7 @@ void LeftViewHistoryService::RunLookups_(const std::shared_ptr<const LeftViewCap
             // The tracker answered without this issue. Only a reload still needs to ask whether it is gone: the
             // monitor's probe already answered that.
             reason = NotVisibleReason();
-            if (job.needsExistenceProbe && !(cancelled && cancelled())) {
+            if (job.needsExistenceProbe && !cancelled()) {
                 auto exists = capture->reader->ProbeIssueExists(capture->cfg, job.issueKey);
                 if (exists.has_value() && !exists.value()) {
                     reason = DeletedReason();

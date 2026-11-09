@@ -450,13 +450,13 @@ class AppController : public IAppThreading,
     /// Returns true if the plugin should bring the Scripting window to the foreground.
     bool ConsumeScriptingWindowRequest() override;
 
+    /// The history of issues that left a view. Null only before Initialize.
+    smatchet::LeftViewHistoryService* LeftViewHistory() override { return leftViewHistory_.get(); }
+
     /**
      * Optional host callback for launching URLs.
      * Use this when embedding in Unreal (avoids OS-level `system("start")` calls).
      */
-    /// The history of issues that left a view. Null only before Initialize.
-    smatchet::LeftViewHistoryService* LeftViewHistory() override { return leftViewHistory_.get(); }
-
     void SetOpenUrlHandler(std::function<void(const std::string&)> handler);
 
     /** Opens a URL using the handler if set; otherwise falls back to default browser. */

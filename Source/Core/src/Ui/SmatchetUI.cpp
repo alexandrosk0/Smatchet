@@ -1454,6 +1454,7 @@ void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) 
         SmatchetDrawNotificationCenterWindow(d);
     }
     if (d.showLeftViewHistory && app.LeftViewHistory() != nullptr) {
+        SMATCHET_UI_PERF_SCOPE("SmatchetDrawLeftViewHistoryWindow");
         SmatchetDrawLeftViewHistoryWindow(d, *app.LeftViewHistory());
     }
     if (g_ui.showPerformance) {

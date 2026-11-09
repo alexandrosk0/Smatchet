@@ -124,7 +124,7 @@ Pre-resolved: reads for details go through the service with no fetch while offli
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Doc validation**: the canonical `scripts/dev/test-docs.sh` suite green.
 - **Plan stress-test — `grill-with-docs`**: run against this plan before ship; record the outcome here.
-- **Manual residue**: a live Jira transition produces the expected reason, and the window's look with real rows. Bucket A covers the parser against fixture JSON and every state against a scripted reader; the live and visual checks are for the user (visual-validation exception), because no credentials are available to agents. The bucket-E case asserts the rows but not how they look.
+- **Manual residue**: a live Jira transition produces the expected reason, and the window's look with real rows. Bucket A covers the parser against fixture JSON and every state against a scripted reader; the live and visual checks are for the user (visual-validation exception), because no credentials are available to agents. The bucket-E case asserts the rows but not how they look. Tracked: the live-Jira lane in `docs/self-improvement/categories/tooling/2026-11-09-left-view-reason-live-jira-check.md`, the window golden in `docs/self-improvement/categories/test/2026-11-09-left-view-window-golden.md`.
 
 ## Open questions
 
@@ -141,7 +141,7 @@ None — the user settled persistence, layout, row actions and reason depth.
 *(populated post-ship)*
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Pre-push review round**: the history request now goes through refusal isolation (`FetchItemsIsolatingRefusals`, the ticket-row helper generalised), so one hidden issue no longer costs a batch its history. A reason that could not be read is no longer final (Pillar 6): rows still `Unavailable` are asked again, within `LeftViewReasonMaxKeys`, on the next completed reload of the same site. "Deleted or no longer visible" got its own kind (`NotVisible = 7`, appended), since the tracker did answer and a retry would ask the same question. The bucket-E driver joined the fixture-backed loop in `build-and-test.yml`; the time column reads "Left at".
 
 ## Verification (actual)
 *(populated post-ship)*
