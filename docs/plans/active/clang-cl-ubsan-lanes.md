@@ -67,8 +67,19 @@ None.
 
 ## Implementation log
 
+- Clang-cl arm of `smatchet_apply_sanitizers()`: `-fsanitize=undefined -fno-sanitize-recover=all /clang:-fsanitize-address-use-after-return=never`; `SMATCHET_ASAN=1` on every ASan/fuzzer target; POST_BUILD copy of LLVM's `clang_rt.asan_dynamic-<arch>.dll` next to each sanitized executable.
+- 9 test budget guards + `tests/support/StubAiClient.h` cancel-ack budget accept `SMATCHET_ASAN`.
+- Per-PR `sanitizer-ubsan-pr`: `-DSMATCHET_SANITIZE_TESTS=ON`, `ctest --no-tests=error`; comments, preset descriptions and the nightly header updated.
+
 ## Deviations from plan
 
+- Added the runtime-DLL copy (code-review CRITICAL): MSVC's `VC\Tools\...\bin` ships a same-named `clang_rt.asan_dynamic-x86_64.dll` without the UBSan exports and sits first on PATH under msvc-dev-cmd, so the instrumented rig would not have loaded on CI.
+- `tests/support/StubAiClient.h` added to the write-set (review LOW: the 100 ms cancel-ack budget was widened for coverage only).
+
 ## Verification (actual)
+
+- Local LLVM 22.1.6 / MSVC 14.38: `ninja-clang-asan` + `-DSMATCHET_BUILD_TESTS=ON -DSMATCHET_SANITIZE_TESTS=ON` builds `SmatchetStandalone` and `SmatchetTests`; every rig TU carries `-fsanitize=undefined`; the exe imports `clang_rt.asan_dynamic-x86_64.dll` and links `__ubsan_handle_*`.
+- Rig run under `with-msvc-env.sh` with MSVC's DLL first on PATH: 3927/3927 test cases, 52766 assertions, no sanitizer report.
+- CI on the runner's LLVM 20.1.8: this PR.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)

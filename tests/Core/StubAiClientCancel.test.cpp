@@ -83,7 +83,7 @@ TEST_CASE("StubAiClient: cancel mid-stream stops onDelta within 100 ms") {
     // compile beside ctest) has overrun it on token-identical code, so a budget
     // miss is reported without failing a required check (backlog test entry
     // 2026-08-17-stubaiclient-cancel-100ms-budget-is-flaky-on-ci).
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_ASAN)
     WARN_LT(postCancelMs, 2000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
     WARN_LT(totalMs, 4000);
 #elif defined(SMATCHET_COVERAGE)
