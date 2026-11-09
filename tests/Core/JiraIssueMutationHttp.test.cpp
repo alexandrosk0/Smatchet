@@ -11,17 +11,20 @@
 #include "JiraCatalogHttpFixture.h"
 #include "JiraClient.h"
 #include "TestEnvGuard.h"
+#include "TrackerFieldCatalogPure.h"
 
 #include <doctest/doctest.h>
 
 #include <nlohmann/json.hpp>
 
+#include <mutex>
 #include <string>
 
 namespace {
 
 const std::string kIssuePath = "/rest/api/3/issue/SMT-1";
 const std::string kSprintPath = "/rest/agile/1.0/sprint/77/issue";
+const std::string kTransitionsPath = "/rest/api/3/issue/SMT-1/transitions";
 
 // The cfg-less mutation paths read ConfigManager::Load() per request — persist the loopback
 // config into the TestEnvGuard-redirected dir so they resolve to the fixture.
@@ -57,6 +60,67 @@ TEST_CASE("JiraClient::UpdateIssueFields classifies the PUT failure status into 
         CHECK_FALSE(err.IsOk());
         CHECK(err.Kind == TrackerErrorKind::ServerError);
         CHECK(err.IsRetryable());
+    }
+}
+
+TEST_CASE("JiraClient: a merged status moves the issue through the transition of its own workflow") {
+    smatchet_tests::TestEnvGuard guard;
+    JiraCatalogHttpFixture fx;
+    SaveLoopbackJiraConfig(fx);
+    JiraClient client;
+
+    TrackerField status;
+    status.Id = "status";
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(
+        nlohmann::json::array({{{"id", "3"}, {"name", "In Progress"}},
+                               {{"id", "10023"}, {"name", "In Progress"}},
+                               {{"id", "4"}, {"name", "Done"}}}),
+        status);
+    REQUIRE(status.AllowedValueOptions.size() == 2);
+
+    // This issue's workflow has its own "In Progress" (10023), and a transition only NAMED "Done".
+    fx.ScriptJson(
+        kTransitionsPath,
+        {{"transitions",
+          nlohmann::json::array({{{"id", "51"}, {"name", "Begin"}, {"to", {{"id", "10023"}, {"name", "In Progress"}}}},
+                                 {{"id", "61"}, {"name", "Done"}, {"to", {{"id", "90"}, {"name", "Closed"}}}}})}});
+    std::mutex postedMutex;
+    std::string posted;
+    fx.ScriptHandler(
+        kTransitionsPath,
+        [&](const httplib::Request& req) {
+            std::lock_guard<std::mutex> lock(postedMutex);
+            posted = req.body;
+            return nlohmann::json::object();
+        },
+        "POST");
+
+    const auto move = [&](const std::string& value) {
+        const Result<nlohmann::json, TrackerError> payload = client.BuildFieldPayload(status, {value});
+        REQUIRE(payload.has_value());
+        return client.UpdateIssueFields("SMT-1", payload.value());
+    };
+    const auto postedTransition = [&]() {
+        std::lock_guard<std::mutex> lock(postedMutex);
+        return posted;
+    };
+    const std::string transition51 = nlohmann::json{{"transition", {{"id", "51"}}}}.dump();
+
+    SUBCASE("the catalog row's id belongs to another workflow: the name finds this issue's transition") {
+        CHECK(move("3").IsOk());
+        CHECK(postedTransition() == transition51);
+    }
+    SUBCASE("the id from this issue's own transitions") {
+        CHECK(move("10023").IsOk());
+        CHECK(postedTransition() == transition51);
+    }
+    SUBCASE("a name, as Ticket:transition and ticket.transition pass it") {
+        CHECK(move("In Progress").IsOk());
+        CHECK(postedTransition() == transition51);
+    }
+    SUBCASE("a picked status with no transition fails instead of following one that is only named like it") {
+        CHECK_FALSE(move("4").IsOk());
+        CHECK(postedTransition().empty());
     }
 }
 

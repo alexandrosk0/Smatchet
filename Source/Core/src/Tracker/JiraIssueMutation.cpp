@@ -50,7 +50,7 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
 namespace {
 
 // Returns the transition id leading to the requested status (status id → to.name →
-// transition-name fallback, prioritised GLOBALLY). The matcher is the pure,
+// transition-name fallback for a name-only target, prioritised GLOBALLY). The matcher is the pure,
 // unit-tested smatchet::jira::FindJiraTransitionId; the LOG_WARN for a name-fallback
 // match lives here because the pure unit is Logger-free (#670).
 std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, const std::string& targetStatusId,

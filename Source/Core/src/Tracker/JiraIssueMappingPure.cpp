@@ -58,7 +58,8 @@ bool IEquals(const std::string& a, const std::string& b) {
 
 JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
                                          const std::string& targetStatusName) {
-    JiraTransitionMatch fallback; // first transition-name match; used only if no exact match exists
+    JiraTransitionMatch nameMatch; // first to.name match; used only if no transition leads to the status id
+    JiraTransitionMatch fallback;  // first transition-name match; used only if no status match exists
     if (!transitionsArray.is_array()) {
         return JiraTransitionMatch();
     }
@@ -85,23 +86,28 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
             toStatusName = to.value("name", std::string());
         }
 
-        // Pass-1 priority (global): exact status id or exact to.name wins outright.
-        if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
-            (!targetStatusName.empty() && IEquals(toStatusName, targetStatusName))) {
+        // Priority (global): the exact status id wins outright.
+        if (!targetStatusId.empty() && toStatusId == targetStatusId) {
             JiraTransitionMatch m;
             m.id = thisId;
             return m;
         }
-        // Pass-2 candidate: remember the FIRST transition-name match, do NOT return
-        // yet — a later transition may still be an exact status match.
-        if (fallback.id.empty() && !targetStatusName.empty() && IEquals(transitionName, targetStatusName)) {
+        // Then the first to.name match: a status of the same name, possibly with another id in this
+        // issue's workflow. Do NOT return yet — a later transition may still match the id.
+        if (nameMatch.id.empty() && !targetStatusName.empty() && IEquals(toStatusName, targetStatusName)) {
+            nameMatch.id = thisId;
+        }
+        // Last, the FIRST transition-name match. Only for a target given by name alone: a picked status
+        // (an id) must not move the issue to whatever status a transition of that name leads to.
+        if (fallback.id.empty() && targetStatusId.empty() && !targetStatusName.empty() &&
+            IEquals(transitionName, targetStatusName)) {
             fallback.id = thisId;
             fallback.usedNameFallback = true;
             fallback.transitionName = transitionName;
             fallback.toStatusName = toStatusName;
         }
     }
-    return fallback;
+    return nameMatch.id.empty() ? fallback : nameMatch;
 }
 
 std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray) {

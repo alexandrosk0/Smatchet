@@ -403,7 +403,10 @@ void AppendJqlValueModeSuggestions(const std::vector<TrackerUser>& users, const 
     // sources; both build the same BuildJqlUserInsert token, so they dedup to one row.
     if (valueField != nullptr && !IsQueryUserField(*valueField) &&
         (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
-        AppendValueSuggestions(*valueField, prefix, kJiraUserDisplaySuffix, out.Items, seen);
+        // A status name matches every workflow's status of that name; one id row would match only one
+        // of them, and would list the name a second time.
+        AppendValueSuggestions(*valueField, prefix, kJiraUserDisplaySuffix, out.Items, seen,
+                               valueField->Family != TrackerFieldFamily::Status);
     }
     if (valueField != nullptr) {
         AppendJqlFunctionSuggestions(*valueField, prefix, out.Items, seen);

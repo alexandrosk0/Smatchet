@@ -75,7 +75,9 @@ bool ParseFieldDefinition(const nlohmann::json& field, TrackerField& outField,
 /// Rebuild `field`'s AllowedValues + AllowedValueOptions from a flat Jira
 /// catalog array (`/priority`, `/status`, …) of `{id,name,…}` objects.
 /// Dedupes by coerced id, skips entries with empty id/name, stores each
-/// object's `dump()` as the option PayloadJson, and refreshes Family.
+/// object's `dump()` as the option PayloadJson, and refreshes Family. The
+/// `status` field also merges options of the same name (StatusOptionMergePure);
+/// any other field keeps same-name options, which can be truly different.
 /// `array` that is not a JSON array clears nothing and returns immediately.
 void BuildSimpleCatalogOptions(const nlohmann::json& array, TrackerField& field);
 

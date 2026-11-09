@@ -7,6 +7,7 @@
 #include "Logger.h"
 #include "Json/BoundedJsonParse.h"
 #include "JsonParseUtil.h"
+#include "Tracker/StatusOptionMergePure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -686,6 +687,14 @@ bool LoadSnapshotFromRootLocked(nlohmann::json& root, const std::string& cacheKe
     const bool ok = ParseCatalogEntryObject(root[resolvedKey], outFields, outComponents, outIssueTypeMeta, outError);
     if (!ok) {
         return false;
+    }
+    // A snapshot saved before the catalog merged same-name Jira statuses still lists each one.
+    if (resolvedKey.rfind("Jira", 0) == 0) {
+        for (TrackerField& field : outFields) {
+            if (field.Id == "status") {
+                smatchet::statusoptions::MergeSameNameStatusOptions(field);
+            }
+        }
     }
 
     // Record the read for the LRU order and report the save time, both from this one parse. The touch stays in

@@ -485,6 +485,67 @@ TEST_CASE("BuildSimpleCatalogOptions: dedupes by id, coerces int ids, keeps Payl
     CHECK_FALSE(field.AllowedValueOptions[0].PayloadJson.empty());
 }
 
+TEST_CASE("BuildSimpleCatalogOptions: status lists a name once, keeping the first spelling and every id") {
+    json arr = json::array({
+        {{"id", "3"}, {"name", "In Progress"}},
+        {{"id", "1"}, {"name", "To Do"}},
+        {{"id", "10023"}, {"name", "In Progress"}}, // same name, another workflow's id
+        {{"id", "10100"}, {"name", "IN PROGRESS"}}, // case only
+    });
+    TrackerField field;
+    field.Id = "status";
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(arr, field);
+    REQUIRE(field.AllowedValueOptions.size() == 2);
+    CHECK(field.AllowedValues == std::vector<std::string>{"In Progress", "To Do"});
+    CHECK(field.AllowedValueOptions[0].Id == "3");
+    CHECK(field.AllowedValueOptions[0].Value == "In Progress");
+    CHECK(field.AllowedValueOptions[0].MergedIds == std::vector<std::string>{"10023", "10100"});
+    CHECK(field.AllowedValueOptions[1].MergedIds.empty());
+    CHECK(field.Family == TrackerFieldFamily::Status);
+}
+
+TEST_CASE("BuildSimpleCatalogOptions: a non-status field keeps same-name options apart") {
+    json arr = json::array({
+        {{"id", "1"}, {"name", "High"}},
+        {{"id", "2"}, {"name", "High"}},
+        {{"id", "3"}, {"name", "HIGH"}},
+    });
+    TrackerField field;
+    field.Id = "priority";
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(arr, field);
+    REQUIRE(field.AllowedValueOptions.size() == 3);
+    CHECK(field.AllowedValues == std::vector<std::string>{"High", "High", "HIGH"});
+    CHECK(field.AllowedValueOptions[0].MergedIds.empty());
+}
+
+TEST_CASE("ApplyCreateMetaToCatalog: a createmeta status of a known name joins the existing row") {
+    TrackerField status;
+    status.Id = "status";
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(json::array({{{"id", "3"}, {"name", "In Progress"}}}), status);
+    std::vector<TrackerField> fields;
+    fields.push_back(status);
+    const std::unordered_map<std::string, std::size_t> index{{"status", 0}};
+    const json meta = {
+        {"projects",
+         json::array(
+             {{{"key", "P"},
+               {"issuetypes",
+                json::array(
+                    {{{"id", "1"},
+                      {"name", "Task"},
+                      {"fields",
+                       {{"status",
+                         {{"allowedValues", json::array({{{"id", "10023"}, {"name", "in progress"}}})}}}}}}})}}})}};
+    std::vector<TrackerComponent> components;
+    std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
+    std::set<std::string> issueTypes;
+    TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(meta, "P", index, fields, components, issueTypeMeta, issueTypes);
+    REQUIRE(fields[0].AllowedValueOptions.size() == 1);
+    CHECK(fields[0].AllowedValueOptions[0].Id == "3");
+    CHECK(fields[0].AllowedValueOptions[0].MergedIds == std::vector<std::string>{"10023"});
+    CHECK(fields[0].AllowedValues == std::vector<std::string>{"In Progress"});
+}
+
 TEST_CASE("BuildSimpleCatalogOptions: non-array input is a no-op (no clear)") {
     TrackerField field;
     field.AllowedValues = {"keep"};
