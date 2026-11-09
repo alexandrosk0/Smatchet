@@ -230,10 +230,12 @@ jobs:
           set -uo pipefail
           # What the engine itself reported, so the issue and every recurrence comment
           # say WHAT failed: a bare "Recurred" line can hide a wall-clock watchdog abort
-          # behind the word "crash" (Issue #2216). Engine log lines only (`[frame] ...`):
-          # the JSON envelope repeats the whole log on one line.
+          # behind the word "crash" (Issue #2216). Engine log lines only: the engine
+          # prefixes each with its frame number (`[0123] Error ...`, `[0123] [Watchdog] ...`),
+          # while the JSON envelope repeats the whole log on one line. Log order is kept,
+          # so the first error (usually the cause) leads.
           sig="$(grep -aE '^\[[0-9]+\] (Error |\[Watchdog\]|.*IM_ASSERT)' ui-monkey.log 2>/dev/null \
-                   | cut -c1-300 | sort -u | head -8 || true)"
+                   | cut -c1-300 | awk '!seen[$0]++' | head -8 || true)"
           [ -n "$sig" ] || sig="(no engine error line in the log: the child process died or hung; read the run log)"
           # Two DISTINCT issue shapes (Issue #1666 lesson — the original zero-match got
           # filed under the crash title with seed=unknown, sending a human after a
