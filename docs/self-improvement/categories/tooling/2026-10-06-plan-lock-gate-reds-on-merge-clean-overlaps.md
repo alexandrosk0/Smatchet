@@ -5,6 +5,8 @@
 - **Date**: 2026-10-06
 - **Observed on**:
   - PR #2313: merged under `plan-lock-out-of-band` over lock `shutdown-cancel-all-pane-syncs`, which overlapped `AppController.h`, `AppController_LocalCacheDb.cpp` and `tests/support/FakeTrackerClient.h`. See its [postmortem](../../postmortems.md#2026-10-06--pr-2313--override-plan-lock-out-of-band-over-a-live-lock-whose-three-overlapping-files-merged-clean-in-disjoint-hunks).
+  - PR #2372: `fieldcatalog-snapshot`, four files, holder-agreed. See its [postmortem](../../postmortems.md#2026-11-03--pr-2372--override-plan-lock-out-of-band-over-the-live-fieldcatalog-snapshot-lock-with-the-holders-agreement).
+  - PR #2375, #2385, #2389: five lock crossings (`status-bar-row-count`, `build-dir-gitignore-guard`, `fieldcatalog-snapshot`, `require-all-checks-green` twice), each disjoint-hunk; replayed `git merge-tree` against every holder's PR head is clean. See their [postmortem](../../postmortems.md#2026-11-10--pr-2375-2385-2389--override-plan-lock-out-of-band-over-path-only-overlaps-that-git-merge-tree-shows-clean-plus-a-moot-tests-out-of-band-on-2385-and-2389).
 - **Status**: open
 
 ## What happened

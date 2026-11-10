@@ -34,6 +34,51 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-10 · PR #2375, #2385, #2389 · override: `plan-lock-out-of-band` over path-only overlaps that `git merge-tree` shows clean (plus a moot `tests-out-of-band` on #2385 and #2389)
+
+### What escaped
+Three PRs merged on 2026-11-04, each past a red `Plan-lock gate` waived by `plan-lock-out-of-band`. The newest run of every other check on each merged head was green, apart from `Cursor Bugbot`, which was neutral because of its usage cap.
+
+| PR | merged (UTC) | head | locks crossed (holder) | overlap |
+|---|---|---|---|---|
+| #2375 | 05:16:26 | `8a1fcb335` | `status-bar-row-count` (#2390) | `tests/CMakeLists.txt` |
+| #2385 | 02:51:41 | `10fef8298` | `build-dir-gitignore-guard` (#2384), `fieldcatalog-snapshot` (#2375), `require-all-checks-green` (#2387) | `.gitignore`; five comment-only lines in the `fieldcatalog-snapshot` write set; `project.config.json` |
+| #2389 | 14:15:33 | `00284ee6b` | `require-all-checks-green` (#2387) | one `_doc` string in `project.config.json` |
+
+Each PR body carries one `plan-lock-disposition:` line per lock crossed. Each line names the holder, says the hunks are disjoint and reports a clean `git merge-tree`. #2375's line also records that the user approved the override in that session.
+
+#2385 and #2389 also carry `tests-out-of-band`. None of the three has a `merge-snapshots.jsonl` row.
+
+### Root cause
+This is the path-only overlap class of the #2313 and #2372 entries above, for the sixth, seventh and eighth time. A plan lock claims whole files, and `plan-lock-gate.sh` compares paths only. So a disjoint edit to a shared file (`.gitignore`, `project.config.json`, `tests/CMakeLists.txt`) reads as contention.
+
+Every holder's branch had an open PR, so the evidence that settles the overlap was on origin. Each session ran the merge by hand, recorded it and spent an override. Reproduced 2026-11-10 from this lead worktree, branched from `origin/develop` at `99b7ed8ff`: `git merge-tree --write-tree` of each PR head against each holder's PR head is clean for all five pairs:
+
+- #2375 × #2390
+- #2385 × #2384
+- #2385 × #2375
+- #2385 × #2387
+- #2389 × #2387
+
+These are the holders' final heads, not their heads at merge time. Every red has a recorded per-slug disposition.
+
+The `tests-out-of-band` labels were not load-bearing. `scripts/dev/coverage-delta-gate.sh`, run without the label on each head against its squash parent, reports `PASS — production + test files both changed`:
+- #2385: 19 production changes, 3 test changes.
+- #2389: 6 production changes, 5 test changes.
+
+### Preventing gate
+None — override legitimate. Each crossing is a disjoint-hunk overlap, recorded per slug in the PR body, and the merge is clean when replayed.
+
+The class gate is already filed, [`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md): settle a pushed lock's overlap with `git merge-tree`, not by path. Replayed on these three, it reports WARNs and no red, because every holder's branch was on origin. With #2313 and #2372 that makes five overrides it would have removed.
+
+These three are added to that entry's **Observed on** list. Its priority (P2) is left for the next triage.
+
+### Eval case
+None — not agent-reviewable. These are lock-granularity gate decisions, and the code on the overlaps holds no defect.
+
+### Filed as
+[`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (existing, P2; **Observed on** updated)
+
 ## 2026-11-03 · PR #2380, #2368, #2371 · direct merges past a red `All checks green (block-on-any-red)` and a never-green `CR findings (0 actionable)`, because neither is a required context
 
 ### What escaped
