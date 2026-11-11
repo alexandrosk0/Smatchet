@@ -823,6 +823,9 @@ $marker"
     setup_jq; setup_decide
     # `printf | grep -q` under pipefail: grep quits at the early match, printf
     # dies of SIGPIPE past the pipe buffer, and `!` reads that as "no marker".
+    # The per-review jq vocabulary check also covers the latest review, so a
+    # reverted here-string alone is backstopped; with both removed this fails
+    # (checked by mutation when the guard was added).
     local pad b
     pad="$(head -c 200000 /dev/zero | tr '\0' 'x' | fold -w 100)"
     b="♻️ Duplicate comments (1)
