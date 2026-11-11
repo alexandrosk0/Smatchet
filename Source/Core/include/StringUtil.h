@@ -41,6 +41,19 @@ inline std::string ToLowerAsciiCopy(std::string s) {
     return s;
 }
 
+/// Case-insensitive equality with the same folding as ToLowerAsciiCopy, without allocating.
+inline bool EqualsIgnoreCaseAscii(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 inline std::string ToUpperAsciiCopy(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     return s;

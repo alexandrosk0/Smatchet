@@ -1,6 +1,7 @@
 #include "GitHubQueryFromJql.h"
 
 #include "GitHubClientHelpers.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -36,18 +37,6 @@ std::string ToLower(const std::string& s) {
     std::transform(s.begin(), s.end(), out.begin(),
                    [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
     return out;
-}
-
-bool EqIgnoreCase(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
 }
 
 // Scan a quoted string starting just past the opening quote at `i` (which is
@@ -175,8 +164,9 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
 // then RParen). On match consumes through ')' and returns true; otherwise i is
 // untouched.
 bool MatchCurrentUser(const std::vector<Tok>& tokens, std::size_t& i) {
-    if (i + 2 < tokens.size() && tokens[i].Kind == TokKind::Word && EqIgnoreCase(tokens[i].Text, "currentUser") &&
-        tokens[i + 1].Kind == TokKind::LParen && tokens[i + 2].Kind == TokKind::RParen) {
+    if (i + 2 < tokens.size() && tokens[i].Kind == TokKind::Word &&
+        EqualsIgnoreCaseAscii(tokens[i].Text, "currentUser") && tokens[i + 1].Kind == TokKind::LParen &&
+        tokens[i + 2].Kind == TokKind::RParen) {
         i += 3;
         return true;
     }
@@ -192,7 +182,7 @@ bool ReadValue(const std::vector<Tok>& tokens, std::size_t& i, std::string& outV
     if (i >= tokens.size()) {
         return false;
     }
-    if (tokens[i].Kind == TokKind::Word && EqIgnoreCase(tokens[i].Text, "currentUser")) {
+    if (tokens[i].Kind == TokKind::Word && EqualsIgnoreCaseAscii(tokens[i].Text, "currentUser")) {
         if (MatchCurrentUser(tokens, i)) {
             outIsCurrentUser = true;
             return true;
@@ -259,8 +249,8 @@ std::string MaybeQuote(const std::string& v) {
 // string tokens carry a different Kind and never match.
 void StripOrderByClause(std::vector<Tok>& tokens, std::string& warning) {
     for (std::size_t j = 0; j + 1 < tokens.size(); ++j) {
-        if (tokens[j].Kind == TokKind::Word && EqIgnoreCase(tokens[j].Text, "ORDER") &&
-            tokens[j + 1].Kind == TokKind::Word && EqIgnoreCase(tokens[j + 1].Text, "BY")) {
+        if (tokens[j].Kind == TokKind::Word && EqualsIgnoreCaseAscii(tokens[j].Text, "ORDER") &&
+            tokens[j + 1].Kind == TokKind::Word && EqualsIgnoreCaseAscii(tokens[j + 1].Text, "BY")) {
             AppendWarning(warning, "ORDER BY clause dropped (GitHub search uses separate sort parameter)");
             tokens.resize(j); // drop everything from `ORDER` onward
             return;
@@ -409,23 +399,24 @@ void HandleTextClause(const std::string& field, const std::string& op, const std
 // value was a `currentUser()` call.
 void HandleFieldClause(const std::string& field, const std::string& op, const std::string& value, bool isCurrentUser,
                        std::string& body, JqlToGitHubResult& result) {
-    if (EqIgnoreCase(field, "project")) {
+    if (EqualsIgnoreCaseAscii(field, "project")) {
         AppendWarning(result.Warning, "project key '" + value + "' ignored (GitHub has no project-key concept)");
-    } else if (EqIgnoreCase(field, "assignee")) {
+    } else if (EqualsIgnoreCaseAscii(field, "assignee")) {
         HandleAssigneeClause(op, value, isCurrentUser, body, result.Warning);
-    } else if (EqIgnoreCase(field, "reporter") || EqIgnoreCase(field, "author")) {
+    } else if (EqualsIgnoreCaseAscii(field, "reporter") || EqualsIgnoreCaseAscii(field, "author")) {
         HandleReporterClause(op, value, isCurrentUser, body, result.Warning);
-    } else if (EqIgnoreCase(field, "status")) {
+    } else if (EqualsIgnoreCaseAscii(field, "status")) {
         HandleStatusClause(op, value, body, result.Warning);
-    } else if (EqIgnoreCase(field, "labels") || EqIgnoreCase(field, "label")) {
+    } else if (EqualsIgnoreCaseAscii(field, "labels") || EqualsIgnoreCaseAscii(field, "label")) {
         HandleLabelsClause(op, value, body, result.Warning);
-    } else if (EqIgnoreCase(field, "type")) {
+    } else if (EqualsIgnoreCaseAscii(field, "type")) {
         HandleTypeClause(op, value, body, result);
-    } else if (EqIgnoreCase(field, "is")) {
+    } else if (EqualsIgnoreCaseAscii(field, "is")) {
         HandleIsClause(op, value, body, result);
-    } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") || EqIgnoreCase(field, "description")) {
+    } else if (EqualsIgnoreCaseAscii(field, "text") || EqualsIgnoreCaseAscii(field, "summary") ||
+               EqualsIgnoreCaseAscii(field, "description")) {
         HandleTextClause(field, op, value, body, result.Warning);
-    } else if (EqIgnoreCase(field, "key") || EqIgnoreCase(field, "issuekey")) {
+    } else if (EqualsIgnoreCaseAscii(field, "key") || EqualsIgnoreCaseAscii(field, "issuekey")) {
         // Item 18c (user-info-window) — single-issue narrowing. GitHub search has
         // no exact issue-key qualifier, so the canonical key is carried out-of-band
         // in result.KeyFilter and the fetch path post-filters client-side.
@@ -453,11 +444,11 @@ void TranslateClauses(const std::vector<Tok>& tokens, std::string& body, JqlToGi
         // AND / OR connectors at top level. AND becomes implicit space (skip);
         // OR is unsupported — warn and treat as AND so we don't drop following
         // clauses entirely.
-        if (t.Kind == TokKind::Word && EqIgnoreCase(t.Text, "AND")) {
+        if (t.Kind == TokKind::Word && EqualsIgnoreCaseAscii(t.Text, "AND")) {
             ++i;
             continue;
         }
-        if (t.Kind == TokKind::Word && EqIgnoreCase(t.Text, "OR")) {
+        if (t.Kind == TokKind::Word && EqualsIgnoreCaseAscii(t.Text, "OR")) {
             AppendWarning(result.Warning, "OR connector unsupported (GitHub search is AND-only); treating as AND");
             ++i;
             continue;

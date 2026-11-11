@@ -105,3 +105,15 @@ TEST_CASE("ToLowerAsciiCopy — the per-TU bodies it replaced are behaviour-iden
         CHECK(ToLowerAsciiCopy(one) == explicitAsciiLower(one));
     }
 }
+
+TEST_CASE("EqualsIgnoreCaseAscii — matches ToLowerAsciiCopy equality without allocating") {
+    CHECK(EqualsIgnoreCaseAscii("In Progress", "IN PROGRESS"));
+    CHECK(EqualsIgnoreCaseAscii("", ""));
+    CHECK_FALSE(EqualsIgnoreCaseAscii("In Progress", "In Progres"));
+    CHECK_FALSE(EqualsIgnoreCaseAscii("Done", "Dome"));
+    const std::vector<std::pair<std::string, std::string>> pairs = {
+        {"To Do", "to do"}, {"Ready-1", "READY-1"}, {"caf\xc3\xa9", "CAF\xc3\xa9"}, {"a", "b"}, {"ab", "abc"}};
+    for (const auto& p : pairs) {
+        CHECK(EqualsIgnoreCaseAscii(p.first, p.second) == (ToLowerAsciiCopy(p.first) == ToLowerAsciiCopy(p.second)));
+    }
+}

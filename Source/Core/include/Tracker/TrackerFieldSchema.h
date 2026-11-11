@@ -47,7 +47,7 @@ struct TrackerFieldOption {
     }
     /// A merged row also answers to the other spellings it replaced, which differ only by case.
     bool HasName(const std::string& name) const {
-        return Value == name || (!MergedIds.empty() && ToLowerAsciiCopy(Value) == ToLowerAsciiCopy(name));
+        return Value == name || (!MergedIds.empty() && EqualsIgnoreCaseAscii(Value, name));
     }
 };
 

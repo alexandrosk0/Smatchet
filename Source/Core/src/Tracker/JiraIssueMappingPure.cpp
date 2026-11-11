@@ -42,18 +42,6 @@ std::string TransitionFieldToString(const nlohmann::json& v) {
     return std::string();
 }
 
-bool IEquals(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
@@ -94,7 +82,8 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
         }
         // Then the first to.name match: a status of the same name, possibly with another id in this
         // issue's workflow. Do NOT return yet — a later transition may still match the id.
-        if (nameMatch.id.empty() && !targetStatusName.empty() && IEquals(toStatusName, targetStatusName)) {
+        if (nameMatch.id.empty() && !targetStatusName.empty() &&
+            EqualsIgnoreCaseAscii(toStatusName, targetStatusName)) {
             nameMatch.id = thisId;
             // A picked id the issue's workflow does not have: the move lands on its same-name status.
             nameMatch.usedStatusNameMatch = !targetStatusId.empty();
@@ -103,7 +92,7 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
         // Last, the FIRST transition-name match. Only for a target given by name alone: a picked status
         // (an id) must not move the issue to whatever status a transition of that name leads to.
         if (fallback.id.empty() && targetStatusId.empty() && !targetStatusName.empty() &&
-            IEquals(transitionName, targetStatusName)) {
+            EqualsIgnoreCaseAscii(transitionName, targetStatusName)) {
             fallback.id = thisId;
             fallback.usedNameFallback = true;
             fallback.transitionName = transitionName;
@@ -422,7 +411,7 @@ void ApplyIssueLinksParentFallback(const nlohmann::json& issueFields, CachedTick
             continue;
         }
         const std::string inward = JsonGetStringIfString(link["type"], "inward");
-        if (!IEquals(inward, "is part of") && !IEquals(inward, "part of")) {
+        if (!EqualsIgnoreCaseAscii(inward, "is part of") && !EqualsIgnoreCaseAscii(inward, "part of")) {
             continue;
         }
         if (!link.contains("inwardIssue") || !link["inwardIssue"].is_object()) {

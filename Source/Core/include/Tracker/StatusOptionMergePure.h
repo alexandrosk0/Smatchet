@@ -20,7 +20,7 @@ namespace smatchet {
 namespace statusoptions {
 
 inline bool SameStatusName(const std::string& a, const std::string& b) {
-    return !a.empty() && ToLowerAsciiCopy(a) == ToLowerAsciiCopy(b);
+    return !a.empty() && EqualsIgnoreCaseAscii(a, b);
 }
 
 /// Keeps the first option of each name (compared case-insensitively, first spelling and order kept) and
