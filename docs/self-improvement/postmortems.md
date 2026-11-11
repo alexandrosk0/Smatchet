@@ -34,6 +34,39 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-10 · PR #2395 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a one-line relay config change CodeRabbit skipped
+
+### What escaped
+`fix(relay): send crash minidumps to the private dumps repo` (#2395, head `776c65811`) merged 2026-11-05T03:05:19Z as `06d3f4628`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`.
+
+The diff is one line in `tools/bug-report-relay/wrangler.toml`: it sets `DUMPS_REPO`, which was empty before. On the head:
+- the `CodeRabbit` check run concluded `skipped` (auto-review is off for repositories under 10 stars), and no review was posted;
+- `Cursor Bugbot` was `neutral` (usage cap);
+- the PR body's verdict line is `adversarial-code-review: n/a — one-line config value; …`.
+
+Both labels went on at 2026-11-04T23:20:06Z, before CodeRabbit's first run. No `@coderabbitai review` comment was posted. Every other check's newest run on the head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request. `merge-gates.sh` blocks a CR-skipped head and names two ways forward: a human-triggered review (`scripts/dev/trigger-coderabbit-review.sh`), or the `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` pair. This PR took the second, the documented waiver.
+
+The change carried little risk:
+- The relay's Worker already refuses to upload a minidump unless the destination repo is private (`isDumpRepoPrivate` in `src/index.js`).
+- `test/index.test.mjs` covers the private-repo and `DUMPS_REPO`-precedence paths.
+- The PR set a value that guard checks; it did not touch the guard.
+
+So the merge shipped with no independent review of any kind. That is the open state the review-assurance ladder entry describes, accepted here on purpose for a config value.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for a CR-skipped head, on a one-line config value whose safety property is enforced and tested in code the PR did not change.
+
+The upstream cause (CodeRabbit reviews only on request, Bugbot is capped, and the self-review verdict line is a presence check) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md), actions 1 and 2 open. Enabling CodeRabbit auto-review is a human account action, not a gate (2026-08-19 #2127 entry). This PR is added to that entry's **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. The diff is one correct config value, so a reviewer would rightly find nothing. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
 ## 2026-11-10 · PR #2375, #2385, #2389 · override: `plan-lock-out-of-band` over path-only overlaps that `git merge-tree` shows clean (plus a moot `tests-out-of-band` on #2385 and #2389)
 
 ### What escaped
