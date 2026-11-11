@@ -3,7 +3,7 @@
 - **Category**: process
 - **Priority**: P1
 - **Date**: 2026-08-17
-- **Observed on**: PR #2090 — `adversarial-code-review: 4 findings, all fixed` went green; an independent pass afterwards found 11, six of them defects in the diff
+- **Observed on**: PR #2090 — `adversarial-code-review: 4 findings, all fixed` went green; an independent pass afterwards found 11, six of them defects in the diff; PR #2395 — one-line relay config merged with CodeRabbit `skipped`, Bugbot `neutral` and an `n/a` verdict line under the documented `cr-auto-review-disabled` waiver (no review of any kind; [postmortem](../../postmortems.md#2026-11-10--pr-2395--override-cr-out-of-band--cr-dispositioncr-auto-review-disabled-on-a-one-line-relay-config-change-coderabbit-skipped))
 - **Status**: open — action 3 (second review for gate-logic diffs) landed 2026-11-04; actions 1 and 2 remain
 
 ## What happened
