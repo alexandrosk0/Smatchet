@@ -65,8 +65,8 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
             insert.bind(12, row.author);
             insert.bind(13, row.browseUrl);
             insert.bind(14, row.lastKnownJson);
-            insert.bind(15, static_cast<long long>(row.leftAtUnixSec));
-            insert.bind(16, static_cast<long long>(row.listedAtUnixSec));
+            insert.bind(15, static_cast<std::int64_t>(row.leftAtUnixSec));
+            insert.bind(16, static_cast<std::int64_t>(row.listedAtUnixSec));
             // RETURNING, not last_insert_rowid: a lookup upsert on another thread can move that between statements.
             if (insert.executeStep()) {
                 row.id = insert.getColumn(0).getInt64();
@@ -79,7 +79,7 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
         listing.bind(2, kViewListingKind);
         listing.bind(3, viewId);
         listing.bind(4, listingJson);
-        listing.bind(5, static_cast<long long>(listingSavedAtUnixSec));
+        listing.bind(5, static_cast<std::int64_t>(listingSavedAtUnixSec));
         listing.exec();
         if (!rows.empty()) {
             TrimLeftViewRows(db, maxRows);
@@ -138,7 +138,7 @@ bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row
         stmt.bind(5, row.author);
         stmt.bind(6, row.browseUrl);
         stmt.bind(7, row.summary);
-        stmt.bind(8, static_cast<long long>(row.id));
+        stmt.bind(8, static_cast<std::int64_t>(row.id));
         return stmt.exec() > 0;
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager::UpdateLeftViewReason failed: %s", ex.what());
@@ -149,7 +149,7 @@ bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row
 bool LocalCacheManager::DeleteLeftViewRow(std::int64_t id) {
     try {
         SQLite::Statement stmt(db, "DELETE FROM left_view_history WHERE id = ?");
-        stmt.bind(1, static_cast<long long>(id));
+        stmt.bind(1, static_cast<std::int64_t>(id));
         return stmt.exec() > 0;
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager::DeleteLeftViewRow failed: %s", ex.what());
