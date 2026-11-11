@@ -788,7 +788,9 @@ TEST_CASE("FindJiraTransitionId — the status id beats an earlier transition to
         {{"id", "11"}, {"name", "Start"}, {"to", {{"id", "10001"}, {"name", "In Progress"}}}},
         {{"id", "21"}, {"name", "Begin"}, {"to", {{"id", "10023"}, {"name", "In Progress"}}}},
     });
-    CHECK(FindJiraTransitionId(transitions, "10023", "In Progress").id == "21");
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "10023", "In Progress");
+    CHECK(m.id == "21");
+    CHECK_FALSE(m.usedStatusNameMatch);
 }
 
 TEST_CASE("FindJiraTransitionId — an id from another workflow still finds this issue's status of that name") {
@@ -798,6 +800,8 @@ TEST_CASE("FindJiraTransitionId — an id from another workflow still finds this
     const JiraTransitionMatch m = FindJiraTransitionId(transitions, "3", "In Progress");
     CHECK(m.id == "21");
     CHECK_FALSE(m.usedNameFallback);
+    CHECK(m.usedStatusNameMatch);
+    CHECK(m.toStatusId == "10023");
 }
 
 TEST_CASE("FindJiraTransitionId — a target with an id never follows a transition that is only named like it") {

@@ -15,6 +15,9 @@ struct TransitionsQuery {
     std::string ProjectKey;
     std::string IssueTypeKey;
     std::string FromStatusKey;
+    /// Display name of that status. A status merged across workflows keeps only its first id, so the
+    /// "issue moved on the server" self-target check also matches by name. Empty = id check only.
+    std::string FromStatusName;
 };
 
 struct TransitionsLookup {

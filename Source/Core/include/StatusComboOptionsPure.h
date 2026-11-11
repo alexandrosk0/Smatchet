@@ -37,11 +37,13 @@ inline StatusComboPick PickStatusComboOptions(const std::vector<TrackerFieldOpti
     if (targetsAreLive || !targets.empty()) {
         pick.Options = targets;
         pick.From = targetsAreLive ? StatusOptionsSource::Live : StatusOptionsSource::Learned;
+        statusoptions::MergeSameNameStatusOptions(pick.Options);
     } else {
+        // The catalog's status list is merged once where it is built and where it is loaded from
+        // cache, so it is not re-merged here every frame the combo is open.
         pick.Options = catalogAll;
         pick.From = StatusOptionsSource::Catalog;
     }
-    statusoptions::MergeSameNameStatusOptions(pick.Options);
     if (current.Id.empty() && current.Value.empty()) {
         return pick;
     }

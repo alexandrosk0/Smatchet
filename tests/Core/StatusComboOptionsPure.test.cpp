@@ -98,16 +98,21 @@ TEST_CASE("StatusComboOptionsPure — two live transitions to one status name li
     CHECK(pick.Options[2].Id == "21");
 }
 
-TEST_CASE("StatusComboOptionsPure — learned and catalog lists also show each name once") {
+TEST_CASE("StatusComboOptionsPure — a learned list also shows each name once; the catalog is used as merged") {
     const std::vector<TrackerFieldOption> sameName = {Option("20", "In Progress"), Option("30", "IN PROGRESS")};
     const StatusComboPick learned = PickStatusComboOptions(sameName, false, Catalog(), Option("1", "To Do"));
     CHECK(learned.From == StatusOptionsSource::Learned);
     REQUIRE(learned.Options.size() == 2);
     CHECK(learned.Options[1].Value == "In Progress"); // the first spelling stays
 
-    const StatusComboPick catalog = PickStatusComboOptions({}, false, sameName, Option("1", "To Do"));
+    // The catalog's status list is merged where it is built and loaded (TrackerFieldCatalogPure,
+    // FieldCatalogCache), so the combo takes it as is and only adds the current status.
+    std::vector<TrackerFieldOption> merged = sameName;
+    smatchet::statusoptions::MergeSameNameStatusOptions(merged);
+    const StatusComboPick catalog = PickStatusComboOptions({}, false, merged, Option("1", "To Do"));
     CHECK(catalog.From == StatusOptionsSource::Catalog);
-    CHECK(catalog.Options.size() == 2);
+    REQUIRE(catalog.Options.size() == 2);
+    CHECK(catalog.Options[1].HasId("30"));
 }
 
 TEST_CASE("StatusComboOptionsPure — a target named like the current status is the current row, not a second one") {

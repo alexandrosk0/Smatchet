@@ -6,8 +6,6 @@
 #include <fstream>
 #include <algorithm>
 
-namespace {} // namespace
-
 namespace TrackerFieldValueUtils {
 
 // Keeps editor selection-id resolution consistent with ResolveOptionLabel.

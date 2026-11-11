@@ -62,6 +62,11 @@ std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, cons
                  "status name '%s' but status name is '%s' — workflow may have diverged.",
                  match.transitionName.c_str(), targetStatusName.c_str(), match.toStatusName.c_str());
     }
+    if (match.usedStatusNameMatch) {
+        LOG_DEBUG("JiraClient: no transition leads to status id '%s'; moving to same-name status '%s' (id '%s') "
+                  "in this issue's workflow.",
+                  targetStatusId.c_str(), targetStatusName.c_str(), match.toStatusId.c_str());
+    }
     return match.id;
 }
 

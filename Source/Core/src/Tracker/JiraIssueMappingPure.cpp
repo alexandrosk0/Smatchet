@@ -96,6 +96,9 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
         // issue's workflow. Do NOT return yet — a later transition may still match the id.
         if (nameMatch.id.empty() && !targetStatusName.empty() && IEquals(toStatusName, targetStatusName)) {
             nameMatch.id = thisId;
+            // A picked id the issue's workflow does not have: the move lands on its same-name status.
+            nameMatch.usedStatusNameMatch = !targetStatusId.empty();
+            nameMatch.toStatusId = toStatusId;
         }
         // Last, the FIRST transition-name match. Only for a target given by name alone: a picked status
         // (an id) must not move the issue to whatever status a transition of that name leads to.
