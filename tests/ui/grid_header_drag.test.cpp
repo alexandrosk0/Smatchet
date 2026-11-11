@@ -33,6 +33,7 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "GridPane.h"
 #include "SmatchetGridColumnInteraction_detail.h"
+#include "SmatchetGridUiSupport.h" // ComputeGridSortSignature
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "ViewColumnsPure.h"
@@ -51,6 +52,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 extern UiDrawSession g_ui;
@@ -426,6 +428,81 @@ void CheckHeaderMenuOffers(ImGuiTestContext* ctx, const std::vector<std::string>
     }
 }
 
+// `keys` with the columns at `a` and `b` swapped.
+std::vector<std::string> SwapKeys(std::vector<std::string> keys, size_t a, size_t b) {
+    std::swap(keys[a], keys[b]);
+    return keys;
+}
+
+// A column-order change from outside the header menu (a view.set_column_order, as a Views-editor
+// Apply or a header drag in another pane would make) drops a rectangle selection, which addresses
+// columns by index, and keeps the row selection, which does not. The selection is seeded with the
+// grid's current sort signature, and first shown to survive unchanged frames, so only the column
+// change can clear it. Expects and leaves the active view on `keys`.
+void CheckColumnOrderChangeClearsRectSel(ImGuiTestContext* ctx, AppController* app,
+                                         const std::vector<std::string>& keys) {
+    GridPane& pane = g_ui.gridPanes.front();
+    GridRectSelection& rect = pane.gridState.RectSel;
+    rect.ClearAll();
+    rect.Active = true;
+    rect.AnchorRow = rect.ExtentRow = 0;
+    rect.AnchorCol = rect.ExtentCol = 1;
+    rect.Rows.insert(0);
+    rect.SortSignature = ComputeGridSortSignature(pane.cachedSortFingerprint, pane.snapshotRevision,
+                                                  pane.ticketsSnapshot ? pane.ticketsSnapshot->size() : 0);
+    ctx->Yield(5);
+    IM_CHECK_NO_RET(rect.Active); // control: nothing else clears it
+    const std::vector<std::string> swapped = SwapKeys(keys, 1, 2);
+    IM_CHECK_NO_RET(RunCommand(ctx, app, "view.set_column_order", {{"order", swapped}}).Ok);
+    IM_CHECK_NO_RET(StepUntil(ctx, 120, [&] { return DrawnKeys() == swapped; }));
+    IM_CHECK_NO_RET(!rect.Active);
+    IM_CHECK_NO_RET(rect.Rows.count(0) == 1);
+    rect.ClearAll();
+    IM_CHECK_NO_RET(RunCommand(ctx, app, "view.set_column_order", {{"order", keys}}).Ok);
+    IM_CHECK_NO_RET(StepUntil(ctx, 120, [&] { return DrawnKeys() == keys; }));
+}
+
+// The menu's Remove targets the column key latched when it opened, not ImGui's column index. Here
+// the columns are reordered under the open menu (same column count, so ImGui keeps the menu open
+// on the old index, which now holds a different column); Remove must still take off the column
+// that was right-clicked. Expects the active view on `keys`; leaves it there with `keys[1]` re-added.
+void CheckRemoveFollowsLatchedKeyAfterReorder(ImGuiTestContext* ctx, AppController* app,
+                                              const std::vector<std::string>& keys) {
+    const std::string clicked = keys[1];
+    if (!RightClickHeader(ctx, kGridWindow, keys, clicked)) {
+        return;
+    }
+    const std::vector<std::string> swapped = SwapKeys(keys, 1, 2);
+    IM_CHECK_NO_RET(RunCommand(ctx, app, "view.set_column_order", {{"order", swapped}}).Ok);
+    IM_CHECK_NO_RET(StepUntil(ctx, 120, [&] { return DrawnKeys() == swapped; }));
+    ctx->Yield(2);
+    IM_CHECK_NO_RET(ctx->ItemExists("//$FOCUSED/###ResetOrder")); // the menu is still open
+    if (!ctx->ItemExists(RemoveColumnItemRef().c_str())) {
+        IM_CHECK_NO_RET(false);
+        ctx->PopupCloseAll();
+        return;
+    }
+    ctx->ItemClick(RemoveColumnItemRef().c_str());
+    std::vector<std::string> expected = swapped;
+    expected.erase(std::find(expected.begin(), expected.end(), clicked));
+    IM_CHECK_NO_RET(StepUntil(ctx, 60, [&] { return DrawnKeys() == expected; }));
+    RestoreActiveViewColumns(ctx, app, keys);
+    IM_CHECK_NO_RET(StepUntil(ctx, 120, [&] { return DrawnKeys() == keys; }));
+}
+
+// The re-added column comes back at a default width; put the fixture width back so the armed
+// layout autosave does not persist a different one for the later tests in this process.
+void RestoreRemovedColumnWidth(ImGuiTestContext* ctx, const std::string& key, float originalWidth) {
+    ctx->Yield(2);
+    const std::unordered_map<std::string, float> now = WidthsByKey(*LiveTicketGrid());
+    const auto it = now.find(key);
+    IM_CHECK_NO_RET(it != now.end());
+    if (it != now.end() && std::fabs(it->second - originalWidth) > 1.0f) {
+        const float restored = ResizeColumnBy(ctx, key, originalWidth - it->second);
+        IM_CHECK_NO_RET(std::fabs(restored - originalWidth) <= 1.0f);
+    }
+}
+
 void RegisterGridHeaderRemoveColumn(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "JiraDeterministic", "GridHeaderRemoveColumn_PlainRightClick");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -492,6 +569,10 @@ void RegisterGridHeaderRemoveColumn(ImGuiTestEngine* engine) {
 
         RestoreActiveViewColumns(ctx, app, original);
         IM_CHECK_NO_RET(StepUntil(ctx, 120, [&] { return DrawnKeys() == original; }));
+        IM_CHECK_NO_RET(StepUntil(ctx, 600, [&] { return !app->IsSyncPendingOrActive(); }));
+        CheckColumnOrderChangeClearsRectSel(ctx, app, original);
+        CheckRemoveFollowsLatchedKeyAfterReorder(ctx, app, original); // removes and re-adds `field` again
+        RestoreRemovedColumnWidth(ctx, field, widths.at(field));
     };
 }
 
@@ -585,8 +666,8 @@ void RegisterGridHeaderRemoveColumnClickedPaneOnly(ImGuiTestEngine* engine) {
         }
         const smatchet::cmd::CommandResult created =
             RunCommand(ctx, app, "view.create", {{"name", "Remove column pane test"}, {"columns", columns}});
-        IM_CHECK_NO_RET(created.Ok);
-        if (!created.Ok) {
+        IM_CHECK_NO_RET(created.Ok && created.Data != nullptr);
+        if (!created.Ok || created.Data == nullptr) {
             return;
         }
         const std::string otherViewId = created.Data->value("id", std::string());

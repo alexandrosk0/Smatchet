@@ -136,6 +136,9 @@ struct GridPane {
     /// The menu's Remove action targets this key and not ImGui's column index, because an index
     /// names a different column as soon as the column set changes under the open menu.
     std::string headerMenuColumnKey;
+    /// Field id of that same column, latched with it: an in-progress cell edit is keyed by field id,
+    /// so Remove ends only an edit of the removed field.
+    std::string headerMenuColumnFieldId;
 
     /// Per-pane field-catalog index for read routing (per-pane-catalog-value-read-routing).
     /// A non-focused cross-backend pane resolves its cell option labels / display names

@@ -576,10 +576,14 @@ static void RemoveHeaderMenuColumnFromPaneView(UiDrawSession& d, Views& viewStat
     if (view.Id == viewState.GetStore().ActiveViewId) {
         d.cfg.SelectedFields = view.Fields; // what a Fields-tab Apply leaves here for the next sync
     }
-    // The rectangle addresses columns by index, and every column after the removed one shifts. The
-    // edit state may name the removed field.
+    // The rectangle addresses columns by index, and every column after the removed one shifts.
+    // Every pane on this view also clears it next frame (columnKeysChanged); this pane clears it now
+    // because the rest of this frame still reads it. An edit is keyed by field, so only an edit of
+    // the removed field ends.
     pane.gridState.RectSel.Clear();
-    pane.gridState.ClearEditing();
+    if (!pane.headerMenuColumnFieldId.empty() && pane.gridState.EditingFieldId == pane.headerMenuColumnFieldId) {
+        pane.gridState.ClearEditing();
+    }
     viewState.BumpRevision();
     d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
 }
@@ -870,6 +874,10 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
             // ImGui's sort state is per column INDEX too; re-derive it from the view by key so
             // the arrow and the row order stay on the column the user sorted, not its old index.
             ctx.pane.forceApplySortSpecs = true;
+            // So is the rectangle selection: after a column is added, removed or moved it would
+            // cover different fields, and Ctrl+C / paste would hit them. This runs for every pane
+            // on the changed view, not only the one the change was made in.
+            ctx.pane.gridState.RectSel.Clear();
         }
         ctx.pane.lastDrawnColumnKeys = std::move(currentColumnKeys);
         // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
@@ -957,6 +965,7 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
         // The same test TableHeader just used to open its context menu on this column.
         if (ImGui::IsPopupOpenRequestForItem(ImGuiPopupFlags_None, ImGui::GetItemID())) {
             ctx.pane.headerMenuColumnKey = hcol.Key;
+            ctx.pane.headerMenuColumnFieldId = hcol.FieldId;
         }
         smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the column
 
