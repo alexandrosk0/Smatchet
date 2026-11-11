@@ -785,7 +785,7 @@ runs:
             ' 2>/dev/null) || body=""
           body="${body//$'\r'/}"
 
-          n=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+          n=$(grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' <<<"$body" \
                 | grep -oE '[0-9]+' | head -1 || true)
           if [ -z "$n" ]; then
             # Shape 3 (2026-08-12 entry, observed #2002 round 12): a clean pass
@@ -857,12 +857,20 @@ runs:
             #     (replyTo set) are excluded: CR answers "fixed, resolving" in
             #     an old thread from the new head (#2410 has one). A truncated
             #     or missing comment list counts as a finding (fail closed).
+            #     An earlier review counts as findings on any line pairing
+            #     "actionable" with a digit (a drifted header), except the
+            #     genuine "Actionable comments posted: 0".
+            #
+            # Known safe-direction PENDING: a manual re-review of a head whose
+            # earlier review was nitpick-only stays unsettled, because real
+            # nitpick bodies carry the per-finding markers (cr-comment:v1,
+            # ai-agent-prompt, "Review comment at @"). Fails closed by design.
             if grep -qiE 'Reviewing files that changed from the base of the PR and between [0-9a-f]{7,40} and [0-9a-f]{7,40}' <<<"$body" \
                && grep -qi 'Files selected for processing' <<<"$body" \
                && ! grep -qiE "$actionable_digit_re" <<<"$body" \
                && ! grep -qiE "$incr_findings_re" <<<"$body"; then
               local n_inline
-              n_inline=$(printf '%s' "$resp" | CR_INCR_FINDINGS_RE="$incr_findings_re" jq -r '
+              n_inline=$(printf '%s' "$resp" | CR_INCR_FINDINGS_RE="$incr_findings_re" CR_ACTIONABLE_DIGIT_RE="$actionable_digit_re" jq -r '
                 .data.repository.pullRequest as $pr
                 | ($pr.headRefOid // "") as $oid
                 | [ $pr.reviews.nodes[]
@@ -871,8 +879,11 @@ runs:
                     | if (.comments | type) != "object" or (.comments.nodes | type) != "array" then 1
                       elif (.comments.totalCount | type) != "number"
                            or .comments.totalCount > (.comments.nodes | length) then 1
-                      elif ((.body // "") | test("Actionable comments posted:\\s*[1-9]"; "i")
-                                          or test($ENV.CR_INCR_FINDINGS_RE; "i")) then 1
+                      elif ((.body // "") | test($ENV.CR_INCR_FINDINGS_RE; "i")
+                              or ([ split("\n")[]
+                                    | select(test($ENV.CR_ACTIONABLE_DIGIT_RE; "i")
+                                             and (test("Actionable comments posted:\\s*0([^0-9]|$)"; "i") | not)) ]
+                                  | length > 0)) then 1
                       else ([ .comments.nodes[] | select(.replyTo == null) ] | length) end
                   ] | add // 0
                 ' 2>/dev/null) || n_inline=1

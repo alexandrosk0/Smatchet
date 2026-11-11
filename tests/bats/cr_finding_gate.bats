@@ -386,7 +386,7 @@ verdict() {
            && grep -qi "$INCR_FILES_RE" <<<"$body" \
            && ! grep -qiE "$ACTIONABLE_DIGIT_RE" <<<"$body" \
            && ! grep -qiE "$INCR_FINDINGS_RE" <<<"$body" \
-           && [ "$(CR_INCR_FINDINGS_RE="$INCR_FINDINGS_RE" jq -r -f "$BATS_TEST_TMPDIR/inline.jq" "$f")" = 0 ]; then
+           && [ "$(CR_INCR_FINDINGS_RE="$INCR_FINDINGS_RE" CR_ACTIONABLE_DIGIT_RE="$ACTIONABLE_DIGIT_RE" jq -r -f "$BATS_TEST_TMPDIR/inline.jq" "$f")" = 0 ]; then
             printf 'incremental-clean'
         else printf 'fail-closed'; fi
     elif [ "$num" -gt 0 ]; then printf 'findings:%s' "$num"
@@ -850,6 +850,10 @@ $(incr_body)"
     extra="$(jq -n --arg b "$(followups_body)" --argjson c "$NO_COMMENTS" \
       '[{author:{login:"coderabbitai"},submittedAt:"2026-11-11T12:00:00Z",commit:{oid:"HEAD"},body:$b,comments:$c}]')"
     incr_case "$(incr_payload "$(incr_body)" "$NO_COMMENTS" "$extra")" fail-closed
+    # A DRIFTED count header in the earlier review blocks too.
+    extra='[{"author":{"login":"coderabbitai"},"submittedAt":"2026-11-11T12:00:00Z","commit":{"oid":"HEAD"},
+             "body":"**Actionable comments: 2**","comments":'"$NO_COMMENTS"'}]'
+    incr_case "$(incr_payload "$(incr_body)" "$NO_COMMENTS" "$extra")" fail-closed
     # An earlier same-head review that reported ZERO does not block.
     extra='[{"author":{"login":"coderabbitai"},"submittedAt":"2026-11-11T12:00:00Z","commit":{"oid":"HEAD"},
              "body":"**Actionable comments posted: 0**","comments":'"$NO_COMMENTS"'}]'
@@ -901,6 +905,14 @@ $section"
     # The query must still ask for each review's inline comments and replyTo,
     # or the structural side has no data and the shape can never pass.
     grep -qF 'comments(first:100){ totalCount nodes{ replyTo{ id } } }' "$ACTION"
+}
+
+@test "decide() never pipes the review body into grep (pipefail SIGPIPE fail-open)" {
+    # The SIGPIPE test above is backstopped by the per-review jq check, so a
+    # reverted here-string alone would not fail it. Pin the idiom directly.
+    setup_decide
+    ! grep -qF "printf '%s' \"\$body\" | grep" "$BATS_TEST_TMPDIR/decide.fn" || false
+    grep -qF '<<<"$body"' "$BATS_TEST_TMPDIR/decide.fn"
 }
 
 @test "verdict: a rate-limited SUCCESS is NOT review evidence" {
