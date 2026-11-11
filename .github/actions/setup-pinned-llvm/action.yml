@@ -1,8 +1,9 @@
 name: Set up pinned LLVM (clang-cl)
 description: >-
-  Installs a pinned LLVM release (clang-cl + its clang_rt ASan/UBSan runtimes)
-  outside the runner image's C:\Program Files\LLVM, puts its bin dir first on
-  PATH, and fails unless `clang-cl --version` reports exactly the pinned version.
+  Extracts a pinned LLVM release (clang-cl + its clang_rt ASan/UBSan runtimes)
+  beside the runner image's C:\Program Files\LLVM, leaving that one untouched,
+  puts its bin dir first on PATH, and fails unless `clang-cl --version`
+  reports exactly the pinned version.
   Single source of the clang-cl toolchain for the ninja-clang-asan lanes
   (build-and-test.yml "Sanitizer (UBSan via Clang)" and sanitizer-nightly.yml).
 
@@ -14,8 +15,9 @@ description: >-
   crashes an otherwise-clean instrumented binary. LLVM 22.1.6 is the version the
   clang-cl ASan + UBSan rig was validated on; cmake/Sanitizers.cmake refuses an
   older clang-cl under SMATCHET_SANITIZER=asan.
-  Must run AFTER ilammy/msvc-dev-cmd so the GITHUB_PATH entry lands ahead of the
-  VS-bundled clang-cl that vcvars exports.
+  Conventionally placed after ilammy/msvc-dev-cmd. The runner puts GITHUB_PATH
+  entries ahead of every later step's PATH, including the VS-bundled clang-cl
+  that vcvars exports, and the Verify step below fails if anything else wins.
 
 inputs:
   version:
@@ -62,10 +64,13 @@ runs:
           Remove-Item -Force $exe
           throw "LLVM installer SHA-256 mismatch: expected $env:LLVM_SHA256, got $actual"
         }
-        # NSIS silent install; /D= must be the last argument and unquoted.
+        # Extract the NSIS payload with 7-Zip (on the image) rather than running
+        # the installer: LLVM's installer uninstalls any registered LLVM first,
+        # which would silently remove the image's C:\Program Files\LLVM and
+        # rewrite HKLM\Software\LLVM.
         $dest = Join-Path $env:RUNNER_TOOL_CACHE "llvm-$env:LLVM_VERSION"
-        $proc = Start-Process -FilePath $exe -ArgumentList '/S', "/D=$dest" -Wait -PassThru
-        if ($proc.ExitCode -ne 0) { throw "LLVM installer exited $($proc.ExitCode)" }
+        & 7z x $exe "-o$dest" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "7z extract of $exe exited $LASTEXITCODE" }
         $bin = Join-Path $dest 'bin'
         if (-not (Test-Path (Join-Path $bin 'clang-cl.exe'))) { throw "clang-cl.exe missing under $bin" }
         Add-Content -Path $env:GITHUB_PATH -Value $bin
