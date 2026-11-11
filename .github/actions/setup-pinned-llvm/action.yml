@@ -73,6 +73,13 @@ runs:
         if ($LASTEXITCODE -ne 0) { throw "7z extract of $exe exited $LASTEXITCODE" }
         $bin = Join-Path $dest 'bin'
         if (-not (Test-Path (Join-Path $bin 'clang-cl.exe'))) { throw "clang-cl.exe missing under $bin" }
+        # The ASan runtime layout cmake/Sanitizers.cmake resolves; a miss there is
+        # only a configure WARN and a later link error, so fail here instead.
+        $major = $env:LLVM_VERSION.Split('.')[0]
+        $rt = Join-Path $dest "lib\clang\$major\lib\windows"
+        foreach ($f in 'clang_rt.asan_dynamic-x86_64.dll', 'clang_rt.asan_dynamic-x86_64.lib', 'clang_rt.asan_dynamic_runtime_thunk-x86_64.lib') {
+          if (-not (Test-Path (Join-Path $rt $f))) { throw "$f missing under $rt" }
+        }
         Add-Content -Path $env:GITHUB_PATH -Value $bin
 
     - name: Verify pinned clang-cl
