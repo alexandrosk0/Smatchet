@@ -197,6 +197,10 @@ jobs:
           # (mirrors the `code=true` fail-safe above). Only a *non-empty* file list
           # with no Core/Plugins C++ match yields false (the intended skip on
           # docs/yaml/Standalone-only PRs). In `case`, * spans '/', so nested paths match.
+          # The sanitizer toolchain/config itself (cmake/Sanitizers.cmake, the pinned
+          # clang-cl action) also counts: a PR that changes how the lanes instrument
+          # must run them. #2400 changed those flags with no Core C++, so the UBSan
+          # lane skipped on it and its LLVM-20 crash first surfaced on later PRs.
           if [ -z "$files" ]; then
             source_core_cpp=true
           else
@@ -204,12 +208,12 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
-                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh)
+                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh|cmake/Sanitizers.cmake|.github/actions/setup-pinned-llvm/*)
                   source_core_cpp=true; break ;;
               esac
             done <<< "$files"
           fi
-          echo "Source/Core|Plugins C++ changed (asan gate): ${source_core_cpp}"
+          echo "Source/Core|Plugins C++ or sanitizer config changed (asan gate): ${source_core_cpp}"
           echo "source_core_cpp=${source_core_cpp}" >> "$GITHUB_OUTPUT"
           # Android-only diff gate: skip the desktop standalone builds + their
           # downstream tests when the diff touches ONLY android/mobile paths —
