@@ -338,7 +338,10 @@ NITPICK_CLEAN_RE='nitpick comments'
 # extracted from the action). Same restate-then-assert-verbatim contract.
 INCR_COMMITS_RE='Reviewing files that changed from the base of the PR and between [0-9a-f]{7,40} and [0-9a-f]{7,40}'
 INCR_FILES_RE='Files selected for processing'
-INCR_FINDINGS_RE='inline comments:|review comments at @|outside diff range|duplicate comments|autofix_checkbox'
+INCR_FINDINGS_RE='inline comments:|(minor|major|critical|trivial) comments:|review comments? at @|cr-comment:v1|ai-agent-prompt|follow-ups? \(|follow-up comments|outside diff range|duplicate comments|autofix_checkbox'
+# The drifted-header guard both shapes share, as one regex (a two-grep pipe
+# can fail open under pipefail — see the action's shape-3 note).
+ACTIONABLE_DIGIT_RE='actionable.*[0-9]|[0-9].*actionable'
 
 # verdict <fixture> -> not-reviewed | unsettled | fail-closed | findings:N | clean
 #                      | nitpick-clean | incremental-clean
@@ -376,14 +379,14 @@ verdict() {
     num=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
             | grep -oE '[0-9]+' | head -1 || true)
     if [ -z "$num" ]; then
-        if printf '%s' "$body" | grep -qiE "$NITPICK_CLEAN_RE" \
-           && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]'; then
+        if grep -qiE "$NITPICK_CLEAN_RE" <<<"$body" \
+           && ! grep -qiE "$ACTIONABLE_DIGIT_RE" <<<"$body"; then
             printf 'nitpick-clean'
-        elif printf '%s' "$body" | grep -qiE "$INCR_COMMITS_RE" \
-           && printf '%s' "$body" | grep -qi "$INCR_FILES_RE" \
-           && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]' \
-           && ! printf '%s' "$body" | grep -qiE "$INCR_FINDINGS_RE" \
-           && [ "$(jq -r -f "$BATS_TEST_TMPDIR/inline.jq" "$f")" = 0 ]; then
+        elif grep -qiE "$INCR_COMMITS_RE" <<<"$body" \
+           && grep -qi "$INCR_FILES_RE" <<<"$body" \
+           && ! grep -qiE "$ACTIONABLE_DIGIT_RE" <<<"$body" \
+           && ! grep -qiE "$INCR_FINDINGS_RE" <<<"$body" \
+           && [ "$(CR_INCR_FINDINGS_RE="$INCR_FINDINGS_RE" jq -r -f "$BATS_TEST_TMPDIR/inline.jq" "$f")" = 0 ]; then
             printf 'incremental-clean'
         else printf 'fail-closed'; fi
     elif [ "$num" -gt 0 ]; then printf 'findings:%s' "$num"
@@ -638,8 +641,11 @@ TOP_COMMENT='{"totalCount":1,"nodes":[{"replyTo":null}]}'
 # "omit" drops the comments field (a query that stopped asking for it). The
 # rollup is empty: with an on-head review, decide() never reads it.
 incr_payload() {
-    local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json"
-    jq -n --arg body "$1" --arg c "$2" --argjson extra "${3:-[]}" '
+    local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json" bf="$BATS_TEST_TMPDIR/body.$RANDOM.txt"
+    # --rawfile, not --arg: a >64 KB body overflows the Windows argv limit, and
+    # a jq that fails to build the fixture would make the case pass vacuously.
+    printf '%s' "$1" > "$bf"
+    jq -n --rawfile body "$bf" --arg c "$2" --argjson extra "${3:-[]}" '
       {data:{repository:{pullRequest:{
         headRefOid:"HEAD",
         reviews:{nodes:([{author:{login:"coderabbitai"},state:"COMMENTED",
@@ -671,7 +677,9 @@ real_decide() {
         oss_ask_state() { echo none; }
         # shellcheck disable=SC1091
         source "$BATS_TEST_TMPDIR/decide.fn"
-        set +e
+        # The action step's own options (action.yml: `set +e -uo pipefail`):
+        # without pipefail this harness cannot see a SIGPIPE fail-open.
+        set +e -uo pipefail
         decide
         [ $? -eq 1 ] && echo retry
     )
@@ -680,6 +688,8 @@ real_decide() {
 # incr_case <fixture> <expected-verdict> — the model and the real decide() agree.
 incr_case() {
     local got real
+    # Non-vacuity: a fixture jq could not build must not read as fail-closed.
+    jq -e '.data.repository.pullRequest.reviews.nodes | length > 0' "$1" >/dev/null
     got="$(verdict "$1")"
     real="$(real_decide "$1")"
     echo "verdict=$got real=$real" >&2
@@ -752,6 +762,95 @@ incr_case() {
     incr_case "$(incr_payload "$(incr_body)" omit)" fail-closed
     incr_case "$(incr_payload "$(incr_body)" '{"totalCount":101,"nodes":[]}')" fail-closed
     incr_case "$(incr_payload "$(incr_body)" '{"totalCount":0}')" fail-closed
+    incr_case "$(incr_payload "$(incr_body)" '{"nodes":[]}')" fail-closed
+}
+
+# The #2384 head-c44d9e8 findings body, trimmed: two Minor findings that live
+# only in the body (no count header, no inline comment), beside the same
+# Commits and Files furniture as a clean incremental pass.
+followups_body() {
+    cat <<'EOF'
+<!-- coderabbit-ai-generated:v1 -->
+
+<details>
+<summary>Follow-ups (2)</summary><blockquote>
+
+<!-- ai-agent-prompt:start -->
+Review comment at @Source/Standalone/CMakeLists.txt around lines 96 - 98:
+Adjust the CMake configure flow so the build-root .gitignore guard runs.
+<!-- ai-agent-prompt:end -->
+<!-- cr-comment:v1:3104e4f243e2c81c08a1138f -->
+
+</blockquote></details>
+
+<details>
+<summary>Prompt to fix review comments</summary>
+
+```
+Minor comments:
+Review comments at @Source/Standalone/CMakeLists.txt:
+- Around line 96-98: Adjust the CMake configure flow.
+```
+
+</details>
+
+<details>
+<summary>Commits</summary>
+Reviewing files that changed from the base of the PR and between 1111111111111111111111111111111111111111 and c44d9e8c44d9e8c44d9e8c44d9e8c44d9e8c44d9.
+</details>
+
+<details>
+<summary>Files selected for processing: 1</summary>
+* `Source/Standalone/CMakeLists.txt`
+</details>
+EOF
+}
+
+@test "shape 4 negative: the #2384 header-less body-only findings shape stays fail-closed" {
+    setup_jq; setup_decide
+    incr_case "$(incr_payload "$(followups_body)" "$NO_COMMENTS")" fail-closed
+    # Each of its markers blocks on its own, so dropping one does not open it.
+    local marker b
+    for marker in 'Follow-ups (2)' 'Minor comments:' 'Review comment at @Source/x.cpp around lines 1 - 2:' \
+                  '<!-- cr-comment:v1:abc -->' '<!-- ai-agent-prompt:start -->' '## Follow-up Comments'; do
+        b="$(incr_body)
+$marker"
+        incr_case "$(incr_payload "$b" "$NO_COMMENTS")" fail-closed
+    done
+}
+
+@test "shape 4 negative: a findings marker early in a >64 KB body still blocks (pipefail SIGPIPE)" {
+    setup_jq; setup_decide
+    # `printf | grep -q` under pipefail: grep quits at the early match, printf
+    # dies of SIGPIPE past the pipe buffer, and `!` reads that as "no marker".
+    local pad b
+    pad="$(head -c 200000 /dev/zero | tr '\0' 'x' | fold -w 100)"
+    b="♻️ Duplicate comments (1)
+$pad
+$(incr_body)"
+    [ "${#b}" -gt 70000 ]
+    incr_case "$(incr_payload "$b" "$NO_COMMENTS")" fail-closed
+    # Control: the same padding without the marker is still the clean shape.
+    b="$pad
+$(incr_body)"
+    incr_case "$(incr_payload "$b" "$NO_COMMENTS")" incremental-clean
+}
+
+@test "shape 4 negative: an earlier same-head review's body-only findings are not laundered" {
+    setup_jq; setup_decide
+    # Review A on the head reported findings in its body only (no inline
+    # comment); a furniture-only re-review B on the same head must not pass.
+    local extra
+    extra='[{"author":{"login":"coderabbitai"},"submittedAt":"2026-11-11T12:00:00Z","commit":{"oid":"HEAD"},
+             "body":"**Actionable comments posted: 2**\n⚠️ Outside diff range comments (2)","comments":'"$NO_COMMENTS"'}]'
+    incr_case "$(incr_payload "$(incr_body)" "$NO_COMMENTS" "$extra")" fail-closed
+    extra="$(jq -n --arg b "$(followups_body)" --argjson c "$NO_COMMENTS" \
+      '[{author:{login:"coderabbitai"},submittedAt:"2026-11-11T12:00:00Z",commit:{oid:"HEAD"},body:$b,comments:$c}]')"
+    incr_case "$(incr_payload "$(incr_body)" "$NO_COMMENTS" "$extra")" fail-closed
+    # An earlier same-head review that reported ZERO does not block.
+    extra='[{"author":{"login":"coderabbitai"},"submittedAt":"2026-11-11T12:00:00Z","commit":{"oid":"HEAD"},
+             "body":"**Actionable comments posted: 0**","comments":'"$NO_COMMENTS"'}]'
+    incr_case "$(incr_payload "$(incr_body)" "$NO_COMMENTS" "$extra")" incremental-clean
 }
 
 @test "shape 4 negative: each findings section blocks the pass, header or not" {
@@ -1246,7 +1345,8 @@ run_nudge() {
 @test "the drifted-header digit guard is present in the action, not just here" {
     # verdict() restates the negative half of the shape-3 discrimination; this
     # pins the action's copy so removing it there cannot pass silently.
-    grep -qF "grep -i 'actionable' | grep -q '[0-9]'" "$ACTION"
+    grep -qF "local actionable_digit_re='$ACTIONABLE_DIGIT_RE'" "$ACTION"
+    grep -qF '! grep -qiE "$actionable_digit_re" <<<"$body"' "$ACTION"
 }
 
 # ============================================================================

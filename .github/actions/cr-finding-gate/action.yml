@@ -537,6 +537,12 @@ runs:
         # Windows dev env).
         decide() {
           local resp n_reviews cr_ctx body n
+          # Header-less body discriminators (shapes 3 and 4, below). The digit
+          # pairing is one regex, not `grep actionable | grep -q digit`: see the
+          # pipefail note at shape 3. Both are ERE and also valid Oniguruma, so
+          # the shape-4 jq can reuse the findings vocabulary verbatim.
+          local actionable_digit_re='actionable.*[0-9]|[0-9].*actionable'
+          local incr_findings_re='inline comments:|(minor|major|critical|trivial) comments:|review comments? at @|cr-comment:v1|ai-agent-prompt|follow-ups? \(|follow-up comments|outside diff range|duplicate comments|autofix_checkbox'
           # On a transient GraphQL failure, do NOT post error + exit — that would
           # bypass the poll loop and leave a false blocking status on a brief API
           # blip. Return non-terminal so the loop retries; persistent failure is
@@ -803,8 +809,15 @@ runs:
             #   - negative: no line may pair "actionable" with a digit — a
             #     drifted count header would, while clean prose ("No
             #     actionable comments were generated") does not.
-            if printf '%s' "$body" | grep -qiE 'nitpick comments' \
-               && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]'; then
+            #
+            # Every body check here reads a HERE-STRING, never `printf | grep -q`:
+            # this step runs with pipefail, and `grep -q` quits at its first
+            # match, so on a body past the ~64 KB pipe buffer printf dies of
+            # SIGPIPE and the pipeline fails even though grep matched. Under `!`
+            # that turns "a findings marker is present" into a pass (fail open).
+            # The digit pairing is one grep for the same reason.
+            if grep -qiE 'nitpick comments' <<<"$body" \
+               && ! grep -qiE "$actionable_digit_re" <<<"$body"; then
               post success "CodeRabbit clean review on current head (nitpicks only, no actionable-count header)"; exit 0
             fi
             # Shape 4 (observed #2410, head 6c6f028, review 5858939088): when a
@@ -823,31 +836,43 @@ runs:
             #     the shape that was observed. "Review info" / the
             #     auto-generated marker alone prove nothing;
             #   - negative (body): no line pairs "actionable" with a digit (a
-            #     drifted count header), and none of the findings sections CR
-            #     writes beside one: the prompt's "Inline comments:" /
-            #     "Review comments at @" list, "Outside diff range" and
-            #     "Duplicate comments" sections, or the autofix checkbox;
+            #     drifted count header), and no findings marker. CR also posts
+            #     findings that live ONLY in the body, header-less and with no
+            #     inline comment: #2384 head c44d9e8 carried two Minor findings
+            #     as "Follow-ups (2)", a "Minor comments:" prompt list and
+            #     per-finding "Review comment at @…" prompts, with the same
+            #     Commits and Files lines as a clean pass. So the vocabulary
+            #     covers the prompt lists ("Inline comments:", "<Severity>
+            #     comments:", "Review comment(s) at @"), the per-finding
+            #     markers (cr-comment:v1, ai-agent-prompt), the "Follow-ups",
+            #     "Outside diff range" and "Duplicate comments" sections, and
+            #     the autofix checkbox. None of these appear in the clean
+            #     incremental bodies (#2410 5858939088, #2407 5852988367);
             #   - negative (structure): no on-head CR review has posted a
-            #     top-level inline comment. Findings land as inline comments, so
-            #     a drifted header that also dropped every section above still
-            #     cannot pass. Thread replies (replyTo set) are excluded: CR
-            #     answers "fixed, resolving" in an old thread from the new head
-            #     (#2410 has one). A review whose comment list is truncated, or
-            #     a response with no comment data at all, counts as having
-            #     inline comments (fail closed).
-            if printf '%s' "$body" | grep -qiE 'Reviewing files that changed from the base of the PR and between [0-9a-f]{7,40} and [0-9a-f]{7,40}' \
-               && printf '%s' "$body" | grep -qi 'Files selected for processing' \
-               && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]' \
-               && ! printf '%s' "$body" | grep -qiE 'inline comments:|review comments at @|outside diff range|duplicate comments|autofix_checkbox'; then
+            #     top-level inline comment, and no EARLIER on-head CR review
+            #     reported findings in its body (a nonzero count header or the
+            #     same vocabulary): the body checks only see the latest review,
+            #     and a furniture-only re-review on the same head must not
+            #     launder an earlier review's body-only findings. Thread replies
+            #     (replyTo set) are excluded: CR answers "fixed, resolving" in
+            #     an old thread from the new head (#2410 has one). A truncated
+            #     or missing comment list counts as a finding (fail closed).
+            if grep -qiE 'Reviewing files that changed from the base of the PR and between [0-9a-f]{7,40} and [0-9a-f]{7,40}' <<<"$body" \
+               && grep -qi 'Files selected for processing' <<<"$body" \
+               && ! grep -qiE "$actionable_digit_re" <<<"$body" \
+               && ! grep -qiE "$incr_findings_re" <<<"$body"; then
               local n_inline
-              n_inline=$(printf '%s' "$resp" | jq -r '
+              n_inline=$(printf '%s' "$resp" | CR_INCR_FINDINGS_RE="$incr_findings_re" jq -r '
                 .data.repository.pullRequest as $pr
                 | ($pr.headRefOid // "") as $oid
                 | [ $pr.reviews.nodes[]
                     | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                              and (.commit.oid // "") == $oid)
                     | if (.comments | type) != "object" or (.comments.nodes | type) != "array" then 1
-                      elif (.comments.totalCount // 0) > (.comments.nodes | length) then 1
+                      elif (.comments.totalCount | type) != "number"
+                           or .comments.totalCount > (.comments.nodes | length) then 1
+                      elif ((.body // "") | test("Actionable comments posted:\\s*[1-9]"; "i")
+                                          or test($ENV.CR_INCR_FINDINGS_RE; "i")) then 1
                       else ([ .comments.nodes[] | select(.replyTo == null) ] | length) end
                   ] | add // 0
                 ' 2>/dev/null) || n_inline=1
