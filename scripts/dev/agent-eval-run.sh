@@ -259,7 +259,9 @@ THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
 # The marker is a closed phrase, matched on the bullet's first line whether or
 # not it cites code, and must be followed by end of line or a separator:
 #   head:  "no [qualifiers] findings|issues|bugs|problems|concerns" (whole
-#          word, so "No issue-type check" is prose) or "none|nothing|n/a";
+#          word, so "No issue-type check" is prose; qualifiers may be space-,
+#          comma-, slash-, "or"- or "and"-joined: "No genuine correctness
+#          bugs") or "none|nothing|n/a";
 #   tail:  optional verb "identified|found|noted|observed|reported|flagged"
 #          or "to report|flag|note", then optional scope "at|in|for this|the
 #          severity|category|section|...|diff|change|patch|PR|hunk|code" or
@@ -276,7 +278,7 @@ _EMPTY_QUALIFIER = (r'(?:critical|high|medium|low|nits?|info|other|further|new|a
 NONE_MARKER = re.compile(
     r'^[\s*_`(\[]*'
     r'(?:no(?:\s+' + _EMPTY_QUALIFIER +
-    r'(?:\s*(?:,|/|\bor\b|\band\b)\s*' + _EMPTY_QUALIFIER + r')*)?'
+    r'(?:(?:\s*(?:,|/|\bor\b|\band\b)\s*|\s+)' + _EMPTY_QUALIFIER + r')*)?'
     r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)(?![\w-])'
     r'|none|nothing|n/a)'
     r'(?:\s+(?:identified|found|noted|observed|reported|flagged'

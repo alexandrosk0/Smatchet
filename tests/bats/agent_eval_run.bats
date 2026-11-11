@@ -248,6 +248,8 @@ No findings.
 - No issues found in this diff.
 - None identified in this change.
 - No critical issues found in the changed code.
+- No genuine correctness bugs.
+- No genuine correctness bugs found.
 
 ## Verified clean
 - Source/Core/src/secrets/Store.cpp:60 releases on every path.
