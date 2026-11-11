@@ -129,6 +129,8 @@ std::vector<smatchet::LeftViewRecord> LocalCacheManager::LoadLeftViewRows(int ma
 
 bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row) {
     try {
+        // Same shared connection: this write must not land inside another thread's open transaction.
+        std::lock_guard<std::mutex> lock(stmtMutex_);
         SQLite::Statement stmt(db, "UPDATE left_view_history SET kind = ?, reason_kind = ?, reason = ?, "
                                    "reason_detail_json = ?, author = ?, browse_url = ?, summary = ? WHERE id = ?");
         stmt.bind(1, static_cast<int>(row.kind));
@@ -148,6 +150,7 @@ bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row
 
 bool LocalCacheManager::DeleteLeftViewRow(std::int64_t id) {
     try {
+        std::lock_guard<std::mutex> lock(stmtMutex_);
         SQLite::Statement stmt(db, "DELETE FROM left_view_history WHERE id = ?");
         stmt.bind(1, static_cast<std::int64_t>(id));
         return stmt.exec() > 0;
@@ -159,6 +162,7 @@ bool LocalCacheManager::DeleteLeftViewRow(std::int64_t id) {
 
 bool LocalCacheManager::ClearLeftViewRows() {
     try {
+        std::lock_guard<std::mutex> lock(stmtMutex_);
         db.exec("DELETE FROM left_view_history");
         return true;
     } catch (const std::exception& ex) {

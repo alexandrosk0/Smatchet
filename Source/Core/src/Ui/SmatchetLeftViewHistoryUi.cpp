@@ -249,9 +249,9 @@ void DrawGrid(WindowState& state, const smatchet::LeftViewHistoryService& histor
               PendingRowAction& pending) {
     if (state.visible.empty()) {
         if (history.Rows().empty()) {
-            ImGui::TextDisabled("No issue has left a view yet.");
+            ::ImGui::TextDisabled("%s", SmatchetLocalization::T("leftView.empty", "No issue has left a view yet."));
         } else {
-            ImGui::TextDisabled("No row matches the filter.");
+            ::ImGui::TextDisabled("%s", SmatchetLocalization::T("leftView.empty_filter", "No row matches the filter."));
         }
         return;
     }
@@ -294,7 +294,7 @@ void DrawDetailsStatus(const smatchet::LeftViewRecord& row, const smatchet::Left
     case Status::Failed:
         DataFreshnessCue::DrawInlineBadge(DataFreshness::CachedStale, details.error.c_str());
         ImGui::SameLine();
-        if (ImGui::Button("Retry")) {
+        if (::ImGui::Button(SmatchetLocalization::T("leftView.retry", "Retry"))) {
             history.RequestDetails(row, cfg);
         }
         break;

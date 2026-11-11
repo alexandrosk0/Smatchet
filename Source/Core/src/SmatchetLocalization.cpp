@@ -1436,6 +1436,12 @@ const TranslationEntry kEntries[] = {
     {"leftView.col_domain", "Domain", u8"Domaine"},
     {"leftView.col_reason", "Reason", u8"Raison"},
     {"leftView.col_by", "By", u8"Par"},
+    {"leftView.between", "Left between %s and %s", u8"Sorti entre %s et %s"},
+    {"leftView.count", "%d of %d", u8"%d sur %d"},
+    {"leftView.not_connected", "Saved values: no open pane is connected to this tracker.",
+     u8"Valeurs enregistrées : aucun panneau ouvert n'est connecté à ce suivi."},
+    {"leftView.deleted_saved", "Saved values: deleted on the tracker.",
+     u8"Valeurs enregistrées : supprimé sur le suivi."},
 
     // Icon picker modal (toolbar editor).
     {"iconPicker.title", "Pick Icon", u8"Choisir une icône"},
