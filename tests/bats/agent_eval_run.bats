@@ -248,6 +248,8 @@ No findings.
 - No issues found in this diff.
 - None identified in this change.
 - No critical issues found in the changed code.
+- No genuine correctness bugs.
+- No genuine correctness bugs found.
 
 ## Verified clean
 - Source/Core/src/secrets/Store.cpp:60 releases on every path.
@@ -406,4 +408,28 @@ parser=citations" ]
     run "$PY" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["runMeta"]["parserByTrial"])' "$out"
     [ "$status" -eq 0 ]
     [ "$output" = "['reference', 'reference']" ]
+}
+
+@test "every code-review case packet requests the headings the real-mode parser reads" {
+    # The claude-print adapter sends delegationPacket as the whole prompt, so a
+    # packet that omits the severity headings sends live runs to the coarse
+    # citation fallback (runMeta.parserByTrial = "citations").
+    run "$PY" - "$REPO_ROOT/tests/agent-eval/code-review" <<'PY'
+import glob, json, os, sys
+need = ["## Critical", "## High", "## Medium", "## Low / Nits", "## Verified clean", "## Outcome:"]
+paths = sorted(glob.glob(os.path.join(sys.argv[1], "*.json")))
+assert paths, "no code-review cases found"
+bad = []
+for p in paths:
+    case = json.load(open(p, encoding="utf-8"))
+    if case.get("agent") != "code-review":
+        continue
+    missing = [h for h in need if h not in case["delegationPacket"]]
+    if missing:
+        bad.append("%s: missing %s" % (os.path.basename(p), ", ".join(missing)))
+print("\n".join(bad) if bad else "ok %d" % len(paths))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == "ok "* ]]
 }
