@@ -94,7 +94,9 @@ case "$PRESET" in
 esac
 
 # 5. clang presets pin CMAKE_CXX_COMPILER to clang-cl, which only exists when
-#    LLVM (or the VS "C++ Clang tools for Windows" component) is installed.
+#    LLVM (or the VS "C++ Clang tools for Windows" component) is installed. The
+#    *-asan clang presets need standalone LLVM >= 22: the VS component's clang-cl
+#    is older, and cmake/Sanitizers.cmake refuses it under asan.
 case "$PRESET" in
     *clang*)
         if ! command -v clang-cl >/dev/null 2>&1; then
