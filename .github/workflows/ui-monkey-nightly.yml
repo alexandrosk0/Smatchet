@@ -12,6 +12,11 @@ name: UI monkey nightly
 #
 # Build/run steps mirror the proven bucket-e-ui-tests job (ninja-ui-test-msvc on
 # windows-2022 + the install-mesa-gl composite action + llvmpipe).
+#
+# The checkout takes the ref the run was started on. The schedule runs on the default
+# branch (develop); a `workflow_dispatch` from a feature branch builds that branch, so a
+# change to the walk or to this file can be verified before it merges. Only a run on
+# develop opens or updates the bug issue.
 
 on:
   schedule:
@@ -32,7 +37,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: ui-monkey-nightly
+  group: ui-monkey-nightly-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -44,11 +49,10 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
-      - name: Checkout develop
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-          ref: develop
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -209,12 +213,12 @@ jobs:
             fi
             echo ""
             echo '```'
-            grep -aE "Error |IM_ASSERT|ui-monkey|Passed:|Failed:|crash" ui-monkey.log | head -160 || true
+            grep -aE "Error |IM_ASSERT|Watchdog|ui-monkey|Passed:|Failed:|crash" ui-monkey.log | head -160 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update bug issue on finding
-        if: steps.eval.outputs.finding == '1'
+        if: steps.eval.outputs.finding == '1' && github.ref == 'refs/heads/develop'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -224,6 +228,15 @@ jobs:
           TESTED: ${{ steps.run.outputs.tested }}
         run: |
           set -uo pipefail
+          # What the engine itself reported, so the issue and every recurrence comment
+          # say WHAT failed: a bare "Recurred" line can hide a wall-clock watchdog abort
+          # behind the word "crash" (Issue #2216). Engine log lines only: the engine
+          # prefixes each with its frame number (`[0123] Error ...`, `[0123] [Watchdog] ...`),
+          # while the JSON envelope repeats the whole log on one line. Log order is kept,
+          # so the first error (usually the cause) leads.
+          sig="$(grep -aE '^\[[0-9]+\] (Error |\[Watchdog\]|.*IM_ASSERT)' ui-monkey.log 2>/dev/null \
+                   | cut -c1-300 | awk '!seen[$0]++' | head -8 || true)"
+          [ -n "$sig" ] || sig="(no engine error line in the log: the child process died or hung; read the run log)"
           # Two DISTINCT issue shapes (Issue #1666 lesson — the original zero-match got
           # filed under the crash title with seed=unknown, sending a human after a
           # phantom crash). Each kind gets its own stable title so dedup upserts the
@@ -253,13 +266,26 @@ jobs:
             ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --frames=8000 --timeout=420000 --spawn --yes
           \`\`\`
 
-          See the job summary for the ImGui Test Engine error / assertion. This is Layer 2 of
+          What the engine reported:
+          \`\`\`
+          ${sig}
+          \`\`\`
+
+          See the job summary and the run log for the rest. This is Layer 2 of
           nightly-monkey-tester.md — a random-input UI defect (crash or Begin/End imbalance)."
           fi
           existing=$(gh issue list --state open --label bug --search "\"$title\" in:title" \
                        --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
-            gh issue comment "$existing" --body "Recurred: ${RUN_URL} (kind=${KIND}, seed \`${SEED:-unknown}\`)" || true
+            comment="Recurred: ${RUN_URL} (kind=${KIND}, seed \`${SEED:-unknown}\`)"
+            if [ "$KIND" != "harness" ]; then
+              comment="${comment}
+
+          \`\`\`
+          ${sig}
+          \`\`\`"
+            fi
+            gh issue comment "$existing" --body "$comment" || true
           else
             gh issue create --title "$title" --label bug --body "$body" || true
           fi
