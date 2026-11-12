@@ -76,16 +76,10 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
-      - name: Put LLVM (clang-cl) on PATH
-        shell: bash
-        run: |
-          # windows-2022 ships LLVM at C:\Program Files\LLVM; ensure clang-cl is
-          # reachable for the ninja-clang-asan preset.
-          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
-
-      - name: Verify clang-cl
-        shell: bash
-        run: clang-cl --version
+      # Same pinned clang-cl as the per-PR "Sanitizer (UBSan via Clang)" job;
+      # cmake/Sanitizers.cmake refuses the runner image's older LLVM under asan.
+      - name: Set up pinned LLVM (clang-cl)
+        uses: ./.github/actions/setup-pinned-llvm
 
       - name: Cache FetchContent _deps (clang-asan)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

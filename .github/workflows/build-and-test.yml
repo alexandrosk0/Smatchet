@@ -197,6 +197,10 @@ jobs:
           # (mirrors the `code=true` fail-safe above). Only a *non-empty* file list
           # with no Core/Plugins C++ match yields false (the intended skip on
           # docs/yaml/Standalone-only PRs). In `case`, * spans '/', so nested paths match.
+          # The sanitizer toolchain/config itself (cmake/Sanitizers.cmake, the pinned
+          # clang-cl action) also counts: a PR that changes how the lanes instrument
+          # must run them. #2400 changed those flags with no Core C++, so the UBSan
+          # lane skipped on it and its LLVM-20 crash first surfaced on later PRs.
           if [ -z "$files" ]; then
             source_core_cpp=true
           else
@@ -204,12 +208,12 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
-                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh)
+                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh|cmake/Sanitizers.cmake|.github/actions/setup-pinned-llvm/*)
                   source_core_cpp=true; break ;;
               esac
             done <<< "$files"
           fi
-          echo "Source/Core|Plugins C++ changed (asan gate): ${source_core_cpp}"
+          echo "Source/Core|Plugins C++ or sanitizer config changed (asan gate): ${source_core_cpp}"
           echo "source_core_cpp=${source_core_cpp}" >> "$GITHUB_OUTPUT"
           # Android-only diff gate: skip the desktop standalone builds + their
           # downstream tests when the diff touches ONLY android/mobile paths —
@@ -2319,8 +2323,8 @@ jobs:
   sanitizer-ubsan-pr:
     name: Sanitizer (UBSan via Clang)
     # Per-PR UBSan using ninja-clang-asan (clang-cl -fsanitize=address +
-    # -fsanitize=undefined). MSVC has no UBSan; clang-cl (present on windows-2022)
-    # delivers both via the clang-cl arm of smatchet_apply_sanitizers(). The doctest
+    # -fsanitize=undefined). MSVC has no UBSan; clang-cl (pinned LLVM via
+    # .github/actions/setup-pinned-llvm) delivers both via the clang-cl arm of smatchet_apply_sanitizers(). The doctest
     # rig is built instrumented too (SMATCHET_SANITIZE_TESTS=ON) — without it the
     # rig compiles its Core TUs uninstrumented and this run proves nothing.
     # docs/plans/active/build-quality-velocity-hardening.md #11.
@@ -2344,16 +2348,12 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
-      - name: Put LLVM (clang-cl) on PATH
-        shell: bash
-        run: |
-          # windows-2022 ships LLVM at C:\Program Files\LLVM; ensure clang-cl is
-          # reachable for the ninja-clang-asan preset. Mirrors sanitizer-nightly.yml.
-          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
-
-      - name: Verify clang-cl
-        shell: bash
-        run: clang-cl --version
+      # Pinned LLVM, not the runner image's C:\Program Files\LLVM (20.1.8 in
+      # 2026-11): clang-cl <= 20 miscompiles the ASan frame of a function holding a
+      # catch funclet, so the instrumented rig faulted in LaunchIntoSlot's
+      # `catch (const std::exception&)`. Rationale + version pin live in the action.
+      - name: Set up pinned LLVM (clang-cl)
+        uses: ./.github/actions/setup-pinned-llvm
 
       - name: Setup sccache (object cache)
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
