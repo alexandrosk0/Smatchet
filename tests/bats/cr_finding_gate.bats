@@ -219,7 +219,8 @@ provenance_step() {
 # overlong text would silently lose its tail: the very next-step it carries).
 # ASCII-only, so a byte-counting locale cannot cut it mid-character.
 pending_desc_action() {
-    sed -n 's/^ *post pending "\(.*\)"$/\1/p' "$ACTION"
+    # The generic one; the merge-only carry has its own (tested with shape 5).
+    sed -n 's/^ *post pending "\(awaiting .*\)"$/\1/p' "$ACTION"
 }
 fallback_desc_wf() {
     sed -n 's/^ *-f description="\(.*\)" \\$/\1/p' "$WF"
@@ -1859,7 +1860,7 @@ setup_mcf() {
     grep -q '^        mcf_scan() {'            "$BATS_TEST_TMPDIR/mcf.fn"
     grep -q '^        merge_carry_forward() {' "$BATS_TEST_TMPDIR/mcf.fn"
     grep -q 'merge-tree --write-tree'          "$BATS_TEST_TMPDIR/mcf.fn"
-    grep -q 'tac <<<"$cands"'                  "$BATS_TEST_TMPDIR/mcf.fn"
+    grep -q 'done 3<<<"$order"'                "$BATS_TEST_TMPDIR/mcf.fn"
     MR="$BATS_TEST_TMPDIR/mr"
     STATUS_DIR="$BATS_TEST_TMPDIR/statuses"
     GH_CALLS="$BATS_TEST_TMPDIR/gh-calls"
@@ -1897,13 +1898,17 @@ merge_into_pr() {
     mg rev-parse HEAD
 }
 
-# pass_status <sha> [state] [creator|null] [description] -> records the newest
-# `CR findings (0 actionable)` status on <sha> (an older pending one below it).
+# pass_status <sha> [state] [creator|null] [description] [target_url|null] ->
+# records the newest `CR findings (0 actionable)` status on <sha> (an older
+# pending one below it). The default target_url is a run of this gate, as
+# head-bound code posts it.
 pass_status() {
     jq -n --arg s "${2:-success}" --arg c "${3:-github-actions[bot]}" \
           --arg d "${4:-CodeRabbit: 0 actionable findings on current head}" \
+          --arg u "${5:-https://github.com/o/r/actions/runs/123}" \
         '[{context:"CR findings (0 actionable)", state:$s,
-           creator:(if $c == "null" then null else {login:$c} end), description:$d},
+           creator:(if $c == "null" then null else {login:$c} end), description:$d,
+           target_url:(if $u == "null" then null else $u end)},
           {context:"CR findings (0 actionable)", state:"pending", creator:{login:"github-actions[bot]"}, description:"older"}]' \
         > "$STATUS_DIR/$1"
 }
@@ -1932,8 +1937,11 @@ mcf_gh() {
             out=$(git -C "$MR" rev-list --parents -n1 "$a" | tr ' ' '\n' | tail -n +2 | jq -R . | jq -s 'map({sha: .}) | {parents: .}') ;;
         repos/o/r/pulls/1/commits*)
             # MCF_PAD_COMMITS fake oldest commits, to reach the 250 cap.
+            # MCF_API_REVERSE=1 lists newest first, as backdated commit dates
+            # can make the API do: the walk must take its order from git.
             out=$( { for _ in $(seq 1 "${MCF_PAD_COMMITS:-0}"); do echo 0000000000000000000000000000000000000000; done
-                     git -C "$MR" rev-list --reverse "develop..$SHA"; } | jq -R . | jq -s 'map({sha: .})') ;;
+                     if [ "${MCF_API_REVERSE:-}" = 1 ]; then git -C "$MR" rev-list "develop..$SHA"
+                     else git -C "$MR" rev-list --reverse "develop..$SHA"; fi; } | jq -R . | jq -s 'map({sha: .})') ;;
         repos/o/r/pulls/1)
             out=$(jq -n --arg r "${MCF_FIX_BASE_REF:-develop}" '{base:{ref:$r}}') ;;
         repos/o/r/git/ref/heads/*)
@@ -2061,6 +2069,9 @@ run_mcf() {
     pass_status "$p2" failure 'github-actions[bot]' 'CodeRabbit posted 1 actionable finding(s) on current head'
     pass_status "$p3" failure 'github-actions[bot]' 'CodeRabbit posted 2 actionable finding(s) on current head'
     [ "$(run_mcf "$m")" = blocked ]
+    # The same when the API lists the commits newest first (backdated dates):
+    # walked in the API's order, P1 would come first and carry.
+    [ "$(MCF_API_REVERSE=1 run_mcf "$m")" = blocked ]
     # Non-vacuity: without P3's verdict the same merge carries from P1.
     echo '[]' > "$STATUS_DIR/$p3"; echo '[]' > "$STATUS_DIR/$p2"
     [ "$(run_mcf "$m")" = "carried:$P1" ]
@@ -2219,7 +2230,8 @@ run_mcf() {
         > "$STATUS_DIR/$p3"
     [ "$(run_mcf "$m")" = blocked ]
     # Findings, then a real pass on the same commit: that pass is the verdict.
-    jq -n '[{context:"CR findings (0 actionable)", state:"success", creator:{login:"github-actions[bot]"}, description:"CodeRabbit: 0 actionable findings on current head"},
+    jq -n '[{context:"CR findings (0 actionable)", state:"success", creator:{login:"github-actions[bot]"}, description:"CodeRabbit: 0 actionable findings on current head",
+             target_url:"https://github.com/o/r/actions/runs/7"},
             {context:"CR findings (0 actionable)", state:"failure", creator:{login:"github-actions[bot]"}, description:"CodeRabbit posted 1 actionable finding(s) on current head"}]' \
         > "$STATUS_DIR/$p3"
     [ "$(run_mcf "$m")" = "carried:$p3" ]
@@ -2298,11 +2310,14 @@ shallow_clone() {
 
 # real_mcf_decide <head-sha> <graphql-fixture> [ask-state] — the real decide()
 # with the real merge_carry_forward(), gh split between the GraphQL fixture and
-# mcf_gh.
+# mcf_gh. The fixture's headRefOid becomes <head-sha> (the PR head is this
+# run's commit) unless MCF_LIVE_OID names another live head.
 real_mcf_decide() {
     (
         mcf_env "$1"
-        q=unused RESP_FIXTURE="$2" ASK="${3:-waiting}"
+        jq --arg o "${MCF_LIVE_OID:-$1}" '.data.repository.pullRequest.headRefOid = $o' "$2" \
+            > "$BATS_TEST_TMPDIR/bound.json" || exit 1
+        q=unused RESP_FIXTURE="$BATS_TEST_TMPDIR/bound.json" ASK="${3:-waiting}"
         post() { printf '%s: %s\n' "$1" "$2"; }
         maybe_nudge_review() { :; }
         oss_ask_state() { echo "$ASK"; }
@@ -2332,12 +2347,113 @@ real_mcf_decide() {
     [ "$(real_mcf_decide "$h" "$f" none)" = "failure: OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled" ]
 }
 
+@test "shape 5: a failed carry-forward read retries through the real decide(), never the arm's terminal failure" {
+    setup_jq; setup_decide; setup_mcf
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    pass_status "$P1"
+    m=$(merge_into_pr realfail)
+    out="$(GH_STATUS_FAIL=1 real_mcf_decide "$m" "$f" none)"
+    echo "$out" >&2
+    [ "${out##*$'\n'}" = retry ]
+    ! grep -qE '^(success|failure)' <<<"$out" || false
+    # Non-vacuity: the same head with the read working carries.
+    [ "$(real_mcf_decide "$m" "$f" none)" = "success: Merge-only head: PR diff identical to ${P1:0:12}, which passed this gate; CodeRabbit skipped the merge" ]
+}
+
+@test "decide() posts nothing while the PR's live head is not this run's commit" {
+    # Its evidence (reviews on headRefOid, the head's rollup) is about another
+    # commit: a verdict from it on SHA would be a pass CodeRabbit never gave.
+    setup_jq; setup_decide; setup_mcf
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    pass_status "$P1"
+    m=$(merge_into_pr moved)
+    out="$(MCF_LIVE_OID=0123456789abcdef0123456789abcdef01234567 real_mcf_decide "$m" "$f" none)"
+    echo "$out" >&2
+    [ "${out##*$'\n'}" = retry ]
+    ! grep -qE '^(success|failure)' <<<"$out" || false
+    # The ordinary path too: a clean CodeRabbit check run on another head.
+    c="$(checkrun_payload '[]' "[$(cr_run COMPLETED SUCCESS 'Review completed')]")"
+    [ "$(real_decide "$c")" = "success: CodeRabbit completed with no review on head (skipped/clean)" ]
+    sed 's/"headRefOid":"HEAD"/"headRefOid":"OTHER"/' "$c" > "$BATS_TEST_TMPDIR/other.json"
+    grep -q '"headRefOid":"OTHER"' "$BATS_TEST_TMPDIR/other.json"
+    out="$(real_decide "$BATS_TEST_TMPDIR/other.json")"
+    [ "${out##*$'\n'}" = retry ]
+    ! grep -qE '^(success|failure)' <<<"$out" || false
+}
+
+@test "shape 5: only a head-bound review pass is a credential" {
+    setup_mcf
+    m=$(merge_into_pr creds)
+    # Posted before head binding (no run target_url): never counts.
+    pass_status "$P1" success 'github-actions[bot]' 'CodeRabbit: 0 actionable findings on current head' null
+    [ "$(run_mcf "$m")" = blocked ]
+    pass_status "$P1" success 'github-actions[bot]' 'CodeRabbit: 0 actionable findings on current head' 'https://example.invalid/not-a-run'
+    [ "$(run_mcf "$m")" = blocked ]
+    # Passes that are not a CodeRabbit review of the commit: never count.
+    for d in 'CodeRabbit completed with no review on head (skipped/clean)' \
+             'self-improvement-only diff (1 file(s) under docs/self-improvement/**) — CR review exempt' \
+             'CodeRabbit not installed — gate not applicable' \
+             'Dependabot github-actions bump (dependabot[bot], x) — CR does not auto-review bot PRs; build/test/lint still enforced'; do
+        pass_status "$P1" success 'github-actions[bot]' "$d"
+        [ "$(run_mcf "$m")" = blocked ]
+    done
+    # Non-vacuity: each review pass does count.
+    for d in 'CodeRabbit: 0 actionable findings on current head' \
+             'CodeRabbit clean review on current head (nitpicks only, no actionable-count header)' \
+             'CodeRabbit clean incremental review on current head (no count header, no findings sections, no inline comments)'; do
+        pass_status "$P1" success 'github-actions[bot]' "$d"
+        [ "$(run_mcf "$m")" = "carried:$P1" ]
+    done
+}
+
+@test "shape 5: a conflicting merge resolved by hand stays blocked" {
+    setup_mcf
+    # develop edits the line right after the PR's insertion: the merge conflicts.
+    mg checkout -q develop
+    sed -i 's/^line 16$/line 16 (develop)/' "$MR/a.txt"
+    mg commit -qam 'develop edits next to the hunk'
+    ! mg merge-tree --write-tree "$P1" develop >/dev/null 2>&1 || false
+    # The resolution keeps both sides, as a conflict fix would.
+    m=$(merge_into_pr conflict "sed -i -e '/^<<<<<<< /d' -e '/^=======\$/d' -e '/^>>>>>>> /d' a.txt")
+    [ "$(mg rev-list --parents -n1 "$m" | wc -w)" -eq 3 ]
+    ! grep -q '^<<<<<<<' "$MR/a.txt" || false
+    pass_status "$P1"
+    [ "$(run_mcf "$m")" = blocked ]
+}
+
+@test "post() names this run as the status target_url when it has one" {
+    setup_post
+    gh() { post_gh "$@"; }
+    GITHUB_RUN_ID=42 post success "CodeRabbit: 0 actionable findings on current head"
+    grep -qx 'target_url=https://github.com/o/r/actions/runs/42' "$POST_LOG"
+    : > "$POST_LOG"
+    (unset GITHUB_RUN_ID; post success "CodeRabbit: 0 actionable findings on current head")
+    grep -qx 'state=success' "$POST_LOG"
+    ! grep -q 'target_url' "$POST_LOG" || false
+}
+
+@test "the self-improvement exemption is posted only while SHA is still the PR head" {
+    grep -qF 'files_head=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq' "$ACTION"
+    grep -qE '^ +if .*\[ "\$\{n_outside:-1\}" -eq 0 \] && \[ "\$files_head" = "\$SHA" \]; then$' "$ACTION"
+}
+
 @test "shape 5: decide() consults the carry-forward inside the manual-review arm, before the ask state, outside a subshell" {
     awk "/grep -qi 'manual review required'; then/,/^            fi\$/" "$ACTION" > "$BATS_TEST_TMPDIR/oss-arm.txt"
-    grep -qE '^ +if merge_carry_forward; then$' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    grep -qE '^ +merge_carry_forward$' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    grep -qE '^ +if \[ "\$mcf_rc" -eq 2 \]; then$' "$BATS_TEST_TMPDIR/oss-arm.txt"
     ! grep -qF '$(merge_carry_forward)' "$ACTION" || false
     [ "$(grep -nF 'merge_carry_forward' "$BATS_TEST_TMPDIR/oss-arm.txt" | head -1 | cut -d: -f1)" -lt \
       "$(grep -nF 'case "$(oss_ask_state)" in' "$BATS_TEST_TMPDIR/oss-arm.txt" | cut -d: -f1)" ]
+}
+
+@test "shape 5: the carry-forward's window-exhausted PENDING is the only other one, ASCII, names the next step, within 140 chars" {
+    [ "$(grep -cE '^ *post pending "' "$ACTION")" -eq 2 ]
+    d="$(sed -n 's/^ *post pending "\(merge-only head: .*\)"$/\1/p' "$ACTION")"
+    [ -n "$d" ]
+    [ "${#d}" -le 140 ]
+    run env LC_ALL=C grep -q '[^ -~]' <<< "$d"
+    [ "$status" -eq 1 ]
+    printf '%s' "$d" | grep -qF 're-run'
 }
 
 @test "shape 5: the carry-forward description fits GitHub's 140-char limit" {

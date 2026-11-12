@@ -86,10 +86,17 @@ runs:
           # GitHub truncates description at 140 chars.
           desc="${desc:0:140}"
           echo "CR finding gate -> ${state}: ${desc}"
+          # target_url names this run. It also marks a verdict as posted by
+          # head-bound code (decide() refuses evidence for any other head): the
+          # merge-only carry-forward accepts only such passes, never older ones.
+          local url_args=()
+          if [ -n "${GITHUB_RUN_ID:-}" ]; then
+            url_args=(-f target_url="${GITHUB_SERVER_URL:-https://github.com}/${OWNER}/${REPO}/actions/runs/${GITHUB_RUN_ID}")
+          fi
           gh api "repos/${OWNER}/${REPO}/statuses/${SHA}" \
             -f state="${state}" \
             -f context="${CONTEXT}" \
-            -f description="${desc}" >/dev/null \
+            -f description="${desc}" "${url_args[@]}" >/dev/null \
             || echo "WARN: gh api statuses POST failed (fork PR / missing statuses:write?)" >&2
         }
 
@@ -387,14 +394,21 @@ runs:
         #       MCF_BASE_REF (re-read here, not trusted from an earlier step, so
         #       a retarget mid-run cannot swap the base), and the second parent
         #       is an ancestor of the base tip;
-        #   (b) an earlier commit of this PR carries a passing verdict from THIS
-        #       gate: walking the PR's commits newest first, the newest status
-        #       in this context is success, created by github-actions[bot],
-        #       and not the label waiver. A commit met on the way whose newest
-        #       verdict is not such a pass, and that this gate ever failed with
-        #       "actionable finding(s)" (even under a newer waiver), stops the
-        #       walk, so findings on later code never get skipped for an older
-        #       pass;
+        #   (b) an earlier commit of this PR carries a passing REVIEW verdict
+        #       from THIS gate: walking the PR's commits newest first (git's
+        #       topological order, not the API's: commit dates are the author's
+        #       to set), the newest status in this context is success, created
+        #       by github-actions[bot], has this gate's run as its target_url,
+        #       and says CodeRabbit reviewed the commit clean (or is itself a
+        #       merge-only carry). The target_url marks a verdict posted by
+        #       head-bound code: decide() posts nothing on a commit that is no
+        #       longer the PR's head, so a pass cannot rest on a review of some
+        #       other commit. Older statuses were posted by code that read the
+        #       live head, so they never count. Waivers, exemptions and "no
+        #       review" passes never count. A commit met on the way whose
+        #       newest verdict is not such a pass, and that this gate ever
+        #       failed with "actionable finding(s)", stops the walk, so findings
+        #       on later code never get skipped for an older pass;
         #   (c) the head is exactly the reviewed commit merged with the base:
         #       `git merge-tree` of that commit and the second parent is clean
         #       and its tree is byte-for-byte the head's tree. This ties the
@@ -418,16 +432,18 @@ runs:
         # review or a human decision. `pulls/N/commits` lists only the first
         # 250 commits, so a PR that long fails closed.
         #
-        # Sets mcf_carried to the carried-from sha and returns 0 on a pass.
-        # Called directly (never inside $(...), which would lose the cache):
-        # the poll loop re-enters decide(), and a definitive answer cannot
-        # change mid-run. A failed read or fetch is not cached.
+        # Returns 0 on a pass (mcf_carried = the carried-from sha), 1 on a
+        # definitive block, 2 when a read or fetch failed (not cached: the
+        # caller retries). Called directly (never inside $(...), which would
+        # lose the cache): the poll loop re-enters decide(), and a definitive
+        # answer cannot change mid-run.
         MCF_BASE_REF="${MCF_BASE_REF:-develop}"
         MCF_MAX_CANDIDATES="${MCF_MAX_CANDIDATES:-30}"
         MCF_MAX_DIFFS="${MCF_MAX_DIFFS:-5}"
         MCF_GIT_DIR="${MCF_GIT_DIR:-.}"
         mcf_state=""
         mcf_carried=""
+        mcf_retry=false
         mcf_git() { git -C "$MCF_GIT_DIR" "$@"; }
         pr_diff_norm() {
           # $1 base sha, $2 commit sha -> normalised base...commit diff on stdout.
@@ -443,7 +459,7 @@ runs:
         }
         # mcf_scan -> 0 pass (mcf_carried set), 1 definitive block, 2 read failure.
         mcf_scan() {
-          local base_ref base_sha parents shallow budget p2 mtree htree head_norm cands c st findings state desc cand_norm
+          local base_ref base_sha parents shallow budget p2 mtree htree head_norm cands order c st findings state cand_norm
           local n_seen=0 n_diffed=0
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || return 1
           # (a), cheap half first: ordinary heads stop here, before any fetch.
@@ -472,34 +488,35 @@ runs:
           mcf_git merge-base --is-ancestor "$p2" "$base_sha" 2>/dev/null || return 1
           htree=$(mcf_git rev-parse "${SHA}^{tree}" 2>/dev/null) || return 2
           head_norm=$(pr_diff_norm "$base_sha" "$SHA") || return 1
-          # (b) + (c). Oldest first from the API; walk newest first. A failed
-          # page fails closed rather than trusting a partial list, and so does
-          # a list at the endpoint's 250-commit cap (its newest commits are cut).
+          # (b) + (c). The API says which commits are the PR's; git says their
+          # order, newest first. A failed page fails closed rather than
+          # trusting a partial list, and so does a list at the endpoint's
+          # 250-commit cap (its newest commits are cut).
           cands=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/commits?per_page=100" \
                     --jq '.[].sha' 2>/dev/null) || return 2
           [ "$(grep -c . <<<"$cands")" -lt 250 ] || return 1
-          while read -r c; do
+          order=$(mcf_git rev-list --topo-order "$SHA" "^$base_sha" 2>/dev/null) || return 2
+          # fd 3, so nothing in the loop body can read candidates off stdin.
+          while read -r c <&3; do
             [[ "$c" =~ ^[0-9a-f]{40}$ ]] || continue
             [ "$c" != "$SHA" ] || continue
+            grep -qxF "$c" <<<"$cands" || continue
             n_seen=$((n_seen + 1))
             [ "$n_seen" -le "$MCF_MAX_CANDIDATES" ] || break
-            # One field per line of jq output, so an empty field cannot shift
-            # the next one in (a tab-joined read collapses it): whether this
-            # gate ever failed the commit with findings, then the state and
-            # description of the newest status in this context, the state
-            # only when this gate's own token created it.
+            # Two lines of jq output, so an empty field cannot shift into the
+            # other's place (a tab-joined read collapses it): whether this gate
+            # ever failed the commit with findings, then the state of the
+            # newest status in this context, empty unless it is a credential.
             st=$(gh api "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" \
                    --jq "[.[] | select(.context == \"${CONTEXT}\")] as \$s
                          | ([\$s[] | select((.creator.login // \"\") == \"github-actions[bot]\" and .state == \"failure\"
                                             and ((.description // \"\") | test(\"actionable finding\")))] | length > 0 | tostring),
-                           (\$s[0] | if . != null and (.creator.login // \"\") == \"github-actions[bot]\" then (.state // \"\") else \"\" end),
-                           (\$s[0] | if . != null then ((.description // \"\") | gsub(\"[\\r\\n]\"; \" \")) else \"\" end)" \
+                           (\$s[0] | if . != null and (.creator.login // \"\") == \"github-actions[bot]\"
+                                        and ((.target_url // \"\") | test(\"/actions/runs/[0-9]+$\"))
+                                        and ((.description // \"\") | test(\"^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )\"))
+                                     then (.state // \"\") else \"\" end)" \
                    2>/dev/null) || return 2
-            findings="${st%%$'\n'*}"; st="${st#*$'\n'}"
-            state="${st%%$'\n'*}"; desc="${st#*$'\n'}"
-            if [ "$state" = success ]; then
-              case "$desc" in *"gate overridden"*) state=waived ;; esac
-            fi
+            findings="${st%%$'\n'*}"; state="${st#*$'\n'}"
             # Not a pass: if this gate ever reported findings here, newer code
             # had findings, so an older pass must not stand in for it.
             if [ "$state" != success ]; then
@@ -517,7 +534,7 @@ runs:
               mcf_carried="$c"
               return 0
             fi
-          done < <(tac <<<"$cands")
+          done 3<<<"$order"
           return 1
         }
         merge_carry_forward() {
@@ -530,10 +547,10 @@ runs:
           rc=$?
           case "$rc" in
             0) mcf_state=yes; return 0 ;;
-            1) mcf_state=no; mcf_carried="" ;;
-            *) mcf_carried="" ;;
+            1) mcf_state=no; mcf_carried=""; return 1 ;;
           esac
-          return 1
+          mcf_carried=""
+          return 2
         }
 
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
@@ -625,7 +642,10 @@ runs:
         else
           n_files=0; n_outside=1   # gh error (partial/none) or empty — fail closed
         fi
-        if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ]; then
+        # The file list describes the LIVE head; it proves nothing about SHA
+        # if the head moved since the Resolve step.
+        files_head=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.head.sha // empty' 2>/dev/null) || files_head=""
+        if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ] && [ "$files_head" = "$SHA" ]; then
           post success "self-improvement-only diff (${n_files} file(s) under docs/self-improvement/**) — CR review exempt"
           exit 0
         fi
@@ -716,6 +736,19 @@ runs:
             return 1
           fi
           any_fetch_ok=true
+
+          # Every verdict below is posted to SHA, but read from the PR's live
+          # head. If the head moved, that evidence is about another commit: post
+          # nothing on it (the run for the new head owns that head) and retry,
+          # which also rides out a GraphQL read that lags the REST-resolved SHA.
+          # Without this, a pass could land on a commit CodeRabbit never saw,
+          # and the merge-only carry-forward would trust it.
+          local live_oid
+          live_oid=$(printf '%s' "$resp" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null) || live_oid=""
+          if [ "$live_oid" != "$SHA" ]; then
+            echo "CR finding gate: PR head is ${live_oid:0:12}, not ${SHA:0:12}; this run's evidence is not about its commit"
+            return 1
+          fi
 
           # Count CR reviews on the current head that actually CARRY A VERDICT —
           # i.e. have a non-blank top-level body.
@@ -898,10 +931,22 @@ runs:
               # unchanged. Checked before the ask state, because on such a head
               # an ask draws "No files to review" and never settles anything.
               # Called directly, not in $(...): its per-run cache lives in
-              # globals that a subshell would throw away.
-              if merge_carry_forward; then
+              # globals that a subshell would throw away. A failed read or
+              # fetch retries rather than fall through: with no ask on the head
+              # (the usual case on a merge) the arm below would post a terminal
+              # failure naming an ask that gets "No files to review".
+              local mcf_rc
+              merge_carry_forward
+              mcf_rc=$?
+              mcf_retry=false
+              if [ "$mcf_rc" -eq 0 ]; then
                 post success "Merge-only head: PR diff identical to ${mcf_carried:0:12}, which passed this gate; CodeRabbit skipped the merge"
                 exit 0
+              fi
+              if [ "$mcf_rc" -eq 2 ]; then
+                mcf_retry=true
+                echo "CR finding gate: merge-only carry-forward check could not complete on ${SHA:0:12}; retrying"
+                return 1
               fi
               # If a human already asked FOR THIS HEAD, keep waiting — CR may
               # still be working (synchronize / human-trigger comment re-runs land
@@ -1124,6 +1169,8 @@ runs:
         # cuts at 140, and nothing parses this text.
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
+        elif [ "$mcf_retry" = true ]; then
+          post pending "merge-only head: the carry-forward check could not read the API or fetch git history; re-run this gate"
         else
           post pending "awaiting CodeRabbit on current head; if stalled, a human comments '@coderabbitai review' (scripts/dev/trigger-coderabbit-review.sh)"
         fi
