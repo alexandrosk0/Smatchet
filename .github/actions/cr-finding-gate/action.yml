@@ -23,7 +23,7 @@ inputs:
     description: Pull-request number to evaluate.
     required: true
   head-sha:
-    description: Head commit SHA the status is posted against.
+    description: Commit the status is posted against (the PR head, or the commit a submitted review is on).
     required: true
 
 runs:
@@ -514,8 +514,9 @@ runs:
             # ever failed the commit with findings, then the state of the
             # newest TERMINAL status in this context (success or failure; a
             # later pending or error is a run that did not conclude, not a new
-            # verdict), empty unless it is this gate's credential. tr: a
-            # Windows jq writes CRLF; harmless elsewhere.
+            # verdict), empty unless it is this gate's credential, "none" if
+            # there is no terminal status at all. tr: a Windows jq writes CRLF;
+            # harmless elsewhere.
             st=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" 2>/dev/null \
                    | jq -r --arg ctx "$CONTEXT" '
                        [add // [] | .[] | select(.context == $ctx)] as $s
@@ -523,7 +524,8 @@ runs:
                                          and ((.description // "") | test("actionable finding")))]
                           | length > 0 | tostring),
                          ([$s[] | select(.state == "success" or .state == "failure")][0]
-                          | if . != null and (.creator.login // "") == "github-actions[bot]"
+                          | if . == null then "none"
+                            elif (.creator.login // "") == "github-actions[bot]"
                                and ((.target_url // "") | test("/actions/runs/[0-9]+$"))
                                and ((.description // "") | test("^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )"))
                             then (.state // "") else "" end)' 2>/dev/null \
@@ -531,8 +533,19 @@ runs:
             findings="${st%%$'\n'*}"; state="${st#*$'\n'}"
             # Not a pass: if this gate ever reported findings here, newer code
             # had findings, so an older pass must not stand in for it.
+            #
+            # CodeRabbit reviewed it but no run has posted its verdict yet (the
+            # review-triggered run on it is still going, typically because the
+            # develop merge was pushed seconds after the review): its verdict is
+            # unknown, so the walk must not skip past it to an older pass, and
+            # must not block on it either. Retry (not cached) until that verdict
+            # lands; the window ends in the carry PENDING if it never does.
             if [ "$state" != success ]; then
               [ "$findings" = false ] || return 1
+              if [ "$state" = none ] && mcf_cr_reviewed "$c"; then
+                echo "CR finding gate: CodeRabbit reviewed ${c:0:12} but no verdict is posted on it yet; retrying"
+                return 2
+              fi
               continue
             fi
             n_diffed=$((n_diffed + 1))
@@ -548,6 +561,16 @@ runs:
             fi
           done 3<<<"$order"
           return 1
+        }
+        # mcf_cr_reviewed <commit>: true when decide()'s GraphQL response (resp,
+        # in scope when called from decide) holds a CodeRabbit review on that
+        # commit with a body, the same selection decide() counts as a review.
+        mcf_cr_reviewed() {
+          printf '%s' "${resp:-}" | jq -e --arg c "$1" '
+            [ .data.repository.pullRequest.reviews.nodes[]?
+              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                       and (.commit.oid // "") == $c
+                       and ((.body // "") | test("\\S"))) ] | length > 0' >/dev/null 2>&1
         }
         merge_carry_forward() {
           case "$mcf_state" in
@@ -800,8 +823,8 @@ runs:
           #
           # The no-review-node arms read the rollup from `commits(last:1)`, the
           # PR's last commit in GitHub's order (normally the head), not SHA.
-          # If the head moved, that evidence is about another commit: post nothing (the run for
-          # the new head owns it) and retry, which also rides out a GraphQL read
+          # If the head moved, that evidence is about another commit: post
+          # nothing (the run for the new head owns it) and retry, which also rides out a GraphQL read
           # that lags the REST-resolved SHA. If the head is still elsewhere when
           # the window closes, the run posts nothing at all (see the poll loop),
           # so it cannot overwrite SHA's settled verdict either. Without this, a
@@ -1214,7 +1237,7 @@ runs:
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
         elif [ "$mcf_retry" = true ]; then
-          post pending "merge-only head: the carry-forward check could not read the API or fetch git history; re-run this gate"
+          post pending "merge-only head: carry-forward not finished (API or git read failed, or a reviewed commit has no verdict yet); re-run this gate"
         else
           post pending "awaiting CodeRabbit on current head; if stalled, a human comments '@coderabbitai review' (scripts/dev/trigger-coderabbit-review.sh)"
         fi

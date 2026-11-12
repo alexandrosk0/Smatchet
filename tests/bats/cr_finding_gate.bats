@@ -2154,6 +2154,65 @@ run_mcf() {
     )
 }
 
+# cr_review_resp <commit> [body] -> a GraphQL response holding one CodeRabbit
+# review on <commit>, as decide() has it in scope when it calls the carry.
+cr_review_resp() {
+    jq -n --arg c "$1" --arg b "${2-Actionable comments posted: 0}" \
+        '{data:{repository:{pullRequest:{reviews:{nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:$b}]}}}}}'
+}
+
+@test "shape 5: a commit CodeRabbit reviewed with no verdict posted yet makes the carry retry, never skip past it" {
+    setup_mcf
+    # P2 changes nothing, so a walk that skipped it would carry P1's pass.
+    mg checkout -q -B waitc "$P1"
+    mg commit -q --allow-empty -m 'no-op after the pass'
+    P2=$(mg rev-parse HEAD)
+    m=$(merge_into_pr waitm '' "$P2")
+    pass_status "$P1"
+    # Non-vacuity: with no review on P2 the walk passes it and carries P1.
+    [ "$(run_mcf "$m")" = "carried:$P1" ]
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P2")"
+        rc=0; merge_carry_forward || rc=$?
+        [ "$rc" -eq 2 ] || exit 1
+        [ -z "$mcf_state" ] || exit 1
+        # P2's verdict lands: the same run's next pass carries from it.
+        pass_status "$P2"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P2" ] || exit 1
+    ) || false
+    # A thread reply (blank body) is not a review; a terminal non-credential
+    # status is a posted verdict. Neither waits.
+    printf '[]' > "$STATUS_DIR/$P2"
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P2" '')"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    ) || false
+    pass_status "$P2" failure 'github-actions[bot]' "OSS <10 stars: comment '@coderabbitai review'"
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P2")"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    ) || false
+}
+
+@test "shape 5: through the real decide(), a reviewed commit with no verdict yet retries with the carry PENDING cause" {
+    setup_jq; setup_decide; setup_mcf
+    m=$(merge_into_pr realwait)
+    f="$(checkrun_payload "[{\"author\":{\"login\":\"coderabbitai\"},\"commit\":{\"oid\":\"$P1\"},\"state\":\"COMMENTED\",\"submittedAt\":\"2026-11-12T10:00:00Z\",\"body\":\"Actionable comments posted: 0\"}]" "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    out="$(real_mcf_decide "$m" "$f" none)"
+    echo "$out" >&2
+    [ "${out##*$'\n'}" = retry ]
+    grep -q "CodeRabbit reviewed ${P1:0:12} but no verdict is posted on it yet" <<<"$out"
+    ! grep -qE '^(success|failure)' <<<"$out" || false
+    pass_status "$P1"
+    [ "$(real_mcf_decide "$m" "$f" none)" = "success: Merge-only head: PR diff identical to ${P1:0:12}, which passed this gate; CodeRabbit skipped the merge" ]
+}
+
 @test "shape 5: the answer is cached per run (the poll loop re-enters decide)" {
     setup_mcf
     m=$(merge_into_pr cache)
