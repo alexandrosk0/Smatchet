@@ -11,6 +11,8 @@
 #                  there (ASan + UBSan, one runtime: clang_rt.asan_dynamic).
 #                  Native Clang -fsanitize=address,undefined (full suite).
 #                  CI uses both ninja-msvc-asan and ninja-clang-asan (clang-cl).
+#                  clang-cl ASan needs LLVM >= 22 (configure fails below that;
+#                  CI pins it via .github/actions/setup-pinned-llvm).
 #                  Legacy MinGW/MSYS2 GCC does NOT ship ASAN/UBSAN runtimes;
 #                  smatchet_verify_mingw_gcc_sanitizer_runtimes() catches that.
 #   tsan         : MSVC-ABI compilers (MSVC, clang-cl) warn and ignore it.
@@ -60,6 +62,24 @@ function(smatchet_apply_sanitizers tgt)
                 -D_DISABLE_STRING_ANNOTATION
                 -D_DISABLE_VECTOR_ANNOTATION)
             if(_clang_cl)
+                # Version floor. clang-cl up to at least 20 (19.1.5 locally, 20.1.8
+                # on the windows-2022 image) miscompiles the ASan stack frame of a
+                # function that holds a C++ catch funclet: the funclet reads the
+                # caught exception through the wrong frame slot and faults on the
+                # ASan frame magic, so `catch (const std::exception& e) { e.what(); }`
+                # crashes a clean binary (AsyncLoadGatePure.h LaunchIntoSlot was the
+                # first rig casualty). 22.1.6 is the first version verified clean;
+                # CI pins it via .github/actions/setup-pinned-llvm. Fail at configure
+                # rather than let the rig die at run time on a toolchain bug.
+                if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 22)
+                    message(FATAL_ERROR
+                        "clang-cl ${CMAKE_CXX_COMPILER_VERSION} (${CMAKE_CXX_COMPILER}) is too "
+                        "old for SMATCHET_SANITIZER=asan: clang-cl 19 and 20 miscompile ASan "
+                        "stack frames around C++ catch funclets (the instrumented exe "
+                        "crashes inside its own catch blocks) and 22 is the first version "
+                        "verified clean. Put LLVM >= 22 first on PATH "
+                        "(the VS-bundled clang-cl that vcvars exports is older).")
+                endif()
                 # clang-cl is a Clang front end, so unlike cl.exe it CAN carry UBSan
                 # next to ASan; the UBSan handlers ship inside clang_rt.asan_dynamic,
                 # so no second runtime is linked (a clang_rt.ubsan_standalone beside
