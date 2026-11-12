@@ -34,6 +34,36 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-11 · PR #2392 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after a manual CodeRabbit trigger was rate-limited
+
+### What escaped
+`fix(agent-eval): parse real-mode findings from code-review severity headings` (#2392, head `ae8256ae2451`) merged 2026-11-11T03:20:47Z as `671aa9c8e`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`, `crState: NONE+rate-limit CODE-PR-pause`.
+
+The diff is test tooling: `scripts/dev/agent-eval-run.sh` (+188/−6), `tests/bats/agent_eval_run.bats` (+286/−1) and `docs/agent-eval/result-schema.json` (+6/−1). No C++ and no gate script. On the head:
+- CodeRabbit never reviewed the PR. Its first auto-generated comment (2026-11-04) was a rate-limit notice. A human-credentialed `@coderabbitai review` from `scripts/dev/trigger-coderabbit-review.sh` at 2026-11-11T02:26:59Z got a `Review rate limited` check run (`neutral`).
+- `Cursor Bugbot` was `neutral` (`Error`).
+- The PR body carries `adversarial-code-review: 11 findings, 10 fixed, 1 deferred to user` and `independent-review: code-review agent, separate subagent context, 6 rounds; 11 findings, 10 fixed, 1 deferred to user`. Both were pinned to the merged head.
+
+Both labels went on at 2026-11-11T02:52:57Z, after the rate-limited trigger, with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request (under 10 stars), and the on-request review was refused by its quota. `merge-gates.sh` correctly held the PR (`NONE+rate-limit CODE-PR-pause`) and named the `cr-out-of-band` + `cr-disposition:` pair as the escape. This PR took that documented waiver.
+
+The disposition names the standing cause (auto-review off) rather than the proximate one (the manual trigger was rate-limited); `cr-disposition:cr-rate-limited` would have matched the snapshot's `crState` more exactly. Either waives the same block.
+
+Unlike #2395, the merge did not ship unreviewed: a separate-context code-review agent ran six rounds on the diff and its findings were fixed or deferred in the open. What is missing is the *external* reviewer, which is the gap the review-assurance entry tracks.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for a rate-limited CodeRabbit on a code PR, applied with the maintainer's OK, on a test-tooling diff with an independent multi-round review recorded on the head.
+
+The upstream cause (CodeRabbit reviews only on request and runs out of quota, Bugbot errors or is capped) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md). Enabling CodeRabbit auto-review is a human account action, not a gate (2026-08-19 #2127 entry). This PR is added to that entry's **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the independent review's one open item (eval packets don't ask for the heading format) was surfaced and deferred to the maintainer in the PR body. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
 ## 2026-11-10 · PR #2395 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a one-line relay config change CodeRabbit skipped
 
 ### What escaped
