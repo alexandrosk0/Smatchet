@@ -379,7 +379,7 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     }
 
     // Action buttons on a separate row below the title for a more compact header. The commit action
-    // comes first and the destructive one last; tests/ui/views_editor_header.test.cpp pins the order.
+    // comes first and the destructive one last; the ViewsEditorHeader UI test pins the order.
     if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
                                   "Apply changes and sync issues (Ctrl+Enter).")) {
         ctx.applyAndSync();

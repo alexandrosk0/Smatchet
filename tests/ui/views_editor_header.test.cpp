@@ -95,9 +95,17 @@ bool SharesOneRow(const HeaderRow& row) {
 // The first ItemInfo for a ref yields a frame, and the content above the row can still be moving
 // after the backend flip, so a pass can mix two layouts. A pass counts only if no frame elapsed
 // during it and the three buttons report one row; a row that never forms is a failure, so this also
-// asserts the same-row half of the layout.
+// asserts the same-row half of the layout. Focus is re-armed on every attempt: another docked window
+// can take the tab at any time, and a pane that stops submitting must be waited on, not failed on.
 bool ReadSettledRow(ImGuiTestContext* ctx, HeaderRow* row) {
+    int paneMissing = 0;
     for (int i = 0; i < kRowSettleAttempts; ++i) {
+        g_ui.requestViewsDashboardFocus = true;
+        if (FindLiveEditorPane() == nullptr) {
+            ++paneMissing;
+            ctx->Yield();
+            continue;
+        }
         const int frameAtStart = ctx->FrameCount;
         if (!LocateItem(ctx, kApplyRef, &row->apply) || !LocateItem(ctx, "Discard", &row->discard) ||
             !LocateItem(ctx, "Delete view", &row->del)) {
@@ -107,6 +115,10 @@ bool ReadSettledRow(ImGuiTestContext* ctx, HeaderRow* row) {
             return true;
         }
         ctx->Yield();
+    }
+    if (paneMissing == kRowSettleAttempts) {
+        ctx->LogError("Views editor pane never became live (%d/%d attempts)", paneMissing, kRowSettleAttempts);
+        return false;
     }
     ctx->LogError("Views editor header buttons never shared a row: y = %.1f, %.1f, %.1f", row->apply.RectFull.Min.y,
                   row->discard.RectFull.Min.y, row->del.RectFull.Min.y);
