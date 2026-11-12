@@ -87,8 +87,9 @@ runs:
           desc="${desc:0:140}"
           echo "CR finding gate -> ${state}: ${desc}"
           # target_url names this run. It also marks a verdict as posted by
-          # head-bound code (decide() refuses evidence for any other head): the
-          # merge-only carry-forward accepts only such passes, never older ones.
+          # SHA-bound code (decide() reads only reviews on SHA, and no rollup
+          # of another head): the merge-only carry-forward accepts only such
+          # passes, never older ones.
           local url_args=()
           if [ -n "${GITHUB_RUN_ID:-}" ]; then
             url_args=(-f target_url="${GITHUB_SERVER_URL:-https://github.com}/${OWNER}/${REPO}/actions/runs/${GITHUB_RUN_ID}")
@@ -402,9 +403,10 @@ runs:
         #       created by github-actions[bot], has this gate's run as its
         #       target_url, and says CodeRabbit reviewed the commit clean (or
         #       is itself a merge-only carry). The target_url marks a verdict
-        #       posted by head-bound code: decide() posts nothing on a commit
-        #       that is no longer the PR's head, so a pass cannot rest on a
-        #       review of some other commit. Older statuses were posted by code that read the
+        #       posted by SHA-bound code: decide() reads only CodeRabbit reviews
+        #       on SHA itself, and posts nothing from the head's rollup while
+        #       SHA is not the head, so a pass cannot rest on a review of some
+        #       other commit. Older statuses were posted by code that read the
         #       live head, so they never count. Waivers, exemptions and "no
         #       review" passes never count. A commit met on the way whose
         #       newest verdict is not such a pass, and that this gate ever
@@ -797,8 +799,8 @@ runs:
           # skip a findings failure that was never posted.
           #
           # The no-review-node arms read the rollup from `commits(last:1)`, the
-          # PR's last commit, which is the head, not SHA. If the head moved,
-          # that evidence is about another commit: post nothing (the run for
+          # PR's last commit in GitHub's order (normally the head), not SHA.
+          # If the head moved, that evidence is about another commit: post nothing (the run for
           # the new head owns it) and retry, which also rides out a GraphQL read
           # that lags the REST-resolved SHA. If the head is still elsewhere when
           # the window closes, the run posts nothing at all (see the poll loop),

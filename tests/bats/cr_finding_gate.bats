@@ -2390,6 +2390,46 @@ real_mcf_decide() {
     ! grep -qE '^(success|failure)' <<<"$out" || false
 }
 
+# resolve_pr <event> <review-commit> <api-head> -> "sha=<x>" from the workflow's
+# real Resolve PR script, with the expressions filled in and gh stubbed to
+# report <api-head> as the PR's live head.
+resolve_pr() {
+    local f="$BATS_TEST_TMPDIR/resolve.sh"
+    awk '/^      - name: Resolve PR$/{f=1} f && /^        run: \|$/{r=1; next}
+         r && /^      [-#]/{exit} r{sub(/^          /, ""); print}' "$WF" \
+      | sed -e 's/\${{ github.event_name }}/'"$1"'/g' \
+            -e 's/\${{ github.event.pull_request.number }}/7/g' \
+            -e 's/\${{ github.event.issue.number }}/7/g' \
+            -e 's|\${{ github.repository }}|o/r|g' > "$f"
+    # Non-vacuity: the extraction is the real step, with no expression left.
+    grep -q 'REVIEW_COMMIT' "$f" || return 1
+    ! grep -q '\${{' "$f" || return 1
+    (
+        gh() { [ -n "$API_HEAD" ] && printf '%s develop\n' "$API_HEAD"; }
+        export -f gh
+        GITHUB_OUTPUT="$BATS_TEST_TMPDIR/out" EVENT_NAME="$1" REVIEW_COMMIT="$2" API_HEAD="$3" \
+            bash "$f" || exit 1
+        grep '^sha=' "$BATS_TEST_TMPDIR/out"
+    )
+    rm -f "$BATS_TEST_TMPDIR/out"
+}
+
+@test "Resolve PR: a submitted review evaluates the commit it reviewed; every other event, the live head" {
+    c=1111111111111111111111111111111111111111
+    m=2222222222222222222222222222222222222222
+    grep -qF 'REVIEW_COMMIT: ${{ github.event.review.commit_id }}' "$WF"
+    [ "$(resolve_pr pull_request_review "$c" "$m")" = "sha=$c" ]
+    [ "$(resolve_pr pull_request_review "$m" "$m")" = "sha=$m" ]
+    for e in pull_request pull_request_review_comment issue_comment; do
+        [ "$(resolve_pr "$e" "$c" "$m")" = "sha=$m" ]
+    done
+    # A missing or malformed commit id falls back to the live head ...
+    [ "$(resolve_pr pull_request_review '' "$m")" = "sha=$m" ]
+    [ "$(resolve_pr pull_request_review 'abc; echo pwned' "$m")" = "sha=$m" ]
+    # ... and a failed PR read still resolves nothing, so nothing is evaluated.
+    [ "$(resolve_pr pull_request_review "$c" '')" = "sha=" ]
+}
+
 @test "decide() still records a verdict on this run's commit when CodeRabbit reviewed it and the head has moved on" {
     # CR reviewed SHA, then a develop merge moved the head before this run
     # read GraphQL. The review is about SHA itself, so its verdict must still
