@@ -2990,6 +2990,45 @@ TEST_CASE("A completed delta reload publishes the view's own ids, not the hierar
     CHECK(rig.deps.ViewListed == std::vector<std::string>{"ABC-1"});
 }
 
+TEST_CASE("A complete reload reports its own query, view, listing and the rows it dropped") {
+    DeltaRig rig;
+    rig.cfg.JqlQuery = "status != Done";
+    ViewDefinition view;
+    view.Id = "view-1";
+    view.Name = "Open work";
+    rig.views.ActiveViewId = "view-1";
+    rig.views.Views.push_back(view);
+    rig.deps.ActiveTickets().push_back(MakeTicket("ABC-9", "gone"));
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, true);
+
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+
+    REQUIRE(rig.deps.ViewListingCompletions.size() == 1);
+    const ViewListingCompletion& completion = rig.deps.ViewListingCompletions[0];
+    CHECK(completion.query == "status != Done");
+    CHECK(completion.viewId == "view-1");
+    CHECK(completion.viewName == "Open work");
+    CHECK(completion.listed == std::vector<std::string>{"ABC-1"});
+    CHECK(completion.stillHeld.count("ABC-1") == 1);
+    REQUIRE(completion.droppedRows.size() == 1);
+    CHECK(completion.droppedRows[0].id == "ABC-9");
+    CHECK(completion.droppedRows[0].GetFieldValue("summary") == "gone");
+}
+
+TEST_CASE("An empty or partial reload reports no listing") {
+    DeltaRig rig;
+    rig.fake->SetFetchIssuesResult({}, true);
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+    CHECK(rig.deps.ViewListingCompletions.empty());
+
+    rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1")}, false);
+    rig.Sync(smatchet::sync::SyncMode::Full);
+    REQUIRE(rig.Settle());
+    CHECK(rig.deps.ViewListingCompletions.empty());
+}
+
 TEST_CASE("A full reload publishes the ids its query streamed") {
     DeltaRig rig;
     rig.fake->SetFetchIssuesResult({Stamped("ABC-1", "T1"), Stamped("ABC-2", "T1")}, true);

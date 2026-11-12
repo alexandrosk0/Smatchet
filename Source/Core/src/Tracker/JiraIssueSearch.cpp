@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "JiraChangelogDeltaPure.h"
 #include "JiraCommentMappingPure.h"
 #include "JiraIssueMappingPure.h"
 #include "Sync/JqlChangedSincePure.h"
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -993,6 +995,39 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
         return KeysResult::Err(TrackerErrorUnknown("keys-only membership fetch returned a partial page walk"));
     }
     return KeysResult::Ok(std::move(keys));
+}
+
+Result<std::vector<TrackerFieldChange>, TrackerError>
+JiraClient::FetchIssueFieldChanges(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                   const CancelCallback& shouldCancel) {
+    using ChangesResult = Result<std::vector<TrackerFieldChange>, TrackerError>;
+    std::vector<TrackerFieldChange> changes;
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    constexpr std::size_t kMaxKeysPerRequest = 40;
+    for (std::size_t offset = 0; offset < issueKeys.size(); offset += kMaxKeysPerRequest) {
+        const std::size_t count = (std::min)(kMaxKeysPerRequest, issueKeys.size() - offset);
+        const std::string url = base +
+                                "/rest/api/3/search/jql?jql=" + UrlEncode(BuildKeyInJql(issueKeys, offset, count)) +
+                                "&maxResults=" + std::to_string(count) + "&fields=summary&expand=changelog";
+        const auto response = TrackerGetLogged("JiraClient", url, headers, shouldCancel);
+        if (response.status_code != 200) {
+            if (shouldCancel && shouldCancel()) {
+                return ChangesResult::Err(TrackerErrorCancelled());
+            }
+            return ChangesResult::Err(ClassifyRejectedHttpStatus(
+                response.status_code, smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text)));
+        }
+        const nlohmann::json body = smatchet::json_safe::ParseBoundedOrDiscarded(response.text);
+        if (!body.is_object() || !body.contains("issues") || !body["issues"].is_array()) {
+            return ChangesResult::Err(TrackerErrorUnknown("field-change search returned an unexpected body"));
+        }
+        for (const nlohmann::json& issue : body["issues"]) {
+            std::vector<TrackerFieldChange> rows = JiraChangelogDeltaPure::AllChangesFromIssueJson(issue);
+            changes.insert(changes.end(), std::make_move_iterator(rows.begin()), std::make_move_iterator(rows.end()));
+        }
+    }
+    return ChangesResult::Ok(std::move(changes));
 }
 
 Result<bool, TrackerError> JiraClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {

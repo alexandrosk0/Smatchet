@@ -47,10 +47,13 @@ inline bool IsTrackerRefusal(const TrackerError& error) {
 /// ticket and goes into `refusedKeys`, and the rest load normally. Any other failure, or a refusal once
 /// `budget` extra requests are spent, is returned as an error (the caller then keeps the cached rows).
 /// Once `cancelled` reports true no further request is sent and a Cancelled error is returned.
-inline Result<std::vector<CachedTicket>, TrackerError>
-FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
-                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
-    using R = Result<std::vector<CachedTicket>, TrackerError>;
+/// `Item` is whatever one key yields: a ticket row, or the field changes of its history.
+template <typename Item>
+Result<std::vector<Item>, TrackerError> FetchItemsIsolatingRefusals(
+    const std::function<Result<std::vector<Item>, TrackerError>(const std::vector<std::string>&)>& fetch,
+    const std::function<bool()>& cancelled, const std::vector<std::string>& keys, int& budget,
+    std::vector<std::string>& refusedKeys) {
+    using R = Result<std::vector<Item>, TrackerError>;
     if (cancelled()) {
         return R::Err(TrackerErrorCancelled());
     }
@@ -60,28 +63,35 @@ FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool(
     }
     if (keys.size() == 1) {
         refusedKeys.push_back(keys.front());
-        return R::Ok(std::vector<CachedTicket>());
+        return R::Ok(std::vector<Item>());
     }
     if (budget < 2) {
         return fetched;
     }
     budget -= 2;
     const auto mid = keys.begin() + static_cast<std::ptrdiff_t>(keys.size() / 2);
-    R first =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget, refusedKeys);
+    R first = FetchItemsIsolatingRefusals<Item>(fetch, cancelled, std::vector<std::string>(keys.begin(), mid), budget,
+                                                refusedKeys);
     if (!first.has_value()) {
         return first;
     }
-    R second =
-        FetchKeysIsolatingRefusals(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget, refusedKeys);
+    R second = FetchItemsIsolatingRefusals<Item>(fetch, cancelled, std::vector<std::string>(mid, keys.end()), budget,
+                                                 refusedKeys);
     if (!second.has_value()) {
         return second;
     }
-    std::vector<CachedTicket> merged = std::move(first.value());
-    for (CachedTicket& ticket : second.value()) {
-        merged.push_back(std::move(ticket));
+    std::vector<Item> merged = std::move(first.value());
+    for (Item& item : second.value()) {
+        merged.push_back(std::move(item));
     }
     return R::Ok(std::move(merged));
+}
+
+/// The ticket-row form of FetchItemsIsolatingRefusals.
+inline Result<std::vector<CachedTicket>, TrackerError>
+FetchKeysIsolatingRefusals(const KeyBatchFetch& fetch, const std::function<bool()>& cancelled,
+                           const std::vector<std::string>& keys, int& budget, std::vector<std::string>& refusedKeys) {
+    return FetchItemsIsolatingRefusals<CachedTicket>(fetch, cancelled, keys, budget, refusedKeys);
 }
 
 } // namespace sync

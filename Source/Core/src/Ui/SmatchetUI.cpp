@@ -50,6 +50,7 @@
 #include "SmatchetAiAssistantUi.h"
 #endif
 #include "SmatchetToast.h"
+#include "SmatchetLeftViewHistoryUi.h"
 #include "SmatchetNotificationCenterUi.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
@@ -832,6 +833,10 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     static bool s_ticketFocusHandlerRegistered = false;
     if (!s_ticketFocusHandlerRegistered) {
         s_ticketFocusHandlerRegistered = true;
+        SetLeftViewHistoryOpenHandler([]() {
+            g_ui.showLeftViewHistory = true;
+            g_ui.requestLeftViewHistoryFocus = true;
+        });
         SetTicketChangeFocusHandler([](const std::string& paneId, const std::string& issueId) {
             if (!paneId.empty()) {
                 g_ui.focusedPaneId = paneId;
@@ -1447,6 +1452,10 @@ void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) 
     if (d.showNotificationCenterWindow) {
         SMATCHET_UI_PERF_SCOPE("SmatchetDrawNotificationCenterWindow");
         SmatchetDrawNotificationCenterWindow(d);
+    }
+    if (d.showLeftViewHistory && app.LeftViewHistory() != nullptr) {
+        SMATCHET_UI_PERF_SCOPE("SmatchetDrawLeftViewHistoryWindow");
+        SmatchetDrawLeftViewHistoryWindow(d, *app.LeftViewHistory());
     }
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();

@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "CachedTicketTypes.h"     // for CachedTicket (in vector & shared_ptr returns)
@@ -28,6 +29,19 @@
 #include "TimeNowPure.h"           // NowUnixSeconds (the default clock)
 
 class ISyncCache;
+struct TrackerConfig;
+
+/// What one complete reload of a pane's view returned. The query and view are the ones the session itself ran:
+/// the pane's other records of its query can lag behind a view switch or a focused sync.
+struct ViewListingCompletion {
+    const TrackerConfig* cfg = nullptr; ///< The session's config, valid for the call.
+    std::string query;
+    std::string viewId;
+    std::string viewName;
+    std::vector<std::string> listed;           ///< What the view's own query returned.
+    std::unordered_set<std::string> stillHeld; ///< Everything the session kept, the hierarchy walk's rows included.
+    std::vector<CachedTicket> droppedRows;     ///< Rows the session removed from the pane, as they last were.
+};
 class ITrackerBackend;
 class ITrackerIssueReader;
 class ITrackerConnectivity;
@@ -105,6 +119,10 @@ class ITicketSyncDeps {
     /// parents and children the hierarchy walk added). The change monitor uses it to tell a row that left the
     /// view from one the walk owns. UI thread, once per completed session. Defaulted no-op for the test fakes.
     virtual void PublishViewListedIds(const std::vector<std::string>& /*ids*/) {}
+    /// A complete, non-empty reload of this pane finished: the history of issues that left a view diffs its listing
+    /// against the view's saved one. UI thread, once per such session, after PublishViewListedIds. Defaulted no-op for
+    /// the test fakes.
+    virtual void OnViewListingCompleted(ViewListingCompletion /*completion*/) {}
 
     /// Tracker HTTP traffic counters right now (monotonic). A session reads it at its start and end
     /// to report requests and bytes in `SyncSessionStats`. Defaulted to zeros so test fakes need no

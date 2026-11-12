@@ -16,6 +16,7 @@
 #endif
 
 #include "AppController.h"
+#include "LeftViewHistoryService.h"
 #include "AppControllerImpl.h"
 #include "GridContextDepsAdapter.h"
 #include "GridPaneEvictionPolicy.h"

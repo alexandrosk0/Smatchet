@@ -40,6 +40,10 @@ struct ChangeMonitorPaneState {
     /// complete reload replaces it.
     std::unordered_set<std::string> ViewListed;
     bool ViewListedKnown = false;
+    /// The query and view that listing answered, so a probe that ran another query is not taken for a departure.
+    std::string ViewListedQuery;
+    std::string ViewListedViewId;
+    std::string ViewListedViewName;
 
     /// The view's own rows after a complete reload.
     void SetViewListing(const std::vector<std::string>& ids) {
@@ -52,6 +56,13 @@ struct ChangeMonitorPaneState {
     void NoteViewRowsAdded(const std::vector<std::string>& ids) {
         if (ViewListedKnown) {
             ViewListed.insert(ids.begin(), ids.end());
+        }
+    }
+
+    /// Rows recorded as having left the view: they are no longer part of what it lists.
+    void NoteViewRowsLeft(const std::vector<std::string>& ids) {
+        for (const std::string& id : ids) {
+            ViewListed.erase(id);
         }
     }
 

@@ -12,9 +12,10 @@ struct ToastNotification {
     std::string Message;
     ToastType Type = ToastType::Info;
     std::chrono::steady_clock::time_point Expiry;
-    float FadeIn = 0.0f;      // 0..1
-    bool Sticky = false;      // never auto-expires; requires an explicit dismiss (Error toasts)
-    ToastRowAction RowAction; // optional; the history entry's action (transient click opens the center)
+    float FadeIn = 0.0f;              // 0..1
+    bool Sticky = false;              // never auto-expires; requires an explicit dismiss (Error toasts)
+    ToastRowAction RowAction;         // optional; the history entry's action (transient click opens the center)
+    bool RunRowActionOnClick = false; // a click on the toast itself runs RowAction
 };
 
 class SmatchetToastManager {
@@ -26,6 +27,9 @@ class SmatchetToastManager {
     // Overload carrying the per-entry Notification Center row action; otherwise identical.
     void Push(const std::string& title, const std::string& message, ToastType type, int durationMs,
               ToastRowAction rowAction);
+    // As above, and a click on the toast itself runs `rowAction` too.
+    void PushClickable(const std::string& title, const std::string& message, ToastType type, int durationMs,
+                       ToastRowAction rowAction);
     void Render();
 
     // Bounded, session-only history of every toast raised (newest last). Drawn newest-first
