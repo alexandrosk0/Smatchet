@@ -87,6 +87,61 @@ None — not agent-reviewable. No defect is known to have shipped; the independe
 ### Filed as
 [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
 
+## 2026-11-12 · PR #2400 · post-merge break: a required lane's new config merged with that lane `skipped`, then crashed on #2407, #2409 and #2410
+
+### What escaped
+`fix(sanitizers): UBSan + instrumented rig on the clang-cl lanes` (#2400, head `866c18161`) merged 2026-11-09T21:32:19Z as `2e1f9a0de`. It changed how the required `Sanitizer (UBSan via Clang)` check builds and runs:
+- UBSan and `/clang:-fsanitize-address-use-after-return=never` in the clang-cl arm of `cmake/Sanitizers.cmake`;
+- the doctest rig built instrumented in that job;
+- matching `CMakePresets.json`, workflow and test edits.
+
+On #2400's head that check concluded `skipped`, as did `Sanitizer (ASAN via MSVC)`. The PR merged with `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled`; no other override was involved.
+
+The lane then stayed `skipped` on the develop push of `2e1f9a0de` and on the next two merges (#2392, #2414). `sanitizer-nightly.yml` went green on `2e1f9a0de` (run 42811948214), because its clang job is build-only.
+
+The first execution of the new config was on three unrelated PRs, on 2026-11-11: #2407 (run 42945983692), #2409 (42954758927) and #2410 (42965923809). Each crashed in `LaunchIntoSlot` (`Source/Core/include/Ui/AsyncLoadGatePure.h:86`) with an ASan access violation at `0x41b58abb`, inside `ex.what()` of a `catch (const std::exception&)`. All three stayed blocked until #2415.
+
+### Root cause
+Toolchain cause: the code has no UB. clang-cl 19 and 20 miscompile the ASan stack frame of a function holding a C++ catch funclet, so the funclet reads the caught exception from the wrong slot. The fault address is the ASan frame magic `0x41B58AB3` + 8. Evidence:
+- A standalone copy of the test crashes identically on clang-cl 19.1.5 with ASan alone.
+- It passes on 22.1.6.
+- The runner's image ships 20.1.8.
+
+#2400 was validated on local LLVM 22.1.6 only. Its plan says so and names the gap: "The runner's LLVM 20.1.8 may behave differently from local LLVM 22.1.6; CI on this PR is the proof."
+
+Gate holes, blameless:
+1. **The lane's trigger set omitted the lane's own config.** The `changes` job in `build-and-test.yml` sets `source_core_cpp` only for `Source/Core` and `Source/Plugins` C++. #2400 changed none, so the lane skipped on the PR that reconfigured it.
+2. **A skipped required check is a pass.** Branch protection and `merge-gates.sh` both accept `skipped`. No gate compared it with the plan's § Verification, which named this check green on this PR as the proof.
+3. **Nothing else executes clang-cl ASan code.** The nightly clang job builds and runs nothing. So once the PR-time lane skipped, the first run of the new config was on whichever Core PR came next.
+
+A fourth contributor: the toolchain was unpinned. The lane took whatever LLVM the runner image carried, so "verified locally on 22" said nothing about CI.
+
+Gate-tool provenance: check conclusions are from `gh api …/commits/<sha>/check-runs` against GitHub, 2026-11-12. The `changes`-job reading is from `build-and-test.yml` at `2e1f9a0de` and at `origin/develop` `2a22aabf1`.
+
+### Preventing gate
+Shipped in #2415:
+- The `changes` job now flips `source_core_cpp` on `cmake/Sanitizers.cmake` and `.github/actions/setup-pinned-llvm/*`. Replayed on #2400's file list, the lane runs on #2400 itself.
+- Both clang-cl lanes run a pinned LLVM 22.1.6 from `.github/actions/setup-pinned-llvm`. Its install is SHA-256-checked, and a `clang-cl --version` check fails setup on any other version.
+- `cmake/Sanitizers.cmake` refuses clang-cl < 22 under `SMATCHET_SANITIZER=asan`, so image drift fails at configure, not inside a catch block.
+
+#2415's own `Sanitizer (UBSan via Clang)` run on 22.1.6 is green, with `smatchet_tests` passed.
+
+Open, filed below (suggestion-only):
+- Add the rest of #2400's inputs to the trigger set: `CMakePresets.json`, the lane's job definition, `tests/**`.
+- A bats case pinning that set.
+- Run the instrumented rig in the nightly clang job.
+- Have `pre-ship.sh` / the plan-doc lint refuse when a check that a plan's § Verification names as the proof is `skipped` on the PR.
+
+### Eval case
+**Yes — agent-reviewable.** Input: the #2400 diff, including its plan's § Risks line "CI on this PR is the proof", together with the `changes` job's `source_core_cpp` `case` in `build-and-test.yml` as context.
+
+Reference outcome: a competent reviewer notes that the diff touches no `Source/Core` or `Source/Plugins` C++. So the `Sanitizer (UBSan via Clang)` job it reconfigures will be skipped on this PR, and the LLVM-20 proof the plan relies on never runs. The reviewer asks for the trigger set to cover `cmake/Sanitizers.cmake` before merge.
+
+No execution required: the skip is readable from the diff and the workflow. Candidate for `tests/agent-eval/code-review/_candidates/`, promoted by a human.
+
+### Filed as
+[`categories/infra/2026-11-12-delta-gated-lane-skips-the-pr-that-reconfigures-it.md`](categories/infra/2026-11-12-delta-gated-lane-skips-the-pr-that-reconfigures-it.md) (new, P1). Fix and first half of the gate: #2415.
+
 ## 2026-11-11 · PR #2392 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after a manual CodeRabbit trigger was rate-limited
 
 ### What escaped
