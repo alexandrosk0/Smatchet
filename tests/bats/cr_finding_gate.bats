@@ -2154,11 +2154,13 @@ run_mcf() {
     )
 }
 
-# cr_review_resp <commit> [body] -> a GraphQL response holding one CodeRabbit
-# review on <commit>, as decide() has it in scope when it calls the carry.
+# cr_review_resp <commit> [body] [age-seconds] -> a GraphQL response holding
+# one CodeRabbit review on <commit>, submitted <age> seconds ago (default 60),
+# as decide() has it in scope when it calls the carry.
 cr_review_resp() {
-    jq -n --arg c "$1" --arg b "${2-Actionable comments posted: 0}" \
-        '{data:{repository:{pullRequest:{reviews:{nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:$b}]}}}}}'
+    jq -n --arg c "$1" --arg b "${2-Actionable comments posted: 0}" --argjson a "${3:-60}" \
+        '{data:{repository:{pullRequest:{reviews:{nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:$b,
+          submittedAt:((now - $a) | floor | todate)}]}}}}}'
 }
 
 @test "shape 5: a commit CodeRabbit reviewed with no verdict posted yet makes the carry retry, never skip past it" {
@@ -2182,9 +2184,23 @@ cr_review_resp() {
         merge_carry_forward || exit 1
         [ "$mcf_carried" = "$P2" ] || exit 1
     ) || false
-    # A thread reply (blank body) is not a review; a terminal non-credential
-    # status is a posted verdict. Neither waits.
+    # A thread reply (blank body) is not a review; a review older than the
+    # wait bound means P2's run can no longer be in flight; a terminal
+    # non-credential status is a posted verdict. None of them waits.
     printf '[]' > "$STATUS_DIR/$P2"
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P2" 'Actionable comments posted: 0' 3600)"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    ) || false
+    # Non-vacuity for the bound: a review 10 minutes old still waits.
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P2" 'Actionable comments posted: 0' 600)"
+        rc=0; merge_carry_forward || rc=$?
+        [ "$rc" -eq 2 ] || exit 1
+    ) || false
     (
         mcf_env "$m"
         resp="$(cr_review_resp "$P2" '')"
@@ -2203,7 +2219,7 @@ cr_review_resp() {
 @test "shape 5: through the real decide(), a reviewed commit with no verdict yet retries with the carry PENDING cause" {
     setup_jq; setup_decide; setup_mcf
     m=$(merge_into_pr realwait)
-    f="$(checkrun_payload "[{\"author\":{\"login\":\"coderabbitai\"},\"commit\":{\"oid\":\"$P1\"},\"state\":\"COMMENTED\",\"submittedAt\":\"2026-11-12T10:00:00Z\",\"body\":\"Actionable comments posted: 0\"}]" "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    f="$(checkrun_payload "$(cr_review_resp "$P1" | jq -c '.data.repository.pullRequest.reviews.nodes')" "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
     out="$(real_mcf_decide "$m" "$f" none)"
     echo "$out" >&2
     [ "${out##*$'\n'}" = retry ]

@@ -563,14 +563,22 @@ runs:
           return 1
         }
         # mcf_cr_reviewed <commit>: true when decide()'s GraphQL response (resp,
-        # in scope when called from decide) holds a CodeRabbit review on that
-        # commit with a body, the same selection decide() counts as a review.
+        # a local of decide(), which calls the carry: nothing in between may
+        # declare its own resp) holds a CodeRabbit review on that commit with a
+        # body, the same selection decide() counts as a review, submitted within
+        # MCF_VERDICT_WAIT seconds. That bounds the wait to how long the
+        # commit's own gate run can still be in flight (12-minute job timeout,
+        # plus queueing): a review whose run died, or whose verdict settled only
+        # as PENDING, stops holding every carry past it after that.
+        MCF_VERDICT_WAIT="${MCF_VERDICT_WAIT:-900}"
         mcf_cr_reviewed() {
-          printf '%s' "${resp:-}" | jq -e --arg c "$1" '
-            [ .data.repository.pullRequest.reviews.nodes[]?
-              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                       and (.commit.oid // "") == $c
-                       and ((.body // "") | test("\\S"))) ] | length > 0' >/dev/null 2>&1
+          printf '%s' "${resp:-}" | jq -e --arg c "$1" --argjson w "$MCF_VERDICT_WAIT" '
+            (now - $w) as $t
+            | [ .data.repository.pullRequest.reviews.nodes[]?
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $c
+                         and ((.body // "") | test("\\S"))
+                         and (((.submittedAt // "") | fromdateiso8601? // 0) > $t)) ] | length > 0' >/dev/null 2>&1
         }
         merge_carry_forward() {
           case "$mcf_state" in
@@ -824,12 +832,12 @@ runs:
           # The no-review-node arms read the rollup from `commits(last:1)`, the
           # PR's last commit in GitHub's order (normally the head), not SHA.
           # If the head moved, that evidence is about another commit: post
-          # nothing (the run for the new head owns it) and retry, which also rides out a GraphQL read
-          # that lags the REST-resolved SHA. If the head is still elsewhere when
-          # the window closes, the run posts nothing at all (see the poll loop),
-          # so it cannot overwrite SHA's settled verdict either. Without this, a
-          # pass could land on a commit CodeRabbit never saw, and shape 5 would
-          # trust it.
+          # nothing (the run for the new head owns it) and retry, which also
+          # rides out a GraphQL read that lags the REST-resolved SHA. If the
+          # head is still elsewhere when the window closes, the run posts
+          # nothing at all (see the poll loop), so it cannot overwrite SHA's
+          # settled verdict either. Without this, a pass could land on a commit
+          # CodeRabbit never saw, and shape 5 would trust it.
           if [ "$live_oid" != "$SHA" ] && [ "$n_reviews" -eq 0 ]; then
             head_moved=true
             echo "CR finding gate: PR head is ${live_oid:0:12}, not ${SHA:0:12}, and CodeRabbit has not reviewed ${SHA:0:12}; this run's evidence is not about its commit"
@@ -1237,7 +1245,7 @@ runs:
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
         elif [ "$mcf_retry" = true ]; then
-          post pending "merge-only head: carry-forward not finished (API or git read failed, or a reviewed commit has no verdict yet); re-run this gate"
+          post pending "merge-only head: carry-forward not finished (API/git read failed, or a reviewed commit's gate run has not posted); re-run this gate"
         else
           post pending "awaiting CodeRabbit on current head; if stalled, a human comments '@coderabbitai review' (scripts/dev/trigger-coderabbit-review.sh)"
         fi
