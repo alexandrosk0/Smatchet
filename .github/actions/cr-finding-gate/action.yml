@@ -372,6 +372,102 @@ runs:
           fi
         }
 
+        # --- Merge-only head carry-forward (shape 5) ----------------------------
+        # Merging the base branch into a PR branch makes a head that CodeRabbit
+        # will not review: its CheckRun ends SKIPPED, and a `@coderabbitai
+        # review` gets "No files to review" (observed on #2407 head 0fcfd5c,
+        # #2409 head a7a0352 and #2410 head e19751f, all `Merge branch 'develop'
+        # into ...`). The manual-review arm in decide() then leaves the gate
+        # failed or pending with nothing left that could settle it.
+        #
+        # A merge commit can still carry new PR code (a conflict fix, or any
+        # edit amended into the merge), so "the head is a merge" is not enough.
+        # The earlier verdict carries forward only when ALL of these hold:
+        #   (a) the head has two or more parents;
+        #   (b) an earlier commit of this PR carries a passing verdict from THIS
+        #       gate: the newest status in this context is success, its
+        #       creator is github-actions[bot], and it is not the label waiver;
+        #   (c) the PR's own diff against the current base tip (three-dot,
+        #       base...commit) is the same at the head as at that commit.
+        # Compared exactly after normalising only what a clean base merge
+        # moves: blob hashes on `index` lines and hunk START line numbers (hunk
+        # lengths, the function-context text, every content and context line,
+        # and file modes still have to match). Not `git patch-id`: it drops
+        # whitespace, so a merge that edits only spaces inside a string literal
+        # would collide. A binary file fails closed, since its diff shows no
+        # content. Anything unreadable, empty, over the API's diff limit, or
+        # different blocks, and the manual-review arm runs as before.
+        #
+        # Safe-direction PENDING, by design: if the base changed lines next to
+        # the PR's hunks, the context lines differ and the head still needs a
+        # CodeRabbit review or a human decision.
+        #
+        # Residual, accepted: hunk start numbers are ignored, so a merge that
+        # moved a PR hunk to another spot with the same three context lines on
+        # each side and the same function-context text would match.
+        #
+        # Echoes the carried-from commit sha on success. Cached per run: the
+        # poll loop re-enters decide(), and the answer cannot change mid-run.
+        MCF_MAX_CANDIDATES="${MCF_MAX_CANDIDATES:-30}"
+        MCF_MAX_DIFFS="${MCF_MAX_DIFFS:-5}"
+        mcf_cached=""
+        pr_diff_norm() {
+          # $1 base sha, $2 commit sha -> normalised base...commit diff on stdout.
+          local d
+          d=$(gh api -H 'Accept: application/vnd.github.diff' \
+                "repos/${OWNER}/${REPO}/compare/$1...$2" 2>/dev/null) || return 1
+          grep -q '^diff --git ' <<<"$d" || return 1
+          if grep -qE '^(Binary files .* differ$|GIT binary patch$)' <<<"$d"; then
+            return 1
+          fi
+          sed -E -e 's/^index [0-9a-f]+\.\.[0-9a-f]+/index/' \
+                 -e 's/^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/@@ -\1 +\2 @@/' <<<"$d"
+        }
+        merge_carry_forward() {
+          case "$mcf_cached" in
+            no) return 1 ;;
+            yes:*) echo "${mcf_cached#yes:}"; return 0 ;;
+          esac
+          mcf_cached=no
+          local parents base_ref base_sha head_norm cands c st state creator desc cand_norm
+          local n_seen=0 n_diffed=0
+          parents=$(gh api "repos/${OWNER}/${REPO}/commits/${SHA}" --jq '.parents | length' 2>/dev/null) || return 1
+          parents="${parents//[^0-9]/}"
+          [ "${parents:-0}" -ge 2 ] || return 1
+          base_ref=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.base.ref // empty' 2>/dev/null) || return 1
+          [ -n "$base_ref" ] || return 1
+          base_sha=$(gh api "repos/${OWNER}/${REPO}/git/ref/heads/${base_ref}" --jq '.object.sha // empty' 2>/dev/null) || return 1
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+          head_norm=$(pr_diff_norm "$base_sha" "$SHA") || return 1
+          # Oldest first from the API; walk newest first. A failed page fails
+          # closed rather than trusting a partial list.
+          cands=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/commits?per_page=100" \
+                    --jq '.[].sha' 2>/dev/null) || return 1
+          while read -r c; do
+            [[ "$c" =~ ^[0-9a-f]{40}$ ]] || continue
+            [ "$c" != "$SHA" ] || continue
+            n_seen=$((n_seen + 1))
+            [ "$n_seen" -le "$MCF_MAX_CANDIDATES" ] || break
+            st=$(gh api "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" \
+                   --jq "[.[] | select(.context == \"${CONTEXT}\")][0] | select(. != null)
+                         | [(.state // \"\"), (.creator.login // \"\"), ((.description // \"\") | gsub(\"[\\t\\n]\"; \" \"))] | @tsv" \
+                   2>/dev/null) || continue
+            IFS=$'\t' read -r state creator desc <<<"$st"
+            [ "$state" = success ] || continue
+            [ "$creator" = "github-actions[bot]" ] || continue
+            case "$desc" in *"gate overridden"*) continue ;; esac
+            n_diffed=$((n_diffed + 1))
+            [ "$n_diffed" -le "$MCF_MAX_DIFFS" ] || break
+            cand_norm=$(pr_diff_norm "$base_sha" "$c") || continue
+            if [ "$cand_norm" = "$head_norm" ]; then
+              mcf_cached="yes:${c}"
+              echo "$c"
+              return 0
+            fi
+          done < <(tac <<<"$cands")
+          return 1
+        }
+
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
         # `cr-out-of-band` + a `cr-disposition:<reason>` attestation lets a
         # maintainer force-pass this gate (PR-3 disposition trail). The workflow
@@ -728,6 +824,16 @@ runs:
             # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
+              # Shape 5: a merge-only head CodeRabbit skipped. The earlier
+              # verdict carries forward only under merge_carry_forward()'s three
+              # conditions; on any doubt it returns non-zero and this arm runs
+              # unchanged. Checked before the ask state, because on such a head
+              # an ask draws "No files to review" and never settles anything.
+              local carried
+              if carried=$(merge_carry_forward); then
+                post success "Merge-only head: PR diff identical to ${carried:0:12}, which passed this gate; CodeRabbit skipped the merge"
+                exit 0
+              fi
               # If a human already asked FOR THIS HEAD, keep waiting — CR may
               # still be working (synchronize / human-trigger comment re-runs land
               # here) — UNLESS CR has since answered that ask with a review error:
