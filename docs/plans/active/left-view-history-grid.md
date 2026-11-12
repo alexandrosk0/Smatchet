@@ -142,7 +142,7 @@ None — the user settled persistence, layout, row actions and reason depth.
 
 ## Deviations from plan
 - **Pre-push review round**: the history request now goes through refusal isolation (`FetchItemsIsolatingRefusals`, the ticket-row helper generalised), so one hidden issue no longer costs a batch its history. A reason that could not be read is no longer final (Pillar 6): rows still `Unavailable` are asked again, within `LeftViewReasonMaxKeys`, on the next completed reload of the same site. "Deleted or no longer visible" got its own kind (`NotVisible = 7`, appended), since the tracker did answer and a retry would ask the same question. The time column reads "Left at".
-- **Deferred: CI wiring for the bucket-E driver.** `test-ui-left-view-history` belongs in the fixture-backed driver loop in `.github/workflows/build-and-test.yml`; until then the `--all` lane has no fixture and the test SKIPs there. Left out because plan-lock `clang-cl-ubsan-lanes` (branch `fix/clang-cl-ubsan`) holds that file. Tracked in `docs/self-improvement/categories/test/2026-11-09-left-view-ui-test-ci-wiring.md`.
+- **CI wiring for the bucket-E driver, landed late.** `test-ui-left-view-history` runs in the fixture-backed driver loop of `.github/workflows/build-and-test.yml` ("Run grid search + grid panes + left-view history bucket-E (hard)"). It was first left out because plan-lock `clang-cl-ubsan-lanes` (branch `fix/clang-cl-ubsan`) held that file; it went in on this PR once #2400 merged and the lock was released.
 
 ## Verification (actual)
 *(populated post-ship)*
