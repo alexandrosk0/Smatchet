@@ -45,6 +45,24 @@ TicketChangeFocusHandler& FocusHandlerRef() {
     return s_handler;
 }
 
+// Opens the window listing issues that left a view. Same registration as the focus handler above.
+std::function<void()>& LeftViewOpenHandlerRef() {
+    static std::function<void()> s_handler;
+    return s_handler;
+}
+
+// True when every change is a departure: the row it refers to is gone from the grid, so there is nothing to focus,
+// and the history window is where the rest of the story is.
+bool OnlyDepartures(const std::vector<smatchet::TicketChangeSummary>& changes) {
+    for (std::size_t i = 0; i < changes.size(); ++i) {
+        if (changes[i].kind != smatchet::TicketChangeKind::LeftView &&
+            changes[i].kind != smatchet::TicketChangeKind::Deleted) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // The issue the Notification Center row should focus for a change batch: the first change that is
 // not a Deletion (a deleted ticket has no grid row to focus). Empty if every change is a Deletion.
 std::string PrimaryFocusableId(const std::vector<smatchet::TicketChangeSummary>& changes) {
@@ -59,6 +77,8 @@ std::string PrimaryFocusableId(const std::vector<smatchet::TicketChangeSummary>&
 } // namespace
 
 void SetTicketChangeFocusHandler(TicketChangeFocusHandler handler) { FocusHandlerRef() = std::move(handler); }
+
+void SetLeftViewHistoryOpenHandler(std::function<void()> handler) { LeftViewOpenHandlerRef() = std::move(handler); }
 
 void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& changes, const std::string& paneId) {
     if (changes.empty()) {
@@ -86,6 +106,15 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
     // pane is known; otherwise fall through to the plain 4-arg Push and the row stays informational.
     const std::string focusId = PrimaryFocusableId(changes);
     const std::string title = SmatchetLocalization::T("toast.tickets", "Issues");
+    if (OnlyDepartures(changes) && LeftViewOpenHandlerRef()) {
+        SmatchetToastManager::Instance().PushClickable(title, body, ToastType::Info, 5000, []() {
+            const std::function<void()>& open = LeftViewOpenHandlerRef();
+            if (open) {
+                open();
+            }
+        });
+        return;
+    }
     if (!focusId.empty() && !paneId.empty()) {
         SmatchetToastManager::Instance().Push(title, body, ToastType::Info, 5000, [paneId, focusId]() {
             const TicketChangeFocusHandler& h = FocusHandlerRef();

@@ -293,7 +293,8 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
 }
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta) {
-    // Power-user only: Shift + right-click on header (plain RMB keeps default table header behavior).
+    // Power-user only: Shift + right-click on header. A plain right-click keeps ImGui's table
+    // context menu (sizing, Reset order) plus Remove column (DrawHeaderRemoveColumnMenuItem).
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetIO().KeyShift) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
         ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);

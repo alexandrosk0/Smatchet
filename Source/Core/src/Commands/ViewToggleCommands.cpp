@@ -32,8 +32,8 @@ namespace {
 // side-effects). `focusLatch`, when set, is raised ONLY on action=="show" — so a
 // plain menu/palette toggle does not steal window focus, while an explicit reveal
 // shortcut (Ctrl+Shift+F etc.) does. This keeps the pre-migration behavior exact.
-CommandResult ToggleFlag(IMainThreadPoster& app, bool UiDrawSession::*flag, void (*onOpen)(UiDrawSession&),
-                         bool UiDrawSession::*focusLatch, const std::string& action) {
+CommandResult ToggleFlag(IMainThreadPoster& app, bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
+                         bool UiDrawSession::* focusLatch, const std::string& action) {
     return RunOnUiThreadAsCommandResult(app, [flag, onOpen, focusLatch, action]() {
         bool& v = g_ui.*flag;
         bool open;
@@ -60,8 +60,8 @@ CommandResult ToggleFlag(IMainThreadPoster& app, bool UiDrawSession::*flag, void
 }
 
 void RegisterToggle(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label,
-                    bool UiDrawSession::*flag, void (*onOpen)(UiDrawSession&),
-                    bool UiDrawSession::*focusLatch = nullptr, const char* alias = nullptr) {
+                    bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
+                    bool UiDrawSession::* focusLatch = nullptr, const char* alias = nullptr) {
     Command c;
     c.Name = name;
     c.Category = "view";
@@ -90,6 +90,8 @@ void OnOpenViewsDashboard(UiDrawSession& d) { d.requestViewsDashboardFocus = tru
 void OnOpenAuditTrail(UiDrawSession& d) { d.requestAuditTrailFocus = true; }
 
 void OnOpenNotificationCenter(UiDrawSession& d) { d.requestNotificationCenterFocus = true; }
+
+void OnOpenLeftViewHistory(UiDrawSession& d) { d.requestLeftViewHistoryFocus = true; }
 
 void OnOpenAnnotate(UiDrawSession& d) { d.showAnnotateAnalysis = true; }
 
@@ -120,6 +122,9 @@ void RegisterViewToggleCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     // keybindings from configs written before the rename keep dispatching).
     RegisterToggle(reg, app, "view.toggle.notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
                    &OnOpenNotificationCenter, &UiDrawSession::requestNotificationCenterFocus, "notifications");
+    RegisterToggle(reg, app, "view.toggle.left_view_history", "Issues That Left Views",
+                   &UiDrawSession::showLeftViewHistory, &OnOpenLeftViewHistory,
+                   &UiDrawSession::requestLeftViewHistoryFocus);
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,
                    &OnOpenAuditTrail);
     RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr,

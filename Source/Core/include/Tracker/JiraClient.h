@@ -129,6 +129,11 @@ class JiraClient : public ITrackerBackend,
      * Search by explicit issue keys (same field selection as FetchIssues for `viewStore`).
      * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.
      */
+    /// One `search/jql?expand=changelog` request per batch of keys; every field's changes, attributed.
+    Result<std::vector<TrackerFieldChange>, TrackerError>
+    FetchIssueFieldChanges(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                           const CancelCallback& shouldCancel) override;
+
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& viewStore) override;

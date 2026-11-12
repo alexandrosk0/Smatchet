@@ -18,7 +18,6 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
-#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdio>
@@ -58,14 +57,7 @@ static StatusBarRowCountPure::Result FocusedGridRowCount(const UiDrawSession& d)
         in.hasSnapshot = pane.ticketsSnapshot != nullptr;
         in.loaded = pane.ticketsSnapshot ? pane.ticketsSnapshot->size() : 0;
         in.sorted = pane.cachedSortedIndices.size();
-        in.filtered = pane.filteredIndices.size();
-        if (in.sorted > in.loaded) {
-            // Only while a shrinking sync waits out the rebuild debounce: count the retained rows
-            // the grid's prune keeps (indices inside the snapshot), not every stale index.
-            in.filtered =
-                static_cast<std::size_t>(std::count_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
-                                                       [&in](std::size_t idx) { return idx < in.loaded; }));
-        }
+        in.filtered = StatusBarRowCountPure::DrawnFilteredRows(pane.filteredIndices, in.sorted, in.loaded);
     }
     return StatusBarRowCountPure::Compute(in);
 }

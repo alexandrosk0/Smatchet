@@ -174,6 +174,14 @@ void GridContextDepsAdapter::PublishViewListedIds(const std::vector<std::string>
     ctx().monitorState.SetViewListing(ids); // UI thread, same discipline as the other monitor bookkeeping
 }
 
+void GridContextDepsAdapter::OnViewListingCompleted(ViewListingCompletion completion) {
+    GridLiveContext& c = ctx();
+    c.monitorState.ViewListedQuery = completion.query;
+    c.monitorState.ViewListedViewId = completion.viewId;
+    c.monitorState.ViewListedViewName = completion.viewName;
+    app_.onViewListingCompleted_(c, std::move(completion));
+}
+
 // Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
 // Every per-pane adapter forwards its connectivity writes into that one instance (N writers, one
 // service). The service is constructed eagerly in Initialize before the first tick, so these

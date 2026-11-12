@@ -13,6 +13,7 @@
 
 #include "CachedTicketTypes.h"
 #include "ILookupCache.h"
+#include "LeftViewRecord.h"
 #include "ISyncCache.h"
 #include "OfflineQueueReplayPolicy.h"
 
@@ -206,6 +207,20 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) override;
     bool DeleteLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey) override;
 
+    // History of issues that left a view (LocalCacheManager_LeftViewHistory.cpp), worker threads only.
+    /// In one transaction: inserts `rows` (setting each row's id), saves the view's listing, and trims the history
+    /// to the newest `maxRows`. `listingSavedAtUnixSec` is when the tracker last answered the whole listing: a partial
+    /// update keeps the earlier time. False when nothing was committed.
+    bool CommitLeftViewDepartures(std::vector<smatchet::LeftViewRecord>& rows, int maxRows,
+                                  const std::string& backendKey, const std::string& viewId,
+                                  const std::string& listingJson, std::int64_t listingSavedAtUnixSec);
+    /// Newest first.
+    std::vector<smatchet::LeftViewRecord> LoadLeftViewRows(int maxRows);
+    /// Writes the reason columns plus kind, browse URL and summary of the row with `row.id`.
+    bool UpdateLeftViewReason(const smatchet::LeftViewRecord& row);
+    bool DeleteLeftViewRow(std::int64_t id);
+    bool ClearLeftViewRows();
+
 #if defined(SMATCHET_WITH_AI)
     // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------
     // All writes routed through `smatchet::ai::chat_persist` worker so the UI thread
@@ -248,6 +263,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     void InitSchema();
     /// Create the lookup_cache table (Pillar 6 offline reads); called from InitSchema.
     void InitLookupCacheSchema_();
+    /// Create the left_view_history table; called from InitSchema.
+    void InitLeftViewHistorySchema_();
     /// Create the pending_actions tables (Pillar 6 offline writes) and turn rows left in `sending`
     /// by an interrupted run into `ambiguous`; called from InitSchema.
     void InitPendingActionsSchema_();

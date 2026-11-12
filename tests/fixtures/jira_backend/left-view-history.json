@@ -1,0 +1,45 @@
+{
+  "name": "left-view-history",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "catalog": {
+    "fields": [],
+    "components": [],
+    "issueTypeMeta": [],
+    "users": []
+  },
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {"key": "LEFT-1", "fields": {"summary": "Stays in the view", "status": {"name": "Open", "id": "1"}}},
+            {"key": "LEFT-2", "fields": {"summary": "Gets finished", "status": {"name": "In Progress", "id": "3"}}},
+            {"key": "LEFT-3", "fields": {"summary": "Goes out of reach", "status": {"name": "Open", "id": "1"}}}
+          ],
+          "isLast": true
+        }
+      ]
+    },
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {"key": "LEFT-1", "fields": {"summary": "Stays in the view", "status": {"name": "Open", "id": "1"}}}
+          ],
+          "isLast": true
+        }
+      ]
+    }
+  ],
+  "keyedOnlyTickets": [
+    {"id": "LEFT-2", "fields": {"summary": "Gets finished", "status": "Done"}}
+  ]
+}

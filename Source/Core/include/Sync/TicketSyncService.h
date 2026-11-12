@@ -421,6 +421,12 @@ class TicketSyncService {
     /// Mode of the session started last (UI thread only); a later Delta request must not downgrade it while
     /// its fetch is still running.
     smatchet::sync::SyncMode activeMode_ = smatchet::sync::SyncMode::Delta;
+    /// What the current session asked for, latched in StartStreamingSync; UI thread. See ViewListingCompletion.
+    TrackerConfig sessionCfg_;
+    std::string sessionViewId_;
+    std::string sessionViewName_;
+    /// Rows the session's convergence removed from the pane, consumed by PublishViewListing; UI thread.
+    std::vector<CachedTicket> convergedOutRows_;
     /// Versions of the cached rows as of the session start; worker-thread only (written before the first
     /// batch is queued, read while persisting the batches of the same session).
     std::unordered_map<std::string, TicketSyncMeta> sessionMeta_;

@@ -21,3 +21,13 @@ Re-running 42677019167 created its jobs: `Detect` succeeded and `Perf PR-fast` w
 ## Concrete next action
 
 In `merge-gates.sh`, when GitHub reports `BLOCKED` and every gate passes, list the head's check suites over REST (`commits/<sha>/check-suites`). Flag any `github-actions` suite that is `completed` with `conclusion: cancelled` and `latest_check_runs_count: 0`. Resolve its run id from `actions/runs?check_suite_id=<id>` and print `gh run rerun <run-id>` in the BLOCK line, beside the duplicate check-name WARN. Add the zero-job shape to `docs/agent-rules/merge-gates.md` § Duplicate check-name divergence, with a bats fixture in `tests/bats/merge_gates.bats`.
+
+## Second shape: suites stuck `queued` with zero runs (PRs #2401, #2408, #2412)
+
+On 2026-11-11T20:34Z, `labeled` events on #2401, #2408 and #2412 each created eight `github-actions` check suites that never started: `status: queued`, `latest_check_runs_count: 0`. They belonged to the label-triggered workflows (`Perf PR-fast`, `Coverage gate (test-delta)`, `CR finding gate`, `All checks green`).
+
+- GitHub refused `gh run cancel` and `--force` on all of them with HTTP 409 `Cannot cancel a workflow run that has not been queued yet`, and a queued run cannot be re-run.
+- `mergeStateStatus` stayed `BLOCKED` with every required context green on the head. `safe-admin-merge.sh` printed `GREEN … genuine stale-BLOCKED carve-out`, then `gh pr merge --admin` failed with `3 of 23 required status checks are expected`.
+- The only route found was a new head. #2412 got one from a push, and #2401 and #2408 from `gh pr update-branch`; the normal gate poll then merged each PR.
+
+The next action above should cover this shape too: flag a `queued` suite with zero runs that is older than a few minutes, and print `gh pr update-branch <pr>` rather than `gh run rerun`, since a run that never started can be neither cancelled nor re-run.

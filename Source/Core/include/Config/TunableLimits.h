@@ -84,6 +84,8 @@ namespace limits {
     X(AiPlanCacheMaxMiB, "ai_plan_cache_max_mib", 4, 1, 256)                                                           \
     X(NavigationHistoryMax, "navigation_history_max", 200, 10, 10000)                                                  \
     X(ToastHistoryMax, "toast_history_max", 200, 10, 10000)                                                            \
+    X(LeftViewHistoryMaxRows, "left_view_history_max_rows", 1000, 10, 100000)                                          \
+    X(LeftViewReasonMaxKeys, "left_view_reason_max_keys", 100, 1, 1000)                                                \
     X(ToastMaxLive, "toast_max_live", 6, 1, 50)                                                                        \
     X(LogBufferMaxEntries, "log_buffer_max_entries", 1000, 100, 100000)                                                \
     X(CommandRecentsMax, "command_recents_max", 16, 1, 200)                                                            \

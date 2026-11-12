@@ -59,6 +59,7 @@ class JiraFakeTrackerFixture {
     TrackerReachabilityProbeKind reachabilityKind_ = TrackerReachabilityProbeKind::AuthenticatedReachable;
     std::string reachabilityDiagnostic_;
     std::vector<JiraFixtureFetch> fetches_;
+    std::vector<CachedTicket> keyedOnlyTickets_; ///< Rows only a keyed fetch returns, never a view's query.
     // Scripted mutation replies (FIFO, same shape as FakeTrackerClient queues).
     std::vector<ScriptedReply> updateIssueFieldsReplies_;
     std::vector<ScriptedReply> createIssueReplies_;

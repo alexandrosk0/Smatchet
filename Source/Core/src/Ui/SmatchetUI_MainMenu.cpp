@@ -777,6 +777,11 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.requestNotificationCenterFocus = true;
         recentViews_.Touch("view.toggle.notifications");
     }
+    if (ImGui::MenuItem("Issues That Left Views", nullptr, d.showLeftViewHistory)) {
+        d.showLeftViewHistory = true;
+        d.requestLeftViewHistoryFocus = true;
+        recentViews_.Touch("view.toggle.left_view_history");
+    }
     if (ImGui::MenuItem("Preferences", MenuShortcut(ctx, "view.toggle.preferences", "Ctrl+,").c_str(),
                         d.showPreferences)) {
         d.showPreferences = true;

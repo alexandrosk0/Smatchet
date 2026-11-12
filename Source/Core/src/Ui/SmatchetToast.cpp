@@ -23,6 +23,14 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     Push(title, message, type, durationMs, ToastRowAction());
 }
 
+void SmatchetToastManager::PushClickable(const std::string& title, const std::string& message, ToastType type,
+                                         int durationMs, ToastRowAction rowAction) {
+    Push(title, message, type, durationMs, std::move(rowAction));
+    if (!m_toasts.empty()) {
+        m_toasts.back().RunRowActionOnClick = true;
+    }
+}
+
 void SmatchetToastManager::Push(const std::string& title, const std::string& message, ToastType type, int durationMs,
                                 ToastRowAction rowAction) {
     ToastNotification toast;
@@ -89,7 +97,8 @@ void SmatchetToastManager::Render() {
 
     ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-    int dismissIndex = -1; // applied after the loop (never mutate m_toasts mid-walk)
+    int dismissIndex = -1;      // applied after the loop (never mutate m_toasts mid-walk)
+    ToastRowAction clickAction; // run after the loop, so it may push toasts
 
     for (int i = static_cast<int>(m_toasts.size()) - 1; i >= 0; --i) {
         auto& t = m_toasts[i];
@@ -153,6 +162,9 @@ void SmatchetToastManager::Render() {
                 if (bodyClicked) {
                     if (t.Type == ToastType::Error && !closeHovered) {
                         m_openCenterRequested = true;
+                    }
+                    if (t.RunRowActionOnClick && !closeHovered) {
+                        clickAction = t.RowAction;
                     }
                     dismissIndex = i;
                 }
@@ -229,5 +241,8 @@ void SmatchetToastManager::Render() {
 
     if (dismissIndex >= 0 && dismissIndex < static_cast<int>(m_toasts.size())) {
         m_toasts.erase(m_toasts.begin() + dismissIndex);
+    }
+    if (clickAction) {
+        clickAction();
     }
 }
