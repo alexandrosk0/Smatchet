@@ -383,36 +383,40 @@ runs:
         # A merge commit can still carry new PR code (a conflict fix, or any
         # edit amended into the merge), so "the head is a merge" is not enough.
         # The earlier verdict carries forward only when ALL of these hold:
-        #   (a) the head is a two-parent merge that git can REPRODUCE: the PR
-        #       targets MCF_BASE_REF (re-read here, not trusted from an earlier
-        #       step, so a retarget mid-run cannot swap the base), the second
-        #       parent is an ancestor of the base tip, and `git merge-tree` of
-        #       the two parents yields a clean merge whose tree is byte-for-byte
-        #       the head's tree. Any hand edit (a conflict fix, an amended
-        #       merge, a moved hunk) changes the tree and blocks;
+        #   (a) the head is a two-parent merge of the base: the PR targets
+        #       MCF_BASE_REF (re-read here, not trusted from an earlier step, so
+        #       a retarget mid-run cannot swap the base), and the second parent
+        #       is an ancestor of the base tip;
         #   (b) an earlier commit of this PR carries a passing verdict from THIS
         #       gate: walking the PR's commits newest first, the newest status
         #       in this context is success, created by github-actions[bot],
-        #       and not the label waiver. A newer "actionable finding(s)"
-        #       failure met on the way stops the walk, so findings on later
-        #       code never get skipped in favour of an older pass;
-        #   (c) the PR's own diff against the base tip (three-dot,
-        #       base...commit) is the same at the head as at that commit, after
-        #       normalising only what a clean base merge moves: blob hashes on
-        #       `index` lines and hunk START line numbers. Hunk lengths, the
-        #       function-context text, every content and context line and file
-        #       modes must match. Not `git patch-id`: it drops whitespace, so a
-        #       merge that edits only spaces inside a string would collide. A
-        #       binary file fails closed (its diff shows no content).
-        # (a) is the exact check; (c) also holds the PR's code to what was
-        # reviewed. Diffs are computed locally (no API size limit or
-        # truncation): the checkout is shallow, so the head and base tip are
-        # fetched with full history first (the repo is public; about 20 MiB).
+        #       and not the label waiver. A commit met on the way whose newest
+        #       verdict is not such a pass, and that this gate ever failed with
+        #       "actionable finding(s)" (even under a newer waiver), stops the
+        #       walk, so findings on later code never get skipped for an older
+        #       pass;
+        #   (c) the head is exactly the reviewed commit merged with the base:
+        #       `git merge-tree` of that commit and the second parent is clean
+        #       and its tree is byte-for-byte the head's tree. This ties the
+        #       head to the REVIEWED commit itself, not to the head's first
+        #       parent, so neither a hand edit inside the merge (a conflict
+        #       fix, an amended merge) nor an unreviewed commit between the pass
+        #       and the merge (even one that only moves a hunk between identical
+        #       stanzas) can pass. As a second, independent check, the PR's own
+        #       diff against the base tip (base...commit) must be the same at
+        #       the head as at that commit after normalising only what a clean
+        #       base merge moves (blob hashes on `index` lines, hunk START line
+        #       numbers); not `git patch-id`, which drops whitespace. A binary
+        #       file fails closed (its diff shows no content).
+        # Everything is computed locally: the checkout is shallow, so the head
+        # and base tip are fetched with full history (the repo is public, about
+        # 20 MiB), and only after the API shows the head is a two-parent merge,
+        # so ordinary heads pay nothing. The fetch is capped by the poll window.
         #
-        # Safe-direction PENDING, by design: if the base changed lines next to
-        # the PR's hunks, (c) differs and the head still needs a CodeRabbit
-        # review or a human decision. `pulls/N/commits` lists at most 250
-        # commits, so a longer PR may not see its newest heads: it blocks.
+        # Safe-direction PENDING, by design: if the reviewed commit no longer
+        # merges cleanly with the base, the head still needs a CodeRabbit
+        # review or a human decision. `pulls/N/commits` lists only the first
+        # 250 commits, so a PR that long fails closed.
         #
         # Sets mcf_carried to the carried-from sha and returns 0 on a pass.
         # Called directly (never inside $(...), which would lose the cache):
@@ -439,57 +443,75 @@ runs:
         }
         # mcf_scan -> 0 pass (mcf_carried set), 1 definitive block, 2 read failure.
         mcf_scan() {
-          local base_ref base_sha shallow p1 p2 mtree htree head_norm cands c st state desc cand_norm
+          local base_ref base_sha parents shallow budget p2 mtree htree head_norm cands c st findings state desc cand_norm
           local n_seen=0 n_diffed=0
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || return 1
+          # (a), cheap half first: ordinary heads stop here, before any fetch.
+          parents=$(gh api "repos/${OWNER}/${REPO}/commits/${SHA}" --jq '.parents | length' 2>/dev/null) || return 2
+          [ "$parents" = 2 ] || return 1
           base_ref=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.base.ref // empty' 2>/dev/null) || return 2
           [ "$base_ref" = "$MCF_BASE_REF" ] || return 1
           base_sha=$(gh api "repos/${OWNER}/${REPO}/git/ref/heads/${base_ref}" --jq '.object.sha // empty' 2>/dev/null) || return 2
           [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || return 2
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || return 1
           if ! mcf_git cat-file -e "${SHA}^{commit}" 2>/dev/null \
              || ! mcf_git cat-file -e "${base_sha}^{commit}" 2>/dev/null \
              || [ "$(mcf_git rev-parse --is-shallow-repository 2>/dev/null)" != false ]; then
             shallow=""
             [ "$(mcf_git rev-parse --is-shallow-repository 2>/dev/null)" = true ] && shallow=--unshallow
-            timeout 180 git -C "$MCF_GIT_DIR" fetch --quiet --no-tags ${shallow} origin "$SHA" "$base_sha" \
+            # Never outlive the poll window: leave it time to post a verdict.
+            budget=120
+            if [ -n "${deadline:-}" ] && [ $(( deadline - SECONDS - 30 )) -lt "$budget" ]; then
+              budget=$(( deadline - SECONDS - 30 ))
+            fi
+            [ "$budget" -ge 10 ] || return 2
+            timeout "$budget" git -C "$MCF_GIT_DIR" fetch --quiet --no-tags ${shallow} origin "$SHA" "$base_sha" \
               >/dev/null 2>&1 || return 2
           fi
-          # (a) a reproducible two-parent merge of the base into the PR.
           [ "$(mcf_git rev-list --parents -n1 "$SHA" 2>/dev/null | wc -w)" -eq 3 ] || return 1
-          p1=$(mcf_git rev-parse "${SHA}^1" 2>/dev/null) || return 2
           p2=$(mcf_git rev-parse "${SHA}^2" 2>/dev/null) || return 2
           mcf_git merge-base --is-ancestor "$p2" "$base_sha" 2>/dev/null || return 1
-          mtree=$(mcf_git merge-tree --write-tree "$p1" "$p2" 2>/dev/null) || return 1
-          mtree="${mtree%%$'\n'*}"
           htree=$(mcf_git rev-parse "${SHA}^{tree}" 2>/dev/null) || return 2
-          [ -n "$mtree" ] && [ "$mtree" = "$htree" ] || return 1
           head_norm=$(pr_diff_norm "$base_sha" "$SHA") || return 1
           # (b) + (c). Oldest first from the API; walk newest first. A failed
-          # page fails closed rather than trusting a partial list.
+          # page fails closed rather than trusting a partial list, and so does
+          # a list at the endpoint's 250-commit cap (its newest commits are cut).
           cands=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/commits?per_page=100" \
                     --jq '.[].sha' 2>/dev/null) || return 2
+          [ "$(grep -c . <<<"$cands")" -lt 250 ] || return 1
           while read -r c; do
             [[ "$c" =~ ^[0-9a-f]{40}$ ]] || continue
             [ "$c" != "$SHA" ] || continue
             n_seen=$((n_seen + 1))
             [ "$n_seen" -le "$MCF_MAX_CANDIDATES" ] || break
-            # One field per line of jq output: state, then description, and
-            # only for a status this gate's own token created. (A tab-joined
-            # read would collapse an empty field and shift the next one in.)
+            # One field per line of jq output, so an empty field cannot shift
+            # the next one in (a tab-joined read collapses it): whether this
+            # gate ever failed the commit with findings, then the state and
+            # description of the newest status in this context, the state
+            # only when this gate's own token created it.
             st=$(gh api "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" \
-                   --jq "[.[] | select(.context == \"${CONTEXT}\")][0]
-                         | select(. != null and (.creator.login // \"\") == \"github-actions[bot]\")
-                         | (.state // \"\"), ((.description // \"\") | gsub(\"[\\r\\n]\"; \" \"))" \
+                   --jq "[.[] | select(.context == \"${CONTEXT}\")] as \$s
+                         | ([\$s[] | select((.creator.login // \"\") == \"github-actions[bot]\" and .state == \"failure\"
+                                            and ((.description // \"\") | test(\"actionable finding\")))] | length > 0 | tostring),
+                           (\$s[0] | if . != null and (.creator.login // \"\") == \"github-actions[bot]\" then (.state // \"\") else \"\" end),
+                           (\$s[0] | if . != null then ((.description // \"\") | gsub(\"[\\r\\n]\"; \" \")) else \"\" end)" \
                    2>/dev/null) || return 2
-            state="${st%%$'\n'*}"
-            desc="${st#*$'\n'}"
-            if [ "$state" = failure ]; then
-              case "$desc" in *"actionable finding"*) return 1 ;; esac
+            findings="${st%%$'\n'*}"; st="${st#*$'\n'}"
+            state="${st%%$'\n'*}"; desc="${st#*$'\n'}"
+            if [ "$state" = success ]; then
+              case "$desc" in *"gate overridden"*) state=waived ;; esac
             fi
-            [ "$state" = success ] || continue
-            case "$desc" in *"gate overridden"*) continue ;; esac
+            # Not a pass: if this gate ever reported findings here, newer code
+            # had findings, so an older pass must not stand in for it.
+            if [ "$state" != success ]; then
+              [ "$findings" = false ] || return 1
+              continue
+            fi
             n_diffed=$((n_diffed + 1))
             [ "$n_diffed" -le "$MCF_MAX_DIFFS" ] || break
+            mcf_git cat-file -e "${c}^{commit}" 2>/dev/null || continue
+            mtree=$(mcf_git merge-tree --write-tree "$c" "$p2" 2>/dev/null) || continue
+            mtree="${mtree%%$'\n'*}"
+            [ -n "$mtree" ] && [ "$mtree" = "$htree" ] || continue
             cand_norm=$(pr_diff_norm "$base_sha" "$c") || continue
             if [ "$cand_norm" = "$head_norm" ]; then
               mcf_carried="$c"

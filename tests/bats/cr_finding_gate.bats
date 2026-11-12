@@ -1927,8 +1927,13 @@ mcf_gh() {
             [ "${GH_STATUS_FAIL:-}" = 1 ] && return 1
             a="${path#repos/o/r/commits/}"; a="${a%%/*}"
             out=$(cat "$STATUS_DIR/$a" 2>/dev/null || echo '[]') ;;
+        repos/o/r/commits/*)
+            a="${path#repos/o/r/commits/}"
+            out=$(git -C "$MR" rev-list --parents -n1 "$a" | tr ' ' '\n' | tail -n +2 | jq -R . | jq -s 'map({sha: .}) | {parents: .}') ;;
         repos/o/r/pulls/1/commits*)
-            out=$(git -C "$MR" rev-list --reverse "develop..$SHA" | jq -R . | jq -s 'map({sha: .})') ;;
+            # MCF_PAD_COMMITS fake oldest commits, to reach the 250 cap.
+            out=$( { for _ in $(seq 1 "${MCF_PAD_COMMITS:-0}"); do echo 0000000000000000000000000000000000000000; done
+                     git -C "$MR" rev-list --reverse "develop..$SHA"; } | jq -R . | jq -s 'map({sha: .})') ;;
         repos/o/r/pulls/1)
             out=$(jq -n --arg r "${MCF_FIX_BASE_REF:-develop}" '{base:{ref:$r}}') ;;
         repos/o/r/git/ref/heads/*)
@@ -1997,7 +2002,7 @@ run_mcf() {
     (
         mcf_env "$m"
         b=$(git -C "$MR" rev-parse develop)
-        [ "$(pr_diff_norm "$b" "$p")" = "$(pr_diff_norm "$b" "$m")" ]
+        [ "$(pr_diff_norm "$b" "$p")" = "$(pr_diff_norm "$b" "$m")" ] || exit 1
     )
     [ "$(run_mcf "$m")" = blocked ]
 }
@@ -2121,11 +2126,11 @@ run_mcf() {
     (
         mcf_env "$m"
         GH_STATUS_FAIL=1
-        ! merge_carry_forward || false
-        [ -z "$mcf_state" ]
+        merge_carry_forward && exit 1
+        [ -z "$mcf_state" ] || exit 1
         GH_STATUS_FAIL=0
-        merge_carry_forward
-        [ "$mcf_carried" = "$P1" ]
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
     )
 }
 
@@ -2136,22 +2141,22 @@ run_mcf() {
     (
         mcf_env "$m"
         merge_carry_forward; merge_carry_forward; merge_carry_forward
-        [ "$mcf_carried" = "$P1" ]
+        [ "$mcf_carried" = "$P1" ] || exit 1
         n=$(grep -c . "$GH_CALLS")
         : > "$GH_CALLS"
-        merge_carry_forward
-        [ "$(grep -c . "$GH_CALLS")" -eq 0 ]
+        merge_carry_forward || exit 1
+        [ "$(grep -c . "$GH_CALLS")" -eq 0 ] || exit 1
         echo "calls for the first pass: $n" >&2
-        [ "$n" -gt 0 ]
+        [ "$n" -gt 0 ] || exit 1
     )
     # A definitive block is cached too.
     h=$(merge_into_pr cache2 "printf 'evil\n' >> b.txt")
     (
         mcf_env "$h"
-        ! merge_carry_forward || false
+        merge_carry_forward && exit 1
         : > "$GH_CALLS"
-        ! merge_carry_forward || false
-        [ "$(grep -c . "$GH_CALLS")" -eq 0 ]
+        merge_carry_forward && exit 1
+        [ "$(grep -c . "$GH_CALLS")" -eq 0 ] || exit 1
     )
 }
 
@@ -2169,6 +2174,126 @@ run_mcf() {
     mg merge -q --no-ff -m "Merge branch 'develop' into first" develop >/dev/null
     m2=$(mg rev-parse HEAD)
     [ "$(run_mcf "$m2")" = "carried:$m1" ]
+}
+
+@test "shape 5: an unreviewed commit that moves the hunk between identical stanzas, then a clean merge, stays blocked" {
+    setup_mcf
+    mg checkout -q -B stanzas develop
+    for i in 1 2 3; do printf 'job:\n  a: 1\n  b: 2\n  c: 3\n  d: 4\n  e: 5\n  f: 6\n'; done > "$MR/w.yml"
+    mg add -A; mg commit -qm stanzas
+    mg checkout -q develop; mg merge -q --ff-only stanzas
+    mg checkout -q -B moved2 develop
+    awk '{print} /^  c: 3$/{n++; if (n == 1) print "  if: x"}' "$MR/w.yml" > "$MR/w.tmp" && mv "$MR/w.tmp" "$MR/w.yml"
+    mg commit -qam 'pr adds if: to the first stanza'
+    p=$(mg rev-parse HEAD)
+    # The unreviewed commit: the same line, one stanza down. It never passed.
+    awk '/^  if: x$/{next} {print} /^  c: 3$/{n++; if (n == 2) print "  if: x"}' "$MR/w.yml" > "$MR/w.tmp" && mv "$MR/w.tmp" "$MR/w.yml"
+    mg commit -qam 'move it'
+    q=$(mg rev-parse HEAD)
+    mg checkout -q develop; printf 'later\n' > "$MR/e.txt"; mg add -A; mg commit -qm 'develop again'
+    m=$(merge_into_pr moved2m "" "$q")
+    pass_status "$p"
+    # Non-vacuity: the merge itself is clean (merge-tree of its own parents
+    # reproduces it) and the normalised diffs collide, so only the merge-tree
+    # check against the REVIEWED commit can tell.
+    (
+        mcf_env "$m"
+        b=$(git -C "$MR" rev-parse develop)
+        [ "$(pr_diff_norm "$b" "$p")" = "$(pr_diff_norm "$b" "$m")" ] || exit 1
+        [ "$(git -C "$MR" merge-tree --write-tree "$m^1" "$m^2")" = "$(git -C "$MR" rev-parse "$m^{tree}")" ] || exit 1
+    )
+    [ "$(run_mcf "$m")" = blocked ]
+}
+
+@test "shape 5: a newer findings failure stops the walk even under a newer waiver, but not under a newer pass" {
+    setup_mcf
+    mg checkout -q -B waived "$P1"
+    printf 'X\n' >> "$MR/b.txt"; mg commit -qam 'add X'
+    mg revert --no-edit HEAD >/dev/null
+    p3=$(mg rev-parse HEAD)
+    m=$(merge_into_pr waivedm "" "$p3")
+    pass_status "$P1"
+    # p3: findings, then the label waiver on top. The waiver hides nothing.
+    jq -n '[{context:"CR findings (0 actionable)", state:"success", creator:{login:"github-actions[bot]"}, description:"cr-out-of-band + cr-disposition set — gate overridden"},
+            {context:"CR findings (0 actionable)", state:"failure", creator:{login:"github-actions[bot]"}, description:"CodeRabbit posted 1 actionable finding(s) on current head"}]' \
+        > "$STATUS_DIR/$p3"
+    [ "$(run_mcf "$m")" = blocked ]
+    # Findings, then a real pass on the same commit: that pass is the verdict.
+    jq -n '[{context:"CR findings (0 actionable)", state:"success", creator:{login:"github-actions[bot]"}, description:"CodeRabbit: 0 actionable findings on current head"},
+            {context:"CR findings (0 actionable)", state:"failure", creator:{login:"github-actions[bot]"}, description:"CodeRabbit posted 1 actionable finding(s) on current head"}]' \
+        > "$STATUS_DIR/$p3"
+    [ "$(run_mcf "$m")" = "carried:$p3" ]
+    # Non-vacuity: with only the waiver, the walk does reach P1.
+    pass_status "$p3" success 'github-actions[bot]' 'cr-out-of-band + cr-disposition set — gate overridden'
+    [ "$(run_mcf "$m")" = "carried:$P1" ]
+}
+
+@test "shape 5: a PR at the 250-commit list cap fails closed" {
+    setup_mcf
+    m=$(merge_into_pr capped)
+    pass_status "$P1"
+    # P1 + m are the PR's 2 real commits.
+    [ "$(MCF_PAD_COMMITS=247 run_mcf "$m")" = "carried:$P1" ]
+    [ "$(MCF_PAD_COMMITS=248 run_mcf "$m")" = blocked ]
+}
+
+# shallow_clone <dir> -> a depth-1 clone of the fixture's develop, as the
+# action's checkout leaves it, with origin pointing at the fixture.
+shallow_clone() {
+    mg config uploadpack.allowAnySHA1InWant true
+    git clone -q --depth 1 --branch develop "file://$(cygpath -m "$MR" 2>/dev/null || echo "$MR")" "$1"
+    [ "$(git -C "$1" rev-parse --is-shallow-repository)" = true ]
+}
+
+@test "shape 5: from a shallow checkout, the head and base are fetched and the carry still works" {
+    setup_mcf
+    m=$(merge_into_pr shallowm)
+    pass_status "$P1"
+    shallow_clone "$BATS_TEST_TMPDIR/sh"
+    ! git -C "$BATS_TEST_TMPDIR/sh" cat-file -e "$m^{commit}" 2>/dev/null || false
+    out=$( mcf_env "$m"; MCF_GIT_DIR="$BATS_TEST_TMPDIR/sh"
+           if merge_carry_forward; then echo "carried:$mcf_carried"; else echo blocked; fi )
+    [ "$out" = "carried:$P1" ]
+    [ "$(git -C "$BATS_TEST_TMPDIR/sh" rev-parse --is-shallow-repository)" = false ]
+}
+
+@test "shape 5: a failed or out-of-time fetch fails closed and is not cached; a non-merge head never fetches" {
+    setup_mcf
+    m=$(merge_into_pr fetchfail)
+    pass_status "$P1"
+    shallow_clone "$BATS_TEST_TMPDIR/sh"
+    git -C "$BATS_TEST_TMPDIR/sh" remote set-url origin "file://$(cygpath -m "$BATS_TEST_TMPDIR" 2>/dev/null || echo "$BATS_TEST_TMPDIR")/missing"
+    (
+        mcf_env "$m"; MCF_GIT_DIR="$BATS_TEST_TMPDIR/sh"
+        merge_carry_forward && exit 1
+        [ -z "$mcf_state" ] || exit 1
+    )
+    # Too little of the poll window left: no fetch is started.
+    shallow_clone "$BATS_TEST_TMPDIR/sh2"
+    (
+        mcf_env "$m"; MCF_GIT_DIR="$BATS_TEST_TMPDIR/sh2"
+        deadline=$(( SECONDS + 35 ))
+        # Record every timeout-wrapped command: no fetch may even start.
+        timeout() { echo "timeout $*" >> "$GH_CALLS"; command timeout "$@"; }
+        : > "$GH_CALLS"
+        merge_carry_forward && exit 1
+        [ -z "$mcf_state" ] || exit 1
+        ! grep -q '^timeout ' "$GH_CALLS" || exit 1
+        [ "$(git -C "$BATS_TEST_TMPDIR/sh2" rev-parse --is-shallow-repository)" = true ] || exit 1
+        unset deadline
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    )
+    # A non-merge head is a definitive block from one API call, before any fetch.
+    mg checkout -q -B single2 "$P1"; mg commit -q --allow-empty -m 'empty follow-up'
+    s=$(mg rev-parse HEAD)
+    (
+        mcf_env "$s"; MCF_GIT_DIR="$BATS_TEST_TMPDIR/sh"
+        : > "$GH_CALLS"
+        merge_carry_forward && exit 1
+        [ "$mcf_state" = no ] || exit 1
+        [ "$(cat "$GH_CALLS")" = "repos/o/r/commits/$s" ] || exit 1
+    )
 }
 
 # real_mcf_decide <head-sha> <graphql-fixture> [ask-state] — the real decide()
