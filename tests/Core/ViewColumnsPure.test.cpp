@@ -385,3 +385,100 @@ TEST_CASE("Save round-trip keeps column order") {
               std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee", "field:priority"});
     }
 }
+
+TEST_CASE("CanRemoveViewColumn locks only the id column, like the Fields tab") {
+    const ViewDefinition v = MakeView({{"id", 90.0f}, {"field:summary", 0.0f}, {"field:status", 0.0f}});
+    CHECK(CanRemoveViewColumn(v, "field:summary"));
+    CHECK(CanRemoveViewColumn(v, " field:status "));
+    CHECK_FALSE(CanRemoveViewColumn(v, "id"));
+    CHECK_FALSE(CanRemoveViewColumn(v, "field:priority")); // not on this view
+    CHECK_FALSE(CanRemoveViewColumn(v, "summary"));        // not a column key
+    CHECK_FALSE(CanRemoveViewColumn(v, ""));
+
+    SUBCASE("a field in the frozen first slot can go: the Fields tab locks only ID") {
+        const ViewDefinition reordered = MakeView({{"field:summary", 0.0f}, {"id", 90.0f}, {"field:status", 0.0f}});
+        CHECK(reordered.Columns.front().Key == "field:summary");
+        CHECK(CanRemoveViewColumn(reordered, "field:summary"));
+    }
+}
+
+TEST_CASE("RemoveViewColumn") {
+    ViewDefinition v =
+        MakeView({{"id", 90.0f}, {"field:status", 120.0f}, {"field:summary", 320.0f}, {"field:assignee", 200.0f}});
+    ViewSortSpec onSummary;
+    onSummary.ColumnKey = "field:summary";
+    ViewSortSpec onAssignee;
+    onAssignee.ColumnKey = "field:assignee";
+    v.SortSpecs = {onSummary, onAssignee};
+
+    SUBCASE("drops only that column; the others keep position and width") {
+        CHECK(RemoveViewColumn("field:summary", v));
+        REQUIRE(v.Columns.size() == 3);
+        CHECK(v.Columns[0].Key == "id");
+        CHECK(v.Columns[1].Key == "field:status");
+        CHECK(v.Columns[1].Width == doctest::Approx(120.0f));
+        CHECK(v.Columns[2].Key == "field:assignee");
+        CHECK(v.Columns[2].Width == doctest::Approx(200.0f));
+    }
+    SUBCASE("Fields is regenerated and a sort rule on the column goes with it") {
+        CHECK(RemoveViewColumn("field:summary", v));
+        CHECK(v.Fields == std::vector<std::string>{"status", "assignee"});
+        REQUIRE(v.SortSpecs.size() == 1);
+        CHECK(v.SortSpecs[0].ColumnKey == "field:assignee");
+    }
+    SUBCASE("a refused key leaves the view untouched") {
+        const ViewDefinition before = v;
+        CHECK_FALSE(RemoveViewColumn("id", v));
+        CHECK_FALSE(RemoveViewColumn("field:priority", v));
+        CHECK(v == before);
+    }
+    SUBCASE("removing twice is a no-op the second time") {
+        CHECK(RemoveViewColumn("field:summary", v));
+        const ViewDefinition once = v;
+        CHECK_FALSE(RemoveViewColumn("field:summary", v));
+        CHECK(v == once);
+    }
+    SUBCASE("every field can go: the grid still has its id column") {
+        CHECK(RemoveViewColumn("field:status", v));
+        CHECK(RemoveViewColumn("field:summary", v));
+        CHECK(RemoveViewColumn("field:assignee", v));
+        REQUIRE(v.Columns.size() == 1);
+        CHECK(v.Columns[0].Key == "id");
+    }
+}
+
+TEST_CASE("RemoveViewColumn against the Views editor draft") {
+    const ViewDefinition loaded =
+        MakeView({{"id", 90.0f}, {"field:status", 120.0f}, {"field:summary", 320.0f}, {"field:assignee", 200.0f}});
+    ViewDefinition saved = loaded;
+    ViewDefinition draft = loaded;
+    ViewDefinition base = loaded;
+
+    SUBCASE("no phantom unsaved edits: draft and base lose the column along with the saved view") {
+        RemoveViewColumn("field:summary", saved);
+        RemoveViewColumn("field:summary", draft);
+        RemoveViewColumn("field:summary", base);
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
+        RebaseViewDraft(draft, base, saved);
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
+    }
+    SUBCASE("a draft the removal did not reach still adopts it on the next rebase") {
+        RemoveViewColumn("field:summary", saved);
+        RebaseViewDraft(draft, base, saved);
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
+    }
+    SUBCASE("a pending column edit survives, and its Apply does not bring the column back") {
+        draft.Columns.push_back({"field:priority", 0.0f}); // ticked in the Fields tab, not applied yet
+        RemoveViewColumn("field:summary", saved);
+        RemoveViewColumn("field:summary", draft);
+        RemoveViewColumn("field:summary", base);
+        RebaseViewDraft(draft, base, saved);
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
+
+        const ViewDefinition merged = MergeDraftEditsOntoSaved(draft, saved);
+        std::vector<std::string> keys;
+        for (const auto& c : merged.Columns)
+            keys.push_back(c.Key);
+        CHECK(keys == std::vector<std::string>{"id", "field:status", "field:assignee", "field:priority"});
+    }
+}
