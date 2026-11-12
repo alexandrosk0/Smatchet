@@ -1,0 +1,97 @@
+name: Set up pinned LLVM (clang-cl)
+description: >-
+  Extracts a pinned LLVM release (clang-cl + its clang_rt ASan/UBSan runtimes)
+  beside the runner image's C:\Program Files\LLVM, leaving that one untouched,
+  puts its bin dir first on PATH, and fails unless `clang-cl --version`
+  reports exactly the pinned version.
+  Single source of the clang-cl toolchain for the ninja-clang-asan lanes
+  (build-and-test.yml "Sanitizer (UBSan via Clang)" and sanitizer-nightly.yml).
+
+  Why pinned: the runner image's LLVM drifts with the image (20.1.8 on
+  windows-2022 in 2026-11), and clang-cl up to at least 20 miscompiles the ASan
+  stack frame of a function that holds a C++ catch funclet — the funclet reads
+  the caught exception through the wrong frame slot and faults on the ASan
+  frame magic (0x41B58AB3), so `catch (const std::exception& e) { e.what(); }`
+  crashes an otherwise-clean instrumented binary. LLVM 22.1.6 is the version the
+  clang-cl ASan + UBSan rig was validated on; cmake/Sanitizers.cmake refuses an
+  older clang-cl under SMATCHET_SANITIZER=asan.
+  Conventionally placed after ilammy/msvc-dev-cmd. The runner puts GITHUB_PATH
+  entries ahead of every later step's PATH, including the VS-bundled clang-cl
+  that vcvars exports, and the Verify step below fails if anything else wins.
+
+inputs:
+  version:
+    description: LLVM release to install (llvmorg-<version>), e.g. 22.1.6.
+    required: false
+    default: "22.1.6"
+  sha256:
+    description: >-
+      SHA-256 of LLVM-<version>-win64.exe. The default is the digest GitHub
+      publishes for the llvmorg-22.1.6 release asset; keep it in lockstep with
+      `version`.
+    required: false
+    default: "e2d9a6855ff22c0acf3adc87ff1e1ad9705b8b6fc5bab2542aefc3315fc24cf7"
+
+runs:
+  using: composite
+  steps:
+    # Pure speed: the install step re-downloads on a miss, so a cache-service error
+    # must not red the consuming job.
+    - name: Cache LLVM installer
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      continue-on-error: true
+      with:
+        path: llvm-installer-cache
+        key: llvm-installer-win64-${{ inputs.version }}
+
+    - name: Install pinned LLVM
+      shell: pwsh
+      env:
+        LLVM_VERSION: ${{ inputs.version }}
+        LLVM_SHA256: ${{ inputs.sha256 }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $cacheDir = Join-Path $env:GITHUB_WORKSPACE 'llvm-installer-cache'
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+        $exe = Join-Path $cacheDir "LLVM-$env:LLVM_VERSION-win64.exe"
+        if (-not (Test-Path $exe)) {
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe"
+          & curl.exe -fsSL --retry 5 --retry-all-errors -o $exe $url
+          if ($LASTEXITCODE -ne 0) { throw "LLVM download failed: $url" }
+        }
+        $actual = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant()
+        if ($actual -ne $env:LLVM_SHA256.ToLowerInvariant()) {
+          Remove-Item -Force $exe
+          throw "LLVM installer SHA-256 mismatch: expected $env:LLVM_SHA256, got $actual"
+        }
+        # Extract the NSIS payload with 7-Zip (on the image) rather than running
+        # the installer: LLVM's installer uninstalls any registered LLVM first,
+        # which would silently remove the image's C:\Program Files\LLVM and
+        # rewrite HKLM\Software\LLVM.
+        $dest = Join-Path $env:RUNNER_TOOL_CACHE "llvm-$env:LLVM_VERSION"
+        & 7z x $exe "-o$dest" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "7z extract of $exe exited $LASTEXITCODE" }
+        $bin = Join-Path $dest 'bin'
+        if (-not (Test-Path (Join-Path $bin 'clang-cl.exe'))) { throw "clang-cl.exe missing under $bin" }
+        # The ASan runtime layout cmake/Sanitizers.cmake resolves; a miss there is
+        # only a configure WARN and a later link error, so fail here instead.
+        $major = $env:LLVM_VERSION.Split('.')[0]
+        $rt = Join-Path $dest "lib\clang\$major\lib\windows"
+        foreach ($f in 'clang_rt.asan_dynamic-x86_64.dll', 'clang_rt.asan_dynamic-x86_64.lib', 'clang_rt.asan_dynamic_runtime_thunk-x86_64.lib') {
+          if (-not (Test-Path (Join-Path $rt $f))) { throw "$f missing under $rt" }
+        }
+        Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+    - name: Verify pinned clang-cl
+      shell: bash
+      env:
+        LLVM_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        command -v clang-cl
+        first=$(clang-cl --version | head -1)
+        echo "$first"
+        case "$first" in
+          "clang version ${LLVM_VERSION}"*) ;;
+          *) echo "::error::clang-cl on PATH is not the pinned LLVM ${LLVM_VERSION}: ${first}"; exit 1 ;;
+        esac

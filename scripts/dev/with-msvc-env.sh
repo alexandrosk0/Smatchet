@@ -241,8 +241,9 @@ done < <(powershell.exe -NoProfile -Command "$PS_CMD" 2>/dev/null | tr -d '\r')
 
 # vcvars64 prepends the VS-bundled LLVM (older clang) to PATH. The ninja-clang-*
 # presets call bare `clang-cl`, which would then resolve to that older VS clang
-# instead of the standalone LLVM that CI pins (both workflows echo LLVM\bin onto
-# the path after msvc-dev-cmd). Mirror CI: put standalone LLVM first. Guarded —
+# instead of the standalone LLVM that CI uses (both clang-cl workflows prepend a
+# pinned LLVM 22.1.6 via .github/actions/setup-pinned-llvm, and the asan presets
+# refuse clang-cl < 22 at configure). Mirror CI: put standalone LLVM first. Guarded —
 # no-op if absent; harmless for MSVC presets (cl/link.exe aren't in LLVM\bin).
 _llvm_bin="/c/Program Files/LLVM/bin"
 if [ -x "$_llvm_bin/clang-cl.exe" ]; then

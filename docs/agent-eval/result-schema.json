@@ -45,7 +45,12 @@
         "model": { "type": "string" },
         "promptRootRef": { "type": "string", "description": "Commit SHA / worktree label of the prompt-root, if known." },
         "capturedAt": { "type": "string", "description": "ISO-8601 capture time (informational)." },
-        "trialsRequested": { "type": "integer", "minimum": 1 }
+        "trialsRequested": { "type": "integer", "minimum": 1 },
+        "parserByTrial": {
+          "type": "array",
+          "description": "parserByTrial[i] names how trials[i].findings were produced: 'headings' (one finding per bullet under the code-review severity headings), 'citations' (fallback when no severity heading is present: one info finding per line citing file:line, outside the contract's evidence sections such as Verified clean) or 'reference' (fake runner, copied from the case's expectedFindings). For triage only — the scorer never reads it.",
+          "items": { "type": "string", "enum": ["headings", "citations", "reference"] }
+        }
       }
     },
     "case": {
