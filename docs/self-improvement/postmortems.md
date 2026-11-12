@@ -34,6 +34,59 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-12 · PR #2401 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after CodeRabbit reviewed the code but the gate read its clean incremental review as stale
+
+### What escaped
+`refactor(ui): move the stale-index row count into the pure header` (#2401, head `ffb8a503428a`) merged 2026-11-12T15:12:47Z as `eb0312d6c`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`, `crState: STALE_UNKNOWN`.
+
+The diff is small UI-layer C++: `Source/Core/include/Ui/StatusBarRowCountPure.h` (+16/−1), `Source/Core/src/Ui/SmatchetStatusBarUi.cpp` (+1/−9) and `tests/Core/StatusBarRowCountPure.test.cpp` (+15). On the head:
+- CodeRabbit did review the code. Its review of `7478dc9cac` posted 1 actionable comment and 2 nitpicks; the fix landed in `979a7f8ab`, and CodeRabbit's incremental review of `979a7f8ab` posted nothing. The two later commits (`b4af5e023`, `ffb8a5034`) are develop merge-ins that do not touch the reviewed files, and a manual re-review request was refused as `Review rate limited`.
+- The PR body carries `adversarial-code-review: 1 finding, 1 fixed in 979a7f8ab`, re-pinned to the merged head with the note that it is a develop merge with no change to the reviewed files.
+
+Both labels went on at 2026-11-11T20:34:42Z with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the merged head was green.
+
+### Root cause
+The external review existed; the gate could not credit it. CodeRabbit's clean incremental review has no `Actionable comments posted` header, so `merge-gates.sh` read the latest review as `STALE_UNKNOWN` and blocked by its safe default. That is the shape #2414 taught the `CR finding gate` workflow to pass. The waiver was applied before #2414 merged, and each develop merge-in afterwards reset the review state while the re-review quota was spent.
+
+The merge was further delayed by the same ghost queued check suites as #2408 (eight suites from the 20:34Z `labeled` events, `queued` with zero runs, uncancellable). An admin merge was refused with `3 of 23 required status checks are expected`; `gh pr update-branch` gave the PR a fresh head, and the normal gate poll merged it.
+
+### Preventing gate
+None — override legitimate. CodeRabbit reviewed the code and its one finding was fixed; the waiver bridged a gate that could not read the clean follow-up review and a re-review quota that was exhausted. The CR finding gate's half of the parsing gap is fixed by #2414. Whether `merge-gates.sh` reads the same shape is not verified here; the snapshot's `STALE_UNKNOWN` says it did not at merge time, and that belongs on the existing P1 entry below rather than a new one.
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the review that ran found one issue and it was fixed. The gap is gate parsing and review quota, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
+## 2026-11-12 · PR #2408 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a test-tooling diff CodeRabbit never reviewed
+
+### What escaped
+`test(agent-eval): case packets request the code-review heading format` (#2408, head `dd5c0ae9c93e`) merged 2026-11-12T14:25:55Z as `96f0858bf`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`.
+
+The diff is test tooling: `scripts/dev/agent-eval-run.sh` (+4/−2), four `tests/agent-eval/code-review/*.json` case packets (one line each) and `tests/bats/agent_eval_run.bats` (+26). No C++ and no gate script. On the head:
+- CodeRabbit never reviewed the PR. Its only comment (2026-11-11T03:24:48Z) was the notice that repositories under 10 stars get no automatic review.
+- `Cursor Bugbot` could not run (usage limit), which the gate treats as a no-wedge pass.
+- The PR body carries `adversarial-code-review: 3 findings, 2 fixed, 1 deferred to user` and `independent-review: code-review agent, separate subagent context, 2 rounds; 3 findings, 2 fixed, 1 deferred to user`. Both were re-pinned to the merged head, whose patch is identical to the reviewed `93d0bbd` (the delta is a develop merge-in).
+
+Both labels went on at 2026-11-11T20:34:46Z with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the merged head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request (under 10 stars), and no request was spent on this PR while its quota was being rationed. `merge-gates.sh` held the PR on the missing review and named the `cr-out-of-band` + `cr-disposition:` pair as the escape; this PR took that documented waiver.
+
+The merge was delayed, not driven, by two unrelated blockers: the UBSan lane crash fixed by #2415, and eight check suites created by the 20:34Z `labeled` events that stayed `queued` with zero runs. GitHub would not cancel or re-run them and kept the PR `BLOCKED` with every required check green. `gh pr update-branch` gave the PR a fresh head, and the normal gate poll merged it.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for an unreviewed CodeRabbit on a code PR, applied with the maintainer's OK, on a test-tooling diff with a separate-context review recorded on the head.
+
+The upstream cause (CodeRabbit reviews only on request, Bugbot hits its usage cap) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md). This PR is added to that entry's **Observed on** list. The ghost queued suites are recorded on [`categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md`](categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md).
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the independent review's deferred item (a layer doc outside this repository) was surfaced to the maintainer in the PR body. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
 ## 2026-11-11 · PR #2392 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after a manual CodeRabbit trigger was rate-limited
 
 ### What escaped
