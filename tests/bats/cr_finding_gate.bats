@@ -1840,27 +1840,32 @@ post_gh() {
 #
 # Merging the base into a PR branch makes a head CodeRabbit skips ("No files to
 # review"). merge_carry_forward() lets an earlier passing verdict carry forward
-# only when (a) the head is a merge, (b) an earlier PR commit passed THIS gate,
-# and (c) the PR's base...commit diff is identical at both. These tests build a
-# real git repository so (c) runs against real `git diff A...B` output, and
-# serve every REST call from it through a gh stub that applies the action's own
-# --jq filters (so the jq is under test too).
+# only when (a) the head is a two-parent merge of the base that git reproduces
+# exactly, (b) an earlier PR commit passed THIS gate with no newer findings
+# verdict in between, and (c) the PR's base...commit diff is identical at both.
+# These tests run the real extracted functions against a real git repository
+# (MCF_GIT_DIR) and serve the REST calls through a gh stub that applies the
+# action's own --jq filters, so the jq is under test too.
 # ----------------------------------------------------------------------------
 
 # mg <git args> — git in the fixture repo with a throwaway identity.
-mg() { git -C "$MR" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
+mg() { git -C "$MR" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c core.autocrlf=false "$@"; }
 
 setup_mcf() {
-    awk '/^        MCF_MAX_CANDIDATES=/{f=1} f{print} f && /^        merge_carry_forward\(\) \{/{g=1} g && /^        \}$/{exit}' \
+    awk '/^        MCF_BASE_REF=/{f=1} f{print} f && /^        merge_carry_forward\(\) \{/{g=1} g && /^        \}$/{exit}' \
         "$ACTION" > "$BATS_TEST_TMPDIR/mcf.fn"
     # Non-vacuity: an extraction miss must fail loudly, not test nothing.
     grep -q '^        pr_diff_norm() {'        "$BATS_TEST_TMPDIR/mcf.fn"
+    grep -q '^        mcf_scan() {'            "$BATS_TEST_TMPDIR/mcf.fn"
     grep -q '^        merge_carry_forward() {' "$BATS_TEST_TMPDIR/mcf.fn"
+    grep -q 'merge-tree --write-tree'          "$BATS_TEST_TMPDIR/mcf.fn"
     grep -q 'tac <<<"$cands"'                  "$BATS_TEST_TMPDIR/mcf.fn"
     MR="$BATS_TEST_TMPDIR/mr"
     STATUS_DIR="$BATS_TEST_TMPDIR/statuses"
+    GH_CALLS="$BATS_TEST_TMPDIR/gh-calls"
     mkdir -p "$MR" "$STATUS_DIR"
-    export MR STATUS_DIR
+    : > "$GH_CALLS"
+    export MR STATUS_DIR GH_CALLS
     mg init -q -b develop
     seq 1 30 | sed 's/^/line /' > "$MR/a.txt"
     printf 'base b\n' > "$MR/b.txt"
@@ -1880,75 +1885,75 @@ setup_mcf() {
     export P1
 }
 
-# merge_into_pr <name> [edit-command] -> merges develop into a fresh branch off
-# P1, optionally running <edit-command> inside the merge (a conflict fix or a
-# hidden edit), and prints the merge sha.
+# merge_into_pr <name> [edit-command] [from] -> merges develop into a fresh
+# branch off <from> (default P1), optionally running <edit-command> inside the
+# merge (a conflict fix or a hidden edit), and prints the merge sha.
 merge_into_pr() {
-    local name="$1" edit="${2:-}"
-    mg checkout -q -B "$name" "$P1"
+    local name="$1" edit="${2:-}" from="${3:-$P1}"
+    mg checkout -q -B "$name" "$from"
     mg merge -q --no-ff --no-commit develop >/dev/null 2>&1 || true
     if [ -n "$edit" ]; then (cd "$MR" && eval "$edit"); mg add -A; fi
     mg commit -qm "Merge branch 'develop' into $name" >/dev/null
     mg rev-parse HEAD
 }
 
-# pass_status <sha> [state] [creator] [description] -> records the newest
+# pass_status <sha> [state] [creator|null] [description] -> records the newest
 # `CR findings (0 actionable)` status on <sha> (an older pending one below it).
 pass_status() {
     jq -n --arg s "${2:-success}" --arg c "${3:-github-actions[bot]}" \
           --arg d "${4:-CodeRabbit: 0 actionable findings on current head}" \
-        '[{context:"CR findings (0 actionable)", state:$s, creator:{login:$c}, description:$d},
+        '[{context:"CR findings (0 actionable)", state:$s,
+           creator:(if $c == "null" then null else {login:$c} end), description:$d},
           {context:"CR findings (0 actionable)", state:"pending", creator:{login:"github-actions[bot]"}, description:"older"}]' \
         > "$STATUS_DIR/$1"
 }
 
-# mcf_gh — gh stub serving the REST calls merge_carry_forward() makes, from $MR.
+# mcf_gh — gh stub serving the REST calls mcf_scan() makes. Every call is
+# logged to $GH_CALLS so the cache can be counted.
 mcf_gh() {
-    local jqf="" path="" accept="" a out
+    local jqf="" path="" a out
     [ "$1" = api ] && shift
     while [ $# -gt 0 ]; do
         case "$1" in
             --jq) jqf="$2"; shift 2 ;;
-            -H) accept="$2"; shift 2 ;;
+            -H) shift 2 ;;
             --paginate) shift ;;
             *) path="$1"; shift ;;
         esac
     done
+    echo "$path" >> "$GH_CALLS"
     case "$path" in
-        repos/o/r/compare/*)
-            [ "${GH_COMPARE_FAIL:-}" = 1 ] && return 1
-            case "$accept" in *diff*) ;; *) return 1 ;; esac
-            a="${path#repos/o/r/compare/}"
-            git -C "$MR" diff --no-color --no-ext-diff "${a%%...*}...${a#*...}"
-            return ;;
         repos/o/r/commits/*/statuses*)
+            [ "${GH_STATUS_FAIL:-}" = 1 ] && return 1
             a="${path#repos/o/r/commits/}"; a="${a%%/*}"
             out=$(cat "$STATUS_DIR/$a" 2>/dev/null || echo '[]') ;;
-        repos/o/r/commits/*)
-            a="${path#repos/o/r/commits/}"
-            out=$(git -C "$MR" rev-list --parents -n1 "$a" \
-                    | jq -R 'split(" ") | {parents: (.[1:] | map({sha: .}))}') ;;
         repos/o/r/pulls/1/commits*)
             out=$(git -C "$MR" rev-list --reverse "develop..$SHA" | jq -R . | jq -s 'map({sha: .})') ;;
         repos/o/r/pulls/1)
-            out='{"base":{"ref":"develop"}}' ;;
-        repos/o/r/git/ref/heads/develop)
-            out=$(jq -n --arg s "$(git -C "$MR" rev-parse develop)" '{object:{sha:$s}}') ;;
+            out=$(jq -n --arg r "${MCF_FIX_BASE_REF:-develop}" '{base:{ref:$r}}') ;;
+        repos/o/r/git/ref/heads/*)
+            a="${path#repos/o/r/git/ref/heads/}"
+            out=$(jq -n --arg s "$(git -C "$MR" rev-parse "$a")" '{object:{sha:$s}}') ;;
         *) return 1 ;;
     esac
     # tr: a Windows jq writes CRLF; gh's built-in --jq writes LF.
     if [ -n "$jqf" ]; then printf '%s' "$out" | jq -r "$jqf" | tr -d '\r'; else printf '%s' "$out"; fi
 }
 
+# mcf_env — the action's environment around the extracted functions.
+mcf_env() {
+    OWNER=o REPO=r PR=1 SHA="$1" CONTEXT='CR findings (0 actionable)' MCF_GIT_DIR="$MR"
+    gh() { mcf_gh "$@"; }
+    # shellcheck disable=SC1091
+    source "$BATS_TEST_TMPDIR/mcf.fn"
+    set +e -uo pipefail
+}
+
 # run_mcf <head-sha> -> "carried:<sha>" or "blocked"
 run_mcf() {
     (
-        OWNER=o REPO=r PR=1 SHA="$1" CONTEXT='CR findings (0 actionable)'
-        gh() { mcf_gh "$@"; }
-        # shellcheck disable=SC1091
-        source "$BATS_TEST_TMPDIR/mcf.fn"
-        set +e -uo pipefail
-        if c=$(merge_carry_forward); then echo "carried:$c"; else echo blocked; fi
+        mcf_env "$1"
+        if merge_carry_forward; then echo "carried:$mcf_carried"; else echo blocked; fi
     )
 }
 
@@ -1973,13 +1978,43 @@ run_mcf() {
     [ "$(run_mcf "$m")" = blocked ]
 }
 
-@test "shape 5: a whitespace-only edit inside the PR's string stays blocked (no patch-id collision)" {
+@test "shape 5: a merge that moves the PR's hunk between identical stanzas stays blocked" {
     setup_mcf
-    m=$(merge_into_pr ws "sed -i 's/^x = \"a b\"\$/x = \"ab\"/' a.txt")
+    # Two identical stanzas: the hunk's context and function-context text are
+    # the same at both spots, so only the exact merge-tree check can tell.
+    mg checkout -q -B stanzas develop
+    for i in 1 2 3; do printf 'job:\n  a: 1\n  b: 2\n  c: 3\n  d: 4\n  e: 5\n  f: 6\n'; done > "$MR/w.yml"
+    mg add -A; mg commit -qm stanzas
+    mg checkout -q develop; mg merge -q --ff-only stanzas
+    mg checkout -q -B moved-pr develop
+    awk '{print} /^  c: 3$/{n++; if (n == 1) print "  if: x"}' "$MR/w.yml" > "$MR/w.tmp" && mv "$MR/w.tmp" "$MR/w.yml"
+    mg commit -qam 'pr adds if: to the first stanza'
+    p=$(mg rev-parse HEAD)
+    mg checkout -q develop; printf 'later\n' > "$MR/e.txt"; mg add -A; mg commit -qm 'develop again'
+    m=$(merge_into_pr movedm "awk '/^  if: x\$/{next} {print} /^  c: 3\$/{n++; if (n == 2) print \"  if: x\"}' w.yml > w.tmp && mv w.tmp w.yml" "$p")
+    pass_status "$p"
+    # Non-vacuity: the normalised diffs really do collide on this pair.
+    (
+        mcf_env "$m"
+        b=$(git -C "$MR" rev-parse develop)
+        [ "$(pr_diff_norm "$b" "$p")" = "$(pr_diff_norm "$b" "$m")" ]
+    )
+    [ "$(run_mcf "$m")" = blocked ]
+}
+
+@test "shape 5: a clean merge on top of an unreviewed whitespace edit stays blocked (no patch-id collision)" {
+    setup_mcf
+    # P2 changes only spaces inside the PR's string and never passed; the merge
+    # of develop into it is clean, so (a) holds and (c) must catch it.
+    mg checkout -q -B ws "$P1"
+    sed -i 's/^x = "a b"$/x = "ab"/' "$MR/a.txt"
+    mg commit -qam 'whitespace only'
+    p2=$(mg rev-parse HEAD)
+    m=$(merge_into_pr wsm "" "$p2")
     pass_status "$P1"
     [ "$(run_mcf "$m")" = blocked ]
     # Non-vacuity: git patch-id really does collide on this pair, so an
-    # implementation built on it would pass the hidden edit.
+    # implementation built on it would pass the edit.
     base=$(mg rev-parse develop)
     [ "$(mg diff "$base...$P1" | git patch-id --stable | cut -d' ' -f1)" = \
       "$(mg diff "$base...$m"  | git patch-id --stable | cut -d' ' -f1)" ]
@@ -2002,6 +2037,28 @@ run_mcf() {
     [ "$(run_mcf "$m")" = blocked ]
     pass_status "$P1" success 'github-actions[bot]' 'cr-out-of-band + cr-disposition set — gate overridden'
     [ "$(run_mcf "$m")" = blocked ]
+    # A null creator must not let the next field shift into its place.
+    pass_status "$P1" success null 'github-actions[bot]'
+    [ "$(run_mcf "$m")" = blocked ]
+}
+
+@test "shape 5: a newer findings failure on identical code stops the walk" {
+    setup_mcf
+    # P1 passes; P2 adds X (findings); P3 reverts X and CR reports findings on
+    # the original code. The merge must not skip P3's verdict for P1's pass.
+    mg checkout -q -B findings "$P1"
+    printf 'X\n' >> "$MR/b.txt"; mg commit -qam 'add X'
+    p2=$(mg rev-parse HEAD)
+    mg revert --no-edit HEAD >/dev/null
+    p3=$(mg rev-parse HEAD)
+    m=$(merge_into_pr findm "" "$p3")
+    pass_status "$P1"
+    pass_status "$p2" failure 'github-actions[bot]' 'CodeRabbit posted 1 actionable finding(s) on current head'
+    pass_status "$p3" failure 'github-actions[bot]' 'CodeRabbit posted 2 actionable finding(s) on current head'
+    [ "$(run_mcf "$m")" = blocked ]
+    # Non-vacuity: without P3's verdict the same merge carries from P1.
+    echo '[]' > "$STATUS_DIR/$p3"; echo '[]' > "$STATUS_DIR/$p2"
+    [ "$(run_mcf "$m")" = "carried:$P1" ]
 }
 
 @test "shape 5: a head that is not a merge commit stays blocked" {
@@ -2011,6 +2068,28 @@ run_mcf() {
     s=$(mg rev-parse HEAD)
     pass_status "$P1"
     [ "$(run_mcf "$s")" = blocked ]
+}
+
+@test "shape 5: a PR not based on develop, or a merge of a non-base branch, stays blocked" {
+    setup_mcf
+    pass_status "$P1"
+    # The retarget attack: branch Y = develop + Q (Q carries unreviewed code),
+    # m = merge(P1, Y). Against Y, both Y...m and Y...P1 are exactly the PR's
+    # change and merge-tree reproduces m, so only the base-ref check stops it.
+    mg checkout -q -B other develop; printf 'unreviewed\n' > "$MR/q.txt"; mg add -A; mg commit -qm Q
+    mg checkout -q -B ym "$P1"
+    mg merge -q --no-ff -m "Merge branch 'other' into ym" other >/dev/null
+    ym=$(mg rev-parse HEAD)
+    [ "$(MCF_FIX_BASE_REF=other run_mcf "$ym")" = blocked ]
+    # Second parent with develop's content but not an ancestor of develop (an
+    # empty commit on a side branch): only the ancestor check stops it.
+    mg checkout -q -B side develop; mg commit -q --allow-empty -m side
+    mg checkout -q -B sidem "$P1"
+    mg merge -q --no-ff -m "Merge branch 'side' into sidem" side >/dev/null
+    [ "$(run_mcf "$(mg rev-parse HEAD)")" = blocked ]
+    # Non-vacuity: the same shapes against develop itself do carry.
+    m=$(merge_into_pr retarget)
+    [ "$(run_mcf "$m")" = "carried:$P1" ]
 }
 
 @test "shape 5: develop editing lines next to the PR's hunk stays blocked (safe direction)" {
@@ -2035,11 +2114,45 @@ run_mcf() {
     [ "$(run_mcf "$m")" = blocked ]
 }
 
-@test "shape 5: an unreadable compare diff fails closed" {
+@test "shape 5: a failed status read fails closed and is not cached" {
     setup_mcf
     m=$(merge_into_pr apifail)
     pass_status "$P1"
-    [ "$(GH_COMPARE_FAIL=1 run_mcf "$m")" = blocked ]
+    (
+        mcf_env "$m"
+        GH_STATUS_FAIL=1
+        ! merge_carry_forward || false
+        [ -z "$mcf_state" ]
+        GH_STATUS_FAIL=0
+        merge_carry_forward
+        [ "$mcf_carried" = "$P1" ]
+    )
+}
+
+@test "shape 5: the answer is cached per run (the poll loop re-enters decide)" {
+    setup_mcf
+    m=$(merge_into_pr cache)
+    pass_status "$P1"
+    (
+        mcf_env "$m"
+        merge_carry_forward; merge_carry_forward; merge_carry_forward
+        [ "$mcf_carried" = "$P1" ]
+        n=$(grep -c . "$GH_CALLS")
+        : > "$GH_CALLS"
+        merge_carry_forward
+        [ "$(grep -c . "$GH_CALLS")" -eq 0 ]
+        echo "calls for the first pass: $n" >&2
+        [ "$n" -gt 0 ]
+    )
+    # A definitive block is cached too.
+    h=$(merge_into_pr cache2 "printf 'evil\n' >> b.txt")
+    (
+        mcf_env "$h"
+        ! merge_carry_forward || false
+        : > "$GH_CALLS"
+        ! merge_carry_forward || false
+        [ "$(grep -c . "$GH_CALLS")" -eq 0 ]
+    )
 }
 
 @test "shape 5: a later clean merge carries forward from an earlier carried-forward merge" {
@@ -2058,17 +2171,17 @@ run_mcf() {
     [ "$(run_mcf "$m2")" = "carried:$m1" ]
 }
 
-# real_mcf_decide <head-sha> <graphql-fixture> — the real decide() with the
-# real merge_carry_forward(), gh split between the GraphQL fixture and mcf_gh.
+# real_mcf_decide <head-sha> <graphql-fixture> [ask-state] — the real decide()
+# with the real merge_carry_forward(), gh split between the GraphQL fixture and
+# mcf_gh.
 real_mcf_decide() {
     (
-        OWNER=o REPO=r PR=1 SHA="$1" q=unused RESP_FIXTURE="$2" CONTEXT='CR findings (0 actionable)'
+        mcf_env "$1"
+        q=unused RESP_FIXTURE="$2" ASK="${3:-waiting}"
         post() { printf '%s: %s\n' "$1" "$2"; }
         maybe_nudge_review() { :; }
-        oss_ask_state() { echo waiting; }
+        oss_ask_state() { echo "$ASK"; }
         gh() { case "$*" in "api graphql"*) cat "$RESP_FIXTURE" ;; *) mcf_gh "$@" ;; esac; }
-        # shellcheck disable=SC1091
-        source "$BATS_TEST_TMPDIR/mcf.fn"
         # shellcheck disable=SC1091
         source "$BATS_TEST_TMPDIR/decide.fn"
         set +e -uo pipefail
@@ -2077,24 +2190,27 @@ real_mcf_decide() {
     )
 }
 
-@test "shape 5: real decide() posts the carry-forward on a skipped CodeRabbit run, and blocks a hidden edit" {
+@test "shape 5: real decide() posts the carry-forward on a skipped CodeRabbit run, and falls through otherwise" {
     setup_jq; setup_decide; setup_mcf
     f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
     pass_status "$P1"
     m=$(merge_into_pr real)
     [ "$(real_mcf_decide "$m" "$f")" = "success: Merge-only head: PR diff identical to ${P1:0:12}, which passed this gate; CodeRabbit skipped the merge" ]
     # A hidden edit falls through to the unchanged manual-review arm: an open
-    # ask keeps waiting (retry -> PENDING), never green.
+    # ask keeps waiting (retry -> PENDING), never green ...
     h=$(merge_into_pr realhidden "printf 'evil\n' >> b.txt")
     out="$(real_mcf_decide "$h" "$f")"
     echo "$out" >&2
     [ "${out##*$'\n'}" = retry ]
     ! grep -q '^success' <<<"$out" || false
+    # ... and with no ask it posts the arm's terminal failure, as before.
+    [ "$(real_mcf_decide "$h" "$f" none)" = "failure: OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled" ]
 }
 
-@test "shape 5: decide() consults the carry-forward inside the manual-review arm, before the ask state" {
+@test "shape 5: decide() consults the carry-forward inside the manual-review arm, before the ask state, outside a subshell" {
     awk "/grep -qi 'manual review required'; then/,/^            fi\$/" "$ACTION" > "$BATS_TEST_TMPDIR/oss-arm.txt"
-    grep -qF 'if carried=$(merge_carry_forward); then' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    grep -qE '^ +if merge_carry_forward; then$' "$BATS_TEST_TMPDIR/oss-arm.txt"
+    ! grep -qF '$(merge_carry_forward)' "$ACTION" || false
     [ "$(grep -nF 'merge_carry_forward' "$BATS_TEST_TMPDIR/oss-arm.txt" | head -1 | cut -d: -f1)" -lt \
       "$(grep -nF 'case "$(oss_ask_state)" in' "$BATS_TEST_TMPDIR/oss-arm.txt" | cut -d: -f1)" ]
 }
@@ -2102,6 +2218,6 @@ real_mcf_decide() {
 @test "shape 5: the carry-forward description fits GitHub's 140-char limit" {
     d="$(sed -n 's/^ *post success "\(Merge-only head: [^"]*\)"$/\1/p' "$ACTION")"
     [ -n "$d" ]
-    d="${d//\$\{carried:0:12\}/0123456789ab}"
+    d="${d//\$\{mcf_carried:0:12\}/0123456789ab}"
     [ "${#d}" -le 140 ]
 }
