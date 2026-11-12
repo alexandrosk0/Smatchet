@@ -1916,13 +1916,14 @@ pass_status() {
 # mcf_gh — gh stub serving the REST calls mcf_scan() makes. Every call is
 # logged to $GH_CALLS so the cache can be counted.
 mcf_gh() {
-    local jqf="" path="" a out
+    local jqf="" path="" a out slurp=""
     [ "$1" = api ] && shift
     while [ $# -gt 0 ]; do
         case "$1" in
             --jq) jqf="$2"; shift 2 ;;
             -H) shift 2 ;;
             --paginate) shift ;;
+            --slurp) slurp=1; shift ;;
             *) path="$1"; shift ;;
         esac
     done
@@ -1949,6 +1950,11 @@ mcf_gh() {
             out=$(jq -n --arg s "$(git -C "$MR" rev-parse "$a")" '{object:{sha:$s}}') ;;
         *) return 1 ;;
     esac
+    # --slurp: an array of pages. MCF_STATUS_PAGE=N splits a list N per page.
+    if [ -n "$slurp" ]; then
+        printf '%s' "$out" | jq -c --argjson n "${MCF_STATUS_PAGE:-100}" '[range(0; length; $n) as $i | .[$i:$i+$n]] | if length == 0 then [[]] else . end'
+        return 0
+    fi
     # tr: a Windows jq writes CRLF; gh's built-in --jq writes LF.
     if [ -n "$jqf" ]; then printf '%s' "$out" | jq -r "$jqf" | tr -d '\r'; else printf '%s' "$out"; fi
 }
@@ -2360,7 +2366,7 @@ real_mcf_decide() {
     [ "$(real_mcf_decide "$m" "$f" none)" = "success: Merge-only head: PR diff identical to ${P1:0:12}, which passed this gate; CodeRabbit skipped the merge" ]
 }
 
-@test "decide() posts nothing while the PR's live head is not this run's commit" {
+@test "decide() retries without a verdict while the PR's live head is not this run's commit" {
     # Its evidence (reviews on headRefOid, the head's rollup) is about another
     # commit: a verdict from it on SHA would be a pass CodeRabbit never gave.
     setup_jq; setup_decide; setup_mcf
@@ -2406,6 +2412,76 @@ real_mcf_decide() {
     done
 }
 
+@test "shape 5: a later pending or error does not cancel a pass, a later failure does, and every status page is read" {
+    setup_mcf
+    m=$(merge_into_pr terminal)
+    pass_status "$P1"
+    # A run that could not conclude posted on P1 after its pass (a stale run
+    # at window end, the workflow's fallback poster).
+    for s in pending error; do
+        jq --arg s "$s" '[{context:"CR findings (0 actionable)", state:$s, creator:{login:"github-actions[bot]"},
+                           description:"gate evaluation did not conclude", target_url:null}] + .' \
+            "$STATUS_DIR/$P1" > "$STATUS_DIR/x" && mv "$STATUS_DIR/x" "$STATUS_DIR/$P1"
+        [ "$(run_mcf "$m")" = "carried:$P1" ]
+    done
+    # ... also with the statuses spread over pages, one per page.
+    [ "$(MCF_STATUS_PAGE=1 run_mcf "$m")" = "carried:$P1" ]
+    # A newer failure, even one a person posted, is the verdict.
+    jq '[{context:"CR findings (0 actionable)", state:"failure", creator:{login:"a-maintainer"},
+          description:"do not merge", target_url:null}] + .' \
+        "$STATUS_DIR/$P1" > "$STATUS_DIR/x" && mv "$STATUS_DIR/x" "$STATUS_DIR/$P1"
+    [ "$(run_mcf "$m")" = blocked ]
+    # A findings failure on a later page still stops the walk.
+    mg checkout -q -B paged "$P1"
+    printf 'X\n' >> "$MR/b.txt"; mg commit -qam 'add X'
+    mg revert --no-edit HEAD >/dev/null
+    p3=$(mg rev-parse HEAD)
+    m3=$(merge_into_pr pagedm "" "$p3")
+    pass_status "$P1"
+    jq -n '[{context:"CR findings (0 actionable)", state:"pending", creator:{login:"github-actions[bot]"}, description:"a"},
+            {context:"CR findings (0 actionable)", state:"pending", creator:{login:"github-actions[bot]"}, description:"b"},
+            {context:"CR findings (0 actionable)", state:"failure", creator:{login:"github-actions[bot]"},
+             description:"CodeRabbit posted 1 actionable finding(s) on current head"}]' > "$STATUS_DIR/$p3"
+    [ "$(MCF_STATUS_PAGE=1 run_mcf "$m3")" = blocked ]
+    # Non-vacuity: without that failure the walk reaches P1.
+    jq 'map(select(.state != "failure"))' "$STATUS_DIR/$p3" > "$STATUS_DIR/x" && mv "$STATUS_DIR/x" "$STATUS_DIR/$p3"
+    [ "$(MCF_STATUS_PAGE=1 run_mcf "$m3")" = "carried:$P1" ]
+}
+
+@test "shape 5: the walk stops at MCF_MAX_CANDIDATES and MCF_MAX_DIFFS" {
+    setup_mcf
+    m=$(merge_into_pr capsm)
+    pass_status "$P1"
+    [ "$(MCF_MAX_CANDIDATES=1 run_mcf "$m")" = "carried:$P1" ]
+    [ "$(MCF_MAX_CANDIDATES=0 run_mcf "$m")" = blocked ]
+    [ "$(MCF_MAX_DIFFS=0 run_mcf "$m")" = blocked ]
+}
+
+@test "the poll loop posts nothing when the run's commit is no longer the PR head at window end" {
+    awk '/^        POLL_BUDGET_SECONDS=/{f=1} f{print} f && /post pending "awaiting /{g=1} g && /^        fi$/{exit}' \
+        "$ACTION" > "$BATS_TEST_TMPDIR/loop.fn"
+    grep -q 'while :; do' "$BATS_TEST_TMPDIR/loop.fn"
+    grep -q 'post pending "awaiting ' "$BATS_TEST_TMPDIR/loop.fn"
+    loop() {
+        (
+            SHA=0123456789abcdef0123456789abcdef01234567 mcf_retry=false
+            POLL_BUDGET_SECONDS=0 POLL_INTERVAL_SECONDS=1
+            post() { printf 'POST %s: %s\n' "$1" "$2"; }
+            sleep() { :; }
+            decide() { any_fetch_ok=true; head_moved="$MOVED"; return 1; }
+            # shellcheck disable=SC1091
+            source "$BATS_TEST_TMPDIR/loop.fn"
+        )
+    }
+    out="$(MOVED=true loop)"
+    echo "$out" >&2
+    ! grep -q '^POST' <<<"$out" || false
+    grep -q 'no longer the PR head' <<<"$out"
+    # Non-vacuity: the same window on the head posts the PENDING.
+    out="$(MOVED=false loop)"
+    grep -q '^POST pending: awaiting CodeRabbit' <<<"$out"
+}
+
 @test "shape 5: a conflicting merge resolved by hand stays blocked" {
     setup_mcf
     # develop edits the line right after the PR's insertion: the merge conflicts.
@@ -2434,7 +2510,8 @@ real_mcf_decide() {
 
 @test "the self-improvement exemption is posted only while SHA is still the PR head" {
     grep -qF 'files_head=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq' "$ACTION"
-    grep -qE '^ +if .*\[ "\$\{n_outside:-1\}" -eq 0 \] && \[ "\$files_head" = "\$SHA" \]; then$' "$ACTION"
+    grep -qF 'files_head0=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq' "$ACTION"
+    grep -qE '^ +if .*\[ "\$\{n_outside:-1\}" -eq 0 \] && \[ "\$files_head0" = "\$SHA" \] && \[ "\$files_head" = "\$SHA" \]; then$' "$ACTION"
 }
 
 @test "shape 5: decide() consults the carry-forward inside the manual-review arm, before the ask state, outside a subshell" {

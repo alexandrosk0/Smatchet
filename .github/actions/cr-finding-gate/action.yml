@@ -397,13 +397,14 @@ runs:
         #   (b) an earlier commit of this PR carries a passing REVIEW verdict
         #       from THIS gate: walking the PR's commits newest first (git's
         #       topological order, not the API's: commit dates are the author's
-        #       to set), the newest status in this context is success, created
-        #       by github-actions[bot], has this gate's run as its target_url,
-        #       and says CodeRabbit reviewed the commit clean (or is itself a
-        #       merge-only carry). The target_url marks a verdict posted by
-        #       head-bound code: decide() posts nothing on a commit that is no
-        #       longer the PR's head, so a pass cannot rest on a review of some
-        #       other commit. Older statuses were posted by code that read the
+        #       to set), the newest terminal status in this context (a later
+        #       pending or error is a run that did not conclude) is success,
+        #       created by github-actions[bot], has this gate's run as its
+        #       target_url, and says CodeRabbit reviewed the commit clean (or
+        #       is itself a merge-only carry). The target_url marks a verdict
+        #       posted by head-bound code: decide() posts nothing on a commit
+        #       that is no longer the PR's head, so a pass cannot rest on a
+        #       review of some other commit. Older statuses were posted by code that read the
         #       live head, so they never count. Waivers, exemptions and "no
         #       review" passes never count. A commit met on the way whose
         #       newest verdict is not such a pass, and that this gate ever
@@ -480,7 +481,9 @@ runs:
               budget=$(( deadline - SECONDS - 30 ))
             fi
             [ "$budget" -ge 10 ] || return 2
-            timeout "$budget" git -C "$MCF_GIT_DIR" fetch --quiet --no-tags ${shallow} origin "$SHA" "$base_sha" \
+            # --no-recurse-submodules: the checkout is recursive, and an
+            # unshallow would otherwise fetch the submodule for every pin.
+            timeout "$budget" git -C "$MCF_GIT_DIR" fetch --quiet --no-tags --no-recurse-submodules ${shallow} origin "$SHA" "$base_sha" \
               >/dev/null 2>&1 || return 2
           fi
           [ "$(mcf_git rev-list --parents -n1 "$SHA" 2>/dev/null | wc -w)" -eq 3 ] || return 1
@@ -503,19 +506,26 @@ runs:
             grep -qxF "$c" <<<"$cands" || continue
             n_seen=$((n_seen + 1))
             [ "$n_seen" -le "$MCF_MAX_CANDIDATES" ] || break
-            # Two lines of jq output, so an empty field cannot shift into the
+            # Every page (a reviewed commit collects many statuses), newest
+            # first. Two lines out, so an empty field cannot shift into the
             # other's place (a tab-joined read collapses it): whether this gate
             # ever failed the commit with findings, then the state of the
-            # newest status in this context, empty unless it is a credential.
-            st=$(gh api "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" \
-                   --jq "[.[] | select(.context == \"${CONTEXT}\")] as \$s
-                         | ([\$s[] | select((.creator.login // \"\") == \"github-actions[bot]\" and .state == \"failure\"
-                                            and ((.description // \"\") | test(\"actionable finding\")))] | length > 0 | tostring),
-                           (\$s[0] | if . != null and (.creator.login // \"\") == \"github-actions[bot]\"
-                                        and ((.target_url // \"\") | test(\"/actions/runs/[0-9]+$\"))
-                                        and ((.description // \"\") | test(\"^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )\"))
-                                     then (.state // \"\") else \"\" end)" \
-                   2>/dev/null) || return 2
+            # newest TERMINAL status in this context (success or failure; a
+            # later pending or error is a run that did not conclude, not a new
+            # verdict), empty unless it is this gate's credential. tr: a
+            # Windows jq writes CRLF; harmless elsewhere.
+            st=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" 2>/dev/null \
+                   | jq -r --arg ctx "$CONTEXT" '
+                       [add // [] | .[] | select(.context == $ctx)] as $s
+                       | ([$s[] | select((.creator.login // "") == "github-actions[bot]" and .state == "failure"
+                                         and ((.description // "") | test("actionable finding")))]
+                          | length > 0 | tostring),
+                         ([$s[] | select(.state == "success" or .state == "failure")][0]
+                          | if . != null and (.creator.login // "") == "github-actions[bot]"
+                               and ((.target_url // "") | test("/actions/runs/[0-9]+$"))
+                               and ((.description // "") | test("^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )"))
+                            then (.state // "") else "" end)' 2>/dev/null \
+                   | tr -d '\r') || return 2
             findings="${st%%$'\n'*}"; state="${st#*$'\n'}"
             # Not a pass: if this gate ever reported findings here, newer code
             # had findings, so an older pass must not stand in for it.
@@ -633,6 +643,9 @@ runs:
         # would be invisible — a >100-file code PR whose first page is all
         # self-improvement could then auto-pass. Capture the exit code and require
         # rc==0 before trusting the list (CodeRabbit #1724).
+        # The file list describes the LIVE head; it proves nothing about SHA
+        # unless SHA is the head both before and after it is read.
+        files_head0=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.head.sha // empty' 2>/dev/null) || files_head0=""
         files_list=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/files?per_page=100" \
                        --jq '.[].filename' 2>/dev/null)
         files_rc=$?
@@ -642,10 +655,8 @@ runs:
         else
           n_files=0; n_outside=1   # gh error (partial/none) or empty — fail closed
         fi
-        # The file list describes the LIVE head; it proves nothing about SHA
-        # if the head moved since the Resolve step.
         files_head=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.head.sha // empty' 2>/dev/null) || files_head=""
-        if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ] && [ "$files_head" = "$SHA" ]; then
+        if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ] && [ "$files_head0" = "$SHA" ] && [ "$files_head" = "$SHA" ]; then
           post success "self-improvement-only diff (${n_files} file(s) under docs/self-improvement/**) — CR review exempt"
           exit 0
         fi
@@ -737,18 +748,26 @@ runs:
           fi
           any_fetch_ok=true
 
-          # Every verdict below is posted to SHA, but read from the PR's live
-          # head. If the head moved, that evidence is about another commit: post
-          # nothing on it (the run for the new head owns that head) and retry,
-          # which also rides out a GraphQL read that lags the REST-resolved SHA.
+          # Every verdict below is posted to SHA, but the reviews it reads are
+          # those on the PR's live head (headRefOid). If the head moved, that
+          # evidence is about another commit: post nothing on it (the run for
+          # the new head owns that head) and retry, which also rides out a
+          # GraphQL read that lags the REST-resolved SHA. If the head is still
+          # elsewhere when the window closes, the run posts nothing at all (see
+          # the poll loop), so it cannot overwrite SHA's settled verdict either.
           # Without this, a pass could land on a commit CodeRabbit never saw,
-          # and the merge-only carry-forward would trust it.
+          # and the merge-only carry-forward would trust it. (The rollup below
+          # comes from `commits(last:1)`, the PR's last commit in GitHub's
+          # order, not from headRefOid; shape 5 re-proves everything about SHA
+          # itself, so it only decides whether that arm is entered.)
           local live_oid
           live_oid=$(printf '%s' "$resp" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null) || live_oid=""
           if [ "$live_oid" != "$SHA" ]; then
+            head_moved=true
             echo "CR finding gate: PR head is ${live_oid:0:12}, not ${SHA:0:12}; this run's evidence is not about its commit"
             return 1
           fi
+          head_moved=false
 
           # Count CR reviews on the current head that actually CARRY A VERDICT —
           # i.e. have a non-blank top-level body.
@@ -1152,6 +1171,7 @@ runs:
         POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-180}"
         POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-15}"
         any_fetch_ok=false   # set true by decide() on any successful fetch
+        head_moved=false     # set by decide(): the last read saw another head
         deadline=$(( SECONDS + POLL_BUDGET_SECONDS ))
         while :; do
           decide   # exits on a terminal verdict; falls through on retry
@@ -1167,6 +1187,15 @@ runs:
         # self-explanatory to whoever has to unpark it (tooling 2026-08-16
         # cr-gate-nudge-403 entry, item 3). ASCII only and <=140 chars: post()
         # cuts at 140, and nothing parses this text.
+        #
+        # A run whose commit stopped being the PR head posts nothing: a PENDING
+        # there would overwrite that commit's settled verdict, and the
+        # merge-only carry-forward reads it (the burst of runs CodeRabbit's
+        # review fires on a head, then "Update branch" seconds later).
+        if [ "$head_moved" = true ]; then
+          echo "CR finding gate: ${SHA:0:12} is no longer the PR head; leaving its status as it is"
+          exit 0
+        fi
         if [ "$any_fetch_ok" = false ]; then
           post error "GraphQL query failed on every attempt (transient API issue?)"
         elif [ "$mcf_retry" = true ]; then
