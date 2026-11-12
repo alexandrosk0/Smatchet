@@ -700,7 +700,7 @@ runs:
           exit 0
         fi
 
-        # Latest CR review whose commit.oid == headRefOid; CR posts "Actionable
+        # Latest CR review whose commit.oid == SHA; CR posts "Actionable
         # comments posted: N" as the first body line. Also pull the head's
         # "CodeRabbit" StatusContext so a skipped review (no review node) can
         # still be resolved. Each review's inline comments (replyTo marks a
@@ -746,30 +746,18 @@ runs:
                         -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null); then
             return 1
           fi
-          any_fetch_ok=true
-
-          # Every verdict below is posted to SHA, but the reviews it reads are
-          # those on the PR's live head (headRefOid). If the head moved, that
-          # evidence is about another commit: post nothing on it (the run for
-          # the new head owns that head) and retry, which also rides out a
-          # GraphQL read that lags the REST-resolved SHA. If the head is still
-          # elsewhere when the window closes, the run posts nothing at all (see
-          # the poll loop), so it cannot overwrite SHA's settled verdict either.
-          # Without this, a pass could land on a commit CodeRabbit never saw,
-          # and the merge-only carry-forward would trust it. (The rollup below
-          # comes from `commits(last:1)`, the PR's last commit in GitHub's
-          # order, not from headRefOid; shape 5 re-proves everything about SHA
-          # itself, so it only decides whether that arm is entered.)
+          # A 200 whose body names no PR head is a failed read, not a moved
+          # head: retry without posting, and without counting it as a fetch
+          # (so a window of them still ends in the error status, not silence).
           local live_oid
           live_oid=$(printf '%s' "$resp" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null) || live_oid=""
-          if [ "$live_oid" != "$SHA" ]; then
-            head_moved=true
-            echo "CR finding gate: PR head is ${live_oid:0:12}, not ${SHA:0:12}; this run's evidence is not about its commit"
+          live_oid="${live_oid//$'\r'/}"
+          if [ -z "$SHA" ] || [ -z "$live_oid" ]; then
             return 1
           fi
-          head_moved=false
+          any_fetch_ok=true
 
-          # Count CR reviews on the current head that actually CARRY A VERDICT —
+          # Count CR reviews on SHA that actually CARRY A VERDICT —
           # i.e. have a non-blank top-level body.
           #
           # Replying to a review thread creates a review node with an EMPTY body
@@ -789,15 +777,40 @@ runs:
           # no-review-node case. This does NOT loosen the #524 fail-closed rule —
           # a review with a NON-blank body but no count header still fail-closes
           # below, and a review with findings always carries the header.
-          n_reviews=$(printf '%s' "$resp" | jq -r '
+          n_reviews=$(printf '%s' "$resp" | CR_SHA="$SHA" jq -r '
             .data.repository.pullRequest as $pr
-            | ($pr.headRefOid // "") as $oid
+            | ($ENV.CR_SHA // "") as $oid
             | [ $pr.reviews.nodes[]
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                          and (.commit.oid // "") == $oid
                          and ((.body // "") | test("\\S"))) ] | length
             ' 2>/dev/null) || n_reviews=0
           n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
+
+          # Every verdict below is posted to SHA. The review-node arms read only
+          # CodeRabbit reviews whose commit is SHA itself (CR_SHA above), so they
+          # stay about SHA after the head moves: a run on a commit CR reviewed
+          # still records that commit's pass or findings failure. Without that,
+          # a burst of runs from CR's review followed seconds later by "Update
+          # branch" would leave the reviewed commit with no verdict at all, and
+          # the merge-only carry-forward (shape 5) would find no credential, or
+          # skip a findings failure that was never posted.
+          #
+          # The no-review-node arms read the rollup from `commits(last:1)`, the
+          # PR's last commit, which is the head, not SHA. If the head moved,
+          # that evidence is about another commit: post nothing (the run for
+          # the new head owns it) and retry, which also rides out a GraphQL read
+          # that lags the REST-resolved SHA. If the head is still elsewhere when
+          # the window closes, the run posts nothing at all (see the poll loop),
+          # so it cannot overwrite SHA's settled verdict either. Without this, a
+          # pass could land on a commit CodeRabbit never saw, and shape 5 would
+          # trust it.
+          if [ "$live_oid" != "$SHA" ] && [ "$n_reviews" -eq 0 ]; then
+            head_moved=true
+            echo "CR finding gate: PR head is ${live_oid:0:12}, not ${SHA:0:12}, and CodeRabbit has not reviewed ${SHA:0:12}; this run's evidence is not about its commit"
+            return 1
+          fi
+          head_moved=false
 
           if [ "$n_reviews" -eq 0 ]; then
             # A terminal "Review skipped … path filters" case (every changed file
@@ -1012,9 +1025,9 @@ runs:
           # posted AFTER a real review would otherwise be selected, blanking the
           # body and fail-closing a head that genuinely reported its count. Both
           # selections therefore skip blank-bodied reply nodes.
-          body=$(printf '%s' "$resp" | jq -r '
+          body=$(printf '%s' "$resp" | CR_SHA="$SHA" jq -r '
             .data.repository.pullRequest as $pr
-            | ($pr.headRefOid // "") as $oid
+            | ($ENV.CR_SHA // "") as $oid
             | [ $pr.reviews.nodes[]
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                          and (.commit.oid // "") == $oid
@@ -1109,9 +1122,9 @@ runs:
                && ! grep -qiE "$actionable_digit_re" <<<"$body" \
                && ! grep -qiE "$incr_findings_re" <<<"$body"; then
               local n_inline
-              n_inline=$(printf '%s' "$resp" | CR_INCR_FINDINGS_RE="$incr_findings_re" CR_ACTIONABLE_DIGIT_RE="$actionable_digit_re" jq -r '
+              n_inline=$(printf '%s' "$resp" | CR_SHA="$SHA" CR_INCR_FINDINGS_RE="$incr_findings_re" CR_ACTIONABLE_DIGIT_RE="$actionable_digit_re" jq -r '
                 .data.repository.pullRequest as $pr
-                | ($pr.headRefOid // "") as $oid
+                | ($ENV.CR_SHA // "") as $oid
                 | [ $pr.reviews.nodes[]
                     | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                              and (.commit.oid // "") == $oid)

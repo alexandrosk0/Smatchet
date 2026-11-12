@@ -404,10 +404,13 @@ setup_jq() {
     extract_jq 'cr_ctx=$(printf'    '|| cr_ctx="ABSENT"' > "$BATS_TEST_TMPDIR/ctx.jq"
     extract_jq 'cr_desc=$(printf'   '|| cr_desc=""'      > "$BATS_TEST_TMPDIR/desc.jq"
     extract_jq 'n_inline=$(printf'  '|| n_inline=1'      > "$BATS_TEST_TMPDIR/inline.jq"
+    # The review filters select reviews on the run's own commit, passed as
+    # CR_SHA; the fixtures name that commit "HEAD".
+    export CR_SHA=HEAD
     # An empty extraction would make every assertion below vacuous.
-    grep -q 'headRefOid' "$BATS_TEST_TMPDIR/count.jq"
-    grep -q 'headRefOid' "$BATS_TEST_TMPDIR/body.jq"
-    grep -q 'headRefOid' "$BATS_TEST_TMPDIR/inline.jq"
+    grep -q 'CR_SHA' "$BATS_TEST_TMPDIR/count.jq"
+    grep -q 'CR_SHA' "$BATS_TEST_TMPDIR/body.jq"
+    grep -q 'CR_SHA' "$BATS_TEST_TMPDIR/inline.jq"
     grep -q 'replyTo'    "$BATS_TEST_TMPDIR/inline.jq"
     # `StatusContext` alone cannot tell ctx.jq and desc.jq apart — both select it.
     # If the extraction markers drifted and desc.jq came back as the STATE program,
@@ -2385,6 +2388,54 @@ real_mcf_decide() {
     out="$(real_decide "$BATS_TEST_TMPDIR/other.json")"
     [ "${out##*$'\n'}" = retry ]
     ! grep -qE '^(success|failure)' <<<"$out" || false
+}
+
+@test "decide() still records a verdict on this run's commit when CodeRabbit reviewed it and the head has moved on" {
+    # CR reviewed SHA, then a develop merge moved the head before this run
+    # read GraphQL. The review is about SHA itself, so its verdict must still
+    # land on SHA: otherwise the reviewed commit never gets the credential the
+    # merge-only carry-forward needs, or a findings failure the walk must stop
+    # at is never posted.
+    setup_jq; setup_decide
+    clean="$(payload "[{$CR_NODE,\"state\":\"COMMENTED\",\"submittedAt\":\"2026-11-12T10:00:00Z\",\"body\":\"Actionable comments posted: 0\"}]" SUCCESS)"
+    bad="$(payload "[{$CR_NODE,\"state\":\"COMMENTED\",\"submittedAt\":\"2026-11-12T10:00:00Z\",\"body\":\"Actionable comments posted: 2\"}]" SUCCESS)"
+    for f in "$clean" "$bad"; do
+        sed 's/"headRefOid":"HEAD"/"headRefOid":"OTHER"/' "$f" > "$f.moved"
+        grep -q '"headRefOid":"OTHER"' "$f.moved"
+    done
+    [ "$(real_decide "$clean.moved")" = "success: CodeRabbit: 0 actionable findings on current head" ]
+    [ "$(real_decide "$bad.moved")" = "failure: CodeRabbit posted 2 actionable finding(s) on current head" ]
+    # A review of the new head is not about SHA: no verdict from it.
+    sed 's/"oid":"HEAD"/"oid":"OTHER"/' "$clean.moved" > "$clean.other"
+    grep -q '"oid":"OTHER"' "$clean.other"
+    out="$(real_decide "$clean.other")"
+    [ "${out##*$'\n'}" = retry ]
+    ! grep -qE '^(success|failure)' <<<"$out" || false
+}
+
+@test "decide() treats a response that names no PR head as a failed read, not a moved head" {
+    setup_jq; setup_decide
+    c="$(checkrun_payload '[]' "[$(cr_run COMPLETED SUCCESS 'Review completed')]")"
+    jq '.data.repository.pullRequest.headRefOid = null' "$c" > "$BATS_TEST_TMPDIR/nohead.json"
+    jq '.data.repository.pullRequest = null' "$c" > "$BATS_TEST_TMPDIR/nopr.json"
+    for f in nohead nopr; do
+        out="$(
+            RESP_FIXTURE="$BATS_TEST_TMPDIR/$f.json" SHA=HEAD OWNER=o REPO=r PR=1 q=unused
+            gh() { case "$*" in "api graphql"*) cat "$RESP_FIXTURE" ;; *) return 1 ;; esac; }
+            post() { printf '%s: %s\n' "$1" "$2"; }
+            maybe_nudge_review() { :; }
+            oss_ask_state() { echo none; }
+            merge_carry_forward() { return 1; }
+            any_fetch_ok=false head_moved=false
+            # shellcheck disable=SC1091
+            source "$BATS_TEST_TMPDIR/decide.fn"
+            set +e -uo pipefail
+            decide
+            echo "rc=$? fetch=$any_fetch_ok moved=$head_moved"
+        )"
+        echo "$f: $out" >&2
+        [ "$out" = "rc=1 fetch=false moved=false" ]
+    done
 }
 
 @test "shape 5: only a head-bound review pass is a credential" {
