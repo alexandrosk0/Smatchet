@@ -34,6 +34,114 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-11 · PR #2392 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after a manual CodeRabbit trigger was rate-limited
+
+### What escaped
+`fix(agent-eval): parse real-mode findings from code-review severity headings` (#2392, head `ae8256ae2451`) merged 2026-11-11T03:20:47Z as `671aa9c8e`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`, `crState: NONE+rate-limit CODE-PR-pause`.
+
+The diff is test tooling: `scripts/dev/agent-eval-run.sh` (+188/−6), `tests/bats/agent_eval_run.bats` (+286/−1) and `docs/agent-eval/result-schema.json` (+6/−1). No C++ and no gate script. On the head:
+- CodeRabbit never reviewed the PR. Its first auto-generated comment (2026-11-04) was a rate-limit notice. A human-credentialed `@coderabbitai review` from `scripts/dev/trigger-coderabbit-review.sh` at 2026-11-11T02:26:59Z got a `Review rate limited` check run (`neutral`).
+- `Cursor Bugbot` was `neutral` (`Error`).
+- The PR body carries `adversarial-code-review: 11 findings, 10 fixed, 1 deferred to user` and `independent-review: code-review agent, separate subagent context, 6 rounds; 11 findings, 10 fixed, 1 deferred to user`. Both were pinned to the merged head.
+
+Both labels went on at 2026-11-11T02:52:57Z, after the rate-limited trigger, with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request (under 10 stars), and the on-request review was refused by its quota. `merge-gates.sh` correctly held the PR (`NONE+rate-limit CODE-PR-pause`) and named the `cr-out-of-band` + `cr-disposition:` pair as the escape. This PR took that documented waiver.
+
+The disposition names the standing cause (auto-review off) rather than the proximate one (the manual trigger was rate-limited); `cr-disposition:cr-rate-limited` would have matched the snapshot's `crState` more exactly. Either waives the same block.
+
+Unlike #2395, the merge did not ship unreviewed: a separate-context code-review agent ran six rounds on the diff and its findings were fixed or deferred in the open. What is missing is the *external* reviewer, which is the gap the review-assurance entry tracks.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for a rate-limited CodeRabbit on a code PR, applied with the maintainer's OK, on a test-tooling diff with an independent multi-round review recorded on the head.
+
+The upstream cause (CodeRabbit reviews only on request and runs out of quota, Bugbot errors or is capped) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md). Enabling CodeRabbit auto-review is a human account action, not a gate (2026-08-19 #2127 entry). This PR is added to that entry's **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the independent review's one open item (eval packets don't ask for the heading format) was surfaced and deferred to the maintainer in the PR body. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
+## 2026-11-10 · PR #2395 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a one-line relay config change CodeRabbit skipped
+
+### What escaped
+`fix(relay): send crash minidumps to the private dumps repo` (#2395, head `776c65811`) merged 2026-11-05T03:05:19Z as `06d3f4628`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`.
+
+The diff is one line in `tools/bug-report-relay/wrangler.toml`: it sets `DUMPS_REPO`, which was empty before. On the head:
+- the `CodeRabbit` check run concluded `skipped` (auto-review is off for repositories under 10 stars), and no review was posted;
+- `Cursor Bugbot` was `neutral` (usage cap);
+- the PR body's verdict line is `adversarial-code-review: n/a — one-line config value; …`.
+
+Both labels went on at 2026-11-04T23:20:06Z, before CodeRabbit's first run. No `@coderabbitai review` comment was posted. Every other check's newest run on the head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request. `merge-gates.sh` blocks a CR-skipped head and names two ways forward: a human-triggered review (`scripts/dev/trigger-coderabbit-review.sh`), or the `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` pair. This PR took the second, the documented waiver.
+
+The change carried little risk:
+- The relay's Worker already refuses to upload a minidump unless the destination repo is private (`isDumpRepoPrivate` in `src/index.js`).
+- `test/index.test.mjs` covers the private-repo and `DUMPS_REPO`-precedence paths.
+- The PR set a value that guard checks; it did not touch the guard.
+
+So the merge shipped with no independent review of any kind. That is the open state the review-assurance ladder entry describes, accepted here on purpose for a config value.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for a CR-skipped head, on a one-line config value whose safety property is enforced and tested in code the PR did not change.
+
+The upstream cause (CodeRabbit reviews only on request, Bugbot is capped, and the self-review verdict line is a presence check) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md), actions 1 and 2 open. Enabling CodeRabbit auto-review is a human account action, not a gate (2026-08-19 #2127 entry). This PR is added to that entry's **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. The diff is one correct config value, so a reviewer would rightly find nothing. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
+## 2026-11-10 · PR #2375, #2385, #2389 · override: `plan-lock-out-of-band` over path-only overlaps that `git merge-tree` shows clean (plus a moot `tests-out-of-band` on #2385 and #2389)
+
+### What escaped
+Three PRs merged on 2026-11-04, each past a red `Plan-lock gate` waived by `plan-lock-out-of-band`. The newest run of every other check on each merged head was green, apart from `Cursor Bugbot`, which was neutral because of its usage cap.
+
+| PR | merged (UTC) | head | locks crossed (holder) | overlap |
+|---|---|---|---|---|
+| #2375 | 05:16:26 | `8a1fcb335` | `status-bar-row-count` (#2390) | `tests/CMakeLists.txt` |
+| #2385 | 02:51:41 | `10fef8298` | `build-dir-gitignore-guard` (#2384), `fieldcatalog-snapshot` (#2375), `require-all-checks-green` (#2387) | `.gitignore`; five comment-only lines in the `fieldcatalog-snapshot` write set; `project.config.json` |
+| #2389 | 14:15:33 | `00284ee6b` | `require-all-checks-green` (#2387) | one `_doc` string in `project.config.json` |
+
+Each PR body carries one `plan-lock-disposition:` line per lock crossed. Each line names the holder, says the hunks are disjoint and reports a clean `git merge-tree`. #2375's line also records that the user approved the override in that session.
+
+#2385 and #2389 also carry `tests-out-of-band`. None of the three has a `merge-snapshots.jsonl` row.
+
+### Root cause
+This is the path-only overlap class of the #2313 and #2372 entries above, for the sixth, seventh and eighth time. A plan lock claims whole files, and `plan-lock-gate.sh` compares paths only. So a disjoint edit to a shared file (`.gitignore`, `project.config.json`, `tests/CMakeLists.txt`) reads as contention.
+
+Every holder's branch had an open PR, so the evidence that settles the overlap was on origin. Each session ran the merge by hand, recorded it and spent an override. Reproduced 2026-11-10 from this lead worktree, branched from `origin/develop` at `99b7ed8ff`: `git merge-tree --write-tree` of each PR head against each holder's PR head is clean for all five pairs:
+
+- #2375 × #2390
+- #2385 × #2384
+- #2385 × #2375
+- #2385 × #2387
+- #2389 × #2387
+
+These are the holders' final heads, not their heads at merge time. Every red has a recorded per-slug disposition.
+
+The `tests-out-of-band` labels were not load-bearing. `scripts/dev/coverage-delta-gate.sh`, run without the label on each head against its squash parent, reports `PASS — production + test files both changed`:
+- #2385: 19 production changes, 3 test changes.
+- #2389: 6 production changes, 5 test changes.
+
+### Preventing gate
+None — override legitimate. Each crossing is a disjoint-hunk overlap, recorded per slug in the PR body, and the merge is clean when replayed.
+
+The class gate is already filed, [`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md): settle a pushed lock's overlap with `git merge-tree`, not by path. Replayed on these three, it reports WARNs and no red, because every holder's branch was on origin. With #2313 and #2372 that makes five overrides it would have removed.
+
+These three are added to that entry's **Observed on** list. Its priority (P2) is left for the next triage.
+
+### Eval case
+None — not agent-reviewable. These are lock-granularity gate decisions, and the code on the overlaps holds no defect.
+
+### Filed as
+[`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (existing, P2; **Observed on** updated)
+
 ## 2026-11-03 · PR #2380, #2368, #2371 · direct merges past a red `All checks green (block-on-any-red)` and a never-green `CR findings (0 actionable)`, because neither is a required context
 
 ### What escaped

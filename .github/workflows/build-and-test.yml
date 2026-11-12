@@ -2318,9 +2318,11 @@ jobs:
 
   sanitizer-ubsan-pr:
     name: Sanitizer (UBSan via Clang)
-    # Per-PR UBSan using ninja-clang-asan (Clang -fsanitize=address,undefined).
-    # MSVC has no UBSan; clang-cl (present on windows-2022) delivers both ASan
-    # and UBSan via Sanitizers.cmake's "asan" branch for Clang.
+    # Per-PR UBSan using ninja-clang-asan (clang-cl -fsanitize=address +
+    # -fsanitize=undefined). MSVC has no UBSan; clang-cl (present on windows-2022)
+    # delivers both via the clang-cl arm of smatchet_apply_sanitizers(). The doctest
+    # rig is built instrumented too (SMATCHET_SANITIZE_TESTS=ON) — without it the
+    # rig compiles its Core TUs uninstrumented and this run proves nothing.
     # docs/plans/active/build-quality-velocity-hardening.md #11.
     #
     # Core-delta gate: mirrors sanitizer-asan — skip on Standalone-only / docs /
@@ -2376,11 +2378,11 @@ jobs:
       # the ASAN per-PR job. Add SMATCHET_BUILD_TESTS so ctest actually exercises
       # code under the sanitizer (not just a "no tests" green). UBSan halt-on-error
       # is not a separate flag here — Clang's -fno-sanitize-recover=all (set by
-      # Sanitizers.cmake for the non-MSVC Clang path) already terminates on the
+      # Sanitizers.cmake's clang-cl arm) already terminates on the
       # first UB violation rather than continuing, which is the correct behaviour
       # for a CI gate: a UB finding must fail the job, not be logged and ignored.
       - name: Configure ninja-clang-asan (ASan+UBSan, tests on)
-        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF -DSMATCHET_BUILD_TESTS=ON
+        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF -DSMATCHET_BUILD_TESTS=ON -DSMATCHET_SANITIZE_TESTS=ON
 
       - name: Build (Clang ASan+UBSan)
         run: cmake --build --preset ninja-clang-asan --target SmatchetStandalone SmatchetTests
@@ -2402,7 +2404,8 @@ jobs:
         id: ctest_ubsan
         continue-on-error: ${{ steps.oob.outputs.oob == '1' }}
         working-directory: build/ninja-clang-asan
-        run: ctest --output-on-failure
+        # --no-tests=error: an empty test list must fail, not pass vacuously.
+        run: ctest --output-on-failure --no-tests=error
 
       - name: Warn on downgraded UBSan failure
         if: ${{ steps.ctest_ubsan.outcome == 'failure' && steps.oob.outputs.oob == '1' }}
@@ -2825,7 +2828,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17 (AGP 8.5 toolchain)
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: "17"

@@ -7,7 +7,8 @@
 #
 # Compiler matrix (verify if symptoms arise):
 #   asan / ubsan : MSVC /fsanitize=address (ASAN-only; UBSAN not available).
-#                  clang-cl takes the MSVC branch, so it is ASAN-only too.
+#                  clang-cl takes the MSVC branch and adds -fsanitize=undefined
+#                  there (ASan + UBSan, one runtime: clang_rt.asan_dynamic).
 #                  Native Clang -fsanitize=address,undefined (full suite).
 #                  CI uses both ninja-msvc-asan and ninja-clang-asan (clang-cl).
 #                  Legacy MinGW/MSYS2 GCC does NOT ship ASAN/UBSAN runtimes;
@@ -59,6 +60,24 @@ function(smatchet_apply_sanitizers tgt)
                 -D_DISABLE_STRING_ANNOTATION
                 -D_DISABLE_VECTOR_ANNOTATION)
             if(_clang_cl)
+                # clang-cl is a Clang front end, so unlike cl.exe it CAN carry UBSan
+                # next to ASan; the UBSan handlers ship inside clang_rt.asan_dynamic,
+                # so no second runtime is linked (a clang_rt.ubsan_standalone beside
+                # it would add a duplicate copy). -fno-sanitize-recover=all makes a
+                # UBSan finding fatal, matching the native-Clang branch below.
+                #
+                # use-after-return=never: with clang-cl's default (runtime-selectable
+                # fake stacks) a C++ rethrow caught by an enclosing try in the same
+                # function dies inside VCRUNTIME140/MSVCP140 exception dispatch —
+                # `try { try { throw X; } catch (...) { throw; } } catch (...) {}`
+                # aborts an otherwise-clean binary. cl.exe's ASan is unaffected. The
+                # /clang: spelling passes the driver flag through on every clang-cl
+                # version, and the flag stays on sanitized targets only: unsanitized it is an
+                # unused argument that -Werror makes fatal.
+                list(APPEND _flags
+                    -fsanitize=undefined
+                    -fno-sanitize-recover=all
+                    /clang:-fsanitize-address-use-after-return=never)
                 # clang-cl needs the ASAN dynamic runtime linked explicitly. The
                 # runtime lives at <clang-install>/lib/clang/<major>/lib/windows.
                 # Resolve <major> from the *actual* resolved compiler instead of a
@@ -106,6 +125,21 @@ function(smatchet_apply_sanitizers tgt)
                     NO_DEFAULT_PATH)
                 if(_clang_asan_lib AND _clang_asan_thunk)
                     list(APPEND _link "${_clang_asan_lib}" "${_clang_asan_thunk}")
+                    # Ship LLVM's runtime DLL next to the exe. MSVC's VC\Tools\...\bin
+                    # carries a same-named clang_rt.asan_dynamic-<arch>.dll that lacks
+                    # the UBSan/LLVM-only exports (e.g. __ubsan_handle_function_type_
+                    # mismatch_abort), and under vcvars / msvc-dev-cmd it is first on
+                    # PATH, so the loader would pick it and the exe would not start.
+                    # The application directory wins over PATH.
+                    get_target_property(_tgt_type ${tgt} TYPE)
+                    cmake_path(GET _clang_asan_lib PARENT_PATH _clang_asan_dir)
+                    set(_clang_asan_dll "${_clang_asan_dir}/clang_rt.asan_dynamic-${_asan_arch_suffix}.dll")
+                    if(_tgt_type STREQUAL "EXECUTABLE" AND EXISTS "${_clang_asan_dll}")
+                        add_custom_command(TARGET ${tgt} POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                    "${_clang_asan_dll}" "$<TARGET_FILE_DIR:${tgt}>"
+                            VERBATIM)
+                    endif()
                 else()
                     message(WARNING
                         "clang-cl ASAN: could not find clang_rt.asan_dynamic libs under "
@@ -193,6 +227,13 @@ function(smatchet_apply_sanitizers tgt)
         "(compiler=${CMAKE_CXX_COMPILER_ID})")
 
     target_compile_options(${tgt} PRIVATE ${_flags})
+    # Compiler-independent "this TU runs under ASan" signal. cl.exe and GCC define
+    # __SANITIZE_ADDRESS__ under ASan, but clang-cl does not reliably (seen defined
+    # on LLVM 22, not on 19), so the tests' widened wall-clock
+    # budgets key off SMATCHET_ASAN as well.
+    if("${SMATCHET_SANITIZER}" STREQUAL "asan" OR "${SMATCHET_SANITIZER}" STREQUAL "fuzzer")
+        target_compile_definitions(${tgt} PRIVATE SMATCHET_ASAN=1)
+    endif()
     if(_link)
         target_link_options(${tgt} PRIVATE ${_link})
     endif()

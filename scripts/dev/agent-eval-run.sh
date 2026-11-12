@@ -196,7 +196,12 @@ done
 
 # -- assemble result JSON ----------------------------------------------------
 # Fake mode derives findings from the case's expectedFindings (deterministic).
-# Real mode parses file:line citations out of each trial's raw output.
+# Real mode parses each trial's raw output: one finding per bullet under the
+# code-review severity headings (## Critical / High / Medium / Low / Nits),
+# falling back to a per-line file:line citation scan only when no severity
+# heading is present. Neither parser counts citations in the contract's
+# evidence sections (## Verified clean, ## Outcome, ## Self-improvement,
+# ## Session context append). runMeta.parserByTrial records which parser ran.
 MODE="real"
 if [[ "$HARNESS" == "fake-runner" ]]; then MODE="fake"; fi
 
@@ -222,10 +227,173 @@ def fake_findings():
     return out
 
 CITE = re.compile(r'([A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]+):(\d+)')
+SUMMARY_CAP = 200
 
-def parse_findings(text):
+# -- headings parser ---------------------------------------------------------
+# The code-review agent's output contract (agent-layer/agents/core/code-review.md
+# § Output format): one finding per bullet under `## Critical` / `## High` /
+# `## Medium` / `## Low / Nits`. Every other section (`## Verified clean`,
+# `## Outcome: ...`, `## Self-improvement`, ...) cites evidence, not findings,
+# and is skipped. Keys are normalised titles (see _heading_key).
+SEVERITY_HEADINGS = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low / nits": "low",
+    "low": "low",
+    "nits": "low",
+    "info": "info",
+}
+# The contract's evidence sections. Their citations are never findings, in
+# either parser: a clean review is "no findings" + `## Verified clean` +
+# `## Outcome:` with no severity heading, and its Verified-clean citations
+# must not reach the citation scan.
+CONTRACT_SECTION = re.compile(
+    r'^(?:verified clean|outcome\b.*|session context append|self-improvement)$')
+HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
+FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+BULLET = re.compile(r'^ *(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$')
+THEMATIC_BREAK = re.compile(r'^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$')
+# A bullet whose leading clause only says its section is empty is not a
+# finding; counting it would break finding_count on a clean (0-finding) case.
+# The marker is a closed phrase, matched on the bullet's first line whether or
+# not it cites code, and must be followed by end of line or a separator:
+#   head:  "no [qualifiers] findings|issues|bugs|problems|concerns" (whole
+#          word, so "No issue-type check" is prose) or "none|nothing|n/a";
+#   tail:  optional verb "identified|found|noted|observed|reported|flagged"
+#          or "to report|flag|note", then optional scope "at|in|for this|the
+#          severity|category|section|...|diff|change|patch|PR|hunk|code" or
+#          "that meet(s) the bar".
+# So "- No issues identified.", "- No critical or high findings.", "- None at
+# this severity", "- No issues found in this diff.", "- None — a.h:410 is
+# safe" and "- No findings (checked a.cpp:12)" are markers, while "- No issue
+# key is validated before a.cpp:210", "- None of the callers holds mLock" and
+# "- Nothing releases the handle" are findings. "issue" is a domain noun here
+# (tracker issues), hence the closed tail.
+_EMPTY_QUALIFIER = (r'(?:critical|high|medium|low|nits?|info|other|further|new|additional'
+                    r'|genuine|correctness|real|actionable|blocking'
+                    r'|(?:critical|high|medium|low)-(?:severity|priority))')
+NONE_MARKER = re.compile(
+    r'^[\s*_`(\[]*'
+    r'(?:no(?:\s+' + _EMPTY_QUALIFIER +
+    r'(?:\s*(?:,|/|\bor\b|\band\b)\s*' + _EMPTY_QUALIFIER + r')*)?'
+    r'\s+(?:findings?|issues?|bugs?|problems?|concerns?)(?![\w-])'
+    r'|none|nothing|n/a)'
+    r'(?:\s+(?:identified|found|noted|observed|reported|flagged'
+    r'|to\s+(?:report|flag|note)))?'
+    r'(?:\s+(?:(?:at|in|for)\s+(?:this|the)\s+(?:severity|category|section|level|tier'
+    r'|diff|change|changes|changeset|patch|pr|hunk|code|changed\s+code)'
+    r'|that\s+meets?\s+the\s+bar))?'
+    r'[\s*_`)\]]*(?:$|[.:;,!(—–-])', re.IGNORECASE)
+
+def _heading_key(title):
+    """Lowercased title without emphasis, a trailing count `(2)` or a dash
+    suffix, with `/` spacing and runs of whitespace normalised."""
+    t = re.sub(r'[*_`]', '', title.strip().lower())
+    t = re.sub(r'\s*\([^)]*\)\s*$', '', t)
+    t = re.sub(r'\s+[—–-]\s.*$', '', t)
+    t = re.sub(r'\s*/\s*', ' / ', t)
+    return re.sub(r'\s+', ' ', t).strip().rstrip(':').strip()
+
+def _indent(line):
+    return len(line) - len(line.lstrip(' '))
+
+def _finding_from_bullet(severity, parts):
+    if NONE_MARKER.match(parts[0]):
+        return None
+    text = re.sub(r'\s+', ' ', ' '.join(parts)).strip()
+    f = {"severity": severity, "summary": text[:SUMMARY_CAP] or "parsed from output"}
+    m = CITE.search(text)
+    if m:
+        f["file"] = m.group(1)
+        f["line"] = int(m.group(2))
+    return f
+
+def parse_heading_findings(text):
+    """Returns (saw_severity_heading, findings, non_evidence_lines).
+
+    A bullet starts at an indent no deeper than the open bullet's; deeper
+    lines (wrapped text, nested bullets, indented fences) continue it. A blank
+    line keeps the bullet open; an unindented non-bullet line, a thematic
+    break or a heading closes it. A `#` line indented to the open bullet's
+    content column is wrapped bullet text, not a heading. Fenced code is
+    opaque: a `## High` inside a fence is not a heading.
+
+    non_evidence_lines are the lines outside the contract's evidence sections,
+    for the citation fallback.
+    """
+    saw = False
+    severity = None          # severity of the current section, None = not a severity section
+    evidence = False         # inside a CONTRACT_SECTION
+    cur = None               # (indent, content column, [text parts]) of the open bullet
+    fence = None             # (char, length) of the open fence
+    findings = []
+    free = []
+
+    def close():
+        nonlocal cur
+        if cur is not None and severity is not None:
+            f = _finding_from_bullet(severity, cur[2])
+            if f is not None:
+                findings.append(f)
+        cur = None
+
+    for line in text.expandtabs(4).splitlines():
+        stripped = line.strip()
+        if fence is not None:
+            m = FENCE.match(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] \
+                    and stripped == m.group(1):
+                fence = None
+            elif cur is not None and stripped:
+                cur[2].append(stripped)
+            if not evidence:
+                free.append(line)
+            continue
+        if not stripped:
+            continue
+        ind = _indent(line)
+        hm = HEADING.match(line)
+        if hm and (cur is None or ind < cur[1]):
+            close()
+            key = _heading_key(hm.group(1))
+            severity = SEVERITY_HEADINGS.get(key)
+            evidence = severity is None and CONTRACT_SECTION.match(key) is not None
+            saw = saw or severity is not None
+            if not evidence:
+                free.append(line)    # "### 1. a.cpp:374 — ..." is a finding for the fallback
+            continue
+        if not evidence:
+            free.append(line)
+        continues = cur is not None and ind > cur[0]
+        fm = FENCE.match(line)
+        if fm:
+            fence = (fm.group(1)[0], len(fm.group(1)))
+            if not continues:
+                close()
+            continue
+        if not continues and THEMATIC_BREAK.match(line):
+            close()
+            continue
+        bm = BULLET.match(line)
+        if bm and not continues:
+            close()
+            cur = (ind, bm.start(1), [bm.group(1)])
+        elif continues:
+            cur[2].append(stripped)
+        else:
+            close()          # unindented prose ends the bullet; not a finding
+    close()
+    return saw, findings, free
+
+# -- citations parser (fallback) ---------------------------------------------
+# For output with no severity heading: one info finding per line citing
+# file:line, outside the contract's evidence sections. Coarse (it counts
+# citing lines, not findings), so it runs only when the headings parser has
+# nothing to key on.
+def parse_citation_findings(lines):
     out = []
-    for line in text.splitlines():
+    for line in lines:
         m = CITE.search(line)
         if not m:
             continue
@@ -233,11 +401,19 @@ def parse_findings(text):
             "file": m.group(1),
             "line": int(m.group(2)),
             "severity": "info",
-            "summary": line.strip()[:200] or "parsed from output",
+            "summary": line.strip()[:SUMMARY_CAP] or "parsed from output",
         })
     return out
 
+def parse_findings(text):
+    """Returns (parser_name, findings)."""
+    saw, findings, free = parse_heading_findings(text)
+    if saw:
+        return "headings", findings
+    return "citations", parse_citation_findings(free)
+
 trials = []
+parsers = []
 if mode == "fake":
     ff = fake_findings()
     for i in range(trials_n):
@@ -246,10 +422,13 @@ if mode == "fake":
             "output": "FAKE RUN for %s (trial %d)" % (case["caseId"], i),
             "findings": ff,
         })
+        parsers.append("reference")
 else:
     for i, path in enumerate(sys.argv[1:]):
         text = open(path, encoding="utf-8").read()
-        trials.append({"index": i, "output": text, "findings": parse_findings(text)})
+        parser, findings = parse_findings(text)
+        trials.append({"index": i, "output": text, "findings": findings})
+        parsers.append(parser)
 
 result = {
     "schemaVersion": 1,
@@ -257,7 +436,10 @@ result = {
     "agent": case["agent"],
     "promptRoot": os.environ["AE_PROMPT_ROOT"],
     "harness": os.environ["AE_HARNESS"],
-    "runMeta": {"trialsRequested": trials_n},
+    # parserByTrial[i] names how trials[i].findings were produced: "headings"
+    # (code-review severity sections), "citations" (fallback scan) or
+    # "reference" (fake mode, from the case's expectedFindings).
+    "runMeta": {"trialsRequested": trials_n, "parserByTrial": parsers},
     "case": case,
     "trials": trials,
 }
