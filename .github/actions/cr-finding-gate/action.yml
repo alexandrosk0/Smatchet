@@ -462,7 +462,7 @@ runs:
         }
         # mcf_scan -> 0 pass (mcf_carried set), 1 definitive block, 2 read failure.
         mcf_scan() {
-          local base_ref base_sha parents shallow budget p2 mtree htree head_norm cands order c st findings state cand_norm
+          local base_ref base_sha parents shallow budget p2 mtree htree head_norm cands order c st findings state verdict_at cand_norm
           local n_seen=0 n_diffed=0
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || return 1
           # (a), cheap half first: ordinary heads stop here, before any fetch.
@@ -509,28 +509,30 @@ runs:
             n_seen=$((n_seen + 1))
             [ "$n_seen" -le "$MCF_MAX_CANDIDATES" ] || break
             # Every page (a reviewed commit collects many statuses), newest
-            # first. Two lines out, so an empty field cannot shift into the
-            # other's place (a tab-joined read collapses it): whether this gate
-            # ever failed the commit with findings, then the state of the
+            # first. Three lines out, so an empty field cannot shift into
+            # another's place (a tab-joined read collapses it): whether this
+            # gate ever failed the commit with findings; the state of the
             # newest TERMINAL status in this context (success or failure; a
             # later pending or error is a run that did not conclude, not a new
             # verdict), empty unless it is this gate's credential, "none" if
-            # there is no terminal status at all. tr: a Windows jq writes CRLF;
-            # harmless elsewhere.
+            # there is no terminal status at all; and that status's created_at.
+            # tr: a Windows jq writes CRLF; harmless elsewhere.
             st=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/commits/${c}/statuses?per_page=100" 2>/dev/null \
                    | jq -r --arg ctx "$CONTEXT" '
                        [add // [] | .[] | select(.context == $ctx)] as $s
                        | ([$s[] | select((.creator.login // "") == "github-actions[bot]" and .state == "failure"
                                          and ((.description // "") | test("actionable finding")))]
                           | length > 0 | tostring),
-                         ([$s[] | select(.state == "success" or .state == "failure")][0]
-                          | if . == null then "none"
-                            elif (.creator.login // "") == "github-actions[bot]"
-                               and ((.target_url // "") | test("/actions/runs/[0-9]+$"))
-                               and ((.description // "") | test("^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )"))
-                            then (.state // "") else "" end)' 2>/dev/null \
+                         ([$s[] | select(.state == "success" or .state == "failure")][0] as $v
+                          | (if $v == null then "none"
+                             elif ($v.creator.login // "") == "github-actions[bot]"
+                                and (($v.target_url // "") | test("/actions/runs/[0-9]+$"))
+                                and (($v.description // "") | test("^(CodeRabbit: 0 actionable findings|CodeRabbit clean (incremental )?review|Merge-only head: )"))
+                             then ($v.state // "") else "" end),
+                            (if $v == null then "" else ($v.created_at // "") end))' 2>/dev/null \
                    | tr -d '\r') || return 2
-            findings="${st%%$'\n'*}"; state="${st#*$'\n'}"
+            findings="" state="" verdict_at=""
+            { IFS= read -r findings; IFS= read -r state; IFS= read -r verdict_at; } <<<"$st"
             # Not a pass: if this gate ever reported findings here, newer code
             # had findings, so an older pass must not stand in for it.
             #
@@ -547,6 +549,19 @@ runs:
                 return 2
               fi
               continue
+            fi
+            # A pass, but CodeRabbit reviewed the commit again after it (a
+            # `full review` on the same commit): that newer review's verdict is
+            # the commit's real one, and its run may not have posted yet. Wait
+            # while that run can still be in flight; past the bound, block
+            # rather than stand an older pass in for a review that may have
+            # findings.
+            if mcf_cr_review_after "$c" "$verdict_at"; then
+              if mcf_cr_reviewed "$c"; then
+                echo "CR finding gate: CodeRabbit reviewed ${c:0:12} again after its pass; waiting for that verdict"
+                return 2
+              fi
+              return 1
             fi
             n_diffed=$((n_diffed + 1))
             [ "$n_diffed" -le "$MCF_MAX_DIFFS" ] || break
@@ -579,6 +594,19 @@ runs:
                          and (.commit.oid // "") == $c
                          and ((.body // "") | test("\\S"))
                          and (((.submittedAt // "") | fromdateiso8601? // 0) > $t)) ] | length > 0' >/dev/null 2>&1
+        }
+        # mcf_cr_review_after <commit> <iso-time>: true when resp holds a
+        # CodeRabbit review on that commit, with a body, submitted after
+        # <iso-time>. A time that does not parse reads as 0, so any review is
+        # after it (fail closed: an unreadable verdict time never wins).
+        mcf_cr_review_after() {
+          printf '%s' "${resp:-}" | jq -e --arg c "$1" --arg v "$2" '
+            (($v | fromdateiso8601?) // 0) as $t
+            | [ .data.repository.pullRequest.reviews.nodes[]?
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $c
+                         and ((.body // "") | test("\\S"))
+                         and ((((.submittedAt // "") | fromdateiso8601?) // 0) > $t)) ] | length > 0' >/dev/null 2>&1
         }
         merge_carry_forward() {
           case "$mcf_state" in

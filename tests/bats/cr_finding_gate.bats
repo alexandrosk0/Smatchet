@@ -1901,17 +1901,19 @@ merge_into_pr() {
     mg rev-parse HEAD
 }
 
-# pass_status <sha> [state] [creator|null] [description] [target_url|null] ->
-# records the newest `CR findings (0 actionable)` status on <sha> (an older
-# pending one below it). The default target_url is a run of this gate, as
-# head-bound code posts it.
+# pass_status <sha> [state] [creator|null] [description] [target_url|null]
+# [age-seconds] -> records the newest `CR findings (0 actionable)` status on
+# <sha> (an older pending one below it), created <age> seconds ago (default
+# now). The default target_url is a run of this gate, as head-bound code posts it.
 pass_status() {
     jq -n --arg s "${2:-success}" --arg c "${3:-github-actions[bot]}" \
           --arg d "${4:-CodeRabbit: 0 actionable findings on current head}" \
           --arg u "${5:-https://github.com/o/r/actions/runs/123}" \
+          --argjson age "${6:-0}" \
         '[{context:"CR findings (0 actionable)", state:$s,
            creator:(if $c == "null" then null else {login:$c} end), description:$d,
-           target_url:(if $u == "null" then null else $u end)},
+           target_url:(if $u == "null" then null else $u end),
+           created_at:((now - $age) | floor | todate)},
           {context:"CR findings (0 actionable)", state:"pending", creator:{login:"github-actions[bot]"}, description:"older"}]' \
         > "$STATUS_DIR/$1"
 }
@@ -2214,6 +2216,42 @@ cr_review_resp() {
         merge_carry_forward || exit 1
         [ "$mcf_carried" = "$P1" ] || exit 1
     ) || false
+}
+
+@test "shape 5: a CodeRabbit review newer than the pass makes the carry wait, then block; an older one does not" {
+    setup_mcf
+    m=$(merge_into_pr newer)
+    # The pass on P1 is 5 minutes old.
+    pass_status "$P1" success 'github-actions[bot]' 'CodeRabbit: 0 actionable findings on current head' \
+        'https://github.com/o/r/actions/runs/123' 300
+    # Reviewed again 1 minute ago (a full review): its verdict is not posted yet.
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P1" 'Actionable comments posted: 1' 60)"
+        rc=0; merge_carry_forward || rc=$?
+        [ "$rc" -eq 2 ] || exit 1
+        [ -z "$mcf_state" ] || exit 1
+    ) || false
+    # The same, but the pass is 2 hours old and the newer review 1 hour old:
+    # its run can no longer be in flight, so the older pass must not stand in.
+    pass_status "$P1" success 'github-actions[bot]' 'CodeRabbit: 0 actionable findings on current head' \
+        'https://github.com/o/r/actions/runs/123' 7200
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P1" 'Actionable comments posted: 1' 3600)"
+        rc=0; merge_carry_forward || rc=$?
+        [ "$rc" -eq 1 ] || exit 1
+        [ "$mcf_state" = no ] || exit 1
+    ) || false
+    # Non-vacuity: a review older than the pass (the one it was posted for)
+    # carries, and so does no review in resp at all.
+    (
+        mcf_env "$m"
+        resp="$(cr_review_resp "$P1" 'Actionable comments posted: 0' 9000)"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    ) || false
+    [ "$(run_mcf "$m")" = "carried:$P1" ]
 }
 
 @test "shape 5: through the real decide(), a reviewed commit with no verdict yet retries with the carry PENDING cause" {
