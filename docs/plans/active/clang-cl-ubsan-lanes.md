@@ -80,6 +80,6 @@ None.
 
 - Local LLVM 22.1.6 / MSVC 14.38: `ninja-clang-asan` + `-DSMATCHET_BUILD_TESTS=ON -DSMATCHET_SANITIZE_TESTS=ON` builds `SmatchetStandalone` and `SmatchetTests`; every rig TU carries `-fsanitize=undefined`; the exe imports `clang_rt.asan_dynamic-x86_64.dll` and links `__ubsan_handle_*`.
 - Rig run under `with-msvc-env.sh` with MSVC's DLL first on PATH: 3927/3927 test cases, 52766 assertions, no sanitizer report.
-- CI on the runner's LLVM 20.1.8: this PR.
+- CI on the runner's LLVM 20.1.8: this PR. **It never ran** — the lane's Core-delta gate skipped "Sanitizer (UBSan via Clang)" on #2400 (no `Source/Core` C++ in the diff). Its first real run, on later PRs, crashed in `LaunchIntoSlot`'s catch block (`AsyncLoadGatePure.h:86`): clang-cl 19/20 miscompile the ASan frame around a catch funclet. The lane now installs a pinned LLVM 22.1.6 (`.github/actions/setup-pinned-llvm`), and `cmake/Sanitizers.cmake` refuses clang-cl < 22 under asan.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)

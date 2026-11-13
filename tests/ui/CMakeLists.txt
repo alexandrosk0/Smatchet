@@ -46,6 +46,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/data_dependent_windows_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/plan_doc_viewer_external_open.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/notification_center.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/left_view_history.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_window_render_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_preferences_tabs.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/prefs_schema_coverage.test.cpp"

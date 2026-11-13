@@ -383,6 +383,7 @@ void LocalCacheManager::InitSchema() {
             "value TEXT NOT NULL)");
     InitFieldEditQueueSchema(db);
     InitLookupCacheSchema_();
+    InitLeftViewHistorySchema_();
     InitPendingActionsSchema_();
 #if defined(SMATCHET_WITH_AI)
     // AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity). Additive

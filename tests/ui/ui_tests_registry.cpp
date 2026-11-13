@@ -36,6 +36,7 @@ extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterPlanDocViewerExternalOpenTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterNotificationCenterTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterLeftViewHistoryTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizePreferencesTabsTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterPrefsSchemaCoverageTests(ImGuiTestEngine* engine);
@@ -112,6 +113,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterDataDependentWindowsSmokeTests(engine);
     SmatchetRegisterPlanDocViewerExternalOpenTests(engine);
     SmatchetRegisterNotificationCenterTests(engine);
+    SmatchetRegisterLeftViewHistoryTests(engine);
     SmatchetRegisterFuncSizeWindowRenderSmokeTests(engine);
     SmatchetRegisterFuncSizePreferencesTabsTests(engine);
     SmatchetRegisterPrefsSchemaCoverageTests(engine);

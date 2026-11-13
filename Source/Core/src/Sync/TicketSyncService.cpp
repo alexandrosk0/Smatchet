@@ -864,6 +864,13 @@ void TicketSyncService::ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompl
     {
         std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
         std::vector<CachedTicket>& rows = deps_.ActiveTickets();
+        for (CachedTicket& row : rows) {
+            if (keep.find(row.id) == keep.end()) {
+                // Moved, not copied (the lock is held, and a mass drop can be many rows): the last-known values an
+                // explanation compares against. The moved-from row has an empty id, which the keep set never names.
+                convergedOutRows_.push_back(std::move(row));
+            }
+        }
         const std::size_t dropped = smatchet::RetainTicketsInKeepSet(rows, keep);
         ownedIds.reserve(rows.size());
         for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -891,6 +898,18 @@ void TicketSyncService::PublishViewListing(bool fullSyncCompleted) {
     if (fullSyncCompleted) {
         deps_.PublishViewListedIds(listed);
     }
+    if (fullSyncCompleted && !listed.empty()) {
+        ViewListingCompletion completion;
+        completion.cfg = &sessionCfg_;
+        completion.query = sessionCfg_.JqlQuery;
+        completion.viewId = sessionViewId_;
+        completion.viewName = sessionViewName_;
+        completion.stillHeld = activeStreamingSync_.KeepIds; // the worker has exited: same lock-free read as above
+        completion.droppedRows = std::move(convergedOutRows_);
+        completion.listed = std::move(listed);
+        deps_.OnViewListingCompleted(std::move(completion));
+    }
+    convergedOutRows_.clear();
 }
 
 bool TicketSyncService::IsActive() const {
@@ -1167,6 +1186,11 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     const std::uint64_t reqId = ++currentFetchRequestId_;
     ++sessionEpoch_;
     activeMode_ = mode;
+    sessionCfg_ = cfgCopy;
+    const ViewDefinition* sessionView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
+    sessionViewId_ = sessionView != nullptr ? sessionView->Id : std::string();
+    sessionViewName_ = sessionView != nullptr ? sessionView->Name : std::string();
+    convergedOutRows_.clear();
     mergeIndex_.Release(); // a new session builds its map once, from the roster as it is then
     if (mode == smatchet::sync::SyncMode::Full) {
         refusedKeys_.Clear(); // an explicit full sync asks again about every key (the worker is joined above)

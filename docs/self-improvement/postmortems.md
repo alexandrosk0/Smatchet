@@ -34,6 +34,114 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-12 · PR #2401 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after CodeRabbit reviewed the code but the gate read its clean incremental review as stale
+
+### What escaped
+`refactor(ui): move the stale-index row count into the pure header` (#2401, head `ffb8a503428a`) merged 2026-11-12T15:12:47Z as `eb0312d6c`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`, `crState: STALE_UNKNOWN`.
+
+The diff is small UI-layer C++: `Source/Core/include/Ui/StatusBarRowCountPure.h` (+16/−1), `Source/Core/src/Ui/SmatchetStatusBarUi.cpp` (+1/−9) and `tests/Core/StatusBarRowCountPure.test.cpp` (+15). On the head:
+- CodeRabbit did review the code. Its review of `7478dc9cac` posted 1 actionable comment and 2 nitpicks; the fix landed in `979a7f8ab`, and CodeRabbit's incremental review of `979a7f8ab` posted nothing. The two later commits (`b4af5e023`, `ffb8a5034`) are develop merge-ins that do not touch the reviewed files, and a manual re-review request was refused as `Review rate limited`.
+- The PR body carries `adversarial-code-review: 1 finding, 1 fixed in 979a7f8ab`, re-pinned to the merged head with the note that it is a develop merge with no change to the reviewed files.
+
+Both labels went on at 2026-11-11T20:34:42Z with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the merged head was green.
+
+### Root cause
+The external review existed; the gate could not credit it. CodeRabbit's clean incremental review has no `Actionable comments posted` header, so `merge-gates.sh` read the latest review as `STALE_UNKNOWN` and blocked by its safe default. That is the shape #2414 taught the `CR finding gate` workflow to pass. The waiver was applied before #2414 merged, and each develop merge-in afterwards reset the review state while the re-review quota was spent.
+
+The merge was further delayed by the same ghost queued check suites as #2408 (eight suites from the 20:34Z `labeled` events, `queued` with zero runs, uncancellable). An admin merge was refused with `3 of 23 required status checks are expected`; `gh pr update-branch` gave the PR a fresh head, and the normal gate poll merged it.
+
+### Preventing gate
+None — override legitimate. CodeRabbit reviewed the code and its one finding was fixed; the waiver bridged a gate that could not read the clean follow-up review and a re-review quota that was exhausted. The CR finding gate's half of the parsing gap is fixed by #2414. Whether `merge-gates.sh` reads the same shape is not verified here; the snapshot's `STALE_UNKNOWN` says it did not at merge time, and that belongs on the existing P1 entry below rather than a new one.
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the review that ran found one issue and it was fixed. The gap is gate parsing and review quota, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
+## 2026-11-12 · PR #2408 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a test-tooling diff CodeRabbit never reviewed
+
+### What escaped
+`test(agent-eval): case packets request the code-review heading format` (#2408, head `dd5c0ae9c93e`) merged 2026-11-12T14:25:55Z as `96f0858bf`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`.
+
+The diff is test tooling: `scripts/dev/agent-eval-run.sh` (+4/−2), four `tests/agent-eval/code-review/*.json` case packets (one line each) and `tests/bats/agent_eval_run.bats` (+26). No C++ and no gate script. On the head:
+- CodeRabbit never reviewed the PR. Its only comment (2026-11-11T03:24:48Z) was the notice that repositories under 10 stars get no automatic review.
+- `Cursor Bugbot` could not run (usage limit), which the gate treats as a no-wedge pass.
+- The PR body carries `adversarial-code-review: 3 findings, 2 fixed, 1 deferred to user` and `independent-review: code-review agent, separate subagent context, 2 rounds; 3 findings, 2 fixed, 1 deferred to user`. Both were re-pinned to the merged head, whose patch is identical to the reviewed `93d0bbd` (the delta is a develop merge-in).
+
+Both labels went on at 2026-11-11T20:34:46Z with the maintainer's OK in chat. A PR comment recorded the waiver and why. Every other check's newest run on the merged head was green.
+
+### Root cause
+CodeRabbit reviews this repository only on request (under 10 stars), and no request was spent on this PR while its quota was being rationed. `merge-gates.sh` held the PR on the missing review and named the `cr-out-of-band` + `cr-disposition:` pair as the escape; this PR took that documented waiver.
+
+The merge was delayed, not driven, by two unrelated blockers: the UBSan lane crash fixed by #2415, and eight check suites created by the 20:34Z `labeled` events that stayed `queued` with zero runs. GitHub would not cancel or re-run them and kept the PR `BLOCKED` with every required check green. `gh pr update-branch` gave the PR a fresh head, and the normal gate poll merged it.
+
+### Preventing gate
+None — override legitimate. It is the documented waiver for an unreviewed CodeRabbit on a code PR, applied with the maintainer's OK, on a test-tooling diff with a separate-context review recorded on the head.
+
+The upstream cause (CodeRabbit reviews only on request, Bugbot hits its usage cap) is already filed at P1: [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md). This PR is added to that entry's **Observed on** list. The ghost queued suites are recorded on [`categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md`](categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md).
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the independent review's deferred item (a layer doc outside this repository) was surfaced to the maintainer in the PR body. The gap is review availability, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
+## 2026-11-12 · PR #2400 · post-merge break: a required lane's new config merged with that lane `skipped`, then crashed on #2407, #2409 and #2410
+
+### What escaped
+`fix(sanitizers): UBSan + instrumented rig on the clang-cl lanes` (#2400, head `866c18161`) merged 2026-11-09T21:32:19Z as `2e1f9a0de`. It changed how the required `Sanitizer (UBSan via Clang)` check builds and runs:
+- UBSan and `/clang:-fsanitize-address-use-after-return=never` in the clang-cl arm of `cmake/Sanitizers.cmake`;
+- the doctest rig built instrumented in that job;
+- matching `CMakePresets.json`, workflow and test edits.
+
+On #2400's head that check concluded `skipped`, as did `Sanitizer (ASAN via MSVC)`. The PR merged with `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled`; no other override was involved.
+
+The lane then stayed `skipped` on the develop push of `2e1f9a0de` and on the next two merges (#2392, #2414). `sanitizer-nightly.yml` went green on `2e1f9a0de` (run 42811948214), because its clang job is build-only.
+
+The first execution of the new config was on three unrelated PRs, on 2026-11-11: #2407 (run 42945983692), #2409 (42954758927) and #2410 (42965923809). Each crashed in `LaunchIntoSlot` (`Source/Core/include/Ui/AsyncLoadGatePure.h:86`) with an ASan access violation at `0x41b58abb`, inside `ex.what()` of a `catch (const std::exception&)`. All three stayed blocked until #2415.
+
+### Root cause
+Toolchain cause: the code has no UB. clang-cl 19 and 20 miscompile the ASan stack frame of a function holding a C++ catch funclet, so the funclet reads the caught exception from the wrong slot. The fault address is the ASan frame magic `0x41B58AB3` + 8. Evidence:
+- A standalone copy of the test crashes identically on clang-cl 19.1.5 with ASan alone.
+- It passes on 22.1.6.
+- The runner's image ships 20.1.8.
+
+#2400 was validated on local LLVM 22.1.6 only. Its plan says so and names the gap: "The runner's LLVM 20.1.8 may behave differently from local LLVM 22.1.6; CI on this PR is the proof."
+
+Gate holes, blameless:
+1. **The lane's trigger set omitted the lane's own config.** The `changes` job in `build-and-test.yml` sets `source_core_cpp` only for `Source/Core` and `Source/Plugins` C++. #2400 changed none, so the lane skipped on the PR that reconfigured it.
+2. **A skipped required check is a pass.** Branch protection and `merge-gates.sh` both accept `skipped`. No gate compared it with the plan's § Verification, which named this check green on this PR as the proof.
+3. **Nothing else executes clang-cl ASan code.** The nightly clang job builds and runs nothing. So once the PR-time lane skipped, the first run of the new config was on whichever Core PR came next.
+
+A fourth contributor: the toolchain was unpinned. The lane took whatever LLVM the runner image carried, so "verified locally on 22" said nothing about CI.
+
+Gate-tool provenance: check conclusions are from `gh api …/commits/<sha>/check-runs` against GitHub, 2026-11-12. The `changes`-job reading is from `build-and-test.yml` at `2e1f9a0de` and at `origin/develop` `2a22aabf1`.
+
+### Preventing gate
+Shipped in #2415:
+- The `changes` job now flips `source_core_cpp` on `cmake/Sanitizers.cmake` and `.github/actions/setup-pinned-llvm/*`. Replayed on #2400's file list, the lane runs on #2400 itself.
+- Both clang-cl lanes run a pinned LLVM 22.1.6 from `.github/actions/setup-pinned-llvm`. Its install is SHA-256-checked, and a `clang-cl --version` check fails setup on any other version.
+- `cmake/Sanitizers.cmake` refuses clang-cl < 22 under `SMATCHET_SANITIZER=asan`, so image drift fails at configure, not inside a catch block.
+
+#2415's own `Sanitizer (UBSan via Clang)` run on 22.1.6 is green, with `smatchet_tests` passed.
+
+Open, filed below (suggestion-only):
+- Add the rest of #2400's inputs to the trigger set: `CMakePresets.json`, the lane's job definition, `tests/**`.
+- A bats case pinning that set.
+- Run the instrumented rig in the nightly clang job.
+- Have `pre-ship.sh` / the plan-doc lint refuse when a check that a plan's § Verification names as the proof is `skipped` on the PR.
+
+### Eval case
+**Yes — agent-reviewable.** Input: the #2400 diff, including its plan's § Risks line "CI on this PR is the proof", together with the `changes` job's `source_core_cpp` `case` in `build-and-test.yml` as context.
+
+Reference outcome: a competent reviewer notes that the diff touches no `Source/Core` or `Source/Plugins` C++. So the `Sanitizer (UBSan via Clang)` job it reconfigures will be skipped on this PR, and the LLVM-20 proof the plan relies on never runs. The reviewer asks for the trigger set to cover `cmake/Sanitizers.cmake` before merge.
+
+No execution required: the skip is readable from the diff and the workflow. Candidate for `tests/agent-eval/code-review/_candidates/`, promoted by a human.
+
+### Filed as
+[`categories/infra/2026-11-12-delta-gated-lane-skips-the-pr-that-reconfigures-it.md`](categories/infra/2026-11-12-delta-gated-lane-skips-the-pr-that-reconfigures-it.md) (new, P1). Fix and first half of the gate: #2415.
+
 ## 2026-11-11 · PR #2392 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after a manual CodeRabbit trigger was rate-limited
 
 ### What escaped

@@ -1,10 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <vector>
 
 // Pure, ImGui-free decision for the status bar's grid row count ("340 rows" /
 // "12 of 340 rows"). The impure driver (SmatchetStatusBarUi.cpp) feeds it the focused
-// pane's cached sort/filter projection sizes, so the count costs O(1) per frame.
+// pane's cached sort/filter projection sizes, so the count costs O(1) per frame outside the
+// short shrink window DrawnFilteredRows describes.
 
 namespace StatusBarRowCountPure {
 
@@ -25,6 +28,18 @@ struct Result {
 
     bool Filtered() const { return show && visible < total; }
 };
+
+// The `filtered` input: the size of filteredIndices, except while a projection from a larger
+// snapshot lingers (a shrinking sync inside the rebuild debounce). Then only the indices inside
+// the snapshot count, matching the grid's per-frame prune; the O(n) walk runs only in that window.
+inline std::size_t DrawnFilteredRows(const std::vector<std::size_t>& filteredIndices, std::size_t sorted,
+                                     std::size_t loaded) {
+    if (sorted <= loaded) {
+        return filteredIndices.size();
+    }
+    return static_cast<std::size_t>(std::count_if(filteredIndices.begin(), filteredIndices.end(),
+                                                  [loaded](std::size_t idx) { return idx < loaded; }));
+}
 
 inline Result Compute(const Inputs& in) {
     Result r;

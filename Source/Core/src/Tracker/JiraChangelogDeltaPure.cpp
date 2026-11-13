@@ -1,6 +1,7 @@
 #include "JiraChangelogDeltaPure.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace JiraChangelogDeltaPure {
@@ -22,9 +23,7 @@ std::string JsonValueAsString(const nlohmann::json& node, const char* key) {
 /// Human side of a from/to pair: prefer the display string, fall back to the raw value.
 /// Unlike JiraActivityFeed there is no estimate-seconds special case — no salient role is an
 /// estimate field, so the roster filter never lets one through.
-std::string DisplaySide(const std::string& raw, const std::string& display) {
-    return display.empty() ? raw : display;
-}
+std::string DisplaySide(const std::string& raw, const std::string& display) { return display.empty() ? raw : display; }
 
 /// Roster lookup by concrete field id; returns the matched role (for its label) or nullptr.
 const smatchet::SalientFieldRole* FindRole(const std::string& id,
@@ -59,10 +58,9 @@ bool CreatedSinceMinute(const std::string& created, const std::string& sinceIsoM
 
 } // namespace
 
-std::vector<JiraChangelogDelta>
-DeltasFromIssueJson(const nlohmann::json& issue, const std::string& sinceIsoMinute,
-                    const std::vector<smatchet::SalientFieldRole>& roster,
-                    const std::string& selfAccountId) {
+std::vector<JiraChangelogDelta> DeltasFromIssueJson(const nlohmann::json& issue, const std::string& sinceIsoMinute,
+                                                    const std::vector<smatchet::SalientFieldRole>& roster,
+                                                    const std::string& selfAccountId) {
     std::vector<JiraChangelogDelta> out;
     if (!issue.is_object()) {
         return out;
@@ -116,12 +114,57 @@ DeltasFromIssueJson(const nlohmann::json& issue, const std::string& sinceIsoMinu
             delta.summary.changedFieldLabel = role->label;
             delta.summary.fromValue =
                 DisplaySide(JsonValueAsString(item, "from"), JsonValueAsString(item, "fromString"));
-            delta.summary.toValue =
-                DisplaySide(JsonValueAsString(item, "to"), JsonValueAsString(item, "toString"));
+            delta.summary.toValue = DisplaySide(JsonValueAsString(item, "to"), JsonValueAsString(item, "toString"));
             delta.summary.author = authorName;
             delta.changelogEntryId = entryId;
             delta.createdAt = created;
             out.push_back(std::move(delta));
+        }
+    }
+    return out;
+}
+
+namespace {
+
+/// Appends one changelog history's items, whatever the field and whoever made the change.
+void AppendHistoryChanges(const nlohmann::json& history, const std::string& issueKey,
+                          std::vector<TrackerFieldChange>& out) {
+    const auto items = history.value("items", nlohmann::json::array());
+    if (!items.is_array()) {
+        return;
+    }
+    TrackerFieldChange shared;
+    shared.issueKey = issueKey;
+    shared.changedAt = JsonValueAsString(history, "created");
+    if (history.contains("author") && history["author"].is_object()) {
+        shared.author = JsonValueAsString(history["author"], "displayName");
+    }
+    for (const auto& item : items) {
+        if (item.is_object()) {
+            TrackerFieldChange change = shared;
+            change.fieldId = JsonValueAsString(item, "fieldId");
+            change.fieldLabel = JsonValueAsString(item, "field");
+            change.fromValue = DisplaySide(JsonValueAsString(item, "from"), JsonValueAsString(item, "fromString"));
+            change.toValue = DisplaySide(JsonValueAsString(item, "to"), JsonValueAsString(item, "toString"));
+            out.push_back(std::move(change));
+        }
+    }
+}
+
+} // namespace
+
+std::vector<TrackerFieldChange> AllChangesFromIssueJson(const nlohmann::json& issue) {
+    std::vector<TrackerFieldChange> out;
+    if (!issue.is_object() || !issue.contains("changelog") || !issue["changelog"].is_object()) {
+        return out;
+    }
+    const auto histories = issue["changelog"].value("histories", nlohmann::json::array());
+    if (histories.is_array()) {
+        const std::string key = JsonValueAsString(issue, "key");
+        for (const auto& history : histories) {
+            if (history.is_object()) {
+                AppendHistoryChanges(history, key, out);
+            }
         }
     }
     return out;

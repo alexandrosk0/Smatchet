@@ -8,9 +8,10 @@ name: Agentic self-tests
 # merge green (the "gate, don't trust" suite gated nowhere). This lane is that
 # missing backstop.
 #
-# Runs on ubuntu-latest where shellcheck is preinstalled; bats is installed via
-# apt and python3 is preinstalled. `test-all.sh --ci` treats a missing built
-# Smatchet.exe (exit 2) as a clean SKIP and denylists suites needing a service
+# Runs on ubuntu-latest where shellcheck is preinstalled; bats-core is installed
+# from its pinned GitHub tag (not apt — see the install step) and python3 is
+# preinstalled. `test-all.sh --ci` treats a missing built Smatchet.exe (exit 2)
+# as a clean SKIP and denylists suites needing a service
 # unavailable here (Perforce, live gh) or tracked-pending-fix — so only genuine
 # assertion failures in the deterministic agentic suite red this lane. The
 # denylist + its reasons live in scripts/dev/test-all.sh (CI_SKIP_RE).
@@ -78,12 +79,40 @@ jobs:
       - name: Ensure origin/develop ref (for delta-vs-develop gates)
         run: git fetch --no-tags --quiet origin develop || true
 
+      # bats-core from its GitHub tag, NOT apt: the Ubuntu mirror is a dependency this
+      # lane does not otherwise have, and a mirror DNS outage (2026-11-11, `Temporary
+      # failure resolving 'azure.archive.ubuntu.com'`, exit 100 for 35+ min) red'd this
+      # required lane on develop and every PR. github.com is already a hard dependency
+      # (checkout). v1.10.0 = the version apt shipped on ubuntu-latest, so no behaviour
+      # change; the tag is verified against its commit SHA so a moved tag fails loudly.
       - name: Install bats (shellcheck + python3 preinstalled on ubuntu runner)
+        env:
+          BATS_TAG: v1.10.0
+          BATS_SHA: f7defb94362f2053a3e73d13086a167448ea9133
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bats
+          set -euo pipefail
+          src="$RUNNER_TEMP/bats-core"
+          for attempt in 1 2 3; do
+            rm -rf "$src"
+            if git clone --quiet --depth 1 --branch "$BATS_TAG" \
+                 https://github.com/bats-core/bats-core.git "$src"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::bats-core clone failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+          got="$(git -C "$src" rev-parse HEAD)"
+          if [ "$got" != "$BATS_SHA" ]; then
+            echo "::error::bats-core $BATS_TAG resolved to $got, expected $BATS_SHA"
+            exit 1
+          fi
+          sudo "$src/install.sh" /usr/local
           bats --version
-          shellcheck --version | head -2
+          # sed, not head: under pipefail an early-exiting head could SIGPIPE shellcheck.
+          shellcheck --version | sed -n 1,2p
           python3 --version
 
       - name: Provision .claude/ adapter (gitignored — hooks/agents the guard + lint-hook + adapter suites source)

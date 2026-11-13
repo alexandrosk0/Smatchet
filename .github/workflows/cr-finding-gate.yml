@@ -125,12 +125,23 @@ jobs:
           persist-credentials: false
 
       # Resolve PR number + CURRENT head SHA + base ref uniformly across all
-      # trigger events (issue_comment has no pull_request payload). Always reads
-      # the live head via the API so the status lands on the right commit.
+      # trigger events (issue_comment has no pull_request payload). Reads the
+      # live head via the API so the status lands on the right commit, except
+      # for a submitted review: that run evaluates the commit the review was
+      # submitted on (review.commit_id). Every review-node verdict in the action
+      # reads only reviews on its SHA, so this is the run that records a
+      # reviewed commit's pass or findings failure even when the head moved on
+      # before the run started (a develop merge pushed seconds after
+      # CodeRabbit's review). Without it, the merge-only carry-forward finds no
+      # credential on the reviewed commit, or misses a findings failure on it.
+      # The new head has its own pull_request run. Event values arrive via env,
+      # not expression interpolation inside run: (zizmor template-injection).
       - name: Resolve PR
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
         shell: bash
         run: |
           set -uo pipefail
@@ -141,6 +152,10 @@ jobs:
           fi
           read -r sha base < <(gh api "repos/${{ github.repository }}/pulls/${num}" \
                                  --jq '"\(.head.sha) \(.base.ref)"' 2>/dev/null || echo " ")
+          if [ -n "${sha:-}" ] && [ "${EVENT_NAME:-}" = "pull_request_review" ] \
+             && [[ "${REVIEW_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            sha="$REVIEW_COMMIT"
+          fi
           echo "num=${num}"   >> "$GITHUB_OUTPUT"
           echo "sha=${sha}"   >> "$GITHUB_OUTPUT"
           echo "base=${base}" >> "$GITHUB_OUTPUT"

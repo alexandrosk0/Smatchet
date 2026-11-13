@@ -172,6 +172,22 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
     }
 
     // Mutation scripts
+    // Rows only a keyed fetch returns: an issue that left the view can still be read by its key.
+    if (root.contains("keyedOnlyTickets") && root["keyedOnlyTickets"].is_array()) {
+        for (const auto& ct : root["keyedOnlyTickets"]) {
+            CachedTicket ticket;
+            ticket.id = ct.value("id", std::string());
+            if (ct.contains("fields") && ct["fields"].is_object()) {
+                for (auto it = ct["fields"].begin(); it != ct["fields"].end(); ++it) {
+                    if (it.value().is_string()) {
+                        ticket.fieldValues[it.key()] = it.value().get<std::string>();
+                    }
+                }
+            }
+            fixture.keyedOnlyTickets_.push_back(std::move(ticket));
+        }
+    }
+
     if (root.contains("mutations") && root["mutations"].is_object()) {
         const auto& m = root["mutations"];
         if (m.contains("updateIssueFields") && m["updateIssueFields"].is_array()) {
@@ -353,7 +369,9 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         // A keyed fetch (the offline-replay conflict re-check, the parent top-up) answers from the same
         // steady-state issue set, filtered to the requested keys, as a real tracker does. Without it a
         // replayed edit could never read the server value and would stay parked as "unverified".
-        client.SetFetchIssuesForKeysResult(true, last.Tickets);
+        std::vector<CachedTicket> keyed = last.Tickets;
+        keyed.insert(keyed.end(), keyedOnlyTickets_.begin(), keyedOnlyTickets_.end());
+        client.SetFetchIssuesForKeysResult(true, keyed);
     }
 
     for (const auto& reply : updateIssueFieldsReplies_) {

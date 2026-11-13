@@ -527,6 +527,10 @@ struct UiDrawSession {
     bool showNotificationCenterWindow = false;
     /// One-frame focus latch for the Notification Center. See `requestPreferencesFocus`.
     bool requestNotificationCenterFocus = false;
+    /** Issues that left a view. Opened from the menu, `view.toggle.left_view_history`, or a departures toast. */
+    bool showLeftViewHistory = false;
+    /// One-frame focus latch for the left-view history. See `requestPreferencesFocus`.
+    bool requestLeftViewHistoryFocus = false;
     int layoutForceDefaultsFrames = 0;
     std::unordered_set<std::string> pendingReDockWindows;
     /// Latch set when a layout reset is requested MID-FRAME (menu bar, command dispatch).

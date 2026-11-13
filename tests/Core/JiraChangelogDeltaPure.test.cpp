@@ -27,6 +27,32 @@ std::vector<SalientFieldRole> Roster() {
 
 } // namespace
 
+TEST_CASE("AllChangesFromIssueJson: every field and author, malformed nodes skipped") {
+    const nlohmann::json issue = nlohmann::json::parse(R"json({
+      "key": "PROJ-1",
+      "changelog": { "histories": [
+        { "created": "2026-06-20T08:00:00.000+0000", "author": { "accountId": "a", "displayName": "Bob" },
+          "items": [ { "fieldId": "labels", "field": "labels", "fromString": "x", "toString": "y" }, 7 ] },
+        "not an object",
+        { "created": "2026-06-19T08:00:00.000+0000",
+          "items": [ { "field": "Sprint", "from": "1", "to": "2" } ] }
+      ] }
+    })json");
+    const std::vector<TrackerFieldChange> changes = JiraChangelogDeltaPure::AllChangesFromIssueJson(issue);
+    REQUIRE(changes.size() == 2);
+    CHECK(changes[0].issueKey == "PROJ-1");
+    CHECK(changes[0].fieldId == "labels");
+    CHECK(changes[0].fromValue == "x");
+    CHECK(changes[0].toValue == "y");
+    CHECK(changes[0].author == "Bob");
+    CHECK(changes[0].changedAt == "2026-06-20T08:00:00.000+0000");
+    CHECK(changes[1].fieldLabel == "Sprint");
+    CHECK(changes[1].fromValue == "1");
+    CHECK(changes[1].author.empty());
+    CHECK(JiraChangelogDeltaPure::AllChangesFromIssueJson(nlohmann::json::parse("{}")).empty());
+    CHECK(JiraChangelogDeltaPure::AllChangesFromIssueJson(nlohmann::json::array()).empty());
+}
+
 TEST_CASE("DeltasFromIssueJson: salient filter + from->to + author") {
     const nlohmann::json issue = nlohmann::json::parse(R"json({
       "key": "PROJ-1",

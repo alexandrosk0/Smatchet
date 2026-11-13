@@ -211,6 +211,37 @@ inline std::vector<std::string> ReorderViewColumns(const std::vector<std::string
     return ignored;
 }
 
+/// True when `key` names a column of `view` the user may take off it: any "field:<id>" column,
+/// wherever it sits. As in the Views editor's Fields tab, the synthetic "id" column is the one
+/// locked row (NormalizeViewDefinition would put it straight back), no field is mandatory, and
+/// position is not a factor: the frozen strip is simply whichever column comes first. Wider than
+/// that tab in one way: a column whose field is not in the catalog has no row to untick there, yet
+/// the grid still draws it, and this is what lets the user clear it.
+inline bool CanRemoveViewColumn(const ViewDefinition& view, const std::string& key) {
+    const std::string canonical = CanonicalGridColumnKey(key);
+    if (canonical == "id" || !IsRenderableGridColumnKey(canonical)) {
+        return false;
+    }
+    return std::any_of(view.Columns.begin(), view.Columns.end(),
+                       [&](const ViewColumn& col) { return col.Key == canonical; });
+}
+
+/// Take `key`'s column off `view`, the outcome of unticking that field in the Fields tab: every
+/// other column keeps its position and width, and NormalizeViewDefinition regenerates Fields and
+/// prunes a sort rule on the removed column. Returns false, leaving `view` untouched, when
+/// CanRemoveViewColumn refuses.
+inline bool RemoveViewColumn(const std::string& key, ViewDefinition& view) {
+    if (!CanRemoveViewColumn(view, key)) {
+        return false;
+    }
+    const std::string canonical = CanonicalGridColumnKey(key);
+    view.Columns.erase(std::remove_if(view.Columns.begin(), view.Columns.end(),
+                                      [&](const ViewColumn& col) { return col.Key == canonical; }),
+                       view.Columns.end());
+    NormalizeViewDefinition(view);
+    return true;
+}
+
 /// True when both lists name the same columns in the same order (widths ignored).
 inline bool ViewColumnKeysEqual(const std::vector<ViewColumn>& a, const std::vector<ViewColumn>& b) {
     if (a.size() != b.size()) {

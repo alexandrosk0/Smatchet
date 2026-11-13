@@ -8,6 +8,7 @@
 // clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining the AppController local-cache database methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
+#include "LeftViewHistoryService.h"
 // clang-format on
 
 #include "ConfigManager.h"
@@ -199,6 +200,7 @@ void AppController::FlushTicketSavesBeforeShutdown_() {
     if (!ticketSaves_.Flush(std::chrono::seconds(5))) {
         LOG_WARN("AppController shutdown: a queued ticket cache save did not finish within 5 s.");
     }
+    FlushLeftViewHistoryBeforeShutdown_(); // the same risk: its queue's drain is a background task too
 }
 
 void AppController::JoinCacheRecreateWorker_() {
@@ -396,6 +398,9 @@ void AppController::FinishCacheRecreate_(
     const TicketSyncService* const focusedSync = focusedContext().ticketSync_.get();
     for (TicketSyncService* svc : CollectPaneSyncServices_()) {
         svc->EndCacheTeardown(foldFocused && svc == focusedSync);
+    }
+    if (leftViewHistory_ && (outcome.Ok || outcome.Wiped)) {
+        leftViewHistory_->ResetForCacheRecreate(); // the rows on screen came from the file that is gone
     }
     if (outcome.Ok) {
         ClearLastTrackerTicketSyncWarning();

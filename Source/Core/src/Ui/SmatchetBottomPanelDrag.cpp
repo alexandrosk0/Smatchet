@@ -47,6 +47,8 @@ const ClosableWindowEntry kClosableWindows[] = {
     {"user_info", "User Info", &UiDrawSession::showUserInfo, &UiDrawSession::requestUserInfoFocus},
     {"notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
      &UiDrawSession::requestNotificationCenterFocus},
+    {"left_view_history", "Issues That Left Views###LeftViewHistory", &UiDrawSession::showLeftViewHistory,
+     &UiDrawSession::requestLeftViewHistoryFocus},
     // Restore deliberately skips the open latches of these two, so an in-progress draft
     // survives hide/reveal instead of being re-seeded.
     {"quick_create", "Quick Create Issue", &UiDrawSession::showQuickCreateIssue, nullptr},
