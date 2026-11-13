@@ -94,13 +94,21 @@ void DrawHarness(ImGuiTestContext* /*ctx*/) {
     ImGui::TextUnformatted("focus host");
     ImGui::End();
 
+    // The palette sizes itself from the work area, so the simulated window replaces that as well,
+    // with no menu-bar inset.
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     const ImVec2 realSize = viewport->Size;
+    const ImVec2 realWorkPos = viewport->WorkPos;
+    const ImVec2 realWorkSize = viewport->WorkSize;
     if (g_cancel.simulatedViewport.x > 0.0f) {
         viewport->Size = g_cancel.simulatedViewport;
+        viewport->WorkPos = viewport->Pos;
+        viewport->WorkSize = g_cancel.simulatedViewport;
     }
     g_cancel.palette.Draw(*g_cancel.app);
     viewport->Size = realSize;
+    viewport->WorkPos = realWorkPos;
+    viewport->WorkSize = realWorkSize;
 }
 
 ImGuiWindow* FocusedRootWindow() {
@@ -171,6 +179,8 @@ void CheckExitRestoresFocus(ImGuiTestContext* ctx, bool viaButton) {
 }
 
 // Asserts the geometry the button has to keep in this state, then that a click on it still closes.
+// The 320x200 cases assume a font and DPI scale near 1.0, as on the pinned CI lane: at a much larger
+// scale the list's one-frame-height floor plus the hint line can need more than 200 px.
 void CheckCancelReachable(ImGuiTestContext* ctx, ImVec2 simulatedViewport) {
     g_cancel.simulatedViewport = simulatedViewport;
     OpenPalette(ctx, nullptr); // empty filter = the whole registry, far more rows than fit

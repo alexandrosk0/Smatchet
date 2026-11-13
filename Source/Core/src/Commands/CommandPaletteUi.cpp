@@ -259,11 +259,14 @@ void CommandPaletteUi::Draw(AppController& app) {
     if (!open_)
         return;
 
-    // Center the modal, clamped to the viewport so a small window cannot push its edges (and the
-    // Cancel button on the top row) off screen.
+    // Center the modal in the work area (the viewport minus the main menu bar and other insets),
+    // clamped to it so a small window cannot push its edges (and the Cancel button on the top row)
+    // off screen or under the menu bar. Each axis is floored at 1 px: a 0 size means auto-fit to
+    // ImGui, which a minimised window would otherwise request.
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2((std::min)(600.f, viewport->Size.x), (std::min)(420.f, viewport->Size.y)),
+    ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2((std::max)(1.0f, (std::min)(600.f, viewport->WorkSize.x)),
+                                    (std::max)(1.0f, (std::min)(420.f, viewport->WorkSize.y))),
                              ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.97f);
 
@@ -292,14 +295,18 @@ void CommandPaletteUi::Draw(AppController& app) {
             "%s", SmatchetLocalization::Format("cmdpalette.scope", "Showing %s commands only", categoryLabel_.c_str()));
     }
 
-    // Filter text input, narrowed only when the Cancel button beside it would not otherwise fit.
+    // Filter text input, narrowed only when the Cancel button beside it would not otherwise fit. The
+    // arg form draws no Cancel on this row, so its filter keeps the default width.
+    const bool argForm = argFormStep_ >= 0;
     const char* cancelLabel = SmatchetLocalization::T("common.cancel", "Cancel");
     const ImGuiStyle& style = ImGui::GetStyle();
     const float rowStartX = ImGui::GetCursorPosX();
     const float rowWidth = ImGui::GetContentRegionAvail().x;
     const float cancelWidth = ImGui::CalcTextSize(cancelLabel).x + style.FramePadding.x * 2.0f;
-    ImGui::SetNextItemWidth(
-        (std::max)(1.0f, (std::min)(ImGui::CalcItemWidth(), rowWidth - cancelWidth - style.ItemSpacing.x)));
+    if (!argForm) {
+        ImGui::SetNextItemWidth(
+            (std::max)(1.0f, (std::min)(ImGui::CalcItemWidth(), rowWidth - cancelWidth - style.ItemSpacing.x)));
+    }
     const bool filterChanged =
         ImGui::InputTextWithHint("##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."),
                                  filterBuf_, sizeof(filterBuf_));
@@ -308,7 +315,7 @@ void CommandPaletteUi::Draw(AppController& app) {
     }
 
     // Arg-form mode.
-    if (argFormStep_ >= 0) {
+    if (argForm) {
         drawArgForm();
         ImGui::End();
         return;
@@ -370,7 +377,9 @@ void CommandPaletteUi::handleListNavigation(const ImGuiIO& io) {
 void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
     // Shrink below the default height in a short window so the hint line under the list stays
     // visible: the space it needs is the separator above it plus the item spacing on either side.
-    const float hintH = ImGui::GetStyle().ItemSpacing.y * 2.0f + 1.0f + ImGui::GetTextLineHeight();
+    // ImGui draws the separator max(SeparatorSize, 1) px thick, and SeparatorSize scales with DPI.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float hintH = style.ItemSpacing.y * 2.0f + (std::max)(style.SeparatorSize, 1.0f) + ImGui::GetTextLineHeight();
     const float listH =
         (std::max)(ImGui::GetFrameHeight(), (std::min)(300.f, ImGui::GetContentRegionAvail().y - hintH));
     ImGui::BeginChild("##cmdlist", ImVec2(0, listH), false);
