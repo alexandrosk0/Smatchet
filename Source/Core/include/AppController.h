@@ -133,6 +133,13 @@ class AiAssistantController;
 
 class ITrackerBackendFactory;
 class ILookupCache;
+namespace smatchet {
+class LeftViewHistoryService;
+struct LeftViewCapture;
+struct LeftViewRecord;
+struct MembershipReconcilePlan;
+} // namespace smatchet
+struct ViewListingCompletion;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
                          // Cache` member is fine with the incomplete type since ~AppController is out-of-line. Defining
                          // TUs include LocalCacheManager.h directly.
@@ -442,6 +449,9 @@ class AppController : public IAppThreading,
     /// automation worker sets on a Lua error. UI-thread: call once per frame in OnDraw.
     /// Returns true if the plugin should bring the Scripting window to the foreground.
     bool ConsumeScriptingWindowRequest() override;
+
+    /// The history of issues that left a view. Null only before Initialize.
+    smatchet::LeftViewHistoryService* LeftViewHistory() override { return leftViewHistory_.get(); }
 
     /**
      * Optional host callback for launching URLs.
@@ -1610,7 +1620,24 @@ class AppController : public IAppThreading,
                                        std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt, std::uint64_t capturedGeneration,
                                        std::uint64_t capturedSyncEpoch, bool addNewRows,
-                                       const smatchet::sync::ChangeProbeCycleNotes& notes);
+                                       const smatchet::sync::ChangeProbeCycleNotes& notes,
+                                       const TrackerConfig& probedCfg);
+    /// Records the departures a change probe found, in the history of issues that left a view, when the probe ran
+    /// the query the view's last reload answered and the key is one that reload listed. Anything else is not
+    /// provably a departure and stays out of the history. UI thread. AppController_LeftViewHistory.cpp.
+    void recordMonitorDepartures_(GridLiveContext& ctx, const std::string& paneId,
+                                  const std::vector<CachedTicket>& prev, const smatchet::MembershipReconcilePlan& plan,
+                                  const TrackerConfig& probedCfg);
+    /// A complete reload finished: hands its listing to the history. UI thread.
+    void onViewListingCompleted_(GridLiveContext& ctx, ViewListingCompletion completion);
+    /// The change monitor added rows the view's roster listed: the saved listing names them from now on. UI thread.
+    void noteMonitorRowsAdded_(GridLiveContext& ctx, const std::vector<std::string>& addedKeys,
+                               const TrackerConfig& probedCfg);
+    smatchet::LeftViewCapture makeLeftViewCapture_(GridLiveContext& ctx, const std::string& viewId,
+                                                   const std::string& viewName, const std::string& query,
+                                                   const TrackerConfig& cfg);
+    void initLeftViewHistory_();
+    void onReloadDepartures_(const std::vector<smatchet::LeftViewRecord>& rows);
     /// applyChangeProbeOnMainThread_ halves: drop the shared cache rows of 404'd keys no sibling pane retains,
     /// and persist the rows a probe updated (worker write, latched cache handle). UI thread.
     void dropUnheldCacheRows_(const GridLiveContext& ctx, const std::string& paneId, const std::string& backendKey,
@@ -1987,6 +2014,9 @@ class AppController : public IAppThreading,
     void DrainCatalogWorkBeforeShutdown_();
     /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
     void FlushTicketSavesBeforeShutdown_();
+    void FlushLeftViewHistoryBeforeShutdown_();
+    std::unique_ptr<smatchet::LeftViewHistoryService> leftViewHistory_;
+    bool leftViewNotifyEnabled_ = false; ///< The user's notify preference, from the last reload's config; UI thread.
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
     /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
     void JoinCacheRecreateWorker_();

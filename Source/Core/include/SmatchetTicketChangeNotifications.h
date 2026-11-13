@@ -21,6 +21,10 @@
 using TicketChangeFocusHandler = std::function<void(const std::string& paneId, const std::string& issueId)>;
 void SetTicketChangeFocusHandler(TicketChangeFocusHandler handler);
 
+/// Opens the window listing issues that left a view: what clicking a departures-only toast does. Registered once at
+/// UI init; with no handler registered such a toast behaves like any other.
+void SetLeftViewHistoryOpenHandler(std::function<void()> handler);
+
 /// Surface `changes` as a single summarised "Tickets" toast (FormatTicketChangeToast, cap 1 +
 /// "+N more"). Empty `changes` is a no-op. Consecutive calls carrying the identical change set
 /// are de-duplicated by a function-static last-signature guard, so an overlapping/retried poll

@@ -53,6 +53,59 @@ const TrackerField* FindField(const std::vector<TrackerField>& fields, const std
 
 } // namespace
 
+TEST_CASE("FieldCatalogCache: a saved Jira catalog loads each status name once; another tracker's stays as saved") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerField status;
+    status.Id = "status";
+    status.Family = TrackerFieldFamily::Status;
+    for (const char* id : {"3", "10023"}) { // as a snapshot from before the catalog merged them holds it
+        TrackerFieldOption opt;
+        opt.Id = id;
+        opt.Value = "In Progress";
+        status.AllowedValueOptions.push_back(opt);
+        status.AllowedValues.push_back(opt.Value);
+    }
+    const std::vector<TrackerField> fields{status};
+
+    const auto load = [](const std::string& key) {
+        std::vector<TrackerField> outFields;
+        std::vector<TrackerComponent> outComponents;
+        std::vector<TrackerIssueTypeCreateMeta> outMeta;
+        std::string loadErr;
+        REQUIRE(FieldCatalogCache::TryLoadFieldCatalogSnapshot(key, outFields, outComponents, outMeta, loadErr));
+        REQUIRE(outFields.size() == 1);
+        return outFields[0];
+    };
+
+    TrackerConfig jira;
+    jira.TrackerType = "Jira";
+    jira.Domain = "https://example.atlassian.net";
+    const std::string jiraKey = FieldCatalogCache::BuildFieldCatalogCacheKey(jira, "BLOOP");
+    std::string saveErr;
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(jiraKey, "Jira", jira.Domain, "BLOOP", 16, fields, {}, {},
+                                                        saveErr));
+    const TrackerField fromJira = load(jiraKey);
+    REQUIRE(fromJira.AllowedValueOptions.size() == 1);
+    CHECK(fromJira.AllowedValueOptions[0].MergedIds == std::vector<std::string>{"10023"});
+    CHECK(fromJira.AllowedValues == std::vector<std::string>{"In Progress"});
+
+    // Saved once merged, the other ids can only come back from the file itself.
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(jiraKey, "Jira", jira.Domain, "BLOOP", 16, {fromJira}, {}, {},
+                                                        saveErr));
+    const TrackerField reloaded = load(jiraKey);
+    REQUIRE(reloaded.AllowedValueOptions.size() == 1);
+    CHECK(reloaded.AllowedValueOptions[0].MergedIds == std::vector<std::string>{"10023"});
+
+    TrackerConfig plane;
+    plane.TrackerType = "Plane";
+    plane.PlaneUrl = "https://plane.example";
+    const std::string planeKey = FieldCatalogCache::BuildFieldCatalogCacheKey(plane, "BLOOP");
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(planeKey, "Plane", plane.PlaneUrl, "BLOOP", 16, fields, {}, {},
+                                                        saveErr));
+    CHECK(load(planeKey).AllowedValueOptions.size() == 2);
+}
+
 TEST_CASE("FieldCatalogCache: scoped components catalog round-trips under the project key") {
     smatchet_tests::TestEnvGuard env;
 

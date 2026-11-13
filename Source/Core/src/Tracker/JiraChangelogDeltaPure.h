@@ -9,6 +9,7 @@
 // (tests/Core/JiraChangelogDeltaPure.test.cpp) — no network, no JiraClient.
 
 #include "Sync/TicketChangeDiffPure.h"
+#include "TrackerFieldChange.h"
 
 #include <nlohmann/json.hpp>
 
@@ -36,9 +37,13 @@ struct JiraChangelogDelta {
 /// from/to=display-preferred (`fromString`/`toString` else `from`/`to`), author=`displayName`.
 /// Non-salient items, non-object nodes, and missing changelog are skipped. Output order
 /// follows the changelog (histories, then items within a history).
-std::vector<JiraChangelogDelta>
-DeltasFromIssueJson(const nlohmann::json& issue, const std::string& sinceIsoMinute,
-                    const std::vector<smatchet::SalientFieldRole>& roster,
-                    const std::string& selfAccountId);
+std::vector<JiraChangelogDelta> DeltasFromIssueJson(const nlohmann::json& issue, const std::string& sinceIsoMinute,
+                                                    const std::vector<smatchet::SalientFieldRole>& roster,
+                                                    const std::string& selfAccountId);
+
+/// Every change in one issue's `expand=changelog` JSON, whatever the field and whoever made it, for explaining
+/// why the issue left a view. Output follows the changelog order. Non-object nodes and a missing changelog are
+/// skipped; `issueKey` falls back to the issue's own `key`.
+std::vector<TrackerFieldChange> AllChangesFromIssueJson(const nlohmann::json& issue);
 
 } // namespace JiraChangelogDeltaPure

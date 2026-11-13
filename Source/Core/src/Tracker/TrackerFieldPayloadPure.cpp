@@ -5,6 +5,7 @@
 #include "MarkdownConvert.h"
 #include "StringUtil.h"
 #include "Tracker/ParentHierarchyPure.h"
+#include "Tracker/TrackerFieldOptionLookup.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,17 +25,7 @@ void DecodeCascadingSelection(const std::string& encoded, std::string& outParent
 }
 
 const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& options, const std::string& id) {
-    for (const auto& option : options) {
-        if (option.Id == id) {
-            return &option;
-        }
-        if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionById(option.Children, id)) {
-                return nested;
-            }
-        }
-    }
-    return nullptr;
+    return tracker_field_options::FindById(options, id);
 }
 
 // Id-preferred resolution: scan for option.Id == value first; only fall back to
@@ -42,7 +33,7 @@ const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& 
 // component literally named "10033" shadows the option whose Id is 10033.
 std::string ResolveOptionLabelByIdRecursive(const std::vector<TrackerFieldOption>& options, const std::string& value) {
     for (const auto& option : options) {
-        if (option.Id == value) {
+        if (option.HasId(value)) {
             return option.Value;
         }
         if (!option.Children.empty()) {
@@ -58,7 +49,7 @@ std::string ResolveOptionLabelByIdRecursive(const std::vector<TrackerFieldOption
 std::string ResolveOptionLabelByValueRecursive(const std::vector<TrackerFieldOption>& options,
                                                const std::string& value) {
     for (const auto& option : options) {
-        if (option.Value == value) {
+        if (option.HasName(value)) {
             return option.Value;
         }
         if (!option.Children.empty()) {
@@ -79,32 +70,11 @@ std::string ResolveOptionLabel(const std::vector<TrackerFieldOption>& options, c
     return ResolveOptionLabelByValueRecursive(options, value);
 }
 
-const TrackerFieldOption* FindOptionByValueRecursive(const std::vector<TrackerFieldOption>& options,
-                                                     const std::string& value) {
-    for (const auto& option : options) {
-        if (option.Value == value) {
-            return &option;
-        }
-        if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionByValueRecursive(option.Children, value)) {
-                return nested;
-            }
-        }
-    }
-    return nullptr;
-}
-
-// Id-preferred resolution: a full id-first pass before any value match. Mirrors
-// ResolveOptionLabel's two-pass ordering so the payload path serializes the same
-// option the display path resolves. Avoids the id/name collision where a component
-// literally named "10033" shadows the option whose Id is 10033 — a single-pass
-// `Id == v || Value == v` would return the wrong (Value-matched) option first.
+// Mirrors ResolveOptionLabel's two-pass ordering so the payload path serializes the same option the
+// display path resolves.
 const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,
                                                 const std::string& idOrValue) {
-    if (const TrackerFieldOption* byId = FindOptionById(options, idOrValue)) {
-        return byId;
-    }
-    return FindOptionByValueRecursive(options, idOrValue);
+    return tracker_field_options::FindByIdOrName(options, idOrValue);
 }
 
 nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
@@ -171,6 +141,23 @@ Optional<nlohmann::json> BuildStructuredOptionPayload(const TrackerFieldOption& 
     return Optional<nlohmann::json>(std::move(outPayload));
 }
 
+// A status target is matched against the issue's own /transitions, and the catalog row's id can belong
+// to another workflow's status of the same name. Sends the id that was picked when it is one of the
+// row's merged ids, plus the name, so the move still resolves on an issue whose workflow uses another id.
+Optional<nlohmann::json> BuildStatusOptionPayload(const TrackerFieldOption& option, const std::string& selectedValue) {
+    Optional<nlohmann::json> payload = BuildStructuredOptionPayload(option, std::string());
+    if (!payload.has_value() || !payload.value().is_object()) {
+        return payload;
+    }
+    if (selectedValue != option.Id && option.HasId(selectedValue)) {
+        payload.value()["id"] = selectedValue;
+    }
+    if (!option.Value.empty()) {
+        payload.value()["name"] = option.Value;
+    }
+    return payload;
+}
+
 Optional<nlohmann::json> BuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue) {
     if (field.Family == TrackerFieldFamily::CascadingSelect) {
         std::string parentId;
@@ -186,6 +173,9 @@ Optional<nlohmann::json> BuildFieldOptionPayload(const TrackerField& field, cons
     if (option == nullptr) {
         return Optional<nlohmann::json>();
     }
+    if (field.Family == TrackerFieldFamily::Status) {
+        return BuildStatusOptionPayload(*option, selectedValue);
+    }
     return BuildStructuredOptionPayload(*option, std::string());
 }
 
@@ -199,6 +189,12 @@ nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, cons
         return nlohmann::json{{"accountId", scalarValue}};
     }
     if (field.Family == TrackerFieldFamily::Status) {
+        // A picked target is an id, and the catalog can lack it (a failed /status fetch, an older
+        // snapshot). Sent as a name alone it would match no transition; a status named with digits still
+        // matches through the name.
+        if (IsDigitsOnly(scalarValue)) {
+            return nlohmann::json{{"id", scalarValue}, {"name", scalarValue}};
+        }
         return nlohmann::json{{"name", scalarValue}};
     }
     if (field.Family == TrackerFieldFamily::IssueType) {

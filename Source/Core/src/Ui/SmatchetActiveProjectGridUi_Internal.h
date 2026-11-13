@@ -73,6 +73,9 @@ struct ActiveProjectDrawCtx {
     // The pending-edit cue of the row currently being drawn (set per row by drawActiveProjectGridRows from
     // d.pendingOverlay, read by the Id cell and by that row's value cells). None = nothing unconfirmed.
     smatchet::sync::PendingRowCue currentRowPending{};
+    // Set when the header menu's Remove item is clicked. Applied after EndTable, so the rest of this
+    // frame's table still sees the column list it was laid out with.
+    bool removeHeaderMenuColumn = false;
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

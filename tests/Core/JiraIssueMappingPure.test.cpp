@@ -783,6 +783,34 @@ TEST_CASE("FindJiraTransitionId — transition-name fallback only when no status
     CHECK(m.toStatusName == "Closed");
 }
 
+TEST_CASE("FindJiraTransitionId — the status id beats an earlier transition to the same name") {
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "11"}, {"name", "Start"}, {"to", {{"id", "10001"}, {"name", "In Progress"}}}},
+        {{"id", "21"}, {"name", "Begin"}, {"to", {{"id", "10023"}, {"name", "In Progress"}}}},
+    });
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "10023", "In Progress");
+    CHECK(m.id == "21");
+    CHECK_FALSE(m.usedStatusNameMatch);
+}
+
+TEST_CASE("FindJiraTransitionId — an id from another workflow still finds this issue's status of that name") {
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "21"}, {"name", "Begin"}, {"to", {{"id", "10023"}, {"name", "in progress"}}}},
+    });
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "3", "In Progress");
+    CHECK(m.id == "21");
+    CHECK_FALSE(m.usedNameFallback);
+    CHECK(m.usedStatusNameMatch);
+    CHECK(m.toStatusId == "10023");
+}
+
+TEST_CASE("FindJiraTransitionId — a target with an id never follows a transition that is only named like it") {
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "31"}, {"name", "Done"}, {"to", {{"id", "10009"}, {"name", "Closed"}}}},
+    });
+    CHECK(FindJiraTransitionId(transitions, "10002", "Done").id.empty());
+}
+
 TEST_CASE("FindJiraTransitionId — no candidate returns empty, integer ids stringified") {
     const nlohmann::json none = nlohmann::json::array({
         {{"id", 41}, {"name", "Reopen"}, {"to", {{"id", 10005}, {"name", "Reopened"}}}},

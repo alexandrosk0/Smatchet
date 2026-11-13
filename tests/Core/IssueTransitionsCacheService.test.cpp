@@ -331,6 +331,21 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(svc.GetAvailableTransitions(Query("PROJ-2")).options.empty());
     }
 
+    TEST_CASE("a fetched list containing the from-status under another id (merged status) is not remembered") {
+        FakeEditMetaDeps deps;
+        const auto store = SetUpJiraLike(deps);
+        // The issue's "To Do" is this workflow's id "11"; the merged catalog row it resolved to keeps id "1".
+        deps.Fake()->SetIssueTransitions("PROJ-1", {Option("11", "to do"), Option("3", "Done")});
+        IssueTransitionsCacheService svc(deps);
+        TransitionsQuery q = Query("PROJ-1");
+        q.FromStatusName = "To Do";
+
+        svc.EnsureIssueTransitionsLoaded(q);
+
+        CHECK(svc.GetAvailableTransitions(q).freshness == DataFreshness::Fresh);
+        CHECK(store->UpsertCalls.load() == 0);
+    }
+
     TEST_CASE("a from-status offered by a global or looped transition is remembered without itself") {
         // Every status of a team-managed workflow allows all: Jira lists the current status as a target.
         FakeEditMetaDeps deps;

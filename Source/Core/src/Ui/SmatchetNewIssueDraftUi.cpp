@@ -441,7 +441,7 @@ void DrawDraftOptionCombo(UiDrawSession& d, const TrackerField* field, const std
         preview = d.newIssueDraft.IssueTypeName;
     if (field && !field->AllowedValueOptions.empty()) {
         auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
-                                  [&](const auto& opt) { return opt.Id == current || opt.Value == current; });
+                                  [&](const auto& opt) { return opt.HasId(current) || opt.HasName(current); });
         if (optIt != field->AllowedValueOptions.end()) {
             preview = optIt->Value;
         }
@@ -494,7 +494,7 @@ void DrawDraftOptionCombo(UiDrawSession& d, const TrackerField* field, const std
                     firstMatch = &opt;
                 }
                 drewAny = true;
-                const bool selected = (opt.Id == current || opt.Value == current);
+                const bool selected = (opt.HasId(current) || opt.HasName(current));
                 ImGui::PushID(optId.c_str());
                 if (ImGui::Selectable(opt.Value.c_str(), selected)) {
                     applySelection(opt);

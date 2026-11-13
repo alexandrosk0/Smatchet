@@ -144,6 +144,7 @@ struct MonitorProbeResult {
     std::vector<smatchet::MembershipRemovalVerdict> Verdicts;
     smatchet::sync::ChangeProbeCycleNotes Notes;
     bool AddNewRows = false;
+    TrackerConfig ProbedCfg; // the config the cycle ran with, its query included
 };
 
 // Worker half of one monitor cycle. False = soft failure (logged by the cycle): the caller skips the apply.
@@ -152,6 +153,7 @@ bool RunMonitorProbe(MonitorProbeJob& job, MonitorProbeResult& result) {
     if (!job.PaneJql.empty()) {
         job.Cfg.JqlQuery = job.PaneJql;
     }
+    result.ProbedCfg = job.Cfg;
     smatchet::sync::RosterProbeContext probeContext;
     probeContext.RefusedKeys = &job.RefusedKeys;
     probeContext.WalkOwned = &job.WalkOwned;
@@ -830,7 +832,8 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             mainThreadDispatcher.PostToMainThread([this, paneId = job.PaneId, result = std::move(result), polledAt,
                                                    capturedGeneration, capturedSyncEpoch]() mutable {
                 applyChangeProbeOnMainThread_(paneId, std::move(result.Fetched), std::move(result.Verdicts), polledAt,
-                                              capturedGeneration, capturedSyncEpoch, result.AddNewRows, result.Notes);
+                                              capturedGeneration, capturedSyncEpoch, result.AddNewRows, result.Notes,
+                                              result.ProbedCfg);
             });
         });
     }
@@ -903,11 +906,13 @@ void AppController::persistProbeRows_(const std::string& paneId, const std::stri
     }
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=a declaration and its definition necessarily repeat a long parameter list; owner=orchestrator; revisit=when the probe result becomes one struct parameter)
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
                                                   std::uint64_t capturedGeneration, std::uint64_t capturedSyncEpoch,
-                                                  bool addNewRows, const smatchet::sync::ChangeProbeCycleNotes& notes) {
+                                                  bool addNewRows, const smatchet::sync::ChangeProbeCycleNotes& notes,
+                                                  const TrackerConfig& probedCfg) {
     // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
     // generation (swapped mid-flight → drop): a stale apply would diff new-backend rows against
     // the old baseline (capture-then-check, issue #1081). Also drop when a streaming sync started
@@ -978,7 +983,9 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         AddPaneOwnedTicketId(backendKey, paneId, addedKeys[i]);
     }
     ctx.monitorState.NoteViewRowsAdded(addedKeys); // the roster listed them: they belong to the view itself
+    noteMonitorRowsAdded_(ctx, addedKeys, probedCfg);
     AppendMembershipChangeSummaries(changes, addedKeys, plan);
+    recordMonitorDepartures_(ctx, paneId, prev, plan, probedCfg);
     // Mark Lua cells for re-record whenever ActiveTickets mutates (field updates OR removals).
     // This matches the convention used in TicketSyncService paths: every mutation of ActiveTickets
     // fires the Lua notify signal. UI thread, cheap.

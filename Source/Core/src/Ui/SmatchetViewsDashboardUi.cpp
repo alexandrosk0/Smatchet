@@ -378,7 +378,13 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
         }
     }
 
-    // Action buttons on a separate row below the title for a more compact header.
+    // Action buttons on a separate row below the title for a more compact header. The commit action
+    // comes first and the destructive one last; the ViewsEditorHeader UI test pins the order.
+    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
+                                  "Apply changes and sync issues (Ctrl+Enter).")) {
+        ctx.applyAndSync();
+    }
+    ImGui::SameLine();
     const bool disableDiscard = !dirty;
     if (disableDiscard) {
         ImGui::BeginDisabled();
@@ -388,11 +394,6 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     }
     if (disableDiscard) {
         ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
-                                  "Apply changes and sync issues (Ctrl+Enter).")) {
-        ctx.applyAndSync();
     }
     ImGui::SameLine();
     const bool disableDelete = (store.Views.size() <= 1);
@@ -678,6 +679,9 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputTextWithHint("##ViewFieldSearch", "Search field id or name", d.fieldSearchBuf,
                                      sizeof(d.fieldSearchBuf));
+            ImGui::TextDisabled(
+                "%s", SmatchetLocalization::T("views.remove_column_hint",
+                                              "(right-click a grid column header to remove it from the view)"));
 
             const CategorizedFields categorized = CategorizeAvailableFields(availableFields, d.fieldSearchBuf);
             const std::vector<const TrackerField*>& visibleFields = categorized.visible;

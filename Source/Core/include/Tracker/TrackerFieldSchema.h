@@ -1,5 +1,8 @@
 #pragma once
 
+#include "StringUtil.h"
+
+#include <algorithm>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -34,6 +37,18 @@ struct TrackerFieldOption {
     /// same one (`isLooped`), so it appearing as the issue's current status says nothing about where the
     /// issue is. Set only by transition parsing; never persisted.
     bool ReachableFromAnyStatus = false;
+    /// Other tracker ids of this one row: a Jira status name that several workflows define with their
+    /// own id (StatusOptionMergePure). Lookups by id accept them, so a target from an issue's own
+    /// transitions still resolves after the catalog shows the name once.
+    std::vector<std::string> MergedIds;
+
+    bool HasId(const std::string& id) const {
+        return Id == id || std::find(MergedIds.begin(), MergedIds.end(), id) != MergedIds.end();
+    }
+    /// A merged row also answers to the other spellings it replaced, which differ only by case.
+    bool HasName(const std::string& name) const {
+        return Value == name || (!MergedIds.empty() && EqualsIgnoreCaseAscii(Value, name));
+    }
 };
 
 struct TrackerField {

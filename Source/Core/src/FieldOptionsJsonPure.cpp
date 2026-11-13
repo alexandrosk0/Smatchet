@@ -22,12 +22,16 @@ nlohmann::json OptionToJsonAtDepth(const TrackerFieldOption& o, int depth) {
             children.push_back(OptionToJsonAtDepth(child, depth + 1));
         }
     }
-    return nlohmann::json::object({{"id", o.Id},
-                                   {"value", o.Value},
-                                   {"secondary", o.SecondaryValue},
-                                   {"payload_json", o.PayloadJson},
-                                   {"disabled", o.Disabled},
-                                   {"children", std::move(children)}});
+    nlohmann::json out = nlohmann::json::object({{"id", o.Id},
+                                                 {"value", o.Value},
+                                                 {"secondary", o.SecondaryValue},
+                                                 {"payload_json", o.PayloadJson},
+                                                 {"disabled", o.Disabled},
+                                                 {"children", std::move(children)}});
+    if (!o.MergedIds.empty()) {
+        out["merged_ids"] = o.MergedIds;
+    }
+    return out;
 }
 
 bool OptionFromJsonAtDepth(const nlohmann::json& j, TrackerFieldOption& out, int depth) {
@@ -41,6 +45,7 @@ bool OptionFromJsonAtDepth(const nlohmann::json& j, TrackerFieldOption& out, int
     out.SecondaryValue = text("secondary");
     out.PayloadJson = text("payload_json");
     out.Disabled = j.value("disabled", false);
+    out.MergedIds = j.value("merged_ids", std::vector<std::string>());
     out.Children.clear();
     const auto it = j.find("children");
     if (depth < kMaxOptionDepth && it != j.end() && it->is_array()) {

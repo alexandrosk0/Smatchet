@@ -164,7 +164,8 @@ bool IsQueryDateField(const TrackerField& field) {
 }
 
 void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, const char* userDisplaySuffix,
-                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen,
+                            bool includeIdRows) {
     const std::string pre = ToLowerAsciiCopy(prefix);
     const bool isUserField = IsQueryUserField(field);
     // A user field's DISPLAY text matches anywhere (a surname is as natural a search key as
@@ -210,7 +211,7 @@ void AppendValueSuggestions(const TrackerField& field, const std::string& prefix
         if (!opt.Value.empty()) {
             tryAdd(opt.Value, opt.Value);
         }
-        if (!opt.Id.empty() && opt.Id != opt.Value) {
+        if (includeIdRows && !opt.Id.empty() && opt.Id != opt.Value) {
             tryAdd(opt.Id, opt.Id + " (" + opt.Value + ")");
         }
     }
