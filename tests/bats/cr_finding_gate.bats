@@ -2254,6 +2254,35 @@ cr_review_resp() {
     [ "$(run_mcf "$m")" = "carried:$P1" ]
 }
 
+@test "shape 5: a CodeRabbit review in the same second as the pass is unordered and never carries" {
+    setup_mcf
+    m=$(merge_into_pr samesec)
+    # A 2-hour-old pass, so a review after it is past the wait bound: block.
+    pass_status "$P1" success 'github-actions[bot]' 'CodeRabbit: 0 actionable findings on current head' \
+        'https://github.com/o/r/actions/runs/123' 7200
+    at=$(jq -r '.[0].created_at' "$STATUS_DIR/$P1")
+    review_at() {
+        jq -n --arg c "$P1" --arg t "$1" \
+            '{data:{repository:{pullRequest:{reviews:{pageInfo:{hasNextPage:false},nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:"Actionable comments posted: 1",submittedAt:$t}]}}}}}'
+    }
+    # The same second as the verdict: fail closed.
+    (
+        mcf_env "$m"
+        resp="$(review_at "$at")"
+        rc=0; merge_carry_forward || rc=$?
+        [ "$rc" -eq 1 ] || exit 1
+        [ "$mcf_state" = no ] || exit 1
+    ) || false
+    # Non-vacuity: one second earlier is the review the pass was posted for.
+    before=$(jq -rn --arg t "$at" '($t | fromdateiso8601) - 1 | todate')
+    (
+        mcf_env "$m"
+        resp="$(review_at "$before")"
+        merge_carry_forward || exit 1
+        [ "$mcf_carried" = "$P1" ] || exit 1
+    ) || false
+}
+
 @test "shape 5: more review nodes than one page, or no pageInfo, never carries" {
     setup_jq; setup_decide; setup_mcf
     grep -qE '^ +reviews\(first:100\)\{$' "$ACTION"

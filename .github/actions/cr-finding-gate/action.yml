@@ -606,9 +606,13 @@ runs:
                          and (((.submittedAt // "") | fromdateiso8601? // 0) > $t)) ] | length > 0' >/dev/null 2>&1
         }
         # mcf_cr_review_after <commit> <iso-time>: true when resp holds a
-        # CodeRabbit review on that commit, with a body, submitted after
-        # <iso-time>. A time that does not parse reads as 0, so any review is
-        # after it (fail closed: an unreadable verdict time never wins).
+        # CodeRabbit review on that commit, with a body, submitted at or after
+        # <iso-time>. Both times are whole seconds, so a review in the same
+        # second as the verdict is unordered and counts as after it (a gate run
+        # takes far longer than a second to post, so the review a pass was
+        # posted for is always strictly older). A time that does not parse
+        # reads as 0, so any review is after it (fail closed: an unreadable
+        # verdict time never wins).
         mcf_cr_review_after() {
           printf '%s' "${resp:-}" | jq -e --arg c "$1" --arg v "$2" '
             (($v | fromdateiso8601?) // 0) as $t
@@ -616,7 +620,7 @@ runs:
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                          and (.commit.oid // "") == $c
                          and ((.body // "") | test("\\S"))
-                         and ((((.submittedAt // "") | fromdateiso8601?) // 0) > $t)) ] | length > 0' >/dev/null 2>&1
+                         and ((((.submittedAt // "") | fromdateiso8601?) // 0) >= $t)) ] | length > 0' >/dev/null 2>&1
         }
         merge_carry_forward() {
           case "$mcf_state" in
