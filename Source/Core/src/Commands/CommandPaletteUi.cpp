@@ -422,7 +422,14 @@ void CommandPaletteUi::handleListNavigation(const ImGuiIO& io) {
 // Scrollable command-list child. Owns its own BeginChild/EndChild pair. Destructive rows render in
 // the warning colour and require Shift to dispatch on click.
 void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
-    const float listH = 300.f;
+    // The palette window has a fixed height, so a failure message takes its lines from the
+    // list rather than pushing the key hint below the bottom edge.
+    float listH = 300.f;
+    if (!dispatchError_.empty()) {
+        const float errorH =
+            ImGui::CalcTextSize(dispatchError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y;
+        listH = (std::max)(120.f, listH - errorH - ImGui::GetStyle().ItemSpacing.y);
+    }
     ImGui::BeginChild("##cmdlist", ImVec2(0, listH), false);
     for (int i = 0; i < static_cast<int>(filtered_.size()); ++i) {
         const Command& c = filtered_[i];
