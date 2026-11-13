@@ -468,6 +468,16 @@ runs:
           # (a), cheap half first: ordinary heads stop here, before any fetch.
           parents=$(gh api "repos/${OWNER}/${REPO}/commits/${SHA}" --jq '.parents | length' 2>/dev/null) || return 2
           [ "$parents" = 2 ] || return 1
+          # The review checks in the walk read decide()'s reviews(first:100). On
+          # a PR with more review nodes than that page, a newer CodeRabbit
+          # review could be invisible to them, so do not carry: the manual-
+          # review arm decides, as before. A response with no pageInfo (a query
+          # that stopped asking for it) fails closed the same way.
+          if [ -n "${resp:-}" ] && ! printf '%s' "$resp" \
+               | jq -e '.data.repository.pullRequest.reviews.pageInfo.hasNextPage == false' >/dev/null 2>&1; then
+            echo "CR finding gate: more CodeRabbit review nodes than one page (or no pageInfo); not carrying a verdict forward"
+            return 1
+          fi
           base_ref=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.base.ref // empty' 2>/dev/null) || return 2
           [ "$base_ref" = "$MCF_BASE_REF" ] || return 1
           base_sha=$(gh api "repos/${OWNER}/${REPO}/git/ref/heads/${base_ref}" --jq '.object.sha // empty' 2>/dev/null) || return 2
@@ -772,6 +782,7 @@ runs:
             pullRequest(number:$pr){
               headRefOid
               reviews(first:100){
+                pageInfo{ hasNextPage }
                 nodes{ author{login} state submittedAt commit{oid} body
                        comments(first:100){ totalCount nodes{ replyTo{ id } } } }
               }

@@ -429,7 +429,7 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
 # the shape CodeRabbit switched to on 2026-11-01.
 checkrun_payload() {
     local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json"
-    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"HEAD","reviews":{"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":%s}}}}]}}}}}' \
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"HEAD","reviews":{"pageInfo":{"hasNextPage":false},"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":%s}}}}]}}}}}' \
         "$1" "$2" > "$f"
     printf '%s' "$f"
 }
@@ -2161,7 +2161,7 @@ run_mcf() {
 # as decide() has it in scope when it calls the carry.
 cr_review_resp() {
     jq -n --arg c "$1" --arg b "${2-Actionable comments posted: 0}" --argjson a "${3:-60}" \
-        '{data:{repository:{pullRequest:{reviews:{nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:$b,
+        '{data:{repository:{pullRequest:{reviews:{pageInfo:{hasNextPage:false},nodes:[{author:{login:"coderabbitai"},commit:{oid:$c},body:$b,
           submittedAt:((now - $a) | floor | todate)}]}}}}}'
 }
 
@@ -2252,6 +2252,25 @@ cr_review_resp() {
         [ "$mcf_carried" = "$P1" ] || exit 1
     ) || false
     [ "$(run_mcf "$m")" = "carried:$P1" ]
+}
+
+@test "shape 5: more review nodes than one page, or no pageInfo, never carries" {
+    setup_jq; setup_decide; setup_mcf
+    grep -qE '^ +reviews\(first:100\)\{$' "$ACTION"
+    grep -A1 -E '^ +reviews\(first:100\)\{$' "$ACTION" | grep -qF 'pageInfo{ hasNextPage }'
+    f="$(checkrun_payload '[]' "[$(cr_run COMPLETED SKIPPED 'Review skipped')]")"
+    pass_status "$P1"
+    m=$(merge_into_pr pages)
+    # Non-vacuity: one page carries.
+    [ "$(real_mcf_decide "$m" "$f" none)" = "success: Merge-only head: PR diff identical to ${P1:0:12}, which passed this gate; CodeRabbit skipped the merge" ]
+    jq '.data.repository.pullRequest.reviews.pageInfo.hasNextPage = true' "$f" > "$f.more"
+    jq 'del(.data.repository.pullRequest.reviews.pageInfo)' "$f" > "$f.nopage"
+    for g in "$f.more" "$f.nopage"; do
+        out="$(real_mcf_decide "$m" "$g" none)"
+        echo "$out" >&2
+        grep -q 'not carrying a verdict forward' <<<"$out"
+        [ "${out##*$'\n'}" = "failure: OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled" ]
+    done
 }
 
 @test "shape 5: through the real decide(), a reviewed commit with no verdict yet retries with the carry PENDING cause" {
