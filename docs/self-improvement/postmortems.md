@@ -34,6 +34,35 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-13 · PR #2410 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after CodeRabbit reviewed the last code commit and only develop merge-ins followed
+
+### What escaped
+`fix(tracker): list each Jira status name once` (#2410, head `b85365824ad6`) merged 2026-11-13T14:50:39Z as `41c1b3cc6`. It went through the gate poller: its `merge-snapshots.jsonl` row reads `GATES_PASSED`, `orchestrator-automerge`, `redChecks: ["CodeRabbit"]`, `overrideLabels: ["cr-out-of-band"]`, `crState: STALE_UNKNOWN`.
+
+The diff is strict-zone C++ plus tests, 33 files (+640/−163): status-option merging in `Source/Core/{include,src}/Tracker/` (16 files, including a new `StatusOptionMergePure.h`), the status combo and field-option helpers, and 13 doctest units under `tests/Core/`. On the head:
+- CodeRabbit reviewed the code: `dcb99bdbd0` and twice on `6c6f028770`, the last commit that changes the PR's diff. Its one minor finding was fixed. The three later commits (`e19751f0db`, `64a65ceb6b`, `b85365824a`) are develop merge-ins; the PR's own patch-id is `71c9abda6594` at both `64a65ceb6b` and the merged head.
+- `Cursor Bugbot` hit its usage limit on every run.
+- The PR body carries `adversarial-code-review: 8 findings: 7 low (4 fixed, 3 deferred and listed) + 1 CR minor fixed; re-review 0 new`, re-pinned to the merged head with the note that the delta is develop merge-ins only.
+
+Both labels went on at 2026-11-12T18:03:22Z with the maintainer's OK in chat. Every other check's newest run on the merged head was green.
+
+### Root cause
+The external review existed for every line of the PR's diff; the gate could not credit it. CodeRabbit's clean follow-up review has no `Actionable comments posted` header, so `merge-gates.sh` read the state as `STALE_UNKNOWN` and blocked by its safe default — the #2401 shape. Each develop merge-in reset the review state while the re-review quota was spent.
+
+The merge then took a day for reasons that are not about review:
+- On head `e19751f0db`, a `claude` app check suite sat `queued` with zero runs, and GitHub held `mergeStateStatus` at `BLOCKED` with all 22 contexts green. `gh pr update-branch` cleared it, as for #2401 and #2408.
+- On head `64a65ceb6b`, `Cursor Bugbot` posted `Bugbot couldn't run - usage limit reached` but left its check run `queued`. `All checks green (block-on-any-red)` counted it as pending and failed after 10200s (`still pending after 10200s — a timeout is red`). `merge-gates.sh` already passes a usage-capped Bugbot by its no-wedge rule; the CI roll-up does not. Another `gh pr update-branch` gave Bugbot a fresh attempt.
+- On the merged head, the `All checks green` run was cancelled at 2026-11-13T14:00:18Z mid-wait, with no new event on the PR to explain it; a re-run of that job passed and the poll merged the PR.
+
+### Preventing gate
+None — override legitimate. CodeRabbit reviewed the full diff and its finding was fixed; the waiver bridged a gate that could not read the clean follow-up review. The wedges are not escapes, but the Bugbot one is a gate hole of its own: it is added as a third shape to the existing tooling entry below, with the next action to make `All checks green` treat a `queued` Bugbot check run plus a usage-limit comment as terminal, as `merge-gates.sh` does. This PR is added to the P1 entry's **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. No defect is known to have shipped; the review that ran fixed its findings and the three deferred lows are listed in the PR body. The gap is gate parsing and CI wedges, not a missed defect.
+
+### Filed as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated) and [`categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md`](categories/tooling/2026-11-11-merge-gates-blind-to-zero-job-cancelled-run.md) (existing, P2; third shape added)
+
 ## 2026-11-12 · PR #2409 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` on a grid-header change CodeRabbit never reviewed
 
 ### What escaped
