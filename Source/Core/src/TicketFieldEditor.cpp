@@ -785,12 +785,14 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
             query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
             query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
             query.FromStatusKey = currentId;
+            const std::string currentName = app.ResolveDisplayValue(field.Id, &field, currentValue);
+            query.FromStatusName = currentName;
             app.EnsureIssueTransitionsLoaded(query);
             const TransitionsLookup lookup = app.GetAvailableTransitionsForIssue(query);
             if (lookup.applicable) {
                 TrackerFieldOption current;
                 current.Id = currentId;
-                current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                current.Value = currentName;
                 if (current.Value.empty()) {
                     current.Value = currentId;
                 }

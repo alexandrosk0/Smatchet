@@ -72,8 +72,10 @@ bool IsQueryUserField(const TrackerField& field);
 /// id-qualified-by-value) then the flat AllowedValues list.
 /// `userDisplaySuffix` is the only backend-local divergence — Jira renders " (display name) -> ",
 /// Plane " (display) -> "; passing it in keeps both wordings while the body is single-sourced.
+/// `includeIdRows` false drops the id-qualified rows of a non-user field, so each value is listed once.
 void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, const char* userDisplaySuffix,
-                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen);
+                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen,
+                            bool includeIdRows = true);
 
 /// True for date / date-time fields.
 bool IsQueryDateField(const TrackerField& field);

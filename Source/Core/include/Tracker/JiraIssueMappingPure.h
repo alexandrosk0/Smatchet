@@ -40,6 +40,10 @@ struct JiraTransitionMatch {
     bool usedNameFallback = false;
     std::string transitionName; // populated only when usedNameFallback
     std::string toStatusName;   // the matched transition's actual to.name (for the warn)
+    /// A target id was given but no transition leads to it; matched by `to.name` instead (a status
+    /// merged across workflows, whose id in this issue's workflow differs).
+    bool usedStatusNameMatch = false;
+    std::string toStatusId; // populated only when usedStatusNameMatch
 };
 
 /// Find the transition id that leads to the requested status. Priority, applied

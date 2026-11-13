@@ -43,6 +43,16 @@ TEST_SUITE("FieldOptionsJsonPure") {
         CHECK(parsed[0].Children[0].Value == "Child");
     }
 
+    TEST_CASE("merged ids survive the round trip") {
+        TrackerFieldOption option = FullOption();
+        option.MergedIds = {"20", "30"};
+        std::vector<TrackerFieldOption> parsed;
+        REQUIRE(
+            smatchet::fieldoptions::ParseFieldOptions(smatchet::fieldoptions::SerializeFieldOptions({option}), parsed));
+        REQUIRE(parsed.size() == 1u);
+        CHECK(parsed[0].MergedIds == std::vector<std::string>{"20", "30"});
+    }
+
     TEST_CASE("an empty list round-trips to an empty list") {
         std::vector<TrackerFieldOption> parsed{FullOption()};
         REQUIRE(smatchet::fieldoptions::ParseFieldOptions(smatchet::fieldoptions::SerializeFieldOptions({}), parsed));

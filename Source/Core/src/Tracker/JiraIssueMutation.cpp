@@ -50,7 +50,7 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
 namespace {
 
 // Returns the transition id leading to the requested status (status id → to.name →
-// transition-name fallback, prioritised GLOBALLY). The matcher is the pure,
+// transition-name fallback for a name-only target, prioritised GLOBALLY). The matcher is the pure,
 // unit-tested smatchet::jira::FindJiraTransitionId; the LOG_WARN for a name-fallback
 // match lives here because the pure unit is Logger-free (#670).
 std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
@@ -61,6 +61,11 @@ std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, cons
         LOG_WARN("JiraClient: transition name fallback triggered: transition '%s' matched target "
                  "status name '%s' but status name is '%s' — workflow may have diverged.",
                  match.transitionName.c_str(), targetStatusName.c_str(), match.toStatusName.c_str());
+    }
+    if (match.usedStatusNameMatch) {
+        LOG_DEBUG("JiraClient: no transition leads to status id '%s'; moving to same-name status '%s' (id '%s') "
+                  "in this issue's workflow.",
+                  targetStatusId.c_str(), targetStatusName.c_str(), match.toStatusId.c_str());
     }
     return match.id;
 }

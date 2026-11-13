@@ -2,57 +2,16 @@
 #include "JiraIssueMappingPure.h"
 #include "StringUtil.h"
 #include "ConfigManager.h"
+#include "Tracker/TrackerFieldOptionLookup.h"
 #include <fstream>
 #include <algorithm>
 
-namespace {
-} // namespace
-
 namespace TrackerFieldValueUtils {
 
-namespace {
-
-const TrackerFieldOption* FindOptionByIdRecursive(const std::vector<TrackerFieldOption>& options,
-                                                  const std::string& value) {
-    for (const auto& option : options) {
-        if (option.Id == value) {
-            return &option;
-        }
-        if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionByIdRecursive(option.Children, value)) {
-                return nested;
-            }
-        }
-    }
-    return nullptr;
-}
-
-const TrackerFieldOption* FindOptionByValueRecursive(const std::vector<TrackerFieldOption>& options,
-                                                     const std::string& value) {
-    for (const auto& option : options) {
-        if (option.Value == value) {
-            return &option;
-        }
-        if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionByValueRecursive(option.Children, value)) {
-                return nested;
-            }
-        }
-    }
-    return nullptr;
-}
-
-} // namespace
-
-// Id-preferred two-pass: match option.Id across all options first, only then fall back to
-// option.Value. Keeps editor selection-id resolution consistent with ResolveOptionLabel and
-// avoids the id/name collision (a component named "10033" shadowing the option whose Id is 10033).
+// Keeps editor selection-id resolution consistent with ResolveOptionLabel.
 const TrackerFieldOption* FindOptionRecursive(const std::vector<TrackerFieldOption>& options,
                                               const std::string& value) {
-    if (const TrackerFieldOption* byId = FindOptionByIdRecursive(options, value)) {
-        return byId;
-    }
-    return FindOptionByValueRecursive(options, value);
+    return tracker_field_options::FindByIdOrName(options, value);
 }
 
 std::string ResolveOptionId(const TrackerField& field, const std::string& value) {
@@ -118,13 +77,9 @@ bool TryResolveCascadingSelection(const TrackerField& field, const std::string& 
     return true;
 }
 
-std::vector<std::string> LoadDurationSuggestions() {
-    return ConfigManager::Load().DurationSuggestions;
-}
+std::vector<std::string> LoadDurationSuggestions() { return ConfigManager::Load().DurationSuggestions; }
 
-std::vector<std::string> LoadCommentTemplates() {
-    return ConfigManager::Load().WorkLogCommentTemplates;
-}
+std::vector<std::string> LoadCommentTemplates() { return ConfigManager::Load().WorkLogCommentTemplates; }
 
 bool IsTimeDurationField(const std::string& fieldId) {
     // Same six ids as the Jira wire mapping — one list, owned by the pure unit.
@@ -141,9 +96,3 @@ bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
 }
 
 } // namespace TrackerFieldValueUtils
-
-
-
-
-
-

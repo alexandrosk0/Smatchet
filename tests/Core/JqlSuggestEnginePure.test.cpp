@@ -489,6 +489,21 @@ TEST_CASE("value mode — non-user option lists suggest by value and by id, skip
     }
 }
 
+TEST_CASE("value mode — a status is suggested by name only, with no id row") {
+    auto fields = DefaultFields();
+    TrackerFieldOption inProgress;
+    inProgress.Id = "10001";
+    inProgress.Value = "In Progress";
+    fields[0].AllowedValues.clear();
+    fields[0].AllowedValueOptions.push_back(inProgress);
+
+    const std::string buf = "status = ";
+    const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
+    CHECK(HasInsert(out, "\"In Progress\""));
+    CHECK_FALSE(HasInsert(out, "10001"));
+    CHECK_FALSE(HasLabel(out, "10001 (In Progress)"));
+}
+
 TEST_CASE("user catalog — accountId insert fallback when the display name is empty") {
     const auto fields = DefaultFields();
     std::vector<TrackerUser> users;

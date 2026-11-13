@@ -6,6 +6,7 @@
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
+#include "Tracker/StatusOptionMergePure.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -285,6 +286,9 @@ void BuildSimpleCatalogOptions(const nlohmann::json& array, TrackerField& field)
         }
         field.AllowedValueOptions.push_back(std::move(option));
     }
+    if (field.Id == "status") {
+        smatchet::statusoptions::MergeSameNameStatusOptions(field);
+    }
     field.Family = ClassifyTrackerFieldFamily(field);
 }
 
@@ -336,6 +340,9 @@ void MergeCreateMetaIssueTypeFields(const nlohmann::json& fieldsObj,
             if (!option.Value.empty() || !option.Id.empty()) {
                 MergeTrackerFieldOption(targetField.AllowedValueOptions, option);
             }
+        }
+        if (fieldId == "status") {
+            smatchet::statusoptions::MergeSameNameStatusOptions(targetField.AllowedValueOptions);
         }
         RefreshTrackerAllowedValuesFromOptions(targetField);
         targetField.Family = ClassifyTrackerFieldFamily(targetField);

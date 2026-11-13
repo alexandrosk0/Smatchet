@@ -8,6 +8,7 @@
 #include "LearnedWorkflowPure.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
+#include "StringUtil.h"
 #include "Tracker/TrackerError.h"
 
 #include <exception>
@@ -176,7 +177,10 @@ void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey
     std::vector<TrackerFieldOption> remembered;
     remembered.reserve(options.size());
     for (const TrackerFieldOption& opt : options) {
-        if (opt.Id == q.FromStatusKey) {
+        const bool isFromStatus =
+            opt.Id == q.FromStatusKey || (!q.FromStatusName.empty() && !opt.Value.empty() &&
+                                          ToLowerAsciiCopy(opt.Value) == ToLowerAsciiCopy(q.FromStatusName));
+        if (isFromStatus) {
             if (!opt.ReachableFromAnyStatus) {
                 return;
             }

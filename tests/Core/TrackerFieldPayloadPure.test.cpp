@@ -413,6 +413,53 @@ TEST_CASE("BuildValue: priority / version / resolution / group — structured sh
     }
 }
 
+TEST_CASE("BuildValue: merged status — sends the picked id plus the name, display resolves any id") {
+    TrackerField f = MakeField("status", "status");
+    f.Family = TrackerFieldFamily::Status;
+    TrackerFieldOption merged = MakeOption("3", "In Progress", "{\"id\":\"3\",\"name\":\"In Progress\"}");
+    merged.MergedIds = {"10023"};
+    f.AllowedValueOptions.push_back(merged);
+    json out;
+    std::string err;
+
+    SUBCASE("an id from the issue's own transitions is kept") {
+        REQUIRE(BuildValue(f, {"10023"}, out, err));
+        CHECK(out == json{{"id", "10023"}, {"name", "In Progress"}});
+    }
+    SUBCASE("the catalog row's id carries the name, for an issue whose workflow uses another id") {
+        REQUIRE(BuildValue(f, {"3"}, out, err));
+        CHECK(out == json{{"id", "3"}, {"name", "In Progress"}});
+    }
+    SUBCASE("a name resolves to the row, as a script's Ticket:transition passes it") {
+        REQUIRE(BuildValue(f, {"In Progress"}, out, err));
+        CHECK(out == json{{"id", "3"}, {"name", "In Progress"}});
+    }
+    SUBCASE("a merged id never shows as a raw number") {
+        CHECK(TrackerFieldPayloadPure::ResolveDisplayValueForSubmittedSelection(f, "10023") == "In Progress");
+    }
+    SUBCASE("a merged spelling resolves to the row, not to a name-only target") {
+        REQUIRE(BuildValue(f, {"IN PROGRESS"}, out, err));
+        CHECK(out == json{{"id", "3"}, {"name", "In Progress"}});
+        CHECK(TrackerFieldPayloadPure::ResolveDisplayValueForSubmittedSelection(f, "IN PROGRESS") == "In Progress");
+    }
+    SUBCASE("an id the catalog lacks stays an id; a name stays a name") {
+        REQUIRE(BuildValue(f, {"20"}, out, err));
+        CHECK(out == json{{"id", "20"}, {"name", "20"}});
+        REQUIRE(BuildValue(f, {"Closed"}, out, err));
+        CHECK(out == json{{"name", "Closed"}});
+    }
+}
+
+TEST_CASE("Option lookup: only a merged row ignores case, so another field's options stay exact") {
+    TrackerFieldOption plain = MakeOption("1", "High");
+    CHECK(plain.HasName("High"));
+    CHECK_FALSE(plain.HasName("HIGH"));
+    plain.MergedIds = {"2"};
+    CHECK(plain.HasName("HIGH"));
+    CHECK(plain.HasId("2"));
+    CHECK_FALSE(plain.HasId("3"));
+}
+
 TEST_CASE("BuildValue: per-builder dispatch table — one group per scalar field type") {
     json out;
     std::string err;
