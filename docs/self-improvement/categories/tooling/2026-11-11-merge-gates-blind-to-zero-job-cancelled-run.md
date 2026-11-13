@@ -31,3 +31,9 @@ On 2026-11-11T20:34Z, `labeled` events on #2401, #2408 and #2412 each created ei
 - The only route found was a new head. #2412 got one from a push, and #2401 and #2408 from `gh pr update-branch`; the normal gate poll then merged each PR.
 
 The next action above should cover this shape too: flag a `queued` suite with zero runs that is older than a few minutes, and print `gh pr update-branch <pr>` rather than `gh run rerun`, since a run that never started can be neither cancelled nor re-run.
+
+## Third shape: a usage-capped Bugbot leaves its check run `queued` (PR #2410)
+
+On 2026-11-12T20:13Z `Cursor Bugbot` posted `Bugbot couldn't run - usage limit reached` on #2410 head `64a65ceb6b`, but its `Bugbot Review` check run stayed `queued`. `merge-gates.sh` passes a usage-capped Bugbot by its no-wedge rule; the `All checks green (block-on-any-red)` roll-up does not. It listed `PENDING  Cursor Bugbot (queued)` and failed after its 10200s budget (`still pending after 10200s — a timeout is red`). A `gh pr update-branch` gave Bugbot a fresh attempt, which finished `skipping`.
+
+Next action for this shape: in `.github/workflows/all-checks-green.yml` (and its poll script), treat a `Cursor Bugbot` check run that is still `queued` after the settle window as terminal when the PR carries a `cursor[bot]` `usage limit reached` comment newer than the head commit, mirroring `merge-gates.sh`'s no-wedge rule, with a bats fixture. ([postmortem](../../postmortems.md#2026-11-13--pr-2410--override-cr-out-of-band--cr-dispositioncr-auto-review-disabled-after-coderabbit-reviewed-the-last-code-commit-and-only-develop-merge-ins-followed))
