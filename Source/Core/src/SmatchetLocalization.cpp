@@ -1405,6 +1405,9 @@ const TranslationEntry kEntries[] = {
     {"cmdpalette.footer_hint", "Enter to run · Esc to close · Up/Down to navigate",
      u8"Entrée pour exécuter · Échap pour fermer · Haut/Bas pour naviguer"},
     {"cmdpalette.set_shortcut", "Set shortcut...", u8"Définir le raccourci..."},
+    {"cmdpalette.run_failed", "Could not run: %s", u8"Exécution impossible : %s"},
+    {"cmdpalette.run_failed_unknown", "The command failed without an error message.",
+     u8"La commande a échoué sans message d'erreur."},
 
     // Selectable text-run context menu ("Copy" reuses common.copy via the source map).
     {"selectable.select_all", "Select all", u8"Tout sélectionner"},

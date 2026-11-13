@@ -23,11 +23,24 @@
 namespace smatchet {
 namespace cmd {
 
+namespace {
+
+// Registering a history callback makes the filter input own Up/Down while it is active.
+// Without it, keyboard navigation takes the first Down, moves focus from the input onto
+// the list and deactivates the input, so whatever is typed next is dropped. With it the
+// caret stays in the query while handleListNavigation moves the highlight.
+int KeepArrowKeysInFilterInput(ImGuiInputTextCallbackData*) { return 0; }
+
+} // namespace
+
 void CommandPaletteUi::Open() {
     open_ = true;
     focusFilterPending_ = true;
     selected_ = 0;
+    scrollToSelected_ = true;
+    dispatchError_.clear();
     argFormStep_ = -1;
+    argFocusPending_ = false;
     categoryPrefix_.clear();
     categoryLabel_.clear();
     std::memset(filterBuf_, 0, sizeof(filterBuf_));
@@ -46,7 +59,9 @@ void CommandPaletteUi::Open() {
 
 void CommandPaletteUi::Close() {
     open_ = false;
+    dispatchError_.clear();
     argFormStep_ = -1;
+    argFocusPending_ = false;
     argFormBufs_.clear();
     categoryPrefix_.clear();
     categoryLabel_.clear();
@@ -58,6 +73,8 @@ void CommandPaletteUi::SetCategoryPrefix(const char* prefix, const char* label) 
     categoryLabel_ = label != nullptr ? label : "";
     filtered_.clear(); // force a rebuild under the new scope on the next Draw
     selected_ = 0;
+    scrollToSelected_ = true;
+    dispatchError_.clear();
 }
 
 void CommandPaletteUi::SetFilterText(const char* query) {
@@ -67,7 +84,12 @@ void CommandPaletteUi::SetFilterText(const char* query) {
         std::strncpy(filterBuf_, query, sizeof(filterBuf_) - 1U);
         filterBuf_[sizeof(filterBuf_) - 1U] = '\0';
     }
+    // The buffer changed behind the input widget, so Draw sees no edit: drop the list
+    // built for the old query (Draw rebuilds an empty one) along with what described it.
+    filtered_.clear();
     selected_ = 0;
+    scrollToSelected_ = true;
+    dispatchError_.clear();
 }
 
 void CommandPaletteUi::rebuildFiltered(AppController& app) {
@@ -152,6 +174,8 @@ void CommandPaletteUi::dispatchSelected() {
             // Open arg-form mode.
             argFormCmd_ = cmd;
             argFormStep_ = 0;
+            argFocusPending_ = true;
+            dispatchError_.clear();
             argFormBufs_.clear();
             for (size_t i = 0; i < cmd.Params.size(); ++i) {
                 argFormBufs_.emplace_back(256, '\0');
@@ -175,6 +199,7 @@ void CommandPaletteUi::dispatchSelected() {
     // Destructive commands require Shift+Enter (already checked by caller).
     pendingDispatchDestructive_ = cmd.Destructive;
     hasPendingDispatch_ = true;
+    dispatchError_.clear();
 }
 
 void CommandPaletteUi::drainPendingDispatch(AppController& app) {
@@ -189,14 +214,40 @@ void CommandPaletteUi::drainPendingDispatch(AppController& app) {
     ctx.ConfirmedDestructive = pendingDispatchDestructive_;
     const nlohmann::json args = pendingDispatchArgs_ ? *pendingDispatchArgs_ : nlohmann::json::object();
     CommandResult r = app.Commands().Dispatch(pendingDispatchName_, args, ctx);
+    pendingDispatchArgs_.reset();
     if (!r.Ok) {
         LOG_WARN("Palette: dispatch '%s' failed: %s", pendingDispatchName_.c_str(), r.Error.Message.c_str());
-    } else {
-        // Persist recents so they survive restarts.
-        app.Commands().SaveRecents();
+        // Stay open with whatever was typed: closing here would discard the argument
+        // buffers and leave the log as the only trace of why nothing happened.
+        std::string why = r.Error.Message.empty()
+                              ? std::string(SmatchetLocalization::T("cmdpalette.run_failed_unknown",
+                                                                    "The command failed without an error message."))
+                              : r.Error.Message;
+        if (!r.Error.Hint.empty()) {
+            why += " ";
+            why += r.Error.Hint;
+        }
+        dispatchError_ = SmatchetLocalization::Format("cmdpalette.run_failed", "Could not run: %s", why.c_str());
+        // Enter deactivated the input it was pressed in; put the caret back.
+        if (argFormStep_ >= 0) {
+            argFocusPending_ = true;
+        } else {
+            focusFilterPending_ = true;
+        }
+        return;
     }
-    pendingDispatchArgs_.reset();
+    // Persist recents so they survive restarts.
+    app.Commands().SaveRecents();
     Close();
+}
+
+void CommandPaletteUi::drawDispatchError() const {
+    if (dispatchError_.empty()) {
+        return;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+    ImGui::TextWrapped("%s", dispatchError_.c_str());
+    ImGui::PopStyleColor();
 }
 
 void CommandPaletteUi::drawArgForm() {
@@ -209,7 +260,13 @@ void CommandPaletteUi::drawArgForm() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1.f);
         const std::string label = "##arg" + std::to_string(i);
-        ImGui::InputText(label.c_str(), argFormBufs_[i].data(), argFormBufs_[i].size());
+        if (i == 0 && argFocusPending_) {
+            argFocusPending_ = false;
+            ImGui::SetKeyboardFocusHere();
+        }
+        if (ImGui::InputText(label.c_str(), argFormBufs_[i].data(), argFormBufs_[i].size())) {
+            dispatchError_.clear(); // the message described the previous values
+        }
         if (p.Required && argFormBufs_[i][0] == '\0') {
             allFilled = false;
         }
@@ -234,6 +291,7 @@ void CommandPaletteUi::drawArgForm() {
         pendingDispatchArgs_ = std::make_shared<nlohmann::json>(std::move(args));
         pendingDispatchDestructive_ = argFormCmd_.Destructive;
         hasPendingDispatch_ = true;
+        dispatchError_.clear();
     }
     if (!canRun)
         ImGui::EndDisabled();
@@ -241,7 +299,9 @@ void CommandPaletteUi::drawArgForm() {
     if (ImGui::Button(SmatchetLocalization::T("common.cancel", "Cancel")) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         Close();
+        return;
     }
+    drawDispatchError();
 }
 
 void CommandPaletteUi::Draw(AppController& app) {
@@ -291,9 +351,16 @@ void CommandPaletteUi::Draw(AppController& app) {
     }
 
     // Filter text input.
-    const bool filterChanged =
-        ImGui::InputTextWithHint("##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."),
-                                 filterBuf_, sizeof(filterBuf_));
+    const bool filterChanged = ImGui::InputTextWithHint(
+        "##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."), filterBuf_,
+        sizeof(filterBuf_), ImGuiInputTextFlags_CallbackHistory, KeepArrowKeysInFilterInput);
+    if (filterChanged) {
+        // A new query re-ranks the list, so the old index now names an unrelated row:
+        // go back to the best match, which is what Enter should run.
+        selected_ = 0;
+        scrollToSelected_ = true;
+        dispatchError_.clear();
+    }
     if (filterChanged || filtered_.empty()) {
         rebuildFiltered(app);
     }
@@ -314,6 +381,7 @@ void CommandPaletteUi::Draw(AppController& app) {
 
     // Hint line.
     ImGui::Separator();
+    drawDispatchError();
     if (!filtered_.empty() && filtered_[selected_].Destructive) {
         ImGui::TextColored(SmatchetTheme::Colors::PriorityHigh, "%s",
                            SmatchetLocalization::T("cmdpalette.destructive_hint",
@@ -329,10 +397,15 @@ void CommandPaletteUi::Draw(AppController& app) {
 // Up/Down selection movement + Enter/Escape dispatch. Destructive commands require Shift+Enter.
 // Split out of Draw for function-size compliance; runs inside the active palette Begin scope.
 void CommandPaletteUi::handleListNavigation(const ImGuiIO& io) {
+    const int before = selected_;
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) && selected_ > 0)
         --selected_;
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) && selected_ < static_cast<int>(filtered_.size()) - 1)
         ++selected_;
+    if (selected_ != before) {
+        scrollToSelected_ = true;
+        dispatchError_.clear();
+    }
 
     // Enter dispatch. Destructive requires Shift.
     if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !filtered_.empty()) {
@@ -372,6 +445,9 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
         const std::string primary = c.Title.empty() ? TitleCasedSlugFromCommandId(c.Name) : c.Title;
         const std::string rowLabel = primary + "  " + c.Summary + "###row_" + c.Name;
         if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None, ImVec2(0, 0))) {
+            if (selected_ != i) {
+                dispatchError_.clear();
+            }
             selected_ = i;
             if (!c.Destructive || io.KeyShift) {
                 dispatchSelected();
@@ -402,9 +478,14 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
         }
         if (isSelected) {
             ImGui::SetItemDefaultFocus();
-            ImGui::SetScrollHereY(0.5f);
+            // Only when the selection just moved: doing this every frame pins the list to
+            // the selected row and makes the wheel and the scrollbar snap back.
+            if (scrollToSelected_) {
+                ImGui::SetScrollHereY(0.5f);
+            }
         }
     }
+    scrollToSelected_ = false;
     ImGui::EndChild();
 }
 
