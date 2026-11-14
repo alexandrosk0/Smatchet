@@ -8,7 +8,101 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (3 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `bulk-edit-rows`
+
+- **Owner**: `bulk-edit-rows`
+- **Branch**: `claude/bulk-edit-rows-24930b`
+- **Originating plan**: [`docs/plans/active/bulk-edit-rows.md`](../../../docs/plans/active/bulk-edit-rows.md)
+- **Started**: 2026-11-14T05:35:36Z
+- **Write set** (20 paths):
+  - `docs/plans/active/bulk-edit-rows.md`
+  - `Source/Core/include/Ui/BulkFieldEditPure.h`
+  - `Source/Core/src/Ui/BulkFieldEditPure.cpp`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
+  - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridCells.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp`
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/Ui/SmatchetBulkFieldEditPopup.h`
+  - `Source/Core/src/Ui/SmatchetBulkFieldEditPopup.cpp`
+  - `Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `tests/Core/BulkFieldEditPure.test.cpp`
+  - `tests/CMakeLists.txt`
+  - `tests/ui/bulk_field_edit.test.cpp`
+  - `tests/ui/CMakeLists.txt`
+  - `tests/ui/ui_tests_registry.cpp`
+
+### `input-ux-wave1-palette`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/frictionless-user-input-ux-ea174b`
+- **Originating plan**: [`docs/audits/INPUT_UX_AUDIT.md`](../../../docs/audits/INPUT_UX_AUDIT.md)
+- **Started**: 2026-11-13T20:57:46Z
+- **Write set** (7 paths):
+  - `Source/Core/src/Commands/CommandPaletteUi.cpp`
+  - `Source/Core/include/Commands/CommandPaletteUi.h`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `tests/ui/command_palette_input_recovery.test.cpp`
+  - `tests/ui/command_palette_deferred_dispatch.test.cpp`
+  - `tests/ui/CMakeLists.txt`
+  - `tests/ui/ui_tests_registry.cpp`
+
+### `shared-dropdown-recents`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/recent-picks-3e7683`
+- **Originating plan**: [`docs/plans/active/shared-dropdown-recents.md`](../../../docs/plans/active/shared-dropdown-recents.md)
+- **Started**: 2026-11-13T20:24:16Z
+- **Updated**: 2026-11-14T01:17:34Z
+- **Write set** (44 paths):
+  - `Source/Core/include/FilterDropdown.h`
+  - `Source/Core/include/FilterDropdownPure.h`
+  - `Source/Core/include/RecentSelections.h`
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/TicketFieldEditorOptionFilterPure.h`
+  - `Source/Core/include/Tracker/TrackerLabelsPure.h`
+  - `Source/Core/include/TrackerOptionDropdown.h`
+  - `Source/Core/include/Ui/SmatchetNewIssueDraftUi_detail.h`
+  - `Source/Core/include/Ui/SmatchetProjectPicker.h`
+  - `Source/Core/include/Ui/SmatchetProjectPicker_detail.h`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/AppController_Init.cpp`
+  - `Source/Core/src/FilterDropdown.cpp`
+  - `Source/Core/src/RecentSelections.cpp`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `Source/Core/src/TicketFieldEditor.cpp`
+  - `Source/Core/src/Tracker/TrackerLabelsEditor.cpp`
+  - `Source/Core/src/Tracker/TrackerLabelsPure.cpp`
+  - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
+  - `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp`
+  - `Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp`
+  - `Source/Core/src/Ui/SmatchetProjectPicker.cpp`
+  - `Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp`
+  - `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp`
+  - `Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp`
+  - `docs/audits/MUTATION_PILOT.md`
+  - `docs/plans/INDEX.md`
+  - `docs/plans/active/shared-dropdown-recents.md`
+  - `docs/plans/shipped/shared-dropdown-recents.md`
+  - `docs/self-improvement/categories/debt/2026-11-13-dropdown-recents-scope-uses-focused-backend.md`
+  - `docs/self-improvement/categories/debt/2026-11-13-project-picker-rebuilds-rows-every-open-frame.md`
+  - `scripts/dev/mutation-smoke-corpus.json`
+  - `scripts/dev/test-ui-filter-dropdown.sh`
+  - `tests/CMakeLists.txt`
+  - `tests/Core/FilterDropdownPure.test.cpp`
+  - `tests/Core/NewIssueDraftFieldDecision.test.cpp`
+  - `tests/Core/ProjectPickerFilter.test.cpp`
+  - `tests/Core/RecentSelections.test.cpp`
+  - `tests/Core/TicketFieldEditorOptionFilterPure.test.cpp`
+  - `tests/Core/TrackerLabelsPure.test.cpp`
+  - `tests/Core/TrackerOptionDropdown.test.cpp`
+  - `tests/ui/CMakeLists.txt`
+  - `tests/ui/filter_dropdown.test.cpp`
+  - `tests/ui/ui_tests_registry.cpp`
+
