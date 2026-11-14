@@ -13,6 +13,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
+#include "Ui/SmatchetWorklogSubmitPure.h"
 #include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
 
@@ -912,6 +913,24 @@ static void OnContextRestoreDeadEdits(OfflineDrawCtx& ctx, const std::vector<Uni
     ArmOfflineQueuePanelStatus(ctx.d, buf);
 }
 
+static bool IsResolvableConflictRow(const UnifiedOfflineRow& row) {
+    return row.hasMergeConflict && row.kind == UnifiedOfflineKind::PendingFieldEdit;
+}
+
+// Every way into the conflict resolver goes through here: double-click, the context menu, Enter on the row.
+static void RequestConflictResolve(UiDrawSession& d, const UnifiedOfflineRow& row) {
+    d.conflictResolveDbId = row.dbId;
+    d.conflictContextJson = row.conflictContextJson;
+    d.showConflictResolveModal = true;
+}
+
+// Enter or keypad Enter went down this frame with no modifier held (no key repeat).
+static bool PlainEnterPressed() {
+    const ImGuiIO& io = ImGui::GetIO();
+    return !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper &&
+           (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+}
+
 static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineRow& row) {
     UiDrawSession& d = ctx.d;
     std::vector<UnifiedOfflineRow> picks = CollectOfflineContextPicks(ctx.rows, row);
@@ -931,12 +950,9 @@ static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineR
     }
 
     // Conflict resolution — only for a single pending field edit with a conflict.
-    const bool singleConflict =
-        (picks.size() == 1 && picks[0].kind == UnifiedOfflineKind::PendingFieldEdit && picks[0].hasMergeConflict);
+    const bool singleConflict = picks.size() == 1 && IsResolvableConflictRow(picks[0]);
     if (singleConflict && ImGui::MenuItem("Resolve merge conflict...")) {
-        d.conflictResolveDbId = picks[0].dbId;
-        d.conflictContextJson = picks[0].conflictContextJson;
-        d.showConflictResolveModal = true;
+        RequestConflictResolve(d, picks[0]);
     }
 
     if (ImGui::MenuItem("Discard selected row(s)")) {
@@ -974,6 +990,12 @@ static void DrawOfflineRowStateCell(OfflineDrawCtx& ctx, const UnifiedOfflineRow
     const bool held = queued && smatchet::cache_keys::IsHeldCacheKey(row.backendKey, ctx.liveCacheKeys);
     ImGui::Selectable(held ? SmatchetOfflineQueueActionsUi::HeldStateLabel() : row.state.c_str(), false,
                       ImGuiSelectableFlags_SpanAllColumns);
+    // Enter on the row under the keyboard cursor opens the resolver. Space and a single click keep only
+    // placing the cursor on the row. The table must hold the keyboard itself: with the row menu or the
+    // resolver open above it, or the keyboard in another pane, Enter is not this row's key.
+    if (IsResolvableConflictRow(row) && ImGui::IsItemFocused() && ImGui::IsWindowFocused() && PlainEnterPressed()) {
+        RequestConflictResolve(d, row);
+    }
     if (held) {
         SmatchetOfflineQueueActionsUi::NoteHeldRowDrawn();
     }
@@ -982,11 +1004,8 @@ static void DrawOfflineRowStateCell(OfflineDrawCtx& ctx, const UnifiedOfflineRow
             SmatchetOfflineQueueActionsUi::ShowHeldTooltip(row.backendKey);
         }
         ctx.hoveredKey = row.key;
-        if (ImGui::IsMouseDoubleClicked(0) && row.hasMergeConflict &&
-            row.kind == UnifiedOfflineKind::PendingFieldEdit) {
-            d.conflictResolveDbId = row.dbId;
-            d.conflictContextJson = row.conflictContextJson;
-            d.showConflictResolveModal = true;
+        if (ImGui::IsMouseDoubleClicked(0) && IsResolvableConflictRow(row)) {
+            RequestConflictResolve(d, row);
         }
     }
     const bool rightClicked = ImGui::BeginPopupContextItem("offRowCtx", ImGuiPopupFlags_MouseButtonRight);
@@ -1173,15 +1192,105 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
 static const char* const kConflictNotRequeued =
     "The edit could not be re-queued. Your resolution is still here; retry when ready.";
 
+// Keyboard state of the conflict resolver. Reset each time it opens (DrawOfflineConflictModal).
+static bool g_conflictFocusFieldPending = false;      // one-shot: put the caret in the resolved field
+static bool g_conflictOwnedKeyboardLastFrame = false; // the resolver had the keyboard on the previous frame
+static bool g_conflictEscUnsavedHint = false;         // Esc was pressed around a resolution that is not saved
+static std::string g_conflictSeed;                    // the resolved field as opened: the "nothing typed" baseline
+
+static void ResetConflictKeyboardState() {
+    g_conflictFocusFieldPending = false;
+    g_conflictEscUnsavedHint = false;
+    g_conflictSeed.clear();
+}
+
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
     d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
     d.conflictResolveDbId = 0;
+    ResetConflictKeyboardState();
     ImGui::CloseCurrentPopup();
     if (statusMsg) {
         ArmOfflineQueuePanelStatus(d, statusMsg);
     }
+}
+
+// Cancel, Close, and Esc with nothing typed: close and drop the resolution text. The edit stays queued.
+static void CancelConflictModal(UiDrawSession& d) {
+    d.conflictResolveBuf.clear();
+    ResetConflictKeyboardState();
+    ImGui::CloseCurrentPopup();
+}
+
+struct ConflictModalKeys {
+    bool Save = false;  // Ctrl+Enter, in the panes that have a resolved field
+    bool Close = false; // an Esc that closes: nothing was typed
+};
+
+// Reads the resolver's own keys. Call inside the modal before any of its items are drawn: a key the resolver
+// takes must not also reach the field or button that has the keyboard. `fieldLabel` is the resolved field's
+// label, or null in a pane that has none.
+// - Only while the resolver itself has the keyboard, so a popup above it keeps its keys.
+// - Esc never throws typed text away. With the caret in the field and something typed, the first Esc only
+//   leaves the field: what was typed stays (the field's own Esc would put back its text from before the caret
+//   entered). The next Esc keeps the resolver open and says how to discard. With nothing typed, Esc closes.
+// - Ctrl+Enter saves. The field is left first, and nav activation is dropped for the frame: ImGui activates
+//   the button under the keyboard cursor on Enter whatever the modifiers, so Ctrl+Enter with the cursor on
+//   Use Theirs would otherwise resolve to the server's value.
+static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const char* fieldLabel) {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool owns =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const bool fieldActive = fieldLabel != nullptr && g.ActiveId != 0 && g.ActiveId == ImGui::GetID(fieldLabel);
+    const bool nothingTyped = fieldLabel == nullptr || d.conflictResolveBuf.empty() ||
+                              std::strcmp(d.conflictResolveBuf.data(), g_conflictSeed.c_str()) == 0;
+    if (fieldActive) {
+        g_conflictEscUnsavedHint = false;
+    }
+    const smatchet::worklog::WorklogEscapeAction esc = smatchet::worklog::ResolveWorklogEscape(
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false), owns, g_conflictOwnedKeyboardLastFrame, fieldActive, nothingTyped);
+    g_conflictOwnedKeyboardLastFrame = owns;
+
+    ConflictModalKeys keys;
+    keys.Save = fieldLabel != nullptr && owns &&
+                (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
+    const bool escCancels = esc == smatchet::worklog::WorklogEscapeAction::Cancel;
+    keys.Close = escCancels && nothingTyped;
+    if (escCancels && !nothingTyped) {
+        g_conflictEscUnsavedHint = true;
+    }
+    if (fieldActive && (keys.Save || esc != smatchet::worklog::WorklogEscapeAction::None)) {
+        ImGui::ClearActiveID();
+    }
+    if (keys.Save) {
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+    }
+    return keys;
+}
+
+// Puts the caret in the resolved field, once per request; call right before the field. The request waits
+// while Enter is held: the Enter that opened the resolver from the row would otherwise repeat into the field
+// and save a value unasked, or type newlines into the text. It also waits while a window is being dragged,
+// when ImGui drops a focus request.
+static void TakeConflictCaretRequest() {
+    if (!g_conflictFocusFieldPending) {
+        return;
+    }
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter) || g.MovingWindow != nullptr ||
+        ImGui::IsDragDropActive()) {
+        return;
+    }
+    g_conflictFocusFieldPending = false;
+    ImGui::SetKeyboardFocusHere();
+}
+
+static void DrawConflictKeysHint(const char* key, const char* fallback) {
+    ImGui::TextDisabled("%s", SmatchetLocalization::T(key, fallback));
 }
 
 // Keep both the popup and its editor buffer intact until the queue accepts the resolution.
@@ -1199,6 +1308,7 @@ static void HandleConflictRequeueResult(UiDrawSession& d, bool requeued, const c
 static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
+    const ConflictModalKeys keys = ReadConflictModalKeys(d, "##CRResolved");
 
     const ImVec2 vp = ImGui::GetMainViewport()->Size;
     const float halfW = vp.x * 0.28f;
@@ -1225,6 +1335,7 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     if (d.conflictResolveBuf.empty()) {
         d.conflictResolveBuf.assign(64 * 1024, '\0');
     }
+    TakeConflictCaretRequest();
     ImGui::InputTextMultiline("##CRResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size(),
                               ImVec2(-FLT_MIN, resolvedH), ImGuiInputTextFlags_AllowTabInput);
 
@@ -1253,16 +1364,24 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     const bool saveEnabled = !hasConflictMarkers;
     if (!saveEnabled)
         ImGui::BeginDisabled();
-    if (ImGui::Button("Save resolved", ImVec2(130, 0))) {
-        doResolve(std::string(d.conflictResolveBuf.data()));
-    }
+    const bool saveClicked = ImGui::Button("Save resolved", ImVec2(130, 0));
     if (!saveEnabled)
         ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-        d.conflictResolveBuf.clear();
-        ImGui::CloseCurrentPopup();
+    // Ctrl+Enter saves under the same rule as the button: not while a conflict marker is left. It does
+    // nothing when a click on Use Mine or Use Theirs resolved the conflict earlier in this frame.
+    const bool keyboardSave = keys.Save && d.conflictResolveDbId != 0;
+    if ((saveClicked || keyboardSave) && saveEnabled) {
+        doResolve(std::string(d.conflictResolveBuf.data()));
     }
+    if (keyboardSave && (!saveEnabled || !d.conflictResolveError.empty())) {
+        g_conflictFocusFieldPending = true; // turned down: the caret goes back into the text to fix it
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Close) {
+        CancelConflictModal(d);
+    }
+    DrawConflictKeysHint("offline.conflict.keys_text",
+                         "Ctrl+Enter saves. Esc leaves the text box and keeps what you typed.");
 }
 
 // Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
@@ -1270,6 +1389,7 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
 static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
+    const ConflictModalKeys keys = ReadConflictModalKeys(d, "##SCResolved");
 
     const ImVec2 vp = ImGui::GetMainViewport()->Size;
     const float halfW = vp.x * 0.28f;
@@ -1293,8 +1413,12 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     if (d.conflictResolveBuf.empty()) {
         d.conflictResolveBuf.assign(8 * 1024, '\0');
     }
+    TakeConflictCaretRequest();
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##SCResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size());
+    // The value is selected whenever the caret enters, by key or by click, so typing replaces it. An arrow
+    // key or a second click places the caret and keeps it.
+    const bool enterSaves = ImGui::InputText("##SCResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size(),
+                                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::Spacing();
 
     auto doResolve = [&](const std::string& chosen) {
@@ -1313,14 +1437,19 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
         doResolve(cc.Theirs);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Save value", ImVec2(130, 0))) {
+    // A key does nothing when a click on Use Mine or Use Theirs resolved the conflict earlier in this frame.
+    const bool keyboardSave = (enterSaves || keys.Save) && d.conflictResolveDbId != 0;
+    if (ImGui::Button("Save value", ImVec2(130, 0)) || keyboardSave) {
         doResolve(std::string(d.conflictResolveBuf.data()));
+        if (keyboardSave && !d.conflictResolveError.empty()) {
+            g_conflictFocusFieldPending = true; // the value was turned down: caret back in the field to fix it
+        }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-        d.conflictResolveBuf.clear();
-        ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Close) {
+        CancelConflictModal(d);
     }
+    DrawConflictKeysHint("offline.conflict.keys_scalar", "Enter saves. Esc leaves the field and keeps what you typed.");
 }
 
 // Unverified pane for the `unverified` kind, where the server value could not be read. The
@@ -1330,6 +1459,7 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
 static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
+    const ConflictModalKeys keys = ReadConflictModalKeys(d, nullptr);
 
     ImGui::TextDisabled("The server value for this field couldn't be read, so we can't tell whether it changed.");
     ImGui::Spacing();
@@ -1350,9 +1480,8 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
         FinishConflictModal(d, "Edit discarded.");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-        d.conflictResolveBuf.clear();
-        ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Close) {
+        CancelConflictModal(d);
     }
 }
 
@@ -1362,6 +1491,7 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
 static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
     UiDrawSession& d = octx.d;
     AppController& app = octx.app;
+    const ConflictModalKeys keys = ReadConflictModalKeys(d, nullptr);
 
     ImGui::TextDisabled("Conflict details could not be read.");
     ImGui::Spacing();
@@ -1380,9 +1510,8 @@ static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
         FinishConflictModal(d, "Edit discarded.");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Close", ImVec2(80, 0))) {
-        d.conflictResolveBuf.clear();
-        ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Close", ImVec2(80, 0)) || keys.Close) {
+        CancelConflictModal(d);
     }
 }
 
@@ -1415,6 +1544,12 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
             const size_t n = (std::min)(seed.size(), static_cast<size_t>(64 * 1024 - 1));
             std::memcpy(d.conflictResolveBuf.data(), seed.data(), n);
         }
+        // Keyboard: the caret starts in the resolved field (the panes without one have nothing to type in),
+        // and what the field holds now is the baseline for "nothing typed".
+        g_conflictSeed.assign(d.conflictResolveBuf.empty() ? "" : d.conflictResolveBuf.data());
+        g_conflictFocusFieldPending = !d.conflictResolveBuf.empty();
+        g_conflictOwnedKeyboardLastFrame = false;
+        g_conflictEscUnsavedHint = false;
     }
 
     if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
@@ -1432,13 +1567,23 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         if (!d.conflictResolveError.empty()) {
             ImGui::TextWrapped("%s", d.conflictResolveError.c_str());
         }
+        if (g_conflictEscUnsavedHint) {
+            ImGui::TextWrapped("%s", SmatchetLocalization::T("offline.conflict.esc_unsaved",
+                                                             "Your resolution is not saved. Save it, or click "
+                                                             "Cancel to discard it."));
+        }
         ImGui::EndPopup();
-    } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
-        d.conflictResolveBuf.clear();
+    } else {
+        g_conflictOwnedKeyboardLastFrame = false;
+        if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
+            d.conflictResolveBuf.clear();
+        }
     }
 }
 
 } // namespace
+
+bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsavedHint; }
 
 // P2-M1 confirm modal: opened from RequestOfflineDiscard when the discard set contains
 // rows still queued to replay. Panel-level (outside the row context popup) so the modal

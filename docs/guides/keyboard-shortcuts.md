@@ -147,6 +147,10 @@ focus:
 | Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
 | Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
 | Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
+| Offline queue | `Enter` on a **Conflict** (or **Held**) row | Open the merge-conflict resolver |
+| Merge-conflict resolver | `Enter` in the value field | Save the value |
+| Merge-conflict resolver | `Ctrl+Enter` | Save (a text conflict: only once every `<<<<<<<` marker is gone) |
+| Merge-conflict resolver | `Esc` | Leave the field, keeping the text. With nothing typed, close. `Esc` never discards a typed resolution: use **Cancel** |
 
 Log work opens with the caret in **Time spent**, Comments opened from a cell with the
 caret in the comment box, and the long-text editor with the caret in the text (when it
