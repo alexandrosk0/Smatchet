@@ -34,4 +34,16 @@ void CloseLongTextEditor();
 // queued PendingFieldEdit. Compiled only under the ninja-ui-test build.
 void SmatchetTest_RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
                                        std::vector<PendingFieldEdit>& pendingEdits);
+
+// Test-only view of the long-text editor (TicketFieldEditor_Modal.cpp), as of its last draw. The
+// bucket-E tests open it with OpenLongTextEditor and drive it through the real keys and buttons.
+struct LongTextEditorTestSnapshot {
+    bool Active = false;
+    /// Closing now would lose typed text (the same test the close paths use).
+    bool Dirty = false;
+    /// The "discard your changes?" confirm was up at the end of the last draw.
+    bool DiscardConfirmOpen = false;
+    std::string Buffer;
+};
+LongTextEditorTestSnapshot SmatchetTest_GetLongTextEditorSnapshot();
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -22,6 +22,7 @@
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -97,6 +98,8 @@ struct ActiveWorklogDialogState {
     char TimeSpent[64] = "";
     char TimeRemaining[64] = "";
     std::string DateStarted;
+    /// DateStarted as the dialog opened with it, to tell a date the user changed from the default.
+    std::string InitialDateStarted;
     char WorkDescription[1024] = "";
     std::string OriginalEstimate;
     std::string TotalTimeSpent;
@@ -116,9 +119,23 @@ struct ActiveWorklogDialogState {
     /// post-back that lands after the dialog was closed or re-opened on another ticket is
     /// discarded instead of writing into the fresh state.
     int Gen = 0;
+    /// Frames left to put the caret in Time spent (0 = nothing pending): set when the dialog opens
+    /// and when Enter there was turned down. Bounded, so a focus that cannot land never fights the user.
+    int TimeSpentFocusFramesLeft = 0;
+    /// The dialog itself (not a popup above it) had the keyboard on the last draw.
+    bool OwnedKeyboardLastFrame = false;
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
+
+/// One focus request plus one retry; each needs the frame after it to land.
+constexpr int kTimeSpentFocusFrames = 4;
+constexpr const char* kTimeSpentFieldLabel = "##WorklogTimeSpent";
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+/// Latched by the draw for GetWorklogDialogSnapshotForTests.
+static bool s_WorklogTimeSpentActiveForTests = false;
+#endif
 
 /// Monotonic submit-generation counter, deliberately OUTSIDE the dialog state so it survives
 /// the per-open reset (the #1713 lesson: a counter reset with the state makes the guard inert).
@@ -305,12 +322,66 @@ void DrawWorklogProgressBar() {
     }
 }
 
-// Time-spent + time-remaining duration inputs, including the auto-decrement of remaining.
-void DrawWorklogTimeInputs() {
+// Puts the caret in Time spent while a focus request is pending. Call right before the Time spent
+// field, with nothing drawn in between (the request targets the next item).
+//
+// The duration field opens its suggestions list the first time it gains the caret while empty, and
+// that list takes the keyboard away again. A caret this dialog placed must stay put, so the field is
+// told it "already had" the caret. That lives in the per-field slots DrawDurationFieldWithSuggestions
+// keeps in the window's state storage under PushID(label): the last-active id is written on every
+// pending frame, and on the first one the three popup flags a previous open may have left set are
+// cleared. The slot names must match that function. If the last-active slot drifts, the UI test
+// WorklogDialog_OpensWithCaretInTimeSpent (group DurationInlineEdit) fails, but nothing guards the
+// three popup-flag names. A click that puts the caret in the empty field, the down arrow and the
+// list button open the suggestions as before.
+void PrimeTimeSpentFocus(ImGuiID spentInputId) {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (st.TimeSpentFocusFramesLeft <= 0) {
+        return;
+    }
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool otherDialogItemActive = g.ActiveId != 0 && g.ActiveId != spentInputId && g.ActiveIdWindow != nullptr &&
+                                       g.ActiveIdWindow->RootWindow == g.CurrentWindow->RootWindow;
+    if (otherDialogItemActive) {
+        st.TimeSpentFocusFramesLeft = 0; // the user is already in another field: leave them there
+        return;
+    }
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    ImGui::PushID(kTimeSpentFieldLabel);
+    if (st.TimeSpentFocusFramesLeft == kTimeSpentFocusFrames) {
+        storage->SetInt(ImGui::GetID("##popupWasOpen"), 0);
+        storage->SetInt(ImGui::GetID("##valueSelectedFromPopup"), 0);
+        storage->SetInt(ImGui::GetID("##needRepositionAndFocus"), 0);
+    }
+    storage->SetInt(ImGui::GetID("##lastActiveId"), static_cast<int>(spentInputId));
+    ImGui::PopID();
+    if (st.TimeSpentFocusFramesLeft % 2 == 0) {
+        ImGui::SetKeyboardFocusHere(); // lands on the next frame; asked again once if it did not
+    }
+}
+
+// Time-spent + time-remaining duration inputs, including the auto-decrement of remaining. Returns
+// true when Enter was pressed in Time spent (the dialog's quick submit).
+bool DrawWorklogTimeInputs() {
     ImGui::Text("Time spent *");
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent,
-                                         sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr, false)) {
+    ImGui::PushID(kTimeSpentFieldLabel);
+    const ImGuiID spentInputId = ImGui::GetID("##duration_input");
+    ImGui::PopID();
+    PrimeTimeSpentFocus(spentInputId);
+    bool spentEnter = false;
+    const bool spentCommitted = DrawDurationFieldWithSuggestions(kTimeSpentFieldLabel, s_ActiveWorklogState.TimeSpent,
+                                                                 sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr,
+                                                                 nullptr, nullptr, false, &spentEnter);
+    const bool spentActive = ImGui::GetActiveID() == spentInputId;
+    if (s_ActiveWorklogState.TimeSpentFocusFramesLeft > 0) {
+        s_ActiveWorklogState.TimeSpentFocusFramesLeft =
+            spentActive ? 0 : s_ActiveWorklogState.TimeSpentFocusFramesLeft - 1;
+    }
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    s_WorklogTimeSpentActiveForTests = spentActive;
+#endif
+    if (spentCommitted) {
         if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
             long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
             long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
@@ -337,6 +408,121 @@ void DrawWorklogTimeInputs() {
                                          &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
         // value changed!
     }
+    return spentEnter;
+}
+
+struct WorklogKeys {
+    bool Save = false;   ///< Ctrl+Enter
+    bool Cancel = false; ///< Esc
+};
+
+// True when the dialog field holding the caret no longer shows the text it had when the caret
+// entered: something typed that has not reached the dialog's own state yet (a half-typed date).
+bool ActiveFieldTextChanged(const ImGuiContext& g) {
+    const ImGuiInputTextState& input = g.InputTextState;
+    if (g.ActiveId == 0 || input.ID != g.ActiveId || input.TextA.Data == nullptr ||
+        input.TextToRevertTo.Data == nullptr) {
+        return false;
+    }
+    return std::strcmp(input.TextA.Data, input.TextToRevertTo.Data) != 0;
+}
+
+// Reads the dialog's own keys. Call inside the modal before any of its items are drawn: a key the
+// dialog takes must not also reach the field or button that has the keyboard.
+// - Only while the dialog itself has the keyboard. A popup above it (suggestions, date picker,
+//   templates) keeps its keys, and so does any other window.
+// - Ctrl+Enter saves from anywhere. The field being typed in is left first, which commits its text
+//   the way clicking Save would. Nav activation is dropped for the frame, because ImGui activates the
+//   item under the keyboard cursor on Enter whatever the modifiers: without that, Ctrl+Enter with the
+//   cursor on Cancel would save and close, and on the date picker's reset would save a reset date.
+// - Esc: see ResolveWorklogEscape. Leaving the field here ends the edit the way clicking away does:
+//   Time spent, Time remaining and the description keep what was typed (ImGui's own Esc would put
+//   the field back to its text from before the caret entered); a start date or time that does not
+//   parse yet goes back to the last valid one, as it does on a click away.
+WorklogKeys ReadWorklogKeys() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool ownsKeyboard =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const bool fieldActive =
+        g.ActiveId != 0 && g.ActiveIdWindow != nullptr && g.ActiveIdWindow->RootWindow == g.CurrentWindow->RootWindow;
+    WorklogKeys keys;
+    keys.Save = ownsKeyboard && (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+                                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
+    // Nothing typed: Time spent and the description are empty, Time remaining and the start date
+    // still show what the dialog opened with (Time remaining only moves by itself when Time spent
+    // has a value), and the field holding the caret has not been typed in.
+    const bool nothingTyped = st.TimeSpent[0] == '\0' && st.WorkDescription[0] == '\0' &&
+                              st.TotalTimeRemaining == st.TimeRemaining && st.DateStarted == st.InitialDateStarted &&
+                              !(fieldActive && ActiveFieldTextChanged(g));
+    const smatchet::worklog::WorklogEscapeAction escape =
+        smatchet::worklog::ResolveWorklogEscape(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsKeyboard,
+                                                st.OwnedKeyboardLastFrame, fieldActive, nothingTyped);
+    st.OwnedKeyboardLastFrame = ownsKeyboard;
+    keys.Cancel = escape == smatchet::worklog::WorklogEscapeAction::Cancel;
+    if (fieldActive && (keys.Save || escape != smatchet::worklog::WorklogEscapeAction::None)) {
+        ImGui::ClearActiveID();
+    }
+    if (keys.Save) {
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+    }
+    return keys;
+}
+
+// Save / Cancel row with the keyboard hint. Pillar 2 (#2043): while the worklog POST is in flight the
+// Save button is disabled and a visible "Saving worklog..." cue is drawn beside it — the dialog stays
+// interactive (the whole app used to freeze here) and the user can see work is happening.
+// `wasInFlight` is latched BEFORE the Save button so BeginDisabled/EndDisabled stay paired across the
+// click that flips the flag; the cue itself re-reads the LIVE flag afterwards so it appears on the
+// very frame Save dispatched (cue-before-stall ordering — a snapshot here would delay it by one
+// frame). The labelled id is the bucket-E visible-cue anchor.
+// One HandleWorklogSave call per frame whatever asked for it (button, Ctrl+Enter, Enter in Time
+// spent), and it has the same validation and in-flight gates for all three.
+void DrawWorklogButtons(IAppThreading& threading, IAppTicketMutations& mutations, const WorklogKeys& keys,
+                        bool spentEnter) {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    const bool wasInFlight = st.SubmitInFlight;
+    if (wasInFlight) {
+        ImGui::BeginDisabled();
+    }
+    const bool saveClicked = ImGui::Button("Save", ImVec2(80, 0));
+    if (wasInFlight) {
+        ImGui::EndDisabled();
+    } else if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("worklog.save_shortcut_tooltip",
+                                                        "Ctrl+Enter saves from any field. Enter saves from Time "
+                                                        "spent."));
+    }
+    if (saveClicked || keys.Save || spentEnter) {
+        HandleWorklogSave(threading, mutations);
+        if (smatchet::worklog::ShouldRefocusTimeSpentAfterSaveKey(spentEnter || keys.Save, st.SubmitInFlight,
+                                                                  st.TimeSpent)) {
+            st.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Cancel) {
+        ImGui::CloseCurrentPopup();
+        st.Initialized = false;
+    }
+    if (wasInFlight && ImGui::IsItemHovered()) {
+        // Be honest about what Cancel does mid-submit: AddWorklog takes no cancel token, so the
+        // request is already gone. Closing the dialog does not un-send it; the outcome arrives
+        // as a toast instead.
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("worklog.cancel_inflight_tooltip",
+                                                        "The worklog request was already sent — closing this dialog "
+                                                        "won't cancel it. The result will appear as a notification."));
+    }
+    const char* cue = st.SubmitInFlight
+                          ? SmatchetLocalization::T("worklog.saving", "Saving worklog...")
+                          : SmatchetLocalization::T("worklog.keys_hint", "Ctrl+Enter to save \xC2\xB7 Esc to cancel");
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(cue).x) {
+        ImGui::NewLine(); // a large font: the hint goes under the buttons instead of being cut off
+    }
+    ImGui::TextDisabled("%s", cue);
 }
 
 // Work-description label + templates popup + the multiline description input.
@@ -385,6 +571,7 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
 
     s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
+    s_ActiveWorklogState.InitialDateStarted = s_ActiveWorklogState.DateStarted;
 
     s_ActiveWorklogState.WorkDescription[0] = '\0';
     s_ActiveWorklogState.ErrorMsg.clear();
@@ -399,6 +586,8 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     s_ActiveWorklogState.SubmitInFlight =
         smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, ticket.id);
     s_ActiveWorklogState.CloseRequested = false;
+    s_ActiveWorklogState.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
+    s_ActiveWorklogState.OwnedKeyboardLastFrame = false;
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
     // re-opened the SAME ticket and would close the freshly-opened dialog under them.
@@ -455,6 +644,8 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
         return;
     }
 
+    const WorklogKeys keys = ReadWorklogKeys();
+
     ImGui::Text("Time tracking: %s", ticket.id.c_str());
     ImGui::Separator();
     ImGui::Spacing();
@@ -467,7 +658,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Spacing();
 
     // Inputs
-    DrawWorklogTimeInputs();
+    const bool spentEnter = DrawWorklogTimeInputs();
 
     ImGui::Spacing();
     ImGui::Text("Date started *");
@@ -486,42 +677,28 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Buttons. Pillar 2 (#2043): while the worklog POST is in flight the Save button is
-    // disabled and a visible "Saving worklog..." cue is drawn beside it — the dialog stays
-    // interactive (the whole app used to freeze here) and the user can see work is happening.
-    // `wasInFlight` is latched BEFORE the Save button so BeginDisabled/EndDisabled stay paired
-    // across the click that flips the flag; the cue itself re-reads the LIVE flag afterwards so
-    // it appears on the very frame Save dispatched (cue-before-stall ordering — a snapshot here
-    // would delay it by one frame). The labelled id is the bucket-E visible-cue anchor.
-    const bool wasInFlight = s_ActiveWorklogState.SubmitInFlight;
-    if (wasInFlight) {
-        ImGui::BeginDisabled();
-    }
-    if (ImGui::Button("Save", ImVec2(80, 0))) {
-        HandleWorklogSave(threading, mutations);
-    }
-    if (wasInFlight) {
-        ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-        ImGui::CloseCurrentPopup();
-        s_ActiveWorklogState.Initialized = false;
-    }
-    if (wasInFlight && ImGui::IsItemHovered()) {
-        // Be honest about what Cancel does mid-submit: AddWorklog takes no cancel token, so the
-        // request is already gone. Closing the dialog does not un-send it; the outcome arrives
-        // as a toast instead.
-        ImGui::SetTooltip("%s", SmatchetLocalization::T("worklog.cancel_inflight_tooltip",
-                                                        "The worklog request was already sent — closing this dialog "
-                                                        "won't cancel it. The result will appear as a notification."));
-    }
-    if (s_ActiveWorklogState.SubmitInFlight) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("worklog.saving", "Saving worklog..."));
-    }
+    DrawWorklogButtons(threading, mutations, keys, spentEnter);
 
     ImGui::EndPopup();
 }
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests() {
+    WorklogDialogTestSnapshot snap;
+    snap.Active = s_ActiveWorklogState.Initialized;
+    snap.SubmitInFlight = s_ActiveWorklogState.SubmitInFlight;
+    snap.TimeSpentActive = snap.Active && s_WorklogTimeSpentActiveForTests;
+    snap.TimeSpent = s_ActiveWorklogState.TimeSpent;
+    snap.Description = s_ActiveWorklogState.WorkDescription;
+    snap.ErrorMsg = s_ActiveWorklogState.ErrorMsg;
+    return snap;
+}
+
+void RequestCloseWorklogDialogForTests() {
+    if (s_ActiveWorklogState.Initialized) {
+        s_ActiveWorklogState.CloseRequested = true;
+    }
+}
+#endif // SMATCHET_BUILD_UI_TESTS
 
 } // namespace TicketFieldEditorWorklog

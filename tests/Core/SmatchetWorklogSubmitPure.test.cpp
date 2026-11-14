@@ -15,8 +15,11 @@
 using smatchet::worklog::CanSubmitWorklog;
 using smatchet::worklog::ClearWorklogSubmitInFlight;
 using smatchet::worklog::MarkWorklogSubmitInFlight;
+using smatchet::worklog::ResolveWorklogEscape;
+using smatchet::worklog::ShouldRefocusTimeSpentAfterSaveKey;
 using smatchet::worklog::StalePostBackReleasesDialogSubmit;
 using smatchet::worklog::ValidateWorklogSubmission;
+using smatchet::worklog::WorklogEscapeAction;
 using smatchet::worklog::WorklogSubmitInFlightSet;
 using smatchet::worklog::WorklogSubmitOutstandingFor;
 
@@ -140,4 +143,50 @@ TEST_CASE("StalePostBackReleasesDialogSubmit frees a re-opened same-ticket dialo
     // Defensive: an empty post-back id never matches, even an uninitialised dialog id.
     CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "", ""));
     CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "PROJ-1", ""));
+}
+
+TEST_CASE("ResolveWorklogEscape ignores Esc that is not the dialog's") {
+    // Not pressed at all.
+    CHECK(ResolveWorklogEscape(false, true, true, true, true) == WorklogEscapeAction::None);
+    // A popup above the dialog (suggestions, date picker, templates) has the keyboard: the key is its.
+    CHECK(ResolveWorklogEscape(true, false, true, false, true) == WorklogEscapeAction::None);
+    CHECK(ResolveWorklogEscape(true, false, false, true, false) == WorklogEscapeAction::None);
+}
+
+TEST_CASE("ResolveWorklogEscape never cancels around typed text in one press") {
+    // Caret in a field, something typed: the first Esc only leaves the field.
+    CHECK(ResolveWorklogEscape(true, true, true, /*fieldActive=*/true, /*nothingTyped=*/false) ==
+          WorklogEscapeAction::LeaveField);
+    // Out of the field: the next Esc cancels.
+    CHECK(ResolveWorklogEscape(true, true, true, /*fieldActive=*/false, /*nothingTyped=*/false) ==
+          WorklogEscapeAction::Cancel);
+}
+
+TEST_CASE("ResolveWorklogEscape closes an untouched dialog on the first Esc") {
+    // The caret starts in Time spent, so an untouched dialog always has a field active.
+    CHECK(ResolveWorklogEscape(true, true, true, /*fieldActive=*/true, /*nothingTyped=*/true) ==
+          WorklogEscapeAction::Cancel);
+    CHECK(ResolveWorklogEscape(true, true, true, /*fieldActive=*/false, /*nothingTyped=*/true) ==
+          WorklogEscapeAction::Cancel);
+}
+
+TEST_CASE("ResolveWorklogEscape does not cancel on the Esc that closed a popup above the dialog") {
+    // The popup had the keyboard last frame and closed on this Esc; the dialog only just got it back.
+    CHECK(ResolveWorklogEscape(true, true, /*dialogOwnedKeyboardLastFrame=*/false, false, true) ==
+          WorklogEscapeAction::None);
+    CHECK(ResolveWorklogEscape(true, true, /*dialogOwnedKeyboardLastFrame=*/false, false, false) ==
+          WorklogEscapeAction::None);
+}
+
+TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turned-down value") {
+    // Enter on a value that does not parse: back into the field to fix it.
+    CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, ""));
+    CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "junk"));
+    CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "0m"));
+    // The save went out: the dialog is about to close, leave the caret alone.
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, true, "2h"));
+    // A good value turned down for another reason (the date): the error is not in this field.
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "2h"));
+    // Save by the button or Ctrl+Enter: the caret stays where the user had it.
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(false, false, "junk"));
 }

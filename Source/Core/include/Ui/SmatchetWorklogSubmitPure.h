@@ -31,6 +31,37 @@ inline std::string ValidateWorklogSubmission(const std::string& timeSpent, const
     return std::string();
 }
 
+/// What Esc does in the worklog dialog this frame.
+enum class WorklogEscapeAction : unsigned char {
+    None,       ///< not the dialog's key (not pressed, or a popup above the dialog took it)
+    LeaveField, ///< leave the field being typed in; what was typed stays, the dialog stays open
+    Cancel      ///< close the dialog, as the Cancel button does
+};
+
+/// Esc cancels the dialog, but never around text in one press: with the caret in a field and
+/// something typed (`nothingTyped` false) the first Esc only leaves the field, and the next one
+/// cancels. An untouched dialog closes on the first Esc even though the caret starts in a field.
+/// `dialogOwnedKeyboardLastFrame` keeps the Esc that just closed a popup above the dialog (the
+/// suggestions, a date picker, the templates) from also cancelling the dialog under it.
+inline WorklogEscapeAction ResolveWorklogEscape(bool escPressed, bool dialogOwnsKeyboard,
+                                                bool dialogOwnedKeyboardLastFrame, bool fieldActive,
+                                                bool nothingTyped) {
+    if (!escPressed || !dialogOwnsKeyboard) {
+        return WorklogEscapeAction::None;
+    }
+    if (fieldActive) {
+        return nothingTyped ? WorklogEscapeAction::Cancel : WorklogEscapeAction::LeaveField;
+    }
+    return dialogOwnedKeyboardLastFrame ? WorklogEscapeAction::Cancel : WorklogEscapeAction::None;
+}
+
+/// After a save asked for from the keyboard (Enter in Time spent, or Ctrl+Enter anywhere): true when
+/// Time spent was turned down (nothing went out and it does not parse), so the caret goes into that
+/// field to fix it instead of leaving the user to click.
+inline bool ShouldRefocusTimeSpentAfterSaveKey(bool saveKeyPressed, bool submitInFlight, const std::string& timeSpent) {
+    return saveKeyPressed && !submitInFlight && ParseWorkDurationToSeconds(timeSpent) <= 0;
+}
+
 /// Whether the dialog's Save button may fire. False while a submit is already in flight, so a
 /// second click cannot queue a duplicate worklog against the same round-trip (the button is
 /// also drawn disabled with a "Saving..." cue — this is the belt-and-braces guard).

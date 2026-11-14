@@ -132,6 +132,24 @@ keyboard focus:
 Opening Preferences puts the keyboard in the first blank connection field while the
 tracker is still being set up, and in the settings search box afterwards.
 
+The dialogs you type into share fixed keys, active while the dialog has keyboard
+focus:
+
+| Dialog | Shortcut | Action |
+|---|---|---|
+| Log work | `Enter` in **Time spent** | Save |
+| Log work | `Ctrl+Enter` in any field | Save |
+| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field |
+| Comments | `Ctrl+Enter` in the comment box | Post the comment |
+| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once |
+| Long-text editor | `Ctrl+Enter` | Save |
+| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes) |
+| Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
+
+Log work opens with the caret in **Time spent**, Comments opened from a cell with the
+caret in the comment box, and the long-text editor with the caret in the text (when it
+opens in Preview, the caret goes there once the editor pane is shown).
+
 ## Default bindings
 
 | Action | Default | Command id |

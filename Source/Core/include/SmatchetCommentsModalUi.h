@@ -26,13 +26,20 @@ class AppController;
 /// `OpenPopup`/`BeginPopupModal` happens at top-level depth in `RenderFieldViewerModal`.
 /// `prefillBody` (optional) seeds the post box — quick comment templates open here for
 /// review/editing instead of posting to the tracker sight-unseen (P2-M2).
-void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody = std::string());
+/// `focus` says who gets the keyboard: an open the user asked for (a click on the comment cell, a
+/// template pick) puts the caret in the post box so they can type at once; an open from code leaves
+/// the keyboard where it was.
+enum class CommentsOpenFocus : unsigned char { Keep, Composer };
+void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody = std::string(),
+                       CommentsOpenFocus focus = CommentsOpenFocus::Keep);
 
 // The modal body (drawn by the shell): a freshness cue (with Retry after a failed load), then a
 // scrollable read-only thread (each comment: author • formatted time • Markdown body), "Loading
 // comments..." only while nothing is saved, this issue's queued comments, a separator, a post box and a
-// Post button. The post box is disabled when `readOnlyMode` or a post is already in flight; offline a
-// post is saved to the pending-action queue. The state drains when the shell closes the viewer.
+// Post button. Ctrl+Enter in the box posts, the same as the button. Post is disabled while the box is
+// blank, `readOnlyMode` is set or a post is already in flight; offline a post is saved to the
+// pending-action queue. Esc in the box leaves it with the typed text intact, and closes the viewer
+// when nothing was typed. The state drains when the shell closes the viewer.
 
 /// Test hook: a copy of the modal's load state. UI thread only (reads the file-static state the
 /// render loop and post-backs mutate).
@@ -46,5 +53,12 @@ struct CommentsModalSnapshot {
     /// This issue's comments in the pending-action queue (waiting or failed), as the modal lists them.
     std::size_t PendingCommentCount = 0;
     std::string FirstAuthor;
+    /// The caret is in the post box (as of the last draw).
+    bool ComposerActive = false;
+    /// The Post button would act on a click (as of the last draw).
+    bool PostEnabled = false;
+    bool PostInFlight = false;
+    /// The text in the post box.
+    std::string PostDraft;
 };
 CommentsModalSnapshot GetCommentsModalSnapshotForTests();

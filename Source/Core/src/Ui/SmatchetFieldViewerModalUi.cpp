@@ -70,7 +70,7 @@ void OpenFieldViewer(std::unique_ptr<IFieldViewerContent> content, const std::st
 bool OpenFieldViewerForField(AppController& app, const CachedTicket& ticket, const std::string& fieldId) {
     switch (SmatchetFieldViewer::FieldViewerKindForFieldId(fieldId)) {
     case SmatchetFieldViewer::FieldViewerKind::Comments:
-        OpenCommentsModal(app, ticket.id);
+        OpenCommentsModal(app, ticket.id, std::string(), CommentsOpenFocus::Composer);
         return true;
     case SmatchetFieldViewer::FieldViewerKind::ActivityLog:
         OpenFieldViewer(MakeActivityLogViewerContent(ticket.GetFieldValueRef(fieldId)), ticket.id, fieldId);
@@ -106,15 +106,19 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
 
         ImGui::Separator();
         bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
-        // P2-M3: Esc while an input is being edited only defocuses it (ImGui's own
-        // revert-and-deactivate) — it must not also tear down the modal around the draft. Only a
-        // second, unfocused Esc reaches the close path. While the discard confirm is up, Esc is its
-        // "keep writing" (handled inside it), not another close request that re-opens it.
+        // P2-M3: Esc while an input is being edited only leaves that input (the content decides what
+        // happens to its text; the comments box keeps it) — it must not also tear down the modal
+        // around the draft. Only a second, unfocused Esc reaches the close path, unless the content
+        // asks for the close itself (ConsumeCloseRequest). While the discard confirm is up, Esc is
+        // its "keep writing" (handled inside it), not another close request that re-opens it.
         const bool discardWasOpen = ImGui::IsPopupOpen(kFieldViewerDiscardPopupId);
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !discardWasOpen) {
             wantClose = true;
         }
         if (!modalOpen) { // title-bar X — same guard as Close/Esc (the local resets next frame)
+            wantClose = true;
+        }
+        if (s_Viewer.Content->ConsumeCloseRequest()) {
             wantClose = true;
         }
         bool closeNow = false;

@@ -93,6 +93,15 @@ struct ActiveLongTextEditorState {
     std::string BufferSeedShown;
     bool Active = false;
     bool JustOpened = false;
+    /// The popup was dismissed around unsaved text (the title-bar X, or another popup replacing it):
+    /// the next frame puts the editor back with the discard confirm up instead of dropping the text.
+    bool ReopenForDiscardConfirm = false;
+    /// Frame of the last such re-open. A second dismissal right after it means something keeps
+    /// closing the popup; the editor then closes rather than re-opening every frame.
+    int ReopenFrame = -1;
+    /// Give the text editor the keyboard on its next draw: set when the editor opens and when the
+    /// discard confirm is answered with "keep editing", so typing carries on without a click.
+    bool FocusEditorPending = false;
     /// Three-way preview mode. Ctrl+P cycles Edit -> Split -> Preview -> Edit.
     enum class PreviewModeT { EditOnly, Split, PreviewOnly };
     PreviewModeT PreviewMode = PreviewModeT::EditOnly;
@@ -111,14 +120,28 @@ struct ActiveLongTextEditorState {
     /// Pillar 2 — set while a worker thread computes the Markdown seed from a large rich value.
     /// Buffer holds a placeholder until the worker posts back via MainThreadDispatcher.
     bool LoadingMarkdown = false;
-    /// Monotonically-increasing generation token. Worker compares against current LoadGen on
-    /// post-back and discards if the user opened a different editor since dispatch.
+    /// Generation token of this open. Worker compares against current LoadGen on post-back and
+    /// discards if the user opened a different editor since dispatch.
     int LoadGen = 0;
 };
 
 ActiveLongTextEditorState s_ActiveLongTextState;
+/// Source of LoadGen. Kept outside the state because a close resets the state: counting from there
+/// would hand the next open the same number, and a late seed for the editor just closed would
+/// land in the new one.
+int s_LongTextLoadGenCounter = 0;
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Latched by RenderLongTextModal for SmatchetTest_GetLongTextEditorSnapshot: a popup can only be
+// asked about from the window that opened it.
+bool s_LongTextDiscardConfirmOpenForTests = false;
+#endif
 
 constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
+// "###": the id stays stable while the visible title is translated.
+constexpr const char* kLongTextDiscardPopupId = "Discard changes?###LongTextDiscardConfirm";
+// A dismissal this soon after a guarded re-open is not the user: give up instead of looping.
+constexpr int kLongTextReopenSettleFrames = 2;
 
 using TicketFieldEditorLongTextPure::ClassifyRichValue;
 
@@ -136,6 +159,10 @@ using TicketFieldEditorLongTextPure::RoundTripPreview;
 struct LongTextModalCtx {
     ActiveLongTextEditorState::PreviewModeT EffectiveMode = ActiveLongTextEditorState::PreviewModeT::EditOnly;
     bool CtrlDown = false;
+    /// The discard confirm was up when this frame began: the editor's own shortcuts stand down.
+    bool DiscardConfirmOpen = false;
+    /// Hand the keyboard to the text editor this frame (see FocusEditorPending).
+    bool FocusEditor = false;
     float SplitterW = 6.0f;
     float PanesW = 0.0f;
     float EditorW = 0.0f;
@@ -311,6 +338,14 @@ void DrawLongTextEditorPane(const LongTextModalCtx& ctx) {
     // Apply theme-aware palette per-frame. Without this the TextEditor uses its built-in
     // dark palette; same pattern as Lua console + AI chat editor.
     s_LongTextEditor.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
+    // While the value is still loading the pane shows a placeholder the loaded text will replace,
+    // so typing into it would be thrown away (or saved on top of the placeholder).
+    s_LongTextEditor.SetReadOnly(s_ActiveLongTextState.LoadingMarkdown);
+    if (ctx.FocusEditor) {
+        // The editor is a child window that reads keys only while that window has focus, and a
+        // child is not a focusable item, so the focus request has to name the window itself.
+        ImGui::SetNextWindowFocus();
+    }
     s_LongTextEditor.Render("##LongTextEditorBuf", ImVec2(ctx.EditorW, ctx.InputH), false);
     if (s_LongTextEditor.IsTextChanged()) {
         std::string newText = s_LongTextEditor.GetText();
@@ -488,13 +523,58 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
     CloseLongTextEditor();
 }
 
+// IsPopupOpen hashes the id it is given, while the localized OpenPopup / BeginPopupModal hash the
+// translated title: ask with the same transform so the answer holds in every locale.
+bool LongTextPopupOpen(const char* popupId) {
+    return ImGui::IsPopupOpen(SmatchetLocalization::WindowTitleFromSource(popupId));
+}
+
+// True when closing now would drop text the user typed (same baseline as the Save diff).
+bool LongTextHasUnsavedEdit() {
+    const ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    if (!st.Active || st.Buffer.empty()) {
+        return false;
+    }
+    return TicketFieldEditorLongTextPure::ShouldConfirmLongTextDiscard(std::string(st.Buffer.data()),
+                                                                       st.BufferSeedShown, st.LoadingMarkdown);
+}
+
+// The "discard your changes?" confirm, drawn inside the editor popup. Keep editing is the default
+// (keyboard focus starts on it) and Esc keeps too, so no single stray key discards. `wasOpen`: the
+// confirm was already up when this frame began, so the Esc that opened it is not read as its answer.
+// Returns true when the user chose to discard.
+bool DrawLongTextDiscardConfirm(bool wasOpen) {
+    bool discard = false;
+    if (ImGui::BeginPopupModal(kLongTextDiscardPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("longtext.discard_confirm.body",
+                                                       "You have unsaved changes in this field. Discard them?"));
+        ImGui::Spacing();
+        if (ImGui::Button(SmatchetLocalization::T("longtext.discard_confirm.discard", "Discard changes"))) {
+            discard = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool keep = ImGui::Button(SmatchetLocalization::T("longtext.discard_confirm.keep", "Keep editing"));
+        ImGui::SetItemDefaultFocus();
+        if (keep || (wasOpen && !discard && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+            s_ActiveLongTextState.FocusEditorPending = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    return discard;
+}
+
 // Draws the footer hint, the formatting-loss acknowledgement gate, Save / Cancel buttons, and the
 // Edit/Split/Preview segmented control, then applies the save (Ctrl+Enter / Save) or cancel
 // (Esc / Cancel) action. Save is disabled until the loss acknowledgement is ticked when required.
+// Cancel with unsaved text asks first (DrawLongTextDiscardConfirm); a clean buffer closes at once.
 void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdit>& pendingEdits) {
-    // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
-    const bool ctrlEnter = ctx.CtrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
-    const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused. While the discard
+    // confirm is up the keys belong to it: Esc there keeps editing, and nothing saves behind it.
+    const bool discardWasOpen = ctx.DiscardConfirmOpen;
+    const bool ctrlEnter = !discardWasOpen && ctx.CtrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+    const bool escPressed = !discardWasOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
     const char* footerHint = s_ActiveLongTextState.RawMode
                                  ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
@@ -508,7 +588,8 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
     // authoritative for the current buffer in every mode; raw-HTML verbatim saves warn via toast
     // but never gate here (RequireAck=false).
     RefreshSaveFidelityCache();
-    const bool blockSave = s_ActiveLongTextState.LastFidelityRequireAck && !s_ActiveLongTextState.LossAcknowledged;
+    const bool blockSave = s_ActiveLongTextState.LoadingMarkdown ||
+                           (s_ActiveLongTextState.LastFidelityRequireAck && !s_ActiveLongTextState.LossAcknowledged);
     if (s_ActiveLongTextState.LastFidelityRequireAck) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
         ImGui::Checkbox("I understand — save anyway (some formatting will be lost)",
@@ -561,7 +642,20 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
 
     if (save) {
         CommitLongTextEdit(pendingEdits);
-    } else if (cancel) {
+        return;
+    }
+    bool closeNow = false;
+    if (cancel) {
+        if (LongTextHasUnsavedEdit()) {
+            ImGui::OpenPopup(kLongTextDiscardPopupId);
+        } else {
+            closeNow = true;
+        }
+    }
+    if (DrawLongTextDiscardConfirm(discardWasOpen)) {
+        closeNow = true;
+    }
+    if (closeNow) {
         ImGui::CloseCurrentPopup();
         CloseLongTextEditor();
     }
@@ -602,6 +696,9 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
     s_ActiveLongTextState.LoadingMarkdown = false;
     s_ActiveLongTextState.LossAcknowledged = false;
+    s_ActiveLongTextState.ReopenForDiscardConfirm = false;
+    s_ActiveLongTextState.ReopenFrame = -1;
+    s_ActiveLongTextState.FocusEditorPending = true;
     s_ActiveLongTextState.OriginalRichPretty.clear();
     // Reset the round-trip preview + save-fidelity caches so no assessment leaks in from the
     // previously-edited document (both keyed on the buffer, which we are about to reseed).
@@ -611,7 +708,7 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
     s_ActiveLongTextState.RoundTripPending = false;
     s_ActiveLongTextState.LastFidelityInput.clear();
     s_ActiveLongTextState.LastFidelityAssessed = false;
-    ++s_ActiveLongTextState.LoadGen;
+    s_ActiveLongTextState.LoadGen = ++s_LongTextLoadGenCounter;
 
     // Large rich values are parsed on a worker to keep the UI thread responsive; small ones stay inline.
     const bool deferSeed = currentRichValue.size() > kAsyncRichSeedThresholdBytes &&
@@ -684,24 +781,52 @@ void CloseLongTextEditor() {
     s_ActiveLongTextState = ActiveLongTextEditorState{};
 }
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+LongTextEditorTestSnapshot SmatchetTest_GetLongTextEditorSnapshot() {
+    LongTextEditorTestSnapshot snap;
+    snap.Active = s_ActiveLongTextState.Active;
+    snap.Dirty = LongTextHasUnsavedEdit();
+    snap.DiscardConfirmOpen = snap.Active && s_LongTextDiscardConfirmOpenForTests;
+    if (!s_ActiveLongTextState.Buffer.empty()) {
+        snap.Buffer = s_ActiveLongTextState.Buffer.data();
+    }
+    return snap;
+}
+#endif // SMATCHET_BUILD_UI_TESTS
+
 void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendingEdits) {
     if (!s_ActiveLongTextState.Active) {
         return;
     }
 
+    // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
+    // outside the table, so ImGui can correctly anchor the popup to this window.
+    const bool reopenForConfirm = s_ActiveLongTextState.ReopenForDiscardConfirm;
     if (s_ActiveLongTextState.JustOpened) {
-        // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
-        // outside the table, so ImGui can correctly anchor the popup to this window.
         smatchet::ui::OpenCenteredModalPopup(kLongTextModalPopupId, 0.6f, 0.65f);
+        s_ActiveLongTextState.JustOpened = false;
+    } else if (reopenForConfirm) {
+        // Put the editor back where the user left it (no re-centre, no resize). If another popup
+        // opened by code displaced the editor (a programmatic Comments open while text was unsaved),
+        // this closes that popup again: keeping the user's typed text wins over showing it.
+        ImGui::OpenPopup(kLongTextModalPopupId);
     }
 
     // The title-bar close (X) is driven by p_open, the same affordance as every other window. When
-    // the user clicks it ImGui clears the open flag and auto-dismisses the popup; the dismissed-
-    // without-intervention branch below then runs the editor-close path, giving the X the same
-    // discard semantics as Esc and the Cancel button.
+    // the user clicks it ImGui clears the open flag and dismisses the popup inside BeginPopupModal,
+    // on that same frame, so the X cannot be vetoed in place. The dismissed branch below gives it the
+    // same semantics as Esc and the Cancel button: a clean buffer closes, unsaved text comes back
+    // next frame with the discard confirm up.
     bool modalOpen = true;
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        if (reopenForConfirm) {
+            s_ActiveLongTextState.ReopenForDiscardConfirm = false;
+            s_ActiveLongTextState.ReopenFrame = ImGui::GetFrameCount();
+            ImGui::OpenPopup(kLongTextDiscardPopupId);
+        }
+        // Read before the footer can open it, so the key that opens the confirm is not also its answer.
+        const bool discardConfirmOpen = LongTextPopupOpen(kLongTextDiscardPopupId);
         DrawLongTextBanners();
         // Read-only original-source pane (collapsed by default) for raw-HTML / dropped-node paths.
         // Drawn before the input-size reservation so an expanded pane shrinks the editor, not the footer.
@@ -712,21 +837,27 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                               ImGui::GetStyle().ItemSpacing.y;
         const ImVec2 inputSize(-FLT_MIN, ImGui::GetContentRegionAvail().y - footerH);
 
-        if (s_ActiveLongTextState.JustOpened) {
-            ImGui::SetKeyboardFocusHere();
-            s_ActiveLongTextState.JustOpened = false;
-        }
+        // The keyboard goes to the text editor once nothing is in front of it. In Preview mode there
+        // is no editor to take it, so the request waits until the editor pane is shown.
+        const bool focusEditorWanted = s_ActiveLongTextState.FocusEditorPending && !discardConfirmOpen;
 
         // Modifier state — declared up here so the Ctrl+P preview-mode shortcut sees it
         // before we render the panes. Ctrl+Enter / Esc are checked again below for save/cancel.
         const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-        HandleLongTextPreviewModeHotkey(ctrlDown);
+        if (!discardConfirmOpen) {
+            HandleLongTextPreviewModeHotkey(ctrlDown);
+        }
 
         // Preview is disabled in raw-HTML mode — force EditOnly there regardless of the user's choice.
         using PreviewModeT = ActiveLongTextEditorState::PreviewModeT;
         LongTextModalCtx ctx;
         ctx.EffectiveMode = s_ActiveLongTextState.RawMode ? PreviewModeT::EditOnly : s_ActiveLongTextState.PreviewMode;
         ctx.CtrlDown = ctrlDown;
+        ctx.DiscardConfirmOpen = discardConfirmOpen;
+        ctx.FocusEditor = focusEditorWanted && ctx.EffectiveMode != PreviewModeT::PreviewOnly;
+        if (ctx.FocusEditor) {
+            s_ActiveLongTextState.FocusEditorPending = false;
+        }
         ctx.InputH = inputSize.y;
 
         // Pane layout for Split mode: [editor] [splitter] [preview].
@@ -751,10 +882,29 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         }
 
         DrawLongTextFooter(ctx, pendingEdits);
+#if defined(SMATCHET_BUILD_UI_TESTS)
+        s_LongTextDiscardConfirmOpenForTests = LongTextPopupOpen(kLongTextDiscardPopupId);
+#endif
 
         ImGui::EndPopup();
     } else {
-        // Modal dismissed without our intervention — stay self-consistent.
-        CloseLongTextEditor();
+#if defined(SMATCHET_BUILD_UI_TESTS)
+        s_LongTextDiscardConfirmOpenForTests = false;
+#endif
+        if (LongTextPopupOpen(kLongTextModalPopupId)) {
+            // Still open, just not drawn this frame (clipped, e.g. a minimised host): nothing was
+            // dismissed, so the editor and its text stay as they are.
+            return;
+        }
+        // Dismissed without the footer's say: the title-bar X, or another popup took its place.
+        // Unsaved text is kept and asked about next frame. A dismissal right after such a re-open
+        // means something keeps closing the popup, so that one closes for good rather than loop.
+        const bool settled = ImGui::GetFrameCount() - s_ActiveLongTextState.ReopenFrame > kLongTextReopenSettleFrames ||
+                             s_ActiveLongTextState.ReopenFrame < 0;
+        if (settled && !reopenForConfirm && LongTextHasUnsavedEdit()) {
+            s_ActiveLongTextState.ReopenForDiscardConfirm = true;
+        } else {
+            CloseLongTextEditor();
+        }
     }
 }
