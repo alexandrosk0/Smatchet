@@ -250,12 +250,12 @@
     "note": "Gregorian leap-year rule &&->||: 1900/2100 become leap years (Phase 3 expansion 2026-07-13; gives the DT TU a scored guard beside its two equivalents)"
   },
   {
-    "id": "LABELS-01-substring-match",
+    "id": "LABELS-01-equal-fold",
     "file": "Source/Core/src/Tracker/TrackerLabelsPure.cpp",
-    "search": "return ToLowerAsciiCopy(label).find(filterLower) != std::string::npos;",
-    "replace": "return ToLowerAsciiCopy(label).find(filterLower) == std::string::npos;",
+    "search": "return ToLowerAsciiCopy(a) == ToLowerAsciiCopy(b);",
+    "replace": "return ToLowerAsciiCopy(a) != ToLowerAsciiCopy(b);",
     "expect": "killed",
-    "note": "LabelMatchesFilter substring match inverted (Phase 3 expansion 2026-07-13; gives the Labels TU a scored guard beside its equivalent)"
+    "note": "LabelsEqualCaseInsensitive equality inverted (retargeted 2026-11-13: LabelMatchesFilter, the original target, was removed when the labels picker moved to the shared dropdown filter; keeps the Labels TU's scored guard)"
   },
   {
     "id": "MAP-01-label-join-sep",
@@ -298,11 +298,11 @@
     "note": "equivalent: reserve affects capacity only, never observable size/contents (MUTATION_PILOT.md MAP-05)"
   },
   {
-    "id": "LABELS-m3-emptyfilter",
-    "file": "Source/Core/src/Tracker/TrackerLabelsPure.cpp",
-    "search": "if (filterLower.empty()) {",
-    "replace": "if (false) {",
-    "expect": "equivalent",
-    "note": "equivalent: find(\"\")==0 so LabelMatchesFilter still returns true for empty filter; fast path was pure optimisation (MUTATION_PILOT.md Labels-m3)"
+    "id": "RECENTS-01-cap",
+    "file": "Source/Core/src/RecentSelections.cpp",
+    "search": "if (ids.size() > kMaxPerScope) {",
+    "replace": "if (ids.size() > kMaxPerScope + 1) {",
+    "expect": "killed",
+    "note": "recent-picks cap off by one: a scope would keep 6 ids instead of 5 (added 2026-11-13 with the shared dropdown; scored guard for the RecentSelections TU)"
   }
 ]

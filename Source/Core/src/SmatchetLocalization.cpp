@@ -861,6 +861,17 @@ const TranslationEntry kEntries[] = {
      "view's JQL to load them.",
      u8"Cette vue ne cible pas un projet unique : les options liées au projet n'ont pas été chargées. Ajoutez "
      u8"`project = KEY` au JQL de la vue pour les charger."},
+    // Shared value dropdown (FilterDropdown.cpp).
+    {"dropdown.filter_hint", "Filter", u8"Filtrer"},
+    {"dropdown.section.recent", "Recent", u8"Récents"},
+    {"dropdown.section.all", "All", u8"Tous"},
+    {"dropdown.add_fmt", "Add \"%s\"", u8"Ajouter « %s »"},
+    {"dropdown.no_matches", "No matches", u8"Aucun résultat"},
+    {"dropdown.no_options", "No options", u8"Aucune option"},
+    {"dropdown.hint.navigate", "Navigate", u8"Naviguer"},
+    {"dropdown.hint.select", "Select", u8"Choisir"},
+    {"dropdown.hint.toggle", "Toggle", u8"Cocher"},
+    {"dropdown.hint.close", "Close", u8"Fermer"},
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",
@@ -960,9 +971,6 @@ const TranslationEntry kEntries[] = {
     // Project picker (draft + bulk import modal).
     {"draft.project", "Project", u8"Projet"},
     {"draft.project.placeholder", "(pick one)", u8"(choisir)"},
-    {"draft.project.section.recent", "Recently used", u8"Récemment utilisés"},
-    {"draft.project.section.all", "All projects", u8"Tous les projets"},
-    {"draft.project.search", "Search...", u8"Rechercher..."},
     {"draft.project.submit_disabled_tooltip", "Pick a project", u8"Choisir un projet"},
 
     // multi-grid-tabs Slice 2: dockable grid panes.
@@ -1224,8 +1232,6 @@ const TranslationEntry kEntries[] = {
      u8"Le brouillon de ticket en cours a été abandonné par le changement de vue."},
     {"draft.project.fetch_failed", "Couldn't load projects: %s", u8"Impossible de charger les projets : %s"},
     {"draft.project.none", "No projects found.", u8"Aucun projet trouvé."},
-    {"draft.project.none_filtered", "No projects match the filter.", u8"Aucun projet ne correspond au filtre."},
-    {"draft.project.recent.none", "No recent projects", u8"Aucun projet récent"},
     {"draft.project.retry", "Retry", u8"Réessayer"},
     {"views.fields.catalog_failed", "Couldn't load the field catalog: %s",
      u8"Impossible de charger le catalogue de champs : %s"},

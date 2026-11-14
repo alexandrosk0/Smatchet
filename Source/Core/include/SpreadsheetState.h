@@ -114,18 +114,6 @@ struct SpreadsheetState {
         return EditingId == id && EditingFieldId == fieldId;
     }
 
-    /** Per-instance state for the multi-select combo search box.
-     *  Previously block-scope statics in RenderMultiSelectEditor — shared across all combos,
-     *  which aliased the buffer when two different editors were open in the same frame (§3.4). */
-    std::string MultiSelectActiveKey;
-    char MultiSelectSearchBuf[128] = {};
-
-    /** Per-instance state for the single-select combo quick-filter box.
-     *  Same lifetime pattern as `MultiSelect*`: keyed on `ticket.id + "::" + field.Id` so the
-     *  buffer auto-clears when the user opens a different cell's dropdown. */
-    std::string SingleSelectActiveKey;
-    char SingleSelectSearchBuf[128] = {};
-
     /** Double-click arm-then-popup: in double-click-to-edit mode, a double-clicked combo cell
      *  writes its `ticket.id + "::" + field.Id` here on frame N. On frame N+1 the matching
      *  per-type editor sees the key, opens the popup once, and clears the field on combo close. */

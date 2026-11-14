@@ -17,12 +17,14 @@
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
 #include "ProjectResolver.h"
+#include "RecentSelections.h"
 #include "TrackerFieldPayload.h"
 #include "DictationInsertionRouter.h"
+#include "FilterDropdown.h"
+#include "TrackerOptionDropdown.h"
 #include "MarkdownConvert.h"
 #include "TicketFieldEditorLongTextPure.h"
 #include "TicketFieldEditorDescriptionPure.h"
-#include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
 #include "Ui/FieldPreviewLinePure.h"
@@ -386,8 +388,6 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
-using TicketFieldEditorOptionFilterPure::OptionMatchesFilter;
-
 // Draws the inline field-value icon (status/priority sprite) centred-vertically inside the
 // [rectMin, rectMax] cell rect at frame height. Shared verbatim by the single-select preview
 // and combo paths, which previously inlined identical scale-and-blit blocks.
@@ -598,105 +598,49 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
-// The "(no options)" line of an open select combo, plus — when the catalog was fetched without a
-// project scope (#2146) — the one sentence that tells the user WHY the list is empty and what to
-// change. Without it an unscoped default view ("assignee=currentUser()") produced silently empty
-// version / custom-option dropdowns while the log said the catalog had loaded fine.
-void RenderEmptyOptionsNotice(const std::string& filterLower, bool catalogUnscoped) {
-    if (!filterLower.empty()) {
-        ImGui::TextDisabled("(no matching options)");
-        return;
+// The sentence shown under "No options" when the catalog was fetched without a project scope (#2146):
+// it tells the user WHY the list is empty and what to change. Without it an unscoped default view
+// ("assignee=currentUser()") produced silently empty version / custom-option dropdowns while the log
+// said the catalog had loaded fine. Null when the catalog is scoped.
+const char* UnscopedCatalogHint(bool catalogUnscoped) {
+    if (!catalogUnscoped) {
+        return nullptr;
     }
-    ImGui::TextDisabled("(no options)");
-    if (catalogUnscoped) {
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("field.no_options.unscoped_hint",
-                                                          "This view has no single project, so project-scoped "
-                                                          "options were not loaded. Add `project = KEY` to the "
-                                                          "view's JQL to load them."));
-        ImGui::PopTextWrapPos();
-    }
+    return SmatchetLocalization::T("field.no_options.unscoped_hint",
+                                   "This view has no single project, so project-scoped options were not loaded. "
+                                   "Add `project = KEY` to the view's JQL to load them.");
 }
 
-// Draws the open single-select combo body: clear option, auto-focused filter input, and the
-// filtered option list with typeahead enter-commit. Lifted from the single-select editor, whose
-// caller owns the begin / end combo pair. Behaviour byte-identical to the inlined block.
+// Draws the open single-select combo body through the shared dropdown (filter, recent picks, keyboard):
+// the caller owns the begin / end combo pair and anything drawn above (the status cue).
 void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
-                                 SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
-                                 const std::string& editorKey, bool catalogUnscoped,
-                                 const std::vector<TrackerFieldOption>* opts = nullptr) {
-    const bool justOpened = (state.SingleSelectActiveKey != editorKey);
-    if (justOpened) {
-        state.SingleSelectActiveKey = editorKey;
-        state.SingleSelectSearchBuf[0] = '\0';
-    }
-
+                                 std::vector<PendingFieldEdit>& pendingEdits, const std::string& recentsScope,
+                                 bool catalogUnscoped, const std::vector<TrackerFieldOption>* opts = nullptr) {
     if (!opts) {
         opts = &field.AllowedValueOptions;
     }
-
     const std::string currentId = ResolveOptionId(field, currentValue);
-    const bool selectedNone = currentId.empty();
-    if (ImGui::Selectable("<clear>", selectedNone)) {
-        QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
-    }
-    ImGui::Separator();
-
-    // Quick-filter input — auto-focused on combo open so the user can start typing
-    // immediately. Enter on a single match commits that option and closes the combo.
-    if (justOpened) {
-        ImGui::SetKeyboardFocusHere();
-    }
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    const bool submitOnEnter =
-        ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options", state.SingleSelectSearchBuf,
-                                 sizeof(state.SingleSelectSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::Separator();
-
-    const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
-    const TrackerFieldOption* firstMatch = nullptr;
-    bool drewAny = false;
+    std::vector<smatchet::dropdown::Item> items;
+    items.reserve(opts->size());
     for (const auto& option : *opts) {
-        if (!OptionMatchesFilter(option, filterLower)) {
-            continue;
-        }
-        const std::string optionId = option.Id.empty() ? option.Value : option.Id;
-        if (firstMatch == nullptr) {
-            firstMatch = &option;
-        }
-        drewAny = true;
-        const bool isSelected = (optionId == currentId);
-        ImGui::PushID(optionId.c_str());
-        if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
-            // Guard against re-selecting the current value for status field — Jira's /transitions
-            // response omits the current status, so resubmitting it would have no matching transition.
-            // Compare using the same Id-or-Value fallback used for submission to handle id-less options.
-            if (!(field.Id == "status" && optionId == currentId && !currentId.empty())) {
-                // CPP_CODE_AUDIT.md #33 (single-select combo clears the field for id-less
-                // options): queue `optionId` (the same Id-or-Value fallback used for the
-                // widget's own ImGui id above), not the raw `option.Id` — an id-less option
-                // has `option.Id.empty()`, so queuing it directly sent {""} (a field clear)
-                // instead of the option the user actually clicked.
-                QueueEdit(ticket.id, field, {optionId}, pendingEdits, ticket.GetFieldValue(field.Id));
-            }
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::PopID();
+        smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(option);
+        item.Checked = !currentId.empty() && currentId == item.Id;
+        items.push_back(item);
     }
-    if (!drewAny) {
-        RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
-    }
-    // Pressing enter commits when the filter narrows to a single match. When several still match,
-    // the top one is committed as a least-surprise default that mirrors typeahead pickers.
-    if (submitOnEnter && firstMatch != nullptr) {
-        const std::string firstMatchId = firstMatch->Id.empty() ? firstMatch->Value : firstMatch->Id;
+    smatchet::dropdown::Options options = smatchet::dropdown::SingleSelect(recentsScope);
+    options.ClearLabel = SmatchetLocalization::T("field.clear", "<clear>");
+    options.EmptyHint = UnscopedCatalogHint(catalogUnscoped);
+    const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
+    if (ev.Kind == smatchet::dropdown::EventKind::Cleared) {
+        QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
+    } else if (ev.Kind == smatchet::dropdown::EventKind::Picked) {
         // Guard against re-selecting the current value for status field — Jira's /transitions
         // response omits the current status, so resubmitting it would have no matching transition.
-        // Compare using the same Id-or-Value fallback used for submission to handle id-less options.
-        if (!(field.Id == "status" && firstMatchId == currentId && !currentId.empty())) {
-            QueueEdit(ticket.id, field, {firstMatchId}, pendingEdits, ticket.GetFieldValue(field.Id));
+        // ev.Id is the Id-or-Value fallback (OptionPickId), so an id-less option queues its Value and
+        // never {""} (a field clear) — CPP_CODE_AUDIT.md #33.
+        if (!(field.Id == "status" && ev.Id == currentId && !currentId.empty())) {
+            QueueEdit(ticket.id, field, {ev.Id}, pendingEdits, ticket.GetFieldValue(field.Id));
         }
-        ImGui::CloseCurrentPopup();
     }
 }
 
@@ -770,7 +714,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(cellAvail);
-    const bool comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
+    const bool comboOpened =
+        ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_HeightLargest);
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
@@ -809,7 +754,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
                 }
             }
         }
-        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+        RenderSingleSelectComboBody(ticket, field, currentValue, pendingEdits,
+                                    smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), field.Id),
                                     opts->empty() && app.FieldCatalogLacksProjectScope(), opts);
         ImGui::EndCombo();
     }
@@ -828,20 +774,16 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
 }
 
-// Draws the open multi-select combo body: a freshness cue when the list is not live, clear-all, search
-// input, and the per-option checkbox list (checked options are always shown even when filtered out).
-// The caller owns BeginCombo/EndCombo and the effective-option resolution. `selectedSet` is mutated as
-// the user toggles checkboxes.
-void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
-                                std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
+// Draws the open multi-select combo body: a freshness cue when the list is not live, then the shared
+// dropdown in tick-box mode (clear-all, filter, recent picks; ticked options stay listed while a filter
+// hides them). The caller owns BeginCombo/EndCombo and the effective-option resolution. `selectedSet`
+// is mutated as the user toggles options.
+void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field,
+                                std::vector<PendingFieldEdit>& pendingEdits, const std::string& recentsScope,
                                 const std::vector<TrackerFieldOption>* opts, smatchet::offline::DataFreshness freshness,
                                 const std::string& freshnessDetail, std::unordered_set<std::string>& selectedSet,
                                 bool catalogUnscoped, AppController* refreshApp = nullptr,
                                 const std::string& refreshProjectKey = std::string()) {
-    if (state.MultiSelectActiveKey != editorKey) {
-        state.MultiSelectActiveKey = editorKey;
-        state.MultiSelectSearchBuf[0] = '\0';
-    }
     // Pillar 6: say when the list is saved, refreshing or not available yet instead of spinning.
     if (freshness != smatchet::offline::DataFreshness::Fresh) {
         DataFreshnessCue::Draw(freshness, freshnessDetail.empty() ? nullptr : freshnessDetail.c_str());
@@ -857,58 +799,38 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
         ImGui::Separator();
     }
 
-    if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
-        QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
-    }
-    ImGui::Separator();
-
-    const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf,
-                             sizeof(state.MultiSelectSearchBuf));
-    ImGui::Separator();
-
-    const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
-    bool drewAny = false;
+    std::vector<smatchet::dropdown::Item> items;
+    items.reserve(opts->size());
     for (const auto& option : *opts) {
-        const std::string optionId = option.Id.empty() ? option.Value : option.Id;
-        bool checked = (selectedSet.find(optionId) != selectedSet.end());
-        if (!checked && !OptionMatchesFilter(option, filterLower)) {
-            continue;
-        }
-        drewAny = true;
-        // Per-option PushID disambiguates checkboxes whose visible labels could collide
-        // (e.g. duplicate option.Value across customfields); pop matches at the end of body.
-        ImGui::PushID(optionId.c_str());
-        if (option.Disabled) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
-            if (checked) {
-                selectedSet.insert(optionId);
-            } else {
-                selectedSet.erase(optionId);
-            }
-            std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
-            std::sort(updated.begin(), updated.end());
-            QueueEdit(ticket.id, field, updated, pendingEdits, ticket.GetFieldValue(field.Id));
-        }
-        if (option.Disabled) {
-            ImGui::EndDisabled();
-        }
-        if (!option.SecondaryValue.empty() && ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-            ImGui::TextUnformatted(option.SecondaryValue.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-        ImGui::PopID();
+        // SecondaryValue (a component's description) is matched by the filter, shown beside the label
+        // when it fits, and always available as the tooltip.
+        smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(option);
+        item.Tooltip = item.Secondary;
+        item.Checked = selectedSet.find(item.Id) != selectedSet.end();
+        item.Disabled = option.Disabled;
+        items.push_back(item);
     }
+    smatchet::dropdown::Options options =
+        smatchet::dropdown::TickBoxes(recentsScope, SmatchetLocalization::T("field.clear_all", "<clear all>"));
     // With nothing cached the cue above already says why the list is empty. A successful fetch that
     // returned zero components is Fresh, so a genuinely empty project shows the no-options text.
-    if (!drewAny && (!filterLower.empty() || smatchet::offline::ShouldRenderContent(freshness))) {
-        RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
+    if (!smatchet::offline::ShouldRenderContent(freshness)) {
+        options.EmptyText = "";
+    }
+    options.EmptyHint = UnscopedCatalogHint(catalogUnscoped);
+    const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
+    if (ev.Kind == smatchet::dropdown::EventKind::Cleared) {
+        if (!selectedSet.empty()) {
+            selectedSet.clear();
+            QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
+        }
+    } else if (ev.Kind == smatchet::dropdown::EventKind::Picked) {
+        if (selectedSet.erase(ev.Id) == 0) {
+            selectedSet.insert(ev.Id);
+        }
+        std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
+        std::sort(updated.begin(), updated.end());
+        QueueEdit(ticket.id, field, updated, pendingEdits, ticket.GetFieldValue(field.Id));
     }
 }
 
@@ -969,13 +891,15 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+    if (ImGui::BeginCombo("##multiselect", preview.c_str(),
+                          ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_HeightLargest)) {
         // Components have their own per-project lazy path, so the unscoped-catalog hint would
         // mislead there; every other project-scoped multi-select (versions, custom options) gets it.
         const bool catalogUnscoped = field.Id != "components" && opts->empty() && app.FieldCatalogLacksProjectScope();
         RenderMultiSelectComboBody(
-            ticket, field, state, pendingEdits, editorKey, opts, optionsFreshness, rowComponents.lastError, selectedSet,
-            catalogUnscoped, field.Id == "components" ? &app : nullptr,
+            ticket, field, pendingEdits, smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), field.Id), opts,
+            optionsFreshness, rowComponents.lastError, selectedSet, catalogUnscoped,
+            field.Id == "components" ? &app : nullptr,
             field.Id == "components" ? smatchet::ExtractIssueKeyPrefix(ticket.id) : std::string());
         ImGui::EndCombo();
     }

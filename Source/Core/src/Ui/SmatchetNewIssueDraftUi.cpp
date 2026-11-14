@@ -3,9 +3,12 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "FilterDropdown.h"
+#include "TrackerOptionDropdown.h"
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "ProjectResolver.h"
+#include "RecentSelections.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "SmatchetFieldRender.h"
@@ -431,9 +434,10 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
 }
 
 // Catalog-option dropdown for a draft field (issuetype + single-valued select/user fields):
-// preview resolution, in-combo search filter, and selection apply. Owns its BeginCombo/EndCombo.
-void DrawDraftOptionCombo(UiDrawSession& d, const TrackerField* field, const std::string& fieldId,
-                          const std::string& current) {
+// preview resolution, then the shared dropdown body (filter, recent picks, keyboard) and selection
+// apply. Owns its BeginCombo/EndCombo. Recents share the grid editors' scope for the same field.
+void DrawDraftOptionCombo(const AppController& app, UiDrawSession& d, const TrackerField* field,
+                          const std::string& fieldId, const std::string& current) {
     std::string preview = current;
     if (fieldId == "project" && preview.empty())
         preview = d.newIssueDraft.ProjectKey;
@@ -446,74 +450,39 @@ void DrawDraftOptionCombo(UiDrawSession& d, const TrackerField* field, const std
             preview = optIt->Value;
         }
     }
-    const bool comboOpened = ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str());
-    if (comboOpened) {
-        const bool justOpened = (d.newIssueDraftComboSearchActiveField != fieldId);
-        if (justOpened) {
-            d.newIssueDraftComboSearchActiveField = fieldId;
-            d.newIssueDraftComboSearchBufs[fieldId].fill('\0');
-        }
-        auto& searchBuf = d.newIssueDraftComboSearchBufs[fieldId];
-
-        if (justOpened) {
-            ImGui::SetKeyboardFocusHere();
-        }
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        const bool submitOnEnter = ImGui::InputTextWithHint("##NewIssueComboSearch", "Filter options", searchBuf.data(),
-                                                            searchBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Separator();
-
-        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(std::string(searchBuf.data())));
-        const TrackerFieldOption* firstMatch = nullptr;
-        bool drewAny = false;
-
-        auto applySelection = [&](const TrackerFieldOption& opt) {
-            d.newIssueQueueFallbackVisible = false;
-            d.newIssueQueueFallbackError.clear();
-            if (fieldId == "issuetype") {
-                d.newIssueDraft.IssueTypeId = opt.Id;
-                d.newIssueDraft.IssueTypeName = opt.Value;
-                // Keep FieldValues in sync: combo preview/selection read `current` from here.
-                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-            } else if (fieldId == "project") {
-                d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
-                d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
-            } else {
-                // Store option id (e.g. accountId for users) so create payload matches grid edits.
-                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-            }
-        };
-
-        if (field) {
-            for (const auto& opt : field->AllowedValueOptions) {
-                const std::string optId = opt.Id.empty() ? opt.Value : opt.Id;
-                if (!SmatchetNewIssueDraft::detail::OptionMatchesComboFilter(opt, filterLower)) {
-                    continue;
-                }
-                if (firstMatch == nullptr) {
-                    firstMatch = &opt;
-                }
-                drewAny = true;
-                const bool selected = (opt.HasId(current) || opt.HasName(current));
-                ImGui::PushID(optId.c_str());
-                if (ImGui::Selectable(opt.Value.c_str(), selected)) {
-                    applySelection(opt);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopID();
-            }
-        }
-        if (!drewAny) {
-            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
-        }
-        if (submitOnEnter && firstMatch != nullptr) {
-            applySelection(*firstMatch);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndCombo();
-    } else if (d.newIssueDraftComboSearchActiveField == fieldId) {
-        d.newIssueDraftComboSearchActiveField.clear();
+    if (!ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str(), ImGuiComboFlags_HeightLargest)) {
+        return;
     }
+    std::vector<smatchet::dropdown::Item> items;
+    if (field) {
+        items.reserve(field->AllowedValueOptions.size());
+        for (const auto& opt : field->AllowedValueOptions) {
+            smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(opt);
+            item.Checked = opt.HasId(current) || opt.HasName(current);
+            items.push_back(item);
+        }
+    }
+    const std::string recentsScope = smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), fieldId);
+    const smatchet::dropdown::Event ev =
+        smatchet::dropdown::DrawBody(items, smatchet::dropdown::SingleSelect(recentsScope));
+    if (ev.Kind == smatchet::dropdown::EventKind::Picked && field && ev.ItemIndex >= 0) {
+        const TrackerFieldOption& opt = field->AllowedValueOptions[static_cast<size_t>(ev.ItemIndex)];
+        d.newIssueQueueFallbackVisible = false;
+        d.newIssueQueueFallbackError.clear();
+        if (fieldId == "issuetype") {
+            d.newIssueDraft.IssueTypeId = opt.Id;
+            d.newIssueDraft.IssueTypeName = opt.Value;
+            // Keep FieldValues in sync: combo preview/selection read `current` from here.
+            d.newIssueDraft.FieldValues[fieldId] = ev.Id;
+        } else if (fieldId == "project") {
+            d.newIssueDraft.ProjectKey = ev.Id;
+            d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
+        } else {
+            // Store option id (e.g. accountId for users) so create payload matches grid edits.
+            d.newIssueDraft.FieldValues[fieldId] = ev.Id;
+        }
+    }
+    ImGui::EndCombo();
 }
 
 // Free-text draft input: multiline Markdown editor for the description, otherwise a single-line
@@ -606,7 +575,7 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
 
     const std::string& current = d.newIssueDraft.FieldValues[fieldId];
 
-    // Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
+    // Project gets the dedicated picker (recent picks + the tracker's projects + cached ones).
     if (fieldId == "project") {
         std::string backendKind;
         std::string endpoint;
@@ -628,7 +597,7 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
 
     // IssueType / other catalog-option dropdowns come from catalog option sets when available.
     if (SmatchetNewIssueDraft::detail::FieldUsesOptionDropdown(fieldId, field)) {
-        DrawDraftOptionCombo(d, field, fieldId, current);
+        DrawDraftOptionCombo(app, d, field, fieldId, current);
     } else {
         DrawDraftTextFieldInput(app, d, fieldId, current);
     }

@@ -147,7 +147,7 @@ Drops the sign in `ParseLongOr`. The negative-magnitude path (including the deli
 - **`TrackerDateTimePure.cpp` DT5** — `w.Day > dim` → `>= dim` in `ClampDayToMonth`. When `Day == dim` the clamp writes `dim` (the same value) — no observable change.
 - **`LinearQueryFromJql.cpp` JQL-01** — `substr(p + 8)` → `substr(p + 7)` in the ` not in ` branch. `kNotIn` is detected but **every field handler rejects it** with "unsupported operator", so `valueRaw` is never consumed — the offset change is unobservable. *(Product observation, not a test gap: `not in` is silently downgraded to "unsupported". A test SHOULD pin that `not in` warns; that pin would not kill this equivalent mutant but would document the intended behaviour.)*
 - **`LinearIssueMappingPure.cpp` MAP-05** — `reserve(size())` → `reserve(size()+1)`. `reserve` affects capacity only, never observable size/contents.
-- **`TrackerLabelsPure.cpp` m3** — `if (filterLower.empty())` → `if (false)`. `std::string::find("")` returns `0` (`!= npos`), so `LabelMatchesFilter` still returns `true` for an empty filter — the fast path was pure optimisation.
+- **`TrackerLabelsPure.cpp` m3** — `if (filterLower.empty())` → `if (false)`. `std::string::find("")` returns `0` (`!= npos`), so `LabelMatchesFilter` still returns `true` for an empty filter — the fast path was pure optimisation. *(Retired from the corpus 2026-11-13: `LabelMatchesFilter` was removed when the labels picker moved to the shared dropdown filter, `FilterDropdownPure.h` `ItemMatches`.)*
 
 ### Out-of-oracle (a runnable test *could* catch it, but that test isn't in this rig)
 

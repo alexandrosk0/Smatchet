@@ -5,6 +5,8 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetTheme.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -346,21 +348,27 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                                       : (!pane.title.empty() ? pane.title.c_str() : "(no active view)");
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel)) {
+    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel, ImGuiComboFlags_HeightLargest)) {
+        // The shared dropdown body: filter, the last views switched to, then every view.
+        std::vector<smatchet::dropdown::Item> items;
+        items.reserve(viewState.GetStore().Views.size());
         for (const auto& view : viewState.GetStore().Views) {
-            const bool isSelected = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
-            if (ImGui::Selectable(view.Name.c_str(), isSelected)) {
-                if (viewState.Activate(view.Id)) {
-                    activeViewForGrid = viewState.GetActiveViewMutable();
-                    if (activeViewForGrid) {
-                        d.cfg.JqlQuery = activeViewForGrid->Jql;
-                        d.cfg.SelectedFields = activeViewForGrid->Fields;
-                        SyncWithCurrentView(app, d, viewState.GetStore(), true);
-                    }
-                }
-            }
-            if (isSelected) {
-                ImGui::SetItemDefaultFocus();
+            smatchet::dropdown::Item item;
+            item.Id = view.Id.c_str();
+            item.Label = view.Name.c_str();
+            item.Checked = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
+            items.push_back(item);
+        }
+        const std::string recentsScope = smatchet::recents::MakeScopeKey(app.PaneCacheBackendKey(pane.id), "view");
+        const smatchet::dropdown::Event ev =
+            smatchet::dropdown::DrawBody(items, smatchet::dropdown::SingleSelect(recentsScope));
+        // `items` points into the store Activate may change: nothing reads it past this line.
+        if (ev.Kind == smatchet::dropdown::EventKind::Picked && viewState.Activate(ev.Id)) {
+            activeViewForGrid = viewState.GetActiveViewMutable();
+            if (activeViewForGrid) {
+                d.cfg.JqlQuery = activeViewForGrid->Jql;
+                d.cfg.SelectedFields = activeViewForGrid->Fields;
+                SyncWithCurrentView(app, d, viewState.GetStore(), true);
             }
         }
         ImGui::EndCombo();
