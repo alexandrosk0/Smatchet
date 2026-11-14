@@ -14,8 +14,9 @@ The project picker (`Source/Core/src/Ui/SmatchetProjectPicker.cpp`) has the same
 list and its recents scope follow the focused tracker, while its saved-catalog rows are matched on the
 connection of the form that hosts it (`ResolveBackendKindAndEndpoint(cfg, …)`). With a form opened from
 one tracker and focus on a pane of another, the popup lists one tracker's projects plus the other's
-saved-catalog rows. The Recent seed only takes projects the focused tracker's list holds, so it stores
-nothing foreign.
+saved-catalog rows. The Recent seed only takes keys the focused tracker's list holds, so every seeded
+row is a valid pick there; a key that exists on both trackers (say "PROJ") can still be seeded on the
+strength of its use on the other one.
 
 Concrete next action:
 - Carry the drawn pane's cache backend key into `TicketFieldEditor::DispatchEditorByPlan` (it already

@@ -1,8 +1,9 @@
 # Plan — Shared filter dropdown with recent picks
+<!-- plan-date: 2026-11-13 -->
 
 > **Slug**: `shared-dropdown-recents` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -38,10 +39,11 @@ Each picker in scope builds a small `Item` array from the options it already has
 ## Interface contracts
 
 - **No change** to `ITrackerBackend` or its role interfaces, commands, Lua bindings, MCP schemas, view storage or the SQLite cache.
-- **Config format (additive)**: new top-level key `recent_selections` in `smatchet_config.json`: `{ "<scopeKey>": ["<id>", …] }`, at most 5 ids per scope and at most 128 scopes. Unknown to older builds, which preserve unmodelled keys through `ConfigManager::UpdateConfigJson`. A malformed value loads as empty (logged with `LOG_WARN`).
-- **New API** `Source/Core/include/RecentSelections.h`: `smatchet::recents::RecentSelectionStore` (`Record`, `Get`, `ToJson`, `FromJson`, `Clear`), `smatchet::recents::Shared()` (process instance), `smatchet::recents::RecordAndPersist(scope, id)`, `smatchet::recents::LoadSharedFromConfigJson(json)`, `smatchet::recents::MakeScopeKey(backendKey, fieldId)`.
-- **New API** `Source/Core/include/FilterDropdown.h`: `smatchet::dropdown::Item`, `Options`, `Event`, `DrawBody(const Item*, int, const Options&)`.
-- **Plumbing**: picker → `DrawBody(items, opts{RecentsScope = MakeScopeKey(app.FocusedCacheBackendKey(), field.Id)})` → on pick `RecordAndPersist(scope, id)` → `Shared().Record` + `EnqueueConfigJsonKey("recent_selections", Shared().ToJson())` → config-save worker → `ConfigManager::UpdateConfigJson`. Load: `AppController` init → `ConfigManager` merged JSON → `LoadSharedFromConfigJson`.
+- **Config format (additive)**: new top-level key `recent_selections` in `smatchet_config.json`: an array, most recently touched scope first, of `{ "scope": "<scopeKey>", "ids": ["<id>", …] }`, at most 5 ids per scope and at most 128 scopes. Unknown to older builds, which preserve unmodelled keys through `ConfigManager::UpdateConfigJson`. A malformed value loads as empty (logged with `LOG_WARN`).
+- **New API** `Source/Core/include/RecentSelections.h`: `smatchet::recents::RecentSelectionStore` (`Record`, `Get`, `ToJson`, `FromJson`, `Clear`), `smatchet::recents::SharedGet(scope)` (a copy of the process instance's list), `smatchet::recents::RecordAndPersist(scope, id)`, `smatchet::recents::LoadSharedFromConfigJson(json)`, `smatchet::recents::ResetSharedForTests()`, `smatchet::recents::BeginSharedTestScope()` / `EndSharedTestScope()` (a UI-test run inside a live session gets its own empty store and the session's picks back afterwards), `smatchet::recents::MakeScopeKey(backendKey, fieldId)`.
+- **New API** `Source/Core/include/FilterDropdown.h`: `smatchet::dropdown::Item`, `Options`, `Event`, `DrawBody(const Item*, int, const Options&)`, `DrawBody(const std::vector<Item>&, const Options&)`, and the option presets `SingleSelect(recentsScope)` and `TickBoxes(recentsScope, clearAllLabel)`.
+- **New API** `Source/Core/include/TrackerOptionDropdown.h`: `smatchet::dropdown::OptionPickId(option)` and `ItemForOption(option)`, the one place a `TrackerFieldOption` becomes a dropdown row.
+- **Plumbing**: picker → `DrawBody(items, SingleSelect(MakeScopeKey(app.FocusedCacheBackendKey(), field.Id)))` → on pick `RecordAndPersist(scope, id)` → the process store's `Record` + `EnqueueConfigJsonKey("recent_selections", <store JSON>)` → config-save worker → `ConfigManager::UpdateConfigJson`. Load: `AppController` init → `ConfigManager::LoadMergedConfigJson()` → `LoadSharedFromConfigJson`. Persistence stays off until that load has run.
 
 ## Files to modify
 
@@ -137,28 +139,52 @@ None.
 - A filter for the Annotate Jira-field combos (large list, no filter) — follow-up.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `aca1170ed` · wip(plan): this plan.
+- `46e61e30b` · feat(ui): the recents store, the shared dropdown body and its ImGui-free row model, every in-scope picker wired to them, doctest and bucket-E tests, the mutation corpus retarget.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Home / End are not highlight keys.** The filter field keeps keyboard focus, and there Home / End move the text caret. The highlight moves with Up / Down / PageUp / PageDown and the mouse. § Approach and § UX Pillar callouts (Pillar 4) still list Home / End: read them without.
+- **Config value is an array, not an object** (§ Interface contracts is corrected in place): an array keeps the scope order, which is what the 128-scope eviction needs.
+- **Store API**: `Shared()` is not exposed. Callers get `SharedGet(scope)` (a copy) and `RecordAndPersist`; tests get `ResetSharedForTests()`. § Interface contracts is corrected in place.
+- **Load reads the config through `ConfigManager::LoadMergedConfigJson()`** at `AppController` init, before the first frame; § Approach says "already-parsed JSON".
+- **Typed characters are spliced whenever the filter field does not hold keyboard focus** while the popup is focused, which includes a scrollbar drag in progress (a mouse button is down, so focus cannot return yet). § Approach says "no item is active".
+- **No "match span" decision in the pure header.** The match position comes from `FindCaseInsensitive`; the highlight box is drawn by the ImGui body.
+- **`ToLowerAsciiCopy` / `TrimCopy` are not used**; the pure header has its own allocation-free ASCII compare and `TrimFilter`.
+- **Added after code review** (four-agent adversarial review of the first complete build):
+  - Enter under a filter acts on the first option that matches it, never on a ticked option that `KeepCheckedVisible` only keeps listed (`DefaultHighlight`).
+  - The clear row is never the default highlight, so Enter in a picker whose options have not arrived does not clear the field.
+  - The empty-state text and hint are drawn whenever the list holds no option or create row, also under a lone clear row.
+  - The highlight follows its row by identity (id and label) when the option list is rebuilt under an open popup, and takes a fresh default when the list changes size before the user has moved it. An arrow key with no row to move to does not count as a move; a scrollbar drag does.
+  - Under a filter, Enter acts on the best match: a label that starts with the filter, then a label that contains it, then an id or secondary-text match (`MatchRank`). The list order is unchanged.
+  - A row whose secondary text does not fit shows it in the tooltip.
+- **Labels: Enter on a partial name picks the first match, not a new label.** With "ui-polish" existing, typing "ui" and Enter ticks "ui-polish"; the `Add "ui"` row is one arrow key away. The old separate "Add label" input added exactly the typed text.
+- **Deferred to the debt backlog** (second review round, both Low): cell pickers key recents by the focused pane's tracker (`docs/self-improvement/categories/debt/2026-11-13-dropdown-recents-scope-uses-focused-backend.md`); the project picker rebuilds its rows every frame the popup is open (`docs/self-improvement/categories/debt/2026-11-13-project-picker-rebuilds-rows-every-open-frame.md`). Not fixed, cosmetic: moving the mouse onto a row below the highlight draws two highlighted rows for one frame.
+- **Added after the gate review** (`code-review` agent on the complete diff):
+  - The Enter that opens a keyboard-focused combo only opens it. The popup appears in the same frame with the key still down, so the body ignores Enter until that press is released; before, it picked the default row and closed the popup at once (project picker, quick-create type, draft combos, view selector, project pill).
+  - A space typed into an empty filter is dropped, so the Space that opens a combo is not filter text.
+  - **The project picker's Recent section starts from the saved catalogs.** Before any pick is recorded for a tracker, the section is filled once from the projects whose field catalog is saved on this machine, most recently used first (`RecentSeedKeys`), taking only projects the focused tracker's own list holds and never without a tracker. Without it, the first run of this build would have moved a user's daily projects from the top of the popup into the full list. The dropdown reads its recents when it opens, so the section shows from the second open.
+  - `RecentSelections.cpp` and its test are also built into the `SmatchetTsanTests` subset, the mutation-smoke oracle, so the `RECENTS-01-cap` mutant can be killed.
+  - The UI tests take the recents store through `BeginSharedTestScope` / `EndSharedTestScope` (the test's `TeardownFunc`), so a run inside a live session neither wipes its picks nor leaves saving off.
+  - Left open, Low: no bucket-E case for the leading-space skip; the seed's glue (once per scope, skipped when the scope has picks) has no test of its own, only `RecentSeedKeys` does.
+  - Not changed: the splice does not check for another active text field in the popup (no caller has one); the tables in `docs/audits/MUTATION_PILOT.md` are the dated record of the pilot run, so only the retired mutant's entry carries a note.
+- **Added for the DRY gate**: `DrawBody(vector)`, `SingleSelect`, `TickBoxes` and `TrackerOptionDropdown.h` (`ItemForOption`), so the seven call sites share their set-up instead of repeating it.
+- **Files beyond § Files to modify**:
+  - Deleted: `Source/Core/include/TicketFieldEditorOptionFilterPure.h` and `tests/Core/TicketFieldEditorOptionFilterPure.test.cpp` (the per-editor option filter the shared row model replaces).
+  - Trimmed: `Source/Core/include/Tracker/TrackerLabelsPure.h`, `Source/Core/src/Tracker/TrackerLabelsPure.cpp`, `tests/Core/TrackerLabelsPure.test.cpp` (`LabelMatchesFilter` and the add-label helpers); `Source/Core/include/Ui/SmatchetNewIssueDraftUi_detail.h`, `Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp`, `tests/Core/NewIssueDraftFieldDecision.test.cpp` (the draft combo's own filter).
+  - Added: `Source/Core/include/TrackerOptionDropdown.h`, `tests/Core/TrackerOptionDropdown.test.cpp`, `scripts/dev/test-ui-filter-dropdown.sh` (bucket-E runner), the two debt entries named above.
+  - Edited: `Source/Core/src/SmatchetLocalization.cpp` (`dropdown.*` strings), `Source/Core/include/Ui/SmatchetProjectPicker_detail.h`, `Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp` and `tests/Core/ProjectPickerFilter.test.cpp` (`RecentSeedKeys`), `scripts/dev/mutation-smoke-corpus.json` and `docs/audits/MUTATION_PILOT.md` (the `LabelMatchesFilter` mutants: one retargeted to `LabelsEqualCaseInsensitive`, the equivalent one retired; a new `RECENTS-01-cap` guard).
+- **Project picker**: `StartRecentProjectsLoad` is renamed `StartCachedProjectsLoad` (its rows are no longer the "recent" ones), and `StartAllProjectsFetch` runs when the combo opens.
+- **Quick-create issue type** rows now show an option's secondary text when it has one, like every other option picker (`ItemForOption`).
+- **Advisory lint, not blocking**: `tu-line-ceiling` on `SmatchetLocalization.cpp` and `TicketFieldEditor.cpp` (both over 1,200 lines before this change), the soft function-size tier on `DrawHeaderViewToolbar` (103 lines).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Bucket A**: `SmatchetTests` (ninja-test-msvc) full suite 4,121 / 4,121 passed. New: `RecentSelections.test.cpp` (14 cases), `FilterDropdownPure.test.cpp` (row model, default highlight incl. the kept-ticked, clear-row and match-rank cases, row identity, highlight moves, scroll maths), `TrackerOptionDropdown.test.cpp` (the Id-or-Value pick id); `ProjectPickerFilter.test.cpp` gains `RecentSeedKeys`.
+- **Bucket E**: `scripts/dev/test-ui-filter-dropdown.sh` 16 / 16 passed (cases A–P): type on open, arrows + Enter, typing after a row click, after a wheel scroll and during a scrollbar drag, Recent section pinned then hidden while filtering, Escape, untick records nothing, the create row, Enter on the match with a kept ticked option, a recent pick outside the options, PageDown, the empty state under a lone clear row, options arriving under an open popup, rows inserted above the highlight, the Enter that opens the combo. Case P was seen failing before the fix. The splice was mutation-checked by hand: with it disabled, the scrollbar-drag case fails.
+- **Build gate**: `SmatchetStandalone` and `SmatchetCore_DX12` build clean on ninja-iter-msvc; the UI-test exe builds on ninja-ui-test-msvc.
+- **Lint**: `test-lint-rules.sh --diff origin/develop` passes; the first run failed on `function-too-branchy` (two functions), `duplication` (five call-site clones) and `comment-commented-out-code` (two comments), all fixed.
+- **Look**: checked on screenshots of the replica window (match highlight aligned with the text, focus ring around the whole filter row). The look inside the real grid is the user's to confirm (visual-validation exception).
+- **Code review**: four-agent adversarial review of the first complete build (store, widget, wiring, tests and gates), findings fixed (§ Deviations); `code-review` agent on the fixes (0 Critical / High, 3 Medium fixed, 7 Low: 3 fixed, 1 accepted as a design choice, 2 to the debt backlog, 1 cosmetic left); `code-review` gate review of the complete diff, three rounds. Round 1: 2 High (the Enter that opens the popup also picked a row; the new mutant had no oracle), 2 Medium, 5 Low. Round 2, on the fixes: 1 Medium (the Recent seed could take another tracker's projects), 3 Low. Round 3: 0 Critical, 0 High; the visual check stays owed (Medium, the visual-validation exception) and 4 Low are left open or recorded here and in the debt backlog.
+- **Not run**: the `SmatchetTsanTests` subset (Linux only; CI builds it); `cell-edit-burst` / `priority-grid-scroll` perf compare locally (left to the PR-fast CI lane); `grill-with-docs` as a separate pass (the eight scope decisions were settled with the user before the plan; the review above read this plan against the code); the Unreal editor itself (only `SmatchetCore_DX12` is compiled here).
