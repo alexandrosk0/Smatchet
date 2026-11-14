@@ -1159,23 +1159,10 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             }
             continue;
         }
-        nlohmann::json args = nlohmann::json::object();
-        if (!pk.argsJson.empty()) {
-            std::string parseErr;
-            args = smatchet::json_safe::ParseBounded(pk.argsJson, parseErr);
-            if (!parseErr.empty()) {
-                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), parseErr.c_str());
-                args = nlohmann::json::object();
-            }
-        }
-        smatchet::cmd::CommandContext ctx;
-        ctx.ScenarioHost = &app;
-        ctx.Threading = &app;
-        ctx.Source = smatchet::cmd::CommandSource::Internal;
-        const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
-        if (!r.Ok) {
-            LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
-        }
+        // Args that are not a JSON object are refused with a notice, the same as on a toolbar button: a
+        // shortcut set from a button carries that button's args.
+        smatchet::ui::DispatchCommandWithArgsText(app, pk.commandId, pk.argsJson,
+                                                  smatchet::ui::ArgsTextOrigin::Shortcut);
     }
     if (!consumedWheel && io.MouseWheel != 0.0f) {
         // A wheel event no binding claimed (the modifier was released): a later gesture starts from

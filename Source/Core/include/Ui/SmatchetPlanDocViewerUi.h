@@ -34,6 +34,13 @@ void PlanDocViewerOpenExternalFile(UiDrawSession& d, const std::string& absPathU
 // skipped; an all-empty batch changes nothing (window not opened).
 void PlanDocViewerOpenExternalFiles(UiDrawSession& d, const std::vector<std::string>& absPathsUtf8);
 
+// Entry point for an OS file drop. Every .md / .markdown path (extension matched
+// case-insensitively) opens through PlanDocViewerOpenExternalFiles; when anything
+// else was in the drop, one toast says what was not opened and why. No file I/O.
+// UI (main) thread only; safe outside an ImGui frame, which is where the drop
+// callback runs.
+void PlanDocViewerOpenDroppedPaths(UiDrawSession& d, const std::vector<std::string>& pathsUtf8);
+
 } // namespace smatchet
 
 #endif // SMATCHET_PLAN_DOC_VIEWER_UI_H

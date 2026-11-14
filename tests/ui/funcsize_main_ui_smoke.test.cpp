@@ -38,6 +38,7 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetToast.h" // toast history: the observation seam for a refused toolbar button
 
 #include "ui_test_skip.h" // SmatchetUiTestIsHeadlessSoftwareGl
 
@@ -45,6 +46,9 @@
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
+
+#include <string>
+#include <vector>
 
 // g_ui — the shared bag of UI-thread visibility flags. ViewToggleCommands.cpp
 // flips these same fields to open/close panels; we set them directly here.
@@ -112,52 +116,227 @@ void RegisterMainMenuBarRenderSmoke(ImGuiTestEngine* engine) {
 // once live, the editor submits its
 // config-backed body (no project/ticket backend) and the engine traps any
 // in-draw IM_ASSERT.
+// The modal's title carries the "###SmatchetToolbarEditor" suffix the production
+// BeginPopupModal uses (SmatchetLocalization::WindowTitle joins with "###" for a
+// language-stable ID).
+const char* const kToolbarEditorTitle = "Customize Toolbar###SmatchetToolbarEditor";
+
+// Closes the editor through its Cancel button: Esc does not close a modal, and Save
+// would persist the toolbar into later tests.
+void CloseToolbarEditor(ImGuiTestContext* ctx) {
+    if (!WindowIsLive(kToolbarEditorTitle)) {
+        return;
+    }
+    ctx->SetRef(kToolbarEditorTitle);
+    ctx->ItemClick("Cancel");
+    YieldUntil(ctx, [] { return !WindowIsLive(kToolbarEditorTitle); }, 60);
+}
+
+// Opens the editor and leaves the ref on it. False (checked or logged) when the app is
+// not booted or the editor never came up. An editor left open by an earlier case is
+// closed first: it would keep that case's filter text and selection.
+bool OpenToolbarEditor(ImGuiTestContext* ctx) {
+    const AppController* app = SmatchetActiveUiTestAppController();
+    if (app == nullptr) {
+        ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+        return false;
+    }
+
+    const bool barLive = YieldUntil(ctx, [&] { return WindowIsLive("##MainMenuBar"); });
+    IM_CHECK_NO_RET(barLive);
+    if (!barLive) {
+        return false;
+    }
+    CloseToolbarEditor(ctx);
+
+    // Open the editor via the toolbar's right-click context menu, which has
+    // a stable-text "Customize Toolbar..." item (the View-menu path can't be
+    // kept latched open across the headless engine's multi-frame menu
+    // navigation in this app; the toolbar's own ImGui::Button is glyph-
+    // labelled with a non-deterministic id). Right-click the toolbar window's
+    // void area to open "##ToolbarCtx" (BeginPopupContextWindow), then click
+    // the leaf — both production code paths that set requestEditorOpen_.
+    ctx->MouseMove("//##SmatchetToolbar");
+    ctx->MouseClick(ImGuiMouseButton_Right);
+    ctx->ItemClick("//$FOCUSED/Customize Toolbar...");
+
+    const bool editorLive = YieldUntil(ctx, [&] { return WindowIsLive(kToolbarEditorTitle); });
+    IM_CHECK_NO_RET(editorLive);
+    if (editorLive) {
+        ctx->SetRef(kToolbarEditorTitle);
+    }
+    return editorLive;
+}
+
 void RegisterToolbarEditorRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "ToolbarEditor_RendersViaCustomizeToolbarMenu");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        const AppController* app = SmatchetActiveUiTestAppController();
-        if (app == nullptr) {
-            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
-            return;
-        }
-
-        const bool barLive = YieldUntil(ctx, [&] { return WindowIsLive("##MainMenuBar"); });
-        IM_CHECK_NO_RET(barLive);
-        if (!barLive) {
-            return;
-        }
-
-        // Open the editor via the toolbar's right-click context menu, which has
-        // a stable-text "Customize Toolbar..." item (the View-menu path can't be
-        // kept latched open across the headless engine's multi-frame menu
-        // navigation in this app; the toolbar's own ImGui::Button is glyph-
-        // labelled with a non-deterministic id). Right-click the toolbar window's
-        // void area to open "##ToolbarCtx" (BeginPopupContextWindow), then click
-        // the leaf — both production code paths that set requestEditorOpen_.
-        ctx->MouseMove("##SmatchetToolbar");
-        ctx->MouseClick(ImGuiMouseButton_Right);
-        ctx->ItemClick("//$FOCUSED/Customize Toolbar...");
-
-        // The modal's draw fn ticks once the popup is live. Title carries the
-        // "###SmatchetToolbarEditor" suffix the production BeginPopupModal uses
-        // (SmatchetLocalization::WindowTitle joins with "###" for a language-stable ID).
-        const char* kEditorTitle = "Customize Toolbar###SmatchetToolbarEditor";
-        const bool editorLive = YieldUntil(ctx, [&] { return WindowIsLive(kEditorTitle); });
-        IM_CHECK_NO_RET(editorLive);
-
-        if (editorLive) {
+        if (OpenToolbarEditor(ctx)) {
             // Assert a stable in-body widget exists — the editor submits a
             // "Save" button at its footer unconditionally once Begin succeeds,
             // confirming the body ran past BeginPopupModal. Bare ref against the
             // SetRef'd modal window.
-            ctx->SetRef(kEditorTitle);
             const bool saveExists = ctx->ItemExists("Save");
             IM_CHECK_NO_RET(saveExists);
         }
-
         // Dismiss the modal so subsequent tests start clean.
-        ctx->KeyPress(ImGuiKey_Escape);
-        ctx->Yield();
+        CloseToolbarEditor(ctx);
+    };
+}
+
+bool ToolbarEditorSaveDisabled(ImGuiTestContext* ctx) {
+    return (ctx->ItemInfo("Save").ItemFlags & ImGuiItemFlags_Disabled) != 0;
+}
+
+// Adds a Command button to the open editor; the editor selects it, so its fields show
+// whatever the saved toolbar holds. Cancel drops it again. False (checked) when the
+// field `ref` did not come up.
+bool AddToolbarCommandButton(ImGuiTestContext* ctx, const char* ref) {
+    ctx->ItemClick("**/Add command");
+    const bool fieldShown = YieldUntil(ctx, [&] { return ctx->ItemExists(ref); }, 60);
+    IM_CHECK_NO_RET(fieldShown);
+    return fieldShown;
+}
+
+// Args that would not run block Save, and valid args give it back.
+void RegisterToolbarEditorArgsValidation(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "ToolbarEditor_InvalidArgsBlockSave");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenToolbarEditor(ctx)) {
+            CloseToolbarEditor(ctx);
+            return;
+        }
+        const char* kArgs = "**/Args (JSON)";
+        if (!AddToolbarCommandButton(ctx, kArgs)) {
+            CloseToolbarEditor(ctx);
+            return;
+        }
+        IM_CHECK_NO_RET(!ToolbarEditorSaveDisabled(ctx));
+
+        ctx->ItemInputValue(kArgs, "{'a':1}"); // single quotes: not JSON
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(ToolbarEditorSaveDisabled(ctx));
+
+        ctx->ItemInputValue(kArgs, "{\"a\": 1}");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!ToolbarEditorSaveDisabled(ctx));
+
+        ctx->ItemInputValue(kArgs, "[1]"); // JSON, but not an object
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(ToolbarEditorSaveDisabled(ctx));
+
+        CloseToolbarEditor(ctx);
+    };
+}
+
+// The command filter matches like the palette: any case, letters in order, trimmed.
+void RegisterToolbarEditorCommandFilter(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "ToolbarEditor_CommandFilterIsFuzzy");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenToolbarEditor(ctx)) {
+            CloseToolbarEditor(ctx);
+            return;
+        }
+        const char* kFilter = "**/##cmdsearch";
+        const char* kCommand = "**/view.list";
+        if (!AddToolbarCommandButton(ctx, kFilter)) {
+            CloseToolbarEditor(ctx);
+            return;
+        }
+
+        ctx->ItemInputValue(kFilter, "VIEW.LIST");
+        ctx->Yield(2);
+        const bool upperCaseMatches = ctx->ItemExists(kCommand);
+        IM_CHECK_NO_RET(upperCaseMatches);
+
+        ctx->ItemInputValue(kFilter, "  vwlst ");
+        ctx->Yield(2);
+        const bool lettersInOrderMatch = ctx->ItemExists(kCommand);
+        IM_CHECK_NO_RET(lettersInOrderMatch);
+
+        ctx->ItemInputValue(kFilter, "zzzzqq");
+        ctx->Yield(2);
+        const bool noMatchHidesIt = !ctx->ItemExists(kCommand);
+        IM_CHECK_NO_RET(noMatchHidesIt);
+
+        CloseToolbarEditor(ctx);
+    };
+}
+
+// A toolbar button whose saved args are not a JSON object is not run: one warning says so.
+// The probe has no icon, so its label is the first word of its tooltip, and it sits first
+// in the bar. The toolbar is put back at the end; nothing here saves it.
+void RegisterToolbarBadArgsButtonNotRun(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "Toolbar_BadArgsButtonIsNotRun");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        CloseToolbarEditor(ctx);
+        const ToolbarConfig saved = g_ui.cfg.Toolbar;
+        ToolbarButton probe;
+        probe.Kind = ToolbarButtonKind::Command;
+        probe.Tooltip = "BadArgsProbe";
+        probe.CommandId = "view.list";
+        probe.ArgsJson = "{'a':1}"; // single quotes: not JSON
+        g_ui.cfg.Toolbar.Visible = true;
+        g_ui.cfg.Toolbar.Buttons.insert(g_ui.cfg.Toolbar.Buttons.begin(), probe);
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.ClearHistory();
+
+        const char* kProbe = "//##SmatchetToolbar/BadArgsProbe##tb0";
+        const bool shown = YieldUntil(ctx, [&] { return ctx->ItemExists(kProbe); }, 60);
+        IM_CHECK_NO_RET(shown);
+        if (shown) {
+            ctx->ItemClick(kProbe);
+            ctx->Yield(2);
+            bool refused = false;
+            for (const ToastHistoryEntry& entry : toasts.History()) {
+                refused = refused || (entry.Type == ToastType::Warning && entry.Title == "Toolbar button not run");
+            }
+            IM_CHECK_NO_RET(refused);
+        }
+        g_ui.cfg.Toolbar = saved;
+        toasts.DismissAllLive(); // the warning would sit over a later case's click target
+        ctx->Yield(2);
+    };
+}
+
+// A shortcut carries its command's args, and one set from a toolbar button copies that button's.
+// Args that are not a JSON object are refused on the key as they are on the button.
+void RegisterKeybindingBadArgsNotRun(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "Keybinding_BadArgsShortcutIsNotRun");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        CloseToolbarEditor(ctx);
+        const std::vector<Keybinding> saved = g_ui.cfg.Keybindings.Bindings;
+        Keybinding probe;
+        probe.CommandId = "view.list";
+        probe.Hotkeys.push_back("Ctrl+Alt+Shift+F9");
+        probe.ArgsJson = "[1]"; // JSON, but not an object
+        g_ui.cfg.Keybindings.Bindings.push_back(probe);
+        SmatchetUiTestMarkKeybindingsDirty();
+        ctx->Yield(2);
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.ClearHistory();
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_F9);
+        ctx->Yield(2);
+        bool refused = false;
+        for (const ToastHistoryEntry& entry : toasts.History()) {
+            refused = refused || (entry.Type == ToastType::Warning && entry.Title == "Shortcut not run" &&
+                                  entry.Message.find("view.list") != std::string::npos);
+        }
+        IM_CHECK_NO_RET(refused);
+
+        g_ui.cfg.Keybindings.Bindings = saved;
+        SmatchetUiTestMarkKeybindingsDirty();
+        toasts.DismissAllLive();
+        ctx->Yield(2);
     };
 }
 
@@ -207,6 +386,10 @@ void RegisterBulkImportWindowRenderSmoke(ImGuiTestEngine* engine) {
 extern "C" void SmatchetRegisterFuncSizeMainUiSmokeTests(ImGuiTestEngine* engine) {
     RegisterMainMenuBarRenderSmoke(engine);
     RegisterToolbarEditorRenderSmoke(engine);
+    RegisterToolbarEditorArgsValidation(engine);
+    RegisterToolbarEditorCommandFilter(engine);
+    RegisterToolbarBadArgsButtonNotRun(engine);
+    RegisterKeybindingBadArgsNotRun(engine);
     RegisterBulkImportWindowRenderSmoke(engine);
 }
 

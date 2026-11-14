@@ -24,6 +24,8 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
+#include "Ui/SmatchetTheme.h"
+#include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetUiSession.h"
 #include "Ui/TouchInputRouter.h"
 #include "imgui.h"
@@ -57,6 +59,23 @@ bool InputTextMultilineStdString(const char* label, std::string& str, const ImVe
     flags |= ImGuiInputTextFlags_CallbackResize;
     return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
                                      InputTextStdStringResize, &str);
+}
+
+const int kArgsOk = static_cast<int>(smatchet::toolbar_editor::ArgsJsonStatus::Ok);
+
+// What is wrong with a button's args, in the user's words. The parser's own message is English-only.
+const char* ArgsStatusMessage(int status) {
+    using smatchet::toolbar_editor::ArgsJsonStatus;
+    if (status == static_cast<int>(ArgsJsonStatus::NotObject)) {
+        return SmatchetLocalization::T("toolbar.editor.args_not_object",
+                                       "Args must be a JSON object, for example {\"key\": 1}.");
+    }
+    if (status == static_cast<int>(ArgsJsonStatus::TooLarge) || status == static_cast<int>(ArgsJsonStatus::TooDeep)) {
+        return SmatchetLocalization::T("toolbar.editor.args_too_big", "Args are too large or too deeply nested.");
+    }
+    return SmatchetLocalization::T(
+        "toolbar.editor.args_invalid",
+        "Not valid JSON. Use double quotes and no trailing comma, for example {\"key\": 1}.");
 }
 
 bool IsUiPseudoCommand(const std::string& id) {
@@ -130,23 +149,40 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, const ToolbarButton& 
         return;
     }
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=args-JSON command dispatch shared with keybindings, helper backlogged; owner=ui-host; revisit=2027-06-15)
-    nlohmann::json args = nlohmann::json::object();
-    if (!b.ArgsJson.empty()) {
-        std::string parseErr;
-        args = smatchet::json_safe::ParseBounded(b.ArgsJson, parseErr);
-        if (!parseErr.empty()) { // invalid args JSON → dispatch with empty object
-            LOG_WARN("Toolbar: bad args JSON for command \"%s\": %s", b.CommandId.c_str(), parseErr.c_str());
-            args = nlohmann::json::object();
-        }
+    smatchet::ui::DispatchCommandWithArgsText(app, b.CommandId, b.ArgsJson,
+                                              smatchet::ui::ArgsTextOrigin::ToolbarButton);
+}
+
+void smatchet::ui::DispatchCommandWithArgsText(AppController& app, const std::string& commandId,
+                                               const std::string& argsJson, ArgsTextOrigin origin) {
+    const bool fromToolbar = origin == ArgsTextOrigin::ToolbarButton;
+    const char* who = fromToolbar ? "Toolbar" : "Keybindings";
+    nlohmann::json args;
+    const smatchet::toolbar_editor::ArgsJsonStatus argsStatus =
+        smatchet::toolbar_editor::ParseToolbarArgsJson(argsJson, args);
+    if (argsStatus != smatchet::toolbar_editor::ArgsJsonStatus::Ok) {
+        LOG_WARN("%s: args for command \"%s\" are not a valid JSON object (status %d); not run", who, commandId.c_str(),
+                 static_cast<int>(argsStatus));
+        // Each localized string is copied before the next lookup, which may reuse the buffer.
+        const std::string title = fromToolbar
+                                      ? SmatchetLocalization::T("toolbar.bad_args.title", "Toolbar button not run")
+                                      : SmatchetLocalization::T("keybindings.bad_args.title", "Shortcut not run");
+        const std::string body =
+            fromToolbar
+                ? SmatchetLocalization::T("toolbar.bad_args.body",
+                                          "Its args are not a valid JSON object. Fix them in Customize Toolbar.")
+                : SmatchetLocalization::Format("keybindings.bad_args.body",
+                                               "The args for \"%s\" are not a valid JSON object.", commandId.c_str());
+        SmatchetToastManager::Instance().Push(title, body, ToastType::Warning, 6000);
+        return;
     }
     smatchet::cmd::CommandContext ctx;
     ctx.ScenarioHost = &app;
     ctx.Threading = &app;
     ctx.Source = smatchet::cmd::CommandSource::Internal;
-    const smatchet::cmd::CommandResult r = app.Commands().Dispatch(b.CommandId, args, ctx);
+    const smatchet::cmd::CommandResult r = app.Commands().Dispatch(commandId, args, ctx);
     if (!r.Ok) {
-        LOG_WARN("Toolbar command '%s' failed", b.CommandId.c_str());
+        LOG_WARN("%s: command \"%s\" failed: %s", who, commandId.c_str(), r.Error.Message.c_str());
     }
 }
 
@@ -441,12 +477,17 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
     }
     requestEditSelect_ = -1;
     cmdNames_.clear();
+    cmdHaystacks_.clear();
     const std::vector<smatchet::cmd::Command> all = app.Commands().All();
     cmdNames_.reserve(all.size());
+    cmdHaystacks_.reserve(all.size());
     for (const smatchet::cmd::Command& c : all) {
         cmdNames_.push_back(c.Name);
+        cmdHaystacks_.push_back(c.Name + " " + c.Title);
     }
     cmdSearch_[0] = '\0';
+    cmdFilterValid_ = false;
+    argsCheck_.clear();
     // WindowTitle appends "###SmatchetToolbarEditor" so the popup ID is stable across languages
     // (both OpenPopup and BeginPopupModal build the identical translated string).
     ImGui::OpenPopup(ToolbarEditorPopupTitle());
@@ -568,8 +609,18 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
     for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
         const std::string rowLabel = smatchet::toolbar_editor::EditorRowLabel(buttons[i], ctx.faLoaded);
         ImGui::PushID(i);
+        // A row whose args would not run is drawn in the error colour, so the row that keeps Save
+        // disabled can be found without the mouse.
+        const bool badArgs = buttons[i].Kind == ToolbarButtonKind::Command &&
+                             ArgsStatusAt(static_cast<std::size_t>(i), buttons[i].ArgsJson) != kArgsOk;
+        if (badArgs) {
+            ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+        }
         if (ImGui::Selectable(rowLabel.c_str(), selected_ == i)) {
             selected_ = i;
+        }
+        if (badArgs) {
+            ImGui::PopStyleColor();
         }
         smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the button
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
@@ -593,6 +644,84 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
         ImGui::PopID();
     }
     ImGui::EndChild();
+}
+
+int SmatchetToolbarUi::ArgsStatusAt(std::size_t i, const std::string& text) {
+    if (argsCheck_.size() <= i) {
+        argsCheck_.resize(i + 1);
+    }
+    ArgsCheckEntry& e = argsCheck_[i];
+    if (!e.Computed || e.Text != text) {
+        nlohmann::json unused;
+        e.Status = static_cast<int>(smatchet::toolbar_editor::ParseToolbarArgsJson(text, unused));
+        e.Text = text;
+        e.Computed = true;
+    }
+    return e.Status;
+}
+
+// Lua buttons and separators are skipped: their args text is never sent anywhere.
+int SmatchetToolbarUi::FirstInvalidArgsIndex(const std::vector<ToolbarButton>& buttons) {
+    for (std::size_t i = 0; i < buttons.size(); ++i) {
+        if (buttons[i].Kind == ToolbarButtonKind::Command && ArgsStatusAt(i, buttons[i].ArgsJson) != kArgsOk) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// The command id field and the registry list to pick from. The filter matches like the command palette:
+// case-insensitive, the typed characters in order, best match first.
+void SmatchetToolbarUi::DrawEditorCommandPicker(ToolbarButton& b) {
+    // DR23: std::string-backed — no truncation of a long command id.
+    InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##cmdsearch",
+                             SmatchetLocalization::T("toolbar.editor.filter_commands", "Filter commands..."),
+                             cmdSearch_, sizeof(cmdSearch_));
+    const std::string q(cmdSearch_);
+    if (!cmdFilterValid_ || q != cmdFilterKey_) {
+        cmdFiltered_ = smatchet::toolbar_editor::RankCommandMatches(cmdNames_, cmdHaystacks_, q);
+        cmdFilterKey_ = q;
+        cmdFilterValid_ = true;
+    }
+    ImGui::BeginChild("##cmdlist", ImVec2(0.0f, 90.0f), true);
+    if (cmdFiltered_.empty()) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.no_command_match", "No matching commands."));
+    }
+    for (const int idx : cmdFiltered_) {
+        const std::string& n = cmdNames_[static_cast<std::size_t>(idx)];
+        if (ImGui::Selectable(n.c_str(), b.CommandId == n)) {
+            b.CommandId = n;
+        }
+    }
+    ImGui::EndChild();
+}
+
+// The args field, checked as it is typed. The red frame uses the status from before this frame's edit, so
+// its push and pop always pair; the message under the field uses the status after the edit.
+void SmatchetToolbarUi::DrawEditorArgsField(ToolbarButton& b) {
+    const std::size_t idx = static_cast<std::size_t>(selected_);
+    const bool badBefore = ArgsStatusAt(idx, b.ArgsJson) != kArgsOk;
+    const ImVec4 errCol = SmatchetTheme::GetActiveSemanticColors().ErrorText;
+    if (badBefore) {
+        // A frame border is drawn only at a size above zero, and the theme leaves it at zero.
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Border, errCol);
+    }
+    // DR23: std::string-backed — no truncation of a long args-JSON payload.
+    InputTextStdString(SmatchetLocalization::T("toolbar.editor.args_json", "Args (JSON)"), b.ArgsJson);
+    if (badBefore) {
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+    }
+    const int status = ArgsStatusAt(idx, b.ArgsJson);
+    if (status != kArgsOk) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(errCol, "%s", ArgsStatusMessage(status));
+        ImGui::PopTextWrapPos();
+    }
 }
 
 void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
@@ -642,27 +771,8 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
         }
 
         if (b.Kind == ToolbarButtonKind::Command) {
-            // DR23: std::string-backed — no truncation of a long command id.
-            InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##cmdsearch",
-                                     SmatchetLocalization::T("toolbar.editor.filter_commands", "Filter commands..."),
-                                     cmdSearch_, sizeof(cmdSearch_));
-            std::string q(cmdSearch_);
-            ImGui::BeginChild("##cmdlist", ImVec2(0.0f, 90.0f), true);
-            for (const std::string& n : cmdNames_) {
-                if (!q.empty() && n.find(q) == std::string::npos) {
-                    continue;
-                }
-                if (ImGui::Selectable(n.c_str(), b.CommandId == n)) {
-                    b.CommandId = n;
-                }
-            }
-            ImGui::EndChild();
-
-            // DR23: std::string-backed — no truncation of a long args-JSON payload.
-            InputTextStdString(SmatchetLocalization::T("toolbar.editor.args_json", "Args (JSON)"), b.ArgsJson);
+            DrawEditorCommandPicker(b);
+            DrawEditorArgsField(b);
         } else if (b.Kind == ToolbarButtonKind::Lua) {
             // DR23: std::string-backed — no truncation of a >2 KB Lua script.
             InputTextMultilineStdString(SmatchetLocalization::T("toolbar.editor.lua_code", "Lua code"), b.LuaCode,
@@ -687,7 +797,21 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
         ImGui::Checkbox(SmatchetLocalization::T("toolbar.editor.show_toolbar", "Show toolbar"), &editBuf_.Visible);
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
-    if (ImGui::Button(SmatchetLocalization::T("common.save", "Save"), ImVec2(90.0f, 0.0f))) {
+    // Save waits while a Command button in the list being saved has args that would not run. The tooltip
+    // names the row; a disabled item reports a hover only when asked with AllowWhenDisabled.
+    const int firstBadArgs = FirstInvalidArgsIndex(ctx.buttons);
+    ImGui::BeginDisabled(firstBadArgs >= 0);
+    const bool savePressed = ImGui::Button(SmatchetLocalization::T("common.save", "Save"), ImVec2(90.0f, 0.0f));
+    ImGui::EndDisabled();
+    if (firstBadArgs >= 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
+        const std::string rowLabel =
+            smatchet::toolbar_editor::EditorRowLabel(ctx.buttons[static_cast<std::size_t>(firstBadArgs)], ctx.faLoaded);
+        ImGui::SetTooltip("%s", SmatchetLocalization::Format(
+                                    "toolbar.editor.save_blocked_args_row",
+                                    "Row %d (%s) has args that are not a valid JSON object. Fix them to save.",
+                                    firstBadArgs + 1, rowLabel.c_str()));
+    }
+    if (savePressed) {
         if (ctx.trackerScope && editHasTracker_) {
             // Pillar-2: offload the load-modify-save off the UI thread. The load + save stay
             // co-located on one task so they remain ordered (no intra-pair read-after-write
