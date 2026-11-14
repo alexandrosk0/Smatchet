@@ -217,6 +217,15 @@ inline bool AssistantAiFieldsDiffer(const TrackerConfig& a, const TrackerConfig&
            a.AgentsMdAutoDiscoverProject != b.AgentsMdAutoDiscoverProject;
 }
 
+/// True when the Assistant settings hold staged edits the in-tab Save has not committed. `seeded`
+/// is UiDrawSession::assistantPrefsWorkingSeeded: until the tab has drawn once this open session
+/// the working copy is a default-constructed TrackerConfig, which differs from any real cfg, so an
+/// unseeded copy must read clean. Drives the close gate (a close with staged edits routes through
+/// the guard modal rather than discarding them) and the nav marker. Pure — bucket-A testable.
+inline bool AssistantPrefsWorkingCopyDirty(bool seeded, const TrackerConfig& working, const TrackerConfig& cfg) {
+    return seeded && AssistantAiFieldsDiffer(working, cfg);
+}
+
 /// #1706 — reset the Assistant-tab seed latches when the Preferences window
 /// closes (Discard-on-close). Clearing `workingSeeded` makes the working COPY
 /// re-seed from cfg on reopen; setting `forceReseed` makes SeedAssistantBuffers
@@ -246,6 +255,24 @@ inline bool McpPrefsFieldsDiffer(bool enabled, int port, bool allowRemote, bool 
            allowLuaExecution != cfg.McpAllowLuaExecution || authToken != cfg.McpAuthToken;
 }
 
+/// Which sentence the unsaved-changes guard modal shows. One per dirty-domain combination that
+/// has its own wording; anything involving the Assistant plus another domain gets the generic one.
+enum class PrefsCloseGuardKind { Tracker, Mcp, TrackerAndMcp, Assistant, Generic };
+
+/// Picks the guard-modal wording from the per-domain dirty flags. "Nothing dirty" maps to Tracker:
+/// the modal can outlive the edit that opened it (the buffers re-matched while it was up), and the
+/// Tracker sentence was the fallback before the Assistant joined the gate. Pure — bucket-A testable,
+/// and deliberately not feature-gated so the mapping is covered in every build.
+inline PrefsCloseGuardKind PickPrefsCloseGuardKind(bool trackerDirty, bool mcpDirty, bool assistantDirty) {
+    if (assistantDirty) {
+        return (trackerDirty || mcpDirty) ? PrefsCloseGuardKind::Generic : PrefsCloseGuardKind::Assistant;
+    }
+    if (mcpDirty) {
+        return trackerDirty ? PrefsCloseGuardKind::TrackerAndMcp : PrefsCloseGuardKind::Mcp;
+    }
+    return PrefsCloseGuardKind::Tracker;
+}
+
 } // namespace SmatchetPreferencesUiDetail
 
 // Lazy-load flags for the template lists drawn by DrawEditingPreferencesTab.
@@ -259,6 +286,9 @@ struct SmatchetPreferencesUiTemplateFlags {
 
 #if defined(SMATCHET_WITH_AI)
 void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d);
+/// Commits the Assistant working copy into cfg and persists it — the in-tab Save button's action,
+/// exposed so the window-level save paths (close-guard modal, Ctrl+S) can run it. UI-thread-only.
+void CommitAssistantPrefsWorkingCopy(AppController& app, UiDrawSession& d);
 #endif
 
 #if defined(SMATCHET_WITH_WHISPER)

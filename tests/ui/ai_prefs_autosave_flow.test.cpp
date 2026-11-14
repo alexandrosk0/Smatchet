@@ -32,6 +32,13 @@
 //      never a frame-budget yield) before closing Preferences; asserts the result
 //      line stays at the initial "Testing..." (type 0) per the cancel short-circuit.
 //      Skip-with-log on host-coupling failure.
+//   4. AssistantCloseGuard_DiscardDropsStagedEdit and
+//   5. AssistantCloseGuard_SaveCommitsStagedEdit — closing Preferences with a staged
+//      Assistant edit raises the unsaved-changes modal on the real window; Discard
+//      drops the edit, Save & Sync commits it to the live config and to disk.
+//   6. AssistantSaveShortcut_CtrlSSavesButNotThroughGuardModal — Ctrl+S in the focused
+//      Preferences window commits a staged Assistant edit and leaves the window open;
+//      the same chord pressed while the unsaved-changes modal is up saves nothing.
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)
 
@@ -42,14 +49,22 @@
 #include "ConfigManager.h"
 #include "IAiClient.h"
 #include "MainThreadDispatcher.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#if defined(SMATCHET_WITH_MCP)
+#include "McpServerStatus.h"
+#include "PluginHost.h"
+#include "SmatchetDefaults.h"
+#endif
 
 #include "imgui.h"
+#include "imgui_internal.h" // ImGuiWindow, FindWindowByName, ImHashStr
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -330,12 +345,320 @@ void RegisterVerifyOnSaveCancelOnCloseVariant(ImGuiTestEngine* engine) {
     };
 }
 
+// --- Variants 4-6: the Preferences close gate and Ctrl+S cover staged Assistant edits ---
+//
+// The Assistant page stages its edits into a working copy and commits them only on Save. Closing
+// Preferences used to drop that working copy without a word; the close gate now asks first
+// (docs/audits/INPUT_UX_AUDIT.md #74), and Ctrl+S saves it from the keyboard (#72). The variants
+// drive the REAL window: the real close gate, the real modal, a real click or key chord.
+
+template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
+    for (int i = 0; i < maxFrames; ++i) {
+        ctx->Yield();
+        if (pred()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PreferencesFullyClosed() { return !g_ui.showPreferences && !g_ui.preferencesBuffersLoaded; }
+
+// The unsaved-changes modal. The id after "###" is all that is hashed, so the lookup does not
+// depend on the translated title.
+const ImGuiWindow* CloseGuardModal() {
+    const ImGuiWindow* modal = ImGui::FindWindowByName("###PrefsTrackerCloseGuard");
+    return (modal != nullptr && modal->Active) ? modal : nullptr;
+}
+
+// `sourceLabel` is the English label the draw code passes; the localized Button wrapper turns it
+// into the submitted label the same way.
+ImGuiTestRef CloseGuardButton(const char* sourceLabel) {
+    const ImGuiWindow* modal = CloseGuardModal();
+    return ImGuiTestRef(modal != nullptr ? ImHashStr(SmatchetLocalization::LabelFromSource(sourceLabel), 0, modal->ID)
+                                         : 0);
+}
+
+// A reasoning-effort value that differs from the saved one. Not a secret, so nothing the test
+// writes needs protecting.
+const char* StagedEffortFor(const TrackerConfig& cfg) { return cfg.AiReasoningEffort == "high" ? "low" : "high"; }
+
+// What the variants below change outside the window itself, captured before the first change.
+struct StagedEditTestBackup {
+    TrackerConfig cfg;
+    PreferencesCategory category;
+    std::string search;
+};
+
+StagedEditTestBackup CaptureStagedEditTestBackup() {
+    return StagedEditTestBackup{g_ui.cfg, g_ui.preferencesCategory, std::string(g_ui.prefsSearchBuf)};
+}
+
+// The window's save (the modal's Save & Sync button, Ctrl+S) re-applies the MCP settings to the
+// plugin host. This spawned app serves the test driver over an MCP server the command line forced
+// on, which the profile's config knows nothing about; re-applying that config as it stands would
+// stop the server the whole run is driven through. Describe the running server in the config
+// first, so the re-apply finds nothing to change. Only while the window is closed: it loads its
+// MCP buffers from cfg on open, and an open window would read the change as an unsaved MCP edit.
+void DescribeLiveMcpServerInConfig(AppController* app) {
+#if defined(SMATCHET_WITH_MCP)
+    g_ui.cfg.McpEnabled = false;
+    const PluginHost* host = app->RuntimePluginHost();
+    if (host == nullptr) {
+        return;
+    }
+    const McpServerStatus status = host->GetMcpServerStatus();
+    if (status.PluginRegistered) {
+        g_ui.cfg.McpEnabled = true;
+        g_ui.cfg.McpPort = status.ListenPort;
+        g_ui.cfg.McpAllowRemote = status.BindHost == SmatchetDefaults::Mcp::kBindAny;
+    }
+#else
+    (void)app;
+#endif
+}
+
+// The driver's MCP server as the plugin host sees it: the port it listens on (0 when this app has
+// none) and how many times the host has logged starting or stopping the plugin. The description
+// above covers the port and the bind address only; the host also restarts the server when the
+// token, the Lua switch or the rate limits in cfg differ from what it started with, on the same
+// port. The start/stop lines are what shows that.
+struct LiveMcpServerState {
+    int port = 0;
+    int startStopLines = 0;
+};
+
+LiveMcpServerState ReadLiveMcpServerState(AppController* app) {
+    LiveMcpServerState out;
+#if defined(SMATCHET_WITH_MCP)
+    const PluginHost* host = app->RuntimePluginHost();
+    if (host != nullptr) {
+        const McpServerStatus status = host->GetMcpServerStatus();
+        out.port = status.PluginRegistered ? status.ListenPort : 0;
+    }
+    for (const std::string& line : app->CopyMcpActivityLog()) {
+        if (line.find("MCP: plugin started") != std::string::npos ||
+            line.find("MCP: plugin stopped") != std::string::npos) {
+            ++out.startStopLines;
+        }
+    }
+#else
+    (void)app;
+#endif
+    return out;
+}
+
+// True while the save left the driver's MCP server alone: same port, and not stopped or restarted.
+// (The activity log is capped, so old lines can drop out; a restart can only add to the count.)
+bool LiveMcpServerUntouched(AppController* app, const LiveMcpServerState& before) {
+    const LiveMcpServerState now = ReadLiveMcpServerState(app);
+    return now.port == before.port && now.startStopLines <= before.startStopLines;
+}
+
+// Opens Preferences on the Assistant page, waits until the page has seeded its working copy from
+// cfg, then stages one edit into it — the state a user is in after changing a setting there
+// without pressing Save. `savingApp` is the app when the variant goes on to run a real save (see
+// DescribeLiveMcpServerInConfig), null otherwise.
+bool OpenAssistantPageWithStagedEdit(ImGuiTestContext* ctx, const char* stagedEffort,
+                                     AppController* savingApp = nullptr) {
+    g_ui.cfg.BackendHasBeenReachable = true; // without it the first-run lock re-opens the window
+    g_ui.showPreferences = false;
+    if (!YieldUntil(ctx, [] { return PreferencesFullyClosed(); })) {
+        return false;
+    }
+    if (savingApp != nullptr) {
+        DescribeLiveMcpServerInConfig(savingApp);
+    }
+    g_ui.preferencesCategory = PreferencesCategory::AiVoice;
+    g_ui.prefsSearchBuf[0] = '\0';
+    g_ui.showPreferences = true;
+    // Re-arm the focus request each frame: a docked Preferences tab only draws its body once it
+    // is the selected tab, and the draw code consumes the request in one frame.
+    const bool seeded = YieldUntil(ctx, [] {
+        g_ui.requestPreferencesFocus = true;
+        return g_ui.assistantPrefsWorkingSeeded;
+    });
+    // Stop asking for focus before the modal comes up: a focus request raises the Preferences
+    // window every frame, over the modal.
+    g_ui.requestPreferencesFocus = false;
+    if (!seeded) {
+        return false;
+    }
+    ctx->Yield(3);
+    g_ui.assistantPrefsWorking.AiReasoningEffort = stagedEffort;
+    ctx->Yield();
+    return g_ui.assistantPrefsWorking.AiReasoningEffort == stagedEffort;
+}
+
+// Asks the window to close and waits for the modal. False when the window closed, or stayed open
+// without asking.
+bool CloseRaisesGuardModal(ImGuiTestContext* ctx) {
+    g_ui.showPreferences = false;
+    return YieldUntil(ctx, [] { return CloseGuardModal() != nullptr; }, 120);
+}
+
+// Leaves the window closed and the UI's own state as the test found it, whichever step failed.
+// The copy on disk is the caller's to restore: only the saving variants write it.
+void RestoreAfterStagedEditTest(ImGuiTestContext* ctx, const StagedEditTestBackup& backup) {
+    ctx->PopupCloseAll();
+    g_ui.assistantPrefsWorking.AiReasoningEffort = g_ui.cfg.AiReasoningEffort; // nothing left staged
+    g_ui.showPreferences = false;
+    YieldUntil(ctx, [] { return PreferencesFullyClosed(); });
+    g_ui.cfg = backup.cfg;
+    g_ui.preferencesCategory = backup.category;
+    std::snprintf(g_ui.prefsSearchBuf, sizeof(g_ui.prefsSearchBuf), "%s", backup.search.c_str());
+}
+
+// The saving variants ran a real Save & Sync. Let the sync it started and the debounced config
+// write it armed both finish while the config they read is still the saved one; only then is it
+// safe to put the test's backups back, in memory and on disk. Closing the window and swapping the
+// config back arm that debounced write once more (the window-open flag is persisted), so the disk
+// copy goes back last, after that write has landed too.
+void SettleSaveAndRestoreDisk(ImGuiTestContext* ctx, AppController* app, const StagedEditTestBackup& backup,
+                              const TrackerConfig& diskBackup) {
+    YieldUntil(ctx, [app] { return !app->IsSyncPendingOrActive() && !g_ui.prefsDirty; }, 1200);
+    RestoreAfterStagedEditTest(ctx, backup);
+    ctx->Yield(3);
+    YieldUntil(ctx, [] { return !g_ui.prefsDirty; }, 600);
+    ConfigManager::Save(diskBackup);
+    ConfigManager::InvalidateCache();
+}
+
+AppController* StagedEditTestApp(ImGuiTestContext* ctx) {
+    AppController* app = SmatchetActiveUiTestAppController();
+    if (app == nullptr) {
+        ctx->LogInfo("skip: SmatchetActiveUiTestAppController() returned nullptr");
+    }
+    return app;
+}
+
+void RegisterAssistantCloseGuardDiscardVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefs", "AssistantCloseGuard_DiscardDropsStagedEdit");
+
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (StagedEditTestApp(ctx) == nullptr) {
+            return;
+        }
+        const StagedEditTestBackup backup = CaptureStagedEditTestBackup();
+        const std::string savedEffort = backup.cfg.AiReasoningEffort;
+        const char* stagedEffort = StagedEffortFor(backup.cfg);
+        ConfigManager::InvalidateCache();
+        const std::string diskEffort = ConfigManager::Load().AiReasoningEffort;
+
+        const bool staged = OpenAssistantPageWithStagedEdit(ctx, stagedEffort);
+        IM_CHECK_NO_RET(staged);
+        if (staged) {
+            const bool asked = CloseRaisesGuardModal(ctx);
+            IM_CHECK_NO_RET(asked);                // the close did not go through silently
+            IM_CHECK_NO_RET(g_ui.showPreferences); // the gate put the window back
+            IM_CHECK_NO_RET(g_ui.assistantPrefsWorking.AiReasoningEffort == stagedEffort); // edit still there
+            if (asked) {
+                ctx->ItemClick(CloseGuardButton("Discard"));
+                const bool closed = YieldUntil(ctx, [] { return PreferencesFullyClosed(); });
+                IM_CHECK_NO_RET(closed);
+                IM_CHECK_NO_RET(g_ui.cfg.AiReasoningEffort == savedEffort); // nothing was committed
+                IM_CHECK_NO_RET(!g_ui.assistantPrefsWorkingSeeded);         // the next open re-seeds from cfg
+                ConfigManager::InvalidateCache();
+                IM_CHECK_NO_RET(ConfigManager::Load().AiReasoningEffort == diskEffort); // nor written to disk
+            }
+        }
+
+        RestoreAfterStagedEditTest(ctx, backup);
+    };
+}
+
+void RegisterAssistantCloseGuardSaveVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefs", "AssistantCloseGuard_SaveCommitsStagedEdit");
+
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = StagedEditTestApp(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        const StagedEditTestBackup backup = CaptureStagedEditTestBackup();
+        const char* stagedEffort = StagedEffortFor(backup.cfg);
+        ConfigManager::InvalidateCache();
+        const TrackerConfig diskBackup = ConfigManager::Load();
+        const LiveMcpServerState mcpBefore = ReadLiveMcpServerState(app);
+
+        const bool staged = OpenAssistantPageWithStagedEdit(ctx, stagedEffort, app);
+        IM_CHECK_NO_RET(staged);
+        if (staged) {
+            const bool asked = CloseRaisesGuardModal(ctx);
+            IM_CHECK_NO_RET(asked);
+            if (asked) {
+                ctx->ItemClick(CloseGuardButton("Save & Sync"));
+                const bool closed = YieldUntil(ctx, [] { return PreferencesFullyClosed(); });
+                IM_CHECK_NO_RET(closed);
+                IM_CHECK_NO_RET(g_ui.cfg.AiReasoningEffort == stagedEffort); // committed to the live config
+                ConfigManager::InvalidateCache();
+                IM_CHECK_NO_RET(ConfigManager::Load().AiReasoningEffort == stagedEffort); // and to disk
+                IM_CHECK_NO_RET(LiveMcpServerUntouched(app, mcpBefore));
+            }
+        }
+
+        SettleSaveAndRestoreDisk(ctx, app, backup, diskBackup);
+    };
+}
+
+void RegisterAssistantSaveShortcutVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefs", "AssistantSaveShortcut_CtrlSSavesButNotThroughGuardModal");
+
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = StagedEditTestApp(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        const StagedEditTestBackup backup = CaptureStagedEditTestBackup();
+        const std::string savedEffort = backup.cfg.AiReasoningEffort;
+        const std::string stagedEffort = StagedEffortFor(backup.cfg);
+        ConfigManager::InvalidateCache();
+        const TrackerConfig diskBackup = ConfigManager::Load();
+        const LiveMcpServerState mcpBefore = ReadLiveMcpServerState(app);
+
+        const bool staged = OpenAssistantPageWithStagedEdit(ctx, stagedEffort.c_str(), app);
+        IM_CHECK_NO_RET(staged);
+        if (staged) {
+            // The window was just raised and focused by the open; no click, the chord alone.
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_S);
+            const bool saved =
+                YieldUntil(ctx, [&stagedEffort] { return g_ui.cfg.AiReasoningEffort == stagedEffort; }, 60);
+            IM_CHECK_NO_RET(saved);                // committed to the live config
+            IM_CHECK_NO_RET(g_ui.showPreferences); // a save, not a close
+            ConfigManager::InvalidateCache();
+            IM_CHECK_NO_RET(ConfigManager::Load().AiReasoningEffort == stagedEffort); // and to disk
+            IM_CHECK_NO_RET(LiveMcpServerUntouched(app, mcpBefore));
+
+            // Stage the opposite edit and ask to close: with the unsaved-changes modal up the
+            // chord must not reach the window behind it and answer the question on its own.
+            g_ui.assistantPrefsWorking.AiReasoningEffort = savedEffort;
+            ctx->Yield();
+            const bool asked = saved && CloseRaisesGuardModal(ctx);
+            IM_CHECK_NO_RET(asked);
+            if (asked) {
+                ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_S);
+                ctx->Yield(5);
+                IM_CHECK_NO_RET(g_ui.cfg.AiReasoningEffort == stagedEffort); // nothing new committed
+                IM_CHECK_NO_RET(CloseGuardModal() != nullptr);               // still asking
+                ctx->ItemClick(CloseGuardButton("Discard"));
+                IM_CHECK_NO_RET(YieldUntil(ctx, [] { return PreferencesFullyClosed(); }));
+                IM_CHECK_NO_RET(g_ui.cfg.AiReasoningEffort == stagedEffort);
+            }
+        }
+
+        SettleSaveAndRestoreDisk(ctx, app, backup, diskBackup);
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine) {
     RegisterAutosaveDebounceVariant(engine);
     RegisterVerifyOnSaveTestConnectionVariant(engine);
     RegisterVerifyOnSaveCancelOnCloseVariant(engine);
+    RegisterAssistantCloseGuardDiscardVariant(engine);
+    RegisterAssistantCloseGuardSaveVariant(engine);
+    RegisterAssistantSaveShortcutVariant(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS && SMATCHET_WITH_AI

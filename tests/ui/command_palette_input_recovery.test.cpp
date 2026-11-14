@@ -104,12 +104,15 @@ void DrawHarness(ImGuiTestContext* ctx) {
     }
 }
 
-// The palette's scrolling list is a child window named "<parent>/##cmdlist_<id>".
+// The palette's scrolling list is a child window named "##cmdpalette/##cmdlist_<id>". The parent
+// is part of the match: the toolbar editor has a "##cmdlist" child of its own, which stays in the
+// window list after that editor has closed.
 ImGuiWindow* FindPaletteListWindow() {
+    static const char kPrefix[] = "##cmdpalette/##cmdlist";
     const ImGuiContext& g = *GImGui;
     for (int i = 0; i < g.Windows.Size; ++i) {
         ImGuiWindow* w = g.Windows[i];
-        if (w != nullptr && w->Name != nullptr && std::strstr(w->Name, "##cmdlist") != nullptr) {
+        if (w != nullptr && w->Name != nullptr && std::strncmp(w->Name, kPrefix, sizeof(kPrefix) - 1) == 0) {
             return w;
         }
     }

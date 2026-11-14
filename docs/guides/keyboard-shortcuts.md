@@ -121,6 +121,17 @@ shortcuts** section of the editor:
 
 These are multi-key or modal-local and are out of scope for v1 rebinding.
 
+The **Preferences** window has two fixed keys of its own, active only while it has
+keyboard focus:
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+S` | Save & Sync, and save any unsaved Assistant settings |
+| `Enter` in a tracker connection field | Test connection |
+
+Opening Preferences puts the keyboard in the first blank connection field while the
+tracker is still being set up, and in the settings search box afterwards.
+
 ## Default bindings
 
 | Action | Default | Command id |

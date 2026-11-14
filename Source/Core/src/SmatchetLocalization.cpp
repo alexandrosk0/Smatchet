@@ -1279,6 +1279,16 @@ const TranslationEntry kEntries[] = {
      "discards them.",
      u8"L'onglet Suivi et la section MCP contiennent des modifications non enregistrées. Save & Sync les "
      u8"applique ; fermer sans enregistrer les abandonne."},
+    {"prefs.assistant.close_guard.body",
+     "The Assistant settings have unsaved edits. Save & Sync applies them; closing without saving discards them.",
+     u8"Les paramètres de l'assistant contiennent des modifications non enregistrées. Save & Sync les applique ; "
+     u8"fermer sans enregistrer les abandonne."},
+    {"prefs.close_guard.generic.body",
+     "Preferences has unsaved edits. Save & Sync applies them; closing without saving discards them.",
+     u8"Les préférences contiennent des modifications non enregistrées. Save & Sync les applique ; fermer sans "
+     u8"enregistrer les abandonne."},
+    {"prefs.save_sync.tooltip", "Save settings and sync issues (Ctrl+S).",
+     u8"Enregistrer les paramètres et synchroniser les tickets (Ctrl+S)."},
     {"prefs.tracker.test.ok", "Connected - credentials verified.", u8"Connecté - identifiants vérifiés."},
     {"prefs.tracker.test.auth",
      "Reached the server, but sign-in failed: ", u8"Serveur atteint, mais l'authentification a échoué : "},
