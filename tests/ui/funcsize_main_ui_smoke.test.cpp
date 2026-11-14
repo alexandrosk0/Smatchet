@@ -263,7 +263,20 @@ void RegisterToolbarEditorCommandFilter(ImGuiTestEngine* engine) {
     };
 }
 
+// How many notices in the history carry `title` as a warning.
+int CountWarnings(const SmatchetToastManager& toasts, const char* title) {
+    int n = 0;
+    for (const ToastHistoryEntry& entry : toasts.History()) {
+        if (entry.Type == ToastType::Warning && entry.Title == title) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 // A toolbar button whose saved args are not a JSON object is not run: one warning says so.
+// A second click while that warning is up adds no second one, and the button's menu offers
+// no shortcut for it.
 // The probe has no icon, so its label is the first word of its tooltip, and it sits first
 // in the bar. The toolbar is put back at the end; nothing here saves it.
 void RegisterToolbarBadArgsButtonNotRun(ImGuiTestEngine* engine) {
@@ -291,11 +304,21 @@ void RegisterToolbarBadArgsButtonNotRun(ImGuiTestEngine* engine) {
         if (shown) {
             ctx->ItemClick(kProbe);
             ctx->Yield(2);
-            bool refused = false;
-            for (const ToastHistoryEntry& entry : toasts.History()) {
-                refused = refused || (entry.Type == ToastType::Warning && entry.Title == "Toolbar button not run");
+            IM_CHECK_EQ_NO_RET(CountWarnings(toasts, "Toolbar button not run"), 1);
+            ctx->ItemClick(kProbe);
+            ctx->Yield(2);
+            IM_CHECK_EQ_NO_RET(CountWarnings(toasts, "Toolbar button not run"), 1);
+
+            ctx->ItemClick(kProbe, ImGuiMouseButton_Right);
+            const char* kSetShortcut = "//$FOCUSED/Set shortcut...";
+            const bool menuShown = YieldUntil(ctx, [&] { return ctx->ItemExists(kSetShortcut); }, 60);
+            IM_CHECK_NO_RET(menuShown);
+            if (menuShown) {
+                const bool shortcutOffered = (ctx->ItemInfo(kSetShortcut).ItemFlags & ImGuiItemFlags_Disabled) == 0;
+                IM_CHECK_NO_RET(!shortcutOffered);
             }
-            IM_CHECK_NO_RET(refused);
+            ctx->PopupCloseAll(); // the button's menu
+            ctx->Yield(2);
         }
         g_ui.cfg.Toolbar = saved;
         toasts.DismissAllLive(); // the warning would sit over a later case's click target
@@ -328,10 +351,16 @@ void RegisterKeybindingBadArgsNotRun(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         bool refused = false;
         for (const ToastHistoryEntry& entry : toasts.History()) {
+            // The notice names the command and says where the shortcut is cleared.
             refused = refused || (entry.Type == ToastType::Warning && entry.Title == "Shortcut not run" &&
-                                  entry.Message.find("view.list") != std::string::npos);
+                                  entry.Message.find("view.list") != std::string::npos &&
+                                  entry.Message.find("Preferences") != std::string::npos);
         }
         IM_CHECK_NO_RET(refused);
+        // The same key again while that notice is up: refused again, and not announced again.
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_F9);
+        ctx->Yield(2);
+        IM_CHECK_EQ_NO_RET(CountWarnings(toasts, "Shortcut not run"), 1);
 
         g_ui.cfg.Keybindings.Bindings = saved;
         SmatchetUiTestMarkKeybindingsDirty();

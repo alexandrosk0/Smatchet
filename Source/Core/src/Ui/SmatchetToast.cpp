@@ -66,6 +66,15 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     PushBoundedHistory(m_history, std::move(entry), HistoryCap());
 }
 
+bool SmatchetToastManager::HasLive(const std::string& title, const std::string& message) const {
+    for (const ToastNotification& t : m_toasts) {
+        if (t.Title == title && t.Message == message) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool SmatchetToastManager::ConsumeOpenCenterRequest() {
     const bool requested = m_openCenterRequested;
     m_openCenterRequested = false;

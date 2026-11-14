@@ -143,6 +143,8 @@ TEST_CASE("ToolbarButtonShortcutDisplay: empty for non-command buttons and unbou
 }
 
 using smatchet::toolbar_editor::ArgsJsonStatus;
+using smatchet::toolbar_editor::ArgsTextRuns;
+using smatchet::toolbar_editor::EditorRowLabelWithArgsCue;
 using smatchet::toolbar_editor::ParseToolbarArgsJson;
 using smatchet::toolbar_editor::RankCommandMatches;
 using smatchet::toolbar_editor::TrimAscii;
@@ -217,6 +219,22 @@ TEST_CASE("RankCommandMatches: the match ignores case") {
     const std::vector<int> first = {0};
     CHECK(RankCommandMatches(names, names, "REFRESH") == first);
     CHECK(RankCommandMatches(names, names, "Tracker.Refresh") == first);
+}
+
+TEST_CASE("EditorRowLabelWithArgsCue: only a bad-args row carries the cue") {
+    CHECK(EditorRowLabelWithArgsCue("[ ]  Refresh", false, "(args not valid)") == "[ ]  Refresh");
+    CHECK(EditorRowLabelWithArgsCue("[ ]  Refresh", true, "(args not valid)") == "[ ]  Refresh  (args not valid)");
+    CHECK(EditorRowLabelWithArgsCue("[ ]  Refresh", true, "") == "[ ]  Refresh");
+}
+
+TEST_CASE("ArgsTextRuns: empty text and JSON objects run, anything else does not") {
+    CHECK(ArgsTextRuns(""));
+    CHECK(ArgsTextRuns("{}"));
+    CHECK(ArgsTextRuns("   "));
+    CHECK(ArgsTextRuns("{\"action\": \"toggle\"}"));
+    CHECK_FALSE(ArgsTextRuns("[1]"));
+    CHECK_FALSE(ArgsTextRuns("{'a':1}"));
+    CHECK_FALSE(ArgsTextRuns("7"));
 }
 
 TEST_CASE("RankCommandMatches: characters in order match, not only a substring") {

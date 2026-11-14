@@ -153,6 +153,7 @@ void RegisterDropAllRejected(ImGuiTestEngine* engine) {
             IM_CHECK_NO_RET(entry.Message.find(".md") != std::string::npos);
         }
         IM_CHECK_NO_RET(!g_ui.showPlanDocViewer);
+        toasts.DismissAllLive(); // the notice would sit over a later case's click target
         ctx->Yield();
     };
 }
@@ -183,6 +184,7 @@ void RegisterDropMixed(ImGuiTestEngine* engine) {
             IM_CHECK_NO_RET(entry.Message.find("1 of 2") != std::string::npos);
         }
         g_ui.showPlanDocViewer = false;
+        toasts.DismissAllLive(); // the notice would sit over a later case's click target
         ctx->Yield();
     };
 }

@@ -1275,7 +1275,9 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
 // Puts the caret in the resolved field, once per request; call right before the field. The request waits
 // while Enter is held: the Enter that opened the resolver from the row would otherwise repeat into the field
 // and save a value unasked, or type newlines into the text. It also waits while a window is being dragged,
-// when ImGui drops a focus request.
+// when ImGui drops a focus request. A request made while a popup above the resolver has the keyboard is
+// dropped, not kept: the caret is not pulled out of that popup, and not moved later, out of whatever the
+// user went on to.
 static void TakeConflictCaretRequest() {
     if (!g_conflictFocusFieldPending) {
         return;
@@ -1286,7 +1288,9 @@ static void TakeConflictCaretRequest() {
         return;
     }
     g_conflictFocusFieldPending = false;
-    ImGui::SetKeyboardFocusHere();
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+        ImGui::SetKeyboardFocusHere();
+    }
 }
 
 static void DrawConflictKeysHint(const char* key, const char* fallback) {
@@ -1367,10 +1371,12 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     const bool saveClicked = ImGui::Button("Save resolved", ImVec2(130, 0));
     if (!saveEnabled)
         ImGui::EndDisabled();
-    // Ctrl+Enter saves under the same rule as the button: not while a conflict marker is left. It does
-    // nothing when a click on Use Mine or Use Theirs resolved the conflict earlier in this frame.
-    const bool keyboardSave = keys.Save && d.conflictResolveDbId != 0;
-    if ((saveClicked || keyboardSave) && saveEnabled) {
+    // Ctrl+Enter saves under the same rule as the button: not while a conflict marker is left. Neither the
+    // key nor the button does anything once Use Mine or Use Theirs has resolved the conflict earlier in this
+    // frame: the resolution text is gone by then.
+    const bool stillOpen = d.conflictResolveDbId != 0;
+    const bool keyboardSave = keys.Save && stillOpen;
+    if ((saveClicked || keyboardSave) && saveEnabled && stillOpen) {
         doResolve(std::string(d.conflictResolveBuf.data()));
     }
     if (keyboardSave && (!saveEnabled || !d.conflictResolveError.empty())) {
@@ -1437,9 +1443,12 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
         doResolve(cc.Theirs);
     }
     ImGui::SameLine();
-    // A key does nothing when a click on Use Mine or Use Theirs resolved the conflict earlier in this frame.
-    const bool keyboardSave = (enterSaves || keys.Save) && d.conflictResolveDbId != 0;
-    if (ImGui::Button("Save value", ImVec2(130, 0)) || keyboardSave) {
+    // Neither a key nor the button does anything once Use Mine or Use Theirs has resolved the conflict
+    // earlier in this frame: the resolution text is gone by then.
+    const bool stillOpen = d.conflictResolveDbId != 0;
+    const bool keyboardSave = (enterSaves || keys.Save) && stillOpen;
+    const bool saveClicked = ImGui::Button("Save value", ImVec2(130, 0));
+    if ((saveClicked || keyboardSave) && stillOpen) {
         doResolve(std::string(d.conflictResolveBuf.data()));
         if (keyboardSave && !d.conflictResolveError.empty()) {
             g_conflictFocusFieldPending = true; // the value was turned down: caret back in the field to fix it

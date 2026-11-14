@@ -28,7 +28,8 @@ enum class ArgsTextOrigin { ToolbarButton, Shortcut };
 /** Runs the registry command `commandId` with args given as JSON text; empty text means {}.
     Text that is not a JSON object is refused: a warning toast and a log line, and the command
     is not run. Running it with {} in their place would do something other than what the button
-    or shortcut was set up to do. UI thread only. */
+    or shortcut was set up to do. While that toast is still on screen a repeat of the same press
+    is refused without a second one. UI thread only. */
 void DispatchCommandWithArgsText(AppController& app, const std::string& commandId, const std::string& argsJson,
                                  ArgsTextOrigin origin);
 

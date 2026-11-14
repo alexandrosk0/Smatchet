@@ -20,10 +20,12 @@
 #include "Config/KeybindingsConfig.h"
 #include "ConfigManager.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetToolbarUi_detail.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
 #include "Ui/PreferencesFilter.h"
 #include "Ui/SmatchetHotkeyCapture.h"
+#include "Ui/SmatchetTheme.h"
 
 #include "imgui.h"
 
@@ -139,9 +141,9 @@ bool DrawBindingCombosCell(Keybinding& b, const std::string& rowKey, std::string
         std::string out;
         // "###" makes the button's ImGui id locale-stable ("kbAddCombo") while the
         // visible label stays the localized "+ Add" — bucket-E addresses the id.
-        const bool committed = smatchet::ui::DrawHotkeyRebindControl(
-            "###kbAddCombo", std::string(), capturing, out,
-            SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
+        const bool committed =
+            smatchet::ui::DrawHotkeyRebindControl("###kbAddCombo", std::string(), capturing, out,
+                                                  SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
         if (capturing) {
             capturingKey = addKey;
         } else if (capturingKey == addKey) {
@@ -374,10 +376,19 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", b.CommandId.c_str());
             }
+            // A shortcut whose args would not run is refused on every press. Its row says so, in words and
+            // in the error colour, so it can be told from a working shortcut for the same command.
+            if (!smatchet::toolbar_editor::ArgsTextRuns(b.ArgsJson)) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+                ImGui::TextUnformatted(SmatchetLocalization::T("toolbar.editor.row_bad_args", "(args not valid)"));
+                ImGui::PopStyleColor();
+            }
 
             ImGui::TableSetColumnIndex(1);
             const std::string rowKey = b.CommandId + "\x1f" + b.ArgsJson;
-            const std::string conflictLabel = conflictIds[i].empty() ? std::string() : CommandLabel(app, conflictIds[i]);
+            const std::string conflictLabel =
+                conflictIds[i].empty() ? std::string() : CommandLabel(app, conflictIds[i]);
             if (DrawBindingCombosCell(b, rowKey, capturingKey, offendingCombos[i], conflictLabel)) {
                 mutated = true;
             }

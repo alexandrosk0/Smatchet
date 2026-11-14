@@ -41,6 +41,9 @@ class SmatchetToastManager {
     // sticky error toast each) must not stack past the top of the viewport; the oldest
     // live toast is dropped instead (its history entry + the unread-error badge persist).
     std::size_t LiveCount() const { return m_toasts.size(); }
+    // True while a toast with this title and message is on screen. It stops being true when the toast
+    // expires, is dismissed, or is pushed out at the live cap; the history does not count.
+    bool HasLive(const std::string& title, const std::string& message) const;
     // Dismiss every live toast at once (history untouched).
     void DismissAllLive() { m_toasts.clear(); }
     // Live-stack cap: limits::Get().ToastMaxLive (default 6). A function, not a constant, so a

@@ -41,6 +41,15 @@ inline std::string EditorRowLabel(const ToolbarButton& b, bool faLoaded) {
     return label;
 }
 
+// The row label as the editor's list draws it. A row whose args would not run carries `cue` in words,
+// next to the error colour, so it can be told apart without the colour.
+inline std::string EditorRowLabelWithArgsCue(const std::string& rowLabel, bool badArgs, const std::string& cue) {
+    if (!badArgs || cue.empty()) {
+        return rowLabel;
+    }
+    return rowLabel + "  " + cue;
+}
+
 // Destination index for a drag-drop reorder that erases `src` then inserts before
 // the original target `dst`. Erasing an earlier element shifts the target left by
 // one, so the insert position is dst-1 when src precedes dst, dst otherwise.
@@ -103,6 +112,16 @@ inline ArgsJsonStatus ParseToolbarArgsJson(const std::string& text, nlohmann::js
     }
     out = std::move(parsed);
     return ArgsJsonStatus::Ok;
+}
+
+// True when args text would run: it is empty, or a JSON object within the parser's caps. "{}" is the
+// usual text, so it is answered without a parse; this is asked per row and per frame.
+inline bool ArgsTextRuns(const std::string& text) {
+    if (text.empty() || text == "{}") {
+        return true;
+    }
+    nlohmann::json unused;
+    return ParseToolbarArgsJson(text, unused) == ArgsJsonStatus::Ok;
 }
 
 // Indices into `names`, filtered and ranked for the editor's command list. `haystacks[i]` is the text

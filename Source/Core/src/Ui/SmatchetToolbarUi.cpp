@@ -19,7 +19,6 @@
 #include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
-#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
@@ -62,6 +61,9 @@ bool InputTextMultilineStdString(const char* label, std::string& str, const ImVe
 }
 
 const int kArgsOk = static_cast<int>(smatchet::toolbar_editor::ArgsJsonStatus::Ok);
+
+// How long the "not run" notice for a button or shortcut with bad args stays up.
+const int kBadArgsNoticeMs = 6000;
 
 // What is wrong with a button's args, in the user's words. The parser's own message is English-only.
 const char* ArgsStatusMessage(int status) {
@@ -161,8 +163,6 @@ void smatchet::ui::DispatchCommandWithArgsText(AppController& app, const std::st
     const smatchet::toolbar_editor::ArgsJsonStatus argsStatus =
         smatchet::toolbar_editor::ParseToolbarArgsJson(argsJson, args);
     if (argsStatus != smatchet::toolbar_editor::ArgsJsonStatus::Ok) {
-        LOG_WARN("%s: args for command \"%s\" are not a valid JSON object (status %d); not run", who, commandId.c_str(),
-                 static_cast<int>(argsStatus));
         // Each localized string is copied before the next lookup, which may reuse the buffer.
         const std::string title = fromToolbar
                                       ? SmatchetLocalization::T("toolbar.bad_args.title", "Toolbar button not run")
@@ -171,9 +171,21 @@ void smatchet::ui::DispatchCommandWithArgsText(AppController& app, const std::st
             fromToolbar
                 ? SmatchetLocalization::T("toolbar.bad_args.body",
                                           "Its args are not a valid JSON object. Fix them in Customize Toolbar.")
-                : SmatchetLocalization::Format("keybindings.bad_args.body",
-                                               "The args for \"%s\" are not a valid JSON object.", commandId.c_str());
-        SmatchetToastManager::Instance().Push(title, body, ToastType::Warning, 6000);
+                : SmatchetLocalization::Format("keybindings.bad_args.body_fix",
+                                               "The args for \"%s\" are not a valid JSON object. Clear the shortcut "
+                                               "in Preferences, under Shortcuts.",
+                                               commandId.c_str());
+        // One notice is enough while it is on screen: a shortcut on the mouse wheel would otherwise raise
+        // one per notch. The press is refused either way. Asking the toast manager, not a timer, means a
+        // notice the user closed, or one pushed out by others, is raised again on the next press.
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        if (toasts.HasLive(title, body)) {
+            LOG_DEBUG("%s: args for command \"%s\" are still not a valid JSON object; not run", who, commandId.c_str());
+            return;
+        }
+        LOG_WARN("%s: args for command \"%s\" are not a valid JSON object (status %d); not run", who, commandId.c_str(),
+                 static_cast<int>(argsStatus));
+        toasts.Push(title, body, ToastType::Warning, kBadArgsNoticeMs);
         return;
     }
     smatchet::cmd::CommandContext ctx;
@@ -402,9 +414,17 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     // command id to bind. Latches the request for SmatchetUI to open the shared quick-bind modal.
     const ToolbarButton& clicked = buttons[src];
     if (clicked.Kind == ToolbarButtonKind::Command && !clicked.CommandId.empty()) {
-        if (ImGui::MenuItem(SmatchetLocalization::T("cmdpalette.set_shortcut", "Set shortcut..."))) {
+        // A button whose args would not run gets no shortcut from here: the shortcut would copy those args
+        // and be refused on every press.
+        const bool argsOk = smatchet::toolbar_editor::ArgsTextRuns(clicked.ArgsJson);
+        if (ImGui::MenuItem(SmatchetLocalization::T("cmdpalette.set_shortcut", "Set shortcut..."), nullptr, false,
+                            argsOk)) {
             requestQuickBindCommandId_ = clicked.CommandId;
             requestQuickBindArgsJson_ = clicked.ArgsJson; // bind the button's real args, not "{}"
+        }
+        if (!argsOk && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("toolbar.menu.set_shortcut_bad_args",
+                                                            "Fix this button's args in Customize Toolbar first."));
         }
     }
     ImGui::Separator();
@@ -609,14 +629,19 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
     for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
         const std::string rowLabel = smatchet::toolbar_editor::EditorRowLabel(buttons[i], ctx.faLoaded);
         ImGui::PushID(i);
-        // A row whose args would not run is drawn in the error colour, so the row that keeps Save
-        // disabled can be found without the mouse.
+        // A row whose args would not run is drawn in the error colour and says so in words, so the row
+        // that keeps Save disabled can be found without the mouse and without the colour.
         const bool badArgs = buttons[i].Kind == ToolbarButtonKind::Command &&
                              ArgsStatusAt(static_cast<std::size_t>(i), buttons[i].ArgsJson) != kArgsOk;
+        const std::string shownLabel = smatchet::toolbar_editor::EditorRowLabelWithArgsCue(
+            rowLabel, badArgs,
+            badArgs ? SmatchetLocalization::T("toolbar.editor.row_bad_args", "(args not valid)") : "");
         if (badArgs) {
             ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
         }
-        if (ImGui::Selectable(rowLabel.c_str(), selected_ == i)) {
+        // The id is the row's place in the list (PushID above), not its label: the label changes as the
+        // args go bad and good, and the row must stay the same item while it does.
+        if (ImGui::Selectable((shownLabel + "###row").c_str(), selected_ == i)) {
             selected_ = i;
         }
         if (badArgs) {
