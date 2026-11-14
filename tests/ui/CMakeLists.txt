@@ -61,6 +61,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dock_slot_liveness.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/docked_tab_focus.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/duration_inline_edit_commit.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/filter_dropdown.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_view_quick_switcher.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_desktop_layout_roundtrip.test.cpp"

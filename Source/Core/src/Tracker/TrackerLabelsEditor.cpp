@@ -1,5 +1,8 @@
 #include "TrackerLabelsEditor.h"
 #include "AppController.h"
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
 #include "TrackerLabelsPure.h"
 #include "TouchCellEditGesture.h"
@@ -15,7 +18,6 @@
 #include <vector>
 
 using TrackerLabelsPure::ContainsLabelCaseInsensitive;
-using TrackerLabelsPure::FilterSuggestionsForDisplay;
 using TrackerLabelsPure::LabelsEqualCaseInsensitive;
 using TrackerLabelsPure::ParseCsv;
 using TrackerLabelsPure::SortAndUniqueLabels;
@@ -44,83 +46,47 @@ std::vector<std::string> CollectLabelSuggestions(const AppController& app, const
     return SortAndUniqueLabels(std::move(labels));
 }
 
-// Draw the open labels-combo body: the search box, the suggestion checkboxes,
-// and the add-draft row. Owns the inner PushID/PopID pair. `queue` applies the
+// Draws the open labels-combo body through the shared dropdown in tick-box mode: clear-all, filter,
+// recent picks, and an 'Add "<text>"' row for a label that does not exist yet. `queue` applies the
 // intended full label set (set-replace).
-void DrawLabelsComboBody(const std::string& editorKey, const CachedTicket& ticket, const TrackerField& field,
-                         const std::vector<std::string>& selectedLabels, const std::vector<std::string>& suggestions,
+void DrawLabelsComboBody(const std::vector<std::string>& selectedLabels, const std::vector<std::string>& suggestions,
+                         const std::string& recentsScope,
                          const std::function<void(const std::vector<std::string>&)>& queue) {
-    static std::string activeEditorKey;
-    static char draftBuf[128] = "";
-    static char searchBuf[128] = "";
-    ImGui::PushID(editorKey.c_str());
-    if (activeEditorKey != editorKey) {
-        activeEditorKey = editorKey;
-        draftBuf[0] = '\0';
-        searchBuf[0] = '\0';
+    std::vector<smatchet::dropdown::Item> items;
+    items.reserve(suggestions.size());
+    for (const auto& suggestion : suggestions) {
+        smatchet::dropdown::Item item;
+        item.Id = suggestion.c_str();
+        item.Label = suggestion.c_str();
+        item.Checked = ContainsLabelCaseInsensitive(selectedLabels, suggestion);
+        items.push_back(item);
     }
-
-    if (ImGui::Selectable("<clear all>", selectedLabels.empty())) {
-        queue({});
-    }
-    ImGui::Separator();
-
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##LabelSearch", "Search labels", searchBuf, sizeof(searchBuf));
-    ImGui::Separator();
-
-    const std::string filterLower = ToLowerAsciiCopy(TrimCopy(searchBuf));
-    const std::vector<std::string> visibleSuggestions =
-        FilterSuggestionsForDisplay(suggestions, selectedLabels, filterLower);
-
-    if (visibleSuggestions.empty()) {
-        if (suggestions.empty()) {
-            ImGui::TextDisabled("(no labels discovered yet)");
-        } else {
-            ImGui::TextDisabled("(no matching labels)");
+    smatchet::dropdown::Options options =
+        smatchet::dropdown::TickBoxes(recentsScope, SmatchetLocalization::T("field.clear_all", "<clear all>"));
+    options.AllowCreate = true;
+    options.EmptyText = SmatchetLocalization::T("field.no_labels", "(no labels discovered yet)");
+    const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
+    if (ev.Kind == smatchet::dropdown::EventKind::Cleared) {
+        if (!selectedLabels.empty()) {
+            queue({});
         }
+        return;
     }
-
-    for (const auto& suggestion : visibleSuggestions) {
-        bool checked = ContainsLabelCaseInsensitive(selectedLabels, suggestion);
-        const std::string optionWidget = suggestion + "##Label_" + ticket.id + "_" + field.Id + "_" + suggestion;
-        if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
-            std::vector<std::string> updated = selectedLabels;
-            if (checked && !ContainsLabelCaseInsensitive(updated, suggestion)) {
-                updated.push_back(suggestion);
-            } else {
-                updated.erase(std::remove_if(updated.begin(), updated.end(),
-                                             [&](const std::string& label) {
-                                                 return LabelsEqualCaseInsensitive(label, suggestion);
-                                             }),
-                              updated.end());
-            }
-            updated = SortAndUniqueLabels(std::move(updated));
-            queue(updated);
-        }
+    if (ev.Kind != smatchet::dropdown::EventKind::Picked && ev.Kind != smatchet::dropdown::EventKind::Created) {
+        return;
     }
-
-    ImGui::Separator();
-    const bool submitted = ImGui::InputTextWithHint("##NewLabelDraft", "Add label", draftBuf, sizeof(draftBuf),
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    const std::string trimmedDraft = TrimCopy(draftBuf);
-    const bool canAddDraft = !trimmedDraft.empty() && !ContainsLabelCaseInsensitive(selectedLabels, trimmedDraft);
-    if (!canAddDraft) {
-        ImGui::BeginDisabled();
+    std::vector<std::string> updated = selectedLabels;
+    if (!ContainsLabelCaseInsensitive(updated, ev.Id)) {
+        updated.push_back(ev.Id);
+    } else if (ev.Kind == smatchet::dropdown::EventKind::Picked) {
+        updated.erase(
+            std::remove_if(updated.begin(), updated.end(),
+                           [&](const std::string& label) { return LabelsEqualCaseInsensitive(label, ev.Id); }),
+            updated.end());
+    } else {
+        return; // "Add" of a label that is already set: nothing to change
     }
-    const bool addClicked = ImGui::Button("Add");
-    if (!canAddDraft) {
-        ImGui::EndDisabled();
-    }
-    if ((submitted || addClicked) && canAddDraft) {
-        std::vector<std::string> updated = selectedLabels;
-        updated.push_back(trimmedDraft);
-        updated = SortAndUniqueLabels(std::move(updated));
-        queue(updated);
-        draftBuf[0] = '\0';
-    }
-    ImGui::PopID();
+    queue(SortAndUniqueLabels(std::move(updated)));
 }
 
 } // namespace
@@ -157,8 +123,10 @@ void RenderLabelsFieldEditor(const AppController& app, const CachedTicket& ticke
         return;
     }
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        DrawLabelsComboBody(editorKey, ticket, field, selectedLabels, suggestions, queue);
+    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(),
+                          ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_HeightLargest)) {
+        DrawLabelsComboBody(selectedLabels, suggestions,
+                            smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), field.Id), queue);
         ImGui::EndCombo();
     }
 }

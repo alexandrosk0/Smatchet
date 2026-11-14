@@ -9,9 +9,12 @@
 #include "ConfigManager.h"
 #include "Diagnostics/EngineContextFormat.h"
 #include "Diagnostics/EngineHostContext.h"
+#include "FilterDropdown.h"
+#include "TrackerOptionDropdown.h"
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "RecentSelections.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
 #include "SmatchetToast.h"
@@ -250,15 +253,26 @@ void DrawIssueTypeRow(AppController& app, UiDrawSession& d) {
                                       : preview.c_str());
         return;
     }
-    if (!ImGui::BeginCombo("##quickcreate_type", preview.empty() ? "(choose)" : preview.c_str())) {
+    if (!ImGui::BeginCombo("##quickcreate_type", preview.empty() ? "(choose)" : preview.c_str(),
+                           ImGuiComboFlags_HeightLargest)) {
         return;
     }
+    // The shared dropdown body; recents share the "issuetype" scope with the grid and the draft row.
+    std::vector<smatchet::dropdown::Item> items;
+    items.reserve(typeField->AllowedValueOptions.size());
     for (const TrackerFieldOption& opt : typeField->AllowedValueOptions) {
-        const bool isSelected = (opt.Id == d.quickCreateDraft.IssueTypeId) || (opt.Value == preview);
-        if (ImGui::Selectable(opt.Value.c_str(), isSelected)) {
-            d.quickCreateDraft.IssueTypeId = opt.Id;
-            d.quickCreateDraft.IssueTypeName = opt.Value;
-        }
+        smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(opt);
+        item.Checked = (opt.Id == d.quickCreateDraft.IssueTypeId) || (opt.Value == preview);
+        items.push_back(item);
+    }
+    const std::string recentsScope = smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), "issuetype");
+    const smatchet::dropdown::Event ev =
+        smatchet::dropdown::DrawBody(items, smatchet::dropdown::SingleSelect(recentsScope));
+    if (ev.Kind == smatchet::dropdown::EventKind::Picked && ev.ItemIndex >= 0) {
+        // `preview` aliases IssueTypeName: nothing reads it past this point.
+        const TrackerFieldOption& opt = typeField->AllowedValueOptions[static_cast<size_t>(ev.ItemIndex)];
+        d.quickCreateDraft.IssueTypeId = opt.Id;
+        d.quickCreateDraft.IssueTypeName = opt.Value;
     }
     ImGui::EndCombo();
 }

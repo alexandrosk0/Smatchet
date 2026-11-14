@@ -2,7 +2,9 @@
 
 #include "StringUtil.h"
 
+#include <algorithm>
 #include <string>
+#include <utility>
 
 namespace SmatchetProjectPicker {
 namespace detail {
@@ -42,6 +44,30 @@ bool RecentEntryPasses(const FieldCatalogCache::CachedProjectEntry& e, const std
         return false;
     }
     return true;
+}
+
+std::vector<std::string> RecentSeedKeys(std::vector<FieldCatalogCache::CachedProjectEntry> entries,
+                                        const std::string& backendKind, const std::string& endpoint,
+                                        const std::vector<std::string>& listedKeys, std::size_t maxKeys) {
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const FieldCatalogCache::CachedProjectEntry& a,
+                        const FieldCatalogCache::CachedProjectEntry& b) { return a.lastUsedUnix > b.lastUsedUnix; });
+    std::vector<std::string> keys;
+    for (auto& e : entries) {
+        if (keys.size() >= maxKeys) {
+            break;
+        }
+        if (!RecentEntryPasses(e, backendKind, endpoint, std::string())) {
+            continue;
+        }
+        if (std::find(listedKeys.begin(), listedKeys.end(), e.projectKey) == listedKeys.end()) {
+            continue;
+        }
+        if (std::find(keys.begin(), keys.end(), e.projectKey) == keys.end()) {
+            keys.push_back(std::move(e.projectKey));
+        }
+    }
+    return keys;
 }
 
 std::string AllProjectKey(const RemoteProject& p, const std::string& backendKind) {

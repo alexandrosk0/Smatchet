@@ -3,7 +3,6 @@
 #include <doctest/doctest.h>
 
 using SmatchetNewIssueDraft::detail::FieldUsesOptionDropdown;
-using SmatchetNewIssueDraft::detail::OptionMatchesComboFilter;
 
 namespace {
 TrackerFieldOption MakeOption(const std::string& id, const std::string& value, const std::string& secondary) {
@@ -14,31 +13,6 @@ TrackerFieldOption MakeOption(const std::string& id, const std::string& value, c
     return o;
 }
 } // namespace
-
-TEST_CASE("OptionMatchesComboFilter: empty filter matches every option") {
-    const TrackerFieldOption o = MakeOption("10001", "Bug", "");
-    CHECK(OptionMatchesComboFilter(o, ""));
-}
-
-TEST_CASE("OptionMatchesComboFilter: case-insensitive match on the display value") {
-    const TrackerFieldOption o = MakeOption("10001", "Bug", "");
-    CHECK(OptionMatchesComboFilter(o, "bug"));
-    CHECK(OptionMatchesComboFilter(o, "bu"));
-    CHECK_FALSE(OptionMatchesComboFilter(o, "task"));
-}
-
-TEST_CASE("OptionMatchesComboFilter: matches secondary value and option id") {
-    const TrackerFieldOption o = MakeOption("acct-42", "Alice", "alice@example.com");
-    CHECK(OptionMatchesComboFilter(o, "example.com")); // secondary value
-    CHECK(OptionMatchesComboFilter(o, "acct"));        // option id
-    CHECK(OptionMatchesComboFilter(o, "alice"));       // display value
-}
-
-TEST_CASE("OptionMatchesComboFilter: empty id falls back to the value for the id-match test") {
-    const TrackerFieldOption o = MakeOption("", "InProgress", "");
-    // optId resolves to Value when Id is empty, so a value substring still matches.
-    CHECK(OptionMatchesComboFilter(o, "progress"));
-}
 
 TEST_CASE("FieldUsesOptionDropdown: issuetype always uses the dropdown, even with a null field") {
     CHECK(FieldUsesOptionDropdown("issuetype", nullptr));
