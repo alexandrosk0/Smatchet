@@ -59,5 +59,53 @@ bool CanCallCloudApi(const TrackerConfig& cfg, const std::string& resolvedKey);
 std::int64_t NowEpochSec();
 
 } // namespace consent
+
+namespace feedback {
+
+/// Why a push-to-talk attempt ended without putting text anywhere. Also an index into the
+/// per-kind tables, so keep `Count` last.
+enum class DictationFailure : int {
+    ConsentOff = 0,        // dictation not enabled, or its setup not finished
+    CaptureStartFailed,    // the microphone could not be opened
+    TooShort,              // released before any audio was captured
+    Busy,                  // the previous clip is still being transcribed
+    NoSpeech,              // nothing but silence in the clip
+    NoApiKey,              // cloud mode with no key
+    ApiKeyRejected,        // HTTP 401 / 403
+    RateLimited,           // HTTP 429
+    Network,               // the speech service could not be reached
+    ServiceError,          // any other HTTP status, or a reply that could not be read
+    LocalModelUnavailable, // the local model is missing or could not be loaded
+    Other,
+    Count
+};
+
+/// Localization keys and English fallbacks for one failure. String literals, static lifetime.
+struct DictationFailureCopy {
+    bool warning; // true: a warning the user has to act on; false: a short notice
+    const char* titleKey;
+    const char* titleFallback;
+    const char* bodyKey;
+    const char* bodyFallback;
+};
+
+/// The notice for a failure. The body names what to do next and never carries raw error text.
+DictationFailureCopy CopyFor(DictationFailure kind);
+
+/// Maps the error text of a failed transcription (the pipeline, the cloud client or the local
+/// model) to a kind. Matches the leading words those producers write; text it does not know is
+/// `Other`, never silence.
+DictationFailure ClassifyTranscriptionError(const std::string& err);
+
+/// True when a notice of one kind may show now. `lastShownMs == 0` means it has not shown yet.
+bool FailureToastDue(std::int64_t lastShownMs, std::int64_t nowMs, std::int64_t cooldownMs);
+
+/// True when a press that the consent gate turned down should say so. The push-to-talk key is
+/// heard in every application. With dictation never turned on, a press made in another
+/// application is that application's own shortcut and gets no notice; a press made in this one
+/// does. With dictation turned on but its setup unfinished, every press does.
+bool ConsentOffNoticeDue(bool dictationEnabled, bool appInForeground);
+
+} // namespace feedback
 } // namespace whisper
 } // namespace smatchet

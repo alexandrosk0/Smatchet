@@ -451,5 +451,15 @@ bool GlobalHotkey_Win32::IsRegistered() const noexcept { return false; }
 
 #endif // _WIN32
 
+bool IsThisProcessForeground() {
+#if defined(_WIN32)
+    DWORD ownerPid = 0;
+    const HWND front = ::GetForegroundWindow();
+    return front != nullptr && ::GetWindowThreadProcessId(front, &ownerPid) != 0 && ownerPid == ::GetCurrentProcessId();
+#else
+    return true;
+#endif
+}
+
 } // namespace whisper
 } // namespace smatchet

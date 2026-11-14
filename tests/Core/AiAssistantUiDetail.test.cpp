@@ -15,6 +15,14 @@
 
 using namespace smatchet::ai;
 
+TEST_CASE("AiCaretRequestFresh: acts on a young request, drops none, stale and future ones") {
+    CHECK_FALSE(AiCaretRequestFresh(-1, 10, 3)); // no request
+    CHECK(AiCaretRequestFresh(10, 10, 3));       // the frame it was made on
+    CHECK(AiCaretRequestFresh(10, 13, 3));       // an inactive dock tab needed a frame to come forward
+    CHECK_FALSE(AiCaretRequestFresh(10, 14, 3)); // too old: the user would not expect the caret to move
+    CHECK_FALSE(AiCaretRequestFresh(10, 9, 3));  // frame counter went back (context rebuilt)
+}
+
 TEST_CASE("AiPinStripVisibleRows: clamps to the cap, floors at zero") {
     CHECK(AiPinStripVisibleRows(0, 4) == 0);
     CHECK(AiPinStripVisibleRows(-3, 4) == 0);

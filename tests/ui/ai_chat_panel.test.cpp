@@ -25,6 +25,9 @@
 #include "SmatchetChatPersistWorker.h" // chat_persist::EnqueueAppendAndTrim / Enqueue(ClearAll)
 #include "SmatchetImGuiFonts.h"        // SmatchetAreFaIconsLoaded
 #include "SmatchetUiSession.h"
+#if defined(SMATCHET_WITH_AI)
+#include "Ui/SmatchetAiAssistantUi.h" // SmatchetAiAssistantEscStopCountForTest
+#endif
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -438,6 +441,286 @@ void RegisterHistoryPersistRoundTrip(ImGuiTestEngine* engine) {
     };
 }
 
+#if defined(SMATCHET_WITH_AI)
+
+const char* const kAiInputRef = "**/##AiAssistantInput";
+
+// The g_ui fields the message-box cases change, put back by FinishMessageBoxCase.
+struct MessageBoxCaseState {
+    bool Open = false;
+    bool WhisperSetup = false;
+    bool InFlight = false;
+};
+
+// Empties the message box through the widget. Writing the model string does not empty it: the panel
+// copies the widget's own buffer back over the model every frame.
+bool ClearMessageBox(ImGuiTestContext* ctx) {
+    ctx->ItemInput(kAiInputRef);
+    ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_A);
+    ctx->KeyPress(ImGuiKey_Delete);
+    return YieldUntil(ctx, [] { return g_ui.assistantInputBuf.empty(); }, 60);
+}
+
+// Takes the caret out of every field without a key press or a click.
+void DropCaret(ImGuiTestContext* ctx) {
+    ImGui::ClearActiveID();
+    ctx->Yield(2);
+}
+
+// Opens the panel with the message box reachable, empty and without the caret. Returns false when
+// the box cannot be reached; the caller still calls FinishMessageBoxCase.
+bool StartMessageBoxCase(ImGuiTestContext* ctx, MessageBoxCaseState& saved) {
+    saved.Open = g_ui.assistantPanelOpen;
+    saved.WhisperSetup = g_ui.cfg.WhisperSetupCompleted;
+    saved.InFlight = g_ui.assistantInFlight;
+    g_ui.assistantInFlight = false;
+    SeedHistory(/*turnCount=*/1, /*pinFirst=*/false);
+    if (!OpenAssistantPanelWithInput(ctx)) {
+        return false;
+    }
+    if (!ClearMessageBox(ctx)) {
+        return false;
+    }
+    DropCaret(ctx);
+    return true;
+}
+
+void FinishMessageBoxCase(ImGuiTestContext* ctx, const MessageBoxCaseState& saved, bool boxReachable) {
+    g_ui.assistantInFlight = false;
+    if (boxReachable && WindowIsLive("Smatchet Assistant")) {
+        ctx->SetRef("Smatchet Assistant");
+        ClearMessageBox(ctx);
+        DropCaret(ctx);
+    }
+    g_ui.assistantHistory.clear();
+    g_ui.assistantHistoryRowIds.clear();
+    g_ui.assistantPanelOpen = saved.Open;
+    g_ui.cfg.WhisperSetupCompleted = saved.WhisperSetup;
+    g_ui.assistantInFlight = saved.InFlight;
+    ctx->Yield();
+}
+
+const char* const kGridWindowName = "Smatchet - Active Project";
+
+// The root window that holds the keyboard, or nullptr.
+const ImGuiWindow* KeyboardRootWindow() {
+    const ImGuiWindow* nav = GImGui->NavWindow;
+    return nav != nullptr ? nav->RootWindow : nullptr;
+}
+
+// Gives the keyboard to the main grid window and returns it; nullptr when it did not take it.
+const ImGuiWindow* FocusGridWindow(ImGuiTestContext* ctx) {
+    if (!WindowIsLive(kGridWindowName)) {
+        return nullptr;
+    }
+    ctx->WindowFocus("//Smatchet - Active Project");
+    const ImGuiWindow* grid = ImGui::FindWindowByName(kGridWindowName);
+    const bool focused = YieldUntil(ctx, [&] { return grid != nullptr && KeyboardRootWindow() == grid; }, 60);
+    return focused ? grid : nullptr;
+}
+
+// Types `text` into the message box (the caret enters an empty box) and waits for it to land.
+bool TypeIntoMessageBox(ImGuiTestContext* ctx, const char* text) {
+    ctx->ItemInput(kAiInputRef);
+    ctx->KeyChars(text);
+    const std::string want(text);
+    return YieldUntil(ctx, [&] { return g_ui.assistantInputBuf == want; }, 90);
+}
+
+// Asking for the panel (the shortcut and the View menu both set requestAssistantFocus) puts the
+// caret in the message box, so the next key typed lands there.
+void RegisterOpenRequestPutsCaretInInput(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "OpenRequest_PutsCaretInInput");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            IM_CHECK_NO_RET(GImGui->ActiveId != inputId);
+            g_ui.requestAssistantFocus = true;
+            const bool caretIn = YieldUntil(ctx, [&] { return GImGui->ActiveId == inputId; }, 30);
+            IM_CHECK_NO_RET(caretIn);
+            if (caretIn) {
+                ctx->KeyChars("abc");
+                const bool typed = YieldUntil(ctx, [] { return g_ui.assistantInputBuf == "abc"; }, 60);
+                IM_CHECK_NO_RET(typed);
+            }
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+// A panel that opens with no request (the shape of one restored open at startup) leaves the
+// keyboard where it is.
+void RegisterRestoredOpenLeavesKeyboardAlone(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "RestoredOpen_LeavesKeyboardAlone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            g_ui.assistantPanelOpen = false;
+            ctx->Yield(3);
+            g_ui.assistantPanelOpen = true;
+            bool tookKeyboard = false;
+            for (int i = 0; i < 12; ++i) {
+                ctx->Yield();
+                tookKeyboard = tookKeyboard || GImGui->ActiveId == inputId;
+            }
+            IM_CHECK_NO_RET(!tookKeyboard);
+            IM_CHECK_NO_RET(WindowIsLive("Smatchet Assistant"));
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+// Esc with the caret in the message box leaves the box and keeps what was typed. ImGui's own Esc
+// would put back the text from before the caret entered: here an empty box.
+void RegisterEscIdleLeavesInputKeepsText(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "EscIdle_LeavesInputKeepsText");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            // The keyboard goes elsewhere first, so the panel holds no window to hand it back to;
+            // the click into the box then brings it to the panel.
+            const bool wentElsewhere = FocusGridWindow(ctx) != nullptr;
+            IM_CHECK_NO_RET(wentElsewhere);
+            ctx->Yield(2);
+            const bool typed = TypeIntoMessageBox(ctx, "draft kept");
+            IM_CHECK_NO_RET(typed);
+            IM_CHECK_NO_RET(GImGui->ActiveId == inputId);
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield(2);
+            IM_CHECK_NO_RET(GImGui->ActiveId != inputId);
+            IM_CHECK_NO_RET(g_ui.assistantInputBuf == "draft kept");
+            IM_CHECK_NO_RET(g_ui.assistantPanelOpen);
+            IM_CHECK_NO_RET(WindowIsLive("Smatchet Assistant"));
+            // The panel was entered by a click, not asked for: the keyboard stays on it.
+            const ImGuiWindow* panel = ImGui::FindWindowByName("Smatchet Assistant");
+            const bool keyboardStayedOnPanel = panel != nullptr && KeyboardRootWindow() == panel->RootWindow;
+            IM_CHECK_NO_RET(keyboardStayedOnPanel);
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+// Asking for the panel from another window, then Esc in the message box, hands the keyboard back
+// to that window and keeps the text.
+void RegisterEscIdleHandsKeyboardBack(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "EscIdle_HandsKeyboardBackToAskingWindow");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            const ImGuiWindow* grid = FocusGridWindow(ctx);
+            const bool gridHasKeyboard = grid != nullptr;
+            IM_CHECK_NO_RET(gridHasKeyboard);
+            if (gridHasKeyboard) {
+                g_ui.requestAssistantFocus = true;
+                const bool caretIn = YieldUntil(ctx, [&] { return GImGui->ActiveId == inputId; }, 30);
+                IM_CHECK_NO_RET(caretIn);
+                ctx->KeyChars("back");
+                const bool typed = YieldUntil(ctx, [] { return g_ui.assistantInputBuf == "back"; }, 60);
+                IM_CHECK_NO_RET(typed);
+                ctx->KeyPress(ImGuiKey_Escape);
+                const bool handedBack = YieldUntil(ctx, [&] { return KeyboardRootWindow() == grid; }, 30);
+                IM_CHECK_NO_RET(handedBack);
+                IM_CHECK_NO_RET(GImGui->ActiveId != inputId);
+                IM_CHECK_NO_RET(g_ui.assistantInputBuf == "back");
+            }
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+// While a reply is coming in, Esc stops it; the caret and the next message being typed stay.
+void RegisterEscWhileReplyingStopsItKeepsCaret(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "EscWhileReplying_StopsItKeepsCaret");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        if (!app->HasAiAssistantController()) {
+            ctx->LogInfo("SKIP: no AI assistant controller — nothing to stop");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            const bool typed = TypeIntoMessageBox(ctx, "next");
+            IM_CHECK_NO_RET(typed);
+            g_ui.assistantInFlight = true;
+            ctx->Yield(2);
+            const int before = SmatchetAiAssistantEscStopCountForTest();
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield(2);
+            IM_CHECK_EQ_NO_RET(SmatchetAiAssistantEscStopCountForTest(), before + 1);
+            IM_CHECK_NO_RET(GImGui->ActiveId == inputId);
+            IM_CHECK_NO_RET(g_ui.assistantInputBuf == "next");
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+// Idle and with no caret in the box, Esc does nothing: the panel stays open with its text.
+void RegisterEscIdleNoCaretNoOp(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "EscIdleNoCaret_NoOp");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            const ImGuiID inputId = ctx->ItemInfo(kAiInputRef).ID;
+            const bool typed = TypeIntoMessageBox(ctx, "x");
+            IM_CHECK_NO_RET(typed);
+            DropCaret(ctx);
+            ctx->WindowFocus("");
+            const int before = SmatchetAiAssistantEscStopCountForTest();
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield(2);
+            IM_CHECK_NO_RET(g_ui.assistantPanelOpen);
+            IM_CHECK_NO_RET(WindowIsLive("Smatchet Assistant"));
+            IM_CHECK_NO_RET(GImGui->ActiveId != inputId);
+            IM_CHECK_NO_RET(g_ui.assistantInputBuf == "x");
+            IM_CHECK_EQ_NO_RET(SmatchetAiAssistantEscStopCountForTest(), before);
+        }
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
+#endif // SMATCHET_WITH_AI
+
 } // namespace
 
 extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine) {
@@ -446,6 +729,14 @@ extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine) {
     RegisterPinBookmarkToggle(engine);
     RegisterKeyboardEnterSubmits(engine);
     RegisterHistoryPersistRoundTrip(engine);
+#if defined(SMATCHET_WITH_AI)
+    RegisterOpenRequestPutsCaretInInput(engine);
+    RegisterRestoredOpenLeavesKeyboardAlone(engine);
+    RegisterEscIdleLeavesInputKeepsText(engine);
+    RegisterEscIdleHandsKeyboardBack(engine);
+    RegisterEscWhileReplyingStopsItKeepsCaret(engine);
+    RegisterEscIdleNoCaretNoOp(engine);
+#endif
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

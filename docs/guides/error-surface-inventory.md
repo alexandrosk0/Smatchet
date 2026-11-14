@@ -30,6 +30,7 @@
 | App-update check | `SmatchetUI.cpp` + `AttachmentAppUpdateService.cpp` → "Updates" toast | `ex.what()` / literals | localized what+next message; exception detail logged |
 | AI test-connection (Prefs → Assistant) | `SmatchetPreferencesUi_Assistant.cpp` | redacted provider error; raw `ex.what()` on internal errors | internal-error branch now localized + logged |
 | Whisper test-connection (Prefs → Whisper) | `SmatchetPreferencesUi_Whisper.cpp` | transport/HTTP literals; raw `ex.what()` | same fix |
+| Push-to-talk dictation that types nothing | `WhisperPlugin.cpp` (was **silent**: log-only) | — | one toast per failure kind (dictation off, no microphone, too short, still transcribing, no speech, no key, key rejected, rate limit, network, service error, local model), fixed localized text that names the fix; raw error stays in the log; never sticky; same kind not repeated within 4 s; a press made in another application while dictation was never turned on stays silent |
 | AI chat error strip | `AiAssistantController.cpp` → chat panel | `RedactProviderErrorBody` output | already best-in-class; unchanged |
 | Bug-report submit banner | `BugReportService.cpp` → `SmatchetBugReportUi.cpp` | relay `error` field; `ex.what()`/parseErr on bad responses | parse/exception branches → fixed retry message, detail logged |
 | Bulk import/export | `SmatchetBulkTicketsUi.cpp` | `r.Error`, bare `"failed"`, full file paths | `"failed"` → actionable localized text; file errors show the file **name** only |

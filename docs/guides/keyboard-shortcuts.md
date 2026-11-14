@@ -132,7 +132,7 @@ keyboard focus:
 Opening Preferences puts the keyboard in the first blank connection field while the
 tracker is still being set up, and in the settings search box afterwards.
 
-The dialogs you type into share fixed keys, active while the dialog has keyboard
+The dialogs and panels you type into share fixed keys, active while they have keyboard
 focus:
 
 | Dialog | Shortcut | Action |
@@ -145,10 +145,15 @@ focus:
 | Long-text editor | `Ctrl+Enter` | Save |
 | Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes) |
 | Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
+| Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
+| Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
 
 Log work opens with the caret in **Time spent**, Comments opened from a cell with the
 caret in the comment box, and the long-text editor with the caret in the text (when it
 opens in Preview, the caret goes there once the editor pane is shown).
+Asking for the Assistant (`Ctrl+Shift+A`, **View → Assistant**, or revealing its side bar)
+puts the caret in the message box. A panel that was already open when the app started
+leaves the keyboard where it is.
 
 ## Default bindings
 

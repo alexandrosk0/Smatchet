@@ -22,6 +22,8 @@
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SilenceTrim.h"
+#include "SmatchetLocalization.h"
+#include "SmatchetToast.h"
 #include "WavWriter.h"
 #include "WhisperApiClient.h"
 #include "WhisperApiKeyResolve.h"
@@ -810,6 +812,43 @@ bool EndsWithSentencePunctuation(const std::string& text) {
     return false;
 }
 
+namespace fb = smatchet::whisper::feedback;
+
+// Repeated presses that fail the same way show one notice, not a stack of them.
+constexpr std::int64_t kDictationFailureCooldownMs = 4000;
+
+// When a notice of each kind last showed. UI thread only: read and written solely inside the
+// closure PostDictationFailure posts.
+std::int64_t g_dictationFailureLastShownMs[static_cast<int>(fb::DictationFailure::Count)] = {};
+
+// Tells the user why a push-to-talk attempt typed nothing. Safe from any thread: the toast manager
+// is UI-thread-only, so the notice is raised from a closure posted to the UI thread, and the
+// closure holds nothing but the kind. The text is fixed; raw error text stays in the log.
+void PostDictationFailure(AppController* app, fb::DictationFailure kind) {
+    if (app == nullptr) {
+        return;
+    }
+    app->PostToMainThread([kind]() {
+        const int idx = static_cast<int>(kind);
+        if (idx < 0 || idx >= static_cast<int>(fb::DictationFailure::Count)) {
+            return;
+        }
+        const std::int64_t nowMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        if (!fb::FailureToastDue(g_dictationFailureLastShownMs[idx], nowMs, kDictationFailureCooldownMs)) {
+            LOG_DEBUG("Whisper: failure notice kind=%d not repeated (shown moments ago)", idx);
+            return;
+        }
+        g_dictationFailureLastShownMs[idx] = nowMs;
+        const fb::DictationFailureCopy copy = fb::CopyFor(kind);
+        const std::string title = SmatchetLocalization::T(copy.titleKey, copy.titleFallback);
+        const std::string body = SmatchetLocalization::T(copy.bodyKey, copy.bodyFallback);
+        SmatchetToastManager::Instance().Push(title, body, copy.warning ? ToastType::Warning : ToastType::Info,
+                                              copy.warning ? 6000 : 3000);
+    });
+}
+
 // Hotkey-press path — worker-thread entry point. Starts capture if consent
 // allows + nothing is in flight; mirrors the recording flag to the router so
 // the UI indicator + overlay light up. NEVER touches ImGui state.
@@ -834,6 +873,9 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
     const TrackerConfig cfg = ConfigManager::Load();
     if (!smatchet::whisper::consent::CanCaptureMic(cfg)) {
         LOG_WARN("Whisper hotkey: consent gate denied capture — Preferences->Whisper not enabled");
+        if (fb::ConsentOffNoticeDue(cfg.WhisperEnabled, smatchet::whisper::IsThisProcessForeground())) {
+            PostDictationFailure(state->app, fb::DictationFailure::ConsentOff);
+        }
         return;
     }
     bool expected = false;
@@ -845,6 +887,7 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
     if (!state->capture.Start(capErr)) {
         LOG_ERROR("Whisper hotkey: capture start failed: %s", capErr.c_str());
         state->captureActive.store(false, std::memory_order_release);
+        PostDictationFailure(state->app, fb::DictationFailure::CaptureStartFailed);
         return;
     }
     // SetRecording is lock-free atomic — safe from worker; UI thread polls it
@@ -871,6 +914,7 @@ void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
     bool expectedFlight = false;
     if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true, std::memory_order_acq_rel)) {
         LOG_DEBUG("Whisper hotkey release (mock): prior transcription still in flight");
+        PostDictationFailure(state->app, fb::DictationFailure::Busy);
         return;
     }
     const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
@@ -891,6 +935,12 @@ void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
         std::this_thread::sleep_for(mock.delay);
         localState->transcribeInFlight.store(false, std::memory_order_release);
         const std::string text = mock.text;
+        if (text.empty()) {
+            // Same exit as a real clip that transcribes to nothing.
+            g_dictationRouter.SetTranscribing(false);
+            PostDictationFailure(app, fb::DictationFailure::NoSpeech);
+            return;
+        }
         app->PostToMainThread([text]() {
             ImGuiContext* gctx = ::ImGui::GetCurrentContext();
             const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
@@ -942,12 +992,14 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
 
     if (pcm.empty()) {
         LOG_INFO("Whisper hotkey: 0 PCM samples captured (release within < 1 chunk)");
+        PostDictationFailure(state->app, fb::DictationFailure::TooShort);
         return;
     }
 
     bool expectedFlight = false;
     if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true, std::memory_order_acq_rel)) {
         LOG_DEBUG("Whisper hotkey release: prior transcription still in flight; dropping new audio");
+        PostDictationFailure(state->app, fb::DictationFailure::Busy);
         return;
     }
 
@@ -973,11 +1025,13 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         if (!ok) {
             LOG_WARN("Whisper hotkey: transcription failed: %s", err.c_str());
             g_dictationRouter.SetTranscribing(false);
+            PostDictationFailure(app, fb::ClassifyTranscriptionError(err));
             return;
         }
         if (text.empty()) {
             LOG_INFO("Whisper hotkey: transcription returned empty string (silence?)");
             g_dictationRouter.SetTranscribing(false);
+            PostDictationFailure(app, fb::DictationFailure::NoSpeech);
             return;
         }
         // UI-thread hand-off — the router splices into the focused InputText.

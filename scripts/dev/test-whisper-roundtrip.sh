@@ -9,6 +9,11 @@
 # hardware or an OpenAI key. Asserts the scenario's JSON report carries
 # passed=true.
 #
+# Two variants run, each in its own spawned exe:
+#   1. a clip that transcribes to text: the text lands in the focused field;
+#   2. an empty clip (--expectNoSpeechNotice=true): nothing is typed and the
+#      user gets the "no speech" notice instead of silence.
+#
 # Self-guard: skips silently when the exe is missing or when the binary was
 # built with SMATCHET_WITH_WHISPER=OFF (the scenario is then not registered).
 #
@@ -42,30 +47,9 @@ if ! grep -q '"whisper.status"' <<<"$PROBE_OUTPUT"; then
     exit 0
 fi
 
-echo "[whisper-roundtrip] Running whisper-dictation-roundtrip scenario via $EXE ..."
-# scenario.run is marked Destructive in the registry (it can mutate persistent
-# UI state for some scenarios), so the CLI envelope demands an explicit --yes.
-# Keep stderr OUT of RESULT: the JSON envelope is a single ~8KB stdout line
-# (beyond the pipe's atomic-write size), so with 2>&1 the spawn helper's
-# "[spawn] ..." stderr lines interleave MID-LINE into the JSON and the
-# per-line json.loads parse below fails. Capture stderr to a side file and
-# replay it for the log after the envelope.
 SPAWN_ERR=$(mktemp)
 trap 'rm -f "$SPAWN_ERR"' EXIT
-RESULT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-dictation-roundtrip --yes --spawn 2>"$SPAWN_ERR" || true)
 
-# Pretty-print for the test log. The result envelope is the last JSON object
-# in stdout; we accept either pretty or one-line shape.
-echo "$RESULT" | tail -200
-if [ -s "$SPAWN_ERR" ]; then
-    echo "[whisper-roundtrip] --- spawn stderr ---"
-    tail -50 "$SPAWN_ERR"
-fi
-
-# Extract `data.passed` using a portable POSIX-ish path: prefer python's json
-# parser when available, fall back to a grep that matches the literal
-# `"passed": true` line emitted by nlohmann::json::dump(2).
-PASSED="false"
 # resolve-py.sh is agent-layer content:
 # the agent-layer/ mount once it holds the layer's project-config.sh (plan
 # agent-surface-extraction-repo, row 12), else this tree.
@@ -74,13 +58,43 @@ _twr_layer="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
 . "$_twr_layer/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py || true)"
-if [ -n "$PY" ]; then
-    # Pipe the captured envelope through python's JSON parser. The spawn
-    # wrapper prints `[spawn] ...` log lines before the JSON envelope; we
-    # walk lines bottom-up and parse the first one that loads cleanly as a
-    # JSON object carrying `data` or `ok`. Falls through to "false" on any
-    # parse error so a malformed envelope can't accidentally pass the gate.
-    PASSED=$(printf '%s' "$RESULT" | "$PY" -c '
+
+# run_variant <label> [extra scenario args...]
+# Runs the scenario once in a spawned exe and returns 0 only when its report
+# carries passed=true.
+run_variant() {
+    local label="$1"
+    shift
+    echo "[whisper-roundtrip] Running whisper-dictation-roundtrip ($label) via $EXE ..."
+    # scenario.run is marked Destructive in the registry (it can mutate persistent
+    # UI state for some scenarios), so the CLI envelope demands an explicit --yes.
+    # Keep stderr OUT of the result: the JSON envelope is a single ~8KB stdout line
+    # (beyond the pipe's atomic-write size), so with 2>&1 the spawn helper's
+    # "[spawn] ..." stderr lines interleave MID-LINE into the JSON and the
+    # per-line json.loads parse below fails. Capture stderr to a side file and
+    # replay it for the log after the envelope.
+    local result
+    result=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-dictation-roundtrip "$@" --yes --spawn 2>"$SPAWN_ERR" || true)
+
+    # Pretty-print for the test log. The result envelope is the last JSON object
+    # in stdout; we accept either pretty or one-line shape.
+    echo "$result" | tail -200
+    if [ -s "$SPAWN_ERR" ]; then
+        echo "[whisper-roundtrip] --- spawn stderr ---"
+        tail -50 "$SPAWN_ERR"
+    fi
+
+    # Extract `data.passed` using a portable POSIX-ish path: prefer python's json
+    # parser when available, fall back to a grep that matches the literal
+    # `"passed": true` line emitted by nlohmann::json::dump(2).
+    local passed="false"
+    if [ -n "$PY" ]; then
+        # Pipe the captured envelope through python's JSON parser. The spawn
+        # wrapper prints `[spawn] ...` log lines before the JSON envelope; we
+        # walk lines bottom-up and parse the first one that loads cleanly as a
+        # JSON object carrying `data` or `ok`. Falls through to "false" on any
+        # parse error so a malformed envelope can't accidentally pass the gate.
+        passed=$(printf '%s' "$result" | "$PY" -c '
 import json, sys
 lines = [ln for ln in sys.stdin.read().splitlines() if ln.strip().startswith("{")]
 for ln in reversed(lines):
@@ -97,19 +111,25 @@ for ln in reversed(lines):
         sys.exit(0)
 print("false")
 ' 2>/dev/null || echo "false")
-else
-    # Fallback: grep for "passed": true (handles both nlohmann::json::dump(2)
-    # multi-line shape and the spawn-wrapper's single-line envelope). Less
-    # robust but unblocks environments without a python interpreter.
-    if grep -qE '"passed"\s*:\s*true' <<<"$RESULT"; then
-        PASSED="true"
+    else
+        # Fallback: grep for "passed": true (handles both nlohmann::json::dump(2)
+        # multi-line shape and the spawn-wrapper's single-line envelope). Less
+        # robust but unblocks environments without a python interpreter.
+        if grep -qE '"passed"\s*:\s*true' <<<"$result"; then
+            passed="true"
+        fi
     fi
-fi
 
-if [ "$PASSED" != "true" ]; then
-    echo "[whisper-roundtrip] FAIL: scenario reported passed=$PASSED"
-    exit 1
-fi
+    if [ "$passed" != "true" ]; then
+        echo "[whisper-roundtrip] FAIL ($label): scenario reported passed=$passed"
+        return 1
+    fi
+    echo "[whisper-roundtrip] ok ($label)"
+    return 0
+}
+
+run_variant "text lands in the focused field" || exit 1
+run_variant "empty clip raises the no-speech notice" --expectNoSpeechNotice=true || exit 1
 
 echo "[whisper-roundtrip] PASS"
 exit 0

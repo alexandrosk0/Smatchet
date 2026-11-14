@@ -16,7 +16,43 @@
 
 #include "AiAssistantSendButton.h"
 
+using smatchet::ai::AiEscAction;
+using smatchet::ai::DecideAssistantEsc;
 using smatchet::ai::DecideSendDisabled;
+
+TEST_CASE("DecideAssistantEsc: no Esc, or the panel without the keyboard, does nothing") {
+    for (int bits = 0; bits < 8; ++bits) {
+        const bool inFlight = (bits & 1) != 0;
+        const bool hasController = (bits & 2) != 0;
+        const bool caretInInput = (bits & 4) != 0;
+        CHECK(DecideAssistantEsc(/*escPressed=*/false, /*panelHasKeyboard=*/true, inFlight, hasController,
+                                 caretInInput) == AiEscAction::None);
+        // A popup above the panel, or another window, has the keyboard: its Esc is not ours.
+        CHECK(DecideAssistantEsc(/*escPressed=*/true, /*panelHasKeyboard=*/false, inFlight, hasController,
+                                 caretInInput) == AiEscAction::None);
+    }
+}
+
+TEST_CASE("DecideAssistantEsc: a reply coming in is stopped, caret in the box or not") {
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/true, /*hasController=*/true, /*caretInInput=*/true) ==
+          AiEscAction::StopReply);
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/true, /*hasController=*/true, /*caretInInput=*/false) ==
+          AiEscAction::StopReply);
+}
+
+TEST_CASE("DecideAssistantEsc: a stuck in-flight flag with no controller never asks for a stop") {
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/true, /*hasController=*/false, /*caretInInput=*/true) ==
+          AiEscAction::LeaveInput);
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/true, /*hasController=*/false, /*caretInInput=*/false) ==
+          AiEscAction::None);
+}
+
+TEST_CASE("DecideAssistantEsc: idle, Esc leaves the message box and never closes the panel") {
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/false, /*hasController=*/true, /*caretInInput=*/true) ==
+          AiEscAction::LeaveInput);
+    CHECK(DecideAssistantEsc(true, true, /*inFlight=*/false, /*hasController=*/true, /*caretInInput=*/false) ==
+          AiEscAction::None);
+}
 
 TEST_CASE("DecideSendDisabled: all-false enables the button") {
     // Live controller, non-empty input, no in-flight turn — Send is the

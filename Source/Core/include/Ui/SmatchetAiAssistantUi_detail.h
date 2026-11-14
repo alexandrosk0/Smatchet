@@ -181,5 +181,13 @@ inline bool AiAssistantEffectiveOnSecondary(bool persistedOnSecondary, int sideF
     return sideFallback == 1;
 }
 
+/// True while a request to put the caret in the message box, made on frame `requestFrame`, is
+/// still young enough to act on. `requestFrame < 0` means no request. The bound keeps a request
+/// that could not land (its dock tab never came to the front) from moving the caret on some
+/// later frame the user did not ask on.
+inline bool AiCaretRequestFresh(int requestFrame, int nowFrame, int maxAgeFrames) {
+    return requestFrame >= 0 && nowFrame >= requestFrame && nowFrame - requestFrame <= maxAgeFrames;
+}
+
 } // namespace ai
 } // namespace smatchet
