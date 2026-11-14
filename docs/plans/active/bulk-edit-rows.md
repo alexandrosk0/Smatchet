@@ -24,6 +24,7 @@ Design decisions were taken by the user on 2026-11-14 (architect options A/B/C; 
 | D6 | Undo | Best-effort Revert: re-apply each row's captured before-value as a new bulk job |
 | D7 | Throughput | Up to 4 distinct issues saving in parallel, plus Jira Cloud's native bulk-edit API when online |
 | — | Phasing | Three PRs (P1 → P2 → P3), one plan |
+| — | Command name | `ticket.set_field_bulk` and `ticket.revert_bulk`, keeping every write under `ticket.*` (grill, 2026-11-14) |
 
 Origin: the "Review other sessions" orchestrator brief for session `bulk-edit-rows`. Sibling work: PR #2432 (`docs/plans/shared-dropdown-recents.md`), which this plan builds on.
 
@@ -31,20 +32,20 @@ Origin: the "Review other sessions" orchestrator brief for session `bulk-edit-ro
 
 **Shared job core.** A new pure header `BulkFieldEditPure.h` defines `BulkFieldEditJob`. When the job starts, it snapshots everything it needs: the selected **issue ids** (resolved from sort-order rows through `ResolveGridRowsToTicketIndices`, because sort-order indices stop meaning anything once the first edit lands and bumps `snapshotRevision`), the field, the values, the mode (Replace / Add / Remove), the pane's `PendingActionTarget`, each row's before-value, and a per-row state (`Pending / Saving / Saved / Queued / Failed(msg) / Skipped(reason)`).
 
-The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a new `BulkJobId`, and pushes them into the existing `queuedFieldEdits`. The existing pump (`PumpGridFieldEdits`) and the existing commit path then handle each row: `FieldEditPipelineService::CommitOrQueue` → `RouteWrite`, the editmeta retry, the offline queue, ADR-0016 conflict replay, the `field_edit_diff` audit, and the cell badges. Nothing adds a second commit branch, which the Ui `AGENTS.md` grid invariant forbids. `ApplyCommitResultOnUiThread` **folds** each row result back into the job by `BulkJobId`. When the last row lands, the job pushes one summary toast. Queued rows count as "queued", never as "failed".
+The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a new `BulkJobId`, and pushes them into the existing `queuedFieldEdits`. The existing pump (`PumpGridFieldEdits`) and the existing commit path then handle each row: `FieldEditPipelineService::CommitOrQueue` → `RouteWrite`, the editmeta retry, the offline queue, ADR-0016 conflict replay, the `field_edit_diff` audit, and the cell badges. Nothing adds a second commit branch, which the Ui `AGENTS.md` grid invariant forbids. `ApplyCommitResultOnUiThread` **folds** each row result back into the job by `BulkJobId`. When the last row lands, the job pushes one summary toast. Queued rows count as "queued", never as "failed". Per Ui `AGENTS.md` § Toasts say what happened, "queued" is reported only for rows whose `CommitOrQueue` actually enqueued, and the toast reads "Saving k / N…" while rows are in flight.
 
 **Entry.** `DrawGridCellRightClickPopups` gains a "Set <Field> for N rows…" item whenever the clicked row is inside a selection of two or more rows. `GridKeyCellMenuCtx` is widened so data cells receive the selection and the column's `TrackerField` too. Today only the key cell receives it. The item opens a new popup, `SmatchetBulkFieldEditPopup`. For select, user and priority fields it calls `smatchet::dropdown::DrawBody` from #2432 with `RecentsScope = MakeScopeKey(<pane cache key>, field.Id)`, so a bulk pick both feeds and reads the same Recent list as single-cell edits. The header shows "N rows · mixed (k values)", or "N rows · <value>" when every row holds the same value. Above 10 rows, a confirm step ("Apply to N rows? K will be skipped") runs before fan-out.
 
 **Phase 3 throughput.** The pump's single `hasInFlightEdit` gate becomes a bounded in-flight set of up to 4 rows. It never admits two edits for the same (backend, issue), so the order of edits per issue is unchanged. For an online Jira Cloud backend, a job with no Add/Remove on rich or ADF fields is sent instead as one `POST /rest/api/3/bulk/issues/fields` request, and the returned task is polled on a worker. If that request fails with a retryable error or the backend goes offline, the job falls back to per-row fan-out, so offline-first (Pillar 6) still holds: the fast path is an optimisation that never replaces the queue.
 
-**Commands.** `tickets.set_field_bulk` exposes the same job core to the palette, CLI, MCP and Lua through the registry, so no sol2 binding is needed. To respect Pillar 2, the handler never loops N synchronous `SubmitFieldEditOrQueue` calls on the dispatching thread. Over the UI or palette it hands the job to the session queue and returns `{jobId, rows}`. Over automation sources (CLI / MCP / Lua, which dispatch off the UI thread) it runs the rows on the calling worker and returns the per-row results. The command-system owner confirms this threading split in P1 slice 3 (§ Open questions).
+**Commands.** `ticket.set_field_bulk` exposes the same job core to the palette, CLI, MCP and Lua through the registry, so no sol2 binding is needed. To respect Pillar 2, the handler never loops N synchronous `SubmitFieldEditOrQueue` calls on the dispatching thread. Over the UI or palette it hands the job to the session queue and returns `{jobId, rows}`. Over automation sources (CLI / MCP / Lua, which dispatch off the UI thread) it runs the rows on the calling worker and returns the per-row results. The command-system owner confirms this threading split in P1 slice 3 (§ Open questions).
 
 ## Interface contracts
 
 - **`PendingFieldEdit`** (`Source/Core/include/Ui/SmatchetUiSession.h:115`): add `std::uint64_t BulkJobId = 0;`, where 0 means "not part of a bulk job". It is not persisted to the offline queue. A replayed row reports through the normal replay path, not the job.
 - **`UiDrawSession`** (`SmatchetUiSession.h`, next to `queuedFieldEdits` at :1072): add `std::map<std::uint64_t, BulkFieldEditJob> bulkFieldEditJobs;` and `std::uint64_t nextBulkJobId = 1;`. These are in-memory only.
 - **`GridRectSelection`** (`Source/Core/include/SpreadsheetState.h:19-66`, P1 / D5): add `std::set<std::string> KeepIssueIds;`. It is filled when a bulk job starts. After a snapshot-revision `ClearAll()` (`SmatchetActiveProjectGridTable.cpp:1120-1123`), the selection is rebuilt from it against the new sort order, then cleared on the next user selection gesture. The type is in-memory only, with no save-format impact.
-- **`GridKeyCellMenuCtx`** (`Source/Core/include/Ui/SmatchetGridUiSupport.h:29`): add `const TrackerField* field = nullptr;` and `std::string paneCacheKey;`. Data-cell call sites (`SmatchetActiveProjectGridCells.cpp` :413 / :478 / :496) start passing a ctx. Today only the key cell (:333) does.
+- **`GridKeyCellMenuCtx`** (`Source/Core/include/Ui/SmatchetGridUiSupport.h:29`): add `const TrackerField* field = nullptr;` and `const std::string* paneCacheKey = nullptr;`. These are pointers, not owned strings, because Ui `AGENTS.md` § Per-cell grid code allocates nothing per row. The pane builds one ctx before the row loop, and each cell sets only `field` and `clickedRow` (the rest are plain values). Data-cell call sites (`SmatchetActiveProjectGridCells.cpp` :413 / :478 / :496) start passing a ctx. Today only the key cell (:333) does.
 - **`BulkFieldEditJob`** (new, `Source/Core/include/Ui/BulkFieldEditPure.h`, namespace `smatchet::grid::bulk`). It is pure, with no ImGui, cpr or SQLite includes:
   ```cpp
   enum class BulkRowState { Pending, Saving, Saved, Queued, Failed, Skipped };
@@ -61,7 +62,7 @@ The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a
   bool NeedsConfirm(int rowCount, int threshold /* = 10 */);
   BulkFieldEditJob MakeRevertJob(const BulkFieldEditJob& done, std::uint64_t newId); // P2
   ```
-- **Command** (`Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`): `RegisterCommand({"tickets.set_field_bulk", …})` with the parameters `ids: Json (array of string)`, `field: String`, `value: String` or `values: Json`, `mode?: String (replace|add|remove)` and `dry_run?: Bool`. `Destructive = true`, so it needs `--yes` / `__confirm`, the same as `ticket.set_field`. It returns `{jobId, rows:[{id, state, message}]}`, and `dry_run` returns `{rows:[{id, from, to, skip?}]}`. P2 adds `tickets.revert_bulk {jobId}`. This is an MCP schema addition only: no existing tool changes shape.
+- **Command** (`Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`): `RegisterCommand({"ticket.set_field_bulk", …})` with the parameters `ids: Json (array of string)`, `field: String`, `value: String` or `values: Json`, `mode?: String (replace|add|remove)` and `dry_run?: Bool`. `Destructive = true`, so it needs `--yes` / `__confirm`, the same as `ticket.set_field`. It returns `{jobId, rows:[{id, state, message}]}`, and `dry_run` returns `{rows:[{id, from, to, skip?}]}`. P2 adds `ticket.revert_bulk {jobId}`. This is an MCP schema addition only: no existing tool changes shape.
 - **`ITrackerIssueMutations`** (`Source/Core/include/ITrackerIssueMutations.h`, P3 only) gains:
   ```cpp
   virtual bool SupportsBulkFieldEdit() const { return false; }
@@ -75,7 +76,7 @@ The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a
 1. Right-click on a data cell → `DrawGridCellRightClickPopups(…, keyMenu)` with ctx `{sel, field, paneCacheKey, sortedIdx, tickets}`.
 2. Menu item → `ui->bulkEditPopupRequest = {paneId, field, issueIds}`. A new small struct in `SmatchetUiSession.h` holds this request.
 3. The popup draws next frame → user pick → `StartBulkFieldEdit(app, ui, pane, field, values, mode)` (new, in `SmatchetGridFieldEditPipeline.cpp`).
-4. That runs a pre-flight `app.CanEditFieldForIssue` per id, which is memory-only (verified in P1 slice 1), so it is safe for N calls on the UI thread. It then calls `EnqueueGridFieldEdits(d, edits, readOnly)` with `BulkJobId` set.
+4. That runs a pre-flight `app.CanEditFieldForIssue` per id, which is memory-only (verified in P1 slice 1), so it is safe for N calls on the UI thread. For every row it captures the ADR-0016 scalar base: `edit.OriginalValue = ticket.GetFieldValue(field.Id)` and `edit.HasOriginalValue = true`, the same as `QueueEdit` does at `TicketFieldEditor.cpp:380-381`. This lets a queued bulk row that replays after someone else changed the value raise a conflict instead of overwriting it silently. This adds a second capture point next to `QueueEdit`, so P1 slice 1 extracts a shared `CaptureScalarBase(const CachedTicket&, const TrackerField&, PendingFieldEdit&)` into `BulkFieldEditPure` (or a small pure header) and calls it from both places. That keeps ADR-0016's single choke point per kind. It then calls `EnqueueGridFieldEdits(d, edits, readOnly)` with `BulkJobId` set.
 5. The existing `PumpGridFieldEdits` → `RunCommitWorker` → `CommitOrQueueFieldEdit` path saves each row.
 6. `ApplyCommitResultOnUiThread` → `FoldBulkRowResult(d, edit.BulkJobId, issueId, outcome)` → when `Summarize(job).Done`, push the summary toast.
 
@@ -91,7 +92,8 @@ The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a
 6. `Source/Core/include/Ui/SmatchetBulkFieldEditPopup.h` + `Source/Core/src/Ui/SmatchetBulkFieldEditPopup.cpp` (new): the popup, the `dropdown::DrawBody` picker, the mode toggle for multi-value fields, the confirm step and the skip list.
 7. [`Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`](../../../Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp): draw the popup once per pane, at the tail where `LatchPendingActionTargetForPane` is applied (:292).
 8. [`Source/Core/include/SpreadsheetState.h:19`](../../../Source/Core/include/SpreadsheetState.h) + [`Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp:1120`](../../../Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp): add `KeepIssueIds` and rebuild the selection after a re-sort (D5).
-9. [`Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`](../../../Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp): `tickets.set_field_bulk`.
+9. [`Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`](../../../Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp): `ticket.set_field_bulk`.
+10a. `docs/guides/cli.md` (Command catalogue), `docs/guides/lua.md` (`commands` module) and `docs/guides/mcp.md` (Built-in Tools): document the new command, as Commands `AGENTS.md` § Keep the user docs in step requires.
 10. [`Source/Core/src/SmatchetLocalization.cpp`](../../../Source/Core/src/SmatchetLocalization.cpp): the `grid.bulk.*` keys (menu item, header, confirm, summary, skip reasons).
 11. `tests/Core/BulkFieldEditPure.test.cpp` (new) + `tests/CMakeLists.txt`: add it to `add_executable(SmatchetTests …)`.
 12. `tests/ui/bulk_field_edit.test.cpp` (new) + `tests/ui/CMakeLists.txt` + `tests/ui/ui_tests_registry.cpp`: the bucket-E test.
@@ -101,14 +103,14 @@ The job **fans out** into one ordinary `PendingFieldEdit` per row, tagged with a
 13. `SmatchetBulkFieldEditPopup.cpp`: add text, date and number editors. They reuse the existing small inline inputs, not the grid cell editors, and the `TrackerDateTimeFieldEditor` pure parsing helpers. ADF long-text stays out of scope (§ Out of scope).
 14. `BulkFieldEditPure.{h,cpp}`: `MakeRevertJob`. Only rows that reached `Saved` / `Queued` are reverted. Each row's before-value is held as option **ids**, not display names (§ Open questions Q2).
 15. `SmatchetGridFieldEditPipeline.cpp` + `SmatchetGridUiSupport.cpp`: add "Revert last bulk edit (N rows)" to the context menu. The summary toast's `RowAction` opens it.
-16. `BuiltinCommands_TicketMutations.cpp`: `tickets.revert_bulk {jobId}`.
+16. `BuiltinCommands_TicketMutations.cpp`: `ticket.revert_bulk {jobId}`.
 
 **P3 — parallel saves, Jira Cloud bulk API**
 
 17. `SmatchetGridFieldEditPipeline.cpp:253` (`PumpGridFieldEdits`): replace `hasInFlightEdit` with a bounded in-flight set (`limits::Get().GridEditMaxInFlight`, default 4) keyed by (backend, issue).
 18. `Source/Core/include/ITrackerIssueMutations.h`: add the two defaulted virtuals (§ Interface contracts).
 19. `Source/Core/src/Tracker/JiraIssueMutation.cpp` (+ its header): `BulkUpdateSameFields`. POST `bulk/issues/fields`, then poll `bulk/queue/{taskId}` on the worker with a cancel token, and map each failed issue to a `BulkRowResult`.
-20. `SmatchetGridFieldEditPipeline.cpp`: when `SupportsBulkFieldEdit()`, the backend is online and the job is eligible, launch one background task instead of fan-out. On a retryable error, fall back to fan-out.
+20. `Source/Core/src/FieldEditPipelineService.cpp` + `include/FieldEditPipelineService.h`: add `CommitBulkSameValueOrQueue(rows, field, values, target)`. It runs `RouteWrite` once for the job, takes the Jira bulk path only when online and `SupportsBulkFieldEdit()`, writes one `field_edit_diff` pair per row, and on a retryable error or offline falls back to the per-row `CommitOrQueue`, which also queues. The grid pipeline calls this service entry from its worker (`SmatchetGridFieldEditPipeline.cpp`). It never calls a tracker client directly: Ui `AGENTS.md` § Grid forbids a grid-side commit branch that skips the offline queue and audit. In the same PR, P3 updates that invariant's "one edit in flight" wording to "at most `GridEditMaxInFlight` distinct issues in flight" (`Source/Core/src/Ui/AGENTS.md:63`).
 
 ### File-level changes
 
@@ -166,7 +168,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 ## Risks / non-goals
 
 - **Selection cleared by the first landed edit**: mitigated. The job snapshots ids, and `KeepIssueIds` rebuilds the visible selection (D5).
-- **Accidental mass edit**: mitigated by the confirm step above 10 rows, the skip list, `tickets.set_field_bulk` being Destructive, and P2's Revert.
+- **Accidental mass edit**: mitigated by the confirm step above 10 rows, the skip list, `ticket.set_field_bulk` being Destructive, and P2's Revert.
 - **Cross-project option sets** (an assignee not assignable in another project, components that differ per project): the options come from the clicked row's catalog. A row where the value is not allowed fails at the backend with its own message (D4). Accepted: the user picked "try and report per row".
 - **Status = N workflow transitions**: each row can be refused by its workflow and is reported per row. Accepted.
 - **Revert fidelity**: Revert is best-effort. It re-applies the captured before-value, and a row changed by someone else in between gets the normal ADR-0016 conflict handling. Documented in the toast or menu tooltip.
@@ -175,7 +177,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - **Save formats**: none change. Job state is in memory. `BulkJobId` is not persisted, and the offline queue schema is untouched.
 - **Backend leakage**: P1 and P2 add none. P3 adds only defaulted virtuals, and the Jira code stays in `src/Tracker/`.
 - **Dual-target**: everything is in `Source/Core`, so `SmatchetCore_DX12` compiles it as well. There is no `SMATCHET_WITH_MCP` gating, because the command goes through the registry.
-- **Localization churn**: `grid.bulk.*` keys only, added through `SmatchetLocalization::Format`.
+- **Localization churn**: `grid.bulk.*` keys only, added through `SmatchetLocalization::T` / `Label` / `Format` with the English fallback kept in step with the table. `Command::Title`, `Summary` and `Params` stay plain English, because MCP publishes them verbatim.
 - **PR #2432 conflict**: P1 needs #2432 merged, or is stacked on its branch. Shared files are `SmatchetUiSession.h` (different hunks: :115 and :1072 versus #2432 near :1130) and `SpreadsheetState.h` (`GridRectSelection` :19-66 versus #2432's removal at :114-126). This plan does not touch `TicketFieldEditor.cpp` or `TrackerLabelsEditor.cpp`. Conflict risk is low.
 - **Non-goals**: multi-field apply in one gesture, ADF long-text bulk edit, a full undo stack, and bulk edit from the Views dashboard.
 
@@ -221,7 +223,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
   1. Seed 5 tickets and shift-select rows 1–5.
   2. Right-click the Assignee cell, pick a value, and check that 5 rows are saved, the summary toast shows 5 saved, and the selection is still 5 rows after the re-sort.
   3. Repeat with 12 rows and check that the confirm step appears.
-- **Bash-driver / CLI (bucket A-CLI):** `smatchet tickets.set_field_bulk --ids '["A-1","A-2"]' --field assignee --value X --dry-run` returns the from → to diff. With `--yes` it returns `rows[].state`, and the audit log shows 2 `field_edit_diff` pairs. P3 adds a TSan run of the parallel pump plus fold.
+- **Bash-driver / CLI (bucket A-CLI):** `smatchet ticket.set_field_bulk --ids '["A-1","A-2"]' --field assignee --value X --dry-run` returns the from → to diff. With `--yes` it returns `rows[].state`, and the audit log shows 2 `field_edit_diff` pairs. P3 adds a TSan run of the parallel pump plus fold.
 - **Build gate:** `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Doc validation (blocks plan-doc PRs — keep this bullet):** the canonical `scripts/dev/test-docs.sh` suite passes.
 - **Plan stress-test — `grill-with-docs` (keep this bullet):** run `grill-with-docs` against this plan before P1 code starts, and record the outcome in § Deviations.
@@ -248,6 +250,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 ## Deviations from plan
+- **Pre-implementation `grill-with-docs` (2026-11-14):** five gaps fixed before any code was written. (1) ADR-0016 scalar-base capture for every bulk row, through a shared `CaptureScalarBase`. (2) The per-cell menu ctx holds no owned strings (Ui § Per-cell allocation). (3) The P3 Jira bulk path goes through `FieldEditPipelineService`, not a grid-side commit branch, and P3 updates the Ui § Grid one-in-flight wording. (4) The cli, lua and mcp guides are updated. (5) Toast wording follows Ui § Toasts say what happened. The user chose the command name `ticket.set_field_bulk`.
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
 ## Verification (actual)
