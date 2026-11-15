@@ -502,6 +502,104 @@ TEST_CASE("ResolveHighlight: stays on its own row, else follows the identity, el
     CHECK(ResolveHighlight(rows, more.data(), 4, nullptr, third, 99) == 3); // a stale index is not trusted
 }
 
+TEST_CASE("DecideHighlight: an untouched highlight is the default of the list as it is now") {
+    // Filter "abby": "Crabby" contains it, "Zed" only by its secondary text. "Crabby" is the default.
+    std::vector<ItemView> items = {MakeItem("1", "Crabby"), MakeItem("2", "Zed", "abby@example.com")};
+    ModelInput in;
+    in.Items = items.data();
+    in.Count = 2;
+    in.FilterLower = "abby";
+    std::vector<Row> rows;
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "ii");
+    HighlightContext open;
+    open.NeedDefault = true;
+    HighlightDecision d = DecideHighlight(rows, items.data(), 2, nullptr, RowIdentity(), -1, open, in.FilterLower);
+    CHECK(d.Index == 0);
+    CHECK(d.IsDefault);
+    CHECK(d.Reveal);
+    RowIdentity crabby;
+    IdentityOfRow(rows, items.data(), 2, nullptr, d.Index, crabby);
+
+    // Nothing changed: the same row, and the list is not scrolled back to it.
+    const HighlightContext untouched;
+    d = DecideHighlight(rows, items.data(), 2, nullptr, crabby, 0, untouched, in.FilterLower);
+    CHECK(d.Index == 0);
+    CHECK(d.IsDefault);
+    CHECK_FALSE(d.Reveal);
+
+    // A fetch replaces "Zed" with "Abby": still two rows, but Enter now belongs to the label that
+    // starts with the filter.
+    items[1] = MakeItem("3", "Abby");
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "ii");
+    d = DecideHighlight(rows, items.data(), 2, nullptr, crabby, 0, untouched, in.FilterLower);
+    CHECK(d.Index == 1);
+    CHECK(d.IsDefault);
+    CHECK(d.Reveal);
+
+    // The same change after the user placed the highlight on "Crabby": it stays where they put it.
+    HighlightContext moved;
+    moved.UserMoved = true;
+    d = DecideHighlight(rows, items.data(), 2, nullptr, crabby, 0, moved, in.FilterLower);
+    CHECK(d.Index == 0);
+    CHECK_FALSE(d.IsDefault);
+    CHECK_FALSE(d.Reveal);
+}
+
+TEST_CASE("DecideHighlight: a placed highlight follows its row and gives way only when the row is gone") {
+    std::vector<ItemView> items = {MakeItem("a", "Alpha"), MakeItem("b", "Beta"), MakeItem("c", "Gamma")};
+    ModelInput in;
+    in.Items = items.data();
+    in.Count = 3;
+    std::vector<Row> rows;
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "iii");
+    RowIdentity gamma;
+    IdentityOfRow(rows, items.data(), 3, nullptr, 2, gamma);
+    HighlightContext moved;
+    moved.UserMoved = true;
+    moved.RowCountChanged = true;
+
+    // An option arrives in front: the highlight moves down with "Gamma".
+    std::vector<ItemView> more = {MakeItem("z", "Zero"), items[0], items[1], items[2]};
+    in.Items = more.data();
+    in.Count = 4;
+    BuildRows(in, rows);
+    HighlightDecision d = DecideHighlight(rows, more.data(), 4, nullptr, gamma, 2, moved, std::string());
+    CHECK(d.Index == 3);
+    CHECK_FALSE(d.IsDefault);
+
+    // "Gamma" is gone: back to the default, brought into view.
+    in.Items = items.data();
+    in.Count = 2;
+    BuildRows(in, rows);
+    d = DecideHighlight(rows, items.data(), 2, nullptr, gamma, 3, moved, std::string());
+    CHECK(d.Index == 0);
+    CHECK(d.IsDefault);
+    CHECK(d.Reveal);
+
+    // An untouched highlight in a list that changed size is revealed again, also on the same row.
+    RowIdentity alpha;
+    IdentityOfRow(rows, items.data(), 2, nullptr, 0, alpha);
+    HighlightContext grew;
+    grew.RowCountChanged = true;
+    in.Count = 3;
+    BuildRows(in, rows);
+    d = DecideHighlight(rows, items.data(), 3, nullptr, alpha, 0, grew, std::string());
+    CHECK(d.Index == 0);
+    CHECK(d.Reveal);
+
+    // No row to rest on: no highlight, nothing to reveal.
+    const std::vector<Row> none;
+    HighlightContext open;
+    open.NeedDefault = true;
+    d = DecideHighlight(none, nullptr, 0, nullptr, RowIdentity(), -1, open, std::string());
+    CHECK(d.Index == -1);
+    CHECK(d.IsDefault);
+    CHECK_FALSE(d.Reveal);
+}
+
 TEST_CASE("ScrollToRevealRow: scrolls only as far as needed") {
     // Rows of 20 in a 100-tall view scrolled to 40: rows 2..6 are fully visible.
     CHECK(ScrollToRevealRow(3, 20.0f, 100.0f, 40.0f) == doctest::Approx(40.0f)); // visible: unchanged

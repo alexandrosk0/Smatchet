@@ -20,7 +20,6 @@ namespace {
 
 constexpr float kMinWidthEm = 18.0f; // narrowest body, in font sizes: fits the footer hints
 constexpr float kSmallTextScale = 0.85f;
-constexpr int kMaxSplicedChars = 32;
 
 // Everything one open dropdown remembers between frames. Slots are keyed by the popup window id and
 // start fresh whenever that popup (re)appears.
@@ -126,8 +125,10 @@ bool SpliceQueuedCharsIntoFilter(BodyState& st) {
     while (st.Filter[0] == '\0' && first < io.InputQueueCharacters.Size && io.InputQueueCharacters[first] == ' ') {
         ++first;
     }
-    unsigned int queued[kMaxSplicedChars];
-    const int n = (std::min)(io.InputQueueCharacters.Size - first, kMaxSplicedChars);
+    // Every queued character is offered: the buffer's own size is the only limit (it holds fewer
+    // characters than it has bytes, so a longer queue could not land either).
+    unsigned int queued[sizeof(st.Filter)];
+    const int n = (std::min)(io.InputQueueCharacters.Size - first, static_cast<int>(sizeof(st.Filter)));
     for (int i = 0; i < n; ++i) {
         queued[i] = static_cast<unsigned int>(io.InputQueueCharacters[first + i]);
     }
@@ -527,31 +528,26 @@ void BuildRowsForFrame(BodyState& st, const Item* items, int count, const Option
     pure::BuildRows(in, st.Rows);
 }
 
-// Keeps the highlight on the right row. It gets a fresh default when the popup opens, when the filter
-// changes, and, until the user has moved it, whenever the list changes size (options arriving under an
-// open popup). Otherwise it follows its row by identity, so a rebuilt list never leaves it on a
-// different option. Then the arrow and page keys move it.
+// Keeps the highlight on the right row (pure::DecideHighlight). It gets a fresh default when the popup
+// opens and when the filter changes; until the user has moved it, it is the default of every frame's
+// list (options arriving or being replaced under an open popup). Once moved it follows its row by
+// identity, so a rebuilt list never leaves it on a different option. Then the arrow and page keys move it.
 void UpdateHighlight(BodyState& st, int count, const Options& options, const std::string& filterLower,
                      bool popupFocused, int maxRows) {
     const int rowCount = static_cast<int>(st.Rows.size());
     const pure::ItemView* views = st.Views.data();
-    if (!st.NeedDefaultHighlight) {
-        if (!st.UserMovedHighlight && rowCount != st.LastRowCount) {
-            st.NeedDefaultHighlight = true;
-        } else if (st.HighlightIdentity.Valid) {
-            st.Highlight =
-                pure::ResolveHighlight(st.Rows, views, count, &st.Recents, st.HighlightIdentity, st.Highlight);
-            st.NeedDefaultHighlight = st.Highlight < 0; // its row is gone
-        } else {
-            st.NeedDefaultHighlight = true; // nothing was highlighted: take one as soon as a row can be
-        }
-    }
-    if (st.NeedDefaultHighlight) {
-        const bool preferChecked = filterLower.empty() && !options.MultiSelect;
-        st.Highlight = pure::DefaultHighlight(st.Rows, views, count, preferChecked, filterLower);
-        st.NeedDefaultHighlight = false;
+    pure::HighlightContext context;
+    context.NeedDefault = st.NeedDefaultHighlight;
+    context.UserMoved = st.UserMovedHighlight;
+    context.RowCountChanged = rowCount != st.LastRowCount;
+    context.PreferChecked = filterLower.empty() && !options.MultiSelect;
+    const pure::HighlightDecision next = pure::DecideHighlight(st.Rows, views, count, &st.Recents, st.HighlightIdentity,
+                                                               st.Highlight, context, filterLower);
+    st.Highlight = next.Index;
+    st.NeedDefaultHighlight = false;
+    if (next.IsDefault) {
         st.UserMovedHighlight = false;
-        st.ScrollToHighlight = st.Highlight >= 0;
+        st.ScrollToHighlight = next.Reveal;
     }
     st.LastRowCount = rowCount;
     if (!popupFocused) {

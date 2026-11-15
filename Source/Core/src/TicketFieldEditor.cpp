@@ -807,7 +807,6 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
         smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(option);
         item.Tooltip = item.Secondary;
         item.Checked = selectedSet.find(item.Id) != selectedSet.end();
-        item.Disabled = option.Disabled;
         items.push_back(item);
     }
     smatchet::dropdown::Options options =
