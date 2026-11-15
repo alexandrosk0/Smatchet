@@ -143,6 +143,11 @@ These are multi-key or modal-local and are out of scope for v1 rebinding.
 | Zoom In | `Ctrl+=`, `Ctrl+Shift+=` (i.e. `Ctrl++`), `Ctrl+NumAdd`, `Ctrl+MouseWheelUp` | `ui.zoom.in` |
 | Zoom Out | `Ctrl+-`, `Ctrl+NumSubtract`, `Ctrl+MouseWheelDown` | `ui.zoom.out` |
 | Reset Zoom | `Ctrl+0`, `Ctrl+Num0` | `ui.zoom.reset` |
+| Search issues (focused grid pane) | `Ctrl+F`, `/` | `grid.search.focus` |
+
+`/` on its own does nothing while you are typing in a field, so it never takes a
+typed slash; `Ctrl+F` works from anywhere. In the search box, **Esc** clears the
+search and leaves the box.
 
 ## Upgrading from an older build
 
@@ -159,6 +164,9 @@ to the full set in the table above (including `Ctrl+MouseWheelUp` /
 `Ctrl+MouseWheelDown`). A zoom binding you had already rebound — or deliberately
 cleared — is left exactly as you set it; use **Reset all to defaults** if you want
 the alias set instead.
+
+The grid search shortcut (`grid.search.focus`) is added once to a config saved
+before it existed. A binding you already gave that command is kept as it is.
 
 Configs that already ran #2276's wheel migration (`migrated_multi_hotkey_zoom_v2`)
 but still hold only a *partial* default set — the common case is just `Ctrl+=` /

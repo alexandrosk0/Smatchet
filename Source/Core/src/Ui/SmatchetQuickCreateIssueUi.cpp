@@ -23,6 +23,7 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization wrapper.
 #define ImGui SmatchetLocalizedImGui
@@ -127,6 +128,51 @@ void SeedOnOpen(AppController& app, UiDrawSession& d) {
     d.quickCreateQueueOffered = false;
     d.quickCreateCtxGenerating = false;
     d.quickCreateLastFetchedProjectKey = d.quickCreateDraft.ProjectKey;
+}
+
+const char* const kDiscardPopupId = "Discard this issue?##quickcreate_discard";
+
+// The user typed something this popup would lose: a summary, or a description they edited
+// (the engine-context prefill alone is not theirs).
+bool QuickCreateHasUserContent(const UiDrawSession& d) {
+    return !TrimCopy(BufText(d.quickCreateSummaryBuf)).empty() ||
+           (d.quickCreateDescUserEdited && !TrimCopy(BufText(d.quickCreateDescBuf)).empty());
+}
+
+// A popup (a dropdown or the discard question) was open over the quick-create window at the end
+// of the last frame. ImGui's keyboard-nav cancel closes that popup in NewFrame and gives the
+// keyboard back to the window before it draws, so the same Esc would otherwise also reach the
+// window and close it, or open the discard question again.
+bool s_quickCreatePopupOpenLastFrame = false;
+
+// Keys for the popup, read before its fields draw so a field keeps its text: an InputText that
+// is still active when a key reaches it acts on it itself. Only while the popup itself has the
+// keyboard, and never for the Esc that just closed a dropdown or the discard question.
+struct QuickCreateKeys {
+    bool Submit = false;
+    bool Escape = false;
+};
+
+QuickCreateKeys ReadQuickCreateKeys() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    QuickCreateKeys keys;
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+        return keys;
+    }
+    keys.Submit = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+                  ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter);
+    keys.Escape = !keys.Submit && !s_quickCreatePopupOpenLastFrame && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    const bool fieldActive =
+        g.ActiveId != 0 && g.ActiveIdWindow != nullptr && g.ActiveIdWindow->RootWindow == g.CurrentWindow->RootWindow;
+    if (fieldActive && (keys.Submit || keys.Escape)) {
+        ImGui::ClearActiveID();
+    }
+    if (keys.Submit) {
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+    }
+    return keys;
 }
 
 void ResetAndClose(UiDrawSession& d) {
@@ -278,7 +324,7 @@ void DrawIssueTypeRow(AppController& app, UiDrawSession& d) {
 }
 
 // Error banner + Create/Cancel + refresh-context, with Ctrl+Enter submit / Esc cancel.
-void DrawActions(AppController& app, UiDrawSession& d) {
+void DrawActions(AppController& app, UiDrawSession& d, const QuickCreateKeys& keys, bool summaryEnter) {
     if (!d.quickCreateError.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%s", d.quickCreateError.c_str());
@@ -320,12 +366,35 @@ void DrawActions(AppController& app, UiDrawSession& d) {
         }
     }
 
-    const bool ctrlHeld = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-    if (submitClicked || (canSubmit && ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+    // Create button, Ctrl+Enter anywhere in the popup, or Enter in Summary: one submit path. A
+    // key press that cannot create yet says why, the way the disabled Create button would.
+    if (submitClicked || (canSubmit && (keys.Submit || summaryEnter))) {
         OnSubmit(app, d);
+    } else if (!d.quickCreateInFlight && (keys.Submit || summaryEnter)) {
+        d.quickCreateError = SmatchetLocalization::T("quickcreate.needs_summary_and_project",
+                                                     "Type a summary and pick a project to create the issue.");
     }
-    if (!d.quickCreateInFlight && (cancelClicked || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-        ResetAndClose(d);
+    // Cancel and Esc close an empty popup at once and ask first when something is typed.
+    if (!d.quickCreateInFlight && (cancelClicked || keys.Escape)) {
+        if (QuickCreateHasUserContent(d)) {
+            ImGui::OpenPopup(kDiscardPopupId);
+        } else {
+            ResetAndClose(d);
+        }
+    }
+    if (ImGui::BeginPopup(kDiscardPopupId)) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("quickcreate.discard_confirm",
+                                                       "Discard this issue? The summary and description you typed "
+                                                       "will be lost."));
+        if (ImGui::Button(SmatchetLocalization::T("quickcreate.discard", "Discard"))) {
+            ImGui::CloseCurrentPopup();
+            ResetAndClose(d);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("quickcreate.keep_editing", "Keep editing"))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -346,11 +415,13 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_FirstUseEver);
     SmatchetWindowExpand::BeginWindow(d, "Quick Create Issue");
     if (!ImGui::Begin("Quick Create Issue", &d.showQuickCreateIssue)) {
+        s_quickCreatePopupOpenLastFrame = false;
         d.quickCreateOpenLatch = false;
         ImGui::End();
         return;
     }
     SmatchetWindowExpand::DrawToggle(d);
+    const QuickCreateKeys keys = ReadQuickCreateKeys();
 
     DrawProjectRow(app, d);
     DrawIssueTypeRow(app, d);
@@ -364,7 +435,8 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     if (d.quickCreateOpenLatch) {
         ImGui::SetKeyboardFocusHere();
     }
-    ImGui::InputText("##quickcreate_summary", d.quickCreateSummaryBuf.data(), d.quickCreateSummaryBuf.size());
+    const bool summaryEnter = ImGui::InputText("##quickcreate_summary", d.quickCreateSummaryBuf.data(),
+                                               d.quickCreateSummaryBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
 
     ImGui::TextUnformatted(SmatchetLocalization::T("quickcreate.description", "Description"));
     if (d.quickCreateCtxGenerating && BufText(d.quickCreateDescBuf).empty()) {
@@ -379,7 +451,9 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
         d.quickCreateDescUserEdited = true;
     }
 
-    DrawActions(app, d);
+    DrawActions(app, d, keys, summaryEnter);
+    s_quickCreatePopupOpenLastFrame =
+        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 
     d.quickCreateOpenLatch = false;
     ImGui::End();
