@@ -836,7 +836,11 @@ void PostDictationFailure(AppController* app, fb::DictationFailure kind) {
         const std::int64_t nowMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
                 .count();
-        if (!fb::FailureToastDue(g_dictationFailureLastShownMs[idx], nowMs, kDictationFailureCooldownMs)) {
+        // Under the mock seam every failure shows its notice: a scenario run must not depend on
+        // whether a run moments before raised the same one.
+        const bool cooldownApplies = !WhisperPlugin::MockTranscriptionActive();
+        if (cooldownApplies &&
+            !fb::FailureToastDue(g_dictationFailureLastShownMs[idx], nowMs, kDictationFailureCooldownMs)) {
             LOG_DEBUG("Whisper: failure notice kind=%d not repeated (shown moments ago)", idx);
             return;
         }

@@ -84,6 +84,16 @@ TEST_CASE("SmatchetToastManager: HasLive follows the toast on screen, not the hi
     mgr.Push("Copied", "two", ToastType::Info, 1500);
     CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
 
+    // Past its time but not yet removed (removal waits for the next Render): not on screen.
     mgr.DismissAllLive();
+    mgr.Push("Shortcut not run", "bad args", ToastType::Warning, 0);
+    CHECK(mgr.LiveCount() == 1);
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
+    // An error stays until it is dismissed, whatever its time.
+    mgr.Push("Save failed", "disk full", ToastType::Error, 0);
+    CHECK(mgr.HasLive("Save failed", "disk full"));
+
+    mgr.DismissAllLive();
+    mgr.MarkHistorySeen(); // the error above counts as unread: not left for the next case
     mgr.ClearHistory();
 }

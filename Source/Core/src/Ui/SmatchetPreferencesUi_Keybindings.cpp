@@ -372,17 +372,19 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
             ImGui::PushID(static_cast<int>(i));
 
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(label.c_str());
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", b.CommandId.c_str());
-            }
             // A shortcut whose args would not run is refused on every press. Its row says so, in words and
-            // in the error colour, so it can be told from a working shortcut for the same command.
+            // in the error colour, so it can be told from a working shortcut for the same command. The
+            // words come before the command name: in a narrow window the column cuts off its end, and
+            // that must be the name, not the words.
             if (!smatchet::toolbar_editor::ArgsTextRuns(b.ArgsJson)) {
-                ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
                 ImGui::TextUnformatted(SmatchetLocalization::T("toolbar.editor.row_bad_args", "(args not valid)"));
                 ImGui::PopStyleColor();
+                ImGui::SameLine();
+            }
+            ImGui::TextUnformatted(label.c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", b.CommandId.c_str());
             }
 
             ImGui::TableSetColumnIndex(1);

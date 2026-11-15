@@ -189,5 +189,14 @@ inline bool AiCaretRequestFresh(int requestFrame, int nowFrame, int maxAgeFrames
     return requestFrame >= 0 && nowFrame >= requestFrame && nowFrame - requestFrame <= maxAgeFrames;
 }
 
+/// The window the keyboard goes back to when Esc leaves the message box, as it stands while the panel
+/// is hidden (closed, or behind another tab of its dock). `windowId` is the window noted so far, 0 for
+/// none. It is kept only while a request to put the caret in the box is still under way: that request
+/// is about to bring the panel forward. Otherwise it is forgotten (0): the user has moved on, and an
+/// Esc pressed in the box much later must not move the keyboard to a window they left long ago.
+inline unsigned int AiFocusReturnWindowWhileHidden(unsigned int windowId, bool caretRequestFresh) {
+    return caretRequestFresh ? windowId : 0u;
+}
+
 } // namespace ai
 } // namespace smatchet

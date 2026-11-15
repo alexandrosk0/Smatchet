@@ -15,6 +15,12 @@
 
 using namespace smatchet::ai;
 
+TEST_CASE("AiFocusReturnWindowWhileHidden: kept only while a caret request is under way") {
+    CHECK(AiFocusReturnWindowWhileHidden(42u, /*caretRequestFresh=*/true) == 42u);
+    CHECK(AiFocusReturnWindowWhileHidden(42u, false) == 0u); // hidden and nothing asked for: forgotten
+    CHECK(AiFocusReturnWindowWhileHidden(0u, true) == 0u);   // none noted stays none
+}
+
 TEST_CASE("AiCaretRequestFresh: acts on a young request, drops none, stale and future ones") {
     CHECK_FALSE(AiCaretRequestFresh(-1, 10, 3)); // no request
     CHECK(AiCaretRequestFresh(10, 10, 3));       // the frame it was made on

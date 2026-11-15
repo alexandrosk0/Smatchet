@@ -39,8 +39,9 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiSession.h"
-#include "Ui/SmatchetGridUiSupport.h" // SmatchetOfflineConflictUnsavedHintShownForTest
-#include "UiTestWriteScope.h"         // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
+#include "Ui/SmatchetGridUiSupport.h"         // SmatchetOfflineConflictUnsavedHintShownForTest
+#include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
+#include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — real-window probe
@@ -192,6 +193,8 @@ void LeaveConflictHost(ImGuiTestContext* ctx, AppController* app, std::int64_t e
     if (WindowIsLive(kModalTitle)) {
         CancelConflictModal(ctx);
     }
+    // That Cancel keeps typed text like the user's does: nothing kept outlives the case.
+    SmatchetOfflineConflictDraftsClearForTest();
     app->DeletePendingFieldEdits({editId});
     g_ui.requestActiveProjectFocus = false;
     ctx->Yield();
@@ -279,6 +282,9 @@ void RunKeyboardCase(ImGuiTestContext* ctx, KeyboardCaseBody body) {
     if (c.EditId <= 0) {
         return;
     }
+    // A case that cancels around typed text leaves that text kept for its queue id, and the next
+    // case can be given the same id: each case starts with nothing kept.
+    SmatchetOfflineConflictDraftsClearForTest();
     body(ctx, c);
     LeaveConflictHost(ctx, c.App, c.EditId);
 }
@@ -433,6 +439,70 @@ void CaseTextEscKeepsTypedText(ImGuiTestContext* ctx, const KeyboardCase& c) {
     IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
 }
 
+// Types into the text resolver and cancels with the button. Returns what the field held, or an empty
+// string (checked) when the resolver did not open or did not close.
+std::string TypeAndCancelTextResolver(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    if (!OpenWithCaretIn(ctx, kTextJson, c.EditId, kTextField)) {
+        return std::string();
+    }
+    ctx->KeyChars("X");
+    ctx->Yield(2);
+    const std::string typed = ResolvedText();
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Cancel");
+    const bool closed = YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30);
+    IM_CHECK_NO_RET(closed);
+    return closed ? typed : std::string();
+}
+
+// Cancel does not lose a resolution that was typed: opening the same conflict again brings it back,
+// and "Start over" puts the field back to what the resolver opens with and forgets it.
+void CaseTextCancelKeepsWhatWasTyped(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    const std::string typed = TypeAndCancelTextResolver(ctx, c);
+    IM_CHECK_NO_RET(typed.find('X') != std::string::npos);
+    if (typed.empty()) {
+        return;
+    }
+    if (!OpenWithCaretIn(ctx, kTextJson, c.EditId, kTextField)) {
+        return;
+    }
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDraftRestoredForTest());
+    IM_CHECK_STR_EQ_NO_RET(ResolvedText().c_str(), typed.c_str());
+
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Start over");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictDraftRestoredForTest());
+    IM_CHECK_NO_RET(ResolvedText().find('X') == std::string::npos);
+    IM_CHECK_NO_RET(ResolvedText().find("<<<<<<< mine") == 0);
+
+    // Started over and cancelled: nothing is kept for the next open.
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Cancel");
+    IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30));
+    IM_CHECK_NO_RET(OpenConflictModal(ctx, kTextJson, c.EditId));
+    ctx->Yield(2);
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictDraftRestoredForTest());
+    IM_CHECK_NO_RET(ResolvedText().find('X') == std::string::npos);
+}
+
+// The kept text belongs to the conflict it was typed against. When the same queue id opens with a
+// different server side, the resolver starts from that conflict, not from the old text.
+void CaseKeptTextNotPutIntoChangedConflict(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    const std::string typed = TypeAndCancelTextResolver(ctx, c);
+    // Without the typed X nothing is kept, and the checks below would pass with the guard broken.
+    IM_CHECK_NO_RET(typed.find('X') != std::string::npos);
+    if (typed.find('X') == std::string::npos) {
+        return;
+    }
+    const bool opened = OpenConflictModal(ctx, "{\"kind\":\"text\",\"mine\":\"a\",\"theirs\":\"c\"}", c.EditId);
+    IM_CHECK_NO_RET(opened);
+    ctx->Yield(2);
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictDraftRestoredForTest());
+    IM_CHECK_NO_RET(ResolvedText().find('X') == std::string::npos);
+    IM_CHECK_NO_RET(ResolvedText().find("\nc\n") != std::string::npos);
+}
+
 // Nothing typed: one Esc closes, although the caret starts in the field.
 void CaseUntouchedEscCloses(ImGuiTestContext* ctx, const KeyboardCase& c) {
     if (!OpenWithCaretIn(ctx, kScalarJson, c.EditId, kScalarField)) {
@@ -553,6 +623,8 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Text_CtrlEnterBlockedByMarkers", CaseTextCtrlEnterBlockedByMarkers);
     RegisterKeyboardCase(engine, "Text_CtrlEnterSavesWhenClean", CaseTextCtrlEnterSavesWhenClean);
     RegisterKeyboardCase(engine, "Text_EscKeepsTypedText", CaseTextEscKeepsTypedText);
+    RegisterKeyboardCase(engine, "Text_CancelKeepsWhatWasTyped", CaseTextCancelKeepsWhatWasTyped);
+    RegisterKeyboardCase(engine, "Text_KeptTextNotPutIntoChangedConflict", CaseKeptTextNotPutIntoChangedConflict);
     RegisterKeyboardCase(engine, "Untouched_EscCloses", CaseUntouchedEscCloses);
     RegisterKeyboardCase(engine, "Unverified_EscCloses", CaseUnverifiedEscCloses);
     RegisterKeyboardCase(engine, "ConflictRow_EnterOpensResolver", CaseRowEnterOpensResolver);

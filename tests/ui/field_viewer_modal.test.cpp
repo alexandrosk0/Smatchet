@@ -310,6 +310,39 @@ static void RegisterCommentsEscKeepsTypedText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_TitleBarCloseKeepsDraft: the title-bar X with a comment typed does not lose it:
+// the viewer comes back with the comment and the question that Close and Esc ask.
+static void RegisterCommentsTitleBarCloseKeepsDraft(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_TitleBarCloseKeepsDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("draft one");
+        ctx->Yield(2);
+
+        ImGuiWindow* viewer = TopModal();
+        IM_CHECK_NO_RET(viewer != nullptr);
+        if (viewer != nullptr) {
+            const ImGuiID viewerId = viewer->ID;
+            ctx->WindowClose(viewerId);
+            // Back, with the question above it: the topmost modal is no longer the viewer itself.
+            IM_CHECK_NO_RET(YieldUntil(ctx, 30, [viewerId]() {
+                ImGuiWindow* top = TopModal();
+                return GetFieldViewerSnapshotForTests().Active && top != nullptr && top->ID != viewerId;
+            }));
+            IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "draft one");
+
+            IM_CHECK_NO_RET(ClickInTopModal(ctx, "Keep writing"));
+            ctx->Yield(3);
+            IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+            IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "draft one");
+        }
+        CloseCommentsViewer(ctx);
+    };
+}
+
 // OfflineFirst/Comments_BlankBoxCannotPost: a box holding only spaces posts nothing, by the button or
 // by Ctrl+Enter, and Ctrl+Enter gives the caret back.
 static void RegisterCommentsBlankBoxCannotPost(ImGuiTestEngine* engine) {
@@ -549,6 +582,7 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsUserOpenPutsCaretInPostBox(engine);
     RegisterCommentsProgrammaticOpenLeavesKeyboard(engine);
     RegisterCommentsEscKeepsTypedText(engine);
+    RegisterCommentsTitleBarCloseKeepsDraft(engine);
     RegisterCommentsBlankBoxCannotPost(engine);
     RegisterCommentsCtrlEnterPosts(engine);
     RegisterCommentsEscOnFilledBoxOnlyLeaves(engine);

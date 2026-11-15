@@ -12,8 +12,8 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
+#include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
-#include "Ui/SmatchetWorklogSubmitPure.h"
 #include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
 
@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -1197,14 +1198,87 @@ static bool g_conflictFocusFieldPending = false;      // one-shot: put the caret
 static bool g_conflictOwnedKeyboardLastFrame = false; // the resolver had the keyboard on the previous frame
 static bool g_conflictEscUnsavedHint = false;         // Esc was pressed around a resolution that is not saved
 static std::string g_conflictSeed;                    // the resolved field as opened: the "nothing typed" baseline
+static bool g_conflictDraftRestored = false;          // the field opened with a resolution kept from a Cancel
+
+// A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. `Seed`
+// is the field as the resolver opened it then: the text comes back only into a conflict that opens with
+// the same seed, so it never lands on a conflict whose two sides have changed, nor on another edit that
+// was given the same queue id later.
+struct ConflictDraft {
+    std::string Seed;
+    std::string Text;
+};
+
+// Kept while the app runs, by queue id. Bounded: a resolver is cancelled by hand, a few times a session.
+static std::map<std::int64_t, ConflictDraft> g_conflictDrafts;
+static const std::size_t kConflictDraftsMax = 16;
 
 static void ResetConflictKeyboardState() {
     g_conflictFocusFieldPending = false;
     g_conflictEscUnsavedHint = false;
+    g_conflictDraftRestored = false;
     g_conflictSeed.clear();
 }
 
+// Keeps what the resolved field holds when it differs from what the resolver opened with. True when kept.
+static bool KeepConflictDraft(const UiDrawSession& d) {
+    if (d.conflictResolveDbId == 0 || d.conflictResolveBuf.empty()) {
+        return false;
+    }
+    const std::string typed(d.conflictResolveBuf.data());
+    if (typed == g_conflictSeed) {
+        g_conflictDrafts.erase(d.conflictResolveDbId);
+        return false;
+    }
+    ConflictDraft& draft = g_conflictDrafts[d.conflictResolveDbId];
+    draft.Seed = g_conflictSeed;
+    draft.Text = typed;
+    // Over the bound, the lowest queue id goes first: the oldest edit, and never the one just kept
+    // unless it is the only one left.
+    while (g_conflictDrafts.size() > kConflictDraftsMax) {
+        auto oldest = g_conflictDrafts.begin();
+        if (oldest->first == d.conflictResolveDbId) {
+            ++oldest;
+        }
+        g_conflictDrafts.erase(oldest);
+    }
+    return true;
+}
+
+// On open, after the field is seeded: puts back the resolution kept for this edit, when the conflict
+// still opens the way it did then.
+static void RestoreConflictDraft(UiDrawSession& d) {
+    g_conflictDraftRestored = false;
+    const auto it = g_conflictDrafts.find(d.conflictResolveDbId);
+    if (it == g_conflictDrafts.end()) {
+        return;
+    }
+    if (d.conflictResolveBuf.empty() || it->second.Seed != g_conflictSeed) {
+        g_conflictDrafts.erase(it);
+        return;
+    }
+    const std::size_t n = (std::min)(it->second.Text.size(), d.conflictResolveBuf.size() - 1);
+    std::fill(d.conflictResolveBuf.begin(), d.conflictResolveBuf.end(), '\0');
+    std::memcpy(d.conflictResolveBuf.data(), it->second.Text.data(), n);
+    g_conflictDraftRestored = true;
+}
+
+// "Start over": the field goes back to what the resolver opens with, and the kept resolution is dropped.
+static void DropConflictDraft(UiDrawSession& d) {
+    g_conflictDrafts.erase(d.conflictResolveDbId);
+    g_conflictDraftRestored = false;
+    g_conflictEscUnsavedHint = false;
+    if (d.conflictResolveBuf.empty()) {
+        return;
+    }
+    const std::size_t n = (std::min)(g_conflictSeed.size(), d.conflictResolveBuf.size() - 1);
+    std::fill(d.conflictResolveBuf.begin(), d.conflictResolveBuf.end(), '\0');
+    std::memcpy(d.conflictResolveBuf.data(), g_conflictSeed.data(), n);
+    g_conflictFocusFieldPending = true;
+}
+
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
+    g_conflictDrafts.erase(d.conflictResolveDbId);
     d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
@@ -1216,11 +1290,18 @@ static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
     }
 }
 
-// Cancel, Close, and Esc with nothing typed: close and drop the resolution text. The edit stays queued.
+// Cancel, Close, and Esc with nothing typed: close the resolver. The edit stays queued. A resolution that
+// was typed is kept for the next time this conflict is opened, and the panel says so.
 static void CancelConflictModal(UiDrawSession& d) {
+    const bool kept = KeepConflictDraft(d);
     d.conflictResolveBuf.clear();
     ResetConflictKeyboardState();
     ImGui::CloseCurrentPopup();
+    if (kept) {
+        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.draft_kept",
+                                                              "What you typed is kept until Smatchet closes. "
+                                                              "Open the conflict again to go on with it."));
+    }
 }
 
 struct ConflictModalKeys {
@@ -1248,7 +1329,7 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
     if (fieldActive) {
         g_conflictEscUnsavedHint = false;
     }
-    const smatchet::worklog::WorklogEscapeAction esc = smatchet::worklog::ResolveWorklogEscape(
+    const smatchet::dialogkeys::EscapeAction esc = smatchet::dialogkeys::ResolveEscape(
         ImGui::IsKeyPressed(ImGuiKey_Escape, false), owns, g_conflictOwnedKeyboardLastFrame, fieldActive, nothingTyped);
     g_conflictOwnedKeyboardLastFrame = owns;
 
@@ -1256,12 +1337,12 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
     keys.Save = fieldLabel != nullptr && owns &&
                 (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
                  ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
-    const bool escCancels = esc == smatchet::worklog::WorklogEscapeAction::Cancel;
+    const bool escCancels = esc == smatchet::dialogkeys::EscapeAction::Cancel;
     keys.Close = escCancels && nothingTyped;
     if (escCancels && !nothingTyped) {
         g_conflictEscUnsavedHint = true;
     }
-    if (fieldActive && (keys.Save || esc != smatchet::worklog::WorklogEscapeAction::None)) {
+    if (fieldActive && (keys.Save || esc != smatchet::dialogkeys::EscapeAction::None)) {
         ImGui::ClearActiveID();
     }
     if (keys.Save) {
@@ -1272,23 +1353,24 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
     return keys;
 }
 
-// Puts the caret in the resolved field, once per request; call right before the field. The request waits
-// while Enter is held: the Enter that opened the resolver from the row would otherwise repeat into the field
-// and save a value unasked, or type newlines into the text. It also waits while a window is being dragged,
-// when ImGui drops a focus request. A request made while a popup above the resolver has the keyboard is
-// dropped, not kept: the caret is not pulled out of that popup, and not moved later, out of whatever the
-// user went on to.
+// Puts the caret in the resolved field, once per request; call right before the field. When the request
+// waits, is dropped or is taken: smatchet::dialogkeys::ResolveCaretRequest. Here the Enter that is waited
+// out is the one that opened the resolver from the row: repeated into the field it would save a value
+// unasked, or type newlines into the text.
 static void TakeConflictCaretRequest() {
     if (!g_conflictFocusFieldPending) {
         return;
     }
     const ImGuiContext& g = *ImGui::GetCurrentContext();
-    if (ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter) || g.MovingWindow != nullptr ||
-        ImGui::IsDragDropActive()) {
+    const smatchet::dialogkeys::CaretRequest request = smatchet::dialogkeys::ResolveCaretRequest(
+        ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter),
+        g.MovingWindow != nullptr || ImGui::IsDragDropActive(),
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy));
+    if (request == smatchet::dialogkeys::CaretRequest::Wait) {
         return;
     }
     g_conflictFocusFieldPending = false;
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+    if (request == smatchet::dialogkeys::CaretRequest::Take) {
         ImGui::SetKeyboardFocusHere();
     }
 }
@@ -1559,6 +1641,9 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         g_conflictFocusFieldPending = !d.conflictResolveBuf.empty();
         g_conflictOwnedKeyboardLastFrame = false;
         g_conflictEscUnsavedHint = false;
+        // A resolution typed here before and cancelled comes back. The baseline stays the seed, so the
+        // restored text counts as typed: Esc does not close around it.
+        RestoreConflictDraft(d);
     }
 
     if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
@@ -1576,10 +1661,19 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         if (!d.conflictResolveError.empty()) {
             ImGui::TextWrapped("%s", d.conflictResolveError.c_str());
         }
+        if (g_conflictDraftRestored) {
+            if (ImGui::Button(SmatchetLocalization::T("offline.conflict.start_over", "Start over"))) {
+                DropConflictDraft(d);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("offline.conflict.draft_restored",
+                                                              "This is what you typed here before you cancelled."));
+        }
         if (g_conflictEscUnsavedHint) {
             ImGui::TextWrapped("%s", SmatchetLocalization::T("offline.conflict.esc_unsaved",
                                                              "Your resolution is not saved. Save it, or click "
-                                                             "Cancel to discard it."));
+                                                             "Cancel to come back to it later: it is kept until "
+                                                             "Smatchet closes."));
         }
         ImGui::EndPopup();
     } else {
@@ -1593,6 +1687,13 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
 } // namespace
 
 bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsavedHint; }
+
+bool SmatchetOfflineConflictDraftRestoredForTest() { return g_conflictDraftRestored; }
+
+void SmatchetOfflineConflictDraftsClearForTest() {
+    g_conflictDrafts.clear();
+    g_conflictDraftRestored = false;
+}
 
 // P2-M1 confirm modal: opened from RequestOfflineDiscard when the discard set contains
 // rows still queued to replay. Panel-level (outside the row context popup) so the modal

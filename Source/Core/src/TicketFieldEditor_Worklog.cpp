@@ -17,6 +17,7 @@
 #include "TrackerFieldValueUtils.h"
 #include "TrackerGridFieldDisplay.h"
 #include "Ui/PendingActionSubmitAsync.h"
+#include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
@@ -435,7 +436,7 @@ bool ActiveFieldTextChanged(const ImGuiContext& g) {
 //   the way clicking Save would. Nav activation is dropped for the frame, because ImGui activates the
 //   item under the keyboard cursor on Enter whatever the modifiers: without that, Ctrl+Enter with the
 //   cursor on Cancel would save and close, and on the date picker's reset would save a reset date.
-// - Esc: see ResolveWorklogEscape. Leaving the field here ends the edit the way clicking away does:
+// - Esc: see smatchet::dialogkeys::ResolveEscape. Leaving the field here ends the edit the way clicking away does:
 //   Time spent, Time remaining and the description keep what was typed (ImGui's own Esc would put
 //   the field back to its text from before the caret entered); a start date or time that does not
 //   parse yet goes back to the last valid one, as it does on a click away.
@@ -455,12 +456,12 @@ WorklogKeys ReadWorklogKeys() {
     const bool nothingTyped = st.TimeSpent[0] == '\0' && st.WorkDescription[0] == '\0' &&
                               st.TotalTimeRemaining == st.TimeRemaining && st.DateStarted == st.InitialDateStarted &&
                               !(fieldActive && ActiveFieldTextChanged(g));
-    const smatchet::worklog::WorklogEscapeAction escape =
-        smatchet::worklog::ResolveWorklogEscape(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsKeyboard,
-                                                st.OwnedKeyboardLastFrame, fieldActive, nothingTyped);
+    const smatchet::dialogkeys::EscapeAction escape =
+        smatchet::dialogkeys::ResolveEscape(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsKeyboard,
+                                            st.OwnedKeyboardLastFrame, fieldActive, nothingTyped);
     st.OwnedKeyboardLastFrame = ownsKeyboard;
-    keys.Cancel = escape == smatchet::worklog::WorklogEscapeAction::Cancel;
-    if (fieldActive && (keys.Save || escape != smatchet::worklog::WorklogEscapeAction::None)) {
+    keys.Cancel = escape == smatchet::dialogkeys::EscapeAction::Cancel;
+    if (fieldActive && (keys.Save || escape != smatchet::dialogkeys::EscapeAction::None)) {
         ImGui::ClearActiveID();
     }
     if (keys.Save) {

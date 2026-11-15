@@ -1710,10 +1710,9 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             // Hidden with no request for the panel under way: the user has moved on, so the window noted
             // for handing the keyboard back to no longer stands. ReadAssistantEsc drops it the same way,
             // but it does not run while the panel is hidden.
-            if (!smatchet::ai::AiCaretRequestFresh(s_caretRequestFrame, ImGui::GetFrameCount(),
-                                                   kCaretRequestMaxAgeFrames)) {
-                s_focusReturnWindowId = 0;
-            }
+            s_focusReturnWindowId = smatchet::ai::AiFocusReturnWindowWhileHidden(
+                s_focusReturnWindowId, smatchet::ai::AiCaretRequestFresh(s_caretRequestFrame, ImGui::GetFrameCount(),
+                                                                         kCaretRequestMaxAgeFrames));
             // Panel is hidden — collapsed, or its docked tab is inactive. Intentionally do
             // NOT unregister the dictation buffer here — local-model
             // transcription can take multiple seconds, during which the user

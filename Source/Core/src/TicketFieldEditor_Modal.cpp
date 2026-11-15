@@ -14,6 +14,7 @@
 #include "TrackerFieldSchema.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "Ui/DialogKeysPure.h"
 
 #include "Ui/SmatchetModalPopupOpen.h"
 #include "Ui/SmatchetToast.h"
@@ -802,15 +803,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
     // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
     // outside the table, so ImGui can correctly anchor the popup to this window.
     const bool reopenForConfirm = s_ActiveLongTextState.ReopenForDiscardConfirm;
-    if (s_ActiveLongTextState.JustOpened) {
-        smatchet::ui::OpenCenteredModalPopup(kLongTextModalPopupId, 0.6f, 0.65f);
-        s_ActiveLongTextState.JustOpened = false;
-    } else if (reopenForConfirm) {
-        // Put the editor back where the user left it (no re-centre, no resize). If another popup
-        // opened by code displaced the editor (a programmatic Comments open while text was unsaved),
-        // this closes that popup again: keeping the user's typed text wins over showing it.
-        ImGui::OpenPopup(kLongTextModalPopupId);
-    }
+    smatchet::ui::OpenOrBringBackModalPopup(kLongTextModalPopupId, s_ActiveLongTextState.JustOpened, reopenForConfirm,
+                                            0.6f, 0.65f);
 
     // The title-bar close (X) is driven by p_open, the same affordance as every other window. When
     // the user clicks it ImGui clears the open flag and dismisses the popup inside BeginPopupModal,
@@ -899,9 +893,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         // Dismissed without the footer's say: the title-bar X, or another popup took its place.
         // Unsaved text is kept and asked about next frame. A dismissal right after such a re-open
         // means something keeps closing the popup, so that one closes for good rather than loop.
-        const bool settled = ImGui::GetFrameCount() - s_ActiveLongTextState.ReopenFrame > kLongTextReopenSettleFrames ||
-                             s_ActiveLongTextState.ReopenFrame < 0;
-        if (settled && !reopenForConfirm && LongTextHasUnsavedEdit()) {
+        if (smatchet::dialogkeys::DismissedPopupComesBack(LongTextHasUnsavedEdit(), reopenForConfirm,
+                                                          ImGui::GetFrameCount(), s_ActiveLongTextState.ReopenFrame,
+                                                          kLongTextReopenSettleFrames)) {
             s_ActiveLongTextState.ReopenForDiscardConfirm = true;
         } else {
             CloseLongTextEditor();
