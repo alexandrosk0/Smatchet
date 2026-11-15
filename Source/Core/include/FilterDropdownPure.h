@@ -457,7 +457,10 @@ inline HighlightDecision DecideHighlight(const std::vector<Row>& rows, const Ite
                                          const std::vector<std::string>* recents, const RowIdentity& identity,
                                          int current, const HighlightContext& context, const std::string& filterLower) {
     HighlightDecision out;
-    const int followed = context.NeedDefault ? -1 : ResolveHighlight(rows, items, count, recents, identity, current);
+    int followed = context.NeedDefault ? -1 : ResolveHighlight(rows, items, count, recents, identity, current);
+    if (followed >= 0 && !IsSelectableRow(rows[static_cast<std::size_t>(followed)], items, count)) {
+        followed = -1; // the row is still there but Enter can no longer act on it (a refresh disabled it)
+    }
     if (context.UserMoved && followed >= 0) {
         out.Index = followed;
         return out;

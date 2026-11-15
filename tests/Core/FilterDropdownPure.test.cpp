@@ -600,6 +600,29 @@ TEST_CASE("DecideHighlight: a placed highlight follows its row and gives way onl
     CHECK_FALSE(d.Reveal);
 }
 
+TEST_CASE("DecideHighlight: a placed highlight whose option a refresh disabled gives way to the default") {
+    std::vector<ItemView> items = {MakeItem("a", "Alpha"), MakeItem("b", "Beta"), MakeItem("c", "Gamma")};
+    ModelInput in;
+    in.Items = items.data();
+    in.Count = 3;
+    std::vector<Row> rows;
+    BuildRows(in, rows);
+    RowIdentity beta;
+    IdentityOfRow(rows, items.data(), 3, nullptr, 1, beta);
+    HighlightContext moved;
+    moved.UserMoved = true;
+
+    // Same identity, same position, now disabled: Enter would act on nothing, so the default takes over.
+    std::vector<ItemView> refreshed = items;
+    refreshed[1].Disabled = true;
+    in.Items = refreshed.data();
+    BuildRows(in, rows);
+    const HighlightDecision d = DecideHighlight(rows, refreshed.data(), 3, nullptr, beta, 1, moved, std::string());
+    CHECK(d.Index == 0);
+    CHECK(d.IsDefault);
+    CHECK(d.Reveal);
+}
+
 TEST_CASE("LeadingSpacesToSkip: leading spaces go only while the filter is empty, never past the queue") {
     const unsigned int spaceThenText[] = {' ', ' ', 'a', ' '};
     CHECK(LeadingSpacesToSkip(spaceThenText, 4, true) == 2);
