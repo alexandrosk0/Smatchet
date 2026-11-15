@@ -16,14 +16,16 @@ inline const char* OptionPickId(const TrackerFieldOption& option) {
     return option.Id.empty() ? option.Value.c_str() : option.Id.c_str();
 }
 
-/// A dropdown row for `option`: the id above, the Value as the label and the SecondaryValue (when it
-/// has one) as the dimmed text. Checked, Disabled and Tooltip are the caller's. The row points into
+/// A dropdown row for `option`: the id above, the Value as the label, the SecondaryValue (when it has
+/// one) as the dimmed text, and Disabled when the tracker marks the option disabled, so no picker can
+/// pick a value the tracker would reject. Checked and Tooltip are the caller's. The row points into
 /// `option`, which must outlive the DrawBody call.
 inline Item ItemForOption(const TrackerFieldOption& option) {
     Item item;
     item.Id = OptionPickId(option);
     item.Label = option.Value.c_str();
     item.Secondary = option.SecondaryValue.empty() ? nullptr : option.SecondaryValue.c_str();
+    item.Disabled = option.Disabled;
     return item;
 }
 
