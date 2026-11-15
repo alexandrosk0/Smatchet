@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace smatchet {
@@ -120,19 +121,18 @@ bool SpliceQueuedCharsIntoFilter(BodyState& st) {
     if (io.InputQueueCharacters.Size <= 0 || (io.KeyCtrl && !io.KeyAlt)) {
         return false;
     }
+    // The queue as a pointer and a count: ImVector::operator[] asserts on index == Size, which a queue of
+    // spaces only would reach after the skip.
+    static_assert(std::is_same<ImWchar, unsigned int>::value, "the queue is read as 32-bit code points");
+    const unsigned int* queue = io.InputQueueCharacters.Data;
+    const int total = io.InputQueueCharacters.Size;
     // A filter never starts with a space: the Space that opened a keyboard-focused combo is not filter text.
-    int first = 0;
-    while (st.Filter[0] == '\0' && first < io.InputQueueCharacters.Size && io.InputQueueCharacters[first] == ' ') {
-        ++first;
-    }
-    // Every queued character is offered: the buffer's own size is the only limit (it holds fewer
-    // characters than it has bytes, so a longer queue could not land either).
-    unsigned int queued[sizeof(st.Filter)];
-    const int n = (std::min)(io.InputQueueCharacters.Size - first, static_cast<int>(sizeof(st.Filter)));
-    for (int i = 0; i < n; ++i) {
-        queued[i] = static_cast<unsigned int>(io.InputQueueCharacters[first + i]);
-    }
-    if (!TicketFieldEditorDurationPopupPure::SpliceTypedCharsIntoBuf(queued, n, st.Filter, sizeof(st.Filter))) {
+    const int first = pure::LeadingSpacesToSkip(queue, total, st.Filter[0] == '\0');
+    // The whole rest of the queue is offered: the splice skips the non-printable entries and stops when
+    // the buffer is full, so no count of queued entries is a limit (a cap on the entries would drop
+    // printable ones that still fit behind a run of control characters).
+    if (!TicketFieldEditorDurationPopupPure::SpliceTypedCharsIntoBuf(queue + first, total - first, st.Filter,
+                                                                     sizeof(st.Filter))) {
         return false;
     }
     io.InputQueueCharacters.resize(0); // consumed: nothing else may insert them a second time

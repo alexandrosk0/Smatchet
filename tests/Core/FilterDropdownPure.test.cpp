@@ -600,6 +600,16 @@ TEST_CASE("DecideHighlight: a placed highlight follows its row and gives way onl
     CHECK_FALSE(d.Reveal);
 }
 
+TEST_CASE("LeadingSpacesToSkip: leading spaces go only while the filter is empty, never past the queue") {
+    const unsigned int spaceThenText[] = {' ', ' ', 'a', ' '};
+    CHECK(LeadingSpacesToSkip(spaceThenText, 4, true) == 2);
+    CHECK(LeadingSpacesToSkip(spaceThenText, 4, false) == 0); // a filter that has text keeps its spaces
+    const unsigned int spacesOnly[] = {' ', ' '};
+    CHECK(LeadingSpacesToSkip(spacesOnly, 2, true) == 2); // nothing is left after the skip
+    CHECK(LeadingSpacesToSkip(spacesOnly, 0, true) == 0);
+    CHECK(LeadingSpacesToSkip(nullptr, 0, true) == 0);
+}
+
 TEST_CASE("ScrollToRevealRow: scrolls only as far as needed") {
     // Rows of 20 in a 100-tall view scrolled to 40: rows 2..6 are fully visible.
     CHECK(ScrollToRevealRow(3, 20.0f, 100.0f, 40.0f) == doctest::Approx(40.0f)); // visible: unchanged

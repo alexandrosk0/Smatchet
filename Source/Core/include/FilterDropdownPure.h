@@ -485,6 +485,18 @@ inline float ScrollToRevealRow(int index, float rowHeight, float viewHeight, flo
     return scrollY;
 }
 
+// How many queued characters to leave out at the front: while the filter is empty, the spaces a typed
+// queue starts with are not filter text (a filter never starts with a space; the Space that opened a
+// keyboard-focused combo is one). Never more than `count`, so `chars + result` stays inside the queue
+// or at its end, and the rest `count - result` can be 0.
+inline int LeadingSpacesToSkip(const unsigned int* chars, int count, bool filterEmpty) {
+    int first = 0;
+    while (filterEmpty && chars != nullptr && first < count && chars[first] == ' ') {
+        ++first;
+    }
+    return first;
+}
+
 } // namespace pure
 } // namespace dropdown
 } // namespace smatchet
