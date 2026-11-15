@@ -34,6 +34,7 @@
 #include "AsyncLoadGatePure.h"       // LaunchIntoSlot / TakeFromSlot for the cached-projects read
 #include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
 #include "Ui/CachedProjectsPure.h"   // RemoveForgottenProjects (a stale read must not resurrect a Forget)
+#include "Ui/BulkFieldEditPure.h"    // BulkFieldEditJob (the bulk field-edit jobs of this session)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -50,6 +51,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -137,6 +139,32 @@ struct PendingFieldEdit {
     /// The pane the edit was made in, latched when its pane enqueues it (#2260): the edit is sent to,
     /// queued for and applied in that pane even if focus moves first. Empty = the focused pane at dispatch.
     PendingActionTarget Target;
+    /// The bulk field-edit job (UiDrawSession::bulkFieldEditJobs) this row belongs to; 0 = a plain single-cell
+    /// edit. The commit result folds back into the job, and the row reports through the job's summary toast
+    /// instead of one toast per row. Never persisted: an offline-queue replay reports through the replay path.
+    std::uint64_t BulkJobId = 0;
+};
+
+/// The grid's "Set <Field> for N rows" popup (SmatchetBulkFieldEditPopup.cpp): filled by the cell context menu,
+/// drawn by the pane the click came from. In-memory only; one request at a time (a modal popup).
+struct BulkEditPopupRequest {
+    enum class Stage { Pick, Confirm };
+    bool Active = false;
+    bool OpenPending = false;    ///< the popup was just requested: open it on the next draw
+    bool ConfirmPending = false; ///< the confirm popup is to be opened on the next draw
+    Stage CurrentStage = Stage::Pick;
+    std::string PaneId;                ///< the pane the user acted in
+    std::string ClickedIssueId;        ///< the row whose cell was right-clicked (its project scopes the option list)
+    TrackerField Field;                ///< the clicked column's catalog field
+    std::vector<std::string> IssueIds; ///< the selected issues, resolved when the menu item was clicked
+    std::string PaneCacheKey; ///< the pane's cache backend key (the recent-picks scope), copied from the menu ctx
+    // Draw-time state, rebuilt when the popup opens.
+    smatchet::grid::bulk::BulkFieldEditJob Preview; ///< rows with before-values and pre-flight skips; no values yet
+    smatchet::grid::bulk::BulkMode Mode = smatchet::grid::bulk::BulkMode::Replace;
+    std::vector<std::string> Picked;           ///< multi-value fields: the ticked option ids
+    std::vector<std::string> PendingValues;    ///< the values waiting for the confirm step
+    bool Clear = false;                        ///< the pending apply clears the field
+    std::vector<std::string> LabelSuggestions; ///< labels fields: every label seen in the pane's tickets
 };
 
 struct FieldEditCommitResult {
@@ -1069,6 +1097,11 @@ struct UiDrawSession {
     int lastToastedGridBannerKind = 0;
     std::string lastToastedGridBannerMessage;
     std::deque<PendingFieldEdit> queuedFieldEdits;
+    /// Bulk field-edit jobs of this session, by id (PendingFieldEdit::BulkJobId). In memory only; the oldest
+    /// finished jobs are dropped when a new one starts (StartBulkFieldEdit).
+    std::map<std::uint64_t, smatchet::grid::bulk::BulkFieldEditJob> bulkFieldEditJobs;
+    std::uint64_t nextBulkJobId = 1;
+    BulkEditPopupRequest bulkEditPopupRequest;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;
     std::string inFlightOriginalEstimateSnapshot;

@@ -196,6 +196,41 @@ void DrawKeyCellCopyMenuItems(AppController* app, UiDrawSession* ui, const std::
     }
 }
 
+// Data-cell item "Set <Field> for N rows..." (bulk edit, docs/plans/bulk-edit-rows.md): shown when the clicked row
+// is inside a selection of two or more whole rows and the column is a choice field the bulk edit can set. The click
+// only files a request; the pane draws the popup (SmatchetBulkFieldEditPopup.cpp) and hands the pick to
+// StartBulkFieldEdit. Built inside the open menu only, so the label formatting costs nothing while it is closed.
+void DrawBulkEditMenuItem(UiDrawSession* ui, const std::string& issueKey, bool readOnlyMode,
+                          const GridKeyCellMenuCtx* keyMenu) {
+    if (!ui || readOnlyMode || !keyMenu || !keyMenu->sel || !keyMenu->field || !keyMenu->tickets ||
+        !keyMenu->sortedIdx || !keyMenu->sel->RowSelected(keyMenu->clickedRow) || keyMenu->sel->Rows.size() < 2 ||
+        smatchet::grid::bulk::ClassifyBulkField(*keyMenu->field) == smatchet::grid::bulk::BulkFieldKind::Unsupported) {
+        return;
+    }
+    const TrackerField& field = *keyMenu->field;
+    const std::string fieldName = field.Name.empty() ? field.Id : field.Name;
+    // Keyed Format: a pre-formatted label never matches the source-text catalog lookup.
+    const std::string label = SmatchetLocalization::Format(
+        "grid.bulk.menu_set", "Set %s for %d rows...", fieldName.c_str(), static_cast<int>(keyMenu->sel->Rows.size()));
+    if (!ImGui::MenuItem(label.c_str())) {
+        return;
+    }
+    BulkEditPopupRequest request;
+    request.Active = true;
+    request.OpenPending = true;
+    request.PaneId = ui->pane().id;
+    request.ClickedIssueId = issueKey;
+    request.Field = field;
+    if (keyMenu->paneCacheKey) {
+        request.PaneCacheKey = *keyMenu->paneCacheKey;
+    }
+    for (size_t ticketIdx :
+         ResolveGridRowsToTicketIndices(keyMenu->sel->Rows, *keyMenu->sortedIdx, keyMenu->tickets->size())) {
+        request.IssueIds.push_back((*keyMenu->tickets)[ticketIdx].id);
+    }
+    ui->bulkEditPopupRequest = std::move(request);
+}
+
 } // namespace
 
 /**
@@ -261,6 +296,8 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         }
         if (fieldId.empty()) {
             DrawKeyCellCopyMenuItems(app, ui, issueKey, rowForAnnotateMenu, keyMenu);
+        } else {
+            DrawBulkEditMenuItem(ui, issueKey, readOnlyMode, keyMenu);
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
         DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);

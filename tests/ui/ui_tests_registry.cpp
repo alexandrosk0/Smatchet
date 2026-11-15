@@ -53,6 +53,7 @@ extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDockedTabFocusTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine);
@@ -131,6 +132,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterDockedTabFocusTests(engine);
     SmatchetRegisterDurationInlineEditCommitTests(engine);
     SmatchetRegisterFilterDropdownTests(engine);
+    SmatchetRegisterBulkFieldEditTests(engine);
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterMobileViewQuickSwitcherTests(engine);
     SmatchetRegisterMobileDesktopLayoutRoundtripTests(engine);

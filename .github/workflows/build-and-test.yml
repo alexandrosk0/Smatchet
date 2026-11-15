@@ -1863,7 +1863,8 @@ jobs:
           fi
 
       # GridSearch (grid header search box Enter-apply) + GridPanes (dockable grid panes) +
-      # LeftViewHistory (issues that left a view, with their reason). All three need the fixture's
+      # LeftViewHistory (issues that left a view, with their reason); test-ui-bulk-field-edit (the grid's bulk
+      # "Set <Field> for N rows" edit) generates its own fixture and rides this loop. All three need the fixture's
       # loaded tickets, and none ran anywhere before: the bucket-e-ui-tests `--all` lane has no
       # fixture, so they SKIP there, and the JiraDeterministic filter above excludes them. Each
       # driver sets its own filter and seeded profile; the zero-run floor in the driver fails a
@@ -1880,7 +1881,7 @@ jobs:
         run: |
           set -uo pipefail
           failed=0
-          for driver in test-ui-grid-search-apply test-ui-grid-pane-windows test-ui-left-view-history; do
+          for driver in test-ui-grid-search-apply test-ui-grid-pane-windows test-ui-left-view-history test-ui-bulk-field-edit; do
             attempts=2
             rc=1
             for attempt in $(seq 1 "$attempts"); do

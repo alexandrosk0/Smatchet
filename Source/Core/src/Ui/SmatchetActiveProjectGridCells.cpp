@@ -368,6 +368,9 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
     const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidth;
     const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
     const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
+    // The pane's shared menu context (built once before the row loop): a cell sets only its row and field.
+    ctx.cellMenu.clickedRow = clippedRow;
+    ctx.cellMenu.field = fieldMeta;
     // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
     const auto feedbackIt = d.cellFeedbackByKey.empty() ? d.cellFeedbackByKey.end() : d.cellFeedbackByKey.find(cellKey);
     const bool isSavingThisCell =
@@ -411,7 +414,8 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
         DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket,
+                                     &ctx.cellMenu);
     } else if (column.FieldId == "comments") {
         // issue-comments PR-A — backend-agnostic comments cell. Comments are read-only (editmeta
         // marks the field non-editable), so this bypasses the field-edit path entirely. The count
@@ -476,7 +480,8 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
         DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket,
+                                     &ctx.cellMenu);
     } else {
         const bool allowEditsForCell = !readOnlyMode && column.NeedsAllowEditsCheck &&
                                        app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
@@ -494,7 +499,8 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
         DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket,
+                                     &ctx.cellMenu);
     }
 
     if (showBadge) {
@@ -528,7 +534,14 @@ void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int r
     const ImVec2 hitMin(cellOriginX, groupMinY);
     const ImVec2 hitMax(cellOriginX + cellWidth, groupMaxY);
     auto& sel = pane.gridState.RectSel;
-    const bool hovering = ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
+    // IsMouseHoveringRect is geometry-only: a click on the cell menu / a popup drawn over this cell must not count as
+    // a grid click, or the mouse-down changes the selection before the menu item (which fires on release) can read it
+    // — "Set <Field> for N rows..." vanished under the cursor. A popup opened from this window counts as its child
+    // under ImGui's popup hierarchy, so NoPopupHierarchy is required for the hovered-popup case to fail this test.
+    const bool hovering =
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_NoPopupHierarchy |
+                               ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
     const bool mouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 
     if (hovering && mouseClick && sel.Contains(rowIdx, colIdx)) {
@@ -657,8 +670,10 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
         // click into a text input in another docked panel (e.g. the AI Assistant
         // side panel input) doesn't satisfy this branch and clear the grid
         // selection. The clear contract is "user clicked on empty space inside
-        // the Active Project window" — clicking another window is not that.
-        const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+        // the Active Project window" — clicking another window is not that. NoPopupHierarchy: a cell menu opened from
+        // this window is not "empty space" either (its mouse-down must not clear the selection the menu item reads).
+        const bool windowHovered =
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_NoPopupHierarchy);
         // Click outside any currently-selected cell (without Shift/Ctrl) clears
         // the entire selection. Ctrl preserves selection for toggling; Shift
         // preserves it for range extension. Skip when text input elsewhere is

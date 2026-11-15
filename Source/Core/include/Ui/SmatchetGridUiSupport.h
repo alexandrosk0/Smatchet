@@ -23,9 +23,10 @@ class Views;
 void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                         const std::vector<CachedTicket>& tickets);
 
-/// What the Key cell's right-click menu needs to build "Copy N selected rows as CSV". Built on the
-/// stack at the key-cell call site (no allocations); value cells pass nullptr. Every pointer
-/// member must be non-null.
+/// What a cell's right-click menu needs: the Key cell's "Copy N selected rows as CSV" and a data cell's
+/// "Set <Field> for N rows...". The first six members must be set; `field` and `paneCacheKey` only by data cells.
+/// Pointers, never owned strings: per-cell grid code allocates nothing (Ui AGENTS.md). The pane builds ONE ctx
+/// before its row loop; each data cell then writes only `clickedRow` and `field`.
 struct GridKeyCellMenuCtx {
     const std::vector<CachedTicket>* tickets;
     const std::vector<size_t>* sortedIdx;
@@ -33,6 +34,8 @@ struct GridKeyCellMenuCtx {
     const TrackerFieldCatalogIndex* catalog;
     const GridRectSelection* sel;
     int clickedRow;
+    const TrackerField* field = nullptr;       ///< the clicked column's catalog field (data cells)
+    const std::string* paneCacheKey = nullptr; ///< AppController::PaneCacheBackendKey of the pane (data cells)
 };
 
 // SMATCHET_DEVIATION(rule=duplication; reason=declaration mirrors its definition's long parameter list, not a copy-paste clone; owner=grid-engine; revisit=2027-10-13)
@@ -128,6 +131,37 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode)
 /// (perf.grid_edit_pump command, UI tests); their edits go to the focused pane.
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode);
+
+// --- Bulk field edit (docs/plans/bulk-edit-rows.md) ---
+
+/// Pre-flight and snapshot of a bulk edit: one row per distinct id of `issueIds` with its before-value (cached
+/// display value and option ids), and a Skipped state for a row that is no longer in the pane's tickets, not
+/// editable (AppController::CanEditFieldForIssue, a memory read) or, when `rowValues` is given, already holding
+/// the result. `rowValues` receives the values to write per row (parallel to `Rows`); null builds a preview with
+/// no values. Memory only: UI thread safe.
+// SMATCHET_DEVIATION(rule=duplication; reason=a header declaration mirrors its definition signature; owner=grid-engine; revisit=2027-05-15)
+smatchet::grid::bulk::BulkFieldEditJob
+PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
+                        const std::vector<std::string>& issueIds, const std::vector<std::string>& values,
+                        smatchet::grid::bulk::BulkMode mode, std::vector<std::vector<std::string>>* rowValues);
+
+/// Starts a bulk edit: records the job in `d.bulkFieldEditJobs`, keeps the selection by issue id, and fans the
+/// rows out into `d.queuedFieldEdits` through EnqueueGridFieldEdits (every row then commits through the one edit
+/// pipeline). Returns the job id, or 0 when nothing was sent (read-only, or every row skipped; a toast says why).
+// SMATCHET_DEVIATION(rule=duplication; reason=a header declaration mirrors its definition signature; owner=grid-engine; revisit=2027-05-15)
+std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                                 const TrackerField& field, const std::vector<std::string>& issueIds,
+                                 const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
+                                 bool readOnlyMode);
+
+/// Folds one row's result into its job (UI thread). An unknown job is ignored with a warning. When the last row
+/// lands, the one summary toast is pushed.
+void FoldBulkRowResult(UiDrawSession& d, std::uint64_t jobId, const std::string& issueId,
+                       smatchet::grid::bulk::BulkRowState state, const std::string& message);
+
+/// Selects exactly the rows of `paneId`'s grid that show `issueIds` (the summary toast's "failed rows" click).
+/// Applied on the pane's next draw, against its current sort order.
+void SelectGridRowsByIssueIds(UiDrawSession& d, const std::string& paneId, const std::set<std::string>& issueIds);
 
 /// Brings `d.pendingOverlay` up to date with the offline-queue snapshots (in-memory, published by the queue
 /// workers: no SQLite). One shared_ptr load per snapshot per call; the index is rebuilt only when a snapshot was
