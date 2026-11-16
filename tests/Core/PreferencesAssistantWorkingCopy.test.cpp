@@ -159,4 +159,38 @@ TEST_CASE("ResetAssistantPrefsSeedLatchesOnClose — reverts working copy AND fo
     CHECK(forceReseed);
 }
 
+// The Preferences close gate asks this before it lets the window close: staged Assistant edits
+// used to be dropped without a prompt, because the gate only looked at the Tracker and MCP buffers.
+TEST_CASE("AssistantPrefsWorkingCopyDirty — a seeded working copy with an edit is dirty") {
+    using SmatchetPreferencesUiDetail::AssistantPrefsWorkingCopyDirty;
+
+    TrackerConfig cfg;
+    cfg.AiApiKey = "sk-saved";
+    TrackerConfig work = cfg;
+    CHECK_FALSE(AssistantPrefsWorkingCopyDirty(true, work, cfg)); // seeded, untouched
+
+    work.AiApiKey = "sk-pasted";
+    CHECK(AssistantPrefsWorkingCopyDirty(true, work, cfg));
+
+    // Saving (working -> cfg) makes it clean again.
+    CopyAssistantAiFields(work, cfg);
+    CHECK_FALSE(AssistantPrefsWorkingCopyDirty(true, work, cfg));
+}
+
+TEST_CASE("AssistantPrefsWorkingCopyDirty — an unseeded working copy never reads dirty" *
+          doctest::test_suite("[high-risk]")) {
+    using SmatchetPreferencesUiDetail::AssistantPrefsWorkingCopyDirty;
+
+    // Until the Assistant page has drawn once in this open of the window, the working copy is a
+    // default-constructed TrackerConfig. It differs from any configured cfg, so without the seeded
+    // guard every close of Preferences would raise the unsaved-changes modal.
+    TrackerConfig cfg;
+    cfg.AiProviderKind = 2;
+    cfg.AiApiKey = "sk-saved";
+    cfg.AiModelOpenAi = "gpt-4o";
+    const TrackerConfig neverSeeded;
+    REQUIRE(AssistantAiFieldsDiffer(neverSeeded, cfg));
+    CHECK_FALSE(AssistantPrefsWorkingCopyDirty(false, neverSeeded, cfg));
+}
+
 #endif // SMATCHET_WITH_AI

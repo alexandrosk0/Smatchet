@@ -209,7 +209,7 @@ static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs
 }
 
 // Step 2 of RebuildGridSortAndFilterProjection: `pane.cachedSortedIndices` → `pane.filteredIndices`.
-// Quick-filter is the full-text match (TicketMatchesGridFilter), fed by the search box's
+// Quick-filter is the every-word full-text match (TicketMatchesGridFilterTokens), fed by the search box's
 // EFFECTIVE filter (GridSearchRowFilterText) rather than the raw box text: a ticket key /
 // structured query in the box is a commit-on-Enter action, and substring-matching it against
 // the rows would blank the grid (most visibly right after its own Enter re-ran the view) —
@@ -254,11 +254,13 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
     pane.filteredIndices.clear();
     const std::string filter = GridSearchRowFilterText(pane);
     const bool filterActive = !filter.empty();
+    // Split and lowercase the words once here, not once per ticket.
+    const std::vector<std::string> filterWords = SplitGridFilterTokens(filter);
     const CatalogGridFilterDisplay display(catalogIndex);
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        return TicketMatchesGridFilter(tickets[idx], filter, &display);
+        return TicketMatchesGridFilterTokens(tickets[idx], filterWords, &display);
     };
     auto isPresentParent = [&](size_t idx) {
         return hierarchy.hideParents && idx < tickets.size() && pane.cachedParentIds.count(tickets[idx].id) != 0;

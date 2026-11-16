@@ -9,6 +9,7 @@
 // Header stays ImGui-free (Core dual-target rule) — only std + the pure config model
 // and the icon picker (also ImGui-free in its header).
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,23 @@
 
 class AppController;
 struct TrackerConfig;
+
+namespace smatchet {
+namespace ui {
+
+/** What asked for the command: it picks the wording of the notice and the log prefix. */
+enum class ArgsTextOrigin { ToolbarButton, Shortcut };
+
+/** Runs the registry command `commandId` with args given as JSON text; empty text means {}.
+    Text that is not a JSON object is refused: a warning toast and a log line, and the command
+    is not run. Running it with {} in their place would do something other than what the button
+    or shortcut was set up to do. While that toast is still on screen a repeat of the same press
+    is refused without a second one. UI thread only. */
+void DispatchCommandWithArgsText(AppController& app, const std::string& commandId, const std::string& argsJson,
+                                 ArgsTextOrigin origin);
+
+} // namespace ui
+} // namespace smatchet
 
 class SmatchetToolbarUi {
   public:
@@ -57,6 +75,13 @@ class SmatchetToolbarUi {
     void DrawEditorActionRow(EditorCtx& ctx);
     void DrawEditorButtonList(EditorCtx& ctx);
     void DrawEditorFieldEditor(EditorCtx& ctx);
+    void DrawEditorCommandPicker(ToolbarButton& b);
+    void DrawEditorArgsField(ToolbarButton& b);
+    // Status (a toolbar_editor::ArgsJsonStatus) of button `i`'s args text. Cached per index: the text is
+    // parsed again only when it differs from the text the cached status was computed for.
+    int ArgsStatusAt(std::size_t i, const std::string& text);
+    // Index of the first Command button whose args are not usable, or -1.
+    int FirstInvalidArgsIndex(const std::vector<ToolbarButton>& buttons);
     void DrawEditorFooter(AppController& app, EditorCtx& ctx, TrackerConfig& cfg);
     void DispatchButton(AppController& app, const ToolbarButton& b);
     // Reload the active backend's appended buttons from disk into trackerAppendCache_, but only
@@ -83,7 +108,17 @@ class SmatchetToolbarUi {
     std::string editTrackerKey_;                // normalized views-bucket key for that backend
     bool editHasTracker_ = false;               // a backend was connected when the editor opened
     std::vector<std::string> cmdNames_;         // registry command names for the command picker
+    std::vector<std::string> cmdHaystacks_;     // "name title" per cmdNames_ entry: what the filter matches
+    std::vector<int> cmdFiltered_;              // ranked indices into cmdNames_ for the current filter text
+    std::string cmdFilterKey_;                  // filter text cmdFiltered_ was built for
+    bool cmdFilterValid_ = false;               // false forces a rebuild (set when the editor opens)
     char cmdSearch_[64] = {0};                  // command-picker filter text
+    struct ArgsCheckEntry {
+        std::string Text;      // args text the status was computed for
+        int Status = 0;        // toolbar_editor::ArgsJsonStatus
+        bool Computed = false; // false until the first lookup
+    };
+    std::vector<ArgsCheckEntry> argsCheck_; // per button index of the edited scope; cleared when the editor opens
 
     // RenderBar cache of the active backend's ToolbarAppend (refreshed only on backend change).
     std::vector<ToolbarButton> trackerAppendCache_;

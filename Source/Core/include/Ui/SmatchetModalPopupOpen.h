@@ -22,5 +22,20 @@ inline void OpenCenteredModalPopup(const char* popupId, float widthFrac, float h
         ImVec2(0.5f, 0.5f));
 }
 
+/// The open step of a modal that guards typed text; call each frame before its BeginPopupModal.
+/// On the first frame (`justOpened`, cleared here) the popup opens centred, as above. When it was
+/// dismissed around unsaved input and comes back to ask (`bringBack`), it opens again where the
+/// user left it: no re-centre, no resize. If a popup opened by code had taken its place, that one
+/// closes again: keeping what the user typed wins over showing it.
+inline void OpenOrBringBackModalPopup(const char* popupId, bool& justOpened, bool bringBack, float widthFrac,
+                                      float heightFrac) {
+    if (justOpened) {
+        OpenCenteredModalPopup(popupId, widthFrac, heightFrac);
+        justOpened = false;
+    } else if (bringBack) {
+        SmatchetLocalizedImGui::OpenPopup(popupId);
+    }
+}
+
 } // namespace ui
 } // namespace smatchet

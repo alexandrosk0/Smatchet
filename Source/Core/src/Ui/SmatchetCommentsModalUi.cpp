@@ -21,6 +21,7 @@
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -90,6 +91,20 @@ struct CommentsModalState {
 
     static constexpr size_t kPostBufferSize = 16 * 1024;
     std::vector<char> PostBuf;
+    /// Put the caret in the post box on its next enabled draw: set by an open the user asked for,
+    /// by Ctrl+Enter on a blank box, and when a post sent from the keyboard comes back.
+    bool FocusComposerPending = false;
+    /// The post in flight was sent with Ctrl+Enter, so the caret returns to the box afterwards.
+    bool PostSentFromKeyboard = false;
+    /// Where keyboard focus was when that post went out (0 = not tracked). The caret returns only
+    /// if focus is still there: a user who moved to a button while waiting keeps their place.
+    ImGuiID FocusIdAtKeyboardPost = 0;
+    /// The caret is in the post box (as of the last draw).
+    bool ComposerActive = false;
+    /// The Post button would act on a click (as of the last draw).
+    bool PostEnabled = false;
+    /// Esc in a box with no text in it: the shell closes the viewer (through its discard guard).
+    bool CloseRequested = false;
 };
 
 CommentsModalState s_CommentsState;
@@ -494,6 +509,11 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
         return;
     }
     s_CommentsState.PostInFlight = false;
+    if (s_CommentsState.PostSentFromKeyboard) {
+        // Typed and sent without the mouse: the next comment, or a retry, starts without it too.
+        s_CommentsState.PostSentFromKeyboard = false;
+        s_CommentsState.FocusComposerPending = true;
+    }
     if (result.K != PendingActionSubmitResult::Kind::Failed) {
         s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
     }
@@ -531,8 +551,55 @@ void KickCommentPost(AppController& app, const std::string& issueId, const std::
     }
 }
 
-/// Draws the post box + Post button, disabled while read-only or a post is in flight. Offline a post
-/// is saved to the pending-action queue and sent on reconnect; the hint says so.
+/// True when the post box holds something worth posting (not blank, not only whitespace).
+bool PostBufHasText() {
+    for (const char* p = s_CommentsState.PostBuf.data(); *p != '\0'; ++p) {
+        if (*p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The post box itself, with its keyboard contract. Returns true on Ctrl+Enter.
+/// - A pending focus request lands here (never while the box is disabled).
+/// - Esc leaves the box with the typed text intact: ImGui's own Esc would put back the text from
+///   before the caret entered, silently dropping the comment. In a box with no text Esc also asks the
+///   shell to close, so a caret placed on open does not cost an extra key press.
+/// - The id carries this open's generation: a box that was being typed in when another issue's
+///   comments replaced it must not carry its text over into the new box.
+bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
+    CommentsModalState& st = s_CommentsState;
+    ImGui::PushID(st.OpenGen);
+    if (st.ComposerActive && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        if (ImGui::GetActiveID() == ImGui::GetID("##CommentsPostBox")) {
+            ImGui::ClearActiveID();
+        }
+        if (!PostBufHasText()) {
+            st.CloseRequested = true;
+        }
+    }
+    // A focus request is ignored while a window is being dragged, so the request waits that out.
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (st.FocusComposerPending && !st.PostInFlight && g.MovingWindow == nullptr && !ImGui::IsDragDropActive()) {
+        const bool focusMovedAway = st.FocusIdAtKeyboardPost != 0 && ImGui::GetFocusID() != st.FocusIdAtKeyboardPost;
+        st.FocusComposerPending = false;
+        st.FocusIdAtKeyboardPost = 0;
+        if (!readOnlyMode && !focusMovedAway) {
+            ImGui::SetKeyboardFocusHere();
+        }
+    }
+    const bool ctrlEnter =
+        ImGui::InputTextMultiline("##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize,
+                                  ImVec2(-FLT_MIN, 80.0f), ImGuiInputTextFlags_EnterReturnsTrue);
+    st.ComposerActive = ImGui::IsItemActive();
+    ImGui::PopID();
+    return ctrlEnter && !disabled;
+}
+
+/// Draws the post box + Post button, disabled while read-only or a post is in flight. Ctrl+Enter in
+/// the box posts like the button; a blank box posts nothing either way. Offline a post is saved to the
+/// pending-action queue and sent on reconnect; the hint says so.
 void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     const bool disabled = readOnlyMode || s_CommentsState.PostInFlight;
 
@@ -551,22 +618,37 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     if (disabled) {
         ImGui::BeginDisabled();
     }
-    ImGui::InputTextMultiline("##CommentsPostBox", s_CommentsState.PostBuf.data(), CommentsModalState::kPostBufferSize,
-                              ImVec2(-FLT_MIN, 80.0f));
-    const bool hasText = s_CommentsState.PostBuf.data()[0] != '\0';
-    if (!hasText) {
+    const bool ctrlEnter = DrawCommentsPostInput(disabled, readOnlyMode);
+    const bool hasText = PostBufHasText();
+    if (s_CommentsState.PostBuf.data()[0] == '\0') {
         ImGui::TextDisabled(
             "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     }
-    const bool post =
-        ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0)) && hasText;
+    ImGui::BeginDisabled(!hasText);
+    const bool clicked = ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0));
+    ImGui::EndDisabled();
     if (disabled) {
         ImGui::EndDisabled();
     }
+    s_CommentsState.PostEnabled = !disabled && hasText;
+    if (!readOnlyMode) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.post_shortcut_hint", "Ctrl+Enter to post"));
+    }
 
-    if (post) {
+    if ((clicked || ctrlEnter) && s_CommentsState.PostEnabled) {
+        const bool fromKeyboard = ctrlEnter && !clicked;
         KickCommentPost(app, s_CommentsState.IssueId, std::string(s_CommentsState.PostBuf.data()),
                         s_CommentsState.OpenGen);
+        // Sent from the keyboard: the caret returns when the result arrives, or at once when the
+        // post could not start.
+        s_CommentsState.PostSentFromKeyboard = fromKeyboard && s_CommentsState.PostInFlight;
+        s_CommentsState.FocusIdAtKeyboardPost = s_CommentsState.PostSentFromKeyboard ? ImGui::GetFocusID() : 0;
+        s_CommentsState.FocusComposerPending = fromKeyboard && !s_CommentsState.PostInFlight;
+    } else if (ctrlEnter) {
+        // Nothing to post yet: Ctrl+Enter took the caret out of the box, so put it back.
+        s_CommentsState.FocusIdAtKeyboardPost = 0;
+        s_CommentsState.FocusComposerPending = true;
     }
 }
 
@@ -601,19 +683,26 @@ class CommentsViewerContent final : public IFieldViewerContent {
     }
     const char* DiscardButtonLabel() const override { return "Discard comment"; }
     const char* KeepButtonLabel() const override { return "Keep writing"; }
+    bool ConsumeCloseRequest() override {
+        const bool requested = s_CommentsState.CloseRequested;
+        s_CommentsState.CloseRequested = false;
+        return requested;
+    }
     // Resets s_CommentsState, so Active=false drops any late load / post post-back.
     void OnClose() override { CloseCommentsModal(); }
 };
 
 } // namespace
 
-void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody) {
+void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody,
+                       CommentsOpenFocus focus) {
     // First: replacing a viewer runs its OnClose, which (for a previous Comments open) resets
     // s_CommentsState — that must happen before this open seeds the state below.
     OpenFieldViewer(std::make_unique<CommentsViewerContent>(), issueId, "comments");
     s_CommentsState = CommentsModalState{};
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
+    s_CommentsState.FocusComposerPending = focus == CommentsOpenFocus::Composer;
     // Take the next monotonic token from the file-static counter (survives the reset above) so this
     // open is distinguishable from a prior open's still-in-flight fetch (#1713).
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
@@ -655,6 +744,12 @@ CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
     snap.PendingCommentCount = s_CommentsState.PendingComments.size();
     if (!s_CommentsState.Comments.empty()) {
         snap.FirstAuthor = s_CommentsState.Comments.front().Author;
+    }
+    snap.ComposerActive = s_CommentsState.ComposerActive;
+    snap.PostEnabled = s_CommentsState.PostEnabled;
+    snap.PostInFlight = s_CommentsState.PostInFlight;
+    if (!s_CommentsState.PostBuf.empty()) {
+        snap.PostDraft = s_CommentsState.PostBuf.data();
     }
     return snap;
 }

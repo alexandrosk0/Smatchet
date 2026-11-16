@@ -42,10 +42,13 @@
 #include "SmatchetToast.h"
 #include "SmatchetTheme.h"
 #include "Ui/SmatchetSecretInput.h"
+#include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetIconButtons.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
+#include "imgui_internal.h" // ClearActiveID
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -57,6 +60,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -144,10 +148,31 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 // without this Ui TU's ImGui / cpr / AppController dependency chain. The call
 // site below uses the namespaced name.
 
+// Keyboard focus for the frame the Preferences window opens: the first blank credential field
+// while the tracker still needs setting up, otherwise the settings search box. File-local
+// rather than session state because every reader and writer is in this TU and the request
+// means nothing outside one open of the window. UI-thread-only.
+struct PrefsOpenFocus {
+    // An explicit open was asked for and the open edge has not consumed it yet. Without it, a
+    // window merely restored at startup would take the keyboard away from the grid.
+    bool intent = false;
+    // Open edge reached; the target is picked on the first frame no popup owns the keyboard.
+    bool awaitingTarget = false;
+    // The pick had to wait for a popup to close. The user may have moved on in the meantime, so
+    // the keyboard is then only taken while this window still holds the focus.
+    bool waitedForPopup = false;
+    // This frame: the settings search box takes the keyboard.
+    bool searchBox = false;
+    // This frame: the credential field editing this buffer takes the keyboard.
+    const char* credentialBuf = nullptr;
+};
+PrefsOpenFocus s_prefsOpenFocus;
+
 } // namespace
 
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.preferencesBuffersLoaded = false;
+    s_prefsOpenFocus = PrefsOpenFocus{};
     d.mcpPrefsSavedHintUntil = {};
     // Tracker "Test connection" verdict is close-scoped: reopening must not show a stale
     // "Connected" for credentials edited since. The generation bump makes any still-running
@@ -301,6 +326,103 @@ int TrackerBackendIndexFromBuf(const UiDrawSession& d) {
     return smatchet::tracker::BackendIndexFromType(std::string(d.trackerTypeBuf));
 }
 
+const char* FirstBlankOf(std::initializer_list<const char*> bufs) {
+    for (const char* buf : bufs) {
+        if (buf[0] == '\0') {
+            return buf;
+        }
+    }
+    return nullptr;
+}
+
+// First still-blank credential buffer of the selected backend, in draw order, or nullptr when
+// every field a connection needs is filled. Optional rows (Linear team id, the base URLs that
+// load with a default, the inherit lists) are never a target.
+const char* FirstBlankCredentialBuf(const UiDrawSession& d) {
+    const int backend = TrackerBackendIndexFromBuf(d);
+    if (backend == smatchet::tracker::kBackendPlane) {
+        return FirstBlankOf({d.planeUrlBuf, d.planeWorkspaceBuf, d.planeApiKeyBuf});
+    }
+    if (backend == smatchet::tracker::kBackendGitHub) {
+        return FirstBlankOf({d.githubPatBuf, d.githubOwnerBuf, d.githubRepoBuf});
+    }
+    if (backend == smatchet::tracker::kBackendLinear) {
+        return FirstBlankOf({d.linearApiKeyBuf, d.linearTeamKeyBuf});
+    }
+    return FirstBlankOf({d.domainBuf, d.emailBuf, d.tokenBuf});
+}
+
+// Records that this open of the window was asked for: by the user (the menus, the default Ctrl+,
+// binding, the toolbar and the "open Preferences" links all arm requestPreferencesFocus) or by the
+// first-run lock that forces the window open. A plain view.toggle.preferences run (the palette row,
+// a scripted toggle) deliberately does not raise that request, so it leaves the keyboard alone the
+// same way a window restored at startup does. Called before beginPreferencesWindow, which may
+// clear the focus request on a frame the window is not drawn yet; the intent outlives that until
+// the open edge consumes it.
+void NotePrefsOpenIntent(const UiDrawSession& d, bool embedded) {
+    // Not in the mobile shell: focusing a text field there raises the on-screen keyboard.
+    if (!embedded && (d.requestPreferencesFocus || !d.cfg.BackendHasBeenReachable)) {
+        s_prefsOpenFocus.intent = true;
+    }
+}
+
+// Runs once per drawn frame, right after the buffers load. `openEdge` is the frame they were
+// (re)loaded, i.e. the first drawn frame of this open.
+void UpdatePrefsOpenFocus(const UiDrawSession& d, bool openEdge) {
+    if (openEdge && s_prefsOpenFocus.intent) {
+        s_prefsOpenFocus.intent = false;
+        s_prefsOpenFocus.awaitingTarget = true;
+    }
+    if (!s_prefsOpenFocus.awaitingTarget) {
+        return;
+    }
+    // A popup (the update-available modal, a menu that is still closing) owns the keyboard.
+    // Taking it now would type into a field the user cannot see behind it.
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
+        s_prefsOpenFocus.waitedForPopup = true;
+        return;
+    }
+    s_prefsOpenFocus.awaitingTarget = false;
+    const bool waited = s_prefsOpenFocus.waitedForPopup;
+    s_prefsOpenFocus.waitedForPopup = false;
+    if (waited && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        return; // the popup handed the focus to another window: this open no longer wants the keyboard
+    }
+    // The credential rows only draw on the Tracker page, with no search query narrowing the pane
+    // and the section expanded. Anywhere else, or once nothing is blank, the search box is the
+    // useful place to start typing.
+    const bool credentialRowsDrawn = d.preferencesCategory == PreferencesCategory::Tracker &&
+                                     d.prefsSearchBuf[0] == '\0' &&
+                                     d.prefsCollapsedSections.count("tracker.backend") == 0;
+    s_prefsOpenFocus.credentialBuf =
+        credentialRowsDrawn && TrackerSetupPure::NeedsSetup(d.cfg) ? FirstBlankCredentialBuf(d) : nullptr;
+    s_prefsOpenFocus.searchBox = s_prefsOpenFocus.credentialBuf == nullptr;
+}
+
+// Gives the keyboard to the widget submitted next when it edits this open's focus target.
+void FocusNextItemIfOpenTarget(const char* buf) {
+    if (s_prefsOpenFocus.credentialBuf == buf) {
+        ImGui::SetKeyboardFocusHere();
+        s_prefsOpenFocus.credentialBuf = nullptr;
+    }
+}
+
+// One credential text row. Takes the keyboard when it is this open's focus target, and returns
+// true on the frame it was committed with a bare Enter (the Tracker page runs Test connection).
+bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGuiInputTextFlags flags = 0) {
+    FocusNextItemIfOpenTarget(buf);
+    ImGui::InputText(label, buf, bufSize, flags);
+    return SmatchetTextInputCommittedWithEnter();
+}
+
+// The masked variant of CredentialInputText.
+bool CredentialSecretInput(const char* label, char* buf, std::size_t bufSize) {
+    FocusNextItemIfOpenTarget(buf);
+    bool enterPressed = false;
+    SmatchetSecretInputText(label, buf, bufSize, nullptr, &enterPressed);
+    return enterPressed;
+}
+
 // Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub/Linear combo.
 // Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub, 3=Linear). Extracted from
 // drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
@@ -412,19 +534,23 @@ void DrawTrackerJiraExtraBackends(UiDrawSession& d) {
 // backend's block draws, so the drift guard tolerates the other three never being observed. The
 // `chrome` flag suppresses headings/spacers while a search query is active — chrome has no
 // descriptor row of its own and would otherwise survive a filter that matched nothing here.
-void DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
+// Each returns true on the frame one of its connection fields was committed with Enter.
+bool DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
+    bool enterPressed = false;
     if (chrome) {
         ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_domain")) {
-        ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed =
+            CredentialInputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank) ||
+            enterPressed;
         ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_email")) {
-        ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
+        enterPressed = CredentialInputText("Email", d.emailBuf, sizeof(d.emailBuf)) || enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_api_token")) {
-        SmatchetSecretInputText("API Token", d.tokenBuf, sizeof(d.tokenBuf));
+        enterPressed = CredentialSecretInput("API Token", d.tokenBuf, sizeof(d.tokenBuf)) || enterPressed;
     }
     DrawTrackerJiraExtraBackends(d);
     // No "Project Key" preference row. Project is per-operation — picked
@@ -442,23 +568,28 @@ void DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
                                    "click + New issue (e.g. description, priority, assignee, labels, "
                                    "components).");
     }
+    return enterPressed;
 }
 
-void DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
+bool DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
+    bool enterPressed = false;
     if (chrome) {
         ImGui::TextUnformatted("Plane Configuration (plane.so)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_url")) {
-        ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed =
+            CredentialInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank) ||
+            enterPressed;
         ImGui::SetItemTooltip("e.g. https://api.plane.so");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_workspace")) {
-        ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
-                         ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
     }
     // No "Project ID (UUID)" preference row. See Jira note above.
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_api_key")) {
-        SmatchetSecretInputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf));
+        enterPressed = CredentialSecretInput("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf)) || enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_inherit")) {
         ImGui::Spacing();
@@ -470,27 +601,36 @@ void DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
                                    "Comma-separated Plane field ids copied from the last grid row when you "
                                    "click + New issue (e.g. description, priority, assignee, labels).");
     }
+    return enterPressed;
 }
 
 // GitHub-as-tracker — docs/plans/shipped/github-tracker-backend.md.
-void DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
+bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
+    bool enterPressed = false;
     if (chrome) {
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
-        ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_pat")) {
-        SmatchetSecretInputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf));
+        enterPressed =
+            CredentialSecretInput("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf)) || enterPressed;
         ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_owner")) {
-        ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
         ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_repo")) {
-        ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed =
+            CredentialInputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank) ||
+            enterPressed;
         ImGui::SetItemTooltip("Repository name, e.g. \"Smatchet\".");
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.tracker.github_repo.help",
@@ -522,28 +662,36 @@ void DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
                                    "Comma-separated GitHub field ids copied from the last grid row when you "
                                    "click + New issue (e.g. body, labels, assignees, milestone).");
     }
+    return enterPressed;
 }
 
 // Linear-as-tracker — Slice 1 of docs/plans/linear-tracker-backend.md. Draft scope is
 // the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
-void DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
+bool DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
+    bool enterPressed = false;
     if (chrome) {
         ImGui::TextUnformatted("Linear Configuration (linear.app)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_api_key")) {
-        SmatchetSecretInputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf));
+        enterPressed = CredentialSecretInput("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf)) || enterPressed;
         ImGui::SetItemTooltip("Personal API Key from Linear Settings -> API.");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_team_key")) {
-        ImGui::InputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
         ImGui::SetItemTooltip("Team key, e.g. \"ENG\" (the TEAM-123 issue prefix).");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_team")) {
-        ImGui::InputText("Team", d.linearTeamIdBuf, sizeof(d.linearTeamIdBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Team", d.linearTeamIdBuf, sizeof(d.linearTeamIdBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
         ImGui::SetItemTooltip("Linear team UUID. Optional — resolved from Team Key when empty.");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_base_url")) {
-        ImGui::InputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        enterPressed = CredentialInputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                       enterPressed;
         ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_workspace_url")) {
@@ -561,11 +709,13 @@ void DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
                                    "Comma-separated Linear field ids copied from the last grid row when you "
                                    "click + New issue (e.g. description, priority, assignee, labels).");
     }
+    return enterPressed;
 }
 
 // Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub / Linear). Extracted
-// from drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
-void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
+// from drawPreferencesTrackerTab during the over-100-line decomposition. Returns true on the frame
+// a connection field was committed with Enter.
+bool DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
 #if !defined(_WIN32) && !defined(__ANDROID__)
     // ConfigManager's DPAPI secret protection is Win32-only (ConfigManager_PathUtils.cpp
     // ProtectSecretForConfig is a #else passthrough on every other platform), so on a desktop
@@ -582,18 +732,20 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
     }
 #endif
     const bool chrome = !d.prefsFilter.Active();
+    bool enterPressed = false;
     if (currentItem == 0) {
-        DrawTrackerJiraConfig(d, chrome);
+        enterPressed = DrawTrackerJiraConfig(d, chrome);
     } else if (currentItem == 1) {
-        DrawTrackerPlaneConfig(d, chrome);
+        enterPressed = DrawTrackerPlaneConfig(d, chrome);
     } else if (currentItem == 2) {
-        DrawTrackerGitHubConfig(d, chrome);
+        enterPressed = DrawTrackerGitHubConfig(d, chrome);
     } else {
-        DrawTrackerLinearConfig(d, chrome);
+        enterPressed = DrawTrackerLinearConfig(d, chrome);
     }
     if (chrome) {
         ImGui::Spacing();
     }
+    return enterPressed;
 }
 
 // "Recently used projects" section of the Tracker tab: cached-project list filtered to the current
@@ -785,8 +937,10 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
 // "Test connection" probe row for the Tracker tab (P2-M12): probes the CURRENT BUFFER
 // credentials (not the saved cfg) with a throwaway backend on a worker, then renders a
 // verdict line - the same pattern the Assistant and Whisper tabs already use. First-run
-// users can now verify a token before committing it with Save & Sync.
-void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
+// users can now verify a token before committing it with Save & Sync. `enterRequested` is the
+// same-frame "a connection field was committed with Enter" signal: it runs the probe exactly as
+// a click does, and is ignored while one is already in flight or the row is filtered out.
+void DrawTrackerTestConnection(AppController& app, UiDrawSession& d, bool enterRequested) {
     // Whole row (button + in-flight hint + verdict) is one descriptor.
     if (!d.prefsFilter.ShowSetting("tracker.backend.test_connection")) {
         return;
@@ -798,7 +952,8 @@ void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
     if (disabledThisFrame) {
         ImGui::BeginDisabled();
     }
-    if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.test.button", "Test connection"))) {
+    const bool clicked = ImGui::Button(SmatchetLocalization::T("prefs.tracker.test.button", "Test connection"));
+    if (clicked || (enterRequested && !disabledThisFrame)) {
         TrackerConfig probeCfg = d.cfg;
         CopyTrackerBuffersToConfig(d, probeCfg);
         d.trackerPrefsTestInFlight = true;
@@ -924,8 +1079,80 @@ bool McpPrefsDirty(const UiDrawSession& d) {
 #endif
 }
 
+// The Assistant settings stage into a working copy that only the in-tab Save commits, so a close
+// with staged edits must reach the guard modal too; it used to discard them without a prompt.
+bool AssistantPrefsDirty(const UiDrawSession& d) {
+#if defined(SMATCHET_WITH_AI)
+    return SmatchetPreferencesUiDetail::AssistantPrefsWorkingCopyDirty(d.assistantPrefsWorkingSeeded,
+                                                                       d.assistantPrefsWorking, d.cfg);
+#else
+    (void)d;
+    return false;
+#endif
+}
+
 bool PrefsHaveUncommittedEdits(const UiDrawSession& d) {
-    return d.preferencesBuffersLoaded && (TrackerPrefsFieldsDiffer(d) || McpPrefsDirty(d));
+    return d.preferencesBuffersLoaded && (TrackerPrefsFieldsDiffer(d) || McpPrefsDirty(d) || AssistantPrefsDirty(d));
+}
+
+// The guard modal's sentence: it names the domain that is dirty, so the user knows what Save &
+// Sync is about to write and what Discard is about to drop.
+const char* PrefsCloseGuardBodyText(SmatchetPreferencesUiDetail::PrefsCloseGuardKind kind) {
+    using SmatchetPreferencesUiDetail::PrefsCloseGuardKind;
+    // SMATCHET_DEVIATION(rule=duplication; reason=a switch returning one localized sentence per enum value has the same token shape as the status-bar connectivity tooltip, an unrelated enum with unrelated strings and nothing to share; owner=orchestrator; revisit=2027-05-31)
+    switch (kind) {
+    case PrefsCloseGuardKind::Mcp:
+        return SmatchetLocalization::T(
+            "prefs.mcp.close_guard.body",
+            "The MCP section has unsaved edits. Save & Sync applies them; closing without saving discards them.");
+    case PrefsCloseGuardKind::TrackerAndMcp:
+        return SmatchetLocalization::T("prefs.close_guard.body",
+                                       "The Tracker tab and the MCP section have unsaved edits. Save & Sync applies "
+                                       "them; closing without saving discards them.");
+    case PrefsCloseGuardKind::Assistant:
+        return SmatchetLocalization::T("prefs.assistant.close_guard.body",
+                                       "The Assistant settings have unsaved edits. Save & Sync applies them; closing "
+                                       "without saving discards them.");
+    case PrefsCloseGuardKind::Generic:
+        return SmatchetLocalization::T(
+            "prefs.close_guard.generic.body",
+            "Preferences has unsaved edits. Save & Sync applies them; closing without saving discards them.");
+    case PrefsCloseGuardKind::Tracker:
+        break;
+    }
+    return SmatchetLocalization::T(
+        "prefs.tracker.close_guard.body",
+        "The Tracker tab has unsaved edits. Save & Sync applies them; closing without saving discards them.");
+}
+
+// Window-level save, shared by the guard modal and the Ctrl+S shortcut: the Save & Sync button's
+// action (every staged buffer into cfg, then a backend re-sync), with the Assistant's staged edits
+// committed on top when there are any. Save & Sync always runs, even when only the Assistant reads
+// dirty: it also writes buffers no dirty check covers (the "inherit fields" lists), and skipping
+// it would drop those on the close that follows.
+void SavePrefsStagedEdits(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+    ui.OnPreferencesSaveAndSyncForwarded(app, d);
+#if defined(SMATCHET_WITH_AI)
+    if (AssistantPrefsDirty(d)) {
+        CommitAssistantPrefsWorkingCopy(app, d);
+    }
+#endif
+}
+
+// Ctrl+S while the Preferences window (or one of its child panes) holds keyboard focus.
+bool PrefsSaveShortcutPressed(const UiDrawSession& d) {
+    // The close gate armed the guard modal earlier this frame; it opens further down, so the
+    // popup check below cannot see it yet. And a chord pressed to be CAPTURED on the Shortcuts
+    // page is being bound, not used.
+    if (d.prefsTrackerCloseGuardOpen || smatchet::ui::HotkeyCaptureArmedRecently()) {
+        return false;
+    }
+    // NoPopupHierarchy: a popup opened from this window (the guard modal, a consent modal, a
+    // combo) owns the keyboard, so the chord must not reach past it.
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+        return false;
+    }
+    return ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S);
 }
 
 // First-run explainer for the Tracker tab (dev-onboarding-first-run-quickstart, slice 2).
@@ -958,8 +1185,8 @@ void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d)
     SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.backend", [&] {
         DrawTrackerFirstRunExplainer(d);
         const int currentItem = DrawTrackerBackendSelection(d);
-        DrawTrackerBackendConfig(d, currentItem);
-        DrawTrackerTestConnection(app, d);
+        const bool enterInCredentials = DrawTrackerBackendConfig(d, currentItem);
+        DrawTrackerTestConnection(app, d, enterInCredentials);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.recent_projects", [&] {
         DrawTrackerRecentProjects(d, TrackerBackendIndexFromBuf(d));
@@ -1230,6 +1457,12 @@ namespace {
 // Nothing between them emits ImGui, so the readout's SameLine still attaches to
 // the clear button.
 void DrawPrefsSearchBoxInput(UiDrawSession& d) {
+    if (s_prefsOpenFocus.searchBox) {
+        // The window just opened and there is no blank credential to fill: start in the search
+        // box, so typing narrows the settings straight away.
+        ImGui::SetKeyboardFocusHere();
+        s_prefsOpenFocus.searchBox = false;
+    }
     ImGui::SetNextItemWidth(280.0f);
     ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
     const bool hasQuery = d.prefsSearchBuf[0] != '\0';
@@ -1349,12 +1582,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // embedded (dual-ui slice 4): mobile Settings page draws the body directly into the page
     // child; skip the show-gate + beginPreferencesWindow/End chrome. Desktop path below is
     // byte-identical to the pre-slice-4 flow.
+    NotePrefsOpenIntent(d, embedded);
     if (!embedded) {
         if (!d.showPreferences) {
             // P2-H3: the Tracker tab is buffer-staged (unlike the mostly-autosaving
             // sibling tabs), so closing with unsaved credential edits would silently
             // discard them. Reopen and route the decision through the guard modal. The
-            // same gate covers an MCP field the section could not commit (#2133).
+            // same gate covers an MCP field the section could not commit (#2133) and the
+            // Assistant's staged working copy.
             if (PrefsHaveUncommittedEdits(d)) {
                 d.showPreferences = true;
                 d.prefsTrackerCloseGuardOpen = true;
@@ -1369,7 +1604,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         }
     }
 
+    const bool openEdge = !d.preferencesBuffersLoaded;
     loadPreferencesBuffers(d);
+    UpdatePrefsOpenFocus(d, openEdge);
 
     DrawPrefsSearchBoxInput(d);
     d.prefsFilter.Update(d.prefsSearchBuf, d.cfg.UiLanguage);
@@ -1408,11 +1645,17 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // TrackerPrefsFieldsDiffer lives in this TU's anonymous namespace and the assistant
     // diff helper is AI-gated.
     const bool trackerDirty = d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d);
-    bool assistantDirty = false;
-#if defined(SMATCHET_WITH_AI)
-    assistantDirty = d.assistantPrefsWorkingSeeded &&
-                     SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(d.assistantPrefsWorking, d.cfg);
-#endif
+    const bool assistantDirty = AssistantPrefsDirty(d);
+
+    // Ctrl+S saves everything the window is holding, whichever page is showing. The field being
+    // typed in is committed first, the way clicking Save & Sync would commit it: the save
+    // normalizes the buffers, and a still-active input would write its own text back over them.
+    // The save itself waits until the body below has drawn, so that field's own on-commit
+    // handling runs before its buffer is read.
+    const bool saveShortcut = PrefsSaveShortcutPressed(d);
+    if (saveShortcut) {
+        ImGui::ClearActiveID();
+    }
 
     const float bodyHeight = ImGui::GetContentRegionAvail().y;
     d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(embedded, ImGui::GetContentRegionAvail().x,
@@ -1430,6 +1673,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         drawPreferencesCategoryBody(app, d);
     }
     ImGui::EndChild();
+    if (saveShortcut) {
+        SavePrefsStagedEdits(*this, app, d);
+    }
+    // The open-focus target is good for one frame: a credential row that did not draw (its
+    // section just collapsed, the page changed) must not take the keyboard on some later frame.
+    s_prefsOpenFocus.credentialBuf = nullptr;
     if (d.preferencesCategory != PreferencesCategory::Shortcuts) {
         // Preserve the old inactive-BeginTabItem early-return semantics: an armed
         // hotkey capture dies when the page stops drawing.
@@ -1437,51 +1686,37 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     }
 
     // P2-H3 close guard: entered via the close gate above when the window was dismissed
-    // with unsaved Tracker edits. Save and Discard both hand the close back to the gate
+    // with unsaved Tracker, MCP or Assistant edits. Save and Discard both hand the close back to the gate
     // with the dirty state resolved (resetPreferencesWindowState drops the buffers, so
     // the gate's re-check short-circuits instead of reopening the modal forever).
     if (d.prefsTrackerCloseGuardOpen) {
         ImGui::OpenPopup("Unsaved changes###PrefsTrackerCloseGuard");
         d.prefsTrackerCloseGuardOpen = false;
     }
-    if (ImGui::BeginPopupModal("Unsaved changes###PrefsTrackerCloseGuard", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Saving is not destructive, so Enter saves; Esc keeps editing.
+    static smatchet::ui::DialogScopeState s_closeGuardDialog;
+    if (smatchet::ui::BeginDialog(s_closeGuardDialog, "Unsaved changes###PrefsTrackerCloseGuard", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         // Name the domain that is actually dirty: the Tracker wording is kept verbatim for the
-        // Tracker-only case; an uncommitted MCP field (#2133) gets its own sentence.
-        // `trackerDirty` is the nav-marker value computed above — same frame, same buffers.
+        // Tracker-only case; an uncommitted MCP field (#2133) and the Assistant's staged edits
+        // get their own sentences. `trackerDirty` and `assistantDirty` are the nav-marker values
+        // computed above — same frame, same buffers.
         const bool mcpDirty = McpPrefsDirty(d);
-        if (mcpDirty && !trackerDirty) {
-            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.mcp.close_guard.body",
-                                                             "The MCP section has unsaved edits. Save & Sync applies "
-                                                             "them; closing without saving discards them."));
-        } else if (mcpDirty) {
-            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.close_guard.body",
-                                                             "The Tracker tab and the MCP section have unsaved edits. "
-                                                             "Save & Sync applies them; closing without saving "
-                                                             "discards them."));
-        } else {
-            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.tracker.close_guard.body",
-                                                             "The Tracker tab has unsaved edits. Save & Sync applies "
-                                                             "them; closing without saving discards them."));
-        }
+        ImGui::TextWrapped("%s", PrefsCloseGuardBodyText(SmatchetPreferencesUiDetail::PickPrefsCloseGuardKind(
+                                     trackerDirty, mcpDirty, assistantDirty)));
         ImGui::Spacing();
-        if (ImGui::Button("Save & Sync")) {
-            onPreferencesSaveAndSync(app, d);
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+            s_closeGuardDialog, smatchet::ui::UnsavedChangesFooter("Save & Sync", "Discard", "Keep editing"));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
+            SavePrefsStagedEdits(*this, app, d);
+        }
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary ||
+            pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             resetPreferencesWindowState(d);
             d.showPreferences = false;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Discard")) {
-            resetPreferencesWindowState(d);
-            d.showPreferences = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Keep editing")) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_closeGuardDialog);
     }
 
     if (!embedded) {

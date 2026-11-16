@@ -2,6 +2,7 @@
 
 #include "CachedTicketTypes.h"
 #include "SmatchetCommentsModalUi.h"
+#include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetActivityLogViewerUi.h"
 #include "Ui/SmatchetFieldViewerKindPure.h"
 #include "Ui/SmatchetModalPopupOpen.h"
@@ -21,6 +22,8 @@ namespace {
 // "###" ids: the visible title varies per content / issue while the popup id stays stable.
 constexpr const char* kFieldViewerPopupId = "###FieldViewerModal";
 constexpr const char* kFieldViewerDiscardPopupId = "###FieldViewerDiscardConfirm";
+// A dismissal this soon after the viewer came back to ask is not the user: it closes instead of looping.
+constexpr int kFieldViewerReopenSettleFrames = 2;
 
 /// Singleton state, decoupled from the grid cell so the modal survives the originating cell scrolling
 /// out of view: the cell opens it, then the top-level `RenderFieldViewerModal` owns the lifecycle.
@@ -34,6 +37,11 @@ struct FieldViewerState {
     std::string DiscardLabel;
     bool Active = false;
     bool JustOpened = false;
+    /// The popup was dismissed around unsaved input (the title-bar X, or another popup taking its
+    /// place): it comes back next frame with the discard question up.
+    bool ReopenForDiscardConfirm = false;
+    /// Frame of the last such return; negative when there was none.
+    int ReopenFrame = -1;
 };
 
 FieldViewerState s_Viewer;
@@ -65,12 +73,14 @@ void OpenFieldViewer(std::unique_ptr<IFieldViewerContent> content, const std::st
     s_Viewer.DiscardLabel = std::string(s_Viewer.Content->DiscardConfirmTitle()) + kFieldViewerDiscardPopupId;
     s_Viewer.Active = true;
     s_Viewer.JustOpened = true;
+    s_Viewer.ReopenForDiscardConfirm = false;
+    s_Viewer.ReopenFrame = -1;
 }
 
 bool OpenFieldViewerForField(AppController& app, const CachedTicket& ticket, const std::string& fieldId) {
     switch (SmatchetFieldViewer::FieldViewerKindForFieldId(fieldId)) {
     case SmatchetFieldViewer::FieldViewerKind::Comments:
-        OpenCommentsModal(app, ticket.id);
+        OpenCommentsModal(app, ticket.id, std::string(), CommentsOpenFocus::Composer);
         return true;
     case SmatchetFieldViewer::FieldViewerKind::ActivityLog:
         OpenFieldViewer(MakeActivityLogViewerContent(ticket.GetFieldValueRef(fieldId)), ticket.id, fieldId);
@@ -86,13 +96,15 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
         return;
     }
 
-    if (s_Viewer.JustOpened) {
-        // OpenPopup must be called at the same window-depth as BeginPopupModal — both here, outside
-        // the table, so ImGui can anchor the popup to this stable top-level window.
-        smatchet::ui::OpenCenteredModalPopup(kFieldViewerPopupId, 0.5f, 0.6f);
-        s_Viewer.JustOpened = false;
-    }
+    const bool reopenForConfirm = s_Viewer.ReopenForDiscardConfirm;
+    // OpenPopup must be called at the same window-depth as BeginPopupModal — both here, outside
+    // the table, so ImGui can anchor the popup to this stable top-level window.
+    smatchet::ui::OpenOrBringBackModalPopup(kFieldViewerPopupId, s_Viewer.JustOpened, reopenForConfirm, 0.5f, 0.6f);
 
+    // The title-bar X is driven by p_open. When it is clicked ImGui clears the flag and dismisses the
+    // popup inside BeginPopupModal on that same frame, so the X cannot be turned down in place. The
+    // dismissed branch below gives it the meaning of the Close button and Esc: a viewer with nothing
+    // unsaved closes, unsaved input comes back next frame with the discard question up.
     bool modalOpen = true;
     if (ImGui::BeginPopupModal(s_Viewer.WindowLabel.c_str(), &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
@@ -106,15 +118,21 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
 
         ImGui::Separator();
         bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
-        // P2-M3: Esc while an input is being edited only defocuses it (ImGui's own
-        // revert-and-deactivate) — it must not also tear down the modal around the draft. Only a
-        // second, unfocused Esc reaches the close path. While the discard confirm is up, Esc is its
-        // "keep writing" (handled inside it), not another close request that re-opens it.
+        // P2-M3: Esc while an input is being edited only leaves that input (the content decides what
+        // happens to its text; the comments box keeps it) — it must not also tear down the modal
+        // around the draft. Only a second, unfocused Esc reaches the close path, unless the content
+        // asks for the close itself (ConsumeCloseRequest). While the discard confirm is up, Esc is
+        // its "keep writing" (handled inside it), not another close request that re-opens it.
         const bool discardWasOpen = ImGui::IsPopupOpen(kFieldViewerDiscardPopupId);
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !discardWasOpen) {
             wantClose = true;
         }
-        if (!modalOpen) { // title-bar X — same guard as Close/Esc (the local resets next frame)
+        if (reopenForConfirm) { // back after a dismissal around unsaved input: ask now
+            s_Viewer.ReopenForDiscardConfirm = false;
+            s_Viewer.ReopenFrame = ImGui::GetFrameCount();
+            wantClose = true;
+        }
+        if (s_Viewer.Content->ConsumeCloseRequest()) {
             wantClose = true;
         }
         bool closeNow = false;
@@ -147,8 +165,19 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
             CloseFieldViewer();
         }
     } else {
-        // Modal dismissed without our intervention (title-bar X) — stay self-consistent.
-        CloseFieldViewer();
+        if (ImGui::IsPopupOpen(kFieldViewerPopupId)) {
+            // Still open, just not drawn this frame (clipped, e.g. a minimised host): nothing was
+            // dismissed, so the viewer and its input stay as they are.
+            return;
+        }
+        // Dismissed without the Close row's say: the title-bar X, or another popup took its place.
+        if (smatchet::dialogkeys::DismissedPopupComesBack(s_Viewer.Content->HasUnsavedInput(), reopenForConfirm,
+                                                          ImGui::GetFrameCount(), s_Viewer.ReopenFrame,
+                                                          kFieldViewerReopenSettleFrames)) {
+            s_Viewer.ReopenForDiscardConfirm = true;
+        } else {
+            CloseFieldViewer();
+        }
     }
 }
 

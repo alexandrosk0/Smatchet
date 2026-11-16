@@ -24,4 +24,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
 /// `assistantHistory` wholesale (e.g. a scenario restoring saved history) must invoke this —
 /// the index-keyed caches otherwise reuse stale entries when the size is unchanged.
 void SmatchetClearAiRenderCaches();
+
+/// Test seam: how many Esc presses have stopped a reply since the process started.
+int SmatchetAiAssistantEscStopCountForTest();
 #endif

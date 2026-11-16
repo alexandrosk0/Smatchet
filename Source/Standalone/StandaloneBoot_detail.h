@@ -38,12 +38,13 @@ std::string ResolveStandaloneUserDataDir(const std::string& exeDir);
 /// forwarding to ImGui's GLFW backend (so numpad Enter confirms dialogs).
 void KeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
-/// GLFW file-drop callback: routes dropped markdown files (.md/.markdown,
-/// case-insensitive) into the Plan Docs viewer; all matches join the picker and
-/// the first one becomes the active doc. Non-markdown drops are ignored (logged
-/// at INFO). Fires on the main thread inside glfwPollEvents, so writing g_ui
-/// flags directly is safe; the viewer's per-frame async load does the reading
-/// (no file I/O here). ImGui's GLFW backend installs no drop callback, so this
+/// GLFW file-drop callback: hands the dropped paths to the Plan Docs viewer
+/// (PlanDocViewerOpenDroppedPaths). Markdown files (.md/.markdown,
+/// case-insensitive) join the picker and the first one becomes the active doc;
+/// any other file is not opened, and one toast says so. Fires on the main
+/// thread inside glfwPollEvents, so writing g_ui flags and raising a toast
+/// directly is safe; the viewer's per-frame async load does the reading (no
+/// file I/O here). ImGui's GLFW backend installs no drop callback, so this
 /// registration shadows nothing.
 void MarkdownFileDropCallback(GLFWwindow* window, int count, const char** paths);
 

@@ -31,6 +31,7 @@
 #include "SmatchetLocalization.h"
 
 #include "imgui.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -463,7 +464,11 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
     }
     if (consentModalProvider == static_cast<int>(prov)) {
         ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal("Allow custom AI endpoint?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // Keys: smatchet::ui::ConfirmFooter. A consent prompt, so Cancel takes the keyboard on open and Enter
+        // cancels: enabling needs a deliberate click or Tab to the button.
+        static smatchet::ui::DialogScopeState s_consentDialog;
+        if (smatchet::ui::BeginDialog(s_consentDialog, "Allow custom AI endpoint?", nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize)) {
             // Consent modal: the cleartext-key risk must stay visible (informed
             // consent); only the supporting detail moves into the (?) tooltip.
             ImGui::TextWrapped("%s", SmatchetLocalization::Format(
@@ -481,18 +486,17 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
                 providerLabel, canonicalHost);
             SmatchetHelpMarker::RenderText(consentDetail.c_str());
             ImGui::Separator();
-            if (ImGui::Button("Enable custom endpoint")) {
+            const smatchet::dialogkeys::ConfirmPick pick =
+                smatchet::ui::ConfirmFooter(s_consentDialog, smatchet::ui::ConsentFooter("Enable custom endpoint"));
+            if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
                 flag = true;
                 ClearStaleTestResult(d);
                 consentModalProvider = -1;
                 ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
+            } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
                 consentModalProvider = -1;
-                ImGui::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            smatchet::ui::EndDialog(s_consentDialog);
         }
     }
 }
@@ -729,6 +733,8 @@ void RenderAssistantSaveDiscard(AppController& app, UiDrawSession& d, bool dirty
 }
 
 } // namespace
+
+void CommitAssistantPrefsWorkingCopy(AppController& app, UiDrawSession& d) { CommitAssistantWorkingToConfig(app, d); }
 
 void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     // Assistant tab — explicit Save / Discard flow (NOT the debounced autosave

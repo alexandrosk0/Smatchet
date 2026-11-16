@@ -319,7 +319,8 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                         // resolved template instead; the user fills it in and posts from
                         // there (or discards).
                         OpenCommentsModal(*app, issueKey,
-                                          BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates));
+                                          BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates),
+                                          CommentsOpenFocus::Composer);
                     }
                 }
             }

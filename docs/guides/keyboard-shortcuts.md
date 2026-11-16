@@ -121,6 +121,69 @@ shortcuts** section of the editor:
 
 These are multi-key or modal-local and are out of scope for v1 rebinding.
 
+The **Preferences** window has two fixed keys of its own, active only while it has
+keyboard focus:
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+S` | Save & Sync, and save any unsaved Assistant settings |
+| `Enter` in a tracker connection field | Test connection |
+
+Opening Preferences puts the keyboard in the first blank connection field while the
+tracker is still being set up, and in the settings search box afterwards.
+
+The dialogs and panels you type into share fixed keys, active while they have keyboard
+focus:
+
+| Dialog | Shortcut | Action |
+|---|---|---|
+| Log work | `Enter` in **Time spent** | Save |
+| Log work | `Ctrl+Enter` in any field | Save |
+| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field |
+| Comments | `Ctrl+Enter` in the comment box | Post the comment |
+| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once |
+| Long-text editor | `Ctrl+Enter` | Save |
+| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes) |
+| Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
+| Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
+| Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
+| Offline queue | `Enter` on a **Conflict** (or **Held**) row | Open the merge-conflict resolver |
+| Merge-conflict resolver | `Enter` in the value field | Save the value |
+| Merge-conflict resolver | `Ctrl+Enter` | Save (a text conflict: only once every `<<<<<<<` marker is gone) |
+| Merge-conflict resolver | `Esc` | Leave the field, keeping the text. With nothing typed, close. `Esc` never discards a typed resolution: use **Cancel** |
+
+Log work opens with the caret in **Time spent**, Comments opened from a cell with the
+caret in the comment box, and the long-text editor with the caret in the text (when it
+opens in Preview, the caret goes there once the editor pane is shown).
+Asking for the Assistant (`Ctrl+Shift+A`, **View → Assistant**, or revealing its side bar)
+puts the caret in the message box. A panel that was already open when the app started
+leaves the keyboard where it is.
+
+### Confirm dialogs
+
+Every confirm dialog (Delete view, Discard changes, Discard queued work, Delete local
+database, Reset keyboard shortcuts, Reset window layout, Clear conversation, Unsaved
+changes in Preferences or the Lua console, and the custom-endpoint and outbound-context
+consent prompts) uses the same keys:
+
+| Shortcut | Action |
+|---|---|
+| `Enter` | Run the button that has the keyboard |
+| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep my shortcuts**) |
+| `Tab` / arrows | Move between the buttons |
+
+When a confirm opens, the keyboard is on its safe button if the action deletes or
+replaces something, or if it is a consent prompt. Otherwise it is on the action
+(**Save & switch**, **Save & Sync**, **Save**). So pressing `Enter` straight away never
+deletes anything. A destructive action button is red.
+
+The **Pick Icon** dialog opens with the caret in its search box. `Enter` picks the icon
+when exactly one matches, and `Esc` closes it.
+
+While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
+zoom shortcuts and **Full Screen**. A shortcut that ran behind a confirm could change
+or remove what the confirm is asking about.
+
 ## Default bindings
 
 | Action | Default | Command id |

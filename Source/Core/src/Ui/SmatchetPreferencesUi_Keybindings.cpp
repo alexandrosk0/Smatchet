@@ -20,10 +20,13 @@
 #include "Config/KeybindingsConfig.h"
 #include "ConfigManager.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetToolbarUi_detail.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
 #include "Ui/PreferencesFilter.h"
 #include "Ui/SmatchetHotkeyCapture.h"
+#include "Ui/SmatchetDialogScope.h"
+#include "Ui/SmatchetTheme.h"
 
 #include "imgui.h"
 
@@ -139,9 +142,9 @@ bool DrawBindingCombosCell(Keybinding& b, const std::string& rowKey, std::string
         std::string out;
         // "###" makes the button's ImGui id locale-stable ("kbAddCombo") while the
         // visible label stays the localized "+ Add" — bucket-E addresses the id.
-        const bool committed = smatchet::ui::DrawHotkeyRebindControl(
-            "###kbAddCombo", std::string(), capturing, out,
-            SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
+        const bool committed =
+            smatchet::ui::DrawHotkeyRebindControl("###kbAddCombo", std::string(), capturing, out,
+                                                  SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
         if (capturing) {
             capturingKey = addKey;
         } else if (capturingKey == addKey) {
@@ -171,25 +174,27 @@ bool DrawResetDefaultsConfirm(UiDrawSession& d, std::string& capturingKey) {
     if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetDefaults", "Reset all to defaults"))) {
         ImGui::OpenPopup("Reset keyboard shortcuts?###KbResetConfirm");
     }
-    if (ImGui::BeginPopupModal("Reset keyboard shortcuts?###KbResetConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive (custom bindings are lost at once), so "Keep my
+    // shortcuts" takes the keyboard on open and Enter keeps them.
+    static smatchet::ui::DialogScopeState s_resetDialog;
+    if (smatchet::ui::BeginDialog(s_resetDialog, "Reset keyboard shortcuts?###KbResetConfirm", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped(
             "%s", SmatchetLocalization::Format("keybindings.editor.resetConfirm",
                                                "Replace all %d shortcuts with the defaults? Custom bindings are "
                                                "lost immediately (this tab saves automatically).",
                                                static_cast<int>(d.cfg.Keybindings.Bindings.size())));
         ImGui::Spacing();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"))) {
+        const smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::DestructiveFooter(
+            SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"),
+            SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"));
+        if (smatchet::ui::ConfirmFooter(s_resetDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
             d.cfg.Keybindings = KeybindingsConfig::Defaults();
             capturingKey.clear();
             reset = true;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_resetDialog);
     }
     return reset;
 }
@@ -370,6 +375,16 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
             ImGui::PushID(static_cast<int>(i));
 
             ImGui::TableSetColumnIndex(0);
+            // A shortcut whose args would not run is refused on every press. Its row says so, in words and
+            // in the error colour, so it can be told from a working shortcut for the same command. The
+            // words come before the command name: in a narrow window the column cuts off its end, and
+            // that must be the name, not the words.
+            if (!smatchet::toolbar_editor::ArgsTextRuns(b.ArgsJson)) {
+                ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+                ImGui::TextUnformatted(SmatchetLocalization::T("toolbar.editor.row_bad_args", "(args not valid)"));
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+            }
             ImGui::TextUnformatted(label.c_str());
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", b.CommandId.c_str());
@@ -377,7 +392,8 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
 
             ImGui::TableSetColumnIndex(1);
             const std::string rowKey = b.CommandId + "\x1f" + b.ArgsJson;
-            const std::string conflictLabel = conflictIds[i].empty() ? std::string() : CommandLabel(app, conflictIds[i]);
+            const std::string conflictLabel =
+                conflictIds[i].empty() ? std::string() : CommandLabel(app, conflictIds[i]);
             if (DrawBindingCombosCell(b, rowKey, capturingKey, offendingCombos[i], conflictLabel)) {
                 mutated = true;
             }

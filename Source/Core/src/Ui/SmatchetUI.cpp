@@ -16,7 +16,6 @@
 #include "CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
-#include "Json/BoundedJsonParse.h"
 #include "Tracker/TrackerBackendKind.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
@@ -25,6 +24,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Ui/TouchInputRouter.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Logger.h"
 #include "Sync/CatalogRestorePure.h"
 #include "Sync/LookupFreshnessPure.h"
@@ -1108,12 +1108,21 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         return;
     }
     const int frame = ::ImGui::GetFrameCount();
+    const bool modalUp = smatchet::ui::AnyModalDialogOpen();
     bool consumedWheel = false;
     bool wheelAccumulated = false;
     bool wheelFired = false;
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
+            continue;
+        }
+        // Audit #88: nothing runs behind a modal dialog. A command there could change or remove what the
+        // dialog asks about (Delete view? with its pending target), or open the palette over it. Only
+        // zoom and fullscreen pass (GlobalShortcutAllowedUnderModal). Checked first: a muted
+        // wheel combo leaves the wheel to the dialog, and a muted combo does not count as this frame's
+        // firing of its action in the alias de-dup.
+        if (modalUp && !smatchet::dialogkeys::GlobalShortcutAllowedUnderModal(pk.commandId.c_str())) {
             continue;
         }
         // Wheel bindings own the delta for this frame — mark now, clear after the
@@ -1159,23 +1168,10 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             }
             continue;
         }
-        nlohmann::json args = nlohmann::json::object();
-        if (!pk.argsJson.empty()) {
-            std::string parseErr;
-            args = smatchet::json_safe::ParseBounded(pk.argsJson, parseErr);
-            if (!parseErr.empty()) {
-                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), parseErr.c_str());
-                args = nlohmann::json::object();
-            }
-        }
-        smatchet::cmd::CommandContext ctx;
-        ctx.ScenarioHost = &app;
-        ctx.Threading = &app;
-        ctx.Source = smatchet::cmd::CommandSource::Internal;
-        const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
-        if (!r.Ok) {
-            LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
-        }
+        // Args that are not a JSON object are refused with a notice, the same as on a toolbar button: a
+        // shortcut set from a button carries that button's args.
+        smatchet::ui::DispatchCommandWithArgsText(app, pk.commandId, pk.argsJson,
+                                                  smatchet::ui::ArgsTextOrigin::Shortcut);
     }
     if (!consumedWheel && io.MouseWheel != 0.0f) {
         // A wheel event no binding claimed (the modifier was released): a later gesture starts from
