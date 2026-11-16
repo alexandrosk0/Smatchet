@@ -432,6 +432,45 @@ inline int ResolveHighlight(const std::vector<Row>& rows, const ItemView* items,
     return FindRowByIdentity(rows, items, count, recents, identity);
 }
 
+/// What DecideHighlight needs to know about the frame.
+struct HighlightContext {
+    bool NeedDefault = false;     // the popup just opened or the filter changed
+    bool UserMoved = false;       // the user placed the highlight (key, mouse, scrollbar) since the last default
+    bool RowCountChanged = false; // the list has another number of rows than on the previous frame
+    bool PreferChecked = false;   // DefaultHighlight's `preferChecked`
+};
+
+struct HighlightDecision {
+    int Index = -1;         // row index, -1 = none
+    bool IsDefault = false; // DefaultHighlight's row: where the user had placed it no longer applies
+    bool Reveal = false;    // scroll the row into view
+};
+
+/// The highlight for this frame's rebuilt rows.
+/// A highlight the user placed follows its row by `identity` (ResolveHighlight) and gives way to the
+/// default only when that row is gone. One the user has not touched is the default again on every frame,
+/// so options that arrive or are replaced under an open popup, also when the row count stays the same,
+/// never leave Enter on a worse match than the list now holds.
+/// The row is revealed when a default was asked for, when the list changed size, or when the highlight
+/// lands on another row than the one it would have followed.
+inline HighlightDecision DecideHighlight(const std::vector<Row>& rows, const ItemView* items, int count,
+                                         const std::vector<std::string>* recents, const RowIdentity& identity,
+                                         int current, const HighlightContext& context, const std::string& filterLower) {
+    HighlightDecision out;
+    int followed = context.NeedDefault ? -1 : ResolveHighlight(rows, items, count, recents, identity, current);
+    if (followed >= 0 && !IsSelectableRow(rows[static_cast<std::size_t>(followed)], items, count)) {
+        followed = -1; // the row is still there but Enter can no longer act on it (a refresh disabled it)
+    }
+    if (context.UserMoved && followed >= 0) {
+        out.Index = followed;
+        return out;
+    }
+    out.Index = DefaultHighlight(rows, items, count, context.PreferChecked, filterLower);
+    out.IsDefault = true;
+    out.Reveal = out.Index >= 0 && (context.NeedDefault || context.RowCountChanged || out.Index != followed);
+    return out;
+}
+
 /// The scroll offset that brings row `index` fully into a viewport of `viewHeight` showing rows of
 /// `rowHeight`, changing `scrollY` as little as possible.
 inline float ScrollToRevealRow(int index, float rowHeight, float viewHeight, float scrollY) {
@@ -447,6 +486,18 @@ inline float ScrollToRevealRow(int index, float rowHeight, float viewHeight, flo
         return bottom - viewHeight;
     }
     return scrollY;
+}
+
+// How many queued characters to leave out at the front: while the filter is empty, the spaces a typed
+// queue starts with are not filter text (a filter never starts with a space; the Space that opened a
+// keyboard-focused combo is one). Never more than `count`, so `chars + result` stays inside the queue
+// or at its end, and the rest `count - result` can be 0.
+inline int LeadingSpacesToSkip(const unsigned int* chars, int count, bool filterEmpty) {
+    int first = 0;
+    while (filterEmpty && chars != nullptr && first < count && chars[first] == ' ') {
+        ++first;
+    }
+    return first;
 }
 
 } // namespace pure

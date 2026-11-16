@@ -18,19 +18,27 @@
 //      (also after an arrow key found nothing to move to), and a highlight the user moved stays on its
 //      option when rows are inserted above it.
 //  10. The Enter press that opens a keyboard-focused combo only opens it; the next Enter picks.
+//  11. Options replaced under an open popup with the row count unchanged: a highlight the user has not
+//      moved goes to the best match of the new list.
+//  12. The project picker (SmatchetProjectPicker::Draw) reads and records its recent picks under the
+//      focused tracker: the one its project list and the create it feeds belong to.
 //
 // COMPLEMENTS tests/Core/FilterDropdownPure.test.cpp (row model, highlight moves, scroll maths) and
 // tests/Core/RecentSelections.test.cpp (the store). THIS suite drives the production DrawBody inside a
 // real BeginCombo popup, so the focus hand-off, the character splice and the popup close are the real
-// code. The fixture owns only the option list and the event log.
+// code. The fixture owns only the option list and the event log. Case R draws the production project
+// picker instead; its project-list load runs against the test profile's unconfigured tracker.
 //
 // OBSERVATION SURFACE — the Event DrawBody returns each frame (logged by the GuiFunc) plus whether the
 // combo popup is still open. Deterministic, in-process, no network, no golden image.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
+#include "AppController.h"
+#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 #include "FilterDropdown.h"
 #include "RecentSelections.h"
+#include "SmatchetProjectPicker.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -641,25 +649,112 @@ void RegisterEnterThatOpensDoesNotPick(ImGuiTestEngine* engine) {
     };
 }
 
+// ============================================================================
+// Q. The options are replaced while the popup is open and the row count stays the same: a highlight
+//    the user has not moved goes to the best match of the list as it is now.
+// ============================================================================
+void RegisterReplacedOptionsRefreshDefault(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OptionsReplacedSameCount_DefaultHighlightFollowsTheList");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.skipFirst = 5; // zeta, eta, theta
+        g_fixture.itemCount = 8;
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyChars("e"); // all three match; "eta" is the one that starts with it
+        ctx->Yield(2);
+
+        g_fixture.skipFirst = 4; // epsilon, zeta, eta: three rows again, and "epsilon" starts with it first
+        g_fixture.itemCount = 7;
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "epsilon");
+    };
+}
+
+// ============================================================================
+// R. The project picker keeps its recent picks under the focused tracker, the one its project list and
+//    the create it feeds belong to: a recent key is offered as a pick without a list to check it
+//    against, so a key of another tracker must not show up.
+// ============================================================================
+const char* kPickerWindowRef = "SmatchetTest::ProjectPickerRecents";
+
+struct PickerFixture {
+    std::string selected;
+    bool changed = false;
+};
+
+PickerFixture g_picker;
+// Static: the picker's background loads keep a pointer to the state until they finish.
+SmatchetProjectPicker::State g_pickerState;
+
+void DrawPickerHarness() {
+    ImGui::SetNextWindowSize(ImVec2(460, 120), ImGuiCond_Appearing);
+    if (ImGui::Begin(kPickerWindowRef, nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app != nullptr) {
+            ImGui::SetNextItemWidth(320.0f);
+            if (SmatchetProjectPicker::Draw("uitest_project", g_pickerState, *app, "Plane",
+                                            "https://plane.uitest.invalid|other", g_picker.selected)) {
+                g_picker.changed = true;
+            }
+        }
+    }
+    ImGui::End();
+}
+
+void RegisterProjectPickerRecentsFollowTheFocusedTracker(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "ProjectPicker_RecentsFollowTheFocusedTracker");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawPickerHarness(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_picker = PickerFixture();
+        AppController* app = SmatchetActiveUiTestAppController();
+        IM_CHECK(app != nullptr);
+        // Recent picks of the focused tracker and of another one; only the focused tracker's are offered.
+        const std::string focusedKey = app->FocusedCacheBackendKey();
+        const std::string otherScope = smatchet::recents::MakeScopeKey(focusedKey + "|other-tracker", "project");
+        const std::string focusedScope = smatchet::recents::MakeScopeKey(focusedKey, "project");
+        smatchet::recents::RecordAndPersist(otherScope, "OTHERONE");
+        smatchet::recents::RecordAndPersist(focusedScope, "FOCUSED");
+
+        ctx->SetRef(kPickerWindowRef);
+        ctx->ItemClick("uitest_project/##projectpicker");
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter); // the first Recent row
+        ctx->Yield(2);
+
+        IM_CHECK(g_picker.changed);
+        IM_CHECK_STR_EQ(g_picker.selected.c_str(), "FOCUSED");
+        const std::vector<std::string> otherRecents = smatchet::recents::SharedGet(otherScope);
+        IM_CHECK_EQ(static_cast<int>(otherRecents.size()), 1); // the pick was not written to the other tracker
+        IM_CHECK_STR_EQ(otherRecents.empty() ? "" : otherRecents[0].c_str(), "OTHERONE");
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
-    RegisterTypeThenEnterPicks(engine);         // A: type on open → Enter picks, closes
-    RegisterArrowsThenEnterPicks(engine);       // B: Up / Down + Enter
-    RegisterTypeAfterRowClick(engine);          // C: tick-box click keeps open; typing still filters
-    RegisterTypeWhileScrolling(engine);         // D: wheel-scroll then type
-    RegisterRecentSection(engine);              // E: Recent section pinned, hidden while filtering
-    RegisterEscapeCloses(engine);               // F: Escape closes, no pick
-    RegisterTypeWhileScrollbarHeld(engine);     // G: keys typed during a scrollbar drag
-    RegisterUntickRecordsNothing(engine);       // H: unticking is not a recent pick
-    RegisterCreateRow(engine);                  // I: the 'Add "<text>"' row
-    RegisterKeptTickedDoesNotTakeEnter(engine); // J: Enter acts on the match, not a kept ticked option
-    RegisterUnknownRecentPick(engine);          // K: a recent pick outside the options
-    RegisterPageDown(engine);                   // L: PageDown
-    RegisterLoneClearRow(engine);               // M: empty state under a lone clear row
-    RegisterOptionsArriveLate(engine);          // N: options arriving under an open popup
-    RegisterHighlightFollowsItsOption(engine);  // O: rows inserted above the highlight
-    RegisterEnterThatOpensDoesNotPick(engine);  // P: the Enter that opens the combo is not a pick
+    RegisterTypeThenEnterPicks(engine);                          // A: type on open → Enter picks, closes
+    RegisterArrowsThenEnterPicks(engine);                        // B: Up / Down + Enter
+    RegisterTypeAfterRowClick(engine);                           // C: tick-box click keeps open; typing still filters
+    RegisterTypeWhileScrolling(engine);                          // D: wheel-scroll then type
+    RegisterRecentSection(engine);                               // E: Recent section pinned, hidden while filtering
+    RegisterEscapeCloses(engine);                                // F: Escape closes, no pick
+    RegisterTypeWhileScrollbarHeld(engine);                      // G: keys typed during a scrollbar drag
+    RegisterUntickRecordsNothing(engine);                        // H: unticking is not a recent pick
+    RegisterCreateRow(engine);                                   // I: the 'Add "<text>"' row
+    RegisterKeptTickedDoesNotTakeEnter(engine);                  // J: Enter acts on the match, not a kept ticked option
+    RegisterUnknownRecentPick(engine);                           // K: a recent pick outside the options
+    RegisterPageDown(engine);                                    // L: PageDown
+    RegisterLoneClearRow(engine);                                // M: empty state under a lone clear row
+    RegisterOptionsArriveLate(engine);                           // N: options arriving under an open popup
+    RegisterHighlightFollowsItsOption(engine);                   // O: rows inserted above the highlight
+    RegisterEnterThatOpensDoesNotPick(engine);                   // P: the Enter that opens the combo is not a pick
+    RegisterReplacedOptionsRefreshDefault(engine);               // Q: options replaced, same row count
+    RegisterProjectPickerRecentsFollowTheFocusedTracker(engine); // R: project picker recents follow the focused tracker
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

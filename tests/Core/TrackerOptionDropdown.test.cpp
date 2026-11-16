@@ -41,3 +41,11 @@ TEST_CASE("ItemForOption: id, label and secondary text come from the option") {
     CHECK(std::string(plainItem.Id) == "Bug");
     CHECK(plainItem.Secondary == nullptr); // no empty dimmed text beside the label
 }
+
+TEST_CASE("ItemForOption: an option the tracker marks disabled is a disabled row") {
+    TrackerFieldOption retired;
+    retired.Id = "10";
+    retired.Value = "Retired";
+    retired.Disabled = true;
+    CHECK(ItemForOption(retired).Disabled); // every picker built on it skips the row when picking
+}
