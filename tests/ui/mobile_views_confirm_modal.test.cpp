@@ -38,6 +38,8 @@
 #include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
 
+#include <string>
+
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — proven real-window probe
 #include "imgui_te_context.h"
@@ -141,10 +143,227 @@ void RegisterMobileViewsConfirmModalRendersAtShellLevel(ImGuiTestEngine* engine)
     };
 }
 
+// ============================================================================
+// Dialog contract (input-ux-w2-dialog-contract; audit #85 #86 #88). The Views confirms draw through
+// smatchet::ui::ConfirmFooter, so they are the probe for the shared footer and for the shortcut mute.
+// Same Mobile-shell seam as above: drawMobileViewsModals runs every frame and needs an active view.
+// ============================================================================
+
+// Pins Mobile mode with a fresh active view, and restores what it changed on destruction.
+struct MobileViewsModalSeam {
+    UiMode origUiMode = g_ui.cfg.UiMode;
+    std::string origTracker = g_ui.cfg.TrackerType;
+    bool origReachable = g_ui.cfg.BackendHasBeenReachable;
+    MobilePage origPage = g_ui.mobilePage;
+
+    MobileViewsModalSeam() {
+        g_ui.cfg.UiMode = UiMode::Mobile;
+        g_ui.cfg.TrackerType = "Plane";
+        g_ui.cfg.BackendHasBeenReachable = true;
+        g_ui.mobilePage = MobilePage::Views;
+    }
+    ~MobileViewsModalSeam() {
+        g_ui.viewsShowDeleteConfirm = false;
+        g_ui.viewsPendingDeleteId.clear();
+        g_ui.viewsPendingDeleteActive = false;
+        g_ui.viewsShowDiscardConfirm = false;
+        g_ui.viewsPendingActivateId.clear();
+        g_ui.viewsDirty = false;
+        g_ui.mobileDrawerOpen = false;
+        g_ui.mobilePage = origPage;
+        g_ui.cfg.UiMode = origUiMode;
+        g_ui.cfg.TrackerType = origTracker;
+        g_ui.cfg.BackendHasBeenReachable = origReachable;
+    }
+};
+
+// Opens "Delete view?" on a view id that does not exist (the prompt falls back to the active view's name).
+// Nothing is deleted unless Delete runs, and these tests never let it.
+bool OpenDeleteConfirm(ImGuiTestContext* ctx) {
+    g_ui.viewsPendingDeleteActive = false;
+    g_ui.viewsPendingDeleteId = "smatchet_test_dialog_contract_view";
+    g_ui.viewsShowDeleteConfirm = true;
+    if (!YieldUntil(ctx, [] { return WindowIsLive("Delete view?"); })) {
+        return false;
+    }
+    // Let the opening focus land: it waits for a frame where the dialog owns the keyboard.
+    for (int i = 0; i < 4; ++i) {
+        ctx->Yield();
+    }
+    return true;
+}
+
+void RegisterDeleteConfirmKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DialogContract", "DeleteViewConfirm_SafeButtonFocused_EnterAndEscCancel");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr - app not booted");
+            return;
+        }
+        MobileViewsModalSeam seam;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("##MobileShell"); }));
+
+        // On open the keyboard is on Cancel, not on the destructive Delete (#86).
+        IM_CHECK_NO_RET(OpenDeleteConfirm(ctx));
+        ctx->SetRef("Delete view?");
+        IM_CHECK_EQ_NO_RET(GImGui->NavId, ctx->GetID("Cancel"));
+
+        // Enter cancels: nothing is deleted, the pending target is dropped, the dialog closes.
+        ctx->KeyPress(ImGuiKey_Enter);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Delete view?"); }, 30));
+        IM_CHECK_NO_RET(!g_ui.viewsPendingDeleteActive);
+        IM_CHECK_NO_RET(g_ui.viewsPendingDeleteId.empty());
+
+        // Esc cancels too (#85); a modal used to ignore it.
+        IM_CHECK_NO_RET(OpenDeleteConfirm(ctx));
+        ctx->KeyPress(ImGuiKey_Escape);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Delete view?"); }, 30));
+        IM_CHECK_NO_RET(!g_ui.viewsPendingDeleteActive);
+        IM_CHECK_NO_RET(g_ui.viewsPendingDeleteId.empty());
+        ctx->Yield();
+    };
+}
+
+void RegisterDiscardConfirmEsc(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DialogContract", "DiscardChangesConfirm_EscCancelsAndKeepsView");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr - app not booted");
+            return;
+        }
+        MobileViewsModalSeam seam;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("##MobileShell"); }));
+        g_ui.viewsDirty = true;
+        g_ui.viewsPendingActivateId = "smatchet_test_dialog_contract_other";
+        g_ui.viewsShowDiscardConfirm = true;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("Discard changes?"); }));
+        for (int i = 0; i < 4; ++i) {
+            ctx->Yield();
+        }
+        // Saving is not destructive, so the action button holds the keyboard on open.
+        ctx->SetRef("Discard changes?");
+        IM_CHECK_EQ_NO_RET(GImGui->NavId, ctx->GetID("Save & switch"));
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Discard changes?"); }, 30));
+        // Cancelled: no switch is queued and the unsaved changes are still there.
+        IM_CHECK_NO_RET(g_ui.viewsPendingActivateId.empty());
+        IM_CHECK_NO_RET(g_ui.viewsDirty);
+        ctx->Yield();
+    };
+}
+
+void RegisterOpeningEnterDoesNotAnswer(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DialogContract", "OpeningEnterDoesNotAnswerConfirm");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr - app not booted");
+            return;
+        }
+        MobileViewsModalSeam seam;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("##MobileShell"); }));
+
+        // The confirm opens on the frame Enter goes down, as it does when Enter on a view row or a button
+        // opened it. ImGui focuses a new popup at once; that Enter must not also answer the dialog.
+        g_ui.viewsPendingDeleteActive = false;
+        g_ui.viewsPendingDeleteId = "smatchet_test_dialog_contract_view";
+        g_ui.viewsShowDeleteConfirm = true;
+        ctx->KeyPress(ImGuiKey_Enter);
+        for (int i = 0; i < 4; ++i) {
+            ctx->Yield();
+        }
+        IM_CHECK_NO_RET(WindowIsLive("Delete view?"));
+        IM_CHECK_NO_RET(!g_ui.viewsPendingDeleteActive);
+        ctx->KeyPress(ImGuiKey_Escape);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Delete view?"); }, 30));
+
+        // Same for a confirm whose default is the action: the opening Enter must not save and switch.
+        g_ui.viewsDirty = true;
+        g_ui.viewsPendingActivateId = "smatchet_test_dialog_contract_other";
+        g_ui.viewsShowDiscardConfirm = true;
+        ctx->KeyPress(ImGuiKey_Enter);
+        for (int i = 0; i < 4; ++i) {
+            ctx->Yield();
+        }
+        IM_CHECK_NO_RET(WindowIsLive("Discard changes?"));
+        IM_CHECK_NO_RET(!g_ui.viewsPendingActivateId.empty());
+        IM_CHECK_NO_RET(g_ui.viewsDirty);
+        ctx->KeyPress(ImGuiKey_Escape);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Discard changes?"); }, 30));
+        ctx->Yield();
+    };
+}
+
+void RegisterMouseOnNonDefaultButton(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DialogContract", "DiscardChangesConfirm_MouseClickOnCancelWorks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr - app not booted");
+            return;
+        }
+        MobileViewsModalSeam seam;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("##MobileShell"); }));
+        g_ui.viewsDirty = true;
+        g_ui.viewsPendingActivateId = "smatchet_test_dialog_contract_other";
+        g_ui.viewsShowDiscardConfirm = true;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("Discard changes?"); }));
+        for (int i = 0; i < 4; ++i) {
+            ctx->Yield();
+        }
+        // A click on a button that does not hold the keyboard registers: the opening focus is placed once,
+        // not again on every frame, so it does not take the press away from the clicked button.
+        ctx->SetRef("Discard changes?");
+        ctx->ItemClick("Cancel");
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Discard changes?"); }, 30));
+        IM_CHECK_NO_RET(g_ui.viewsPendingActivateId.empty());
+        IM_CHECK_NO_RET(g_ui.viewsDirty);
+        ctx->Yield();
+    };
+}
+
+void RegisterShortcutsMutedUnderModal(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DialogContract", "AppShortcutsMutedWhileConfirmOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr - app not booted");
+            return;
+        }
+        MobileViewsModalSeam seam;
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return WindowIsLive("##MobileShell"); }));
+        const char* kPalette = "##cmdpalette";
+        const ImGuiKeyChord kPaletteChord = ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P;
+
+        // Control: with no dialog up, the palette chord opens the palette, so the key does reach the dispatch.
+        ctx->KeyPress(kPaletteChord);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return WindowIsLive(kPalette); }, 30));
+        ctx->KeyPress(kPaletteChord); // toggles it closed again
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !WindowIsLive(kPalette); }, 30));
+
+        // With "Delete view?" up, the same chord does nothing (#88).
+        IM_CHECK_NO_RET(OpenDeleteConfirm(ctx));
+        ctx->KeyPress(kPaletteChord);
+        for (int i = 0; i < 6; ++i) {
+            ctx->Yield();
+        }
+        IM_CHECK_NO_RET(!WindowIsLive(kPalette));
+        IM_CHECK_NO_RET(WindowIsLive("Delete view?"));
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive("Delete view?"); }, 30));
+        IM_CHECK_NO_RET(!g_ui.viewsPendingDeleteActive);
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine) {
     RegisterMobileViewsConfirmModalRendersAtShellLevel(engine);
+    RegisterDeleteConfirmKeys(engine);
+    RegisterDiscardConfirmEsc(engine);
+    RegisterShortcutsMutedUnderModal(engine);
+    RegisterOpeningEnterDoesNotAnswer(engine);
+    RegisterMouseOnNonDefaultButton(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

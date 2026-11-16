@@ -50,6 +50,7 @@
 // overwrites the splice with the stale internal `state->TextA`. See
 // imgui_widgets.cpp:4821 (init_reload_from_user_buf) for the upstream branch.
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -1115,8 +1116,11 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
 // attempt) with the typed text intact.
 void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               AiAssistantController* ctrl) {
-    if (!ImGui::BeginPopupModal(kOutboundConsentPopupId, nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    // Keys: smatchet::ui::ConfirmFooter. A consent prompt, so Cancel takes the keyboard on open and Enter
+    // cancels (the typed message stays); sending needs a deliberate click or Tab to the button.
+    static smatchet::ui::DialogScopeState s_consentDialog;
+    if (!smatchet::ui::BeginDialog(s_consentDialog, kOutboundConsentPopupId, nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
     ImGui::TextUnformatted("Smatchet is about to send context from your workspace to the configured AI provider.");
@@ -1147,17 +1151,15 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
         ImGui::TreePop();
     }
     ImGui::Spacing();
-    if (ImGui::Button("Send and don't ask again", ImVec2(220, 0))) {
+    smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::ConsentFooter("Send and don't ask again");
+    spec.ButtonSize = ImVec2(220, 0);
+    if (smatchet::ui::ConfirmFooter(s_consentDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
         d.cfg.AssistantOutboundConsentShown = true;
         ScheduleConfigSaveDetached(d.cfg);
         ImGui::CloseCurrentPopup();
         DispatchAiSend(app, d, activeView, ctrl);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_consentDialog);
 }
 
 // Notes which window to hand the keyboard back to. Call when the user asks for the panel.
@@ -1449,12 +1451,16 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
             ImGui::OpenPopup("##ConfirmClearChat");
         }
         ImGui::SetItemTooltip("Clear conversation history (asks for confirmation).");
-        if (ImGui::BeginPopupModal("##ConfirmClearChat", nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        // Keys: smatchet::ui::ConfirmFooter. Destructive, so Cancel takes the keyboard on open and Enter cancels.
+        static smatchet::ui::DialogScopeState s_clearChatDialog;
+        if (smatchet::ui::BeginDialog(s_clearChatDialog, "##ConfirmClearChat", nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::TextUnformatted("Clear the entire conversation?");
             ImGui::TextDisabled("In-memory history + persisted SQLite rows are deleted. This cannot be undone.");
             ImGui::Spacing();
-            if (ImGui::Button("Clear", ImVec2(120, 0))) {
+            smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::DestructiveFooter("Clear");
+            spec.ButtonSize = ImVec2(120, 0);
+            if (smatchet::ui::ConfirmFooter(s_clearChatDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
                 d.assistantHistory.clear();
                 d.assistantHistoryRowIds.clear();
                 d.assistantScrollToMessageIndex = -1;
@@ -1469,11 +1475,7 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
                 smatchet::ai::chat_persist::Enqueue(std::move(clearOp));
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+            smatchet::ui::EndDialog(s_clearChatDialog);
         }
     }
 }
