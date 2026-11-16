@@ -25,6 +25,7 @@
 #include "SmatchetUiSession.h"
 #include "Ui/PreferencesFilter.h"
 #include "Ui/SmatchetHotkeyCapture.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetTheme.h"
 
 #include "imgui.h"
@@ -173,25 +174,27 @@ bool DrawResetDefaultsConfirm(UiDrawSession& d, std::string& capturingKey) {
     if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetDefaults", "Reset all to defaults"))) {
         ImGui::OpenPopup("Reset keyboard shortcuts?###KbResetConfirm");
     }
-    if (ImGui::BeginPopupModal("Reset keyboard shortcuts?###KbResetConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive (custom bindings are lost at once), so "Keep my
+    // shortcuts" takes the keyboard on open and Enter keeps them.
+    static smatchet::ui::DialogScopeState s_resetDialog;
+    if (smatchet::ui::BeginDialog(s_resetDialog, "Reset keyboard shortcuts?###KbResetConfirm", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped(
             "%s", SmatchetLocalization::Format("keybindings.editor.resetConfirm",
                                                "Replace all %d shortcuts with the defaults? Custom bindings are "
                                                "lost immediately (this tab saves automatically).",
                                                static_cast<int>(d.cfg.Keybindings.Bindings.size())));
         ImGui::Spacing();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"))) {
+        const smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::DestructiveFooter(
+            SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"),
+            SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"));
+        if (smatchet::ui::ConfirmFooter(s_resetDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
             d.cfg.Keybindings = KeybindingsConfig::Defaults();
             capturingKey.clear();
             reset = true;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_resetDialog);
     }
     return reset;
 }

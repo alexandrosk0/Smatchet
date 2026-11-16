@@ -48,6 +48,7 @@
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "imgui_internal.h" // ClearActiveID
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -1692,8 +1693,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         ImGui::OpenPopup("Unsaved changes###PrefsTrackerCloseGuard");
         d.prefsTrackerCloseGuardOpen = false;
     }
-    if (ImGui::BeginPopupModal("Unsaved changes###PrefsTrackerCloseGuard", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Saving is not destructive, so Enter saves; Esc keeps editing.
+    static smatchet::ui::DialogScopeState s_closeGuardDialog;
+    if (smatchet::ui::BeginDialog(s_closeGuardDialog, "Unsaved changes###PrefsTrackerCloseGuard", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         // Name the domain that is actually dirty: the Tracker wording is kept verbatim for the
         // Tracker-only case; an uncommitted MCP field (#2133) and the Assistant's staged edits
         // get their own sentences. `trackerDirty` and `assistantDirty` are the nav-marker values
@@ -1702,23 +1705,18 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         ImGui::TextWrapped("%s", PrefsCloseGuardBodyText(SmatchetPreferencesUiDetail::PickPrefsCloseGuardKind(
                                      trackerDirty, mcpDirty, assistantDirty)));
         ImGui::Spacing();
-        if (ImGui::Button("Save & Sync")) {
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+            s_closeGuardDialog, smatchet::ui::UnsavedChangesFooter("Save & Sync", "Discard", "Keep editing"));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             SavePrefsStagedEdits(*this, app, d);
+        }
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary ||
+            pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             resetPreferencesWindowState(d);
             d.showPreferences = false;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Discard")) {
-            resetPreferencesWindowState(d);
-            d.showPreferences = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Keep editing")) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_closeGuardDialog);
     }
 
     if (!embedded) {
