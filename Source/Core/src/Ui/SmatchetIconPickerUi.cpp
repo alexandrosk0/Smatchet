@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "SmatchetImGuiFonts.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetInput.h"
 #include "imgui.h"
 
@@ -18,6 +19,12 @@
 // The alias routes the modal title, search hint, and Cancel button through the localization
 // wrapper. Glyph buttons and icon-name tooltips are data and pass through untranslated.
 #define ImGui SmatchetLocalizedImGui
+
+namespace {
+// Keys (smatchet::ui dialog contract): the search box takes the caret on open, Enter picks the icon when
+// exactly one matches, Esc cancels. The search text is a filter, not work, so Esc closes in one press.
+smatchet::ui::DialogScopeState s_iconPickerDialog;
+} // namespace
 
 void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
 
@@ -32,16 +39,17 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
 
     bool picked = false;
     ImGui::SetNextWindowSize(ImVec2(360.0f, 320.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("Pick Icon###SmatchetIconPicker", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
-        // The caret starts in the search box (the modal takes the keyboard as it opens), so typing
-        // filters at once; a click into the box selects the query so a new one replaces it.
+    if (smatchet::ui::BeginDialog(s_iconPickerDialog, "Pick Icon###SmatchetIconPicker", nullptr,
+                                  ImGuiWindowFlags_NoSavedSettings)) {
+        const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(s_iconPickerDialog, true);
+        ImGui::SetNextItemWidth(-1.0f);
+        smatchet::ui::DialogFocusHere(s_iconPickerDialog);
+        // The query is a std::string (a long paste is kept whole) and a click selects it so a new one
+        // replaces it. The dialog scope above owns the opening caret and Esc; this field only reports Enter.
         SmatchetInput::TextOptions searchOpts;
         searchOpts.hint = "Search icons...";
-        searchOpts.focusOnAppear = true;
         searchOpts.selectAllOnFocus = true;
-        searchOpts.refocusAfterEnter = true; // an Enter that picks nothing keeps the caret in the box
-        ImGui::SetNextItemWidth(-1.0f);
-        const SmatchetInput::TextResult search = SmatchetInput::Text("##iconsearch", search_, searchOpts);
+        const bool searchEnter = SmatchetInput::Text("##iconsearch", search_, searchOpts).enterCommitted;
 
         std::string q(search_);
         std::transform(q.begin(), q.end(), q.begin(),
@@ -60,18 +68,6 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
             if (q.empty() || std::strstr(catalog[i].Name, q.c_str()) != nullptr) {
                 matches.push_back(i);
             }
-        }
-
-        // Keys in the search box: Enter picks the first match, the top-left cell (nothing when no icon
-        // matches); Esc closes without picking. A modal-wide Esc belongs to the dialog scope.
-        if (search.enterCommitted && !matches.empty()) {
-            const SmatchetToolbarIconEntry& first = catalog[static_cast<std::size_t>(matches.front())];
-            outName = first.Name;
-            outGlyph = first.Glyph;
-            picked = true;
-            ImGui::CloseCurrentPopup();
-        } else if (search.reverted) {
-            ImGui::CloseCurrentPopup();
         }
 
         const ImGuiStyle& style = ImGui::GetStyle();
@@ -114,10 +110,18 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         clipper.End();
         ImGui::EndChild();
 
-        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+        if (!picked && searchEnter && matches.size() == 1) {
+            const SmatchetToolbarIconEntry& e = catalog[matches[0]];
+            outName = e.Name;
+            outGlyph = e.Glyph;
+            picked = true;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)) ||
+            (!picked && keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel)) {
+            ImGui::CloseCurrentPopup();
+        }
+        smatchet::ui::EndDialog(s_iconPickerDialog);
     }
     return picked;
 }

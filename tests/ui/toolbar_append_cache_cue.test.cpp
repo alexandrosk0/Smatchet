@@ -28,9 +28,10 @@
 //
 // Also here (group "IconPicker"): the REAL SmatchetIconPickerUi, the toolbar editor's icon picker,
 // driven through the shared text field (Ui/SmatchetInput.h, docs/audits/INPUT_UX_AUDIT.md § 3 picker
-// row and § 4.2): the caret is in the filter when the picker opens, typing filters, Enter picks the
-// first match and picks nothing on an empty list, and Esc closes without a pick. Not a replica: the
-// picker is a public class that needs no AppController.
+// row and § 4.2) under the dialog contract (Ui/SmatchetDialogScope.h): the caret is in the filter when
+// the picker opens, typing filters, Enter picks the icon only when exactly one matches, and Esc closes
+// without a pick; a long pasted query is kept whole. Not a replica: the picker is a public class that
+// needs no AppController.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -166,10 +167,19 @@ bool OpenIconPicker(ImGuiTestContext* ctx) {
     return IconPickerIsOpen();
 }
 
-// The first catalog entry whose slug contains `query`: the icon the picker must pick on Enter.
-const SmatchetToolbarIconEntry* FirstCatalogMatch(const char* query) {
+// How many catalog entries match `query` the way the picker matches (a slug substring).
+int CountCatalogMatches(const char* query) {
+    int n = 0;
     for (const SmatchetToolbarIconEntry& e : SmatchetToolbarIconCatalog()) {
-        if (std::strstr(e.Name, query) != nullptr) {
+        n += std::strstr(e.Name, query) != nullptr ? 1 : 0;
+    }
+    return n;
+}
+
+// An entry whose full slug matches no other entry, so typing it leaves exactly one icon.
+const SmatchetToolbarIconEntry* FindUniquelyMatchedEntry() {
+    for (const SmatchetToolbarIconEntry& e : SmatchetToolbarIconCatalog()) {
+        if (CountCatalogMatches(e.Name) == 1) {
             return &e;
         }
     }
@@ -177,26 +187,46 @@ const SmatchetToolbarIconEntry* FirstCatalogMatch(const char* query) {
 }
 
 void RegisterIconPickerOpensWithCaret(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "OpensWithCaretInFilterAndTypingFilters");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "OpensWithCaretInFilterAndEnterPicksTheOnlyMatch");
     t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
     t->TestFunc = [](ImGuiTestContext* ctx) {
         IM_CHECK(OpenIconPicker(ctx));
         // No click: the picker put the caret in its filter, so the first keys already filter.
         IM_CHECK(KeyboardIsInPickerFilter());
 
-        // "arrow-up" matches several icons; Enter takes the FIRST, in catalog order.
-        const SmatchetToolbarIconEntry* expected = FirstCatalogMatch("arrow-up");
-        IM_CHECK(expected != nullptr);
-        ctx->KeyChars("arrow-up");
+        const SmatchetToolbarIconEntry* only = FindUniquelyMatchedEntry();
+        IM_CHECK(only != nullptr);
+        if (only == nullptr) {
+            return;
+        }
+        ctx->KeyChars(only->Name);
         ctx->Yield();
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(2);
         IM_CHECK_EQ(g_iconPicker.picks, 1);
-        if (expected != nullptr) {
-            IM_CHECK_STR_EQ(g_iconPicker.pickedName.c_str(), expected->Name);
-            IM_CHECK_STR_EQ(g_iconPicker.pickedGlyph.c_str(), expected->Glyph);
-        }
+        IM_CHECK_STR_EQ(g_iconPicker.pickedName.c_str(), only->Name);
+        IM_CHECK_STR_EQ(g_iconPicker.pickedGlyph.c_str(), only->Glyph);
         IM_CHECK(!IconPickerIsOpen()); // a pick closes the picker
+    };
+}
+
+// Several matches: Enter does not guess which icon was meant.
+void RegisterIconPickerEnterOnSeveralMatches(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "EnterOnSeveralMatchesPicksNothing");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        IM_CHECK(OpenIconPicker(ctx));
+        IM_CHECK(KeyboardIsInPickerFilter());
+        IM_CHECK(CountCatalogMatches("arrow-up") > 1);
+        ctx->KeyChars("arrow-up");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_iconPicker.picks, 0);
+        IM_CHECK(IconPickerIsOpen());
+
+        ctx->KeyPress(ImGuiKey_Escape); // close it so the next test starts from no popup
+        ctx->Yield(2);
     };
 }
 
@@ -206,14 +236,13 @@ void RegisterIconPickerEnterOnEmptyList(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
         IM_CHECK(OpenIconPicker(ctx));
         IM_CHECK(KeyboardIsInPickerFilter());
-        IM_CHECK(FirstCatalogMatch("zzzqqq-no-such-icon") == nullptr);
+        IM_CHECK_EQ(CountCatalogMatches("zzzqqq-no-such-icon"), 0);
         ctx->KeyChars("zzzqqq-no-such-icon");
         ctx->Yield();
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(2);
         IM_CHECK_EQ(g_iconPicker.picks, 0);
-        IM_CHECK(IconPickerIsOpen());         // still open: nothing was picked
-        IM_CHECK(KeyboardIsInPickerFilter()); // and the caret is still in the filter to fix the query
+        IM_CHECK(IconPickerIsOpen()); // still open: nothing was picked
 
         // Clean up: Esc closes it so the next test starts from no popup.
         ctx->KeyPress(ImGuiKey_Escape);
@@ -265,6 +294,7 @@ void RegisterIconPickerLongQueryIsKeptWhole(ImGuiTestEngine* engine) {
 extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine) {
     RegisterVisibleWhileLoading(engine);
     RegisterIconPickerOpensWithCaret(engine);
+    RegisterIconPickerEnterOnSeveralMatches(engine);
     RegisterIconPickerEnterOnEmptyList(engine);
     RegisterIconPickerEscClosesWithoutPick(engine);
     RegisterIconPickerLongQueryIsKeptWhole(engine);

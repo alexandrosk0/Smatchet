@@ -20,9 +20,9 @@ const std::vector<SmatchetToolbarIconEntry>& SmatchetToolbarIconCatalog();
 /** Resolve a catalog name to its glyph; returns "" when unknown. */
 std::string SmatchetToolbarIconGlyph(const std::string& name);
 
-/** Modal Font-Awesome icon picker. UI-thread only. The search box has the caret when the picker opens;
- *  Enter picks the first match (nothing on an empty list) and Esc in the box closes the picker without
- *  picking (docs/audits/INPUT_UX_AUDIT.md § 3, picker row). */
+/** Modal Font-Awesome icon picker. UI-thread only. Its keys come from the dialog contract
+ *  (Ui/SmatchetDialogScope.h): the search box has the caret on open, Enter picks the icon when exactly
+ *  one matches, Esc closes without picking. The query is a std::string field (Ui/SmatchetInput.h). */
 class SmatchetIconPickerUi {
   public:
     /** Request the picker to open on the next Draw(). */

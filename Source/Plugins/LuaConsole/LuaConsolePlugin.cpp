@@ -10,6 +10,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "imgui.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -844,9 +845,15 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
     if (openUnsavedSwitchAfterCombo) {
         ImGui::OpenPopup("##lua_unsaved_switch");
     }
-    if (ImGui::BeginPopupModal("##lua_unsaved_switch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Saving is not destructive, so Enter saves and switches; Esc cancels.
+    static smatchet::ui::DialogScopeState s_unsavedSwitchDialog;
+    if (smatchet::ui::BeginDialog(s_unsavedSwitchDialog, "##lua_unsaved_switch", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Save changes to the current script before switching?");
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
+        smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::UnsavedChangesFooter("Save", "Discard");
+        spec.ButtonSize = ImVec2(120, 0);
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(s_unsavedSwitchDialog, spec);
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 const std::string prev = selectedScriptName_;
@@ -859,9 +866,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
                 g_ui.gridEditError = e;
             }
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Discard", ImVec2(120, 0))) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             const std::string prev = selectedScriptName_;
             selectedScriptName_ = pendingScriptName_;
             std::string e;
@@ -871,11 +876,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
             }
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_unsavedSwitchDialog);
     }
 
     ImGui::SameLine();
