@@ -27,6 +27,7 @@
 #include "GitHubClientHelpers.h"
 #include "ProjectResolver.h"
 #include "StringUtil.h"
+#include "TrackerFieldValueParseExplain.h"
 
 #include <cctype>
 #include <string>
@@ -101,11 +102,14 @@ inline bool ContainsKeywordSpan(const std::string& haystack, const std::string& 
 
 /// True when `input` looks like a structured filter query rather than a plain
 /// title phrase. Conservative heuristic (favours TitleSearch on ambiguity):
-///   1. any comparison / grouping char — `= ~ < > ! ( )` — unambiguously marks a
-///      filter clause (every JQL / Plane comparison carries one);
+///   1. a comparison — `= ~ < >`, or `!` only as `!=` / `!~` — unambiguously marks a
+///      filter clause (every JQL / Plane comparison carries one). A parenthesis or a
+///      lone `!` is NOT enough: "fix login (again)" and "C++ !" are titles (#66). A
+///      grouped query still carries a comparison, an `IN (` list or a `field:value`;
 ///   2. a `field:value` colon token (GitHub `is:open`, Plane `state:done`):
 ///      a colon with an alnum immediately before and a non-space immediately
-///      after — excludes free-text colons like "fix: crash on startup";
+///      after — excludes free-text colons like "fix: crash on startup", a URL scheme
+///      ("https://") and a clock time ("10:30");
 ///   3. a case-insensitive "order by" ordering clause (no operator char of its
 ///      own, but never appears in a real ticket title);
 ///   4. JQL's empty/null predicates — `IS EMPTY` / `IS NOT EMPTY` / `IS NULL` /
@@ -118,14 +122,27 @@ inline bool ContainsKeywordSpan(const std::string& haystack, const std::string& 
 /// every Jira example — so the uppercase form is caught and the lowercase form
 /// keeps this classifier's documented TitleSearch bias. Pure.
 inline bool LooksLikeStructuredQuery(const std::string& input) {
-    for (char ch : input) {
-        if (ch == '=' || ch == '~' || ch == '<' || ch == '>' || ch == '!' || ch == '(' || ch == ')') {
+    // Rule 1: a comparison. `!` counts only as `!=` / `!~`, and a parenthesis alone is no longer enough: a
+    // title such as "fix login (again)" or "C++ !" is plain words, not a query (#66). A grouped query always
+    // carries a comparison, `IN (`, or a `field:value` too.
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        const char ch = input[i];
+        if (ch == '=' || ch == '~' || ch == '<' || ch == '>') {
+            return true;
+        }
+        if (ch == '!' && i + 1 < input.size() && (input[i + 1] == '=' || input[i + 1] == '~')) {
             return true;
         }
     }
+    // Rule 2: `field:value`. Not a URL scheme ("https://…") and not a clock time ("10:30").
     for (std::size_t i = 1; i + 1 < input.size(); ++i) {
-        if (input[i] == ':' && std::isalnum(static_cast<unsigned char>(input[i - 1])) != 0 &&
-            std::isspace(static_cast<unsigned char>(input[i + 1])) == 0) {
+        if (input[i] != ':' || std::isalnum(static_cast<unsigned char>(input[i - 1])) == 0 ||
+            std::isspace(static_cast<unsigned char>(input[i + 1])) != 0 || input[i + 1] == '/') {
+            continue;
+        }
+        const bool clockTime = std::isdigit(static_cast<unsigned char>(input[i - 1])) != 0 &&
+                               std::isdigit(static_cast<unsigned char>(input[i + 1])) != 0;
+        if (!clockTime) {
             return true;
         }
     }
@@ -133,7 +150,29 @@ inline bool LooksLikeStructuredQuery(const std::string& input) {
         ContainsKeywordSpan(input, "IS NULL") || ContainsKeywordSpan(input, "IS NOT NULL")) {
         return true;
     }
-    return ToLowerAsciiCopy(input).find("order by") != std::string::npos;
+    const std::string lower = ToLowerAsciiCopy(input);
+    // `status in (Open, Done)`: the space before "in" keeps "login (again)" a title.
+    if (lower.find(" in (") != std::string::npos || lower.find(" in(") != std::string::npos) {
+        return true;
+    }
+    return lower.find("order by") != std::string::npos;
+}
+
+/// True when `input` is a pasted link to one issue the backend can open ("https://acme.atlassian.net/browse/
+/// PROJ-12", "https://github.com/owner/repo/issues/12"). Plane has no typeable key, so it never matches. Pure.
+inline bool LooksLikePastedIssueUrl(const std::string& input, GridSearchBackend backend) {
+    if (backend == GridSearchBackend::Plane || !TrackerParseExplain::LooksLikeUrl(input)) {
+        return false;
+    }
+    const TrackerParseExplain::IssueReferenceParse ref = TrackerParseExplain::ParseIssueReference(input);
+    return ref.Ok && ref.FromUrl && LooksLikeTicketKey(ref.Key, backend);
+}
+
+/// The key Enter should jump to for text classified as TicketKey: the key inside a pasted link, else the
+/// trimmed text as typed. Pure.
+inline std::string TicketKeyFromSearchInput(const std::string& raw, GridSearchBackend backend) {
+    const std::string input = TrimCopyAsciiWhitespace(raw);
+    return LooksLikePastedIssueUrl(input, backend) ? TrackerParseExplain::ParseIssueReference(input).Key : input;
 }
 
 /// Classify trimmed `raw` for `backend`. Precedence: bare ticket key → structured
@@ -146,7 +185,7 @@ inline GridSearchInputKind ClassifyGridSearchInput(const std::string& raw, GridS
     if (input.empty()) {
         return GridSearchInputKind::TitleSearch;
     }
-    if (LooksLikeTicketKey(input, backend)) {
+    if (LooksLikeTicketKey(input, backend) || LooksLikePastedIssueUrl(input, backend)) {
         return GridSearchInputKind::TicketKey;
     }
     if (LooksLikeStructuredQuery(input)) {

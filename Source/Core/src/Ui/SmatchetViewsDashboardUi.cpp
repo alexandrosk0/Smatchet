@@ -14,6 +14,8 @@
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 #include "SmatchetLocalization.h"
+#include "Tracker/JqlQueryValidatePure.h"
+#include "Ui/SmatchetInlineError.h"
 #include "SmatchetTheme.h"
 #include "Ui/SmatchetDestructiveButton.h"
 #include "SmatchetDragCheckbox.h"
@@ -38,6 +40,7 @@
 #include <functional>
 #include <string>
 #include <unordered_set>
+#include <memory>
 #include <vector>
 
 using SmatchetViewsDashboardUiDetail::CategorizeAvailableFields;
@@ -470,13 +473,44 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
                                                                      app.GetAvailableUsers(), d.viewJqlEditor,
                                                                      std::string(d.viewJqlEditor.buf));
         }
+        // What is wrong with the query, under the editor while the user types (#63). Checked again only when
+        // the text changes: the scan is cheap but there is no reason to allocate for it every frame.
+        static std::string s_checkedText;
+        static bool s_checkedJql = false;
+        static const void* s_checkedCatalog = nullptr;
+        static std::size_t s_checkedCatalogSize = 0;
+        static TrackerParseExplain::ParseMessage s_checkedProblem;
+        // Only Jira queries are JQL: the other backends take field:value filters, where an apostrophe and a word
+        // such as "in" are plain text.
+        const bool isJql =
+            smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType) == smatchet::tracker::kBackendJira;
+        const std::shared_ptr<const std::vector<TrackerField>> catalog = isJql ? app.GetAvailableFields() : nullptr;
+        const std::size_t catalogSize = catalog ? catalog->size() : 0;
+        if (s_checkedJql != isJql || s_checkedCatalog != catalog.get() || s_checkedCatalogSize != catalogSize ||
+            s_checkedText != d.viewJqlEditor.buf) {
+            s_checkedJql = isJql;
+            s_checkedCatalog = catalog.get();
+            s_checkedCatalogSize = catalogSize;
+            s_checkedText = d.viewJqlEditor.buf;
+            s_checkedProblem = JqlQueryValidate::ValidateQuery(
+                s_checkedText, isJql ? JqlQueryValidate::QueryDialect::Jql : JqlQueryValidate::QueryDialect::FieldValue,
+                catalog.get());
+        }
+        smatchet::ui::DrawInlineParseError(s_checkedProblem);
         ImGui::TextDisabled(isPlane
                                 ? "field:value AND field:value  ·  Up/Down list  ·  Enter/Tab pick  ·  Esc close list"
                                 : "JQL tokens + catalog  ·  Up/Down list  ·  Enter/Tab pick  ·  Esc close list");
 
         if (d.viewJqlEditor.jqlWantsApplyFromEnter) {
             d.viewJqlEditor.jqlWantsApplyFromEnter = false;
-            ctx.applyAndSync();
+            if (JqlQueryValidate::IsBlockingQueryError(s_checkedProblem)) {
+                // Enter on a query that cannot be sent: the error under the editor stays, nothing is applied.
+                SmatchetToastManager::Instance().Push(
+                    SmatchetLocalization::T("gridsearch.query_refused", "Query not applied"),
+                    TrackerParseExplain::DescribeParseMessage(s_checkedProblem), ToastType::Warning);
+            } else {
+                ctx.applyAndSync();
+            }
         }
 
         ImGui::EndTabItem();

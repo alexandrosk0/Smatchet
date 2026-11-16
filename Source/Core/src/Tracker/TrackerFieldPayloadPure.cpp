@@ -6,6 +6,7 @@
 #include "StringUtil.h"
 #include "Tracker/ParentHierarchyPure.h"
 #include "Tracker/TrackerFieldOptionLookup.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
 
 #include <algorithm>
 #include <cctype>
@@ -350,6 +351,11 @@ std::string ExtractIssueKey(const std::string& value) {
     const std::string trimmed = TrimCopy(value);
     if (LooksLikeIssueKey(trimmed)) {
         return trimmed;
+    }
+    // A pasted link to the issue ("https://acme.atlassian.net/browse/PROJ-12") names its key.
+    if (TrackerParseExplain::LooksLikeUrl(trimmed)) {
+        const TrackerParseExplain::IssueReferenceParse ref = TrackerParseExplain::ParseIssueReference(trimmed);
+        return ref.Ok && LooksLikeIssueKey(ref.Key) ? ref.Key : std::string();
     }
     const std::string key = ParentHierarchyPure::ParentKeyFromFieldValue(trimmed);
     if (key == trimmed) {

@@ -9,8 +9,10 @@ using smatchet::gridsearch::ClassifyGridSearchInput;
 using smatchet::gridsearch::GridSearchBackend;
 using smatchet::gridsearch::GridSearchBackendFromKey;
 using smatchet::gridsearch::GridSearchInputKind;
+using smatchet::gridsearch::LooksLikePastedIssueUrl;
 using smatchet::gridsearch::LooksLikeStructuredQuery;
 using smatchet::gridsearch::LooksLikeTicketKey;
+using smatchet::gridsearch::TicketKeyFromSearchInput;
 
 TEST_CASE("GridSearchBackendFromKey: case-insensitive map, unknown defaults to Jira") {
     CHECK(GridSearchBackendFromKey("Jira") == GridSearchBackend::Jira);
@@ -149,4 +151,64 @@ TEST_CASE("AppliesAsRowFilter: everything but a structured query filters the loa
     CHECK(AppliesAsRowFilter(ClassifyGridSearchInput("PROJ-123", GridSearchBackend::Jira)));
     // An empty box classifies as TitleSearch, and an empty filter matches every row.
     CHECK(AppliesAsRowFilter(ClassifyGridSearchInput("", GridSearchBackend::Jira)));
+}
+
+TEST_CASE("LooksLikeStructuredQuery: a title with punctuation is plain words (#66)") {
+    // Each of these used to flip the glyph to the funnel and stop the live filter.
+    CHECK_FALSE(LooksLikeStructuredQuery("fix login (again)"));
+    CHECK_FALSE(LooksLikeStructuredQuery("C++ !"));
+    CHECK_FALSE(LooksLikeStructuredQuery("(wip) refactor"));
+    CHECK_FALSE(LooksLikeStructuredQuery("why!"));
+    CHECK_FALSE(LooksLikeStructuredQuery("Q3: roadmap"));
+    CHECK_FALSE(LooksLikeStructuredQuery("standup at 10:30 daily"));
+    CHECK_FALSE(LooksLikeStructuredQuery("see https://example.com/page"));
+    CHECK_FALSE(LooksLikeStructuredQuery("login (again)"));
+    CHECK(ClassifyGridSearchInput("fix login (again)", GridSearchBackend::Jira) == GridSearchInputKind::TitleSearch);
+    CHECK(AppliesAsRowFilter(ClassifyGridSearchInput("C++ !", GridSearchBackend::Jira)));
+}
+
+TEST_CASE("LooksLikeStructuredQuery: real queries still read as queries") {
+    CHECK(LooksLikeStructuredQuery("(status = Open OR status = Reopened)"));
+    CHECK(LooksLikeStructuredQuery("status != Done"));
+    CHECK(LooksLikeStructuredQuery("summary !~ crash"));
+    CHECK(LooksLikeStructuredQuery("labels in (a, b)"));
+    CHECK(LooksLikeStructuredQuery("labels IN (a,b)"));
+    CHECK(LooksLikeStructuredQuery("labels not in (a)"));
+    CHECK(LooksLikeStructuredQuery("status in(Open)"));
+    CHECK(LooksLikeStructuredQuery("is:open (label:bug)"));
+}
+
+TEST_CASE("A pasted issue link is a ticket key, and Enter jumps to the key inside it") {
+    const char* jiraUrl = "https://acme.atlassian.net/browse/PROJ-12";
+    CHECK(LooksLikePastedIssueUrl(jiraUrl, GridSearchBackend::Jira));
+    CHECK(ClassifyGridSearchInput(jiraUrl, GridSearchBackend::Jira) == GridSearchInputKind::TicketKey);
+    CHECK(AppliesAsRowFilter(ClassifyGridSearchInput(jiraUrl, GridSearchBackend::Jira)));
+    CHECK(TicketKeyFromSearchInput(jiraUrl, GridSearchBackend::Jira) == "PROJ-12");
+    CHECK(TicketKeyFromSearchInput("  acme.atlassian.net/browse/proj-12  ", GridSearchBackend::Jira) == "PROJ-12");
+    CHECK(
+        TicketKeyFromSearchInput("https://acme.atlassian.net/jira/software/projects/PROJ/boards/1?selectedIssue=PROJ-7",
+                                 GridSearchBackend::Jira) == "PROJ-7");
+
+    const char* ghUrl = "https://github.com/octo/repo/issues/42";
+    CHECK(LooksLikePastedIssueUrl(ghUrl, GridSearchBackend::GitHub));
+    CHECK(ClassifyGridSearchInput(ghUrl, GridSearchBackend::GitHub) == GridSearchInputKind::TicketKey);
+    CHECK(TicketKeyFromSearchInput(ghUrl, GridSearchBackend::GitHub) == "octo/repo#42");
+
+    // A bare key and plain words come back as typed (trimmed).
+    CHECK(TicketKeyFromSearchInput("  PROJ-12 ", GridSearchBackend::Jira) == "PROJ-12");
+    CHECK(TicketKeyFromSearchInput("login button", GridSearchBackend::Jira) == "login button");
+}
+
+TEST_CASE("A pasted link the backend cannot open is not a ticket key") {
+    // A GitHub link in a Jira pane has no Jira key; a Jira link in a GitHub pane has no owner/repo#N.
+    CHECK_FALSE(LooksLikePastedIssueUrl("https://github.com/octo/repo/issues/42", GridSearchBackend::Jira));
+    CHECK_FALSE(LooksLikePastedIssueUrl("https://acme.atlassian.net/browse/PROJ-12", GridSearchBackend::GitHub));
+    // Plane has no typeable key.
+    CHECK_FALSE(LooksLikePastedIssueUrl("https://acme.atlassian.net/browse/PROJ-12", GridSearchBackend::Plane));
+    CHECK(ClassifyGridSearchInput("https://acme.atlassian.net/browse/PROJ-12", GridSearchBackend::Plane) !=
+          GridSearchInputKind::TicketKey);
+    // A link with no key in it, and plain text that merely has a slash.
+    CHECK_FALSE(LooksLikePastedIssueUrl("https://example.com/", GridSearchBackend::Jira));
+    CHECK_FALSE(LooksLikePastedIssueUrl("PROJ-12", GridSearchBackend::Jira)); // a key, not a link
+    CHECK_FALSE(LooksLikePastedIssueUrl("fix a/b problem", GridSearchBackend::Jira));
 }

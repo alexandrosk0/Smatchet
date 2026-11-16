@@ -6,8 +6,11 @@
 #include "Ui/PreferencesFilter.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
+#include "Tracker/TrackerInputNormalisePure.h"
+#include "Ui/SmatchetInlineError.h"
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 
 namespace AnnotateInternal {
@@ -29,6 +32,27 @@ template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgF
     cfgField.assign(buf);
     PersistAnnotateCfg(reason);
     return true;
+}
+
+// A path or link field the user pastes into (#82, #128). Call right after the InputText. When the caret leaves,
+// the quotes "Copy as path" adds and stray spaces are taken off the text; text that cannot be used is explained
+// under the field and is not saved, so the config keeps the last value that worked. `normalise` reads the buffer.
+template <size_t N, typename NormaliseFn>
+void CommitCheckedField(char (&buf)[N], std::string& cfgField, const char* reason, NormaliseFn normalise) {
+    const bool leftAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+    const TrackerInputNormalise::PathParse parsed = normalise(buf);
+    if (!parsed.Ok) {
+        smatchet::ui::DrawInlineParseError(parsed.Message);
+        return;
+    }
+    if (!leftAfterEdit) {
+        return;
+    }
+    if (parsed.Rewritten && parsed.Value.size() < N) {
+        std::memcpy(buf, parsed.Value.c_str(), parsed.Value.size() + 1);
+    }
+    cfgField.assign(buf);
+    PersistAnnotateCfg(reason);
 }
 
 void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const IAppTicketMutations& ticketMutations,
@@ -113,7 +137,8 @@ void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
 
     if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
         ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
-        CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+        CommitCheckedField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
+                           [](const char* text) { return TrackerInputNormalise::ValidateHttpUrl(text); });
     }
 }
 
@@ -124,12 +149,14 @@ void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
 
     if (filter.ShowSetting("connections.perforce.p4_exe")) {
         ImGui::InputText("p4 executable", State().p4Exe, sizeof(State().p4Exe));
-        CommitTextField(State().p4Exe, cfg.P4Executable, "edit_p4exe");
+        CommitCheckedField(State().p4Exe, cfg.P4Executable, "edit_p4exe",
+                           [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
     }
 
     if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
         ImGui::InputText("p4vc executable", State().p4vcExe, sizeof(State().p4vcExe));
-        CommitTextField(State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe");
+        CommitCheckedField(State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
+                           [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
     }
 
     if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {

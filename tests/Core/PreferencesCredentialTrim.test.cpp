@@ -76,3 +76,85 @@ TEST_CASE("TrimTrackerCredentialFields — whitespace-only fields collapse to em
     CHECK(cfg.GitHubBaseUrl.empty());
     CHECK(cfg.GitHubPat.empty());
 }
+
+// Audit #80 — what the user pasted into a site field is stored in the plain form the base-URL builders expect,
+// even when the caret never left the field (Enter saves the form). The tolerant reading itself is covered by
+// TrackerInputNormalisePure.test.cpp; this pins how Save applies it.
+using SmatchetPreferencesUiDetail::NormaliseTrackerSiteFields;
+
+TEST_CASE("NormaliseTrackerSiteFields — a pasted Jira board URL is stored as the host") {
+    TrackerConfig cfg;
+    cfg.Domain = "https://acme.atlassian.net/jira/software/projects/PROJ/boards/1";
+    JiraBackendInstance extra;
+    extra.Domain = "https://other.atlassian.net/browse/X-1";
+    cfg.JiraBackends.push_back(extra);
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.Domain == "acme.atlassian.net");
+    CHECK(cfg.JiraBackends[0].Domain == "other.atlassian.net");
+}
+
+TEST_CASE("NormaliseTrackerSiteFields — a Plane app URL gives the API base and the workspace") {
+    TrackerConfig cfg;
+    cfg.PlaneUrl = "https://app.plane.so/acme/projects/1234/issues/";
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.PlaneUrl == "https://api.plane.so");
+    CHECK(cfg.PlaneWorkspaceSlug == "acme");
+}
+
+TEST_CASE("NormaliseTrackerSiteFields — a workspace the user already set is never overwritten") {
+    TrackerConfig cfg;
+    cfg.PlaneUrl = "https://app.plane.so/acme/projects";
+    cfg.PlaneWorkspaceSlug = "mine";
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.PlaneWorkspaceSlug == "mine");
+}
+
+TEST_CASE("NormaliseTrackerSiteFields — a GitHub repository URL fills the base, owner and repo") {
+    TrackerConfig cfg;
+    cfg.GitHubBaseUrl = "https://github.com/octo/repo";
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.GitHubBaseUrl == "https://api.github.com");
+    CHECK(cfg.GitHubOwner == "octo");
+    CHECK(cfg.GitHubRepo == "repo");
+
+    TrackerConfig set;
+    set.GitHubBaseUrl = "https://github.com/octo/repo";
+    set.GitHubOwner = "mine";
+    set.GitHubRepo = "keep";
+    NormaliseTrackerSiteFields(set);
+    CHECK(set.GitHubOwner == "mine");
+    CHECK(set.GitHubRepo == "keep");
+}
+
+TEST_CASE("NormaliseTrackerSiteFields — owner/repo typed into Owner splits, and unreadable text is left as typed") {
+    TrackerConfig cfg;
+    cfg.GitHubOwner = "octo/repo";
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.GitHubOwner == "octo");
+    CHECK(cfg.GitHubRepo == "repo");
+
+    TrackerConfig bad;
+    bad.Domain = "acme$atlassian.net";
+    bad.PlaneUrl = "ftp://plane.example";
+    NormaliseTrackerSiteFields(bad);
+    CHECK(bad.Domain == "acme$atlassian.net");
+    CHECK(bad.PlaneUrl == "ftp://plane.example");
+}
+
+TEST_CASE("NormaliseTrackerSiteFields — values already in plain form and empty fields are untouched") {
+    TrackerConfig cfg;
+    cfg.Domain = "company.atlassian.net";
+    cfg.PlaneUrl = "https://api.plane.so";
+    cfg.GitHubBaseUrl = "https://api.github.com";
+    NormaliseTrackerSiteFields(cfg);
+    CHECK(cfg.Domain == "company.atlassian.net");
+    CHECK(cfg.PlaneUrl == "https://api.plane.so");
+    CHECK(cfg.GitHubBaseUrl == "https://api.github.com");
+    CHECK(cfg.PlaneWorkspaceSlug.empty());
+    CHECK(cfg.GitHubOwner.empty());
+
+    TrackerConfig empty;
+    NormaliseTrackerSiteFields(empty);
+    CHECK(empty.Domain.empty());
+    CHECK(empty.GitHubBaseUrl.empty());
+}

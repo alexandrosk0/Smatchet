@@ -41,12 +41,26 @@ TEST_CASE("ValidateWorklogSubmission accepts a well-formed time-spent + date pai
     CHECK(ValidateWorklogSubmission("1w 2d 3h 4m", kGoodDate).empty());
 }
 
-TEST_CASE("ValidateWorklogSubmission rejects an empty / unparseable / zero time spent") {
-    // Empty, junk, and an explicit zero all parse to <= 0 seconds and must not dispatch a POST.
-    CHECK(ValidateWorklogSubmission("", kGoodDate) == "Invalid Time spent format. Please use e.g. 2h 30m.");
+TEST_CASE("ValidateWorklogSubmission accepts the natural spellings of a duration (#38)") {
+    // Each of these used to be refused with "Invalid Time spent format" or, worse, mean something else.
+    for (const char* typed : {"1.5h", "90 m", "90", "1h30", "1:30", "2h, 30m", "1 hour 15 mins", ".5d"}) {
+        INFO("typed: " << std::string(typed));
+        CHECK(ValidateWorklogSubmission(typed, kGoodDate).empty());
+    }
+}
+
+TEST_CASE("ValidateWorklogSubmission rejects an empty / unparseable / zero time spent, and says what to fix") {
+    // Nothing logged: ask for a time above zero.
+    const char* kAboveZero = "Enter a time above zero, like 30m or 1h 30m.";
+    CHECK(ValidateWorklogSubmission("", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("   ", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("0m", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("0", kGoodDate) == kAboveZero);
+    // Unreadable: the parser names the part that is wrong.
     CHECK(ValidateWorklogSubmission("not-a-duration", kGoodDate) ==
-          "Invalid Time spent format. Please use e.g. 2h 30m.");
-    CHECK(ValidateWorklogSubmission("0m", kGoodDate) == "Invalid Time spent format. Please use e.g. 2h 30m.");
+          "\"not-a-duration\" is not part of a duration. Use numbers with w, d, h or m, like 2d 4h.");
+    CHECK(ValidateWorklogSubmission("3x", kGoodDate) == "\"x\" is not a time unit. Use w, d, h or m, like 1h 30m.");
+    CHECK(ValidateWorklogSubmission("-1h", kGoodDate) == "A duration cannot be negative. Remove the minus sign.");
 }
 
 TEST_CASE("ValidateWorklogSubmission rejects an unparseable date started") {
@@ -57,7 +71,8 @@ TEST_CASE("ValidateWorklogSubmission rejects an unparseable date started") {
 TEST_CASE("ValidateWorklogSubmission reports the time-spent failure first") {
     // Both inputs bad: the dialog shows one message, and it is the duration one (unchanged from
     // the pre-async ordering, so the user-visible wording does not shift with this fix).
-    CHECK(ValidateWorklogSubmission("junk", "junk") == "Invalid Time spent format. Please use e.g. 2h 30m.");
+    CHECK(ValidateWorklogSubmission("junk", "junk") ==
+          "\"junk\" is not part of a duration. Use numbers with w, d, h or m, like 2d 4h.");
 }
 
 TEST_CASE("CanSubmitWorklog gates a second Save while the POST is in flight") {
@@ -210,10 +225,44 @@ TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turn
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, ""));
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "junk"));
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "0m"));
+    // A natural spelling is a good value, not a turned-down one.
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "1.5h"));
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "90 m"));
     // The save went out: the dialog is about to close, leave the caret alone.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, true, "2h"));
     // A good value turned down for another reason (the date): the error is not in this field.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "2h"));
     // Save by the button or Ctrl+Enter: the caret stays where the user had it.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(false, false, "junk"));
+}
+
+TEST_CASE("TimeRemainingProblem: blank and zero are fine, an unreadable value is not") {
+    using smatchet::worklog::TimeRemainingProblem;
+    CHECK_FALSE(TimeRemainingProblem("").IsError());
+    CHECK_FALSE(TimeRemainingProblem("   ").IsError());
+    CHECK_FALSE(TimeRemainingProblem("0m").IsError());
+    CHECK_FALSE(TimeRemainingProblem("1.5h").IsError());
+    CHECK_FALSE(TimeRemainingProblem("90").IsError());
+    CHECK(TimeRemainingProblem("soon").IsError());
+    CHECK(TimeRemainingProblem("5y").Id == TrackerParseExplain::ParseMessageId::DurationUnknownUnit);
+}
+
+TEST_CASE("CanonicalDurationText sends the canonical spelling and leaves unreadable text alone") {
+    using smatchet::worklog::CanonicalDurationText;
+    CHECK(CanonicalDurationText("1.5h") == "1h 30m");
+    CHECK(CanonicalDurationText("90 m") == "1h 30m");
+    CHECK(CanonicalDurationText("90") == "1h 30m");
+    CHECK(CanonicalDurationText("2h 30m") == "2h 30m");
+    CHECK(CanonicalDurationText("45m") == "45m");
+    CHECK(CanonicalDurationText("") == "");
+    CHECK(CanonicalDurationText("soon") == "soon");
+}
+
+TEST_CASE("TypedDurationSeconds is 0 for anything that does not read, so the progress bar stays quiet") {
+    using smatchet::worklog::TypedDurationSeconds;
+    CHECK(TypedDurationSeconds("1.5h") == 5400);
+    CHECK(TypedDurationSeconds("90") == 5400);
+    CHECK(TypedDurationSeconds("") == 0);
+    CHECK(TypedDurationSeconds("soon") == 0);
+    CHECK(TypedDurationSeconds("-1h") == 0);
 }
