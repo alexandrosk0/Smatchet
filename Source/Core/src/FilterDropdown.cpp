@@ -578,6 +578,9 @@ void UpdateHighlight(BodyState& st, int count, const Options& options, const std
     st.NeedDefaultHighlight = false;
     if (next.IsDefault) {
         st.UserMovedHighlight = false;
+        // A default means the followed row gave way (or was never moved): an earlier arrow move no
+        // longer describes the highlighted row, so Space and Enter must not treat it as one.
+        st.KeyNavigated = false;
         st.ScrollToHighlight = next.Reveal;
     }
     st.LastRowCount = rowCount;
