@@ -92,6 +92,11 @@ LongTextSeedPlan PlanSeedCopy(const std::string& seed, std::size_t bufferCapacit
 /// A no-op Save on a truncated seed must never PUT — CPP_CODE_AUDIT.md #1.
 bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& shownSeed);
 
+/// True when closing the editor without saving would lose typed text, so the close must ask first.
+/// Same baseline as the Save diff (`shownSeed`). While the seed is still being computed
+/// (`seedLoading`) the buffer holds a placeholder the post-back replaces, so there is nothing to lose.
+bool ShouldConfirmLongTextDiscard(const std::string& buffer, const std::string& shownSeed, bool seedLoading);
+
 /// Verdict on whether saving the long-text buffer may lose or best-effort the stored value,
 /// aggregated from the modal's four fidelity signals so the warn/acknowledge policy is
 /// unit-tested and identical across surfaces.

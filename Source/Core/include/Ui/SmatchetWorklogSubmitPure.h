@@ -31,6 +31,13 @@ inline std::string ValidateWorklogSubmission(const std::string& timeSpent, const
     return std::string();
 }
 
+/// After a save asked for from the keyboard (Enter in Time spent, or Ctrl+Enter anywhere): true when
+/// Time spent was turned down (nothing went out and it does not parse), so the caret goes into that
+/// field to fix it instead of leaving the user to click.
+inline bool ShouldRefocusTimeSpentAfterSaveKey(bool saveKeyPressed, bool submitInFlight, const std::string& timeSpent) {
+    return saveKeyPressed && !submitInFlight && ParseWorkDurationToSeconds(timeSpent) <= 0;
+}
+
 /// Whether the dialog's Save button may fire. False while a submit is already in flight, so a
 /// second click cannot queue a duplicate worklog against the same round-trip (the button is
 /// also drawn disabled with a "Saving..." cue — this is the belt-and-braces guard).

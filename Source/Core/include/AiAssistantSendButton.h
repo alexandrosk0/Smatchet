@@ -34,5 +34,23 @@ inline bool DecideSendDisabled(bool inFlight, bool inputEmpty, bool hasControlle
     return inFlight || inputEmpty || !hasController;
 }
 
+/// What Esc does in the Assistant panel's input row.
+enum class AiEscAction { None, StopReply, LeaveInput };
+
+/// `panelHasKeyboard`: the panel or one of its child windows has keyboard focus, never a popup
+/// above it. While a reply is coming in, Esc stops it and leaves the caret alone (the next
+/// message may be half typed). Idle with the caret in the message box, Esc leaves the box.
+/// Otherwise nothing: the panel is a docked window, not a dialog, so Esc never closes it.
+inline AiEscAction DecideAssistantEsc(bool escPressed, bool panelHasKeyboard, bool inFlight, bool hasController,
+                                      bool caretInInput) {
+    if (!escPressed || !panelHasKeyboard) {
+        return AiEscAction::None;
+    }
+    if (inFlight && hasController) {
+        return AiEscAction::StopReply;
+    }
+    return caretInInput ? AiEscAction::LeaveInput : AiEscAction::None;
+}
+
 } // namespace ai
 } // namespace smatchet

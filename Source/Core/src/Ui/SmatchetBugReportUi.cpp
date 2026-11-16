@@ -309,7 +309,10 @@ void DrawActions(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     const bool canSubmit = target.Ok && !desc.empty() && !d.bugReportInFlight;
 
     const bool ctrlEnter = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-    const bool submitKey = ctrlEnter && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+    // Only while this window has the keyboard: Ctrl+Enter typed into another window or dialog (the
+    // comments box, the worklog dialog) must not also file this report.
+    const bool submitKey = ctrlEnter && ImGui::IsKeyPressed(ImGuiKey_Enter, false) &&
+                           ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     // P2-M13: once the egress preview has seeded, IT is what Submit sends
     // (BodyOverride). If the description changed since the preview was built
@@ -340,8 +343,10 @@ void DrawActions(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     if (cancelClicked && !d.bugReportInFlight) {
         d.showBugReport = false;
     }
-    // Esc cancels when not in flight.
-    if (!d.bugReportInFlight && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    // Esc cancels when not in flight, and only while this window has the keyboard: Esc pressed in
+    // another dialog (the comments box, the worklog dialog) must not also hide this one.
+    if (!d.bugReportInFlight && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         d.showBugReport = false;
     }
 }

@@ -30,10 +30,14 @@
 #include "Commands/CommandRegistry.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
+#include "SmatchetToast.h"
 #include "UiPerfMonitor.h"
+#include "WhisperConsentGate.h"
 #include "WhisperPlugin.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <iterator>
@@ -71,6 +75,15 @@ class WhisperDictationScenario : public IScenario {
         frameLimit_ = (std::max)(60, args.value("frames", 300));
         pressFrame_ = (std::max)(1, args.value("pressFrame", 1));
         releaseFrame_ = (std::max)(pressFrame_ + 1, args.value("releaseFrame", pressFrame_ + 3));
+        expectNoSpeechNotice_ = ReadFlag(args, "expectNoSpeechNotice");
+        if (expectNoSpeechNotice_) {
+            // An empty clip: nothing may be typed, and the user must be told why.
+            expectedText_.clear();
+            const smatchet::whisper::feedback::DictationFailureCopy copy =
+                smatchet::whisper::feedback::CopyFor(smatchet::whisper::feedback::DictationFailure::NoSpeech);
+            expectedNoticeTitle_ = SmatchetLocalization::T(copy.titleKey, copy.titleFallback);
+            noticeSince_ = std::chrono::system_clock::now();
+        }
 
         // Zero the buffer and register with the router. The router stores the
         // raw pointer; we must keep g_testBuffer alive until OnFinish runs and
@@ -131,6 +144,10 @@ class WhisperDictationScenario : public IScenario {
             state_ = State::WaitingForInsertion;
             return;
         }
+        if (state_ == State::WaitingForInsertion && expectNoSpeechNotice_) {
+            CheckNoSpeechNotice(frameIndex);
+            return;
+        }
         if (state_ == State::WaitingForInsertion) {
             // The mock worker thread sleeps for `delayMs_` then posts onto the
             // MainThreadDispatcher; the dispatcher drains at the top of each
@@ -160,6 +177,8 @@ class WhisperDictationScenario : public IScenario {
         out["expected_text"] = expectedText_;
         out["observed_text"] = observedText_;
         out["passed"] = passed_;
+        out["expect_no_speech_notice"] = expectNoSpeechNotice_;
+        out["notice_seen"] = noticeSeen_;
         out["state"] = StateName(state_);
         out["press_frame"] = pressFrame_;
         out["release_frame"] = releaseFrame_;
@@ -197,6 +216,40 @@ class WhisperDictationScenario : public IScenario {
         return "Unknown";
     }
 
+    // A CLI flag arrives as a bool, or as text when the caller quoted it.
+    static bool ReadFlag(const nlohmann::json& args, const char* key) {
+        const auto it = args.find(key);
+        if (it == args.end()) {
+            return false;
+        }
+        if (it->is_boolean()) {
+            return it->get<bool>();
+        }
+        return it->is_string() && (it->get<std::string>() == "true" || it->get<std::string>() == "1");
+    }
+
+    // The empty-clip variant passes once the no-speech notice has been raised and nothing was typed.
+    // The notice is looked for among the toasts raised since the scenario started, by their time:
+    // the history drops its oldest entry once it is full, so a position in it does not hold in an
+    // app that has been running for a while. Other toasts of that app may sit between them.
+    void CheckNoSpeechNotice(int frameIndex) {
+        const std::vector<ToastHistoryEntry>& history = SmatchetToastManager::Instance().History();
+        for (const ToastHistoryEntry& entry : history) {
+            if (entry.CreatedAt >= noticeSince_ && entry.Title == expectedNoticeTitle_) {
+                noticeSeen_ = true;
+                break;
+            }
+        }
+        if (!noticeSeen_) {
+            return;
+        }
+        observedText_ = g_testBuffer;
+        passed_ = observedText_.empty();
+        state_ = State::Asserted;
+        LOG_INFO("WhisperDictationScenario: no-speech notice seen after %d frames (passed=%s)", frameIndex,
+                 passed_ ? "true" : "false");
+    }
+
     void Teardown() {
         if (teardownDone_) {
             return;
@@ -213,6 +266,10 @@ class WhisperDictationScenario : public IScenario {
     std::string observedText_;
     bool passed_ = false;
     bool teardownDone_ = false;
+    bool expectNoSpeechNotice_ = false;
+    bool noticeSeen_ = false;
+    std::string expectedNoticeTitle_;
+    std::chrono::system_clock::time_point noticeSince_;
     int delayMs_ = 50;
     int frameLimit_ = 300;
     int pressFrame_ = 1;

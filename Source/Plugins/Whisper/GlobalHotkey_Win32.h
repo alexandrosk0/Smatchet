@@ -52,10 +52,7 @@ class GlobalHotkey_Win32 {
     /// Callbacks may be empty (`nullptr` / default-constructed) — the
     /// listener will still install but the hook is a no-op. Useful for
     /// "register but disable temporarily" flows.
-    bool Register(const hotkey::Hotkey& hk,
-                  PressCallback onPress,
-                  ReleaseCallback onRelease,
-                  std::string& outError);
+    bool Register(const hotkey::Hotkey& hk, PressCallback onPress, ReleaseCallback onRelease, std::string& outError);
 
     /// Tear down the hook + join the thread. Idempotent — safe to call on a
     /// non-registered listener. Called by the destructor.
@@ -74,6 +71,10 @@ class GlobalHotkey_Win32 {
   private:
     std::unique_ptr<Impl> impl_;
 };
+
+/// True while the foreground window belongs to this process: the user is in Smatchet, or in the
+/// application it is embedded in. Callable from any thread.
+bool IsThisProcessForeground();
 
 } // namespace whisper
 } // namespace smatchet

@@ -93,6 +93,23 @@ bool s_inputCharBufSeeded = false;
 // truncation toast. Single-threaded UI-thread access — no atomic needed.
 std::size_t s_inputTruncatedDroppedBytes = 0;
 
+// Frame on which the user last asked for the panel (shortcut, View menu, side-bar reveal); -1 when
+// there is no request. The caret goes into the message box once from it. A panel that is merely
+// restored open at startup never sets it, so it does not take the keyboard from the grid.
+int s_caretRequestFrame = -1;
+// Long enough to outlive the frame an inactive dock tab needs to come to the front, short enough
+// that the caret never jumps in later when the user clicks that tab themselves.
+constexpr int kCaretRequestMaxAgeFrames = 3;
+// Item id of the message box, taken right after it is drawn.
+ImGuiID s_inputItemId = 0;
+// Window that had the keyboard when the user asked for the panel. Esc in an idle message box hands
+// the keyboard back to it. Kept as an id because the window can be gone by then. 0 = none.
+ImGuiID s_focusReturnWindowId = 0;
+// Last frame on which the panel itself, not a popup above it, had the keyboard.
+int s_panelOwnedKeyboardFrame = -1;
+// Esc presses that stopped a reply (read by the UI tests).
+int s_escStopCount = 0;
+
 // CallbackResize handler for the chat input. ImGui invokes this when a paste (or
 // the dictation splice-reload) would grow the text past the buffer capacity. The
 // stdlib pattern would resize a std::string here, but we keep a hard fixed cap
@@ -1143,6 +1160,88 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
     ImGui::EndPopup();
 }
 
+// Notes which window to hand the keyboard back to. Call when the user asks for the panel.
+void RecordFocusReturnWindow() {
+    const ImGuiWindow* nav = ImGui::GetCurrentContext()->NavWindow;
+    const ImGuiWindow* root = nav != nullptr ? nav->RootWindow : nullptr;
+    if (root == nullptr) {
+        s_focusReturnWindowId = 0;
+        return;
+    }
+    const ImGuiWindow* panel = ImGui::FindWindowByName("Smatchet Assistant");
+    if (panel != nullptr && root == panel->RootWindow) {
+        return; // asked for again from inside the panel: the earlier window still stands
+    }
+    // A menu or popup the request came from is closing right now; never hand back to one.
+    const bool usable = (root->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu)) == 0;
+    s_focusReturnWindowId = usable ? root->ID : 0;
+}
+
+// True once per request: on the frame the caret should go into the message box. A request made
+// while a window is being dragged waits, because ImGui ignores a focus request during a drag; the
+// age bound drops it when the drag outlasts it.
+bool TakeAssistantCaretRequest() {
+    if (s_caretRequestFrame < 0) {
+        return false;
+    }
+    if (!smatchet::ai::AiCaretRequestFresh(s_caretRequestFrame, ImGui::GetFrameCount(), kCaretRequestMaxAgeFrames)) {
+        s_caretRequestFrame = -1;
+        return false;
+    }
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (g.MovingWindow != nullptr || ImGui::IsDragDropActive()) {
+        return false;
+    }
+    s_caretRequestFrame = -1;
+    return true;
+}
+
+// Esc for the input row. Call before the message box is drawn: an Esc the panel takes must not
+// also reach the box, whose own Esc puts back the text from before the caret entered and so drops
+// what was typed.
+// - Only while the panel itself has the keyboard, this frame and the one before. A popup above the
+//   panel keeps its Esc, and the Esc that closes such a popup does nothing here.
+// - A reply is coming in: stop it. The caret and the typed text stay.
+// - Idle with the caret in the box: leave the box. LeaveAssistantInput does that after the box has
+//   drawn, so text that dictation put in on this frame is kept too.
+smatchet::ai::AiEscAction ReadAssistantEsc(const UiDrawSession& d, AiAssistantController* ctrl) {
+    const int frame = ImGui::GetFrameCount();
+    if (s_caretRequestFrame < 0 && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        s_focusReturnWindowId = 0; // the user went elsewhere themselves: nothing to hand back to
+    }
+    const bool ownsNow =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const bool ownedLastFrame = s_panelOwnedKeyboardFrame == frame - 1;
+    if (ownsNow) {
+        s_panelOwnedKeyboardFrame = frame;
+    }
+    const bool caretInInput = s_inputItemId != 0 && ImGui::GetActiveID() == s_inputItemId;
+    const smatchet::ai::AiEscAction esc =
+        smatchet::ai::DecideAssistantEsc(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsNow && ownedLastFrame,
+                                         d.assistantInFlight, ctrl != nullptr, caretInInput);
+    if (esc != smatchet::ai::AiEscAction::None && caretInInput) {
+        // The message box does not see this Esc, so it neither puts old text back nor drops the caret.
+        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_Any, ImGuiInputFlags_LockThisFrame);
+    }
+    if (esc == smatchet::ai::AiEscAction::StopReply) {
+        ctrl->Cancel();
+        ++s_escStopCount;
+    }
+    return esc;
+}
+
+// Takes the caret out of the message box, keeping its text, and hands the keyboard back to the
+// window the user asked for the panel from, when that window is still there.
+void LeaveAssistantInput() {
+    ImGuiWindow* back = s_focusReturnWindowId != 0 ? ImGui::FindWindowByID(s_focusReturnWindowId) : nullptr;
+    const ImGuiWindow* self = ImGui::GetCurrentWindow()->RootWindow;
+    s_focusReturnWindowId = 0;
+    ImGui::ClearActiveID();
+    if (back != nullptr && back != self && back->WasActive) {
+        ImGui::FocusWindow(back);
+    }
+}
+
 // Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
 // the keyboard path matches the Send button click; the input buffer is cleared + focus restored.
 bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
@@ -1151,6 +1250,9 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
 
     ProcessPendingDictationReload();
+
+    AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
+    const smatchet::ai::AiEscAction esc = ReadAssistantEsc(d, ctrl);
 
     // Pillar 4 (aspirational keyboard-nav): Enter sends, Ctrl+Enter inserts newline.
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
@@ -1162,9 +1264,16 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // count; we toast it below. (aiassistant-silent-8kib-paste-truncation)
     const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
                                            ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_CallbackResize;
+    if (TakeAssistantCaretRequest()) {
+        ImGui::SetKeyboardFocusHere(); // the next item: the message box
+    }
     const bool enterSubmitted =
         ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
                                   ImVec2(-1.0f, inputH), inputFlags, &InputBufferResizeCallback);
+    s_inputItemId = ImGui::GetItemID();
+    if (esc == smatchet::ai::AiEscAction::LeaveInput) {
+        LeaveAssistantInput();
+    }
     // Mirror char-buf back into the string field every frame so the Send-button click
     // below + the Lua glue see the latest value with no separate poke. Only assign when the
     // buffer actually differs — the panel redraws every frame, so an unconditional assign()
@@ -1191,8 +1300,6 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
                  s_inputTruncatedDroppedBytes, kInputBufCap);
         s_inputTruncatedDroppedBytes = 0;
     }
-
-    AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
 
     // Defense-in-depth recovery: if a prior turn left `assistantInFlight = true`
     // but the controller has since gone away (mid-shutdown, controller torn
@@ -1250,6 +1357,9 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
             if (ctrl) {
                 ctrl->Cancel();
             }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("ai.cancel.tooltip", "Stop the reply (Esc)"));
         }
     }
 
@@ -1550,6 +1660,8 @@ void RecordAssistantSideFromLiveDock(UiDrawSession& d) {
 // restoring saved history — can invalidate the index-keyed render caches.
 void SmatchetClearAiRenderCaches() { ClearAiRenderCaches(); }
 
+int SmatchetAiAssistantEscStopCountForTest() { return s_escStopCount; }
+
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                   bool embedded) {
     HydrateFromConfigOnce(app, d);
@@ -1563,6 +1675,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             // hook would unregister on blur anyway, but the panel-level explicit
             // call is the belt to the wrapper's suspenders.
             g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
+            s_caretRequestFrame = -1;
             // Persist a closed state at most once per close event (idempotent if already false).
             PersistOpenStateImmediate(d);
             return;
@@ -1576,6 +1689,9 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
 
         if (d.requestAssistantFocus) {
             ImGui::SetNextWindowFocus();
+            // The user asked for the panel: the caret goes into the message box once it is drawn.
+            s_caretRequestFrame = ImGui::GetFrameCount();
+            RecordFocusReturnWindow();
         }
 
         // The panel is now a dockable, resizable window — drop the floating-only flags
@@ -1591,6 +1707,12 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             if (d.requestAssistantFocus) {
                 d.requestAssistantFocus = false;
             }
+            // Hidden with no request for the panel under way: the user has moved on, so the window noted
+            // for handing the keyboard back to no longer stands. ReadAssistantEsc drops it the same way,
+            // but it does not run while the panel is hidden.
+            s_focusReturnWindowId = smatchet::ai::AiFocusReturnWindowWhileHidden(
+                s_focusReturnWindowId, smatchet::ai::AiCaretRequestFresh(s_caretRequestFrame, ImGui::GetFrameCount(),
+                                                                         kCaretRequestMaxAgeFrames));
             // Panel is hidden — collapsed, or its docked tab is inactive. Intentionally do
             // NOT unregister the dictation buffer here — local-model
             // transcription can take multiple seconds, during which the user

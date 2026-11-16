@@ -26,6 +26,9 @@ class IFieldViewerContent {
     virtual const char* DiscardConfirmText() const { return ""; }
     virtual const char* DiscardButtonLabel() const { return ""; }
     virtual const char* KeepButtonLabel() const { return ""; }
+    /// Polled by the shell once per frame after `DrawBody`. Returning true asks to close the viewer
+    /// exactly as the Close button does, so unsaved input still gets the discard confirm.
+    virtual bool ConsumeCloseRequest() { return false; }
     /// Called by the shell when the viewer closes AND when another viewer replaces this one. Cleanup
     /// belongs here, never in a destructor: the shell's file-static owner is destroyed at static
     /// destruction time, possibly after the state a destructor would touch (another TU).
@@ -39,7 +42,8 @@ class IFieldViewerContent {
 void OpenFieldViewer(std::unique_ptr<IFieldViewerContent> content, const std::string& issueId,
                      const std::string& fieldId);
 
-/// Opens the viewer registered for `fieldId` on `ticket`; false when the field has none.
+/// Opens the viewer registered for `fieldId` on `ticket`; false when the field has none. This is the
+/// open a user asked for (a click on the cell), so Comments puts the caret in its post box.
 bool OpenFieldViewerForField(AppController& app, const CachedTicket& ticket, const std::string& fieldId);
 
 /// Renders the open viewer once per frame from a stable top-level location (focused pane only; the

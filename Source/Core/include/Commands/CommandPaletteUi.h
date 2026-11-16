@@ -50,6 +50,16 @@ class CommandPaletteUi {
     /// not on any per-frame/render path. See tests/ui/command_palette_inline_typing.test.cpp.
     const char* FilterText() const { return filterBuf_; }
 
+    /// Index of the highlighted row in the filtered list. Test-observability accessor.
+    int SelectedIndex() const { return selected_; }
+
+    /// The line shown for the last failed dispatch ("Could not run: ..."), kept until the
+    /// next input; empty when the last run succeeded. Test-observability accessor.
+    const std::string& DispatchError() const { return dispatchError_; }
+
+    /// True while the required-argument form is showing. Test-observability accessor.
+    bool IsArgFormOpen() const { return argFormStep_ >= 0; }
+
     /// Call once per frame from SmatchetUI::Draw. Handles Ctrl+Shift+P detection,
     /// renders the BeginPopupModal, and dispatches the selected command.
     void Draw(AppController& app);
@@ -83,9 +93,21 @@ class CommandPaletteUi {
 
     /// Index into the current filtered list.
     int selected_ = 0;
+    /// One-shot "bring the selected row into view" latch, set only when the selection
+    /// moves by keyboard or the list is re-ranked. Scrolling to the selection every
+    /// frame would fight the mouse wheel and the scrollbar.
+    bool scrollToSelected_ = false;
+
+    /// The localized line for the last failed dispatch, formatted once when it fails
+    /// (empty = no failure to show). A failed run keeps the palette and any argument
+    /// form open so the input can be corrected and re-run.
+    std::string dispatchError_;
 
     /// If a required-arg form is active, holds the param index being collected.
     int argFormStep_ = -1;
+    /// One-shot "focus the first argument field" latch: set when the form opens and
+    /// after a failed run, so the caret is where the correction goes.
+    bool argFocusPending_ = false;
     /// Per-param input buffers (one per ParamSpec, allocated when arg form opens).
     std::vector<std::vector<char>> argFormBufs_;
     /// The command being arg-prompted.
@@ -114,13 +136,17 @@ class CommandPaletteUi {
     /// Dispatch the currently-selected command (or show arg form for required params).
     void dispatchSelected();
 
-    /// Drain the #1703 deferred-dispatch latch: run the latched command + Close().
+    /// Drain the #1703 deferred-dispatch latch: run the latched command, then Close()
+    /// on success or keep the palette open with dispatchError_ set on failure.
     /// Called at the top of Draw(), before the palette's Begin(), so any command
     /// that touches the ImGui window stack runs at a clean nesting level.
     void drainPendingDispatch(AppController& app);
 
     /// Render the required-args input form for argFormCmd_.
     void drawArgForm();
+
+    /// Render dispatchError_ as wrapped error text; no-op when there is none.
+    void drawDispatchError() const;
 
     /// Up/Down selection + Enter/Escape dispatch for the command list (split out of Draw for
     /// function-size compliance; runs inside the active palette Begin scope).

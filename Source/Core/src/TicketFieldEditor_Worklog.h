@@ -20,7 +20,26 @@ void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& fieldI
                            float availWidth, bool tooltipsEnabled);
 
 /// Draws the dialog when the cell `columnFieldId` owns it (a row can show both entry cells).
+/// Keyboard: the caret starts in Time spent; Enter there, or Ctrl+Enter anywhere in the dialog, saves
+/// like the Save button; Esc cancels (leaving a field that has typed text first).
 void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& mutations, const CachedTicket& ticket,
                              const std::string& columnFieldId);
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+/// Test hook: a copy of the dialog's state as of its last draw. UI thread only.
+struct WorklogDialogTestSnapshot {
+    bool Active = false;
+    bool SubmitInFlight = false;
+    /// The caret is in the Time spent field.
+    bool TimeSpentActive = false;
+    std::string TimeSpent;
+    std::string Description;
+    std::string ErrorMsg;
+};
+WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests();
+/// Test hook: the dialog closes itself on its next draw (the only place a popup can be closed), the
+/// way a finished save does. A test that only cleared the state would leave the popup open.
+void RequestCloseWorklogDialogForTests();
+#endif // SMATCHET_BUILD_UI_TESTS
 
 } // namespace TicketFieldEditorWorklog

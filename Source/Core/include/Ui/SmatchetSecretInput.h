@@ -17,6 +17,22 @@
 
 #include <cstring>
 
+/// True on the frame the single-line text input submitted just before this call was committed
+/// with a bare Enter (main or keypad). Enter with a modifier held (Ctrl, Shift, Alt, Super) also
+/// deactivates a single-line input, so those are excluded: a form that submits on Enter must not
+/// also fire on a chord the surrounding window may bind. Call it immediately after the InputText,
+/// before any other item.
+inline bool SmatchetTextInputCommittedWithEnter() {
+    if (!ImGui::IsItemDeactivated()) {
+        return false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper) {
+        return false;
+    }
+    return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+}
+
 /// Draws `label` as a masked text input + "Show" toggle + length/whitespace hints.
 /// Returns true when the text was edited this frame (same contract as InputText).
 /// `outEditing` (optional) receives whether the inner InputText still holds keyboard focus, i.e.
@@ -24,7 +40,10 @@
 /// widget is compound and ends on the Show/Hide SmallButton or the char-count TextDisabled, so a
 /// caller's own ImGui::IsItemActive() would read one of those, not the input (#2110). Callers that
 /// act on the buffer immediately — rather than behind a Save button — must gate on it.
-inline bool SmatchetSecretInputText(const char* label, char* buf, std::size_t bufSize, bool* outEditing = nullptr) {
+/// `outEnterPressed` (optional) receives SmatchetTextInputCommittedWithEnter() for the inner
+/// input, reported from in here for the same reason.
+inline bool SmatchetSecretInputText(const char* label, char* buf, std::size_t bufSize, bool* outEditing = nullptr,
+                                    bool* outEnterPressed = nullptr) {
     ImGuiStorage* storage = ImGui::GetStateStorage();
     const ImGuiID shownId = ImGui::GetID(label) + 1u; // offset: distinct from the input's own id
     const bool shown = storage->GetBool(shownId, false);
@@ -32,6 +51,9 @@ inline bool SmatchetSecretInputText(const char* label, char* buf, std::size_t bu
         ImGui::InputText(label, buf, bufSize, shown ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_Password);
     if (outEditing != nullptr) {
         *outEditing = ImGui::IsItemActive(); // must be sampled here, before the SameLine chain below
+    }
+    if (outEnterPressed != nullptr) {
+        *outEnterPressed = SmatchetTextInputCommittedWithEnter(); // same: the inner input, not the trailing items
     }
     ImGui::SameLine();
     ImGui::PushID(label);

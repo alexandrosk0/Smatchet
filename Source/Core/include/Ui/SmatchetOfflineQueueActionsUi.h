@@ -26,3 +26,9 @@ int HeldRowsDrawnForTests();
 void ResetHeldRowsDrawnForTests();
 
 } // namespace SmatchetOfflineQueueActionsUi
+
+/// Conflict resolver, for the UI tests (UI thread; defined with the resolver in SmatchetOfflineQueueUi.cpp).
+/// True while the resolver shows a resolution that was typed before and kept when it was cancelled.
+bool SmatchetOfflineConflictDraftRestoredForTest();
+/// Forgets every kept resolution, so one test case does not open on what another one typed.
+void SmatchetOfflineConflictDraftsClearForTest();
