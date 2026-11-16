@@ -64,6 +64,7 @@ extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* en
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInputRecoveryTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterCommandPaletteCancelTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine);
@@ -142,6 +143,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterCommandPaletteInlineTypingTests(engine);
     SmatchetRegisterCommandPaletteDeferredDispatchTests(engine);
     SmatchetRegisterCommandPaletteInputRecoveryTests(engine);
+    SmatchetRegisterCommandPaletteCancelTests(engine);
     SmatchetRegisterGridSearchApplyTests(engine);
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
     SmatchetRegisterOfflineFirstTests(engine);

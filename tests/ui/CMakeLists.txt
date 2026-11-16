@@ -74,6 +74,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_inline_typing.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_deferred_dispatch.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_input_recovery.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_cancel.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_search_apply.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/offline_conflict_modal_panes.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/offline_first.test.cpp"
