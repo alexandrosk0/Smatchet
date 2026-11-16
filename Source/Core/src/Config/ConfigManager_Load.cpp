@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -549,6 +550,32 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = true;
 }
 
+// One-shot migration: seed the primary-action bindings the input UX audit added (§ 4.4:
+// preferences.search.focus, view.next, view.previous) into a config saved before those commands
+// existed. Same replace-not-merge rationale as MigrateMenuShortcutKeybindingsV1. Each row is copied
+// from Defaults(), and a command the user already bound keeps the user's binding.
+void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedActionKeysV1 = j.value("migrated_action_keys_v1", false);
+    if (cfg.MigratedActionKeysV1) {
+        return;
+    }
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int seeded = 0;
+    for (const char* commandId : {"preferences.search.focus", "view.next", "view.previous"}) {
+        const int di = defaults.FindBindingIndex(commandId, "{}");
+        if (di >= 0 && cfg.Keybindings.FindBindingIndex(commandId, "{}") < 0) {
+            cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        LOG_INFO("ConfigManager: seeded %d primary-action keybinding(s) into an existing config "
+                 "(migrated_action_keys_v1)",
+                 seeded);
+    }
+    cfg.MigratedActionKeysV1 = true;
+}
+
 // First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
 // LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
 void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -684,6 +711,8 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateZoomHotkeyAliasesV1(j, cfg);
     MigrateZoomHotkeyAliasesV2(j, cfg);
     MigrateZoomHotkeyAliasesV3(j, cfg);
+    // After the zoom passes, which only touch zoom rows; seeds whole rows copied from Defaults().
+    MigrateActionKeysV1(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

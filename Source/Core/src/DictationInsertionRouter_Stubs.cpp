@@ -26,9 +26,7 @@ void DictationInsertionRouter::UnregisterInputText(char* /*buf*/) {}
 
 void DictationInsertionRouter::Insert(const std::string& /*text*/) {}
 
-bool DictationInsertionRouter::IsRecording() const {
-    return false;
-}
+bool DictationInsertionRouter::IsRecording() const { return false; }
 
 void DictationInsertionRouter::SetRecording(bool /*active*/) {
     // No-op in stub mode — drift between this TU and the real one is caught at
@@ -37,37 +35,35 @@ void DictationInsertionRouter::SetRecording(bool /*active*/) {
     // need no per-callsite SMATCHET_WITH_WHISPER guards on the setter.
 }
 
+void DictationInsertionRouter::RequestDiscard() {}
+
+bool DictationInsertionRouter::TakeDiscardRequest() { return false; }
+
+void DictationInsertionRouter::ClearDiscardRequest() {}
+
 bool DictationInsertionRouter::IsTranscribing() const { return false; }
 
 void DictationInsertionRouter::SetTranscribing(bool /*active*/) {}
 
 void DictationInsertionRouter::SetLastPeakAmplitude(float /*peak0to1*/) {}
 
-float DictationInsertionRouter::GetLastPeakAmplitude() const {
-    return 0.0f;
-}
+float DictationInsertionRouter::GetLastPeakAmplitude() const { return 0.0f; }
 
 void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/) {}
 
-void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/,
-                                                          unsigned int /*activeId*/) {}
+void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/, unsigned int /*activeId*/) {}
 
-void DictationInsertionRouter::RegisterInputTextWithItemId(char* /*buf*/, std::size_t /*cap*/,
-                                                            int* /*cursor*/, unsigned int /*itemId*/) {}
+void DictationInsertionRouter::RegisterInputTextWithItemId(char* /*buf*/, std::size_t /*cap*/, int* /*cursor*/,
+                                                           unsigned int /*itemId*/) {}
 
-std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
-    return 0;
-}
+std::size_t DictationInsertionRouter::RegisteredCountForTest() const { return 0; }
 
-void DictationInsertionRouter::RegisterAiAssistantInputText(char* /*buf*/, std::size_t /*cap*/,
-                                                            int* /*cursor*/) {
+void DictationInsertionRouter::RegisterAiAssistantInputText(char* /*buf*/, std::size_t /*cap*/, int* /*cursor*/) {
     // Same no-op rationale as RegisterInputText — drift between this TU and
     // the real impl is caught at CI link time by build-windows-no-whisper.
 }
 
-bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
-    return false;
-}
+bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const { return false; }
 
 void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> /*cb*/) {}
 

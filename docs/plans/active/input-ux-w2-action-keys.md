@@ -31,10 +31,10 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 ## Interface contracts
 
 - **New public helpers** (`Source/Core/include/Ui/SmatchetSubmitKeys.h`, namespace `smatchet::ui`):
-  - `bool SubmitMultilineInput(const char* label, char* buf, std::size_t bufSize, const ImVec2& size, const char* placeholder, ImGuiInputTextFlags extraFlags = 0);` — true on the frame Ctrl+Enter (or keypad Ctrl+Enter, or the gamepad validate) was pressed with the caret in it; ImGui deactivates the field on that frame, as it does today for `EnterReturnsTrue`. `extraFlags` may not carry `AllowTabInput` (masked off: Tab moves on, per the § 3 contract).
+  - `bool SubmitMultilineInput(const char* label, char* buf, std::size_t bufSize, const ImVec2& size, const char* placeholder, ImGuiInputTextFlags extraFlags = 0, bool dictation = true);` — `dictation` registers the buffer with the dictation router like every localized InputText; pass false for a buffer that is not process-static (Annotate's, which the `AnnotateAnalysisUi` instance owns). True on the frame Ctrl+Enter (or keypad Ctrl+Enter, or the gamepad validate) was pressed with the caret in it; ImGui deactivates the field on that frame, as it does today for `EnterReturnsTrue`. `extraFlags` may not carry `AllowTabInput` (masked off: Tab moves on, per the § 3 contract).
   - `bool KeyHintButton(const char* label, const char* keyHint, const ImVec2& size = ImVec2(0, 0));` — `size.x` is a minimum width; a null or empty `keyHint` draws a plain button.
   - `const char* CtrlEnterKeyName();` — localized `Ctrl+Enter` (`keys.ctrl_enter`).
-  - UI-test seam, compiled only with `SMATCHET_BUILD_UI_TESTS`: `std::string KeyHintDrawnForTest(ImGuiID buttonId)` and `bool PlaceholderDrawnForTest(ImGuiID fieldId)` — what the last frame drew, since both are draw-list text, not items.
+  - UI-test seam, compiled only with `SMATCHET_BUILD_UI_TESTS`: `std::string KeyHintDrawnForTest(const char* buttonLabel)` and `bool PlaceholderDrawnForTest(const char* fieldLabel)` — what the current or previous frame drew, keyed by the label the caller passed (both are draw-list text, not items, and a test cannot easily rebuild the id of a widget deep in a popup).
 - **Pure layout** (`Source/Core/include/Ui/SubmitKeysPure.h`, namespace `smatchet::submitkeys`): `KeyHintButtonLayout ComputeKeyHintButtonLayout(float labelW, float hintW, float gap, float padX, float minW)` (width + hint x offset) and `bool ShowsPlaceholder(const char* buf)`.
 - **Commands** (`RegisterCommand` entries, CLI + palette + MCP + Lua): `preferences.search.focus` (no params; returns `{requested: true}`; non-destructive, idempotent); `view.next` / `view.previous` (no params; returns `{activated: <id>}`; `NotFound`-class failure when no view exists; same activate + save + sync path as `view.activate`).
 - **Pure view cycle** (`Source/Core/include/ViewCyclePure.h`, namespace `smatchet::views`): `int CycleViewIndex(int count, int activeIndex, int step)` — wraps; an unknown active view (`-1`) lands on the first (step > 0) or last (step < 0).
@@ -66,7 +66,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 11. `Source/Core/include/Ui/SmatchetPrefsSearchFocus.h` (new) — the request seam.
 12. `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` — take the request; Esc in the search box clears it and leaves; Enter puts the caret on the first matching setting; the query clears when the window closes; the placeholder names the bound key.
 13. `Source/Core/include/Ui/PreferencesFilter.h`, `Source/Core/src/Ui/PreferencesFilter.cpp` — `RequestFocusOnFirstMatch`.
-14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the placeholder names the view keys.
+14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the search box's tooltip names the view keys (read live from the bindings).
 15. `Source/Core/src/Config/KeybindingsConfig.cpp` — three default bindings, appended after the quick-create row.
 16. `Source/Core/include/Config/ConfigManager.h`, `Source/Core/src/Config/ConfigManager_Load.cpp`, `Source/Core/src/Config/ConfigManager_Save.cpp` — `migrated_action_keys_v1`.
 
@@ -138,7 +138,8 @@ N/A — no file is split. The new helper TU is small; touched TUs stay under the
 - **Merge with #2435.** It edits `KeybindingsConfig.cpp`, `ConfigManager*` and `BuiltinCommands_Ui.cpp` in nearby lines; the new rows are placed in separate hunks (after the quick-create row, after the existing migrations). Accepted.
 - **`Ctrl+PageUp` / `Ctrl+PageDown`** also page-scroll an ImGui window that has keyboard nav. Accepted: the combo is what browsers and editors use for tab switching; rebindable.
 - **`Alt+M` / `Alt+T` on macOS** type `µ` / `†` into a focused field as well. Accepted: the pick replaces the field anyway.
-- **Esc during dictation** also reaches the focused field (it leaves it). Accepted: the clip is the user's target and nothing typed is lost.
+- **Esc during dictation** also reaches the window that has the keyboard, because the overlay is drawn after the windows and reads Esc app-wide. With text typed, the field is only left and nothing is lost. On an untouched dialog (an empty comment box, an untouched Log work) the same Esc also closes it. Accepted for now: nothing typed is lost either way. Taking Esc for the overlay before the dialogs read it needs key-ownership routing (`SetKeyOwner` with `LockThisFrame` early in the frame), which cannot be exercised without a bucket-E run; follow-up.
+- **Dictation registration of the comments buffer.** `PostBuf` was already registered with the dictation router through the localized wrapper. The reset that frees it now unregisters it first (`ResetCommentsState`), so the router's sticky target cannot point at freed memory.
 - **Dual target**: the helper header includes only `imgui.h`; nothing GLFW/GL reaches `Source/Core/include/`.
 - Non-goals: dialog scope / first-field focus / Esc hints on Cancel (4.1); Lua autocomplete auto-open and fuzzy ranking, the views header combo filter row and a `view.switcher` palette scope (#105 / #65 remainders, 4.6 / 4.7); a live recognised-frame count for Annotate (4.5); a context-routed `Ctrl+F` for the settings search.
 

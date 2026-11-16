@@ -15,6 +15,8 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiSession.h"
 
@@ -23,7 +25,11 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstring>
+#include <future>
+#include <nlohmann/json.hpp>
+#include <string>
 
 extern UiDrawSession g_ui;
 
@@ -198,10 +204,155 @@ void RegisterPrefsSearchFilter(ImGuiTestEngine* engine) {
     };
 }
 
+// ---- Search keys (INPUT_UX_AUDIT.md § 4.4, finding #79) --------------------------------------------
+
+// The search box sits in the Preferences window itself, above the nav rail and the PrefsBody child.
+ImGuiID PrefsSearchId() {
+    ImGuiWindow* win = ImGui::FindWindowByName("Preferences");
+    return win != nullptr ? win->GetID("##PrefsSearch") : 0;
+}
+
+bool PrefsSearchHasCaret() {
+    const ImGuiID id = PrefsSearchId();
+    return id != 0 && ImGui::GetCurrentContext()->ActiveId == id;
+}
+
+// The command handlers hop to the UI thread and wait for it, so they run on a worker while the test
+// keeps stepping frames.
+smatchet::cmd::CommandResult RunCommand(ImGuiTestContext* ctx, AppController* app, const std::string& name) {
+    std::future<smatchet::cmd::CommandResult> pending = std::async(std::launch::async, [app, name] {
+        smatchet::cmd::CommandContext cmdCtx;
+        return app->Commands().Dispatch(name, nlohmann::json::object(), cmdCtx);
+    });
+    while (pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        ctx->Yield();
+    }
+    return pending.get();
+}
+
+void ClosePreferencesForNextTest(ImGuiTestContext* ctx) {
+    g_armPreferences = false;
+    g_ui.showPreferences = false;
+    ctx->Yield(2);
+}
+
+void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
+    // Ctrl+Shift+, (preferences.search.focus) puts the caret in the box from wherever it is, Enter sends it
+    // to the first matching setting, and Esc in the box clears the query and leaves the box.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "PrefsSearchFilter", "SearchKeys_ChordFocusesEnterJumpsEscClears");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { ArmPreferencesFrame(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        const bool prefsLive = OpenPreferences(ctx);
+        IM_CHECK_NO_RET(prefsLive);
+        if (!prefsLive) {
+            ClosePreferencesForNextTest(ctx);
+            return;
+        }
+        g_ui.preferencesCategory = PreferencesCategory::Appearance;
+        SetQuery(ctx, "");
+        ctx->SetInputMode(ImGuiInputSource_Keyboard);
+
+        // Start with the caret out of the box (an open may have put it there), so only the chord can.
+        ImGui::ClearActiveID();
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!PrefsSearchHasCaret());
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Comma);
+        const bool focused = YieldUntil(ctx, [] { return PrefsSearchHasCaret(); }, 60);
+        if (!focused) {
+            ctx->LogError("Ctrl+Shift+, did not put the caret in the settings search box");
+        }
+        IM_CHECK_NO_RET(focused);
+
+        if (focused) {
+            ctx->KeyChars("vsy");
+            IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.prefsFilter.Active(); }, 30));
+            const ImGuiID vsyncId = SettingItemId(kDisplaySection, kVsyncLabel);
+            IM_CHECK_NO_RET(vsyncId != 0);
+            ctx->KeyPress(ImGuiKey_Enter);
+            const bool landed =
+                YieldUntil(ctx, [vsyncId] { return vsyncId != 0 && ImGui::GetCurrentContext()->NavId == vsyncId; }, 60);
+            if (!landed) {
+                ctx->LogError("Enter in the search box did not move the keyboard to 'Enable vsync'");
+            }
+            IM_CHECK_NO_RET(landed);
+            IM_CHECK_NO_RET(!PrefsSearchHasCaret());
+            IM_CHECK_NO_RET(std::strcmp(g_ui.prefsSearchBuf, "vsy") == 0); // Enter keeps the query
+
+            // Back into the box with the chord; Esc clears the query and leaves.
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Comma);
+            IM_CHECK_NO_RET(YieldUntil(ctx, [] { return PrefsSearchHasCaret(); }, 60));
+            ctx->KeyPress(ImGuiKey_Escape);
+            const bool cleared = YieldUntil(ctx, [] { return g_ui.prefsSearchBuf[0] == '\0'; }, 30);
+            if (!cleared) {
+                ctx->LogError("Esc in the search box did not clear the query");
+            }
+            IM_CHECK_NO_RET(cleared);
+            ctx->Yield(3); // a deactivated box writes its saved copy back on a later draw if that copy was kept
+            IM_CHECK_NO_RET(g_ui.prefsSearchBuf[0] == '\0');
+            IM_CHECK_NO_RET(!PrefsSearchHasCaret());
+        }
+
+        SetQuery(ctx, "");
+        ClosePreferencesForNextTest(ctx);
+    };
+
+    // The command opens a closed Preferences window with the caret in the search box (palette, CLI, MCP and
+    // Lua reach the same handler).
+    t = IM_REGISTER_TEST(engine, "PrefsSearchFilter", "SearchFocusCommand_OpensPreferencesInTheSearchBox");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { ArmPreferencesFrame(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        ctx->PopupCloseAll();
+        g_ui.showPreferences = false;
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(!WindowIsLive("Preferences"));
+        g_armPreferences = true; // keep the docked tab selected once the command opens it
+        const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "preferences.search.focus");
+        IM_CHECK_NO_RET(r.Ok);
+        IM_CHECK_NO_RET(g_ui.showPreferences);
+        const bool focused = YieldUntil(ctx, [] { return PrefsSearchHasCaret(); }, 120);
+        if (!focused) {
+            ctx->LogError("preferences.search.focus did not put the caret in the settings search box");
+        }
+        IM_CHECK_NO_RET(focused);
+        ClosePreferencesForNextTest(ctx);
+    };
+
+    // A query is about one visit: closing Preferences clears it.
+    t = IM_REGISTER_TEST(engine, "PrefsSearchFilter", "ClosingPreferences_ClearsTheQuery");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { ArmPreferencesFrame(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        const bool prefsLive = OpenPreferences(ctx);
+        IM_CHECK_NO_RET(prefsLive);
+        if (!prefsLive) {
+            ClosePreferencesForNextTest(ctx);
+            return;
+        }
+        SetQuery(ctx, "vsy");
+        IM_CHECK_NO_RET(g_ui.prefsFilter.Active());
+        ClosePreferencesForNextTest(ctx);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.prefsSearchBuf[0] == '\0');
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterPrefsSearchFilterTests(ImGuiTestEngine* engine) {
     RegisterPrefsSearchFilter(engine);
+    RegisterPrefsSearchKeys(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

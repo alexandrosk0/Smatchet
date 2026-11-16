@@ -314,5 +314,11 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     // Quick-create issue popup (docs/plans/quick-create-issue-unreal-context.md). Ctrl+Shift+J is
     // NOT used here on purpose — the Unreal host reserves it for the overlay visibility toggle.
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+T", "issue.quick_create.open", "{}"));
+    // Primary actions that had no key (INPUT_UX_AUDIT.md § 4.4). The settings search sits next to
+    // Ctrl+, (Preferences); the view keys are the tab-switch chords browsers and editors use. Seeded
+    // into older configs once by migrated_action_keys_v1 (ConfigManager_Load.cpp).
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+,", "preferences.search.focus", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageDown", "view.next", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageUp", "view.previous", "{}"));
     return c;
 }
