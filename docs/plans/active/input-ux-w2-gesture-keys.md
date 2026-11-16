@@ -262,11 +262,41 @@ Deferred to a follow-up plan, `input-ux-w2-gesture-keys-followup`, once #2432 an
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `5cbe4fc` · wip(plan): this plan, committed before any code.
+- `b6f782a` · merge `origin/develop` (Wave 1 #2433 and piece 4.1 slice 1 #2437) into the branch; the squash-merge conflicts resolved to develop's side, and the result equalled develop plus this plan.
+- `6dc3281` · the piece itself:
+  - the focus-scoped latch (`Ui/GestureKeysPure.h`, `Ui/GestureKeys.h`) and the seven commands (`Commands/GestureKeyCommands.cpp`);
+  - default bindings and the `migrated_gesture_keys_v1` seed;
+  - consumers: the Customize Toolbar list, the long-text, MCP and Lua dividers, the panel nudge, the calendar keys and quick picks, the path-remap flow, and read-only text select-all;
+  - `scripts/dev/test-drag-keyboard-equivalent.sh` with its selftest and bats suite;
+  - the rule in the audit's § 3 and the shortcuts guide, French strings, and the doctest and bucket-E tests.
+  - `GlobalShortcutAllowedUnderModal` (`DialogKeysPure.h`, from #2437) now lets `ui.list.*` and `ui.splitter.*` through, so they work inside the dialogs they serve.
+
+Findings: **#108** was already closed by Wave 1. **#18** is half closed (the Cancel button, #2430); the outside click is deferred. **#12, #44, #130, #122** and the panel half of **#138** are closed here. **#71, #119** and the column half of **#138** are deferred (below). **#29, #30** stay with Wave 3.
+
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Selection does not follow keyboard focus in the toolbar list** (the plan said it would). ImGui's own arrow navigation also fires on Alt+Up / Alt+Down (`NavUpdateCreateMoveRequest` reads the arrows with no modifier test), so a follow-focus rule would reset the selection to the row the cursor just stepped onto, and Alt+Down would move the wrong button, worse under key repeat. The keys act on the *selected* row (Space or Enter selects), as the Up / Down / Delete buttons do, and the moved row takes the cursor back through `SetKeyboardFocusHere`. Residual: arrow to a row and press Delete, and the previously selected row goes. Accepted by the review.
+- **The panel commands do not fail when `panel=focused` finds no panel.** They return `{"resized": false, "reason": ...}` as a success, because that is the normal case with the keyboard in the grid, and a failure would log a warning on every press and key repeat. A *named* panel that is hidden is still a `ValidationError`.
+- **Toolbar tooltips name the command, not the key** (`ui.list.move_up`, ...), since the bindings are rebindable.
+- **Open question closed:** piece 4.1 slice 1 (#2437) did mute app-wide shortcuts under a modal; this piece extends `GlobalShortcutAllowedUnderModal` rather than adding a second mechanism.
+- **Plan locks.** The `refs/locks/input-ux-w2-gesture-keys` claim could not be filed: pushes to `refs/locks/*` returned HTTP 403 from the session's git proxy, with the claim script's own retries and a later retry both failing. The four append-only shared files (`SmatchetLocalization.cpp`, `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`) are held by sibling locks, so the PR carries `plan-lock-out-of-band` for them, as #2432, #2433 and #2434 do. No feature file under a sibling lock was touched.
+- **Deferred, as planned:** grid column move / resize (`grid.column.*`), the sort-rule list (#71), the views-dashboard row-reorder rebind, the palette outside-click close, and the filter + list popups onto `FilterDropdown` (#119). The check script lists the three still-unmarked drag sources as WARN-only pending entries; `--strict` fails them and is for the follow-up to turn on. A backlog entry covers column resize on the read-only tables.
+- **The plan stays in `active/`**: the follow-up work above still lives here, so the status flip and `git mv` wait for it.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Bucket A, run locally (Linux clang):**
+  - `ninja-test-linux` doctest subset: 1183 of 1183 passed, including the 8 new `GestureKeysPure` cases and the `TrackerDateTimePure` date-step cases.
+  - `KeybindingsConfig.test.cpp` (defaults parity with the seven new rows, plus the hotkey round-trip), built on its own: 19 of 19 passed.
+  - `bash scripts/dev/test-drag-keyboard-equivalent.sh --selftest` (21 cases), the real-tree `--check`, and `test-drag-keyboard-equivalent-bats.sh` (7 of 7).
+  - `pre-ship.sh`: delta lint, comment-noise, function size, duplication, include-cycle, localization drift, markdown lint, test-list, orphan-bats and `test-docs.sh` all passed.
+  - `posix-core-check` compiled every touched Core TU; the UI-test TUs (`gesture_keys.test.cpp`, the toolbar, annotate-prefs and MCP seams) were syntax-checked with `-DSMATCHET_BUILD_UI_TESTS`.
+- **Not run locally:** `ConfigMigration.test.cpp` (the three new `migrated_gesture_keys_v1` cases), `SmatchetWorklogSubmitPure.test.cpp` (the modal-allow cases) and `LuaConsolePlugin.cpp` need the full MSVC test rig. The bucket-E suite `tests/ui/gesture_keys.test.cpp` (8 cases) needs the Windows Mesa lane. All of these are verified by CI on this PR, see below.
+- **Review:** four independent code-review passes against the project's gate. They found one HIGH in the check script (a wrapped marker made it fail on its own tree), one HIGH in a new test (a command dispatched from the coroutine thread), one MEDIUM (the selection deviation above) and a handful of LOWs. All were fixed or accepted; the final artifact is 0 critical, 0 high, 0 medium, 1 accepted low.
+- **Mutation check of the bucket-E tests:** *pending CI.* This container cannot run bucket-E, so each case is checked by reverting its production branch on a scratch commit and watching it go red in the Windows lane. The results are recorded here once run.
+- **`grill-with-docs` stress-test:** the plan's terms were checked against the audit's § 3 contract and the Ui and Commands leaf docs during the review passes; the contract rule in § 3 and `DialogKeysPure.h` now say the same thing.
+- **Manual residue:** none planned. The bucket-E cases have not yet been seen to pass on a real run.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
