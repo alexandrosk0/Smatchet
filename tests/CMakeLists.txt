@@ -1699,6 +1699,12 @@ add_executable(SmatchetTests
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's
     # new history record. Pure STL (no ImGui), so it links in this pure block.
     Core/ToastHistoryPure.test.cpp
+    # bulk-edit-rows P1 — pure job core of "set one field on N selected rows" (Ui/BulkFieldEditPure.h):
+    # Add / Remove merge, summary counts, mixed-value label, confirm threshold, ADR-0016 scalar-base capture.
+    # ImGui-free; the TU depends on StringUtil.h, the field schema header, TrackerFieldValueUtils and
+    # TrackerLabelsPure (both already linked into SmatchetTests).
+    Core/BulkFieldEditPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/BulkFieldEditPure.cpp"
     # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
     # oldest past MaxLiveToasts(); sticky error toasts never expire so the bound is load-
     # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.
