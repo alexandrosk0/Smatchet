@@ -1223,6 +1223,18 @@ const TranslationEntry kEntries[] = {
      u8"Recherche par titre — filtre les lignes chargées."},
     {"gridsearch.hint", "Search issues: key, query, or title text",
      u8"Rechercher des tickets : clé, requête ou texte du titre"},
+    {"quickcreate.discard_confirm", "Discard this issue? The summary and description you typed will be lost.",
+     u8"Abandonner ce ticket ? Le résumé et la description saisis seront perdus."},
+    {"quickcreate.discard", "Discard", u8"Abandonner"},
+    {"quickcreate.needs_summary_and_project", "Type a summary and pick a project to create the issue.",
+     u8"Saisissez un résumé et choisissez un projet pour créer le ticket."},
+    {"quickcreate.keep_editing", "Keep editing", u8"Continuer la saisie"},
+    {"draft.create_tooltip", "Create the issue (Ctrl+Enter in any field)",
+     u8"Créer le ticket (Ctrl+Entrée dans n'importe quel champ)"},
+    {"draft.cancel_tooltip", "Discard the draft (Esc in any field)",
+     u8"Abandonner le brouillon (Échap dans n'importe quel champ)"},
+    {"gridsearch.hint_keys", "Search issues: key, query, or title text (Ctrl+F)",
+     u8"Rechercher des tickets : clé, requête ou texte du titre (Ctrl+F)"},
 
     // UX critique pass 2 (UX_DESIGN_CRITIQUE.md §8) — confirmation guards, probe verdicts,
     // and feedback strings added by the pass-2 implementation.

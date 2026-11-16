@@ -23,6 +23,7 @@
 #include "Tracker/ParentHierarchyPure.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -35,6 +36,55 @@
 #include <unordered_set>
 
 namespace {
+
+// Id of the draft text input (summary, description, other free-text fields) that last held the
+// caret. Item ids are stable across frames, so the key reader can tell before the row draws
+// whether the active item is one of this row's text fields.
+ImGuiID s_draftTextActiveId = 0;
+// Esc in a draft field with text in the draft asks before discarding. The key reader runs before
+// the Id cell, so it leaves this set and the Id cell opens the popup inside its own id stack.
+bool s_openDiscardConfirmPending = false;
+
+// The text each draft edit buffer held when it was created. FieldValues cannot stand in for it:
+// a plain text field copies its buffer into FieldValues on every keystroke.
+std::unordered_map<std::string, std::string> s_draftEditSeeds;
+
+// Esc asks before discarding when the user typed anything: the summary, the description or
+// staged attachments (NewIssueDraftHasUserContent), or any other free-text field whose live
+// text differs from the text it opened with.
+bool DraftHasTypedText(const UiDrawSession& d) {
+    if (NewIssueDraftHasUserContent(d)) {
+        return true;
+    }
+    for (const auto& kv : d.newIssueDraftEditBufs) {
+        if (kv.second.empty()) {
+            continue;
+        }
+        const std::string live(kv.second.data());
+        if (TrimCopy(live).empty()) {
+            continue;
+        }
+        const auto seeded = s_draftEditSeeds.find(kv.first);
+        if (seeded == s_draftEditSeeds.end() || seeded->second != live) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Cancel, "Discard draft" and Esc on an empty draft: close the row and drop everything typed.
+void DiscardNewIssueDraft(UiDrawSession& d) {
+    s_draftTextActiveId = 0;
+    d.newIssueDraftActive = false;
+    d.newIssueFocusSummaryPending = false;
+    d.newIssueDraft = IssueDraft{};
+    d.newIssueDraftEditBufs.clear();
+    d.newIssueMissingFieldIds.clear();
+    d.newIssueQueueFallbackVisible = false;
+    d.newIssueQueueFallbackError.clear();
+    d.gridEditError.clear();
+    d.gridEditSuccess.clear();
+}
 
 static std::string FormatBytesUi(std::uint64_t bytes) {
     if (bytes < 1024)
@@ -117,6 +167,7 @@ std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& field
                                       size_t minSize = 512) {
     auto& buf = d.newIssueDraftEditBufs[fieldId];
     if (buf.empty()) {
+        s_draftEditSeeds[fieldId] = seed;
         buf.resize((std::max)(minSize, seed.size() + 64), '\0');
         std::memcpy(buf.data(), seed.data(), (std::min)(buf.size() - 1, seed.size()));
         // Previously description newlines were stripped to work around the single-line InputText.
@@ -352,6 +403,9 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip("%s", SmatchetLocalization::T("draft.project.submit_disabled_tooltip", "Pick a project"));
         }
+    } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "%s", SmatchetLocalization::T("draft.create_tooltip", "Create the issue (Ctrl+Enter in any field)"));
     }
     const bool canOfferFallbackQueue = !disabled && d.newIssueQueueFallbackVisible;
     if (canOfferFallbackQueue) {
@@ -369,30 +423,27 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
     // user has typed a summary/description or staged attachments, the click routes
     // through a Discard/Keep confirm — up to 64 KB of writing should not die to one
     // stray click next to Create.
-    const auto discardDraft = [&d]() {
-        d.newIssueDraftActive = false;
-        d.newIssueFocusSummaryPending = false;
-        d.newIssueDraft = IssueDraft{};
-        d.newIssueDraftEditBufs.clear();
-        d.newIssueMissingFieldIds.clear();
-        d.newIssueQueueFallbackVisible = false;
-        d.newIssueQueueFallbackError.clear();
-        d.gridEditError.clear();
-        d.gridEditSuccess.clear();
-    };
     if (ImGui::Button("Cancel", draftActionBtn)) {
         if (NewIssueDraftHasUserContent(d)) {
             ImGui::OpenPopup("Discard draft?##newissue_cancel_confirm");
         } else {
-            discardDraft();
+            DiscardNewIssueDraft(d);
         }
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s",
+                          SmatchetLocalization::T("draft.cancel_tooltip", "Discard the draft (Esc in any field)"));
+    }
+    if (s_openDiscardConfirmPending) {
+        s_openDiscardConfirmPending = false;
+        ImGui::OpenPopup("Discard draft?##newissue_cancel_confirm");
     }
     if (ImGui::BeginPopup("Discard draft?##newissue_cancel_confirm")) {
         ImGui::TextUnformatted(SmatchetLocalization::T("draft.cancel_confirm",
                                                        "Discard this draft? Typed fields and staged "
                                                        "attachments will be lost."));
         if (ImGui::Button("Discard draft")) {
-            discardDraft();
+            DiscardNewIssueDraft(d);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -496,11 +547,14 @@ void DrawDraftTextFieldInput(AppController& app, UiDrawSession& d, const std::st
         constexpr size_t kDescBuf = 64 * 1024;
         auto& buf = EnsureDraftEditBuf(d, fieldId, current, kDescBuf);
         const float descHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
-        if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(), ImVec2(-FLT_MIN, descHeight),
-                                      ImGuiInputTextFlags_AllowTabInput)) {
+        // No AllowTabInput: Tab moves to the next field like every other input in the row.
+        if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(), ImVec2(-FLT_MIN, descHeight))) {
             d.newIssueQueueFallbackVisible = false;
             d.newIssueQueueFallbackError.clear();
             d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+        }
+        if (ImGui::IsItemActive()) {
+            s_draftTextActiveId = ImGui::GetItemID();
         }
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::TextDisabled("Markdown: **bold**, *em*, # heading, - list, ```code```");
@@ -520,6 +574,9 @@ void DrawDraftTextFieldInput(AppController& app, UiDrawSession& d, const std::st
     }
     const ImGuiInputTextFlags textFlags = isSummary ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_None;
     const bool submitted = ImGui::InputText("##input", buf.data(), buf.size(), textFlags);
+    if (ImGui::IsItemActive()) {
+        s_draftTextActiveId = ImGui::GetItemID();
+    }
     if (submitted) {
         d.newIssueQueueFallbackVisible = false;
         d.newIssueQueueFallbackError.clear();
@@ -618,6 +675,53 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
     }
 }
 
+// Draft-wide keys, read before any field draws so the field keeps its text: an InputText that is
+// still active when a key reaches it acts on it itself.
+//   Ctrl+Enter (or Ctrl+keypad Enter) in a draft text field submits through the Create path.
+//   Esc in a draft text field discards an empty draft and asks first when anything is typed.
+// ImGui's keyboard-nav cancel runs in NewFrame and has already taken the caret out of the field
+// on an Esc frame (keeping its text), so Esc also counts when the field held the caret last frame.
+void HandleDraftRowKeys(AppController& app, UiDrawSession& d) {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (s_draftTextActiveId == 0) {
+        return;
+    }
+    const bool activeNow = g.ActiveId == s_draftTextActiveId;
+    const bool activeLastFrame = g.ActiveIdPreviousFrame == s_draftTextActiveId;
+    const bool submit = activeNow && (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+                                      ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
+    const bool escape = !submit && (activeNow || activeLastFrame) && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (!submit && !escape) {
+        return;
+    }
+    if (escape && d.newIssueCreateInFlight) {
+        return; // Cancel is disabled while the create runs; Esc waits for it too.
+    }
+    if (activeNow) {
+        ImGui::ClearActiveID();
+    }
+    if (submit) {
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+        if (d.newIssueCreateInFlight) {
+            return;
+        }
+        if (d.newIssueDraft.ProjectKey.empty()) {
+            d.gridEditSuccess.clear();
+            d.gridEditError = SmatchetLocalization::T("draft.project.submit_disabled_tooltip", "Pick a project");
+            return;
+        }
+        TrySubmitNewIssueDraft(app, d);
+        return;
+    }
+    if (DraftHasTypedText(d)) {
+        s_openDiscardConfirmPending = true;
+        return;
+    }
+    DiscardNewIssueDraft(d);
+}
+
 } // namespace
 
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
@@ -640,6 +744,12 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
     // on a worker thread so the returned create-meta becomes per-project required-fields for the next
     // submit attempt — the UI thread cannot block on HTTP.
     MaybeRefetchCatalogForProjectChange(app, d, cfg);
+
+    HandleDraftRowKeys(app, d);
+    if (!d.newIssueDraftActive) {
+        DrawNewIssueInactiveCell(app, d, cfg, lastVisibleTicket);
+        return;
+    }
 
     // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
     const std::unordered_set<std::string> missing(d.newIssueMissingFieldIds.begin(), d.newIssueMissingFieldIds.end());
@@ -665,4 +775,6 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         // Pending scroll is handled after ID column EndGroup; if no Id column, clear stale flag.
         d.newIssueScrollDraftRowIntoViewPending = false;
     }
+    // No Id column drew the popup this frame: drop the request rather than open it later.
+    s_openDiscardConfirmPending = false;
 }
