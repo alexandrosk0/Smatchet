@@ -482,3 +482,57 @@ TEST_CASE("RemoveViewColumn against the Views editor draft") {
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:assignee", "field:priority"});
     }
 }
+
+// A switch from outside the Views dashboard (view.next / view.previous, bound to Ctrl+PageDown / Ctrl+PageUp)
+// asks only when the editor holds an edit of the user's. It cannot rebase the live draft, so it judges a copy.
+TEST_CASE("ViewDraftWouldLoseEditsOnSwitch") {
+    const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 0.0f}, {"field:status", 0.0f}});
+    SUBCASE("an untouched draft loses nothing") {
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, false, ""));
+    }
+    SUBCASE("an edit the user made in the editor would be lost") {
+        ViewDefinition draft = saved;
+        draft.Name = "Renamed";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+        draft = saved;
+        draft.Jql = "status = Open";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+        draft = saved;
+        std::swap(draft.Columns[1], draft.Columns[2]);
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+    }
+    SUBCASE("a change made elsewhere since the draft was synced is not an edit of the user's") {
+        // The grid autosaved a column drag and a rename came in through view.update: the draft is a stale
+        // snapshot (draft == base), not an unsaved edit, so no question is asked.
+        ViewDefinition changed = saved;
+        std::swap(changed.Columns[1], changed.Columns[2]);
+        changed.Name = "Renamed by a command";
+        CHECK(ViewDraftHasUnsavedEdits(saved, changed)); // the raw compare would have read it as "unsaved"
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, changed, false, ""));
+    }
+    SUBCASE("an edit by the user survives a change made elsewhere") {
+        ViewDefinition draft = saved;
+        draft.Jql = "assignee = me";
+        ViewDefinition changed = saved;
+        changed.Name = "Renamed by a command";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, changed, false, ""));
+    }
+    SUBCASE("a rename still being typed counts: it has not reached the draft yet") {
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, true, "New name"));
+        // The title box opened and nothing was typed: the buffer holds the saved name.
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, true, saved.Name));
+        // A closed title box's buffer is a display mirror and never counts.
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, false, "stale text"));
+    }
+    SUBCASE("the caller's draft and base are not touched") {
+        ViewDefinition draft = saved;
+        draft.Name = "Renamed";
+        ViewDefinition base = saved;
+        ViewDefinition changed = saved;
+        changed.Jql = "x = 1";
+        ViewDraftWouldLoseEditsOnSwitch(draft, base, changed, false, "");
+        CHECK(draft.Name == "Renamed");
+        CHECK(draft.Jql == saved.Jql);
+        CHECK(base.Jql == saved.Jql);
+    }
+}

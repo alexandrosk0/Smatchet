@@ -9,6 +9,7 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 #include "ConfigManager.h"
+#include "SmatchetUiSession.h"
 #include "ViewColumnsPure.h"
 #include "ViewCyclePure.h"
 #include "Views.h"
@@ -18,6 +19,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// The shared UI-thread session; the file-static definition lives in SmatchetUI.cpp (see
+// BuiltinCommands_Ui.cpp). view.next / view.previous read the Views editor's draft from it.
+extern UiDrawSession g_ui;
 
 // The include block + namespace-open + first-JSON-builder-function shape below matches
 // PaneCommands.cpp's own opening token-for-token — every Commands/*.cpp command-group file
@@ -219,6 +224,9 @@ void RegisterViewStepCommand(AppController& app, Views& views, CommandRegistry& 
                          : "Switch to the previous view in the view list (wraps from the first to the last) and "
                            "sync it.";
     c.Description = "Returns {activated: <view id>}, plus unchanged: true when the only view is already active. "
+                    "When the Views editor holds edits that were not applied, nothing is switched: the "
+                    "'Discard changes?' question is raised instead and the result is {activated: null, "
+                    "pendingConfirm: <view id>}. "
                     "With no active view, the next view is the first one and the "
                     "previous view is the last one. Fails with NotFound when there are no views.\n"
                     "Example: Smatchet.exe cmd " +
@@ -239,6 +247,23 @@ void RegisterViewStepCommand(AppController& app, Views& views, CommandRegistry& 
             }
             // Copied: activation persists and syncs, and the id must outlive any change to the store.
             const std::string id = store.Views[static_cast<std::size_t>(target)].Id;
+            // The same guard a sidebar click gets (viewsRequestActivate): edits in the Views editor the
+            // user has not applied are not thrown away by a key. Ask first, on the dashboard, which is
+            // raised so the question is on screen. Only a draft that belongs to the active view counts; it
+            // is judged on a rebased copy, with a rename still being typed counted (see the helper).
+            if (activeIndex >= 0 && target != activeIndex && g_ui.viewDraftId == store.ActiveViewId &&
+                ViewDraftWouldLoseEditsOnSwitch(g_ui.viewDraft, g_ui.viewDraftBase,
+                                                store.Views[static_cast<std::size_t>(activeIndex)],
+                                                g_ui.viewsTitleEditing, g_ui.viewNameBuf)) {
+                g_ui.viewsPendingActivateId = id;
+                g_ui.viewsShowDiscardConfirm = true;
+                g_ui.showViewsDashboard = true;
+                g_ui.requestViewsDashboardFocus = true;
+                nlohmann::json pending;
+                pending["activated"] = nullptr;
+                pending["pendingConfirm"] = id;
+                return CommandResult::Success(std::move(pending));
+            }
             if (target == activeIndex) {
                 // The only view: already active, so nothing to save or re-sync.
                 nlohmann::json out;

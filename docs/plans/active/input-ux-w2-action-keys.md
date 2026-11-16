@@ -60,7 +60,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 
 **Global commands (#65, #79)**
 
-8. `Source/Core/src/Commands/ViewCommands.cpp` — `view.next` / `view.previous`, sharing a helper with `view.activate`.
+8. `Source/Core/src/Commands/ViewCommands.cpp` — `view.next` / `view.previous`, sharing a helper with `view.activate`. With unapplied edits in the Views editor (a draft for the active view that differs from it) they do not switch: they raise the same "Discard changes?" confirm a sidebar click does, bring the dashboard forward, and return `{activated: null, pendingConfirm: <id>}`. The check is the pure `ViewDraftWouldLoseEditsOnSwitch` (`ViewColumnsPure.h`): it rebases copies of the draft onto the saved view, as the dashboard does before a sidebar click, so a grid drag or a `view.update` is not read as an edit, and it counts a rename still being typed in the title box.
 9. `Source/Core/include/ViewCyclePure.h` (new) — `CycleViewIndex`.
 10. `Source/Core/src/Commands/Builtin/BuiltinCommands_Ui.cpp` — `preferences.search.focus`.
 11. `Source/Core/include/Ui/SmatchetPrefsSearchFocus.h` (new) — the request seam.
@@ -86,7 +86,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 **Tests** (existing, already-registered files only — see § Risks, plan-lock)
 
 24. `tests/Core/SmatchetIconButtons.test.cpp` — `SubmitKeysPure` cases.
-25. `tests/Core/ViewsClass.test.cpp` — `CycleViewIndex` cases.
+25. `tests/Core/ViewsClass.test.cpp` — `CycleViewIndex` cases; `tests/Core/ViewColumnsPure.test.cpp` — `ViewDraftWouldLoseEditsOnSwitch` cases.
 26. `tests/Core/PreferencesFilter.test.cpp` — first-match focus request.
 27. `tests/Core/DictationInsertionRouter.test.cpp` — discard flag.
 28. `tests/Core/KeybindingsConfig.test.cpp`, `tests/Core/ConfigMigration.test.cpp` — defaults parity, migration seed.
@@ -136,6 +136,7 @@ N/A — no file is split. The new helper TU is small; touched TUs stay under the
 
 - **Plan-lock contention.** Other branches hold `SmatchetLocalization.cpp`, `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`, `SmatchetUiSession.h`, `SmatchetGridHeaderUi.cpp` and `SmatchetQuickCreateIssueUi.cpp`. Mitigation: tests go into already-registered test files, session state stays file-local, the grid-header and quick-create button hints wait, and the fr-FR rows for the new keys are added once `SmatchetLocalization.cpp` is free (English fallbacks render until then, as Wave 1 did).
 - **Merge with #2435.** It edits `KeybindingsConfig.cpp`, `ConfigManager*` and `BuiltinCommands_Ui.cpp` in nearby lines; the new rows are placed in separate hunks (after the quick-create row, after the existing migrations). Accepted.
+- **A key must not skip a guard the pointer path has.** `Ctrl+PageDown` is typing-safe, so it fires while the caret is in the Views editor's query field. `view.activate` (CLI, palette, MCP) has always switched without the unsaved-changes confirm; the step commands do not inherit that gap (review finding, fixed). `view.activate` itself is unchanged.
 - **`Ctrl+PageUp` / `Ctrl+PageDown`** also page-scroll an ImGui window that has keyboard nav. Accepted: the combo is what browsers and editors use for tab switching; rebindable.
 - **`Alt+M` / `Alt+T` on macOS** type `µ` / `†` into a focused field as well. Accepted: the pick replaces the field anyway.
 - **Esc during dictation** also reaches the window that has the keyboard, because the overlay is drawn after the windows and reads Esc app-wide. With text typed, the field is only left and nothing is lost. On an untouched dialog (an empty comment box, an untouched Log work) the same Esc also closes it. Accepted for now: nothing typed is lost either way. Taking Esc for the overlay before the dialogs read it needs key-ownership routing (`SetKeyOwner` with `LockThisFrame` early in the frame), which cannot be exercised without a bucket-E run; follow-up.

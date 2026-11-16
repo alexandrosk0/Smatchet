@@ -297,6 +297,40 @@ void CheckViewSwitchKeys(ImGuiTestContext* ctx, AppController* app) {
         }
         IM_CHECK_NO_RET(movedBack);
 
+        // Unapplied edits in the Views editor are not thrown away by the key: it asks first (the same
+        // "Discard changes?" a sidebar click raises), keeps the draft and stays on the active view.
+        g_ui.cfg.BackendHasBeenReachable = true; // the first-launch gate on drawViewsDashboardWindow
+        g_ui.showViewsDashboard = true;
+        ImGuiWindow* editor = nullptr;
+        const bool draftLive = YieldUntil(ctx, [&] {
+            g_ui.requestViewsDashboardFocus = true;
+            editor = FindLiveEditorPane();
+            return editor != nullptr && g_ui.viewDraftId == start;
+        });
+        IM_CHECK_NO_RET(draftLive);
+        if (draftLive) {
+            g_ui.viewDraft.Name += "_unapplied";
+            ctx->Yield(2);
+            ImGui::ClearActiveID();
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown);
+            // The dashboard turns the show flag into the open popup on the next draw, so the pending id,
+            // which stays until the question is answered, is the lasting sign that it was asked.
+            const bool asked = YieldUntil(ctx, [] { return !g_ui.viewsPendingActivateId.empty(); }, 60);
+            if (!asked) {
+                ctx->LogError("Ctrl+PageDown with unapplied editor edits did not ask before switching");
+            }
+            IM_CHECK_NO_RET(asked);
+            IM_CHECK_NO_RET(CurrentViewId(ctx, app) == start);                            // nothing was switched
+            IM_CHECK_NO_RET(g_ui.viewDraft.Name.find("_unapplied") != std::string::npos); // the draft is kept
+            // Esc answers the question as Cancel does: it clears the pending switch and keeps the view.
+            ctx->KeyPress(ImGuiKey_Escape);
+            const bool answered = YieldUntil(ctx, [] { return g_ui.viewsPendingActivateId.empty(); }, 60);
+            IM_CHECK_NO_RET(answered);
+            IM_CHECK_NO_RET(CurrentViewId(ctx, app) == start);
+            g_ui.viewDraftId = kReseedSentinel; // the next case starts from a clean draft
+            ctx->Yield(2);
+        }
+
         // Enter in the views search box opens the first view it lists: with view A active, search B.
         nlohmann::json activateA;
         activateA["id"] = created[0];
