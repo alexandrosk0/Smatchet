@@ -1,9 +1,17 @@
 #include <doctest/doctest.h>
 
 #include "IssueDraft.h"
+#include "DraftStore.h"
+
+#include <ghc/filesystem.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -451,4 +459,146 @@ TEST_CASE("IssueDraftHelpers::DefaultNewIssueInheritFieldIds returns the canonic
     CHECK(std::find(ids.begin(), ids.end(), "issuetype") != ids.end());
     CHECK(std::find(ids.begin(), ids.end(), "priority") != ids.end());
     CHECK(std::find(ids.begin(), ids.end(), "labels") != ids.end());
+}
+
+// DraftStore (DraftStore.h) — the process-wide store of what the user typed and has not sent, and its
+// file worker (docs/plans/input-ux-w2-drafts-undo.md). These cases drive the real worker against a
+// scratch file: a draft written before a clean stop comes back after a restart; one that was never
+// stopped still reaches the disk after the debounce (a crash); a draft typed while the file loads wins
+// over the copy on disk; a malformed file loads nothing. Each case leaves the store stopped and empty.
+namespace {
+
+namespace dfs = ghc::filesystem;
+
+class DraftScratchFile {
+  public:
+    DraftScratchFile() {
+        const auto unique =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        dir_ = dfs::temp_directory_path() / ("smatchet_drafts_" + std::to_string(unique));
+        std::error_code ec;
+        dfs::create_directories(dir_, ec);
+        smatchet::drafts::Stop();
+        smatchet::drafts::ResetForTests();
+    }
+    ~DraftScratchFile() {
+        smatchet::drafts::Stop();
+        smatchet::drafts::ResetForTests();
+        std::error_code ec;
+        dfs::remove_all(dir_, ec);
+    }
+    std::string Path() const { return (dir_ / "smatchet_drafts.json").string(); }
+    std::string Read() const {
+        std::ifstream in(Path(), std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+
+  private:
+    dfs::path dir_;
+};
+
+template <typename Pred> bool WaitFor(Pred done, int timeoutMs = 5000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (!done()) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return true;
+}
+
+bool GetDraftText(const std::string& surface, const std::string& scope, std::string& out) {
+    smatchet::drafts::DraftEntry entry;
+    if (!smatchet::drafts::Get(surface, scope, entry)) {
+        return false;
+    }
+    out = entry.Text;
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("DraftStore: a draft saved before a clean stop comes back after a restart") {
+    DraftScratchFile file;
+    smatchet::drafts::Start(file.Path());
+    REQUIRE(WaitFor([]() { return smatchet::drafts::IsLoaded(); }));
+    CHECK(smatchet::drafts::Put("comments", "site|PROJ-1", "half a comment"));
+    CHECK(smatchet::drafts::Put("longtext", "PROJ-1|description", "edited", "saved"));
+    smatchet::drafts::Stop();
+    CHECK(file.Read().find("half a comment") != std::string::npos);
+
+    // A new run: nothing in memory, the file is read at Start.
+    smatchet::drafts::ResetForTests();
+    std::string text;
+    CHECK_FALSE(GetDraftText("comments", "site|PROJ-1", text));
+    smatchet::drafts::Start(file.Path());
+    REQUIRE(WaitFor([]() { return smatchet::drafts::IsLoaded(); }));
+    REQUIRE(GetDraftText("comments", "site|PROJ-1", text));
+    CHECK(text == "half a comment");
+    smatchet::drafts::DraftEntry entry;
+    REQUIRE(smatchet::drafts::Get("longtext", "PROJ-1|description", entry));
+    CHECK(entry.Base == "saved");
+}
+
+TEST_CASE("DraftStore: a draft reaches the disk while running, with no stop (a crash keeps it)") {
+    DraftScratchFile file;
+    smatchet::drafts::Start(file.Path());
+    REQUIRE(WaitFor([]() { return smatchet::drafts::IsLoaded(); }));
+    smatchet::drafts::Put("assistant", "", "a long prompt");
+    CHECK(WaitFor([&file]() { return file.Read().find("a long prompt") != std::string::npos; }));
+
+    // An erase reaches the disk the same way.
+    smatchet::drafts::Erase("assistant", "");
+    CHECK(WaitFor([&file]() {
+        const std::string body = file.Read();
+        return !body.empty() && body.find("a long prompt") == std::string::npos;
+    }));
+}
+
+TEST_CASE("DraftStore: a draft typed while the file loads wins over the copy on disk") {
+    DraftScratchFile file;
+    {
+        std::ofstream out(file.Path(), std::ios::binary);
+        out << R"({"version":1,"drafts":[)"
+               R"({"surface":"comments","scope":"A","text":"on disk","updated":1},)"
+               R"({"surface":"comments","scope":"B","text":"only on disk","updated":1}]})";
+    }
+    smatchet::drafts::Start(file.Path());
+    smatchet::drafts::Put("comments", "A", "typed now");
+    REQUIRE(WaitFor([]() { return smatchet::drafts::IsLoaded(); }));
+    std::string text;
+    REQUIRE(GetDraftText("comments", "A", text));
+    CHECK(text == "typed now");
+    REQUIRE(GetDraftText("comments", "B", text));
+    CHECK(text == "only on disk");
+}
+
+TEST_CASE("DraftStore: a malformed file loads nothing and the store still works") {
+    DraftScratchFile file;
+    {
+        std::ofstream out(file.Path(), std::ios::binary);
+        out << "{ this is not json";
+    }
+    smatchet::drafts::Start(file.Path());
+    REQUIRE(WaitFor([]() { return smatchet::drafts::IsLoaded(); }));
+    std::string text;
+    CHECK_FALSE(GetDraftText("comments", "A", text));
+    CHECK(smatchet::drafts::Put("comments", "A", "fresh"));
+    smatchet::drafts::Stop();
+    CHECK(file.Read().find("fresh") != std::string::npos);
+}
+
+TEST_CASE("DraftStore: without Start it keeps drafts in memory and rejects one over the bound") {
+    smatchet::drafts::Stop();
+    smatchet::drafts::ResetForTests();
+    CHECK(smatchet::drafts::IsLoaded());
+    CHECK(smatchet::drafts::Put("comments", "A", "in memory"));
+    std::string text;
+    REQUIRE(GetDraftText("comments", "A", text));
+    CHECK(text == "in memory");
+    CHECK_FALSE(smatchet::drafts::Put("comments", "A", std::string(200u * 1024u, 'x')));
+    CHECK_FALSE(GetDraftText("comments", "A", text));
+    smatchet::drafts::ResetForTests();
 }

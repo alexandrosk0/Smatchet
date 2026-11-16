@@ -190,3 +190,11 @@ TEST_CASE("ShouldKeepRestoreKey drops a remembered tab once its window is open a
     CHECK(pure::ShouldKeepRestoreKey(false));
     CHECK_FALSE(pure::ShouldKeepRestoreKey(true));
 }
+
+TEST_CASE("ShouldHideOnDragEnd hides only on a release while armed, and never after Esc cancelled the drag") {
+    CHECK(pure::ShouldHideOnDragEnd(/*armed=*/true, /*released=*/true, /*escCancelled=*/false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, true, /*escCancelled=*/true));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(/*armed=*/false, true, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, /*released=*/false, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(false, false, true));
+}

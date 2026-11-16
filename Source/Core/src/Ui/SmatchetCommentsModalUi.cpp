@@ -4,6 +4,7 @@
 #include "AppController.h"
 #include "CachedTicketTypes.h"
 #include "DataFreshnessCue.h"
+#include "DraftStore.h"
 #include "ITrackerCollaboration.h"
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
@@ -105,7 +106,19 @@ struct CommentsModalState {
     bool PostEnabled = false;
     /// Esc in a box with no text in it: the shell closes the viewer (through its discard guard).
     bool CloseRequested = false;
+    /// The draft store scope of this open: tracker site and issue. Empty = no draft is kept.
+    std::string DraftScope;
+    /// The post box was filled from a draft kept by an earlier open, and nothing was typed since.
+    bool DraftRestored = false;
 };
+
+/// The draft store surface of the post box (DraftStore.h).
+constexpr const char* kCommentsDraftSurface = "comments";
+
+/// Tracker site and issue: two sites never share a draft for the same key.
+std::string CommentsDraftScope(const std::string& backendKey, const std::string& issueId) {
+    return backendKey + "|" + issueId;
+}
 
 CommentsModalState s_CommentsState;
 
@@ -480,8 +493,13 @@ void DrawCommentsThreadPane(AppController& app, smatchet::offline::DataFreshness
 /// UI-thread end of a post: toast what actually happened (posted, saved offline, or failed). A posted
 /// or queued comment clears the box — a queued one shows in the thread from the queue snapshot — and a
 /// posted one reloads the thread. Only the same open of this issue's modal is touched (OpenGen).
-void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen,
-                            const PendingActionSubmitResult& result) {
+void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen, const std::string& draftScope,
+                            const std::string& postedBody, const PendingActionSubmitResult& result) {
+    if (result.K != PendingActionSubmitResult::Kind::Failed && !draftScope.empty()) {
+        // Sent or saved to the queue: the draft is done, whether or not the modal is still open. Only
+        // while it still holds what was posted: text typed since stays.
+        smatchet::drafts::EraseIfText(kCommentsDraftSurface, draftScope, postedBody);
+    }
     switch (result.K) {
     case PendingActionSubmitResult::Kind::Sent:
         SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
@@ -525,15 +543,16 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
 /// Post on a worker (Pillar 2): sent now, or saved to the pending-action queue when the tracker is
 /// unreachable (Pillar 6). As with the load, PostInFlight is published only after the launch returned
 /// and the worker always posts a result, a throw included, so Post can never stay disabled.
-void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
+void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen,
+                     const std::string& draftScope) {
     AppController* appPtr = &app;
     // Latched at Post: the comment goes to this pane's tracker even if focus moves before the worker runs.
     const PendingActionTarget target = app.LatchPendingActionTarget();
     try {
         smatchet::ui::SubmitPendingActionAsync(
             app, [appPtr, target, issueId, body]() { return appPtr->SubmitOrQueueComment(target, issueId, body); },
-            [appPtr, issueId, openGen](const PendingActionSubmitResult& result) {
-                ApplyCommentPostResult(*appPtr, issueId, openGen, result);
+            [appPtr, issueId, openGen, draftScope, body](const PendingActionSubmitResult& result) {
+                ApplyCommentPostResult(*appPtr, issueId, openGen, draftScope, body, result);
             });
         s_CommentsState.PostInFlight = true;
     } catch (const std::exception& ex) {
@@ -593,6 +612,12 @@ bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
         ImGui::InputTextMultiline("##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize,
                                   ImVec2(-FLT_MIN, 80.0f), ImGuiInputTextFlags_EnterReturnsTrue);
     st.ComposerActive = ImGui::IsItemActive();
+    if (ImGui::IsItemEdited() && !st.DraftScope.empty()) {
+        // Kept as it is typed (an empty box erases the draft), so a close, a replace by another issue or
+        // a crash does not lose it. A map update; the file is written off the UI thread.
+        st.DraftRestored = false;
+        smatchet::drafts::Put(kCommentsDraftSurface, st.DraftScope, std::string(st.PostBuf.data()));
+    }
     ImGui::PopID();
     return ctrlEnter && !disabled;
 }
@@ -615,6 +640,10 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
                                                           "posted when the tracker is reachable."));
     }
 
+    if (s_CommentsState.DraftRestored && s_CommentsState.PostBuf.data()[0] != '\0') {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.draft_restored",
+                                                          "Draft restored from your last session on this issue."));
+    }
     if (disabled) {
         ImGui::BeginDisabled();
     }
@@ -639,7 +668,7 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     if ((clicked || ctrlEnter) && s_CommentsState.PostEnabled) {
         const bool fromKeyboard = ctrlEnter && !clicked;
         KickCommentPost(app, s_CommentsState.IssueId, std::string(s_CommentsState.PostBuf.data()),
-                        s_CommentsState.OpenGen);
+                        s_CommentsState.OpenGen, s_CommentsState.DraftScope);
         // Sent from the keyboard: the caret returns when the result arrives, or at once when the
         // post could not start.
         s_CommentsState.PostSentFromKeyboard = fromKeyboard && s_CommentsState.PostInFlight;
@@ -688,6 +717,13 @@ class CommentsViewerContent final : public IFieldViewerContent {
         s_CommentsState.CloseRequested = false;
         return requested;
     }
+    // The user chose to throw the comment away: the kept draft goes with it. A plain close, a replace by
+    // another viewer or an exit keeps it for the next open.
+    void OnDiscard() override {
+        if (!s_CommentsState.DraftScope.empty()) {
+            smatchet::drafts::Erase(kCommentsDraftSurface, s_CommentsState.DraftScope);
+        }
+    }
     // Resets s_CommentsState, so Active=false drops any late load / post post-back.
     void OnClose() override { CloseCommentsModal(); }
 };
@@ -708,9 +744,19 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
     s_CommentsState.OpenGen = s_CommentsState.Gen;
     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+    s_CommentsState.DraftScope = CommentsDraftScope(app.FocusedCacheBackendKey(), issueId);
     if (!prefillBody.empty()) {
+        // A template or other caller supplied the text: it is what the user asked for, so it wins over a
+        // kept draft (which stays stored until the box is edited).
         const std::size_t copyLen = (std::min)(prefillBody.size(), CommentsModalState::kPostBufferSize - 1);
         std::memcpy(s_CommentsState.PostBuf.data(), prefillBody.data(), copyLen);
+    } else {
+        smatchet::drafts::DraftEntry draft;
+        if (smatchet::drafts::Get(kCommentsDraftSurface, s_CommentsState.DraftScope, draft) && !draft.Text.empty()) {
+            const std::size_t copyLen = (std::min)(draft.Text.size(), CommentsModalState::kPostBufferSize - 1);
+            std::memcpy(s_CommentsState.PostBuf.data(), draft.Text.data(), copyLen);
+            s_CommentsState.DraftRestored = true;
+        }
     }
     CommentsLoadRequest req;
     req.IssueId = issueId;
@@ -748,6 +794,7 @@ CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
     snap.ComposerActive = s_CommentsState.ComposerActive;
     snap.PostEnabled = s_CommentsState.PostEnabled;
     snap.PostInFlight = s_CommentsState.PostInFlight;
+    snap.DraftRestored = s_CommentsState.DraftRestored;
     if (!s_CommentsState.PostBuf.empty()) {
         snap.PostDraft = s_CommentsState.PostBuf.data();
     }

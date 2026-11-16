@@ -8,6 +8,7 @@
 
 #include "AppController.h"
 #include "CachedTicketTypes.h"
+#include "DraftStore.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h" // the posts the fixture tracker received
@@ -241,6 +242,7 @@ static void RegisterFieldViewerHistoryReplacesComments(ImGuiTestEngine* engine) 
     if (!OfflineFirstFixtureActive(ctx)) {                                                                             \
         return;                                                                                                        \
     }                                                                                                                  \
+    smatchet::drafts::ResetForTests(); /* a draft one case leaves must not prefill the next */                         \
     smatchet_tests::ScopedFakeNetworkReset networkReset;                                                               \
     BucketE::UiTestWriteScope writeScope;                                                                              \
     AppController* app = SmatchetActiveUiTestAppController();                                                          \
@@ -573,6 +575,118 @@ static void RegisterLongTextTitleBarCloseKeepsText(ImGuiTestEngine* engine) {
     };
 }
 
+// The draft store key the comments box uses for `issueId` on the focused tracker.
+static std::string CommentsDraftScopeForTest(AppController& app, const char* issueId) {
+    return app.FocusedCacheBackendKey() + "|" + issueId;
+}
+
+// OfflineFirst/Comments_DraftSurvivesReplaceAndComesBack: what is typed in the comment box is kept as it
+// is typed. Opening another issue's comments (which replaces the viewer) does not lose it, and opening
+// the first issue again brings it back with a line that says so.
+static void RegisterCommentsDraftSurvivesReplace(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DraftSurvivesReplaceAndComesBack");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket first = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("kept across a close");
+        ctx->Yield(2);
+
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "kept across a close");
+
+        const CachedTicket second = MakeTicketWithHistory("OFF-2", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, second, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "");
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().DraftRestored);
+
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "kept across a close");
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().DraftRestored);
+        CloseCommentsViewer(ctx); // discards: the box is not empty
+    };
+}
+
+// OfflineFirst/Comments_DiscardErasesTheKeptDraft: Esc asks, and choosing "Discard comment" throws the
+// text away for good: nothing is kept, and the next open starts with an empty box.
+static void RegisterCommentsDiscardErasesDraft(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DiscardErasesTheKeptDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("to be thrown away");
+        ctx->Yield(2);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        ctx->KeyPress(ImGuiKey_Escape); // leaves the box
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Escape); // asks
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        IM_CHECK_NO_RET(ClickInTopModal(ctx, "Discard comment"));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 30, []() { return !GetFieldViewerSnapshotForTests().Active; }));
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "");
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().DraftRestored);
+        CloseCommentsViewer(ctx);
+    };
+}
+
+// OfflineFirst/LongText_DraftComesBackOnReopen: the edit typed in the long-text editor is kept per issue
+// and field. Closing the editor without answering the question (here the way a replace or an exit does,
+// by dropping its state) leaves it, and the next open puts it back with the dirty guard armed; "Discard
+// changes" erases it.
+static void RegisterLongTextDraftComesBack(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "LongText_DraftComesBackOnReopen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        OpenLongTextForTest(*app, "seed text");
+        IM_CHECK_NO_RET(TypeIntoLongText(ctx, "abc"));
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+        IM_CHECK_NO_RET(stored.Text.find("abc") != std::string::npos);
+        IM_CHECK_STR_EQ_NO_RET(stored.Base.c_str(), "seed text");
+
+        CloseLongTextEditor(); // not a discard: the draft stays
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+
+        OpenLongTextForTest(*app, "seed text");
+        IM_CHECK_NO_RET(YieldUntil(ctx, 30, []() { return SmatchetTest_GetLongTextEditorSnapshot().Active; }));
+        ctx->Yield(3);
+        const LongTextEditorTestSnapshot restored = SmatchetTest_GetLongTextEditorSnapshot();
+        IM_CHECK_NO_RET(restored.DraftRestored);
+        IM_CHECK_NO_RET(restored.Dirty);
+        IM_CHECK_NO_RET(restored.Buffer.find("abc") != std::string::npos);
+
+        // Esc asks (the restored text is unsaved), and discarding erases the draft.
+        CloseLongTextForTest(ctx);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().Active);
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+
+        OpenLongTextForTest(*app, "seed text");
+        ctx->Yield(4);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().DraftRestored);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().Dirty);
+        CloseLongTextForTest(ctx);
+    };
+}
+
 #undef SMATCHET_INPUT_CASE_PREAMBLE
 
 extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
@@ -592,6 +706,9 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterLongTextEscWithTextAsksAndKeeps(engine);
     RegisterLongTextCancelAsksDiscardCloses(engine);
     RegisterLongTextTitleBarCloseKeepsText(engine);
+    RegisterCommentsDraftSurvivesReplace(engine);
+    RegisterCommentsDiscardErasesDraft(engine);
+    RegisterLongTextDraftComesBack(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -1,4 +1,5 @@
 #include "SmatchetGridUiSupport.h"
+#include "DraftStore.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -31,7 +32,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -1201,18 +1201,14 @@ static bool g_conflictEscUnsavedHint = false;         // Esc was pressed around 
 static std::string g_conflictSeed;                    // the resolved field as opened: the "nothing typed" baseline
 static bool g_conflictDraftRestored = false;          // the field opened with a resolution kept from a Cancel
 
-// A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. `Seed`
-// is the field as the resolver opened it then: the text comes back only into a conflict that opens with
-// the same seed, so it never lands on a conflict whose two sides have changed, nor on another edit that
-// was given the same queue id later.
-struct ConflictDraft {
-    std::string Seed;
-    std::string Text;
-};
+// A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. It lives
+// in the draft store (DraftStore.h, surface "offline.conflict", scope = the queue id), so it also survives
+// a restart. The entry's base is the field as the resolver opened it then (`g_conflictSeed`): the text
+// comes back only into a conflict that opens with the same seed, so it never lands on a conflict whose two
+// sides have changed, nor on another edit that was given the same queue id later.
+static const char* const kConflictDraftSurface = "offline.conflict";
 
-// Kept while the app runs, by queue id. Bounded: a resolver is cancelled by hand, a few times a session.
-static std::map<std::int64_t, ConflictDraft> g_conflictDrafts;
-static const std::size_t kConflictDraftsMax = 16;
+static std::string ConflictDraftScope(std::int64_t dbId) { return std::to_string(static_cast<long long>(dbId)); }
 
 static void ResetConflictKeyboardState() {
     g_conflictFocusFieldPending = false;
@@ -1227,46 +1223,36 @@ static bool KeepConflictDraft(const UiDrawSession& d) {
         return false;
     }
     const std::string typed(d.conflictResolveBuf.data());
+    const std::string scope = ConflictDraftScope(d.conflictResolveDbId);
     if (typed == g_conflictSeed) {
-        g_conflictDrafts.erase(d.conflictResolveDbId);
+        smatchet::drafts::Erase(kConflictDraftSurface, scope);
         return false;
     }
-    ConflictDraft& draft = g_conflictDrafts[d.conflictResolveDbId];
-    draft.Seed = g_conflictSeed;
-    draft.Text = typed;
-    // Over the bound, the lowest queue id goes first: the oldest edit, and never the one just kept
-    // unless it is the only one left.
-    while (g_conflictDrafts.size() > kConflictDraftsMax) {
-        auto oldest = g_conflictDrafts.begin();
-        if (oldest->first == d.conflictResolveDbId) {
-            ++oldest;
-        }
-        g_conflictDrafts.erase(oldest);
-    }
-    return true;
+    return smatchet::drafts::Put(kConflictDraftSurface, scope, typed, g_conflictSeed);
 }
 
 // On open, after the field is seeded: puts back the resolution kept for this edit, when the conflict
 // still opens the way it did then.
 static void RestoreConflictDraft(UiDrawSession& d) {
     g_conflictDraftRestored = false;
-    const auto it = g_conflictDrafts.find(d.conflictResolveDbId);
-    if (it == g_conflictDrafts.end()) {
+    const std::string scope = ConflictDraftScope(d.conflictResolveDbId);
+    smatchet::drafts::DraftEntry draft;
+    if (!smatchet::drafts::Get(kConflictDraftSurface, scope, draft)) {
         return;
     }
-    if (d.conflictResolveBuf.empty() || it->second.Seed != g_conflictSeed) {
-        g_conflictDrafts.erase(it);
+    if (d.conflictResolveBuf.empty() || draft.Base != g_conflictSeed) {
+        smatchet::drafts::Erase(kConflictDraftSurface, scope);
         return;
     }
-    const std::size_t n = (std::min)(it->second.Text.size(), d.conflictResolveBuf.size() - 1);
+    const std::size_t n = (std::min)(draft.Text.size(), d.conflictResolveBuf.size() - 1);
     std::fill(d.conflictResolveBuf.begin(), d.conflictResolveBuf.end(), '\0');
-    std::memcpy(d.conflictResolveBuf.data(), it->second.Text.data(), n);
+    std::memcpy(d.conflictResolveBuf.data(), draft.Text.data(), n);
     g_conflictDraftRestored = true;
 }
 
 // "Start over": the field goes back to what the resolver opens with, and the kept resolution is dropped.
 static void DropConflictDraft(UiDrawSession& d) {
-    g_conflictDrafts.erase(d.conflictResolveDbId);
+    smatchet::drafts::Erase(kConflictDraftSurface, ConflictDraftScope(d.conflictResolveDbId));
     g_conflictDraftRestored = false;
     g_conflictEscUnsavedHint = false;
     if (d.conflictResolveBuf.empty()) {
@@ -1279,7 +1265,7 @@ static void DropConflictDraft(UiDrawSession& d) {
 }
 
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
-    g_conflictDrafts.erase(d.conflictResolveDbId);
+    smatchet::drafts::Erase(kConflictDraftSurface, ConflictDraftScope(d.conflictResolveDbId));
     d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
@@ -1299,8 +1285,8 @@ static void CancelConflictModal(UiDrawSession& d) {
     ResetConflictKeyboardState();
     ImGui::CloseCurrentPopup();
     if (kept) {
-        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.draft_kept",
-                                                              "What you typed is kept until Smatchet closes. "
+        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.draft_saved",
+                                                              "What you typed is saved, also if Smatchet closes. "
                                                               "Open the conflict again to go on with it."));
     }
 }
@@ -1692,7 +1678,7 @@ bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsa
 bool SmatchetOfflineConflictDraftRestoredForTest() { return g_conflictDraftRestored; }
 
 void SmatchetOfflineConflictDraftsClearForTest() {
-    g_conflictDrafts.clear();
+    smatchet::drafts::EraseSurface(kConflictDraftSurface);
     g_conflictDraftRestored = false;
 }
 

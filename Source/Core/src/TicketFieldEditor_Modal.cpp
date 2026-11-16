@@ -1,4 +1,5 @@
 #include "TicketFieldEditor.h"
+#include "DraftStore.h"
 #include "TicketFieldEditor_detail.h"
 
 #include "Commands/IAppThreading.h"
@@ -124,6 +125,11 @@ struct ActiveLongTextEditorState {
     /// Generation token of this open. Worker compares against current LoadGen on post-back and
     /// discards if the user opened a different editor since dispatch.
     int LoadGen = 0;
+    /// The buffer was filled from an unsaved edit kept by an earlier open (DraftStore, surface "longtext").
+    bool DraftRestored = false;
+    /// That kept edit started from text that is not what the editor was seeded with this time: the saved
+    /// value changed in between.
+    bool DraftBaseChanged = false;
 };
 
 ActiveLongTextEditorState s_ActiveLongTextState;
@@ -216,6 +222,60 @@ void DrawLongTextSourcePane() {
 
 // Draws the required-field marker and the loading / raw-HTML / dropped-ADF-nodes fidelity banners
 // at the top of the modal. Extracted verbatim from RenderLongTextModal; behaviour byte-identical.
+// ---- Kept edit (docs/plans/input-ux-w2-drafts-undo.md): an unsaved edit survives a close, a restart and
+// a crash, per issue and field. The draft is the buffer plus the seed it started from.
+constexpr const char* kLongTextDraftSurface = "longtext";
+
+std::string LongTextDraftScope() { return s_ActiveLongTextState.IssueId + "|" + s_ActiveLongTextState.Field.Id; }
+
+// Keeps the buffer as the draft while it differs from the seed; erases the draft when it does not (a
+// value typed back to the original is no edit). Never while the value is still loading.
+void SaveLongTextDraft() {
+    const ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    if (!st.Active || st.LoadingMarkdown || st.Buffer.empty()) {
+        return;
+    }
+    const std::string text(st.Buffer.data());
+    if (text == st.BufferSeedShown) {
+        smatchet::drafts::Erase(kLongTextDraftSurface, LongTextDraftScope());
+    } else {
+        smatchet::drafts::Put(kLongTextDraftSurface, LongTextDraftScope(), text, st.BufferSeedShown);
+    }
+}
+
+void EraseLongTextDraft() { smatchet::drafts::Erase(kLongTextDraftSurface, LongTextDraftScope()); }
+
+// After the buffer holds the seed: puts back the edit kept for this issue and field, when there is one.
+void RestoreLongTextDraft() {
+    ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    st.DraftRestored = false;
+    st.DraftBaseChanged = false;
+    smatchet::drafts::DraftEntry draft;
+    if (st.Buffer.empty() || !smatchet::drafts::Get(kLongTextDraftSurface, LongTextDraftScope(), draft) ||
+        draft.Text.empty() || draft.Text == st.BufferSeedShown) {
+        return;
+    }
+    const std::size_t copy = (std::min)(draft.Text.size(), ActiveLongTextEditorState::kBufferSize - 1);
+    std::memcpy(st.Buffer.data(), draft.Text.data(), copy);
+    st.Buffer[copy] = '\0';
+    st.DraftRestored = true;
+    st.DraftBaseChanged = draft.Base != st.BufferSeedShown;
+}
+
+// "Use saved text": the buffer goes back to the seed and the kept edit is dropped.
+void DropRestoredLongTextDraft() {
+    ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    EraseLongTextDraft();
+    st.DraftRestored = false;
+    st.DraftBaseChanged = false;
+    if (st.Buffer.empty()) {
+        return;
+    }
+    const std::size_t copy = (std::min)(st.BufferSeedShown.size(), ActiveLongTextEditorState::kBufferSize - 1);
+    std::memset(st.Buffer.data(), 0, st.Buffer.size());
+    std::memcpy(st.Buffer.data(), st.BufferSeedShown.data(), copy);
+}
+
 void DrawLongTextBanners() {
     ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(), s_ActiveLongTextState.IssueId.c_str());
     // Required-field marker: red asterisk with tooltip, mirrors the inline-glyph in new-issue draft rows.
@@ -234,6 +294,20 @@ void DrawLongTextBanners() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.85f, 1.0f, 1.0f));
         ImGui::TextUnformatted("Loading description...");
         ImGui::PopStyleColor();
+    }
+
+    if (s_ActiveLongTextState.DraftRestored && !s_ActiveLongTextState.LoadingMarkdown) {
+        ImGui::TextWrapped("%s", SmatchetLocalization::T("longtext.draft_restored",
+                                                         "Restored your unsaved edit from an earlier session."));
+        if (s_ActiveLongTextState.DraftBaseChanged) {
+            ImGui::TextWrapped("%s",
+                               SmatchetLocalization::T("longtext.draft_base_changed",
+                                                       "The saved text changed since you started this edit; saving "
+                                                       "replaces it with yours."));
+        }
+        if (ImGui::SmallButton(SmatchetLocalization::T("longtext.draft_use_saved", "Use saved text"))) {
+            DropRestoredLongTextDraft();
+        }
     }
 
     // Content exceeds the editor's fixed buffer — anything past kBufferSize - 1 bytes is not
@@ -356,6 +430,7 @@ void DrawLongTextEditorPane(const LongTextModalCtx& ctx) {
         const std::size_t copy = (std::min)(newText.size(), ActiveLongTextEditorState::kBufferSize - 1);
         std::memcpy(s_ActiveLongTextState.Buffer.data(), newText.data(), copy);
         s_ActiveLongTextState.Buffer[copy] = '\0';
+        SaveLongTextDraft();
     }
 }
 
@@ -520,6 +595,7 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
                 ToastType::Warning);
         }
     }
+    EraseLongTextDraft(); // saved (or nothing changed): no kept edit to bring back
     ImGui::CloseCurrentPopup();
     CloseLongTextEditor();
 }
@@ -654,6 +730,7 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
         }
     }
     if (DrawLongTextDiscardConfirm(discardWasOpen)) {
+        EraseLongTextDraft(); // the user chose to throw the edit away
         closeNow = true;
     }
     if (closeNow) {
@@ -699,6 +776,8 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
     s_ActiveLongTextState.LossAcknowledged = false;
     s_ActiveLongTextState.ReopenForDiscardConfirm = false;
     s_ActiveLongTextState.ReopenFrame = -1;
+    s_ActiveLongTextState.DraftRestored = false;
+    s_ActiveLongTextState.DraftBaseChanged = false;
     s_ActiveLongTextState.FocusEditorPending = true;
     s_ActiveLongTextState.OriginalRichPretty.clear();
     // Reset the round-trip preview + save-fidelity caches so no assessment leaks in from the
@@ -726,6 +805,7 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
             ComputeOriginalRichPretty(s_ActiveLongTextState.RichKind, currentRichValue);
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
         SeedLongTextBuffer(seed);
+        RestoreLongTextDraft();
     } else {
         // Show a placeholder so the modal renders immediately; worker replaces it on post-back.
         const std::string placeholder = "Loading description...";
@@ -760,6 +840,7 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
                 s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
                 SeedLongTextBuffer(seed);
                 s_ActiveLongTextState.LoadingMarkdown = false;
+                RestoreLongTextDraft();
             });
         });
     }
@@ -788,6 +869,7 @@ LongTextEditorTestSnapshot SmatchetTest_GetLongTextEditorSnapshot() {
     snap.Active = s_ActiveLongTextState.Active;
     snap.Dirty = LongTextHasUnsavedEdit();
     snap.DiscardConfirmOpen = snap.Active && s_LongTextDiscardConfirmOpenForTests;
+    snap.DraftRestored = s_ActiveLongTextState.DraftRestored;
     if (!s_ActiveLongTextState.Buffer.empty()) {
         snap.Buffer = s_ActiveLongTextState.Buffer.data();
     }

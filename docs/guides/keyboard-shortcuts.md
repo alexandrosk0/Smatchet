@@ -139,11 +139,11 @@ focus:
 |---|---|---|
 | Log work | `Enter` in **Time spent** | Save |
 | Log work | `Ctrl+Enter` in any field | Save |
-| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field |
+| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field. What you typed is kept and comes back when you open Log work on that issue again (**Clear** drops it) |
 | Comments | `Ctrl+Enter` in the comment box | Post the comment |
-| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once |
+| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once. A comment you did not discard is kept for that issue and comes back when you open Comments on it again |
 | Long-text editor | `Ctrl+Enter` | Save |
-| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes) |
+| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes). Unsaved changes are kept per issue and field, and come back when the editor opens on it again (**Use saved text** drops them) |
 | Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
 | Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
 | Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
@@ -151,6 +151,20 @@ focus:
 | Merge-conflict resolver | `Enter` in the value field | Save the value |
 | Merge-conflict resolver | `Ctrl+Enter` | Save (a text conflict: only once every `<<<<<<<` marker is gone) |
 | Merge-conflict resolver | `Esc` | Leave the field, keeping the text. With nothing typed, close. `Esc` never discards a typed resolution: use **Cancel** |
+
+Typed text that has not been sent is saved as you type, off the UI thread, in
+`smatchet_drafts.json` beside your settings (comments, long-text edits, Log work, the
+Assistant message box and a typed merge resolution), so a restart or a crash does not
+lose it. Sending, saving or choosing **Discard** erases it.
+
+Two confirmed actions can be taken back from their notification for a few seconds:
+clearing the Assistant conversation and deleting a view. The notification has an **Undo**
+button, and `Ctrl+Z` does the same while no text field has the caret and no dialog is
+open. Dismissing the notification, or letting it go, makes the action final. Clear is
+unavailable while a reply is coming in.
+
+Dragging a side bar or the bottom panel into the edge of the window shows "release to hide";
+`Esc` while dragging cancels the hide.
 
 Log work opens with the caret in **Time spent**, Comments opened from a cell with the
 caret in the comment box, and the long-text editor with the caret in the text (when it

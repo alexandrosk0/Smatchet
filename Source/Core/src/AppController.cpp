@@ -123,6 +123,7 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 
 #include "AiTypes.h"
+#include "DraftStore.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
@@ -188,8 +189,16 @@ ILuaBindingHost* AppController::GetLuaBindingHost() {
 #endif
 }
 
-AppController::~AppController() {
+// The user's own work that is still pending when the app closes. Undoable actions still inside their undo
+// window (a cleared chat, a deleted view) become final now, while the workers they write through are
+// still running; then the typed-text drafts are written and their worker is joined
+// (docs/plans/input-ux-w2-drafts-undo.md). Both are no-ops when nothing is pending.
+static void SettleUserWorkBeforeShutdown() {
+    SmatchetToastManager::Instance().CommitPendingUndos();
+    smatchet::drafts::Stop();
+}
 
+AppController::~AppController() {
     // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
@@ -202,6 +211,7 @@ AppController::~AppController() {
         mergeWatchNotifyServer_->Stop();
         mergeWatchNotifyServer_.reset();
     }
+    SettleUserWorkBeforeShutdown(); // undo windows close, typed-text drafts reach the disk
 #if defined(SMATCHET_WITH_AI)
     // Drop the AI assistant first — its worker may still be inside SendStreaming. The
     // dtor flips the cancel atom + joins; only after the join can the main-thread

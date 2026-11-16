@@ -8,6 +8,7 @@
 #include "CachedTicketTypes.h"
 #include "Commands/IAppThreading.h"
 #include "CompactDateFormat.h"
+#include "DraftStore.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
 #include "PendingActionTypes.h"
@@ -125,6 +126,12 @@ struct ActiveWorklogDialogState {
     int TimeSpentFocusFramesLeft = 0;
     /// The dialog itself (not a popup above it) had the keyboard on the last draw.
     bool OwnedKeyboardLastFrame = false;
+    /// The two text boxes as last handed to the draft store (DraftStore.h), to notice a change without
+    /// allocating each frame.
+    std::string DraftSyncedSpent;
+    std::string DraftSyncedDescription;
+    /// The boxes were filled from an entry kept by an earlier open.
+    bool DraftRestored = false;
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
@@ -132,6 +139,75 @@ static ActiveWorklogDialogState s_ActiveWorklogState;
 /// One focus request plus one retry; each needs the frame after it to land.
 constexpr int kTimeSpentFocusFrames = 4;
 constexpr const char* kTimeSpentFieldLabel = "##WorklogTimeSpent";
+
+/// Draft store surfaces of the two text boxes; the scope is the issue (DraftStore.h).
+constexpr const char* kWorklogSpentDraftSurface = "worklog.time";
+constexpr const char* kWorklogDescriptionDraftSurface = "worklog.description";
+
+/// Keeps what is typed in the two boxes as a draft, so Cancel, Esc, a restart or a crash does not lose it.
+/// Called once per frame while the dialog is up; it compares the boxes with what was last handed over.
+void SyncWorklogDraft() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (st.SubmitInFlight) {
+        return; // being sent: the draft is erased when it lands
+    }
+    if (st.DraftSyncedSpent != st.TimeSpent) {
+        st.DraftSyncedSpent = st.TimeSpent;
+        smatchet::drafts::Put(kWorklogSpentDraftSurface, st.IssueId, st.DraftSyncedSpent);
+    }
+    if (st.DraftSyncedDescription != st.WorkDescription) {
+        st.DraftSyncedDescription = st.WorkDescription;
+        smatchet::drafts::Put(kWorklogDescriptionDraftSurface, st.IssueId, st.DraftSyncedDescription);
+    }
+}
+
+void EraseWorklogDraft(const std::string& issueId) {
+    smatchet::drafts::Erase(kWorklogSpentDraftSurface, issueId);
+    smatchet::drafts::Erase(kWorklogDescriptionDraftSurface, issueId);
+}
+
+/// At open: puts back the entry kept for this issue. Not while this issue's last submit is still
+/// running: that text is what is being sent.
+void RestoreWorklogDraft() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    st.DraftSyncedSpent.clear();
+    st.DraftSyncedDescription.clear();
+    st.DraftRestored = false;
+    if (st.SubmitInFlight) {
+        return;
+    }
+    smatchet::drafts::DraftEntry spent;
+    smatchet::drafts::DraftEntry description;
+    if (smatchet::drafts::Get(kWorklogSpentDraftSurface, st.IssueId, spent)) {
+        std::strncpy(st.TimeSpent, spent.Text.c_str(), sizeof(st.TimeSpent) - 1);
+        st.TimeSpent[sizeof(st.TimeSpent) - 1] = '\0';
+        st.DraftRestored = true;
+    }
+    if (smatchet::drafts::Get(kWorklogDescriptionDraftSurface, st.IssueId, description)) {
+        std::strncpy(st.WorkDescription, description.Text.c_str(), sizeof(st.WorkDescription) - 1);
+        st.WorkDescription[sizeof(st.WorkDescription) - 1] = '\0';
+        st.DraftRestored = true;
+    }
+    st.DraftSyncedSpent = st.TimeSpent;
+    st.DraftSyncedDescription = st.WorkDescription;
+}
+
+/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes; the
+/// next SyncWorklogDraft erases the kept entry.
+void DrawWorklogDraftNotice() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (!st.DraftRestored) {
+        return;
+    }
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("worklog.draft_restored", "Restored your unsaved entry."));
+    ImGui::SameLine();
+    if (ImGui::SmallButton(SmatchetLocalization::T("worklog.draft_clear", "Clear"))) {
+        st.TimeSpent[0] = '\0';
+        st.WorkDescription[0] = '\0';
+        st.DraftRestored = false;
+        st.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
+    }
+}
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 /// Latched by the draw for GetWorklogDialogSnapshotForTests.
@@ -181,6 +257,9 @@ void ApplyWorklogSaveResult(int gen, const std::string& issueId, const PendingAc
     // Erasing only THIS id leaves any other ticket's outstanding submit latched.
     smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
     const bool ok = result.K != PendingActionSubmitResult::Kind::Failed;
+    if (ok) {
+        EraseWorklogDraft(issueId); // sent or saved to the queue: the kept entry is done
+    }
     const std::string err = result.Error.empty() ? std::string("the worklog could not be saved.") : result.Error;
     if (result.K == PendingActionSubmitResult::Kind::Queued && result.NeedsReview) {
         // The send may have landed: replay never resends it, so say what the user has to do.
@@ -589,6 +668,7 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     s_ActiveWorklogState.CloseRequested = false;
     s_ActiveWorklogState.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
     s_ActiveWorklogState.OwnedKeyboardLastFrame = false;
+    RestoreWorklogDraft();
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
     // re-opened the SAME ticket and would close the freshly-opened dialog under them.
@@ -659,6 +739,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Spacing();
 
     // Inputs
+    DrawWorklogDraftNotice();
     const bool spentEnter = DrawWorklogTimeInputs();
 
     ImGui::Spacing();
@@ -679,6 +760,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Spacing();
 
     DrawWorklogButtons(threading, mutations, keys, spentEnter);
+    SyncWorklogDraft();
 
     ImGui::EndPopup();
 }
@@ -692,6 +774,7 @@ WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests() {
     snap.TimeSpent = s_ActiveWorklogState.TimeSpent;
     snap.Description = s_ActiveWorklogState.WorkDescription;
     snap.ErrorMsg = s_ActiveWorklogState.ErrorMsg;
+    snap.DraftRestored = s_ActiveWorklogState.DraftRestored;
     return snap;
 }
 
