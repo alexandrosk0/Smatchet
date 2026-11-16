@@ -67,7 +67,10 @@ struct TextResult {
     bool active = false;         ///< the field has the keyboard (a half-typed value is in it)
     bool committed = false;      ///< the edit ended this frame by anything but Esc
     bool enterCommitted = false; ///< ... on a bare Enter (no modifier): run the field's action
-    bool reverted = false;       ///< the edit ended on Esc; the text is back to its value at activation
+    /// The edit ended on Esc and the field itself took that Esc: the text is back to its value at
+    /// activation. When a dialog's DialogReadKeys took the Esc first and left the field, the text is kept
+    /// and the end reports as `committed` instead (so trim runs and a caller that saves on `committed` saves).
+    bool reverted = false;
 };
 
 /// Single-line field over a std::string.

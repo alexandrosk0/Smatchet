@@ -90,8 +90,13 @@ const char* TranslatedHint(const char* hint) {
 }
 
 // Reads how the edit of the field just drawn ended. Must run before any other item is drawn.
-ti::SingleLineEnd ReadSingleLineEnd() {
-    return ti::ResolveSingleLineEnd(ImGui::IsItemDeactivated(), ImGui::IsKeyPressed(ImGuiKey_Escape, false),
+// `heldKeyboardWhenDrawn`: the field was the active item when this frame drew it. ImGui reverts the
+// text only for an Esc it sees on an active field. When a surrounding scope (a dialog's DialogReadKeys)
+// took the Esc first and cleared the active id, nothing reverted and the text stands, so that end is a
+// commit, not a revert: the field reports what the text is, not which key was pressed.
+ti::SingleLineEnd ReadSingleLineEnd(bool heldKeyboardWhenDrawn) {
+    return ti::ResolveSingleLineEnd(ImGui::IsItemDeactivated(),
+                                    heldKeyboardWhenDrawn && ImGui::IsKeyPressed(ImGuiKey_Escape, false),
                                     SmatchetTextInputCommittedWithEnter());
 }
 
@@ -136,11 +141,12 @@ TextResult Text(const char* label, std::string& value, const TextOptions& opts) 
     TakeFocusOnAppear(ImGui::GetID(shownLabel), opts.focusOnAppear);
 
     TextResult r;
+    const bool heldKeyboard = ImGui::GetActiveID() == ImGui::GetID(shownLabel);
     r.edited = ImGui::InputTextWithHint(
         shownLabel, TranslatedHint(opts.hint), StringBuf(value), static_cast<std::size_t>(StringBufSize(value)),
         SingleLineFlags(opts) | ImGuiInputTextFlags_CallbackResize, StdStringResizeCallback, &value);
     r.active = ImGui::IsItemActive();
-    ApplyEnd(r, ReadSingleLineEnd());
+    ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
     if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(value)) {
         r.edited = true;
     }
@@ -156,10 +162,11 @@ TextResult TextBuf(const char* label, char* buf, std::size_t bufSize, const Text
     const char* shownLabel = SmatchetLocalization::LabelFromSource(label);
     TakeFocusOnAppear(ImGui::GetID(shownLabel), opts.focusOnAppear);
 
+    const bool heldKeyboard = ImGui::GetActiveID() == ImGui::GetID(shownLabel);
     r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize, SingleLineFlags(opts));
     r.active = ImGui::IsItemActive();
     SmatchetLocalizedImGui::HookDictationOnLastItem(buf, bufSize);
-    ApplyEnd(r, ReadSingleLineEnd());
+    ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
     if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(buf, bufSize)) {
         r.edited = true;
     }

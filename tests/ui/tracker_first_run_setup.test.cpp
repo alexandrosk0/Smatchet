@@ -54,6 +54,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "TrackerSetupPure.h"
+#include "Ui/SmatchetDialogScope.h" // the dialog contract (piece 4.1) the field must work inside
 #include "Ui/SmatchetInput.h"       // the shared text field under test
 #include "Ui/SmatchetSecretInput.h" // SmatchetTextInputCommittedWithEnter — the real Enter-commit signal
 
@@ -915,6 +916,84 @@ static void RegisterTextFieldMultilineKeys(ImGuiTestEngine* engine) {
     };
 }
 
+// A text field inside a dialog scope (piece 4.1): DialogReadKeys takes the first Esc, leaves the field
+// and keeps what was typed, before the field is drawn. ImGui then never runs its own revert, so the
+// field must report a commit (trimmed, saved by a caller that saves on `committed`), not a revert.
+namespace {
+
+struct DialogFieldProbe {
+    bool requestOpen = false;
+    bool requestClose = false;
+    std::string value;
+    int commits = 0;
+    int reverts = 0;
+};
+
+DialogFieldProbe g_dialogField;
+smatchet::ui::DialogScopeState g_dialogFieldScope;
+
+void DrawDialogFieldProbe() {
+    DialogFieldProbe& p = g_dialogField;
+    ImGui::SetNextWindowSize(ImVec2(420, 200), ImGuiCond_Appearing);
+    if (ImGui::Begin("SmatchetTest::TextFieldDialogHost", nullptr,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        if (p.requestOpen) {
+            p.requestOpen = false;
+            ImGui::OpenPopup("Probe dialog###TextFieldDialogProbe");
+        }
+        if (smatchet::ui::BeginDialog(g_dialogFieldScope, "Probe dialog###TextFieldDialogProbe", nullptr,
+                                      ImGuiWindowFlags_NoSavedSettings)) {
+            smatchet::ui::DialogReadKeys(g_dialogFieldScope, false); // typed text: the first Esc leaves the field
+            smatchet::ui::DialogFocusHere(g_dialogFieldScope);
+            SmatchetInput::TextOptions opts;
+            opts.trimOnCommit = true;
+            const SmatchetInput::TextResult r = SmatchetInput::Text("##DialogField", p.value, opts);
+            p.commits += r.committed ? 1 : 0;
+            p.reverts += r.reverted ? 1 : 0;
+            if (p.requestClose) {
+                p.requestClose = false;
+                ImGui::CloseCurrentPopup();
+            }
+            smatchet::ui::EndDialog(g_dialogFieldScope);
+        }
+    }
+    ImGui::End();
+}
+
+} // namespace
+
+static void RegisterTextFieldInsideDialogScope(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "EscTakenByTheDialogScopeKeepsTextAndReportsCommit");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawDialogFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_dialogField = DialogFieldProbe{};
+        ctx->SetRef("SmatchetTest::TextFieldDialogHost");
+        ctx->Yield(2);
+        ImGui::ClearActiveID();
+        g_dialogField.requestOpen = true;
+        for (int i = 0; i < 30 && ImGui::GetCurrentContext()->OpenPopupStack.Size == 0; ++i) {
+            ctx->Yield();
+        }
+        ctx->Yield(3);
+        // The dialog's own opening focus put the caret in the field: no click.
+        const ImGuiContext& g = *ImGui::GetCurrentContext();
+        IM_CHECK(g.ActiveId != 0 && ImGui::GetInputTextState(g.ActiveId) != nullptr);
+
+        ctx->KeyChars("  hi  ");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ(g_dialogField.value.c_str(), "hi"); // kept, and trimmed as the edit ended
+        IM_CHECK_EQ(g_dialogField.commits, 1);
+        IM_CHECK_EQ(g_dialogField.reverts, 0);
+        IM_CHECK(g.OpenPopupStack.Size > 0); // the first Esc only left the field; the dialog stays
+
+        g_dialogField.requestClose = true;
+        ctx->Yield(3);
+        IM_CHECK_EQ(g.OpenPopupStack.Size, 0);
+    };
+}
+
 // The shared text field in the REAL Preferences window: the Email row (a Jira credential row, drawn
 // through CredentialInputText) reverts on Esc and trims on Enter. Both tests open Preferences with
 // blank credentials, so the open puts the caret in Domain, then Tab to Email: no click needed.
@@ -1031,6 +1110,7 @@ extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engin
     RegisterTextFieldRefocusAfterEnter(engine);
     RegisterTextFieldFocusOnAppear(engine);
     RegisterTextFieldMultilineKeys(engine);
+    RegisterTextFieldInsideDialogScope(engine);
     RegisterPreferencesEmailEscReverts(engine);
     RegisterPreferencesEmailEnterTrims(engine);
 }
