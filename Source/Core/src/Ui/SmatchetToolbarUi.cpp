@@ -497,6 +497,7 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         selected_ = editBuf_.Buttons.empty() ? -1 : 0;
     }
     requestEditSelect_ = -1;
+    pendingListFocus_ = -1; // a cursor move left over from the last editing session must not land in this one
     cmdNames_.clear();
     cmdHaystacks_.clear();
     const std::vector<smatchet::cmd::Command> all = app.Commands().All();
@@ -665,6 +666,9 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
     // has the keyboard, on the selected row (Space or Enter selects the row under the keyboard cursor). ImGui's
     // own arrow navigation also fires on Alt+Up / Alt+Down and moves the cursor one row; the moved row takes
     // the cursor back below, so the two never leave it on a different row than the one that moved.
+    // This frame's focus only: a mutation never rests on a flag from an earlier frame. Pressing Alt and Down in
+    // the same frame can lose to ImGui's Alt-release menu-layer toggle (NavUpdateWindowing), which moves focus
+    // off the list on the next frame; a person holds Alt before the arrow, which cancels the toggle.
     const bool listFocused = ImGui::IsWindowFocused();
     if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListMoveUp, listFocused)) {
         MoveSelectedButton(buttons, -1);

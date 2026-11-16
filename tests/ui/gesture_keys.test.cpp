@@ -4,20 +4,22 @@
 // handler directly.
 //
 //   A. CommandsRegisteredAndBound      the seven commands are registered and have a default binding.
-//   B. ToolbarList_KeysMoveAndRemove   Alt+Down / Alt+Up reorder and Delete removes in the Customize Toolbar
-//                                      list (#122), hosted from the real SmatchetToolbarUi.
+//   B. ToolbarList_KeysMoveAndRemove   Alt+Down / Alt+Up (Alt held first, as a person presses it) reorder and
+//                                      Delete removes in the Customize Toolbar list (#122), hosted from the real
+//                                      SmatchetToolbarUi.
 //   C. McpSplitter_KeysResize          Shift+Alt+Down / Shift+Alt+Up move the MCP panel's divider.
-//   D. PanelResize_KeysNudgeBottom     a rebound view.panel.grow / view.panel.shrink chord resizes the bottom
-//                                      panel (#138).
+//   D. PanelResize_KeysNudgeAVisiblePanel  a rebound view.panel.grow / view.panel.shrink chord, naming whichever
+//                                      edge panel is visible, resizes it (#138); seen through the panel state.
 //   E. Calendar_KeysPickDay            PageDown then Enter picks the day a month on; T then Enter picks today
 //                                      (#44), through the real RenderGenericDatePicker.
 //   F. PathRemaps_AddFocusesAndEnter   Add path remap puts the caret in the new row; Enter in the last filled
 //                                      "to" adds the next row and focuses it (#130).
 //   G. ReadOnlyText_CtrlAFromFocus     Ctrl+A selects a keyboard-focused run with the mouse elsewhere (#12).
 //
-// Each case ends by putting back what it touched (bindings, panel height, config value) so a sibling test starts
-// from the same state. Mutation check (recorded in the plan's Verification): reverting the consumer's take, the
-// command's post, the default binding or the focus branch turns the matching case red.
+// Each case puts back what it touched (bindings, panel state, config value, the toolbar modal), red or green, through
+// a scope guard, so a sibling case starts from the same state. Mutation check (recorded in the plan's Verification):
+// reverting the consumer's take, the command's post, the default binding or the focus branch turns the matching case
+// red.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -44,8 +46,10 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
+#include <functional>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern UiDrawSession g_ui;
@@ -68,6 +72,21 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
     return pred();
 }
 
+// Runs `fn` when the case ends, however it ends. IM_CHECK* return from the test body on failure, so cleanup placed
+// after a check would be skipped by a red case, and what it leaves behind (a modal in ImGui's popup stack, a rebound
+// chord, a grown panel) would turn the cases after it red for a reason of their own.
+struct ScopeExit {
+    std::function<void()> Fn;
+    explicit ScopeExit(std::function<void()> fn) : Fn(std::move(fn)) {}
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+    ~ScopeExit() {
+        if (Fn) {
+            Fn();
+        }
+    }
+};
+
 AppController* ArmApp(ImGuiTestContext* ctx) {
     AppController* app = SmatchetActiveUiTestAppController();
     if (app == nullptr) {
@@ -81,6 +100,17 @@ void Rebind(ImGuiTestContext* ctx, const char* commandId, const char* argsJson, 
     g_ui.cfg.Keybindings.SetBindingHotkey(commandId, argsJson, chord);
     SmatchetUiTestMarkKeybindingsDirty();
     ctx->Yield(2);
+}
+
+// Presses `key` with Alt already held, the way a person does. The test engine would otherwise deliver Alt and the
+// arrow in one frame, and ImGui's Alt-release menu-layer toggle (NavUpdateWindowing) then moves focus off the list
+// on the next frame; an Alt that was down first cancels that toggle.
+void PressWithAltHeld(ImGuiTestContext* ctx, ImGuiKey key) {
+    ctx->KeyDown(ImGuiMod_Alt);
+    ctx->Yield();
+    ctx->KeyPress(key);
+    ctx->Yield(2);
+    ctx->KeyUp(ImGuiMod_Alt);
 }
 
 // --- A: registered and bound ------------------------------------------------------------------------------
@@ -168,6 +198,12 @@ void RegisterToolbarListKeys(ImGuiTestEngine* engine) {
             h.cfg.Toolbar.Buttons.push_back(b);
         }
         h.armed = true;
+        // A red case must not leave the modal behind: an undrawn modal in the popup stack keeps blocking, and mutes
+        // the app-wide shortcuts, for every case that follows.
+        ScopeExit cleanup([] {
+            g_toolbarHost.armed = false;
+            ImGui::ClosePopupsOverWindow(nullptr, false);
+        });
         h.toolbar.OpenEditor();
         ctx->Yield(3);
         IM_CHECK_STR_EQ(Tips(h).c_str(), "ABC");
@@ -178,12 +214,12 @@ void RegisterToolbarListKeys(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         IM_CHECK_EQ(h.toolbar.EditorSelectedForTest(), 0);
 
-        ctx->KeyPress(ImGuiMod_Alt | ImGuiKey_DownArrow);
+        PressWithAltHeld(ctx, ImGuiKey_DownArrow);
         YieldUntil(ctx, [&] { return Tips(h) == "BAC"; }, 20);
         IM_CHECK_STR_EQ(Tips(h).c_str(), "BAC");
         IM_CHECK_EQ(h.toolbar.EditorSelectedForTest(), 1);
 
-        ctx->KeyPress(ImGuiMod_Alt | ImGuiKey_UpArrow);
+        PressWithAltHeld(ctx, ImGuiKey_UpArrow);
         YieldUntil(ctx, [&] { return Tips(h) == "ABC"; }, 20);
         IM_CHECK_STR_EQ(Tips(h).c_str(), "ABC");
         IM_CHECK_EQ(h.toolbar.EditorSelectedForTest(), 0);
@@ -199,7 +235,7 @@ void RegisterToolbarListKeys(ImGuiTestEngine* engine) {
         // Alt+Up on the first row has nowhere to go: nothing moves, nothing throws.
         ctx->ItemClick("**/$$0/###row");
         ctx->Yield(2);
-        ctx->KeyPress(ImGuiMod_Alt | ImGuiKey_UpArrow);
+        PressWithAltHeld(ctx, ImGuiKey_UpArrow);
         ctx->Yield(4);
         IM_CHECK_STR_EQ(Tips(h).c_str(), "AC");
 
@@ -236,6 +272,10 @@ void RegisterMcpSplitterKeys(ImGuiTestEngine* engine) {
             return;
         }
         const float original = g_ui.cfg.McpServerInfoPanelHeightPx;
+        ScopeExit cleanup([original] {
+            g_mcpHostArmed = false;
+            g_ui.cfg.McpServerInfoPanelHeightPx = original;
+        });
         g_ui.cfg.McpServerInfoPanelHeightPx = 300.0f; // a size well inside the clamp, so a step is not clamped away
         g_mcpApp = app;
         g_mcpHostArmed = true;
@@ -260,52 +300,109 @@ void RegisterMcpSplitterKeys(ImGuiTestEngine* engine) {
 }
 #endif // SMATCHET_WITH_MCP
 
-// --- D: the bottom panel ------------------------------------------------------------------------------------
+// --- D: the edge panels ---------------------------------------------------------------------------------------
 
-float BottomPanelHeight() {
-    const ImGuiDockNode* node = ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel);
-    return node != nullptr ? node->Size.y : 0.0f;
+// The four per-panel drag states the nudge writes. A nudge sets pendingExtent (the extent asked for) the frame it
+// runs, so a key press that reached NudgePanelExtent shows up there without depending on dock geometry.
+struct PanelStateSnapshot {
+    float pending[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+};
+
+EdgePanelDragState* const* PanelStates() {
+    static EdgePanelDragState* const kStates[4] = {&g_ui.bottomPanelDrag, &g_ui.viewsColumnDrag,
+                                                   &g_ui.primarySideBarDrag, &g_ui.secondarySideBarDrag};
+    return kStates;
+}
+
+PanelStateSnapshot SnapshotPanelStates() {
+    PanelStateSnapshot snap;
+    for (int i = 0; i < 4; ++i) {
+        snap.pending[i] = PanelStates()[i]->pendingExtent;
+    }
+    return snap;
+}
+
+// The index of the first state whose pendingExtent differs from `before`, or -1.
+int ChangedPanelState(const PanelStateSnapshot& before) {
+    for (int i = 0; i < 4; ++i) {
+        if (PanelStates()[i]->pendingExtent != before.pending[i]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// The edge panel to resize: whichever one is on screen. Which are open depends on the layout the earlier cases left
+// behind, and the nudge does the same thing for each, so the case does not hang on one of them.
+const char* FirstVisiblePanelName() {
+    if (SmatchetBottomPanelDrag::IsPanelVisible()) {
+        return "bottom";
+    }
+    if (SmatchetBottomPanelDrag::IsSideBarVisible(SmatchetBottomPanelDrag::SideBar::Primary)) {
+        return "primary";
+    }
+    if (SmatchetBottomPanelDrag::IsSideBarVisible(SmatchetBottomPanelDrag::SideBar::Secondary)) {
+        return "secondary";
+    }
+    return nullptr;
 }
 
 void RegisterPanelResizeKeys(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "GestureKeys", "PanelResize_KeysNudgeBottom");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GestureKeys", "PanelResize_KeysNudgeAVisiblePanel");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         AppController* app = ArmApp(ctx);
         if (app == nullptr) {
             return;
         }
-        const KeybindingsConfig original = g_ui.cfg.Keybindings;
-        // The default chords resolve "focused"; this case names the panel, so it does not depend on what the test
-        // engine focused last. It also proves the chord is rebindable.
-        Rebind(ctx, "view.panel.grow", "{\"panel\":\"bottom\"}", "Ctrl+Alt+Shift+9");
-        Rebind(ctx, "view.panel.shrink", "{\"panel\":\"bottom\"}", "Ctrl+Alt+Shift+8");
-
-        const bool wasVisible = SmatchetBottomPanelDrag::IsPanelVisible();
-        SmatchetBottomPanelDrag::Expand(g_ui, 0.0f);
-        const bool visible = YieldUntil(ctx, [] { return SmatchetBottomPanelDrag::IsPanelVisible(); });
-        IM_CHECK_NO_RET(visible);
-        if (!visible) {
-            g_ui.cfg.Keybindings = original;
+        const KeybindingsConfig originalBindings = g_ui.cfg.Keybindings;
+        const bool bottomWasVisible = SmatchetBottomPanelDrag::IsPanelVisible();
+        bool expandedBottom = false;
+        ScopeExit cleanup([&] {
+            if (expandedBottom && !bottomWasVisible) {
+                SmatchetBottomPanelDrag::Collapse(g_ui);
+            }
+            g_ui.cfg.Keybindings = originalBindings;
             SmatchetUiTestMarkKeybindingsDirty();
+        });
+        const char* panel = FirstVisiblePanelName();
+        if (panel == nullptr) {
+            SmatchetBottomPanelDrag::Expand(g_ui, 0.0f);
+            expandedBottom = true;
+            YieldUntil(ctx, [&] { return FirstVisiblePanelName() != nullptr; }, 120);
+            panel = FirstVisiblePanelName();
+        }
+        if (panel == nullptr) {
+            const ImGuiDockNode* node = ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel);
+            ctx->LogError("no edge panel is visible: bottom node=%d parent=%d isVisible=%d windows=%d showLog=%d",
+                          node != nullptr ? 1 : 0, (node != nullptr && node->ParentNode != nullptr) ? 1 : 0,
+                          (node != nullptr && node->IsVisible) ? 1 : 0, node != nullptr ? node->Windows.Size : -1,
+                          g_ui.showLogWindow ? 1 : 0);
+            IM_CHECK(false);
             return;
         }
-        ctx->Yield(6);
+        ctx->LogInfo("resizing the %s panel", panel);
 
-        const float start = BottomPanelHeight();
-        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_8); // shrink first: a clamp can only
-        YieldUntil(ctx, [&] { return BottomPanelHeight() < start - 1.0f; }, 30);   // stop a grow at the maximum
-        const float shrunk = BottomPanelHeight();
-        IM_CHECK_LT(shrunk, start - 1.0f);
+        // The chords name the panel, so the case does not depend on what the test engine focused last, and rebinding
+        // them is part of what it proves.
+        const std::string args = std::string("{\"panel\":\"") + panel + "\"}";
+        Rebind(ctx, "view.panel.grow", args.c_str(), "Ctrl+Alt+Shift+9");
+        Rebind(ctx, "view.panel.shrink", args.c_str(), "Ctrl+Alt+Shift+8");
+        ctx->Yield(4);
 
+        const PanelStateSnapshot beforeGrow = SnapshotPanelStates();
         ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_9);
-        YieldUntil(ctx, [&] { return BottomPanelHeight() > shrunk + 1.0f; }, 30);
-        IM_CHECK_GT(BottomPanelHeight(), shrunk + 1.0f);
-
-        if (!wasVisible) {
-            SmatchetBottomPanelDrag::Collapse(g_ui);
+        int which = -1;
+        YieldUntil(ctx, [&] { return (which = ChangedPanelState(beforeGrow)) >= 0; }, 30);
+        IM_CHECK_GE(which, 0);
+        if (which >= 0) {
+            const float grown = PanelStates()[which]->pendingExtent;
+            ctx->Yield(8); // let the extent land, so the shrink steps from the new size
+            const PanelStateSnapshot beforeShrink = SnapshotPanelStates();
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_8);
+            YieldUntil(ctx, [&] { return PanelStates()[which]->pendingExtent != beforeShrink.pending[which]; }, 30);
+            IM_CHECK_LT(PanelStates()[which]->pendingExtent, grown - 1.0f);
         }
-        g_ui.cfg.Keybindings = original;
-        SmatchetUiTestMarkKeybindingsDirty();
+
         ctx->Yield(2);
     };
 }
@@ -355,12 +452,17 @@ void RegisterPanelResizeFocusedNoPanel(ImGuiTestEngine* engine) {
         }
         g_panelApp = app;
         g_panelDispatchDone = false;
+        ScopeExit cleanup([] {
+            g_panelHostArmed = false;
+            g_panelDispatchRequested = false;
+            g_panelApp = nullptr;
+        });
         g_panelHostArmed = true;
         ctx->Yield(3);
         ctx->WindowFocus("//SmatchetTest::GesturePanelHost");
         ctx->Yield(2);
 
-        const float before = BottomPanelHeight();
+        const PanelStateSnapshot before = SnapshotPanelStates();
         g_panelDispatchRequested = true;
         const bool done = YieldUntil(ctx, [] { return g_panelDispatchDone; }, 60);
         IM_CHECK(done);
@@ -373,7 +475,7 @@ void RegisterPanelResizeFocusedNoPanel(ImGuiTestEngine* engine) {
                      g_panelShrink.Data->value("resized", true) == false);
         }
         ctx->Yield(4);
-        IM_CHECK_EQ(BottomPanelHeight(), before); // nothing moved
+        IM_CHECK_EQ(ChangedPanelState(before), -1); // no panel was asked to resize
 
         g_panelHostArmed = false;
         g_panelDispatchRequested = false;
@@ -455,6 +557,7 @@ void RegisterPathRemapKeys(ImGuiTestEngine* engine) {
     t->GuiFunc = SubmitRemapHost;
     t->TestFunc = [](ImGuiTestContext* ctx) {
         SmatchetUiTestAnnotateRemapsBegin();
+        ScopeExit cleanup([] { SmatchetUiTestAnnotateRemapsEnd(); }); // puts the user's rules back, red or green
         ctx->Yield(3);
         ctx->SetRef("//SmatchetTest::GestureRemapHost");
 
@@ -479,7 +582,6 @@ void RegisterPathRemapKeys(ImGuiTestEngine* engine) {
         ctx->Yield(3);
         IM_CHECK_EQ(SmatchetUiTestAnnotateRemapCount(), 2);
 
-        SmatchetUiTestAnnotateRemapsEnd();
         ctx->Yield(2);
     };
 }
