@@ -119,7 +119,7 @@ Draft keys (surface → scope → base), fixed here so later surfaces reuse the 
 - `smatchet::config_save` (`ConfigSaveWorker.h`) — the Start / Stop / coalesce / not-running-fallback shape the store copies.
 - `smatchet::dialogkeys::ResolveEscape` (`Ui/DialogKeysPure.h`) — Log work's Esc decision, unchanged; only what Cancel does with typed text changes.
 - `SmatchetToastManager` (`Ui/SmatchetToast.h`) — the existing toast; no second notification surface.
-- `applyPendingViewCreate` (`SmatchetViewsDashboardUi.cpp`) — view restore goes through the existing create latch, never mid-frame (`Ui/AGENTS.md` § Frame state).
+- `applyPendingViewCreate` (`SmatchetViewsDashboardUi.cpp`) — view restore goes through the existing create latch, never mid-frame (the frame-state rules in `Ui/AGENTS.md`).
 - `smatchet::ai::chat_persist::Enqueue(ClearAll)` — the deferred commit of a chat clear.
 - `AppController::LatchPendingActionTarget` — the tracker site for the comments draft key.
 
@@ -184,13 +184,28 @@ None — the lock-driven scope cuts are recorded above and listed in the PR.
 - fr-FR rows for the new strings: once `SmatchetLocalization.cpp` is free.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(commit shas are added once the branch is pushed; the single implementation commit carries the whole slice)*
+
+- `141c34f` · `wip(plan)`: this plan.
+- implementation commit · `DraftStorePure.h` + `DraftStore.{h,cpp}` (bounded map, JSON file, worker); `UndoLedgerPure.h` + `SmatchetToast` (`PushUndoable`, Undo button, Ctrl+Z, `CommitUndo`, `CommitPendingUndos`); kept drafts for Comments (#56), the long-text editor (#39), Log work (#51), the assistant message box (#103) and the conflict resolver (#110, now across restarts); chat clear and view delete as immediate actions with Undo (#90); Esc during an armed hide-drag cancels the hide (#141); `~AppController` commits pending undos and stops the store before the chat-persist worker.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Plan-lock not claimed.** `lock-claim.sh` could not push `refs/locks/input-ux-w2-drafts-undo`: the first attempt was refused by the pre-push hook (the branch's diff against `origin/develop` includes #2433's files, which overlap `input-ux-wave1-palette`), and a retry from a clean worktree on `origin/develop` got HTTP 403 from the session's git proxy, which only lets this session push its own branch. No override was used. The write set was kept off every sibling claim instead (see § Risks); the plan-lock gate on the PR is the check, and the claim can be filed from a normal checkout.
+- **Base branch.** #2433 was not on `develop` when this started, so the branch stays stacked on `claude/frictionless-user-input-ux-ea174b` and the PR targets it; retarget to `develop` once #2433 merges.
+- **Write set grew by four files**: `SmatchetCommentsModalUi.h` (test snapshot field), `TicketFieldEditor_detail.h` (test snapshot field), `AppController.cpp` (shutdown ordering: the undo commit and `drafts::Stop()` must run before `chat_persist::Stop()`, and both targets reach it through `~AppController`, so it replaced the two planned host edits in `StandaloneAppBootstrap.cpp` and `SmatchetImGuiHost.cpp`) and `SmatchetBottomPanelDragPure.h`. None is in a sibling lock.
+- **Localization.** No French rows were added (`SmatchetLocalization.cpp` is held by three siblings). New strings fall back to English. One string changed meaning: the conflict resolver's "kept until Smatchet closes" note is now `offline.conflict.draft_saved`; the old key's row stays in the table unused until the lock lifts.
+- **View delete / chat clear keep their button but lose the question.** The Delete view menu item still reads "Delete view..." and the context-menu entry was not renamed (a label rename needs the localization table).
+- **Restored view order.** Undo of a view delete re-creates the view through the create latch, so it comes back last and active, not at its old position.
+- **Dictation into the long-text editor** changes the buffer without a text-changed event, so only the next typed edit (or none) stores it. Not covered; follow-up if it shows.
+- **Long-text save that the tracker rejects** erases the draft at Save, as the edit pipeline owns the failure (#31 territory, locked files).
+- **Worklog Esc.** Cancel and the second Esc close and keep the entry instead of asking, as planned (a second confirm is piece 4.1's).
+
+Findings left open (reason): **#28, #31, #33** (grid edit undo, rejected value kept, blur-commit: `SmatchetGridFieldEditPipeline.cpp`, `TicketFieldEditor.cpp` and the grid cell TUs are held by `bulk-edit-rows` / `shared-dropdown-recents`; § 5.3 Wave 3 for paste and the rest); **#116** (conflict "Discard my edit" undo: needs an archive/restore entry point in `Sync/`, since a held row could replay during the window); **#51** new-issue half and **#7 / #50** are in #2435 / the locked draft-row files; **#90** offline-row discard and reset-layout keep their confirms. Closed earlier in Wave 1 (#2433): #14, #74, #87, and the confirm half of #39 and #110.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+*(filled below once the full cycle has run)*
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
