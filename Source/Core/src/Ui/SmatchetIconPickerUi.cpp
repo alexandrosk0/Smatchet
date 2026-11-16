@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "SmatchetImGuiFonts.h"
+#include "Ui/SmatchetInput.h"
 #include "imgui.h"
 
 #include "SmatchetLocalizedImGui.h"
@@ -23,7 +24,7 @@ void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
 bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
     if (requestOpen_) {
         requestOpen_ = false;
-        search_[0] = '\0';
+        search_.clear();
         // "###" (not "##") so the popup ID survives title translation — OpenPopup is not
         // wrapped, so the raw and translated titles must hash to the same ID.
         ImGui::OpenPopup("Pick Icon###SmatchetIconPicker");
@@ -32,8 +33,15 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
     bool picked = false;
     ImGui::SetNextWindowSize(ImVec2(360.0f, 320.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Pick Icon###SmatchetIconPicker", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        // The caret starts in the search box (the modal takes the keyboard as it opens), so typing
+        // filters at once; a click into the box selects the query so a new one replaces it.
+        SmatchetInput::TextOptions searchOpts;
+        searchOpts.hint = "Search icons...";
+        searchOpts.focusOnAppear = true;
+        searchOpts.selectAllOnFocus = true;
+        searchOpts.refocusAfterEnter = true; // an Enter that picks nothing keeps the caret in the box
         ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##iconsearch", "Search icons...", search_, sizeof(search_));
+        const SmatchetInput::TextResult search = SmatchetInput::Text("##iconsearch", search_, searchOpts);
 
         std::string q(search_);
         std::transform(q.begin(), q.end(), q.begin(),
@@ -52,6 +60,18 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
             if (q.empty() || std::strstr(catalog[i].Name, q.c_str()) != nullptr) {
                 matches.push_back(i);
             }
+        }
+
+        // Keys in the search box: Enter picks the first match, the top-left cell (nothing when no icon
+        // matches); Esc closes without picking. A modal-wide Esc belongs to the dialog scope.
+        if (search.enterCommitted && !matches.empty()) {
+            const SmatchetToolbarIconEntry& first = catalog[static_cast<std::size_t>(matches.front())];
+            outName = first.Name;
+            outGlyph = first.Glyph;
+            picked = true;
+            ImGui::CloseCurrentPopup();
+        } else if (search.reverted) {
+            ImGui::CloseCurrentPopup();
         }
 
         const ImGuiStyle& style = ImGui::GetStyle();

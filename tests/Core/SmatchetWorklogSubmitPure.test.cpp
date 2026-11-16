@@ -6,13 +6,20 @@
 // TicketFieldEditor.cpp's HandleWorklogSave calls.
 //
 // The key decisions the worklog dialog shares with the other dialogs that hold typed text
-// (Ui/DialogKeysPure.h: Esc, the caret request, a dismissed popup coming back) are covered here too.
+// (Ui/DialogKeysPure.h: Esc, the caret request, a dismissed popup coming back) are covered here too,
+// and so are the shared text field's rules (Ui/SmatchetInputPure.h: growth, trim, focus on appear,
+// how an edit ends, the multiline keys, the near-full counter). They live in this TU because a new
+// test file needs a tests/CMakeLists.txt edit, and that file is plan-locked by other branches; the
+// move to tests/Core/SmatchetInputPure.test.cpp is owed (debt 2026-11-16-text-field-migration-blocked-surfaces).
 
+#include "StringUtil.h" // TrimCopyAsciiWhitespace: the trim the text field must agree with
 #include "Ui/DialogKeysPure.h"
+#include "Ui/SmatchetInputPure.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
 #include <doctest/doctest.h>
 
+#include <cstring>
 #include <set>
 #include <string>
 
@@ -216,4 +223,152 @@ TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turn
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "2h"));
     // Save by the button or Ctrl+Enter: the caret stays where the user had it.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(false, false, "junk"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shared text field (Ui/SmatchetInputPure.h).
+// ---------------------------------------------------------------------------------------------
+
+namespace ti = smatchet::textinput;
+
+TEST_CASE("GrowStringForEdit sizes the string to the new length and hands back its storage") {
+    std::string s = "abc";
+    char* buf = ti::GrowStringForEdit(s, 600);
+    CHECK(s.size() == 600u);
+    CHECK(buf == s.c_str()); // ImGui writes into this exact storage
+    CHECK(s.capacity() >= 600u);
+
+    buf = ti::GrowStringForEdit(s, 2);
+    CHECK(s.size() == 2u);
+    CHECK(buf == s.c_str());
+    CHECK(std::string(buf, 2) == "ab"); // shrinking keeps the head
+
+    ti::GrowStringForEdit(s, -5); // never sent by ImGui; read as empty, never as a huge size
+    CHECK(s.empty());
+}
+
+TEST_CASE("TrimEdgeWhitespace strips space, tab, CR and LF from both ends of a string") {
+    std::string s = " \t host.example.com\r\n";
+    CHECK(ti::TrimEdgeWhitespace(s));
+    CHECK(s == "host.example.com");
+    CHECK_FALSE(ti::TrimEdgeWhitespace(s)); // already clean: reports no change
+    CHECK(s == "host.example.com");
+
+    std::string inner = "a b";
+    CHECK_FALSE(ti::TrimEdgeWhitespace(inner)); // inner spaces stay
+    CHECK(inner == "a b");
+
+    std::string blank = " \t ";
+    CHECK(ti::TrimEdgeWhitespace(blank));
+    CHECK(blank.empty());
+
+    std::string empty;
+    CHECK_FALSE(ti::TrimEdgeWhitespace(empty));
+}
+
+TEST_CASE("TrimEdgeWhitespace strips exactly what TrimCopyAsciiWhitespace strips") {
+    // The Templates add handlers use TrimCopyAsciiWhitespace and the widget uses TrimEdgeWhitespace; a
+    // value must come out the same either way, or a template added with Enter would differ from one
+    // added with the button.
+    const char* const samples[] = {"",     " ",       "a",    " a",       "a ",   "\t a b \r\n",
+                                   "a\vb", "\v a \v", "\f x", "  \n\n  ", "a  b", "\xC2\xA0nbsp"};
+    for (const char* sample : samples) {
+        std::string viaWidget = sample;
+        ti::TrimEdgeWhitespace(viaWidget);
+        CHECK(viaWidget == TrimCopyAsciiWhitespace(sample));
+    }
+}
+
+TEST_CASE("TrimEdgeWhitespace over a fixed buffer is bounded and always NUL-terminates") {
+    char buf[16] = "  key  ";
+    CHECK(ti::TrimEdgeWhitespace(buf, sizeof(buf)));
+    CHECK(std::strcmp(buf, "key") == 0);
+
+    char lead[8] = " abc";
+    CHECK(ti::TrimEdgeWhitespace(lead, sizeof(lead)));
+    CHECK(std::strcmp(lead, "abc") == 0);
+
+    char clean[8] = "abc";
+    CHECK_FALSE(ti::TrimEdgeWhitespace(clean, sizeof(clean)));
+    CHECK(std::strcmp(clean, "abc") == 0);
+
+    char spaces[8] = "   ";
+    CHECK(ti::TrimEdgeWhitespace(spaces, sizeof(spaces)));
+    CHECK(spaces[0] == '\0');
+
+    // No NUL inside the buffer: cut at the last byte rather than read past the end.
+    char full[4] = {'a', 'b', 'c', 'd'};
+    CHECK(ti::TrimEdgeWhitespace(full, sizeof(full)));
+    CHECK(std::strcmp(full, "abc") == 0);
+
+    CHECK_FALSE(ti::TrimEdgeWhitespace(static_cast<char*>(nullptr), 8u));
+    char one[1] = {'x'};
+    CHECK(ti::TrimEdgeWhitespace(one, 0u) == false); // zero size: untouched
+    CHECK(one[0] == 'x');
+}
+
+TEST_CASE("FieldAppearedThisFrame is true only on the first frame of a run of frames") {
+    CHECK(ti::FieldAppearedThisFrame(-1, 0));        // never drawn
+    CHECK(ti::FieldAppearedThisFrame(-1, 500));      // never drawn, late in the session
+    CHECK_FALSE(ti::FieldAppearedThisFrame(41, 42)); // drawn last frame: still showing
+    CHECK(ti::FieldAppearedThisFrame(40, 42));       // skipped a frame: swapped back in
+    CHECK(ti::FieldAppearedThisFrame(10, 300));      // popup reopened much later
+    CHECK(ti::FieldAppearedThisFrame(42, 42));       // drawn twice in one frame is not "still showing"
+}
+
+TEST_CASE("ResolveSingleLineEnd: Esc reverts, anything else that ends the edit commits") {
+    const ti::SingleLineEnd going = ti::ResolveSingleLineEnd(false, true, true);
+    CHECK_FALSE(going.committed); // the edit has not ended: nothing to report, whatever the keys
+    CHECK_FALSE(going.enterCommitted);
+    CHECK_FALSE(going.reverted);
+
+    const ti::SingleLineEnd enter = ti::ResolveSingleLineEnd(true, false, true);
+    CHECK(enter.committed);
+    CHECK(enter.enterCommitted);
+    CHECK_FALSE(enter.reverted);
+
+    // Tab, a click elsewhere, or Ctrl+Enter: committed, but not the field's Enter action.
+    const ti::SingleLineEnd away = ti::ResolveSingleLineEnd(true, false, false);
+    CHECK(away.committed);
+    CHECK_FALSE(away.enterCommitted);
+    CHECK_FALSE(away.reverted);
+
+    const ti::SingleLineEnd esc = ti::ResolveSingleLineEnd(true, true, false);
+    CHECK_FALSE(esc.committed); // a reverted value is never saved or trimmed
+    CHECK_FALSE(esc.enterCommitted);
+    CHECK(esc.reverted);
+}
+
+TEST_CASE("MultilineEscLeavesField only while the composer has the keyboard") {
+    CHECK(ti::MultilineEscLeavesField(true, true));
+    CHECK_FALSE(ti::MultilineEscLeavesField(false, true)); // the second Esc is the dialog's
+    CHECK_FALSE(ti::MultilineEscLeavesField(true, false));
+}
+
+TEST_CASE("MultilineSubmitted: Ctrl+Enter alone submits; Enter and Shift+Enter type a newline") {
+    CHECK(ti::MultilineSubmitted(true, true, true, false, false, false, true));
+    CHECK_FALSE(ti::MultilineSubmitted(false, true, true, false, false, false, true)); // edit still going
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, false, false, false, false, true)); // bare Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, true, false, false, true));   // Ctrl+Shift+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, true, false, true));   // Ctrl+Alt+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, false, true, true));   // Ctrl+Super+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, false, true, false, false, false, true)); // ended by a click
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, false, false, false)); // caller opted out
+}
+
+TEST_CASE("ShowCapacityCounter appears within a tenth of a fixed buffer's end") {
+    // 128-byte buffer: 127 usable bytes; the count shows from 115 (127 - 12).
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 128u));
+    CHECK_FALSE(ti::ShowCapacityCounter(114u, 128u));
+    CHECK(ti::ShowCapacityCounter(115u, 128u));
+    CHECK(ti::ShowCapacityCounter(127u, 128u)); // full: the next keystroke is dropped
+    // Tiny buffers: a 2-byte buffer is full at 1; a 1-byte buffer holds nothing and is always full.
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 2u));
+    CHECK(ti::ShowCapacityCounter(1u, 2u));
+    CHECK(ti::ShowCapacityCounter(0u, 1u));
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 0u));
+    // No overflow on absurd sizes.
+    const std::size_t huge = static_cast<std::size_t>(-1);
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, huge));
+    CHECK(ti::ShowCapacityCounter(huge - 1u, huge));
 }

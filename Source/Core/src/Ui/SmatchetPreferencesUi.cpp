@@ -41,6 +41,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetTheme.h"
+#include "Ui/SmatchetInput.h"
 #include "Ui/SmatchetSecretInput.h"
 #include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetIconButtons.h"
@@ -406,12 +407,20 @@ void FocusNextItemIfOpenTarget(const char* buf) {
     }
 }
 
-// One credential text row. Takes the keyboard when it is this open's focus target, and returns
-// true on the frame it was committed with a bare Enter (the Tracker page runs Test connection).
-bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGuiInputTextFlags flags = 0) {
+// One credential text row (the shared text field, Ui/SmatchetInput.h). Takes the keyboard when it is
+// this open's focus target, and returns true on the frame it was committed with a bare Enter (the
+// Tracker page runs Test connection). A click selects the value, so a pasted domain or URL replaces
+// it, and edge whitespace is dropped as the edit ends, before Test connection reads the buffer.
+// `hint` is an example value shown in the empty field: data, so it is not translated.
+bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGuiInputTextFlags flags = 0,
+                         const char* hint = nullptr) {
     FocusNextItemIfOpenTarget(buf);
-    ImGui::InputText(label, buf, bufSize, flags);
-    return SmatchetTextInputCommittedWithEnter();
+    SmatchetInput::TextOptions opts;
+    opts.hint = hint;
+    opts.selectAllOnFocus = true;
+    opts.trimOnCommit = true;
+    opts.flags = flags;
+    return SmatchetInput::TextBuf(label, buf, bufSize, opts).enterCommitted;
 }
 
 // The masked variant of CredentialInputText.
@@ -508,10 +517,18 @@ void DrawTrackerJiraExtraBackends(UiDrawSession& d) {
         }
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_add_domain")) {
-        ImGui::InputTextWithHint("##JiraAddDomain", "other.atlassian.net", d.extraJiraAddDomainBuf,
-                                 sizeof(d.extraJiraAddDomainBuf), ImGuiInputTextFlags_CharsNoBlank);
+        // Enter adds the site like the button does, and the caret stays for the next one.
+        SmatchetInput::TextOptions addOpts;
+        addOpts.hint = "other.atlassian.net";
+        addOpts.selectAllOnFocus = true;
+        addOpts.trimOnCommit = true;
+        addOpts.refocusAfterEnter = true;
+        addOpts.flags = ImGuiInputTextFlags_CharsNoBlank;
+        const bool enterAdds =
+            SmatchetInput::TextBuf("##JiraAddDomain", d.extraJiraAddDomainBuf, sizeof(d.extraJiraAddDomainBuf), addOpts)
+                .enterCommitted;
         ImGui::SameLine();
-        if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.jira_extras.add", "Add Jira site"))) {
+        if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.jira_extras.add", "Add Jira site")) || enterAdds) {
             const std::string host = smatchet::jira_backends::NormalizeJiraHost(d.extraJiraAddDomainBuf);
             bool dup = host.empty() || smatchet::jira_backends::HostsMatch(d.extraJiraAddDomainBuf, d.domainBuf);
             for (std::size_t i = 0; !dup && i < d.extraJiraRows.size(); ++i) {
@@ -540,13 +557,13 @@ bool DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_domain")) {
-        enterPressed =
-            CredentialInputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank) ||
-            enterPressed;
-        ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
+        enterPressed = CredentialInputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank,
+                                           "companyname.atlassian.net") ||
+                       enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_email")) {
-        enterPressed = CredentialInputText("Email", d.emailBuf, sizeof(d.emailBuf)) || enterPressed;
+        enterPressed =
+            CredentialInputText("Email", d.emailBuf, sizeof(d.emailBuf), 0, "name@company.com") || enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_api_token")) {
         enterPressed = CredentialSecretInput("API Token", d.tokenBuf, sizeof(d.tokenBuf)) || enterPressed;
@@ -576,10 +593,9 @@ bool DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Plane Configuration (plane.so)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_url")) {
-        enterPressed =
-            CredentialInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank) ||
-            enterPressed;
-        ImGui::SetItemTooltip("e.g. https://api.plane.so");
+        enterPressed = CredentialInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf),
+                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.plane.so") ||
+                       enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_workspace")) {
         enterPressed = CredentialInputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
@@ -611,7 +627,7 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
         enterPressed = CredentialInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.github.com") ||
                        enterPressed;
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
     }
@@ -689,9 +705,8 @@ bool DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_base_url")) {
         enterPressed = CredentialInputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.linear.app/graphql") ||
                        enterPressed;
-        ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_workspace_url")) {
         ImGui::InputText("Workspace URL", d.linearWorkspaceUrlBuf, sizeof(d.linearWorkspaceUrlBuf),

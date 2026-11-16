@@ -10,8 +10,8 @@
 #include <vector>
 
 struct SmatchetToolbarIconEntry {
-    const char* Name;   // FA slug, e.g. "magnifying-glass"
-    const char* Glyph;  // UTF-8 glyph (ICON_FA_* macro value)
+    const char* Name;  // FA slug, e.g. "magnifying-glass"
+    const char* Glyph; // UTF-8 glyph (ICON_FA_* macro value)
 };
 
 /** Curated FA icon catalog (stable order). */
@@ -20,7 +20,9 @@ const std::vector<SmatchetToolbarIconEntry>& SmatchetToolbarIconCatalog();
 /** Resolve a catalog name to its glyph; returns "" when unknown. */
 std::string SmatchetToolbarIconGlyph(const std::string& name);
 
-/** Modal Font-Awesome icon picker. UI-thread only. */
+/** Modal Font-Awesome icon picker. UI-thread only. The search box has the caret when the picker opens;
+ *  Enter picks the first match (nothing on an empty list) and Esc in the box closes the picker without
+ *  picking (docs/audits/INPUT_UX_AUDIT.md § 3, picker row). */
 class SmatchetIconPickerUi {
   public:
     /** Request the picker to open on the next Draw(). */
@@ -33,7 +35,7 @@ class SmatchetIconPickerUi {
 
   private:
     bool requestOpen_ = false;
-    char search_[64] = {0};
+    std::string search_; // std::string: a long query is never clipped
 };
 
-#endif  // SMATCHET_UI_ICON_PICKER_UI_H
+#endif // SMATCHET_UI_ICON_PICKER_UI_H

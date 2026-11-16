@@ -25,14 +25,25 @@
 //
 // Determinism: the "worker" is a release atom the TestFunc holds, so the cue is
 // observable for >= 1 frame regardless of engine stepping rate.
+//
+// Also here (group "IconPicker"): the REAL SmatchetIconPickerUi, the toolbar editor's icon picker,
+// driven through the shared text field (Ui/SmatchetInput.h, docs/audits/INPUT_UX_AUDIT.md § 3 picker
+// row and § 4.2): the caret is in the filter when the picker opens, typing filters, Enter picks the
+// first match and picks nothing on an empty list, and Esc closes without a pick. Not a replica: the
+// picker is a public class that needs no AppController.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
+#include "Ui/SmatchetIconPickerUi.h"
+
 #include "imgui.h"
+#include "imgui_internal.h" // ImGuiContext::ActiveIdWindow, ImGui::GetInputTextState
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
 #include <atomic>
+#include <cstring>
+#include <string>
 
 namespace {
 
@@ -101,10 +112,162 @@ void RegisterVisibleWhileLoading(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Group "IconPicker" — the real SmatchetIconPickerUi.
+// ---------------------------------------------------------------------------
+
+struct IconPickerProbe {
+    SmatchetIconPickerUi picker;
+    int picks = 0;
+    std::string pickedName;
+    std::string pickedGlyph;
+};
+
+IconPickerProbe g_iconPicker;
+
+// The picker is a modal popup drawn from inside its owner's window, every frame.
+void DrawIconPickerHost() {
+    ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_Appearing);
+    if (ImGui::Begin("SmatchetTest::IconPickerHost", nullptr,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        std::string name;
+        std::string glyph;
+        if (g_iconPicker.picker.Draw(name, glyph)) {
+            ++g_iconPicker.picks;
+            g_iconPicker.pickedName = name;
+            g_iconPicker.pickedGlyph = glyph;
+        }
+    }
+    ImGui::End();
+}
+
+// True while the picker's modal popup is up.
+bool IconPickerIsOpen() { return ImGui::GetCurrentContext()->OpenPopupStack.Size > 0; }
+
+// True when the keyboard is in a text field inside the picker's popup (the search box).
+bool KeyboardIsInPickerFilter() {
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    return g.ActiveId != 0 && g.ActiveIdWindow != nullptr && (g.ActiveIdWindow->Flags & ImGuiWindowFlags_Popup) != 0 &&
+           ImGui::GetInputTextState(g.ActiveId) != nullptr;
+}
+
+// Opens a fresh picker and waits for its popup; never clicks, so a caret in the filter is the
+// picker's own doing.
+bool OpenIconPicker(ImGuiTestContext* ctx) {
+    g_iconPicker = IconPickerProbe{};
+    ctx->SetRef("SmatchetTest::IconPickerHost");
+    ctx->Yield(2);
+    ImGui::ClearActiveID();
+    g_iconPicker.picker.Open();
+    for (int i = 0; i < 30 && !IconPickerIsOpen(); ++i) {
+        ctx->Yield();
+    }
+    ctx->Yield(2);
+    return IconPickerIsOpen();
+}
+
+// The first catalog entry whose slug contains `query`: the icon the picker must pick on Enter.
+const SmatchetToolbarIconEntry* FirstCatalogMatch(const char* query) {
+    for (const SmatchetToolbarIconEntry& e : SmatchetToolbarIconCatalog()) {
+        if (std::strstr(e.Name, query) != nullptr) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+void RegisterIconPickerOpensWithCaret(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "OpensWithCaretInFilterAndTypingFilters");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        IM_CHECK(OpenIconPicker(ctx));
+        // No click: the picker put the caret in its filter, so the first keys already filter.
+        IM_CHECK(KeyboardIsInPickerFilter());
+
+        // "arrow-up" matches several icons; Enter takes the FIRST, in catalog order.
+        const SmatchetToolbarIconEntry* expected = FirstCatalogMatch("arrow-up");
+        IM_CHECK(expected != nullptr);
+        ctx->KeyChars("arrow-up");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_iconPicker.picks, 1);
+        if (expected != nullptr) {
+            IM_CHECK_STR_EQ(g_iconPicker.pickedName.c_str(), expected->Name);
+            IM_CHECK_STR_EQ(g_iconPicker.pickedGlyph.c_str(), expected->Glyph);
+        }
+        IM_CHECK(!IconPickerIsOpen()); // a pick closes the picker
+    };
+}
+
+void RegisterIconPickerEnterOnEmptyList(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "EnterOnEmptyListPicksNothing");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        IM_CHECK(OpenIconPicker(ctx));
+        IM_CHECK(KeyboardIsInPickerFilter());
+        IM_CHECK(FirstCatalogMatch("zzzqqq-no-such-icon") == nullptr);
+        ctx->KeyChars("zzzqqq-no-such-icon");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_iconPicker.picks, 0);
+        IM_CHECK(IconPickerIsOpen());         // still open: nothing was picked
+        IM_CHECK(KeyboardIsInPickerFilter()); // and the caret is still in the filter to fix the query
+
+        // Clean up: Esc closes it so the next test starts from no popup.
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+    };
+}
+
+void RegisterIconPickerEscClosesWithoutPick(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "EscInFilterClosesWithoutPicking");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        IM_CHECK(OpenIconPicker(ctx));
+        IM_CHECK(KeyboardIsInPickerFilter());
+        ctx->KeyChars("arrow");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        IM_CHECK_EQ(g_iconPicker.picks, 0);
+        IM_CHECK(!IconPickerIsOpen());
+    };
+}
+
+// The filter is a std::string: a pasted query longer than the old 64-byte buffer is kept whole. (No
+// icon name is that long, so the match list cannot tell a clipped query from a whole one; the live
+// text length of the field can.)
+void RegisterIconPickerLongQueryIsKeptWhole(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "IconPicker", "LongQueryIsKeptWholeNotClipped");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawIconPickerHost(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        IM_CHECK(OpenIconPicker(ctx));
+        IM_CHECK(KeyboardIsInPickerFilter());
+        const std::string query(200, 'a');
+        ImGui::SetClipboardText(query.c_str());
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_V);
+        ctx->Yield(2);
+        const ImGuiContext& g = *ImGui::GetCurrentContext();
+        const ImGuiInputTextState* field = ImGui::GetInputTextState(g.ActiveId);
+        IM_CHECK(field != nullptr);
+        if (field != nullptr) {
+            IM_CHECK_EQ(field->TextLen, 200); // the old 64-byte buffer stopped at 63
+        }
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine) {
     RegisterVisibleWhileLoading(engine);
+    RegisterIconPickerOpensWithCaret(engine);
+    RegisterIconPickerEnterOnEmptyList(engine);
+    RegisterIconPickerEscClosesWithoutPick(engine);
+    RegisterIconPickerLongQueryIsKeptWhole(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

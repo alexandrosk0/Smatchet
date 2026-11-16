@@ -7,7 +7,10 @@ moves its storage when it grows, so registering one would let the shadow splice 
 `SmatchetInput::Text` and `Multiline` therefore register nothing, and `SmatchetInput::TextBuf` (fixed
 buffer) keeps the hook. The comment box, worklog description, AI composer, Quick Create and new-issue
 description take dictation today and so were not moved to `std::string` by the shared text field
-(INPUT_UX_AUDIT.md #2, #102).
+(INPUT_UX_AUDIT.md #2, #102). The comment-template detail editor in Preferences (Title, ID and Body,
+`SmatchetPreferencesUi_Templates.cpp`) was moved, and so lost dictation: waived in the plan's Risks, to be
+restored by the same router change. So did the Annotate settings rows (p4 / p4vc executables, AI chat URL,
+the Timelapse and Changelist command templates, path remaps) in `AnnotateAnalysisUi_Preferences.cpp`.
 
 Concrete next action:
 Give `IDictationHost` / `DictationInsertionRouter` a string target: register a `std::string*` plus its item id

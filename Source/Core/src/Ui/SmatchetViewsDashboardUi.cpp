@@ -21,6 +21,7 @@
 #include "TrackerFieldSchema.h"
 #include "Logger.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetInput.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
@@ -355,13 +356,17 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     // Title row. The buffer is a display mirror of d.viewDraft.Name (see its doc comment) —
     // committing writes straight into the draft, no separate dirty flag to set.
     if (d.viewsTitleEditing) {
+        // Rename swaps this field in with the caret in it and the name selected, so typing replaces it
+        // (INPUT_UX_AUDIT.md #5). Enter, Tab or a click away keeps the new name; Esc puts the old one
+        // back (ImGui restores the buffer). Either way the edit is over.
+        SmatchetInput::TextOptions titleOpts;
+        titleOpts.focusOnAppear = true;
+        titleOpts.selectAllOnFocus = true;
+        titleOpts.trimOnCommit = true;
         ImGui::SetNextItemWidth(-260.0f);
-        if (ImGui::InputText("##ViewTitle", d.viewNameBuf, sizeof(d.viewNameBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            d.viewsTitleEditing = false;
-            d.viewDraft.Name = d.viewNameBuf;
-        }
-        if (ImGui::IsItemDeactivated()) {
+        const SmatchetInput::TextResult title =
+            SmatchetInput::TextBuf("##ViewTitle", d.viewNameBuf, sizeof(d.viewNameBuf), titleOpts);
+        if (title.committed || title.reverted) {
             d.viewsTitleEditing = false;
             d.viewDraft.Name = d.viewNameBuf;
         }
