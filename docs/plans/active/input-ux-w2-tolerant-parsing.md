@@ -199,13 +199,36 @@ None blocking. The bare-number preference and the file-existence probe are recor
 - **A bare-number unit preference (#38)**: follow-up, as above.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `27cd39c` · `wip(plan)`: this plan.
+- `a8340c6` · the feature: the parse-and-explain layer (`TrackerFieldValueParseExplain`, `TrackerInputNormalisePure`, `JqlQueryValidatePure`), the inline error widget (`Ui/SmatchetInlineError`), and the wiring. Wired: worklog dialog, grid duration cell, generic date field and the grid date picker's "Type a date" row, grid search Enter and the dashboard query editor, Preferences site fields, annotate p4/p4vc paths and chat URL, the offline conflict scalar pane, P4V launch failures, link-open failures. New: 43 `parse.*` / `p4v.fail.*` / `openurl.*` / related localization keys with French rows, the `Issue reference` and `Parse message` glossary terms in the Tracker `CONTEXT.md`, three unit-test files, and the bucket-E group `TolerantParse` (6 cases).
+- `7a7ca7c` · merge of `origin/develop` (Wave 1 #2433 and the dialog contract #2437).
+- `2eff947` · repair of that merge: a string literal my conflict-resolution script cut, and four function blocks git doubled in `SmatchetAiAssistantUi.cpp` (restored to develop's exact content).
+
+Closes #38, #40, #63 (the Enter refusal and the dashboard inline line), #66, #80, #82, #115, #127, #128 and the `pasted URLs` part of the 4.5 build list. #98, #117 and #136 were closed by Wave 1.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Plan-lock not claimed.** Pushing `refs/locks/input-ux-w2-tolerant-parsing` was refused: first by the environment's proxy (HTTP 403 on `refs/locks/*`), then, once Wave 1 was merged, by the pre-push collision check, because this diff appends rows to files that `bulk-edit-rows` and `shared-dropdown-recents` hold (`SmatchetLocalization.cpp`, `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`). No override was used. The push waits on that decision.
+- **Deferred, as the plan said** (their files are locked by `shared-dropdown-recents`): #53, #58, and the inline line under the grid search box itself (#63; Enter is refused with a toast and the dashboard editor has the inline line). Also deferred: a file-existence probe, Browse and `p4 -V` check for the p4 paths (#82/#128), and a bare-number unit preference.
+- **Canonical duration form is stricter than planned.** The review found that folding hours into days (`8h` to `1d`) sends a wrong value to Jira sites with a non-8-hour day. The committed form never folds hours into days or weeks; whole days and weeks the user wrote are kept as written; only a decimal day falls to hours, using the app's 8-hour day.
+- **Query check is per dialect.** The JQL rules (single quotes, trailing keywords, the field-name check) apply to Jira only. GitHub, Plane and Linear take the field:value dialect, where only a double quote is a quote and a trailing word, `!` or `~` is plain text.
+- **Plane URLs.** Only `app.plane.so` and `api.plane.so` are rewritten to the API host; a self-hosted install keeps its path, and the workspace is read from the segment before the web app's screen route.
+- **Two lint exemptions.** `Tracker/TrackerDateTimeFieldEditor.cpp` is an ImGui widget that lives under `Tracker/`, so its two `Ui/` includes carry `SMATCHET_DEVIATION(rule=no-ui-include-in-domain; ...)` markers (revisit 2027-02-16).
+- **Added beyond the file list:** `EndsWithAscii` in `StringUtil.h`, `TodayLocalYmd` in `TrackerDateTimePure`, and four test files added to the Linux subset so they run in a container without MSVC (with `Source/Core/src/Ui` on its include path for one private header).
+- **One mutant is equivalent.** Removing the "caret came back after Enter" guard in the generic date field changes nothing observable on this ImGui version: ImGui writes the active field's text back into the buffer and reports it edited, which restores the typed state. The guard is kept for robustness; the test asserts the user-visible result (a "Date not changed" toast after clicking away).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Bucket A (unit, Linux clang, `ninja-test-linux`)**: 1272 cases / 11305 assertions pass on the merged tree. 43 are new for the parse layer, plus the changed classifier, issue-key, worklog and Preferences cases.
+- **Mutation checks**
+  - Unit tests: 21 deliberate breaks of the parsers, classifier, worklog helpers and Preferences normaliser, each in one file; all 21 killed. Two survivors on the first pass (a lowercase `selectedIssue` key, a non-Jira path on an Atlassian Cloud host) and a third (an apostrophe opening a field:value token) exposed gaps; cases were added and the three are now killed. A flaw in my first runner (restored files kept an old timestamp, so stale mutated objects were reused) made the first results untrustworthy; all 21 were re-run with the fixed runner.
+  - Bucket E: 10 deliberate breaks of the editors; 9 killed. The tenth is the equivalent mutant above.
+- **Bucket E (ImGui Test Engine)**: run for real on a Linux build of the full app under Xvfb (`SMATCHET_BUILD_UI_TESTS=ON`, Lua, MCP, AI and Whisper-plugin on, local Whisper model off). `TolerantParse` 6/6; the existing `DurationInlineEdit` (12/12) and `OfflineConflictModalPanes` (14/14) groups pass. The whole suite on the merged tree: 243 of 249, with 6 failures that are in code this change does not touch and also failed before the merge: `Pillar2` stall harness x2 (needs `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`), `NotificationCenter/OpenViaToastClickRequest_RendersRowsAndClears`, `FuncSizeMainUi/BulkImportWindow_RendersAndShowsLoadFile` (these two are listed as host-only failures in PR #2433), and `WindowExpand` x2 (docking). I did not re-run them on an unmodified `develop`, so "unrelated" rests on that, not on a baseline run.
+- **Compile gates**: `posix-core-check` (compiles every Core file with clang, no `_WIN32`) passes; the Linux app builds clean.
+- **Static checks**: `pre-ship.sh` delta lint (strict zones, comment noise, duplication, function size, include cycles, fan-in, localization drift, markdown and doc validation) passes; `clang-format` clean. clang-tidy was run by the reviewer on the changed files; cppcheck is not installed here.
+- **Reviews**: the project code-review agent reviewed the staged diff twice (4 High and 3 Medium findings, all fixed; the second pass found nothing) and the branch diff once (it caught the merge damage, fixed in `2eff947`). Acks and the branch review artifact are recorded for the committed tree.
+- **Not run here**: the MSVC dual-target build (`SmatchetStandalone` and `SmatchetCore_DX12`), the Windows half of `P4vLaunch.cpp` (read by hand and by the reviewer only; the non-Windows half compiles), the Perf PR-fast lane, and bucket-C screenshot diffs. CI owns those.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. *flip the § Status header to `shipped`,*
