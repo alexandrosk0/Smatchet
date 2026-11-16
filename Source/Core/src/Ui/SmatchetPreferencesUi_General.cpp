@@ -35,7 +35,6 @@
 #include "Interfaces/IAppMeta.h"
 #include "Interfaces/IAppSync.h"
 #include "SmatchetHelpMarker.h"
-#include "Ui/SmatchetDestructiveButton.h"
 #include "Sync/CacheRecreateReportPure.h"
 #include "Ui/SmatchetStorageSnapshotPure.h"
 #include "Ui/TouchInputRouter.h"
@@ -44,6 +43,7 @@
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -351,21 +351,18 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));
     }
 
-    if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive, so Cancel takes the keyboard on open and Enter cancels.
+    static smatchet::ui::DialogScopeState s_recreateDialog;
+    if (smatchet::ui::BeginDialog(s_recreateDialog, "Delete local database?###RecreateSqliteDbConfirm", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped(
             "This removes cached issues and any queued offline writes stored on this machine. It does not "
             "delete anything on the tracker. Continue?");
         ImGui::Separator();
-        // P2-M16: action-first order + the shared destructive styling (this modal was
-        // the one Cancel-first outlier).
-        SmatchetPushDestructiveButtonColors();
-        const bool deleteClicked = ImGui::Button("Delete and recreate");
-        SmatchetPopDestructiveButtonColors();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
-        }
+        // P2-M16: action-first order + the shared destructive styling, now drawn by the shared footer.
+        const bool deleteClicked =
+            smatchet::ui::ConfirmFooter(s_recreateDialog, smatchet::ui::DestructiveFooter("Delete and recreate")) ==
+            smatchet::dialogkeys::ConfirmPick::Primary;
         if (deleteClicked) {
             // The wipe is asynchronous: the completion (AppController) pushes the success or failure toast and, on
             // success, starts the follow-up full refresh once the new database is in place.
@@ -383,7 +380,7 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
                     ToastType::Error, 6000);
             }
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_recreateDialog);
     }
 }
 

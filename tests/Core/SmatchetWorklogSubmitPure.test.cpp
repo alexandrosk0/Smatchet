@@ -217,3 +217,74 @@ TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turn
     // Save by the button or Ctrl+Enter: the caret stays where the user had it.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(false, false, "junk"));
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// Confirm dialogs and the global-shortcut mute (input-ux-w2-dialog-contract; audit #86, #88). These are the
+// rules the shared footer in Ui/SmatchetDialogScope.h reads; kept beside the Wave 1 dialog-key cases above.
+// ---------------------------------------------------------------------------------------------------------
+
+using smatchet::dialogkeys::ConfirmDefault;
+using smatchet::dialogkeys::ConfirmPick;
+using smatchet::dialogkeys::GlobalShortcutAllowedUnderModal;
+using smatchet::dialogkeys::ResolveConfirmDefault;
+using smatchet::dialogkeys::ResolveConfirmEnter;
+
+TEST_CASE("ResolveConfirmDefault: a destructive or consent prompt defaults to the safe button") {
+    CHECK(ResolveConfirmDefault(true, false) == ConfirmDefault::Safe);
+    CHECK(ResolveConfirmDefault(false, true) == ConfirmDefault::Safe);
+    CHECK(ResolveConfirmDefault(true, true) == ConfirmDefault::Safe);
+}
+
+TEST_CASE("ResolveConfirmDefault: a non-destructive confirm defaults to its action") {
+    CHECK(ResolveConfirmDefault(false, false) == ConfirmDefault::Primary);
+}
+
+TEST_CASE("ResolveConfirmEnter: with no keyboard cursor on an item, Enter runs the default button") {
+    CHECK(ResolveConfirmEnter(true, true, true, false, ConfirmDefault::Safe) == ConfirmPick::Cancel);
+    CHECK(ResolveConfirmEnter(true, true, true, false, ConfirmDefault::Primary) == ConfirmPick::Primary);
+}
+
+TEST_CASE("ResolveConfirmEnter: Enter on a destructive confirm never runs the action by default") {
+    const ConfirmDefault def = ResolveConfirmDefault(true, false);
+    CHECK(ResolveConfirmEnter(true, true, true, false, def) != ConfirmPick::Primary);
+}
+
+TEST_CASE("ResolveConfirmEnter: an item under the visible keyboard cursor takes Enter itself") {
+    // ImGui activates that item and the footer reads the click, so the decision must not also pick.
+    CHECK(ResolveConfirmEnter(true, true, true, true, ConfirmDefault::Primary) == ConfirmPick::None);
+    CHECK(ResolveConfirmEnter(true, true, true, true, ConfirmDefault::Safe) == ConfirmPick::None);
+}
+
+TEST_CASE("ResolveConfirmEnter: nothing without Enter, or while a popup above the dialog has the keyboard") {
+    CHECK(ResolveConfirmEnter(false, true, true, false, ConfirmDefault::Primary) == ConfirmPick::None);
+    CHECK(ResolveConfirmEnter(true, false, true, false, ConfirmDefault::Primary) == ConfirmPick::None);
+    CHECK(ResolveConfirmEnter(true, false, true, false, ConfirmDefault::Safe) == ConfirmPick::None);
+}
+
+TEST_CASE("ResolveConfirmEnter: the Enter that opened the dialog does not also answer it") {
+    // The dialog opened this frame, so it did not hold the keyboard last frame.
+    CHECK(ResolveConfirmEnter(true, true, false, false, ConfirmDefault::Primary) == ConfirmPick::None);
+    CHECK(ResolveConfirmEnter(true, true, false, false, ConfirmDefault::Safe) == ConfirmPick::None);
+}
+
+TEST_CASE("GlobalShortcutAllowedUnderModal: zoom and fullscreen still run under a modal") {
+    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.in"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.out"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.reset"));
+    CHECK(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle"));
+}
+
+TEST_CASE("GlobalShortcutAllowedUnderModal: everything that changes state is muted, the palette too") {
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.command_palette"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.preferences.toggle"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("view.delete"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("grid.search.focus"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal(""));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal(nullptr));
+}
+
+TEST_CASE("GlobalShortcutAllowedUnderModal: the zoom match needs the whole 'ui.zoom.' segment") {
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.zoom"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.zoomer.in"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle.extra"));
+}
