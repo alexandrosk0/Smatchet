@@ -138,14 +138,17 @@ bool OpenClearConfirm(ImGuiTestContext* ctx, const char* panelRef) {
     return YieldUntil(ctx, [] { return WindowIsLive("##ConfirmClearChat"); });
 }
 
-// Clears the conversation the way a user does: the trash button, then "Clear" in the confirm.
+// Clears the conversation the way a user does: the trash button, then "Clear" in the confirm. The test
+// reference goes back to the panel afterwards, so the caller's next lookup is not inside the closed dialog.
 bool ClearThroughConfirm(ImGuiTestContext* ctx, const char* panelRef) {
     if (!OpenClearConfirm(ctx, panelRef)) {
         return false;
     }
     ctx->SetRef("##ConfirmClearChat");
     ctx->ItemClick("Clear");
-    return YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
+    const bool closed = YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
+    ctx->SetRef(panelRef);
+    return closed;
 }
 
 // Cancel in the confirm keeps the conversation. Confirming clears it at once and the toast offers Undo.
