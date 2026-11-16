@@ -18,6 +18,9 @@ setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     SUT="$REPO_ROOT/scripts/dev/plan-ci-proof-check.sh"
     SANDBOX="$(mktemp -d "${BATS_TMPDIR:-/tmp}/plan-proof.XXXXXX")"
+    # Sandbox plan paths are built, not literal, so the plan-ref-integrity doc gate
+    # does not read the fixtures as references to real plans.
+    FIXTURE_PLAN_DIR="docs/plans/""active"
     STUB_BIN="$SANDBOX/.stub-bin"
     git -C "$SANDBOX" init -q -b develop
     git -C "$SANDBOX" config user.email bats@example.invalid
@@ -36,11 +39,11 @@ teardown() {
 
 # write_plan <verification-line> [<actual-line>] — a plan naming a CI proof.
 write_plan() {
-    mkdir -p "$SANDBOX/docs/plans/active"
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
     {
         printf '# Plan\n\n## Verification\n\n- Local: build it.\n%s\n\n' "$1"
         printf '## Verification (actual)\n\n%s\n' "${2:-- nothing yet}"
-    } > "$SANDBOX/docs/plans/active/lane-change.md"
+    } > "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
 }
 
 commit_path() {

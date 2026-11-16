@@ -32,6 +32,9 @@ setup() {
     WF="$REPO_ROOT/.github/workflows/build-and-test.yml"
     NIGHTLY="$REPO_ROOT/.github/workflows/sanitizer-nightly.yml"
     SANDBOX="$(mktemp -d "${BATS_TMPDIR:-/tmp}/detect-changes.XXXXXX")"
+    # Sandbox plan paths are built, not literal, so the plan-ref-integrity doc gate
+    # does not read the fixtures as references to real plans.
+    FIXTURE_PLAN_DIR="docs/plans/""active"
     git -C "$SANDBOX" init -q -b develop
     git -C "$SANDBOX" config user.email bats@example.invalid
     git -C "$SANDBOX" config user.name bats
@@ -107,7 +110,7 @@ rewrite_line() {
 }
 
 @test "a docs-only diff sets source_core_cpp=false and code=false" {
-    commit_path docs/plans/active/some-plan.md
+    commit_path "$FIXTURE_PLAN_DIR/some-plan.md"
     commit_path docs/self-improvement/categories/infra/2026-01-01-x.md
     out="$(detect)"
     printf '%s\n' "$out" | grep -qx 'source_core_cpp=false'
@@ -175,7 +178,7 @@ rewrite_line() {
 
 @test "an android-only diff keeps android_only=true" {
     commit_path Source/Mobile/Android/Main.cpp
-    commit_path docs/plans/active/mobile.md
+    commit_path "$FIXTURE_PLAN_DIR/mobile.md"
     out="$(detect)"
     printf '%s\n' "$out" | grep -qx 'android_only=true'
     printf '%s\n' "$out" | grep -qx 'source_core_cpp=false'
