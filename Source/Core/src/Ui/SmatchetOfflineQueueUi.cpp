@@ -1442,7 +1442,8 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     const bool hasConflictMarkers = std::string(d.conflictResolveBuf.data()).find("<<<<<<<") != std::string::npos;
     if (hasConflictMarkers) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
-        ImGui::TextUnformatted("Resolve all         ImGui::PopStyleColor();
+        ImGui::TextUnformatted("Resolve all <<<<<<< markers before saving.");
+        ImGui::PopStyleColor();
     }
     ImGui::Spacing();
 
@@ -1485,8 +1486,6 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
                          "Ctrl+Enter saves. Esc leaves the text box and keeps what you typed.");
 }
 
-// Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
-// Theirs / Save edited. Writes the chosen value verbatim (no Markdown reconversion).
 // What kind of value the queued edit's field takes, for the hint under the resolved-value box and for the text
 // shown when the replay turns the value down (#115). The kind comes from the field id in the conflict context.
 enum class ScalarConflictKind : unsigned char { Estimate, Sprint, Other };
@@ -1544,6 +1543,9 @@ static std::string ResolvedValueToSend(const std::string& typed, ScalarConflictK
     return typed;
 }
 
+// Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
+// Theirs / Save edited. Writes the chosen value as it is (no Markdown reconversion); an estimate is sent in its
+// canonical form ("1h 30m"), read the tolerant way first.
 static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
