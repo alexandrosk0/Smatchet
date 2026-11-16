@@ -22,6 +22,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -1441,8 +1442,7 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     const bool hasConflictMarkers = std::string(d.conflictResolveBuf.data()).find("<<<<<<<") != std::string::npos;
     if (hasConflictMarkers) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
-        ImGui::TextUnformatted("Resolve all <<<<<<< markers before saving.");
-        ImGui::PopStyleColor();
+        ImGui::TextUnformatted("Resolve all         ImGui::PopStyleColor();
     }
     ImGui::Spacing();
 
@@ -1796,8 +1796,10 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
         ImGui::OpenPopup("Discard queued work?###OfflineDiscardConfirm");
         g_offlineDiscardConfirmRequested = false;
     }
-    if (!ImGui::BeginPopupModal("Discard queued work?###OfflineDiscardConfirm", nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive, so Keep takes the keyboard on open and Enter keeps.
+    static smatchet::ui::DialogScopeState s_discardDialog;
+    if (!smatchet::ui::BeginDialog(s_discardDialog, "Discard queued work?###OfflineDiscardConfirm", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
     ImGui::TextWrapped("%s", SmatchetLocalization::Format(
@@ -1806,17 +1808,16 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
                                  "of that offline work. Discard deletes them permanently.",
                                  static_cast<int>(g_offlineDiscardConfirmKeys.size())));
     ImGui::Spacing();
-    if (ImGui::Button("Discard rows")) {
+    const smatchet::dialogkeys::ConfirmPick pick =
+        smatchet::ui::ConfirmFooter(s_discardDialog, smatchet::ui::DestructiveFooter("Discard rows", "Keep"));
+    if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
         DiscardOfflineRowKeys(ctx, g_offlineDiscardConfirmKeys);
         g_offlineDiscardConfirmKeys.clear();
         ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Keep")) {
+    } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
         g_offlineDiscardConfirmKeys.clear();
-        ImGui::CloseCurrentPopup();
     }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_discardDialog);
 }
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {

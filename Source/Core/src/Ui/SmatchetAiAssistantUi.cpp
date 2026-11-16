@@ -50,6 +50,7 @@
 // overwrites the splice with the stale internal `state->TextA`. See
 // imgui_widgets.cpp:4821 (init_reload_from_user_buf) for the upstream branch.
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -1115,8 +1116,11 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
 // attempt) with the typed text intact.
 void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               AiAssistantController* ctrl) {
-    if (!ImGui::BeginPopupModal(kOutboundConsentPopupId, nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    // Keys: smatchet::ui::ConfirmFooter. A consent prompt, so Cancel takes the keyboard on open and Enter
+    // cancels (the typed message stays); sending needs a deliberate click or Tab to the button.
+    static smatchet::ui::DialogScopeState s_consentDialog;
+    if (!smatchet::ui::BeginDialog(s_consentDialog, kOutboundConsentPopupId, nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
     ImGui::TextUnformatted("Smatchet is about to send context from your workspace to the configured AI provider.");
@@ -1147,17 +1151,97 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
         ImGui::TreePop();
     }
     ImGui::Spacing();
-    if (ImGui::Button("Send and don't ask again", ImVec2(220, 0))) {
+    smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::ConsentFooter("Send and don't ask again");
+    spec.ButtonSize = ImVec2(220, 0);
+    if (smatchet::ui::ConfirmFooter(s_consentDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
         d.cfg.AssistantOutboundConsentShown = true;
         ScheduleConfigSaveDetached(d.cfg);
         ImGui::CloseCurrentPopup();
         DispatchAiSend(app, d, activeView, ctrl);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-        ImGui::CloseCurrentPopup();
+    smatchet::ui::EndDialog(s_consentDialog);
+}
+
+// Notes which window to hand the keyboard back to. Call when the user asks for the panel.
+void RecordFocusReturnWindow() {
+    const ImGuiWindow* nav = ImGui::GetCurrentContext()->NavWindow;
+    const ImGuiWindow* root = nav != nullptr ? nav->RootWindow : nullptr;
+    if (root == nullptr) {
+        s_focusReturnWindowId = 0;
+        return;
     }
-    ImGui::EndPopup();
+    const ImGuiWindow* panel = ImGui::FindWindowByName("Smatchet Assistant");
+    if (panel != nullptr && root == panel->RootWindow) {
+        return; // asked for again from inside the panel: the earlier window still stands
+    }
+    // A menu or popup the request came from is closing right now; never hand back to one.
+    const bool usable = (root->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu)) == 0;
+    s_focusReturnWindowId = usable ? root->ID : 0;
+}
+
+// True once per request: on the frame the caret should go into the message box. A request made
+// while a window is being dragged waits, because ImGui ignores a focus request during a drag; the
+// age bound drops it when the drag outlasts it.
+bool TakeAssistantCaretRequest() {
+    if (s_caretRequestFrame < 0) {
+        return false;
+    }
+    if (!smatchet::ai::AiCaretRequestFresh(s_caretRequestFrame, ImGui::GetFrameCount(), kCaretRequestMaxAgeFrames)) {
+        s_caretRequestFrame = -1;
+        return false;
+    }
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (g.MovingWindow != nullptr || ImGui::IsDragDropActive()) {
+        return false;
+    }
+    s_caretRequestFrame = -1;
+    return true;
+}
+
+// Esc for the input row. Call before the message box is drawn: an Esc the panel takes must not
+// also reach the box, whose own Esc puts back the text from before the caret entered and so drops
+// what was typed.
+// - Only while the panel itself has the keyboard, this frame and the one before. A popup above the
+//   panel keeps its Esc, and the Esc that closes such a popup does nothing here.
+// - A reply is coming in: stop it. The caret and the typed text stay.
+// - Idle with the caret in the box: leave the box. LeaveAssistantInput does that after the box has
+//   drawn, so text that dictation put in on this frame is kept too.
+smatchet::ai::AiEscAction ReadAssistantEsc(const UiDrawSession& d, AiAssistantController* ctrl) {
+    const int frame = ImGui::GetFrameCount();
+    if (s_caretRequestFrame < 0 && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        s_focusReturnWindowId = 0; // the user went elsewhere themselves: nothing to hand back to
+    }
+    const bool ownsNow =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const bool ownedLastFrame = s_panelOwnedKeyboardFrame == frame - 1;
+    if (ownsNow) {
+        s_panelOwnedKeyboardFrame = frame;
+    }
+    const bool caretInInput = s_inputItemId != 0 && ImGui::GetActiveID() == s_inputItemId;
+    const smatchet::ai::AiEscAction esc =
+        smatchet::ai::DecideAssistantEsc(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsNow && ownedLastFrame,
+                                         d.assistantInFlight, ctrl != nullptr, caretInInput);
+    if (esc != smatchet::ai::AiEscAction::None && caretInInput) {
+        // The message box does not see this Esc, so it neither puts old text back nor drops the caret.
+        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_Any, ImGuiInputFlags_LockThisFrame);
+    }
+    if (esc == smatchet::ai::AiEscAction::StopReply) {
+        ctrl->Cancel();
+        ++s_escStopCount;
+    }
+    return esc;
+}
+
+// Takes the caret out of the message box, keeping its text, and hands the keyboard back to the
+// window the user asked for the panel from, when that window is still there.
+void LeaveAssistantInput() {
+    ImGuiWindow* back = s_focusReturnWindowId != 0 ? ImGui::FindWindowByID(s_focusReturnWindowId) : nullptr;
+    const ImGuiWindow* self = ImGui::GetCurrentWindow()->RootWindow;
+    s_focusReturnWindowId = 0;
+    ImGui::ClearActiveID();
+    if (back != nullptr && back != self && back->WasActive) {
+        ImGui::FocusWindow(back);
+    }
 }
 
 // Notes which window to hand the keyboard back to. Call when the user asks for the panel.
@@ -1449,12 +1533,16 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
             ImGui::OpenPopup("##ConfirmClearChat");
         }
         ImGui::SetItemTooltip("Clear conversation history (asks for confirmation).");
-        if (ImGui::BeginPopupModal("##ConfirmClearChat", nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        // Keys: smatchet::ui::ConfirmFooter. Destructive, so Cancel takes the keyboard on open and Enter cancels.
+        static smatchet::ui::DialogScopeState s_clearChatDialog;
+        if (smatchet::ui::BeginDialog(s_clearChatDialog, "##ConfirmClearChat", nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::TextUnformatted("Clear the entire conversation?");
             ImGui::TextDisabled("In-memory history + persisted SQLite rows are deleted. This cannot be undone.");
             ImGui::Spacing();
-            if (ImGui::Button("Clear", ImVec2(120, 0))) {
+            smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::DestructiveFooter("Clear");
+            spec.ButtonSize = ImVec2(120, 0);
+            if (smatchet::ui::ConfirmFooter(s_clearChatDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
                 d.assistantHistory.clear();
                 d.assistantHistoryRowIds.clear();
                 d.assistantScrollToMessageIndex = -1;
@@ -1469,11 +1557,7 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
                 smatchet::ai::chat_persist::Enqueue(std::move(clearOp));
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+            smatchet::ui::EndDialog(s_clearChatDialog);
         }
     }
 }

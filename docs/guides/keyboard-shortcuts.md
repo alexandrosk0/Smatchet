@@ -159,6 +159,31 @@ Asking for the Assistant (`Ctrl+Shift+A`, **View → Assistant**, or revealing i
 puts the caret in the message box. A panel that was already open when the app started
 leaves the keyboard where it is.
 
+### Confirm dialogs
+
+Every confirm dialog (Delete view, Discard changes, Discard queued work, Delete local
+database, Reset keyboard shortcuts, Reset window layout, Clear conversation, Unsaved
+changes in Preferences or the Lua console, and the custom-endpoint and outbound-context
+consent prompts) uses the same keys:
+
+| Shortcut | Action |
+|---|---|
+| `Enter` | Run the button that has the keyboard |
+| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep my shortcuts**) |
+| `Tab` / arrows | Move between the buttons |
+
+When a confirm opens, the keyboard is on its safe button if the action deletes or
+replaces something, or if it is a consent prompt. Otherwise it is on the action
+(**Save & switch**, **Save & Sync**, **Save**). So pressing `Enter` straight away never
+deletes anything. A destructive action button is red.
+
+The **Pick Icon** dialog opens with the caret in its search box. `Enter` picks the icon
+when exactly one matches, and `Esc` closes it.
+
+While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
+zoom shortcuts and **Full Screen**. A shortcut that ran behind a confirm could change
+or remove what the confirm is asking about.
+
 ## Default bindings
 
 | Action | Default | Command id |
