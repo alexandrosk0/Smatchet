@@ -24,10 +24,16 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <functional>
+#include <future>
+#include <iterator>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -155,6 +161,40 @@ void CloseLongTextForTest(ImGuiTestContext* ctx) {
     }
 }
 
+// Looks for `needle` in a file without reading it on the UI thread (Pillar 2): each poll either starts one
+// read on a worker or looks at the result of the one it started on an earlier frame, and never blocks.
+class FileContainsPoll {
+  public:
+    FileContainsPoll(std::string path, std::string needle) : path_(std::move(path)), needle_(std::move(needle)) {}
+
+    bool operator()() {
+        if (found_) {
+            return true; // latched: asking again after success stays true
+        }
+        if (!pending_.valid()) {
+            const std::string path = path_;
+            const std::string needle = needle_;
+            pending_ = std::async(std::launch::async, [path, needle]() {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: 1ms - reads one small file, off the UI thread
+                std::ifstream in(path, std::ios::binary);
+                const std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                return body.find(needle) != std::string::npos;
+            });
+            return false;
+        }
+        if (pending_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return false;
+        }
+        found_ = pending_.get(); // the future is spent: the next poll starts a new read unless found
+        return found_;
+    }
+
+  private:
+    std::string path_;
+    std::string needle_;
+    std::future<bool> pending_;
+    bool found_ = false;
+};
 } // namespace
 
 // OfflineFirst/FieldViewer_HistoryOpensAndEscCloses: the History field opens the generic viewer
@@ -687,6 +727,48 @@ static void RegisterLongTextDraftComesBack(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/DraftStore_PersistsWithoutStopAndReloads: the draft store writes a draft to its file on its
+// own worker while the app runs (so a crash keeps it), and a restart (Stop, then Start on the same file)
+// brings it back. This is the worker half of the store; the map's rules (isolation, bounds, eviction, the
+// file format) are doctest cases in OfflineFirstPure.test.cpp. Needs no fixture: the profile is isolated.
+static void RegisterDraftStorePersistsAndReloads(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "DraftStore_PersistsWithoutStopAndReloads");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const std::string path = smatchet::drafts::DefaultPath();
+        FileContainsPoll fileHasText(path, "kept by the worker");
+        // The store works on wall-clock time (a write debounce, a worker start), and the test engine runs
+        // frames unthrottled, so every wait here is a deadline in seconds, not a frame count.
+        const auto waitFor = [ctx](const std::function<bool()>& done) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            bool ok = done();
+            while (!ok && std::chrono::steady_clock::now() < deadline) {
+                ctx->Yield();
+                ok = done();
+            }
+            return ok; // the last answer: a stateful predicate is not asked once more after the loop
+        };
+        IM_CHECK_NO_RET(waitFor([]() { return smatchet::drafts::IsLoaded(); }));
+        smatchet::drafts::ResetForTests();
+        IM_CHECK_NO_RET(smatchet::drafts::Put("comments", "UITEST|OFF-9", "kept by the worker", "its base"));
+
+        // It reaches the disk with no Stop: the debounce is under a second, the cap two seconds.
+        IM_CHECK_NO_RET(waitFor([&fileHasText]() { return fileHasText(); }));
+
+        // A restart: nothing in memory, the file is read at Start.
+        smatchet::drafts::Stop();
+        smatchet::drafts::ResetForTests();
+        smatchet::drafts::DraftEntry entry;
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("comments", "UITEST|OFF-9", entry));
+        smatchet::drafts::Start(path);
+        IM_CHECK_NO_RET(waitFor([]() { return smatchet::drafts::IsLoaded(); }));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", "UITEST|OFF-9", entry));
+        IM_CHECK_STR_EQ_NO_RET(entry.Text.c_str(), "kept by the worker");
+        IM_CHECK_STR_EQ_NO_RET(entry.Base.c_str(), "its base");
+
+        smatchet::drafts::ResetForTests(); // the worker is running again: it writes the empty store
+    };
+}
+
 #undef SMATCHET_INPUT_CASE_PREAMBLE
 
 extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
@@ -709,6 +791,7 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsDraftSurvivesReplace(engine);
     RegisterCommentsDiscardErasesDraft(engine);
     RegisterLongTextDraftComesBack(engine);
+    RegisterDraftStorePersistsAndReloads(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
