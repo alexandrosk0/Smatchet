@@ -24,6 +24,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Ui/TouchInputRouter.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Logger.h"
 #include "Sync/CatalogRestorePure.h"
 #include "Sync/LookupFreshnessPure.h"
@@ -1107,12 +1108,21 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         return;
     }
     const int frame = ::ImGui::GetFrameCount();
+    const bool modalUp = smatchet::ui::AnyModalDialogOpen();
     bool consumedWheel = false;
     bool wheelAccumulated = false;
     bool wheelFired = false;
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
+            continue;
+        }
+        // Audit #88: nothing runs behind a modal dialog. A command there could change or remove what the
+        // dialog asks about (Delete view? with its pending target), or open the palette over it. Only
+        // zoom and fullscreen pass (GlobalShortcutAllowedUnderModal). Checked first: a muted
+        // wheel combo leaves the wheel to the dialog, and a muted combo does not count as this frame's
+        // firing of its action in the alias de-dup.
+        if (modalUp && !smatchet::dialogkeys::GlobalShortcutAllowedUnderModal(pk.commandId.c_str())) {
             continue;
         }
         // Wheel bindings own the delta for this frame — mark now, clear after the

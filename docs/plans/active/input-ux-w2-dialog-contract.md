@@ -2,7 +2,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `active` — slices 1 and 2 (in part) shipped in the stacked PR; slices 3 and 4 open.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -23,6 +23,8 @@ Global mute is one check in `dispatchKeybindings`: when `ImGui::GetTopMostPopupM
 Trade-off: a wrapper (`BeginDialog`) over a free function called after each `BeginPopupModal` (`ModalEscCancelRequested()`). The wrapper is chosen because focus return and the "owned last frame" bookkeeping need a hook on both open and close; a per-site free function would recreate the Wave 1 per-TU copies this plan exists to delete.
 
 ## Interface contracts
+
+> **As shipped in slice 1, the API differs from the sketch below.** `SmatchetDialogScope.h` is the source of truth. The differences and the reason for each are in § Deviations from plan.
 
 New shared header under `Source/Core/include/Ui/` (widens a shared contract per `Source/Core/src/Ui/AGENTS.md` § Before you edit — this plan is that approval request).
 
@@ -224,13 +226,59 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - Esc Esc leaving Zen mode while a popup is open (#93) — follow-up in the cross-cutting surface; touches `SmatchetUI.cpp:999`.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `112aa561e` · wip(plan): this plan.
+- `c1b6f43f1` · merge of `origin/claude/frictionless-user-input-ux-ea174b` (PR #2433, head `b12bdb424`) for `Ui/DialogKeysPure.h`.
+- Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (this PR's feature commit).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+**Scope of this PR.** Slice 1 and slice 2 ship together (the § Implementation handoff allows 1+2 in one PR), plus row 17 (icon picker) from slice 3. It is stacked on PR #2433, not on #2435 / #2432. Dialogs in files those two PRs change stay for a later PR.
+
+**API changes against § Interface contracts**
+
+- **Button order is `[Primary][Alternate][Cancel]`**, action first, not safe first. The existing confirms already put the action first, and P2-M16 keeps that order. Moving every button would retrain users for no gain. Enter safety comes from the default focus instead: a destructive or consent primary starts with the keyboard on Cancel.
+- **`DialogKind` dropped.** `ConfirmFooterSpec` takes `PrimaryDestructive`, `AlternateDestructive`, `SafeByDefault` (consent prompts) and `PrimaryEnabled` flags. Three kinds could not say "the alternate is destructive" ("Discard & switch") or "non-destructive but default to Cancel" (consent).
+- **`ConfirmPick` gains `Alternate`** for the three-button confirms (Views "Discard changes?", Preferences "Unsaved changes", Lua console unsaved switch). The open question on "Discard changes?" is settled: three buttons, Save & switch is the default.
+- **Pure signatures:** `ResolveConfirmDefault(bool primaryDestructive, bool safeByDefault)` and `ResolveConfirmEnter(bool enterPressed, bool dialogOwnsKeyboard, bool navItemTakesEnter, ConfirmDefault def)`. ImGui itself activates the button under a visible keyboard cursor on Enter, so the pure rule only decides the case where no button does.
+- **`ResolveSubmit` not added.** Ctrl+Enter is read by `DialogReadKeys`. Plain Enter in a single-line field stays the field's own `EnterReturnsTrue`, as the icon picker uses it. A pure rule with no caller is dead code; it lands with the first form dialog that needs it.
+- **`DialogOpen`, `DialogServiceFocusReturn` and the opener / restore fields dropped** from `DialogScopeState`, which now holds `Open`, `FocusPending`, `OwnedKeyboardLastFrame` and `FieldActiveLastFrame`. Focus return (#24, #3) and its open question (`ActivateItemByID` after `CloseCurrentPopup`) move to the slice 3 PR, which has the palette and the form dialogs that need it. `BeginDialog` detects a new open by itself (`IsWindowAppearing`), so call sites keep their own `OpenPopup`.
+- **`DialogFocusFirstField` is named `DialogFocusHere`.** `ConfirmFooter` uses it for the default button, not only for a first field.
+- **The mute is the first check after `MatchHotkey`** in `dispatchKeybindings`, not after the alias de-dup. A muted wheel combo then leaves the wheel to the dialog, and a muted combo does not count as its action's firing in the de-dup.
+- **Spec factories added:** `DestructiveFooter`, `ConsentFooter` and `UnsavedChangesFooter` build the common `ConfirmFooterSpec`s. Without them the call sites were copy-paste clones (`dup_audit`, DRY Pillar 5).
+- **Enter and Ctrl+Enter are gated like Esc** (`ResolveConfirmEnter` takes `dialogOwnedKeyboardLastFrame`; `DialogReadKeys` gates Submit the same way). ImGui focuses a new popup on the frame it opens, so the Enter that opened a confirm also answered it: the AI first-send consent closed unseen, and the Lua console saved over the script without asking. The code-review pass found this.
+- **Mobile Views: the modals draw once per frame.** `drawViewsDashboardWindow(embedded)` no longer calls `drawViewsModals`; the shell's `drawMobileViewsModals` already does, every frame. Two calls under two ID stacks reset the shared dialog state each frame, so the opening focus was re-placed every frame. The code-review pass found this too.
+
+**Tests, localization and locked files**
+
+- **Bucket-A cases live in `tests/Core/SmatchetWorklogSubmitPure.test.cpp`** (9 new cases), not in a new `tests/Core/DialogKeysPure.test.cpp`. A new file needs a `tests/CMakeLists.txt` row, and that file is in the `bulk-edit-rows` plan-lock. That file already holds the Wave 1 `DialogKeysPure.h` cases. Move them when the lock frees.
+- **Bucket-E tests live in `tests/ui/mobile_views_confirm_modal.test.cpp`** (3 new `DialogContract/*` tests), not in a new file. `tests/ui/CMakeLists.txt` and `tests/ui/ui_tests_registry.cpp` are locked by `bulk-edit-rows` and `input-ux-wave1-palette`. The tests cover Delete view (safe focus, Enter and Esc cancel), Discard changes (default on the action, Esc cancels and keeps edits) and the shortcut mute (Ctrl+Shift+P, with a no-dialog control run first). Ctrl+B is not asserted: the mobile shell has no sidebar layout flag to read.
+- **No new localization rows.** `SmatchetLocalization.cpp` is locked by `bulk-edit-rows` and `input-ux-wave1-palette`. Every footer keeps the label it had before, which is already in the table. No `dialog.cancel` / `dialog.keep_editing` keys were added.
+- **No key-hint suffixes on buttons** — `input-ux-w2-action-keys` owns them.
+- **No bucket-C screenshot diff of the footers.** Button order did not change. Only the button that starts with keyboard focus did, and the bucket-E `NavId` asserts cover that.
+
+**Deferred migrations** (later PRs; each row names what holds it)
+
+- Row 16: `TicketFieldEditor_Modal.cpp` long-text discard and `SmatchetFieldViewerModalUi.cpp` field-viewer discard. Both already keep text on Esc. The footer-only swap goes with slice 4, which changes the same two files.
+- Row 18: toolbar editor (`SmatchetToolbarUi.cpp`) — slice 3, it needs Ctrl+Enter save plus a caret after Add command.
+- Row 19: "Update Available" (`SmatchetUI.cpp`) and About (`SmatchetAboutUi.cpp`) — slice 3.
+- Row 20: bulk-import project modal (`SmatchetBulkTicketsUi.cpp`) — slice 3.
+- Row 21: `annotate_assign` and "Jira user profile" (`AnnotateAnalysisUi_Window.cpp`) — slice 3.
+- Row 22: date-time picker held-Esc (`TrackerDateTimeFieldEditor.cpp`) — slice 3.
+- Row 23: "Save view as new" (`SmatchetActiveProjectGridUi.cpp`) — locked by `bulk-edit-rows`, and its only change is focus return (slice 3).
+- Row 24: palette focus return (`CommandPaletteUi.cpp`, #24) — locked by `input-ux-wave1-palette`, and #2435 changes `BuiltinCommands_Ui.cpp`. Slice 3, after #2433 and #2435 merge.
+- Row 25: Wave 1 re-point (slice 4) — after #2432 and #2435 merge (`TicketFieldEditor.cpp` is #2432's).
+- Dialogs in #2435's files (`SmatchetNewIssueDraftUi.cpp`, `SmatchetGridHeaderUi.cpp`, `SmatchetQuickCreateIssueUi.cpp`, `SmatchetMobileShellUi.cpp`, `SmatchetGridPaneWindows.cpp`) and #2432's (`FilterDropdown*`, `TicketFieldEditor.cpp`) — after those PRs merge.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Build (dual-target)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed.
+- **Bucket A**: `ninja-test-msvc` `SmatchetTests.exe` — 4161 / 4161 cases passed (includes the 10 new `ResolveConfirmDefault` / `ResolveConfirmEnter` / `GlobalShortcutAllowedUnderModal` cases).
+- **Bucket E**: `ninja-ui-test-msvc`, `ui_test.run --spawn`: `DialogContract` 5 / 5 passed (spawn log checked: no SKIP), `MobileViewsConfirmModal` 1 / 1. Mutation check: with the Enter gate removed, `DialogContract/OpeningEnterDoesNotAnswerConfirm` fails. Regression filters over the touched dialogs (`Preferences`, `AiAssistant`, `OfflineQueue`, `Views`, `Keybind`, `CommandPalette`) all pass. `UserInfoWindow/NarrowLayoutRendersWithoutAssert` fails locally on this branch and also on the stack-base exe (`b12bdb424`), so it is not from this change; it passes in CI.
+- **Doc validation**: `scripts/dev/test-docs.sh` — see the PR body.
+- **`grill-with-docs`**: not run. The peer coordinator session fixed scope and stacking. The deviations above record each decision the plan left open.
+- **Manual residue**: none. The red destructive buttons and the action-first order are unchanged from before.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
