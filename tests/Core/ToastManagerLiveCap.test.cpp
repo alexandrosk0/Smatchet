@@ -55,3 +55,45 @@ TEST_CASE("SmatchetToastManager: live stack bounded at MaxLiveToasts(); history 
     mgr.DismissAllLive();
     mgr.ClearHistory();
 }
+
+TEST_CASE("SmatchetToastManager: HasLive follows the toast on screen, not the history") {
+    const smatchet_tests::ScopedLimits pinnedLimits([](smatchet::limits::LimitsConfig& l) {
+        l.ToastMaxLive = 2;
+        l.ToastHistoryMax = 200;
+    });
+    SmatchetToastManager& mgr = SmatchetToastManager::Instance();
+    mgr.DismissAllLive();
+    mgr.ClearHistory();
+
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
+    mgr.Push("Shortcut not run", "bad args", ToastType::Warning, 6000);
+    CHECK(mgr.HasLive("Shortcut not run", "bad args"));
+    // Title and message both have to match.
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "other args"));
+    CHECK_FALSE(mgr.HasLive("Toolbar button not run", "bad args"));
+
+    // Dismissed: no longer on screen, though the history keeps it.
+    mgr.DismissAllLive();
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
+    CHECK(mgr.History().size() == 1);
+
+    // Pushed out at the live cap by newer toasts.
+    mgr.Push("Shortcut not run", "bad args", ToastType::Warning, 6000);
+    mgr.Push("Copied", "one", ToastType::Info, 1500);
+    CHECK(mgr.HasLive("Shortcut not run", "bad args"));
+    mgr.Push("Copied", "two", ToastType::Info, 1500);
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
+
+    // Past its time but not yet removed (removal waits for the next Render): not on screen.
+    mgr.DismissAllLive();
+    mgr.Push("Shortcut not run", "bad args", ToastType::Warning, 0);
+    CHECK(mgr.LiveCount() == 1);
+    CHECK_FALSE(mgr.HasLive("Shortcut not run", "bad args"));
+    // An error stays until it is dismissed, whatever its time.
+    mgr.Push("Save failed", "disk full", ToastType::Error, 0);
+    CHECK(mgr.HasLive("Save failed", "disk full"));
+
+    mgr.DismissAllLive();
+    mgr.MarkHistorySeen(); // the error above counts as unread: not left for the next case
+    mgr.ClearHistory();
+}

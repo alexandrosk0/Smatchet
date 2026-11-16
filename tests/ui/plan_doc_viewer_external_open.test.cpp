@@ -19,6 +19,7 @@
 
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetPlanDocViewerUi.h"
+#include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -32,6 +33,7 @@
 #include <random>
 #include <string>
 #include <system_error>
+#include <vector>
 
 // g_ui — the shared bag of UI-thread visibility flags (defined in SmatchetUI.cpp).
 extern UiDrawSession g_ui;
@@ -61,14 +63,14 @@ bool WindowIsLive(const char* title) {
 // absolute path, or empty on failure (the test then SKIPs rather than asserting
 // on an environment problem). The name carries a per-process random suffix so
 // parallel CI shards on one machine never race on the same file.
-std::string WriteTempMarkdownFile() {
+std::string WriteTempMarkdownFile(const char* extension = ".md") {
     std::error_code ec;
     ghc::filesystem::path dir = ghc::filesystem::temp_directory_path(ec);
     if (ec) {
         return std::string();
     }
     std::random_device rd;
-    const std::string name = "smatchet_uitest_external_open_" + std::to_string(rd()) + ".md";
+    const std::string name = "smatchet_uitest_external_open_" + std::to_string(rd()) + extension;
     const ghc::filesystem::path p = dir / name;
     std::ofstream out(p.generic_string().c_str(), std::ios::binary | std::ios::trunc);
     if (!out.is_open()) {
@@ -124,10 +126,100 @@ void RegisterExternalOpenPopulatesPicker(ImGuiTestEngine* engine) {
     };
 }
 
+// ---- OS file drop (PlanDocViewerOpenDroppedPaths) ---------------------------
+// The drop event itself cannot be synthesized, so the cases call the entry point the
+// drop callback forwards to. The toast history is the observation seam; it is cleared
+// first because it stops growing once it reaches its cap. The call is synchronous, so
+// the history is read straight after it with no frame in between.
+
+// A drop with nothing the viewer opens: one warning that says so, and the window stays shut.
+void RegisterDropAllRejected(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "PlanDocViewerExternalOpen", "Drop_AllRejected_RaisesWarning");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.ClearHistory();
+        g_ui.showPlanDocViewer = false;
+
+        std::vector<std::string> dropped;
+        dropped.push_back("C:/x/shot.png");
+        dropped.push_back("C:/x/data.csv");
+        smatchet::PlanDocViewerOpenDroppedPaths(g_ui, dropped);
+
+        IM_CHECK_EQ_NO_RET(static_cast<int>(toasts.History().size()), 1);
+        if (toasts.History().size() == 1) {
+            const ToastHistoryEntry& entry = toasts.History().back();
+            IM_CHECK_NO_RET(entry.Type == ToastType::Warning);
+            IM_CHECK_NO_RET(entry.Message.find("2") != std::string::npos);
+            IM_CHECK_NO_RET(entry.Message.find(".md") != std::string::npos);
+        }
+        IM_CHECK_NO_RET(!g_ui.showPlanDocViewer);
+        toasts.DismissAllLive(); // the notice would sit over a later case's click target
+        ctx->Yield();
+    };
+}
+
+// A mixed drop: the markdown opens, and one notice gives the count that did not.
+void RegisterDropMixed(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "PlanDocViewerExternalOpen", "Drop_Mixed_OpensMarkdownAndSaysWhatWasNot");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const std::string mdPath = WriteTempMarkdownFile();
+        if (mdPath.empty()) {
+            ctx->LogInfo("SKIP: could not write a temp .md file for the drop probe");
+            return;
+        }
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.ClearHistory();
+        g_ui.showPlanDocViewer = false;
+
+        std::vector<std::string> dropped;
+        dropped.push_back(mdPath);
+        dropped.push_back("C:/x/a.log");
+        smatchet::PlanDocViewerOpenDroppedPaths(g_ui, dropped);
+
+        IM_CHECK_NO_RET(g_ui.showPlanDocViewer);
+        IM_CHECK_EQ_NO_RET(static_cast<int>(toasts.History().size()), 1);
+        if (toasts.History().size() == 1) {
+            const ToastHistoryEntry& entry = toasts.History().back();
+            IM_CHECK_NO_RET(entry.Type == ToastType::Info);
+            IM_CHECK_NO_RET(entry.Message.find("1 of 2") != std::string::npos);
+        }
+        g_ui.showPlanDocViewer = false;
+        toasts.DismissAllLive(); // the notice would sit over a later case's click target
+        ctx->Yield();
+    };
+}
+
+// Markdown only, with an upper-case extension: it opens and nothing is said.
+void RegisterDropMarkdownOnly(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "PlanDocViewerExternalOpen", "Drop_MarkdownOnly_NoNotice");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const std::string mdPath = WriteTempMarkdownFile(".MD");
+        if (mdPath.empty()) {
+            ctx->LogInfo("SKIP: could not write a temp .MD file for the drop probe");
+            return;
+        }
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.ClearHistory();
+        g_ui.showPlanDocViewer = false;
+
+        std::vector<std::string> dropped;
+        dropped.push_back(mdPath);
+        smatchet::PlanDocViewerOpenDroppedPaths(g_ui, dropped);
+
+        IM_CHECK_NO_RET(g_ui.showPlanDocViewer);
+        IM_CHECK_EQ_NO_RET(static_cast<int>(toasts.History().size()), 0);
+        g_ui.showPlanDocViewer = false;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterPlanDocViewerExternalOpenTests(ImGuiTestEngine* engine) {
     RegisterExternalOpenPopulatesPicker(engine);
+    RegisterDropAllRejected(engine);
+    RegisterDropMixed(engine);
+    RegisterDropMarkdownOnly(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

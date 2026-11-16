@@ -122,6 +122,10 @@ bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& sho
     return newValue != shownSeed;
 }
 
+bool ShouldConfirmLongTextDiscard(const std::string& buffer, const std::string& shownSeed, bool seedLoading) {
+    return !seedLoading && ShouldQueueLongTextEdit(buffer, shownSeed);
+}
+
 LongTextSaveFidelity AssessLongTextSaveFidelity(bool rawMode, const std::vector<std::string>& droppedAdfNodeTypes,
                                                 bool roundTripLossy, bool seedTruncated, bool conversionFailed) {
     LongTextSaveFidelity out;

@@ -730,6 +730,8 @@ void RenderAssistantSaveDiscard(AppController& app, UiDrawSession& d, bool dirty
 
 } // namespace
 
+void CommitAssistantPrefsWorkingCopy(AppController& app, UiDrawSession& d) { CommitAssistantWorkingToConfig(app, d); }
+
 void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     // Assistant tab — explicit Save / Discard flow (NOT the debounced autosave
     // the other tabs use). Edits stage into `d.assistantPrefsWorking`; Save

@@ -547,6 +547,21 @@ bool AppController::OpenLocalCacheFileForTest(const std::string& dbPath) {
     return true;
 }
 
+bool AppController::MarkFieldEditConflictForTest(std::int64_t id, const std::string& contextJson) {
+    const std::shared_ptr<LocalCacheManager> cache = std::atomic_load(&Cache);
+    if (!cache || !offlineQueue_) {
+        return false;
+    }
+    try {
+        cache->MarkFieldEditConflict(id, contextJson);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("MarkFieldEditConflictForTest: id=%lld err=%s", static_cast<long long>(id), ex.what());
+        return false;
+    }
+    offlineQueue_->RequestSnapshotRefresh();
+    return true;
+}
+
 bool AppController::EnsureLocalCacheForUiTest() {
     // Bucket-E opt-in (SMATCHET_UITEST_WITH_LOCAL_CACHE=1). A normal boot already
     // opened a file-backed cache in InitConfig; only stand one up when it is unset

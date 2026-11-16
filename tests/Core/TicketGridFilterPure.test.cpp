@@ -6,8 +6,10 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -141,6 +143,103 @@ TEST_CASE("TicketMatchesGridFilter — an option stored by id matches by the nam
     // Neither the stored state uuid nor Plane's internal row uuid is text the user can see.
     CHECK_FALSE(TicketMatchesGridFilter(t, "5717", &display));
     CHECK_FALSE(TicketMatchesGridFilter(t, "3b7d", &display));
+}
+
+TEST_CASE("TicketMatchesGridFilter — every word must match, in any order") {
+    const CachedTicket t = Ticket("PROJ-1", {{"summary", "Login page crashes on submit"}});
+    CHECK(TicketMatchesGridFilter(t, "login crash"));
+    CHECK(TicketMatchesGridFilter(t, "crash login"));
+    CHECK(TicketMatchesGridFilter(t, "SUBMIT Login"));
+    // One word that occurs nowhere fails the whole filter.
+    CHECK_FALSE(TicketMatchesGridFilter(t, "login signup"));
+    CHECK_FALSE(TicketMatchesGridFilter(t, "signup login"));
+}
+
+TEST_CASE("TicketMatchesGridFilter — words may match different fields and the id") {
+    const CachedTicket t = Ticket("PROJ-7", {{"summary", "Fix login"}, {"assignee", "Alexandros K."}});
+    CHECK(TicketMatchesGridFilter(t, "login alexandros"));
+    CHECK(TicketMatchesGridFilter(t, "alexandros login"));
+    CHECK(TicketMatchesGridFilter(t, "proj-7 login"));
+    CHECK(TicketMatchesGridFilter(t, "fix proj alex"));
+    CHECK_FALSE(TicketMatchesGridFilter(t, "login proj-8"));
+}
+
+TEST_CASE("TicketMatchesGridFilter — runs of whitespace separate words and never match literally") {
+    const CachedTicket t = Ticket("PROJ-1", {{"summary", "Login page crashes"}});
+    CHECK(TicketMatchesGridFilter(t, "login   crash"));
+    CHECK(TicketMatchesGridFilter(t, "login\tcrash"));
+    CHECK(TicketMatchesGridFilter(t, "  login \r\n crash  "));
+    // A filter of only whitespace has no words, so it filters nothing out.
+    CHECK(TicketMatchesGridFilter(t, "   "));
+    CHECK(TicketMatchesGridFilter(Ticket("PROJ-2", {}), " \t "));
+}
+
+TEST_CASE("TicketMatchesGridFilter — several words still cannot reach hidden payloads or stored ids") {
+    const CachedTicket attach = Ticket("PROJ-1", {{"summary", "Upload fails"}, {"attachment", kAttachmentDump}});
+    CHECK_FALSE(TicketMatchesGridFilter(attach, "screenshot png"));
+    CHECK_FALSE(TicketMatchesGridFilter(attach, "upload alexandros"));
+    CHECK(TicketMatchesGridFilter(attach, "upload fails"));
+
+    const CachedTicket plane =
+        Ticket("PLN-1", {{"status", "3fa85f64-5717-4562-b3fc-2c963f66afa6"}, {"summary", "Ship the build"}});
+    const StateNames display;
+    CHECK(TicketMatchesGridFilter(plane, "build progress", &display));
+    CHECK_FALSE(TicketMatchesGridFilter(plane, "build 5717", &display));
+}
+
+TEST_CASE("TicketMatchesGridFilter — non-ASCII words each match byte-exact") {
+    const CachedTicket t = Ticket("PROJ-1", {{"assignee", "Αλέξανδρος Κωνσταντόνης"}});
+    CHECK(TicketMatchesGridFilter(t, "Κωνσταντόνης Αλέξανδρος"));
+    CHECK_FALSE(TicketMatchesGridFilter(t, "Αλέξανδρος Γιώργος"));
+}
+
+TEST_CASE("SplitGridFilterTokens — lowercased words, whitespace dropped") {
+    CHECK(SplitGridFilterTokens("").empty());
+    CHECK(SplitGridFilterTokens(" \t\r\n ").empty());
+    const std::vector<std::string> one = SplitGridFilterTokens("Login");
+    REQUIRE(one.size() == 1);
+    CHECK(one[0] == "login");
+    const std::vector<std::string> three = SplitGridFilterTokens("  PROJ-7\tFix   Login ");
+    REQUIRE(three.size() == 3);
+    CHECK(three[0] == "proj-7");
+    CHECK(three[1] == "fix");
+    CHECK(three[2] == "login");
+}
+
+TEST_CASE("SplitGridFilterTokens — words past the cap are ignored, so the match only gets looser") {
+    std::string many;
+    for (std::size_t i = 0; i < kGridFilterMaxTokens; ++i) {
+        many += "login ";
+    }
+    many += "absent";
+    CHECK(SplitGridFilterTokens(many).size() == kGridFilterMaxTokens);
+    const CachedTicket t = Ticket("PROJ-1", {{"summary", "Fix the login page"}});
+    CHECK(TicketMatchesGridFilter(t, many));
+    // The same word inside the cap still has to match.
+    CHECK_FALSE(TicketMatchesGridFilter(t, "absent login"));
+
+    // A full set of words, with the one that occurs nowhere in the last slot.
+    std::string full;
+    for (std::size_t i = 0; i + 1 < kGridFilterMaxTokens; ++i) {
+        full += "login ";
+    }
+    full += "absent";
+    REQUIRE(SplitGridFilterTokens(full).size() == kGridFilterMaxTokens);
+    CHECK_FALSE(TicketMatchesGridFilter(t, full));
+
+    // The matcher applies the cap itself when handed more words than it tracks.
+    std::vector<std::string> overCap(kGridFilterMaxTokens, "login");
+    overCap.push_back("absent");
+    CHECK(TicketMatchesGridFilterTokens(t, overCap));
+    overCap[kGridFilterMaxTokens - 1] = "absent";
+    CHECK_FALSE(TicketMatchesGridFilterTokens(t, overCap));
+}
+
+TEST_CASE("TicketMatchesGridFilterTokens — no words matches everything; all listed words are required") {
+    const CachedTicket t = Ticket("PROJ-1", {{"summary", "Fix the login page"}});
+    CHECK(TicketMatchesGridFilterTokens(t, {}));
+    CHECK(TicketMatchesGridFilterTokens(t, {"login", "proj"}));
+    CHECK_FALSE(TicketMatchesGridFilterTokens(t, {"login", "absent"}));
 }
 
 TEST_CASE("TicketMatchesGridFilter — internal sentinel keys never match") {

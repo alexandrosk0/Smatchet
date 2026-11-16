@@ -2,7 +2,10 @@
 
 #include "TicketGridFilterPure.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <utility>
 
 namespace {
 
@@ -35,13 +38,9 @@ unsigned char FoldAscii(unsigned char c) {
     return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c - 'A' + 'a') : c;
 }
 
-std::string FoldAsciiCopy(const std::string& s) {
-    std::string out(s);
-    for (char& c : out) {
-        c = static_cast<char>(FoldAscii(static_cast<unsigned char>(c)));
-    }
-    return out;
-}
+// The separators between filter words: the same four bytes TrimCopyAsciiWhitespace trims, so
+// the trimmed text the grid passes in and the words split from it agree on what a space is.
+bool IsFilterWordSeparator(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
 // This runs per keystroke over every field of every cached ticket, so the fold must stay a
 // compare-and-subtract: std::search with a std::tolower comparator pays two locale calls per byte.
@@ -71,16 +70,54 @@ bool ContainsFolded(const std::string& haystack, const std::string& needleLower)
     return false;
 }
 
+// Clears the bit of every still-missing word that occurs in `text`.
+void MarkWordsFoundIn(const std::string& text, const std::vector<std::string>& foldedTokens, std::size_t count,
+                      std::uint32_t& missing) {
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::uint32_t bit = std::uint32_t(1) << i;
+        if ((missing & bit) != 0U && ContainsFolded(text, foldedTokens[i])) {
+            missing &= ~bit;
+        }
+    }
+}
+
 } // namespace
 
 bool IsInternalTicketFieldKey(const std::string& key) { return key == "uuid" || (!key.empty() && key[0] == '_'); }
 
-bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter, const IGridFilterDisplay* display) {
-    if (filter.empty()) {
+std::vector<std::string> SplitGridFilterTokens(const std::string& filter) {
+    std::vector<std::string> tokens;
+    std::string word;
+    for (const char c : filter) {
+        if (!IsFilterWordSeparator(c)) {
+            word.push_back(static_cast<char>(FoldAscii(static_cast<unsigned char>(c))));
+            continue;
+        }
+        if (!word.empty()) {
+            tokens.push_back(word);
+            word.clear();
+        }
+    }
+    if (!word.empty()) {
+        tokens.push_back(std::move(word));
+    }
+    if (tokens.size() > kGridFilterMaxTokens) {
+        tokens.resize(kGridFilterMaxTokens);
+    }
+    return tokens;
+}
+
+bool TicketMatchesGridFilterTokens(const CachedTicket& ticket, const std::vector<std::string>& foldedTokens,
+                                   const IGridFilterDisplay* display) {
+    const std::size_t count = (std::min)(foldedTokens.size(), kGridFilterMaxTokens);
+    if (count == 0) {
         return true;
     }
-    const std::string needle = FoldAsciiCopy(filter);
-    if (ContainsFolded(ticket.id, needle)) {
+    // One bit per word still to find; a word found in the id or any field stays found.
+    static_assert(kGridFilterMaxTokens <= 32, "the found-word mask is 32 bits wide");
+    std::uint32_t missing = count >= 32 ? ~std::uint32_t(0) : ((std::uint32_t(1) << count) - 1U);
+    MarkWordsFoundIn(ticket.id, foldedTokens, count, missing);
+    if (missing == 0U) {
         return true;
     }
     for (const auto& fieldEntry : ticket.fieldValues) {
@@ -89,9 +126,14 @@ bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filt
         }
         const std::string& shown =
             display != nullptr ? display->Shown(fieldEntry.first, fieldEntry.second) : fieldEntry.second;
-        if (ContainsFolded(shown, needle)) {
+        MarkWordsFoundIn(shown, foldedTokens, count, missing);
+        if (missing == 0U) {
             return true;
         }
     }
     return false;
+}
+
+bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter, const IGridFilterDisplay* display) {
+    return TicketMatchesGridFilterTokens(ticket, SplitGridFilterTokens(filter), display);
 }

@@ -399,6 +399,11 @@ class AppController : public IAppThreading,
     /// cache database path, so `StartRecreateLocalCacheDatabase` has a real file to withdraw, wipe and reopen without
     /// a full `Initialize`. No production caller.
     bool OpenLocalCacheFileForTest(const std::string& dbPath);
+    /// TEST SEAM (UI tests): marks the queued field edit `id` as suspended on a conflict carrying `contextJson`,
+    /// the state the replay's conflict gate writes, then asks for the queue view to be reread (on a worker, so
+    /// the caller waits for `GetOfflineQueueSnapshot` to show it). Writes state only: no conflict logic runs.
+    /// Returns false without a live cache or queue. No production caller.
+    bool MarkFieldEditConflictForTest(std::int64_t id, const std::string& contextJson);
     /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
     /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
     void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {

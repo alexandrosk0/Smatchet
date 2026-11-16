@@ -202,6 +202,27 @@ TEST_CASE("ShouldQueueLongTextEdit: a real edit still queues") {
     CHECK(TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit("same", "same") == false);
 }
 
+TEST_CASE("ShouldConfirmLongTextDiscard: only typed text that a close would lose asks first") {
+    using TicketFieldEditorLongTextPure::ShouldConfirmLongTextDiscard;
+    CHECK(ShouldConfirmLongTextDiscard("edited", "seed", /*seedLoading=*/false) == true);
+    CHECK(ShouldConfirmLongTextDiscard("", "seed", false) == true); // clearing the field is an edit too
+    CHECK(ShouldConfirmLongTextDiscard("same", "same", false) == false);
+    CHECK(ShouldConfirmLongTextDiscard("", "", false) == false);
+}
+
+TEST_CASE("ShouldConfirmLongTextDiscard: a seed still loading has nothing to lose") {
+    using TicketFieldEditorLongTextPure::ShouldConfirmLongTextDiscard;
+    // The buffer holds a placeholder the worker's post-back overwrites, typed-over or not.
+    CHECK(ShouldConfirmLongTextDiscard("Loading description...", "Loading description...", true) == false);
+    CHECK(ShouldConfirmLongTextDiscard("typed over the placeholder", "Loading description...", true) == false);
+}
+
+TEST_CASE("ShouldConfirmLongTextDiscard: an untouched truncated document closes without asking") {
+    const std::string fullSeed(100 * 1024, 'z');
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy(fullSeed, 64 * 1024);
+    CHECK(TicketFieldEditorLongTextPure::ShouldConfirmLongTextDiscard(plan.Shown, plan.Shown, false) == false);
+}
+
 TEST_CASE("AssessLongTextSaveFidelity: clean save has no loss and no ack gate") {
     const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
         /*rawMode=*/false, /*droppedAdfNodeTypes=*/{}, /*roundTripLossy=*/false, /*seedTruncated=*/false,
@@ -220,8 +241,8 @@ TEST_CASE("AssessLongTextSaveFidelity: truncation is a definite loss and gates S
 }
 
 TEST_CASE("AssessLongTextSaveFidelity: dropped ADF nodes gate Save and list up to five") {
-    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        false, {"panel", "mention", "inlineCard"}, false, false, false);
+    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {"panel", "mention", "inlineCard"},
+                                                                             false, false, false);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("panel") != std::string::npos);
@@ -230,8 +251,8 @@ TEST_CASE("AssessLongTextSaveFidelity: dropped ADF nodes gate Save and list up t
 }
 
 TEST_CASE("AssessLongTextSaveFidelity: more than five dropped node types are elided with an ellipsis") {
-    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        false, {"a", "b", "c", "d", "e", "f", "g"}, false, false, false);
+    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {"a", "b", "c", "d", "e", "f", "g"},
+                                                                             false, false, false);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("...") != std::string::npos);
     // The sixth+ node types are not spelled out.

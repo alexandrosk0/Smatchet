@@ -10,7 +10,7 @@
 // not currently being edited".
 //
 // Drift warning — IF YOU CHANGE
-//   - Source/Core/include/Ui/SmatchetSecretInput.h:27-35 (the bool* outEditing
+//   - Source/Core/include/Ui/SmatchetSecretInput.h:44-53 (the bool* outEditing
 //     out-param and the point it is sampled), OR
 //   - Source/Core/src/Ui/SmatchetPreferencesUi.cpp:874-885 (portEditing sample),
 //     :903-906 (tokenEditing sample), or :920-951 (the gated dirty-diff +

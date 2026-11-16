@@ -94,6 +94,9 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
 // --- Extracted Grid Panels & Pipelines ---
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d);
+/// TEST SEAM: true while the conflict resolver shows its "your resolution is not saved" line, the answer to an
+/// Esc pressed around typed text. The line is plain text with no item id, so a UI test cannot find it by label.
+bool SmatchetOfflineConflictUnsavedHintShownForTest();
 
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
                             const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket);

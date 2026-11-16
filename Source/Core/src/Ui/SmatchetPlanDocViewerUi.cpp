@@ -14,6 +14,7 @@
 #include "SmatchetLocalization.h"
 #include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
+#include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 
@@ -597,6 +598,67 @@ void PlanDocViewerOpenExternalFiles(UiDrawSession& d, const std::vector<std::str
     s.selectedIdx = firstIdx; // the first path is the active doc; the rest wait in the picker
     d.showPlanDocViewer = true;
     d.requestPlanDocViewerFocus = true;
+}
+
+namespace {
+
+// Case-insensitive markdown extension check on a UTF-8 path (the OS hands drop
+// paths as UTF-8). ASCII lowering is enough — the extensions matched are ASCII.
+bool HasMarkdownExtension(const std::string& pathUtf8) {
+    std::string ext = fs::path(pathUtf8).extension().generic_string();
+    for (std::size_t i = 0; i < ext.size(); ++i) {
+        if (ext[i] >= 'A' && ext[i] <= 'Z') {
+            ext[i] = static_cast<char>(ext[i] - 'A' + 'a');
+        }
+    }
+    return ext == ".md" || ext == ".markdown";
+}
+
+// One notice for a drop that held files the viewer does not open. Never an Error toast:
+// those stay until dismissed, and a refused drop is not a fault. Each localized string is
+// copied before the next lookup, which may reuse the buffer.
+void NotifyDropNotOpened(int opened, int ignored) {
+    if (opened == 0) {
+        const std::string title = SmatchetLocalization::T("plandoc.drop.rejected.title", "File not opened");
+        const std::string body =
+            ignored == 1 ? std::string(SmatchetLocalization::T("plandoc.drop.rejected.one",
+                                                               "Only .md and .markdown files open here."))
+                         : std::string(SmatchetLocalization::Format(
+                               "plandoc.drop.rejected.many",
+                               "None of the %d files were opened: only .md and .markdown files open here.", ignored));
+        SmatchetToastManager::Instance().Push(title, body, ToastType::Warning, 6000);
+        return;
+    }
+    const std::string title = SmatchetLocalization::T("plandoc.drop.mixed.title", "Some files not opened");
+    const std::string body = SmatchetLocalization::Format(
+        "plandoc.drop.mixed.body", "Opened %d of %d files. The rest are not .md or .markdown files.", opened,
+        opened + ignored);
+    SmatchetToastManager::Instance().Push(title, body, ToastType::Info, 6000);
+}
+
+} // namespace
+
+void PlanDocViewerOpenDroppedPaths(UiDrawSession& d, const std::vector<std::string>& pathsUtf8) {
+    std::vector<std::string> markdown;
+    int ignored = 0;
+    for (const std::string& p : pathsUtf8) {
+        if (p.empty()) {
+            continue;
+        }
+        if (HasMarkdownExtension(p)) {
+            markdown.push_back(p);
+        } else {
+            ++ignored;
+        }
+    }
+    // Every match joins the picker and the first becomes the active doc. No-op on an empty batch.
+    PlanDocViewerOpenExternalFiles(d, markdown);
+    if (ignored == 0) {
+        return; // the viewer opening is the feedback
+    }
+    LOG_INFO("file drop: %d non-markdown file(s) not opened — only .md/.markdown open in the Plan Docs viewer",
+             ignored);
+    NotifyDropNotOpened(static_cast<int>(markdown.size()), ignored);
 }
 
 } // namespace smatchet

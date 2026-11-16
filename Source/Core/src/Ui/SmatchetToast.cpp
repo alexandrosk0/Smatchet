@@ -66,6 +66,21 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     PushBoundedHistory(m_history, std::move(entry), HistoryCap());
 }
 
+bool SmatchetToastManager::HasLive(const std::string& title, const std::string& message) const {
+    // A toast past its time is still in the list until the next Render() removes it. It is not on
+    // screen any more, so it does not count.
+    const auto now = std::chrono::steady_clock::now();
+    for (const ToastNotification& t : m_toasts) {
+        if (!t.Sticky && now >= t.Expiry) {
+            continue;
+        }
+        if (t.Title == title && t.Message == message) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool SmatchetToastManager::ConsumeOpenCenterRequest() {
     const bool requested = m_openCenterRequested;
     m_openCenterRequested = false;

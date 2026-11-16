@@ -105,6 +105,11 @@ const char* ComposeNavLabel(char* buf, std::size_t bufSize, const PrefsNavEntry&
     return buf;
 }
 
+/// Hover text for both Save & Sync buttons (rail and narrow-width combo row). English source
+/// text: SmatchetIconLeadingButton translates it, and the "prefs.save_sync.tooltip" table row
+/// carries the same sentence. Names the Ctrl+S shortcut drawPreferencesWindow handles.
+const char* const kSaveAndSyncTooltip = "Save settings and sync issues (Ctrl+S).";
+
 /// True when the filter is active and this category holds nothing that matches.
 /// Such an entry draws disabled rather than merely dimmed: selecting it lands on
 /// an empty pane, which reads as "the category is broken" instead of "your query
@@ -247,7 +252,8 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
             ImGui::SameLine();
         }
         const float buttonWidth = buttonOnOwnRow ? std::min(saveButtonWidth, rowWidth) : saveButtonWidth;
-        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(buttonWidth, 0.0f))) {
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", kSaveAndSyncTooltip,
+                                      ImVec2(buttonWidth, 0.0f))) {
             ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
         return;
@@ -270,7 +276,7 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         // Save & Sync button at the bottom of the nav rail
         ImGui::Spacing();
         ImGui::Separator();
-        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr,
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", kSaveAndSyncTooltip,
                                       ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
             ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
