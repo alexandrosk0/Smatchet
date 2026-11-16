@@ -612,6 +612,67 @@ TEST_CASE("ConfigMigration quick-create: flag set on disk skips the seed (cleare
     CHECK(cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0); // not resurrected
 }
 
+// --- Gesture-key bindings — one-shot seed migration (migrated_gesture_keys_v1) ---
+//
+// Same replace-not-merge failure class as the seeds above: a config saved before the gesture commands existed
+// carries a keybindings block without them, so the defaults would never arrive without the one-shot seed.
+
+TEST_CASE("ConfigMigration gesture keys: seeds the seven defaults into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGestureKeysV1 == true);
+    const char* const kIds[] = {"ui.list.move_up",    "ui.list.move_down", "ui.list.remove",   "ui.splitter.grow",
+                                "ui.splitter.shrink", "view.panel.grow",   "view.panel.shrink"};
+    for (const char* id : kIds) {
+        CHECK_MESSAGE(cfg.Keybindings.FindBindingIndex(id, "{}") >= 0, id);
+    }
+    const int up = cfg.Keybindings.FindBindingIndex("ui.list.move_up", "{}");
+    REQUIRE(up >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(up)].PrimaryHotkey() == "Alt+Up");
+    // The two-combo rows arrive whole.
+    const int grow = cfg.Keybindings.FindBindingIndex("ui.splitter.grow", "{}");
+    REQUIRE(grow >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(grow)].Hotkeys.size() == 2U);
+    // Pre-existing bindings survive (append-only).
+    CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
+}
+
+TEST_CASE("ConfigMigration gesture keys: respects a user rebind (no duplicate, key kept)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"ui.list.move_up","hotkey":"Ctrl+Alt+K","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(CountCommand(cfg.Keybindings, "ui.list.move_up") == 1);
+    const int idx = cfg.Keybindings.FindBindingIndex("ui.list.move_up", "{}");
+    REQUIRE(idx >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() == "Ctrl+Alt+K");
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.list.move_down", "{}") >= 0); // the rest still seeded
+}
+
+TEST_CASE("ConfigMigration gesture keys: flag set on disk skips the seed (cleared stays cleared)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_gesture_keys_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGestureKeysV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.list.remove", "{}") < 0); // not resurrected
+}
+
 // --- multi-combo zoom aliases (docs/plans/keybindings-multi-combo.md) ------------
 // from_json REPLACES the binding table, so a config saved by a single-combo build
 // keeps one combo per zoom action and would never receive the new alternatives.

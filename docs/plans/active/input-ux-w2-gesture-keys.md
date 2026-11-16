@@ -37,7 +37,7 @@ Posting and taking are frame-stamped, and a request lives for the frame it was p
 - **Path remaps (#130).** Add path remap puts the caret in the new row's *from*. Enter in a row's *to* adds the next row when that row is the last and filled.
 - **Read-only text (#12).** Ctrl+A works while the run has keyboard focus (a click gives it focus, or Tab reaches its hit box), not only while hovered, and the focused run draws the nav focus rectangle.
 
-**Toolbar editor list (#122).** The ##tblist child takes the list requests: Alt+Up / Alt+Down move the selected button, and Delete removes it. These are the same operations as the Up / Down / Delete buttons, factored into members. A row that receives keyboard focus becomes the selected row, so arrowing through the list selects as it goes. After a move, the keyboard cursor follows the moved row.
+**Toolbar editor list (#122).** The ##tblist child takes the list requests: Alt+Up / Alt+Down move the selected button, and Delete removes it. These are the same operations as the Up / Down / Delete buttons, factored into members. They act on the *selected* row (Space or Enter selects the row under the keyboard cursor), and after a move the keyboard cursor follows the moved row. Selection does not follow the cursor: ImGui's own arrow navigation also fires on Alt+Up / Alt+Down, so a follow-focus rule would make Alt+Down move the row the cursor just stepped onto (see § Deviations).
 
 **Check script.** `scripts/dev/test-drag-keyboard-equivalent.sh` scans first-party C++ under `Source/` for drag sources:
 
@@ -87,7 +87,7 @@ New shared headers (the reason this plan exists, `Source/Core/src/Ui/AGENTS.md` 
 
   ```cpp
   enum class PanelTarget { Focused, Bottom, Primary, Secondary };
-  struct PanelNudgeResult { bool Ok = false; const char* Panel = ""; float ExtentPx = 0.0f; const char* Error = ""; };
+  struct PanelNudgeResult { bool Ok = false; const char* Panel = ""; float ExtentPx = 0.0f; const char* Error = ""; bool NoFocusedPanel = false; };
   PanelNudgeResult NudgePanelExtent(UiDrawSession& d, PanelTarget target, float deltaPx);
   ```
 
@@ -103,7 +103,7 @@ New shared headers (the reason this plan exists, `Source/Core/src/Ui/AGENTS.md` 
   | `view.panel.grow` | `panel` (enum, default `focused`) | `Ctrl+Alt+PageUp` |
   | `view.panel.shrink` | `panel` (enum, default `focused`) | `Ctrl+Alt+PageDown` |
 
-  The `ui.list.*` / `ui.splitter.*` handlers return `{"posted": true}`. The panel handlers return `{"panel": "<bottom|primary|secondary>", "extent": <px>}`, or a `ValidationError` naming why: no focused panel, panel hidden, or no resizable edge.
+  The `ui.list.*` / `ui.splitter.*` handlers return `{"posted": true}`. The panel handlers return `{"resized": true, "panel": "<bottom|primary|secondary>", "extent": <px>}`. With `panel=focused` and no panel holding the focus (the usual case when the keyboard is in the grid) they return `{"resized": false, "reason": ...}` as a success, so a key press and its repeats log nothing. A named panel that is hidden, or has no resizable edge, is a `ValidationError`.
 
 - **Config:** `TrackerConfig::MigratedGestureKeysV1` (`migrated_gesture_keys_v1`) seeds the new defaults once into an existing config. This uses the same skip-if-the-identity-is-bound contract as `MigrateMenuShortcutKeybindingsV1`.
 - **Contract for piece 4.1 (dialog scope, built on an unpushed branch):** 4.1 mutes global shortcuts while a dialog is open. The focus-scoped gesture commands must stay live under that mute, because they act only on the focused widget inside the dialog (the Customize Toolbar modal, the long-text editor). 4.1 consults `IsFocusScopedGestureCommand(id)` before muting.
@@ -124,7 +124,7 @@ New shared headers (the reason this plan exists, `Source/Core/src/Ui/AGENTS.md` 
 
 **Consumers**
 
-7. `Source/Core/src/Ui/SmatchetToolbarUi.cpp`, `Source/Core/include/Ui/SmatchetToolbarUi.h`: the list keys, selection follows focus, and factored move/remove (#122).
+7. `Source/Core/src/Ui/SmatchetToolbarUi.cpp`, `Source/Core/include/Ui/SmatchetToolbarUi.h`: the list keys, the cursor following a moved row, and factored move/remove (#122).
 8. `Source/Core/src/TicketFieldEditor_Modal.cpp`: the long-text split splitter.
 9. `Source/Plugins/LuaConsole/LuaConsolePlugin.cpp`: the script/log splitter.
 10. `Source/Core/src/Ui/SmatchetMcpServerUi.cpp`: the info-panel splitter.
@@ -242,7 +242,7 @@ Single slice, orchestrator; Ui subsystem with Commands / Config / Tracker touch 
 
 ## Open questions
 
-- Whether 4.1's mute adopts `IsFocusScopedGestureCommand`. Piece 4.1's owner answers this when its branch is pushed; until then the gesture keys keep working in dialogs because nothing is muted yet.
+- None. Slice 1 of piece 4.1 (#2437) mutes app-wide shortcuts under a modal through `dialogkeys::GlobalShortcutAllowedUnderModal`; this piece extends that predicate with `IsFocusScopedGestureCommand`, so `ui.list.*` and `ui.splitter.*` keep working in the Customize Toolbar editor and the long-text editor (`DialogKeysPure.h`, covered by `SmatchetWorklogSubmitPure.test.cpp`). The panel commands stay muted under a modal.
 
 ## Out of scope (flagged, not designed)
 

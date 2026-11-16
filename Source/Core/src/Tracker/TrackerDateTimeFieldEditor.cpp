@@ -5,6 +5,7 @@
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TouchCellEditGesture.h"
 #include "imgui.h"
+#include "imgui_internal.h" // SetKeyOwner / owner-aware IsKeyPressed for the calendar keys
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -147,6 +148,117 @@ void DrawSelectionSummary(const ParsedJiraDateTime& working, bool isDateOnly, co
     ImGui::Spacing();
 }
 
+// Set when a calendar key or quick pick moves the working day: the day grid puts the keyboard cursor on that
+// day as it draws it, so arrows and Enter carry on from there. One calendar is open at a time (each lives in
+// its own popup), so one flag serves both pickers. UI thread only.
+bool s_focusWorkingDay = false;
+
+// Puts `working` (and the month on show) on y-m-d. `focusDay` also asks the grid to put the keyboard cursor
+// on that day; a pick that applies and closes the popup at once passes false, so nothing is left armed.
+void MoveWorkingDay(ParsedJiraDateTime& working, int& viewYear, int& viewMonth, int y, int m, int d, bool focusDay) {
+    working.Year = y;
+    working.Month = m;
+    working.Day = d;
+    viewYear = y;
+    viewMonth = m;
+    s_focusWorkingDay = focusDay;
+}
+
+// The month on show with the working day's day-of-month clamped into it. The page and home / end keys step
+// from here, not from the working day, so they carry on from a month the chevrons browsed to.
+void ViewedDate(const ParsedJiraDateTime& working, int viewYear, int viewMonth, int& y, int& m, int& d) {
+    y = viewYear;
+    m = (viewMonth >= 1 && viewMonth <= 12) ? viewMonth : 1;
+    d = (std::max)(1, (std::min)(working.Day >= 1 ? working.Day : 1, DaysInMonth(y, m)));
+}
+
+// The calendar's own keys, read while its popup has the keyboard and nothing is being typed: PageUp /
+// PageDown a month, with Shift a year; Home / End the first / last day; T today; Ctrl+Enter applies in the
+// full picker. The arrows stay ImGui's own navigation between the day buttons, and Enter picks the focused
+// day. Returns true for Ctrl+Enter.
+bool HandleCalendarKeys(ParsedJiraDateTime& working, int& viewYear, int& viewMonth, bool isDropdown) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) {
+        return false;
+    }
+    const ImGuiID owner = ImGui::GetID("##calendar_keys");
+    // Claimed every frame while focused, so ImGui's own page and home navigation does not also move the
+    // keyboard cursor to the top or bottom of the popup on the same press.
+    ImGui::SetKeyOwner(ImGuiKey_PageUp, owner);
+    ImGui::SetKeyOwner(ImGuiKey_PageDown, owner);
+    ImGui::SetKeyOwner(ImGuiKey_Home, owner);
+    ImGui::SetKeyOwner(ImGuiKey_End, owner);
+
+    int y = 0;
+    int m = 0;
+    int d = 0;
+    ViewedDate(working, viewYear, viewMonth, y, m, d);
+    const bool plain = !io.KeyCtrl && !io.KeyAlt && !io.KeySuper;
+    const int monthStep = io.KeyShift ? 12 : 1;
+    if (plain && ImGui::IsKeyPressed(ImGuiKey_PageUp, ImGuiInputFlags_Repeat, owner)) {
+        TrackerDateTimePure::AddMonthsClampDay(y, m, d, -monthStep);
+        MoveWorkingDay(working, viewYear, viewMonth, y, m, d, true);
+    } else if (plain && ImGui::IsKeyPressed(ImGuiKey_PageDown, ImGuiInputFlags_Repeat, owner)) {
+        TrackerDateTimePure::AddMonthsClampDay(y, m, d, monthStep);
+        MoveWorkingDay(working, viewYear, viewMonth, y, m, d, true);
+    } else if (plain && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Home, ImGuiInputFlags_None, owner)) {
+        MoveWorkingDay(working, viewYear, viewMonth, y, m, 1, true);
+    } else if (plain && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_End, ImGuiInputFlags_None, owner)) {
+        MoveWorkingDay(working, viewYear, viewMonth, y, m, DaysInMonth(y, m), true);
+    } else if (plain && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_T, false)) {
+        if (TrackerDateTimePure::TodayLocalDate(y, m, d)) {
+            MoveWorkingDay(working, viewYear, viewMonth, y, m, d, true);
+        }
+    }
+    const bool ctrlEnter =
+        io.KeyCtrl && !io.KeyAlt && !io.KeyShift &&
+        (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+    return !isDropdown && ctrlEnter;
+}
+
+// Today / Tomorrow / In a week. In the dropdown a quick pick applies at once, as a day click does; in the
+// full picker it only moves the working day, which Apply then saves.
+PickerAction DrawQuickPicks(ParsedJiraDateTime& working, int& viewYear, int& viewMonth, bool isDropdown) {
+    struct QuickPick {
+        const char* key;
+        const char* fallback;
+        int days;
+    };
+    static const QuickPick kPicks[] = {
+        {"calendar.today", "Today", 0},
+        {"calendar.tomorrow", "Tomorrow", 1},
+        {"calendar.in_a_week", "In a week", 7},
+    };
+    PickerAction action = PickerAction::None;
+    for (std::size_t i = 0; i < sizeof(kPicks) / sizeof(kPicks[0]); ++i) {
+        if (i > 0) {
+            ImGui::SameLine();
+        }
+        ImGui::PushID(static_cast<int>(i));
+        // The label is already translated: the wrapper's English-source lookup would miss it.
+        if (::ImGui::SmallButton(SmatchetLocalization::T(kPicks[i].key, kPicks[i].fallback))) {
+            int y = 0;
+            int m = 0;
+            int d = 0;
+            if (TrackerDateTimePure::TodayLocalDate(y, m, d)) {
+                TrackerDateTimePure::AddDaysToDate(y, m, d, kPicks[i].days);
+                MoveWorkingDay(working, viewYear, viewMonth, y, m, d, /*focusDay=*/false); // a click: no keyboard ring
+                if (isDropdown) {
+                    action = PickerAction::Apply;
+                }
+            }
+        }
+        if (i == 0) {
+            ImGui::SetItemTooltip("%s", SmatchetLocalization::T("calendar.keys_hint",
+                                                                "T today, PageUp / PageDown a month, Shift a year, "
+                                                                "Home / End the month's first / last day"));
+        }
+        ImGui::PopID();
+    }
+    ImGui::Spacing();
+    return action;
+}
+
 // Month-navigation header: the prev-year/prev-month chevrons, centered title, and
 // next-month/next-year chevrons.
 void DrawMonthNavHeader(int& viewYear, int& viewMonth) {
@@ -232,7 +344,18 @@ PickerAction DrawDayCell(ParsedJiraDateTime& working, int& viewYear, int& viewMo
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(21.0f / 255.0f, 96.0f / 255.0f, 216.0f / 255.0f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         }
-        if (ImGui::SmallButton(std::to_string(d).c_str())) {
+        const bool clicked = ImGui::SmallButton(std::to_string(d).c_str());
+        if (selected) {
+            // The popup opens with the keyboard on the chosen day, and a calendar key that moved the day
+            // brings the keyboard cursor along.
+            ImGui::SetItemDefaultFocus();
+            if (s_focusWorkingDay) {
+                s_focusWorkingDay = false;
+                ImGui::FocusItem();
+                ImGui::SetNavCursorVisible(true);
+            }
+        }
+        if (clicked) {
             working.Year = viewYear;
             working.Month = viewMonth;
             working.Day = d;
@@ -343,6 +466,7 @@ PickerAction DrawCalendarPicker(ParsedJiraDateTime& working, int& viewYear, int&
                                 bool isDateOnly, const std::string& originalValue, char* textModeBuffer,
                                 size_t textModeBufferSize, ImGuiInputTextCallback callback = nullptr,
                                 void* callbackUserData = nullptr, bool isDropdown = false) {
+    s_focusWorkingDay = false; // armed and consumed within one call; nothing carries over from an earlier frame
     if (forceTextMode) {
         return DrawRawIsoEditor(working, textModeBuffer, textModeBufferSize, callback, callbackUserData);
     }
@@ -351,15 +475,24 @@ PickerAction DrawCalendarPicker(ParsedJiraDateTime& working, int& viewYear, int&
         DrawSelectionSummary(working, isDateOnly, originalValue);
     }
 
+    const bool applyByKey = HandleCalendarKeys(working, viewYear, viewMonth, isDropdown);
+    const PickerAction quickAction = DrawQuickPicks(working, viewYear, viewMonth, isDropdown);
+    if (quickAction != PickerAction::None) {
+        return quickAction;
+    }
+
     DrawMonthNavHeader(viewYear, viewMonth);
 
     const PickerAction gridAction = DrawDayGrid(working, viewYear, viewMonth, isDropdown);
+    s_focusWorkingDay = false;
     if (gridAction != PickerAction::None) {
         return gridAction;
     }
 
     if (!isDropdown) {
-        return DrawTimeAndActionFooter(working, isDateOnly, textModeBuffer, textModeBufferSize, forceTextMode);
+        const PickerAction footer =
+            DrawTimeAndActionFooter(working, isDateOnly, textModeBuffer, textModeBufferSize, forceTextMode);
+        return applyByKey && footer == PickerAction::None ? PickerAction::Apply : footer;
     }
     return PickerAction::None;
 }

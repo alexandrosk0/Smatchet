@@ -52,6 +52,13 @@ class SmatchetToolbarUi {
      *  through Draw()'s cfg-only signature. */
     std::string TakeQuickBindRequest(std::string& argsJsonOut);
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    /** Bucket-E seams: draw only the Customize Toolbar modal (no bar), and read what it edits. */
+    void DrawEditorOnlyForTest(AppController& app, TrackerConfig& cfg) { RenderEditor(app, cfg); }
+    const std::vector<ToolbarButton>& EditorButtonsForTest() const { return editBuf_.Buttons; }
+    int EditorSelectedForTest() const { return selected_; }
+#endif
+
   private:
     // Which list the Customize editor mutates: the shared toolbar or the active backend's append.
     enum class EditScope { Global, Tracker };
@@ -73,6 +80,10 @@ class SmatchetToolbarUi {
     void SyncEditorOpenRequest(AppController& app, TrackerConfig& cfg);
     EditorCtx DrawEditorScopeSelector();
     void DrawEditorActionRow(EditorCtx& ctx);
+    // The editor's move / remove of the selected button, shared by its Up / Down / Delete buttons and the
+    // list keys (ui.list.move_up / move_down / remove). Each is a no-op without a selection or room to move.
+    bool MoveSelectedButton(std::vector<ToolbarButton>& buttons, int delta);
+    bool RemoveSelectedButton(std::vector<ToolbarButton>& buttons);
     void DrawEditorButtonList(EditorCtx& ctx);
     void DrawEditorFieldEditor(EditorCtx& ctx);
     void DrawEditorCommandPicker(ToolbarButton& b);
@@ -99,6 +110,7 @@ class SmatchetToolbarUi {
     bool requestEditorOpen_ = false;
     int requestEditSelect_ = -1; // button index to preselect when the editor next opens; -1 = default
     int selected_ = -1;          // selected button index in the editor
+    int pendingListFocus_ = -1;  // row the list's keyboard cursor moves to next frame; -1 = none
 
     // Editor working state (populated when the editor opens).
     EditScope editScope_ = EditScope::Global;   // active scope in the editor

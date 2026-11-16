@@ -56,6 +56,25 @@ ParsedJiraDateTime TodayUtcParsed(bool includeTime);
  */
 void ClampDayToMonth(ParsedJiraDateTime& w, int year, int month);
 
+/**
+ * Move the calendar date `y`-`m`-`d` by `deltaDays` (negative goes back), rolling across month and year
+ * ends. An out-of-range input day is clamped into its month first, and the delta to +/-36600 days (a
+ * century). Used by the calendar's quick picks.
+ */
+void AddDaysToDate(int& y, int& m, int& d, int deltaDays);
+
+/**
+ * Move `y`-`m` by `deltaMonths` and clamp `d` to the new month's length (Jan 31 + 1 month = Feb 28/29).
+ * Used by the calendar's PageUp / PageDown (one month) and Shift+PageUp / PageDown (twelve).
+ */
+void AddMonthsClampDay(int& y, int& m, int& d, int deltaMonths);
+
+/**
+ * Today's date on the local clock, which is the day the user means by "Today" (the empty-field seed stays
+ * UTC, see TodayUtcParsed). Returns false, leaving the outputs untouched, when the clock cannot be read.
+ */
+bool TodayLocalDate(int& y, int& m, int& d);
+
 /** Format `M/D/YYYY` (no zero-padding on month / day). Used by the friendly-input row. */
 std::string FormatFriendlyDate(const ParsedJiraDateTime& p);
 

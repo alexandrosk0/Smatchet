@@ -274,6 +274,15 @@ TEST_CASE("GlobalShortcutAllowedUnderModal: zoom and fullscreen still run under 
     CHECK(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle"));
 }
 
+TEST_CASE("GlobalShortcutAllowedUnderModal: the focus-scoped gesture commands still run under a modal") {
+    CHECK(GlobalShortcutAllowedUnderModal("ui.list.move_up"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.list.remove"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.splitter.grow"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("view.panel.grow")); // names a panel: not what a dialog serves
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.listing.other"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal(nullptr));
+}
+
 TEST_CASE("GlobalShortcutAllowedUnderModal: everything that changes state is muted, the palette too") {
     CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.command_palette"));
     CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.preferences.toggle"));

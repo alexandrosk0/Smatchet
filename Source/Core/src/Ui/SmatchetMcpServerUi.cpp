@@ -11,6 +11,7 @@
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Ui/GestureKeys.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -237,12 +238,25 @@ void SmatchetDrawMcpServerPanel(const AppController& app, const TrackerConfig& c
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
+    // The divider moves with the mouse, or one step per ui.splitter.grow / ui.splitter.shrink while this
+    // window has the keyboard.
+    float splitDelta = 0.0f;
+    // keyboard-equivalent: ui.splitter.grow, ui.splitter.shrink
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        splitDelta = ImGui::GetIO().MouseDelta.y;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterGrow)) {
+        splitDelta += line * 2.0f;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterShrink)) {
+        splitDelta -= line * 2.0f;
+    }
+    if (splitDelta != 0.0f) {
         float next = d.cfg.McpServerInfoPanelHeightPx;
         if (next < 80.0f) {
             next = infoH;
         }
-        next += ImGui::GetIO().MouseDelta.y;
+        next += splitDelta;
         next = (std::max)(120.0f, (std::min)(900.0f, next));
         if (std::fabs(next - d.cfg.McpServerInfoPanelHeightPx) > 0.5f) {
             d.cfg.McpServerInfoPanelHeightPx = next;

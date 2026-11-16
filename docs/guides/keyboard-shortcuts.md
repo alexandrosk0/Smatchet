@@ -181,8 +181,9 @@ The **Pick Icon** dialog opens with the caret in its search box. `Enter` picks t
 when exactly one matches, and `Esc` closes it.
 
 While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
-zoom shortcuts and **Full Screen**. A shortcut that ran behind a confirm could change
-or remove what the confirm is asking about.
+zoom shortcuts, **Full Screen** and the list and divider keys below (`Alt+Up`, `Alt+Down`, `Delete`,
+`Shift+Alt+arrows`), which act only on the list or divider that has the keyboard. A shortcut that ran behind a
+confirm could change or remove what the confirm is asking about.
 
 ## Default bindings
 
@@ -206,6 +207,25 @@ or remove what the confirm is asking about.
 | Zoom In | `Ctrl+=`, `Ctrl+Shift+=` (i.e. `Ctrl++`), `Ctrl+NumAdd`, `Ctrl+MouseWheelUp` | `ui.zoom.in` |
 | Zoom Out | `Ctrl+-`, `Ctrl+NumSubtract`, `Ctrl+MouseWheelDown` | `ui.zoom.out` |
 | Reset Zoom | `Ctrl+0`, `Ctrl+Num0` | `ui.zoom.reset` |
+| Move the selected row up (focused list) | `Alt+Up` | `ui.list.move_up` |
+| Move the selected row down (focused list) | `Alt+Down` | `ui.list.move_down` |
+| Remove the selected row (focused list) | `Delete` | `ui.list.remove` |
+| Move the focused splitter down / right | `Shift+Alt+Down`, `Shift+Alt+Right` | `ui.splitter.grow` |
+| Move the focused splitter up / left | `Shift+Alt+Up`, `Shift+Alt+Left` | `ui.splitter.shrink` |
+| Make the focused panel bigger | `Ctrl+Alt+PageUp` | `view.panel.grow` |
+| Make the focused panel smaller | `Ctrl+Alt+PageDown` | `view.panel.shrink` |
+
+## Keyboard versions of mouse gestures
+
+Every drag has a command you can bind, so none of these needs the mouse:
+
+- **Lists and splitters** (`ui.list.*`, `ui.splitter.*`): they act only on the list or divider in the window that has the keyboard. With none focused, the key does nothing. They still run while a dialog is open, because the lists and dividers they serve sit inside dialogs. So far: the Customize Toolbar button list (select a row with `Space` or `Enter`, then `Alt+Up`, `Alt+Down` or `Delete`), and the divider in the long-text editor's Split view, the MCP panel and the Scripts window. The Up, Down and Delete buttons in the toolbar editor name the command in their tooltips, so a rebind never leaves a stale hint.
+- **Panels** (`view.panel.grow`, `view.panel.shrink`): resize the bottom panel or a side bar by two text lines per press. They take a `panel` argument, `focused` (the default: the panel holding the focused window), `bottom`, `primary` or `secondary`, so a binding can name one. The size is clamped and saved like a splitter drag.
+- **Date pickers**: the popup opens with the keyboard on the chosen day. `PageUp` / `PageDown` move a month (with `Shift`, a year), `Home` / `End` go to the first / last day, `T` goes to today, and the arrows move between days. `Enter` picks the focused day, and `Ctrl+Enter` applies in the full picker. The **Today**, **Tomorrow** and **In a week** buttons set the day at once.
+- **Path remaps** (Preferences, Annotate): **Add path remap** puts the caret in the new rule's *from* field, and `Enter` in the last, filled *to* field adds the next rule.
+- **Read-only text** (comments, descriptions): click the text or tab to it, then `Ctrl+A` selects all and `Ctrl+C` copies, with the mouse anywhere.
+
+Not yet: moving and resizing grid columns, the sort-rule list and the filter popups are waiting on other changes to the files they live in, and are listed in `docs/plans/input-ux-w2-gesture-keys.md`.
 
 ## Upgrading from an older build
 

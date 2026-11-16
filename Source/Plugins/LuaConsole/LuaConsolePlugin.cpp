@@ -9,6 +9,7 @@
 #include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Ui/GestureKeys.h"
 #include "imgui.h"
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
@@ -1000,8 +1001,22 @@ void LuaConsolePlugin::DrawSplitterAndConsole(DrawCtx& ctx) {
             dl->AddCircleFilled(ImVec2(cx + static_cast<float>(i) * 6.0f, midY), 1.5f, dotCol);
         }
     }
+    // The divider moves with the mouse, or one step per ui.splitter.grow / ui.splitter.shrink while this
+    // window has the keyboard.
+    float splitDelta = 0.0f;
+    // keyboard-equivalent: ui.splitter.grow, ui.splitter.shrink
     if (splitActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        const float next = luaAutomationScriptPaneHeightPx_ + ImGui::GetIO().MouseDelta.y;
+        splitDelta = ImGui::GetIO().MouseDelta.y;
+    }
+    const float splitStep = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterGrow)) {
+        splitDelta += splitStep;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterShrink)) {
+        splitDelta -= splitStep;
+    }
+    if (splitDelta != 0.0f) {
+        const float next = luaAutomationScriptPaneHeightPx_ + splitDelta;
         const float localMinLogH = ctx.onToolsTab ? ctx.kToolsLogH : ctx.kMinLogH;
         const float localMaxScriptH =
             (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - localMinLogH - ctx.kSplitGrabH);
