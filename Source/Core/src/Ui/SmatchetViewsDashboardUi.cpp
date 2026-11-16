@@ -25,6 +25,7 @@
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -989,31 +990,27 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         ImGui::OpenPopup("Discard changes?");
         d.viewsShowDiscardConfirm = false;
     }
-    if (ImGui::BeginPopupModal("Discard changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Saving is not destructive, so Enter saves and switches; Esc cancels.
+    static smatchet::ui::DialogScopeState s_discardDialog;
+    if (smatchet::ui::BeginDialog(s_discardDialog, "Discard changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes on this view.");
         ImGui::Spacing();
-        if (ImGui::Button("Save & switch")) {
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+            s_discardDialog, smatchet::ui::UnsavedChangesFooter("Save & switch", "Discard & switch"));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             ctx.applyAndSync();
+        }
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary ||
+            pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             if (!d.viewsPendingActivateId.empty()) {
                 ctx.activateView(d.viewsPendingActivateId);
                 d.viewsPendingActivateId.clear();
             }
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Discard & switch")) {
-            if (!d.viewsPendingActivateId.empty()) {
-                ctx.activateView(d.viewsPendingActivateId);
-                d.viewsPendingActivateId.clear();
-            }
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
             d.viewsPendingActivateId.clear();
-            ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_discardDialog);
     }
 
     // -------- Delete-view confirm modal --------
@@ -1021,7 +1018,9 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         ImGui::OpenPopup("Delete view?");
         d.viewsShowDeleteConfirm = false;
     }
-    if (ImGui::BeginPopupModal("Delete view?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive, so Cancel takes the keyboard on open and Enter cancels.
+    static smatchet::ui::DialogScopeState s_deleteDialog;
+    if (smatchet::ui::BeginDialog(s_deleteDialog, "Delete view?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         // DR13b: the confirm + latch target d.viewsPendingDeleteId (the right-clicked view), which
         // may NOT be the active view. Resolve its name from the store for the prompt + toast; an
         // empty target falls back to the active view (back-compat for callers that only set the
@@ -1031,22 +1030,19 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
             SmatchetViewsDashboardUiDetail::FindViewName(ctx.store, targetId, activeView->Name);
         ImGui::Text("Delete view \"%s\"? This cannot be undone.", targetName.c_str());
         ImGui::Spacing();
-        SmatchetPushDestructiveButtonColors();
-        if (ImGui::Button("Delete")) {
+        const smatchet::dialogkeys::ConfirmPick pick =
+            smatchet::ui::ConfirmFooter(s_deleteDialog, smatchet::ui::DestructiveFooter("Delete"));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             // Defer the erase to top-of-next-frame: Views::Delete erases from store.Views — same
             // pointer-invalidation class as the create latch. Copy the name now, mutate next frame.
             // viewsPendingDeleteId carries the target through to applyPendingViewDelete.
             d.viewsPendingDeleteActive = true;
             d.viewsPendingDeleteToastName = targetName;
             ImGui::CloseCurrentPopup();
-        }
-        SmatchetPopDestructiveButtonColors();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
             d.viewsPendingDeleteId.clear();
-            ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_deleteDialog);
     }
 }
 
@@ -1146,7 +1142,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     ImGui::EndChild(); // ViewsEditor
 
-    drawViewsModals(ctx);
+    // Embedded (the mobile Views page), the shell draws these modals every frame through
+    // drawMobileViewsModals. Drawing them here as well would run each dialog twice per frame under two
+    // ID stacks: the second BeginDialog finds its popup closed and resets the shared dialog state.
+    if (!embedded) {
+        drawViewsModals(ctx);
+    }
 
     if (!embedded) {
         ImGui::End();
