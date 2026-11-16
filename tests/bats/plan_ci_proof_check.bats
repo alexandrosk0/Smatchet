@@ -21,6 +21,7 @@ setup() {
     # Sandbox plan paths are built, not literal, so the plan-ref-integrity doc gate
     # does not read the fixtures as references to real plans.
     FIXTURE_PLAN_DIR="docs/plans/""active"
+    FIXTURE_SHIPPED_DIR="docs/plans/""shipped"
     STUB_BIN="$SANDBOX/.stub-bin"
     git -C "$SANDBOX" init -q -b develop
     git -C "$SANDBOX" config user.email bats@example.invalid
@@ -113,6 +114,31 @@ run_sut() {
     STUB="$STUB_BIN" run_sut develop
     [ "$status" -eq 0 ]
     [[ "$output" == *'PASS — 0 CI proof'* ]]
+}
+
+@test "an unchanged proof line in an edited plan is not re-checked" {
+    # "This PR" means the PR that wrote the line; a later docs-only edit must pass.
+    write_plan '- CI: "Sanitizer (UBSan via Clang)" green on this PR.'
+    git -C "$SANDBOX" add -A
+    git -C "$SANDBOX" commit -q -m "plan on base"
+    git -C "$SANDBOX" branch -f develop HEAD
+    printf '\nA typo fix.\n' >> "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
+    commit_all
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'PASS — 0 CI proof'* ]]
+}
+
+@test "moving a plan to shipped/ does not re-check its proof" {
+    write_plan '- CI: "Sanitizer (UBSan via Clang)" green on this PR.'
+    git -C "$SANDBOX" add -A
+    git -C "$SANDBOX" commit -q -m "plan on base"
+    git -C "$SANDBOX" branch -f develop HEAD
+    mkdir -p "$SANDBOX/$FIXTURE_SHIPPED_DIR"
+    git -C "$SANDBOX" mv "$FIXTURE_PLAN_DIR/lane-change.md" "$FIXTURE_SHIPPED_DIR/lane-change.md"
+    commit_all
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 0 ]
 }
 
 @test "a check with no known gate is reported, not refused" {

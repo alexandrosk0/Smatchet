@@ -90,6 +90,10 @@ rewrite_line() {
         cmake/Sanitizers.cmake
         .github/actions/setup-pinned-llvm/action.yml
         CMakePresets.json
+        CMakeLists.txt
+        Source/Core/CMakeLists.txt
+        Source/Plugins/Mcp/CMakeLists.txt
+        Source/Standalone/CMakeLists.txt
         .github/workflows/sanitizer-nightly.yml
         tests/Core/Foo.test.cpp
         tests/CMakeLists.txt
@@ -137,8 +141,8 @@ rewrite_line() {
     # job-range check can see it.
     n="$(job_line sanitizer-ubsan-pr 'ctest --output-on-failure')"
     [ -n "$n" ]
-    run sed -n "${n}p" "$SANDBOX/.github/workflows/build-and-test.yml"
-    ! printf '%s' "$output" | grep -qi sanitizer
+    run grep -qi sanitizer <(sed -n "${n}p" "$SANDBOX/.github/workflows/build-and-test.yml")
+    [ "$status" -ne 0 ]
     rewrite_line "$n" 's/--output-on-failure/--output-on-failure --timeout 1800/'
     out="$(detect)"
     printf '%s\n' "$out" | grep -qx 'source_core_cpp=true'
@@ -158,6 +162,22 @@ rewrite_line() {
     rewrite_line "$n" 's/$/ # raised for the sanitizer rig/'
     out="$(detect)"
     printf '%s\n' "$out" | grep -qx 'source_core_cpp=true'
+}
+
+@test "build-and-test.yml: a sanitizer mention early in a large diff still flips it" {
+    # Regression: a `... | grep -q` last stage SIGPIPEs its writer under pipefail,
+    # so a large diff whose first changed line matched read as "no match".
+    n="$(job_line windows-msvc 'timeout-minutes:')"
+    [ -n "$n" ]
+    local f="$SANDBOX/.github/workflows/build-and-test.yml"
+    sed -i.bak "${n}s/\$/ # raised for the sanitizer rig/" "$f" && rm -f "$f.bak"
+    seq 1 20000 | sed 's/^/# padding /' >> "$f"
+    git -C "$SANDBOX" add -A
+    git -C "$SANDBOX" commit -q -m "large edit"
+    local i
+    for i in 1 2 3 4 5; do
+        detect | grep -qx 'source_core_cpp=true' || { echo "run $i read false" >&2; return 1; }
+    done
 }
 
 @test "build-and-test.yml: an unrelated job edit does not run the sanitizer lanes" {

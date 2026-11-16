@@ -14,11 +14,14 @@
 # Usage:
 #   bash scripts/dev/plan-ci-proof-check.sh [--live] [<base-ref>]   # default origin/develop
 #
-# Scope: the plan docs under docs/plans/{active,shipped}/ that this branch changes vs the
-# merge-base with <base-ref> (committed or not). Only the `## Verification` section is
-# read (not `## Verification (actual)`, which records what happened). A named check
-# counts when the line reads `CI: "<check>" green on this PR` (or `the PR`; the name may
-# be in backticks instead of quotes).
+# Scope: proof lines this branch ADDS to a plan under docs/plans/{active,shipped}/, vs
+# the merge-base with <base-ref> (committed or not). "This PR" in a plan means the PR
+# that wrote the line, so an unchanged proof line is not re-checked: a later docs-only
+# edit of the plan, or its git mv to shipped/ (rename detection, -M), does not inherit
+# the original PR's proof. Only the `## Verification` section is read (not
+# `## Verification (actual)`, which records what happened). A named check counts when
+# the line reads `CI: "<check>" green on this PR` (or `the PR`; the name may be in
+# backticks instead of quotes).
 #
 # Two checks per named CI check:
 #   predicted  For a check build-and-test.yml gates on a `changes` output, run the same
@@ -71,14 +74,34 @@ gate_output_for() {
     esac
 }
 
-# verification_checks <plan-file> — print each check name the `## Verification` section
-# names as proof on the PR, one per line.
+# verification_checks <plan-file> <added-lines> — print each check name the
+# `## Verification` section names as proof on the PR, one per line, keeping only lines
+# whose number is in <added-lines> (space-separated; "all" keeps every line).
 # shellcheck disable=SC2016  # awk / sed programs; the backticks are literal
 verification_checks() {
-    awk '
+    awk -v added=" $2 " '
         /^## / { in_v = ($0 ~ /^## Verification[[:space:]]*$/); next }
-        in_v { print }
+        in_v && (added == " all " || index(added, " " NR " ")) { print }
     ' "$1" | sed -nE 's/.*CI:[[:space:]]*["`]([^"`]+)["`][[:space:]]+green on (this|the) PR.*/\1/p'
+}
+
+# added_lines <plan-file> — the head-side line numbers this branch adds to <plan-file>
+# (space-separated), from the -U0 hunk headers of the rename-aware diff computed once
+# below; "all" for an untracked plan.
+added_lines() {
+    if printf '%s\n' "$untracked" | grep -qxF -- "$1"; then
+        echo all
+        return 0
+    fi
+    printf '%s\n' "$plan_diff" | awk -v want="$1" '
+        /^\+\+\+ / { path = substr($0, 5); sub(/^b\//, "", path); next }
+        /^@@ / && path == want {
+            n = $3; sub(/^\+/, "", n)
+            split(n, p, ",")
+            count = (2 in p) ? p[2] + 0 : 1
+            for (l = p[1] + 0; l < p[1] + count; l++) printf "%d ", l
+        }
+    '
 }
 
 if ! merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null)"; then
@@ -86,7 +109,8 @@ if ! merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null)"; then
     exit 0
 fi
 
-plans="$(git diff --name-only --diff-filter=d "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
+plans="$(git diff -M --name-only --diff-filter=d "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
+plan_diff="$(git diff -M -U0 --diff-filter=d "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
 untracked="$(git ls-files --others --exclude-standard -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
 plans="$(printf '%s\n%s\n' "$plans" "$untracked" | sed '/^$/d' | sort -u)"
 
@@ -168,7 +192,7 @@ EOF
                 echo "plan-ci-proof-check: no PR head readable through gh; live check skipped." >&2
             fi
         fi
-    done < <(verification_checks "$plan")
+    done < <(verification_checks "$plan" "$(added_lines "$plan")")
 done <<< "$plans"
 
 if [ "$fail" -ne 0 ]; then

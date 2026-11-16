@@ -55,7 +55,11 @@ workflow_sanitizer_touched() {
     diff=$(git diff -U0 "$range" -- "$path" 2>/dev/null) || return 0
     [ -n "$diff" ] || return 0
 
-    if printf '%s\n' "$diff" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---) ' | grep -qi 'sanitizer'; then
+    # One awk pass that reads to EOF. Not `... | grep -q`: under pipefail, grep -q exiting
+    # on its first match SIGPIPEs the stage before it, the pipeline reports 141, and a
+    # diff that DOES mention the lanes reads as one that does not (fail-open).
+    if awk '/^[+-]/ && !/^(\+\+\+|---) / && tolower($0) ~ /sanitizer/ { hit = 1 }
+            END { exit hit ? 0 : 1 }' <<< "$diff"; then
         return 0
     fi
 
@@ -167,7 +171,9 @@ echo "non-docs changes present: ${code}" >&2
 # lanes build Debug / RelWithDebInfo under instrumentation (uncacheable by sccache), so
 # they run pre-merge only when the diff can change what they catch:
 #   * first-party shared C++ that can introduce UB — Source/Core or Source/Plugins;
-#   * the lanes' own configuration — cmake/Sanitizers.cmake, the pinned clang-cl action,
+#   * the lanes' own configuration — cmake/Sanitizers.cmake and the CMakeLists that
+#     include it or call smatchet_apply_sanitizers() (the root one, Source/Core,
+#     Source/Plugins and Source/Standalone; tests/ is covered below), the pinned clang-cl action,
 #     CMakePresets.json (the asan presets), sanitizer-nightly.yml, and the sanitizer
 #     jobs of build-and-test.yml (workflow_sanitizer_touched: only a diff that touches
 #     sanitizer lines, so an unrelated workflow edit does not pay for two 25-30 minute
@@ -189,6 +195,8 @@ else
             Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh)
                 source_core_cpp=true; break ;;
             cmake/Sanitizers.cmake|.github/actions/setup-pinned-llvm/*|CMakePresets.json|.github/workflows/sanitizer-nightly.yml)
+                source_core_cpp=true; break ;;
+            CMakeLists.txt|Source/Core/*CMakeLists.txt|Source/Plugins/*CMakeLists.txt|Source/Standalone/CMakeLists.txt)
                 source_core_cpp=true; break ;;
             tests/bats/*|tests/agent-eval/*) ;;
             tests/*)
