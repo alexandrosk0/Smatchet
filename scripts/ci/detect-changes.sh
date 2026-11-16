@@ -32,7 +32,11 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
 fi
 range="$1"
 
-files=$(git diff --name-only "$range" 2>/dev/null || true)
+# Every diff here is parsed as text, so its format is pinned against user git config
+# (color.diff=always, diff.mnemonicPrefix, an external diff driver): a reshaped patch
+# would match nothing and read as "the lanes are not touched".
+GIT_DIFF=(git -c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/)
+files=$("${GIT_DIFF[@]}" --name-only "$range" 2>/dev/null || true)
 echo "Changed files in ${range}:" >&2
 if [ -n "$files" ]; then
     printf '%s\n' "$files" | sed 's/^/  /' >&2
@@ -52,7 +56,7 @@ fi
 # returns 0 (run the lanes).
 workflow_sanitizer_touched() {
     local path="$1" diff lhs rhs base_rev head_rev
-    diff=$(git diff -U0 "$range" -- "$path" 2>/dev/null) || return 0
+    diff=$("${GIT_DIFF[@]}" -U0 "$range" -- "$path" 2>/dev/null) || return 0
     [ -n "$diff" ] || return 0
 
     # One awk pass that reads to EOF. Not `... | grep -q`: under pipefail, grep -q exiting

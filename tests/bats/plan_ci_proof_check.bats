@@ -84,6 +84,18 @@ run_sut() {
     [[ "$output" == *'source_core_cpp=false'* ]]
 }
 
+@test "replay #2400 still refuses under diff-reshaping user git config" {
+    write_plan '- CI: "Sanitizer (UBSan via Clang)" green on this PR.'
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    local kv
+    for kv in diff.mnemonicPrefix=true color.diff=always color.ui=always diff.noprefix=true; do
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="${kv%%=*}" GIT_CONFIG_VALUE_0="${kv#*=}" \
+            STUB="$STUB_BIN" run_sut develop
+        [ "$status" -eq 1 ] || { echo "passed under $kv: $output" >&2; return 1; }
+    done
+}
+
 @test "the same plan with a lane-config change in the diff -> pass" {
     write_plan '- CI: "Sanitizer (UBSan via Clang)" green on this PR.'
     commit_all

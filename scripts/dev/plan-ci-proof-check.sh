@@ -89,7 +89,7 @@ verification_checks() {
 # (space-separated), from the -U0 hunk headers of the rename-aware diff computed once
 # below; "all" for an untracked plan.
 added_lines() {
-    if printf '%s\n' "$untracked" | grep -qxF -- "$1"; then
+    if grep -qxF -- "$1" <<< "$untracked"; then
         echo all
         return 0
     fi
@@ -109,8 +109,12 @@ if ! merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null)"; then
     exit 0
 fi
 
-plans="$(git diff -M --name-only --diff-filter=d "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
-plan_diff="$(git diff -M -U0 --diff-filter=d "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
+# The patch text is parsed below, so its format is pinned against user git config
+# (color.diff=always, diff.mnemonicPrefix's w/ prefix, an external diff driver): a
+# reshaped patch would match no path and silently pass every plan.
+GIT_DIFF=(git -c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -M --diff-filter=d)
+plans="$("${GIT_DIFF[@]}" --name-only "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
+plan_diff="$("${GIT_DIFF[@]}" -U0 "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
 untracked="$(git ls-files --others --exclude-standard -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
 plans="$(printf '%s\n%s\n' "$plans" "$untracked" | sed '/^$/d' | sort -u)"
 

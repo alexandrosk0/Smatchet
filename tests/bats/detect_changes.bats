@@ -180,6 +180,17 @@ rewrite_line() {
     done
 }
 
+@test "build-and-test.yml: diff-reshaping user git config does not hide a lane edit" {
+    n="$(job_line sanitizer-ubsan-pr 'ctest --output-on-failure')"
+    [ -n "$n" ]
+    rewrite_line "$n" 's/--output-on-failure/--output-on-failure --timeout 1800/'
+    local kv out
+    for kv in diff.mnemonicPrefix=true color.diff=always color.ui=always diff.noprefix=true; do
+        out="$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="${kv%%=*}" GIT_CONFIG_VALUE_0="${kv#*=}" detect)"
+        printf '%s\n' "$out" | grep -qx 'source_core_cpp=true' || { echo "false under $kv" >&2; return 1; }
+    done
+}
+
 @test "build-and-test.yml: an unrelated job edit does not run the sanitizer lanes" {
     n="$(job_line windows-msvc 'timeout-minutes:')"
     [ -n "$n" ]
