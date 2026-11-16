@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -40,6 +41,10 @@ struct BodyState {
     bool CaretToEnd = false;             // on the filter's next active frame: caret to the end, no selection
     bool ScrollToHighlight = false;      // bring the highlighted row into view
     bool OpeningEnterHeld = false;       // the Enter that opened the popup is still down: not a pick
+    bool OpeningSpaceHeld = false;       // the Space that opened the popup is still down: not a toggle
+    bool KeyNavigated = false;           // an arrow key moved the highlight since the filter last changed
+    bool SpaceConsumed = false;          // a Space used as the toggle key is still down: its characters are dropped
+    bool ToggledThisFilter = false;      // multi-select: a row was toggled or created since the filter last changed
     bool RecentsLoaded = false;
     std::vector<std::string> Recents;  // newest first, for Options::RecentsScope
     std::vector<pure::ItemView> Views; // scratch, reused across frames
@@ -78,6 +83,10 @@ void ResetForOpen(BodyState& st) {
     st.CaretToEnd = false;
     st.ScrollToHighlight = false;
     st.OpeningEnterHeld = false;
+    st.OpeningSpaceHeld = false;
+    st.KeyNavigated = false;
+    st.SpaceConsumed = false;
+    st.ToggledThisFilter = false;
     st.RecentsLoaded = false;
     st.Recents.clear();
 }
@@ -110,6 +119,20 @@ void DrawCross(ImDrawList* dl, ImVec2 center, float half, ImU32 col) {
 void DrawPlus(ImDrawList* dl, ImVec2 center, float half, ImU32 col) {
     dl->AddLine(ImVec2(center.x - half, center.y), ImVec2(center.x + half, center.y), col, 1.5f);
     dl->AddLine(ImVec2(center.x, center.y - half), ImVec2(center.x, center.y + half), col, 1.5f);
+}
+
+// Takes up to `limit` typed spaces out of this frame's character queue (a Space the dropdown used as a key).
+void DropQueuedSpaces(int limit) {
+    ImVector<ImWchar>& queue = ImGui::GetIO().InputQueueCharacters;
+    int kept = 0;
+    for (int i = 0; i < queue.Size; ++i) {
+        if (queue[i] == ' ' && limit > 0) {
+            --limit;
+            continue;
+        }
+        queue[kept++] = queue[i];
+    }
+    queue.resize(kept);
 }
 
 // Characters typed while the popup has focus but the filter field does not (just after a row click, a
@@ -486,16 +509,24 @@ void DrawFooter(const Options& options, float width) {
     struct Hint {
         const char* Key; // null = arrows
         const char* Text;
+        bool MultiSelectOnly;
     };
+    // A tick-box list toggles with Space and finishes with Enter; a single-select list picks with Enter.
     const Hint hints[] = {
-        {nullptr, SmatchetLocalization::T("dropdown.hint.navigate", "Navigate")},
-        {"Enter", options.MultiSelect ? SmatchetLocalization::T("dropdown.hint.toggle", "Toggle")
-                                      : SmatchetLocalization::T("dropdown.hint.select", "Select")},
-        {"Esc", SmatchetLocalization::T("dropdown.hint.close", "Close")},
+        {nullptr, SmatchetLocalization::T("dropdown.hint.navigate", "Navigate"), false},
+        {options.MultiSelect ? "Space" : "Enter",
+         options.MultiSelect ? SmatchetLocalization::T("dropdown.hint.toggle", "Toggle")
+                             : SmatchetLocalization::T("dropdown.hint.select", "Select"),
+         false},
+        {"Enter", SmatchetLocalization::T("dropdown.hint.done", "Done"), true},
+        {"Esc", SmatchetLocalization::T("dropdown.hint.close", "Close"), false},
     };
     dl->PushClipRect(pos, ImVec2(pos.x + width, pos.y + h), true);
     float x = pos.x;
     for (const Hint& hint : hints) {
+        if (hint.MultiSelectOnly && !options.MultiSelect) {
+            continue;
+        }
         x = DrawKeyCap(dl, x, pos.y, h, hint.Key, col) + size * 0.4f;
         dl->AddText(font, size, ImVec2(x, pos.y + (h - size) * 0.5f), col, hint.Text);
         x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, hint.Text).x + size * 1.1f;
@@ -571,6 +602,7 @@ void UpdateHighlight(BodyState& st, int count, const Options& options, const std
         // A key press with no row to move to is not a move: the default still applies when rows arrive.
         if (st.Highlight >= 0) {
             st.UserMovedHighlight = true;
+            st.KeyNavigated = true;
             st.ScrollToHighlight = true;
         }
     }
@@ -632,8 +664,49 @@ bool FinishEvent(BodyState& st, const Item* items, const Options& options, bool 
     if (!options.MultiSelect) {
         return true;
     }
+    st.ToggledThisFilter = true;
     st.FocusInput = true; // Enter released the field; keep typing after a toggle
     return false;
+}
+
+// Tick-box lists: does the Space pressed this frame toggle the highlighted row? It does while the filter is
+// empty or after an arrow key moved the highlight; otherwise the Space is filter text. The Space that opened
+// the popup toggles nothing. Takes the toggling Space's characters out of the queue, for as long as the key
+// is down and the frame after (key repeat, and a character that ImGui's input trickling delivers late).
+bool SpaceToggles(BodyState& st, const Options& options, bool popupFocused, bool appearing) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool down = ImGui::IsKeyDown(ImGuiKey_Space);
+    st.OpeningSpaceHeld = down && (appearing || st.OpeningSpaceHeld);
+    const bool toggles = options.MultiSelect && popupFocused && !st.OpeningSpaceHeld && !io.KeyCtrl && !io.KeyAlt &&
+                         st.Highlight >= 0 && ImGui::IsKeyPressed(ImGuiKey_Space, false) &&
+                         pure::SpaceTogglesRow(st.AppliedFilterLower.empty(), st.KeyNavigated);
+    if (st.SpaceConsumed || toggles) {
+        DropQueuedSpaces(toggles ? 1 : (std::numeric_limits<int>::max)());
+    }
+    st.SpaceConsumed = down && (toggles || st.SpaceConsumed);
+    return toggles;
+}
+
+// Does Enter act on the highlighted row? A single-select list always picks. A tick-box list does when a
+// filter is typed, nothing was toggled for it yet and the row answers it (the match, the Create row, or a
+// row an arrow key moved onto), so typing a name and pressing Enter still picks the match or creates the
+// typed value. With an empty filter, after a toggle, or on a row that is only listed (a ticked option kept
+// under a filter that matches nothing), Enter only finishes.
+bool EnterActsOnRow(const BodyState& st, const Options& options, bool enterPressed, int count,
+                    const std::string& filterLower) {
+    if (!enterPressed || !options.MultiSelect) {
+        return enterPressed;
+    }
+    const int at = st.Highlight;
+    const bool onRow = at >= 0 && at < static_cast<int>(st.Rows.size());
+    return onRow && !filterLower.empty() && !st.ToggledThisFilter &&
+           (st.KeyNavigated ||
+            pure::RowAnswersFilter(st.Rows[static_cast<std::size_t>(at)], st.Views.data(), count, filterLower));
+}
+
+// Enter finishes a tick-box list, except when it just created a new value (more may follow).
+bool EnterFinishes(const Options& options, bool enterPressed, const Event& ev) {
+    return options.MultiSelect && enterPressed && ev.Kind != EventKind::Created;
 }
 
 } // namespace
@@ -665,6 +738,7 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     // That press, and its key repeat for as long as it is held, opens the popup and nothing more.
     const bool enterDown = ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter);
     st.OpeningEnterHeld = enterDown && (appearing || st.OpeningEnterHeld);
+    const bool spaceToggles = SpaceToggles(st, options, popupFocused, appearing);
     const bool enterPressed = DrawSearchRow(st, options, width, frame, popupFocused) && !st.OpeningEnterHeld;
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.25f));
 
@@ -672,6 +746,8 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     if (filterLower != st.AppliedFilterLower) {
         st.AppliedFilterLower = filterLower;
         st.NeedDefaultHighlight = true;
+        st.KeyNavigated = false; // typing: Space is filter text again until an arrow key moves the highlight
+        st.ToggledThisFilter = false;
     }
     BuildRowsForFrame(st, items, count, options, filterLower, hasScope);
     UpdateHighlight(st, count, options, filterLower, popupFocused, maxRows);
@@ -683,7 +759,8 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     if (!pure::HasOptionRows(st.Rows)) {
         DrawEmptyState(options, !filterLower.empty(), width); // also under a lone clear row
     }
-    if (enterPressed && ev.Kind == EventKind::None && st.Highlight >= 0 && st.Highlight < rowCount) {
+    const bool acts = spaceToggles || EnterActsOnRow(st, options, enterPressed, count, filterLower);
+    if (acts && ev.Kind == EventKind::None && st.Highlight >= 0 && st.Highlight < rowCount) {
         ev = ActivateRow(st, st.Rows[static_cast<std::size_t>(st.Highlight)], items, count);
     }
     pure::IdentityOfRow(st.Rows, st.Views.data(), count, &st.Recents, st.Highlight, st.HighlightIdentity);
@@ -693,6 +770,9 @@ Event DrawBody(const Item* items, int count, const Options& options) {
 
     bool closePopup = popupFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     if (ev.Kind != EventKind::None && FinishEvent(st, items, options, hasScope, ev)) {
+        closePopup = true;
+    }
+    if (EnterFinishes(options, enterPressed, ev)) {
         closePopup = true;
     }
     if (closePopup) {

@@ -335,6 +335,17 @@ inline int DefaultHighlight(const std::vector<Row>& rows, const ItemView* items,
     return createRow >= 0 ? createRow : firstOption;
 }
 
+/// True if Enter on `row` answers what was typed: the Create row, or an option the filter matches. False
+/// for a row that is only listed (a ticked option KeepCheckedVisible keeps under a filter that matches
+/// nothing), so Enter does not tick or untick a value the user did not ask for.
+inline bool RowAnswersFilter(const Row& row, const ItemView* items, int count, const std::string& filterLower) {
+    if (row.Kind == RowKind::Create) {
+        return true;
+    }
+    return row.Kind == RowKind::Item && row.ItemIndex >= 0 && row.ItemIndex < count &&
+           ItemMatches(items[row.ItemIndex], filterLower);
+}
+
 /// True if the list holds at least one option or create row (a lone clear row does not count): when it
 /// does not, the picker shows its empty-state text.
 inline bool HasOptionRows(const std::vector<Row>& rows) {
@@ -499,6 +510,11 @@ inline int LeadingSpacesToSkip(const unsigned int* chars, int count, bool filter
     }
     return first;
 }
+
+/// Whether a Space press toggles the highlighted row of a tick-box list instead of being typed into the
+/// filter: while the filter is empty (a filter never starts with a space) or after an arrow key moved the
+/// highlight since the filter last changed.
+inline bool SpaceTogglesRow(bool filterEmpty, bool keyNavigated) { return filterEmpty || keyNavigated; }
 
 } // namespace pure
 } // namespace dropdown

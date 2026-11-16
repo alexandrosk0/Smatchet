@@ -633,6 +633,35 @@ TEST_CASE("LeadingSpacesToSkip: leading spaces go only while the filter is empty
     CHECK(LeadingSpacesToSkip(nullptr, 0, true) == 0);
 }
 
+TEST_CASE("RowAnswersFilter: the Create row and a matching option answer it, a kept-listed option does not") {
+    std::vector<ItemView> items(2);
+    items[0].Label = "alpha";
+    items[0].Checked = true; // kept visible, does not match "zz"
+    items[1].Label = "zzz-thing";
+    Row create;
+    create.Kind = RowKind::Create;
+    Row first;
+    first.ItemIndex = 0;
+    Row second;
+    second.ItemIndex = 1;
+    Row clear;
+    clear.Kind = RowKind::Clear;
+    const ItemView* v = items.data();
+    CHECK(RowAnswersFilter(create, v, 2, "zz"));
+    CHECK(RowAnswersFilter(second, v, 2, "zz"));
+    CHECK_FALSE(RowAnswersFilter(first, v, 2, "zz"));
+    CHECK_FALSE(RowAnswersFilter(clear, v, 2, "zz"));
+    Row unknown; // a recent id outside the list
+    CHECK_FALSE(RowAnswersFilter(unknown, v, 2, "zz"));
+}
+
+TEST_CASE("SpaceTogglesRow: Space toggles on an empty filter or after arrows, else it is typed") {
+    CHECK(SpaceTogglesRow(true, false)); // empty filter, nothing typed: Space is the toggle key
+    CHECK(SpaceTogglesRow(true, true));
+    CHECK(SpaceTogglesRow(false, true));        // arrows moved the highlight since the filter last changed
+    CHECK_FALSE(SpaceTogglesRow(false, false)); // typing a phrase: Space is a character
+}
+
 TEST_CASE("ScrollToRevealRow: scrolls only as far as needed") {
     // Rows of 20 in a 100-tall view scrolled to 40: rows 2..6 are fully visible.
     CHECK(ScrollToRevealRow(3, 20.0f, 100.0f, 40.0f) == doctest::Approx(40.0f)); // visible: unchanged

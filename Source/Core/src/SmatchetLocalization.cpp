@@ -871,6 +871,7 @@ const TranslationEntry kEntries[] = {
     {"dropdown.hint.navigate", "Navigate", u8"Naviguer"},
     {"dropdown.hint.select", "Select", u8"Choisir"},
     {"dropdown.hint.toggle", "Toggle", u8"Cocher"},
+    {"dropdown.hint.done", "Done", u8"Terminé"},
     {"dropdown.hint.close", "Close", u8"Fermer"},
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},

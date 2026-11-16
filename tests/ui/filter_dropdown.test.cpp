@@ -22,6 +22,10 @@
 //      moved goes to the best match of the new list.
 //  12. The project picker (SmatchetProjectPicker::Draw) reads and records its recent picks under the
 //      focused tracker: the one its project list and the create it feeds belong to.
+//  13. Tick-box lists: Space toggles the highlighted row (empty filter, or after an arrow key moved the
+//      highlight since the filter last changed; otherwise Space is typed); Enter finishes, first acting on
+//      the highlighted row when a filter is typed and nothing was toggled for it (pick or create), and
+//      only closing with an empty filter.
 //
 // COMPLEMENTS tests/Core/FilterDropdownPure.test.cpp (row model, highlight moves, scroll maths) and
 // tests/Core/RecentSelections.test.cpp (the store). THIS suite drives the production DrawBody inside a
@@ -241,16 +245,18 @@ void RegisterTypeAfterRowClick(ImGuiTestEngine* engine) {
         // first match is "epsilon".
         ctx->KeyChars("io");
         ctx->Yield(2);
-        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->KeyPress(ImGuiKey_DownArrow); // one match: the highlight stays, but an arrow key vouches for Space
+        ctx->KeyPress(ImGuiKey_Space);
         ctx->Yield(2);
         IM_CHECK_EQ(EventCount(), 2);
         IM_CHECK_STR_EQ(EventId(1), "iota");
         IM_CHECK(g_fixture.checked[8]);
         IM_CHECK(g_fixture.comboOpen);
 
-        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->KeyPress(ImGuiKey_Enter); // finishes: the popup closes, nothing more is toggled
         ctx->Yield(2);
         IM_CHECK(!g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 2);
     };
 }
 
@@ -454,14 +460,17 @@ void RegisterCreateRow(ImGuiTestEngine* engine) {
         // The filter was cleared: "io" now finds "iota". Left in place it would read "Newio" and create again.
         ctx->KeyChars("io");
         ctx->Yield(2);
-        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->KeyPress(ImGuiKey_DownArrow); // onto the Add "io" row, then back: an arrow key makes Space toggle
+        ctx->KeyPress(ImGuiKey_UpArrow);
+        ctx->KeyPress(ImGuiKey_Space);
         ctx->Yield(2);
         IM_CHECK_EQ(EventCount(), 2);
         IM_CHECK(EventIsPick(1));
         IM_CHECK_STR_EQ(EventId(1), "iota");
 
-        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
         smatchet::recents::BeginSharedTestScope();
     };
 }
@@ -734,6 +743,165 @@ void RegisterProjectPickerRecentsFollowTheFocusedTracker(ImGuiTestEngine* engine
     };
 }
 
+// ============================================================================
+// S. Tick-box lists: Space toggles the highlighted row (while the filter is empty or after an arrow
+//    key), is filter text otherwise, and Enter finishes: it closes the popup, and ticks the highlighted
+//    row first only when nothing was toggled yet.
+// ============================================================================
+void RegisterMultiSelectSpaceToggleEnterFinishes(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "MultiSelect_SpaceToggles_EnterFinishes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        OpenCombo(ctx);
+
+        // Empty filter: arrows then Space tick row after row; the popup stays open.
+        ctx->KeyPress(ImGuiKey_DownArrow); // alpha is the default row; this lands on "beta"
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "beta");
+        IM_CHECK(g_fixture.checked[1]);
+        ctx->KeyPress(ImGuiKey_Space); // the same row again: unticked
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(!g_fixture.checked[1]);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK_STR_EQ(EventId(2), "gamma");
+        IM_CHECK(g_fixture.comboOpen);
+
+        // Enter finishes; something was toggled already, so it ticks nothing more.
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK(g_fixture.checked[2]);
+
+        // A fresh open, nothing toggled: Enter ticks the highlighted match and finishes.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // Typed text and no arrow key: a Space typed with the text is filter text, not a toggle, and the
+        // Space key alone toggles nothing ("e" matches several rows).
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("i o"); // "i o" matches no option; with the Space dropped it would match "iota"
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("e");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.comboOpen);
+
+        // After an arrow key the same Space toggles the highlighted row.
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+
+        // A toggle earlier does not take Enter away from text typed afterwards: it ticks the match, then closes.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space); // beta
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // The same for a created value: Enter after a toggle still creates what was typed, and stays open.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.allowCreate = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->KeyChars("zzz");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(g_fixture.events.size() == 2 && g_fixture.events[1].Kind == smatchet::dropdown::EventKind::Created);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+
+        // Enter on a filter that matches nothing only finishes: the ticked option the list keeps visible
+        // is not what was typed, so it stays ticked.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.keepCheckedVisible = true;
+        g_fixture.checked[0] = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("zzz");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.checked[0]);
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // A held Space (key repeat delivers its character on later frames) toggles once and types nothing.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyDown(ImGuiKey_Space);
+        ctx->Yield();
+        for (int repeat = 0; repeat < 3; ++repeat) {
+            ctx->KeyChars(" ");
+            ctx->Yield();
+        }
+        ctx->KeyUp(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        ctx->KeyChars("io"); // the filter reads "io": a leaked space would not change that, Enter picks iota
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // Enter with an empty filter only finishes: it never unticks the value the default row holds.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.checked[0] = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.checked[0]);
+        IM_CHECK(!g_fixture.comboOpen);
+
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
@@ -755,6 +923,7 @@ extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
     RegisterEnterThatOpensDoesNotPick(engine);                   // P: the Enter that opens the combo is not a pick
     RegisterReplacedOptionsRefreshDefault(engine);               // Q: options replaced, same row count
     RegisterProjectPickerRecentsFollowTheFocusedTracker(engine); // R: project picker recents follow the focused tracker
+    RegisterMultiSelectSpaceToggleEnterFinishes(engine);         // S: Space toggles, Enter finishes
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
