@@ -497,6 +497,10 @@ float DrawKeyCap(ImDrawList* dl, float x, float y, float h, const char* text, Im
     return capMax.x;
 }
 
+// Is the list drawn directly in a modal popup (a caller's dialog) rather than in its own combo popup? The
+// combo's popup is the list's to close; a caller's modal is not.
+bool HostIsModal() { return (ImGui::GetCurrentWindow()->Flags & ImGuiWindowFlags_Modal) != 0; }
+
 void DrawFooter(const Options& options, float width) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImFont* font = ImGui::GetFont();
@@ -524,7 +528,7 @@ void DrawFooter(const Options& options, float width) {
     dl->PushClipRect(pos, ImVec2(pos.x + width, pos.y + h), true);
     float x = pos.x;
     for (const Hint& hint : hints) {
-        if (hint.MultiSelectOnly && !options.MultiSelect) {
+        if (hint.MultiSelectOnly && !(options.MultiSelect && !HostIsModal())) {
             continue;
         }
         x = DrawKeyCap(dl, x, pos.y, h, hint.Key, col) + size * 0.4f;
@@ -707,9 +711,10 @@ bool EnterActsOnRow(const BodyState& st, const Options& options, bool enterPress
             pure::RowAnswersFilter(st.Rows[static_cast<std::size_t>(at)], st.Views.data(), count, filterLower));
 }
 
-// Enter finishes a tick-box list, except when it just created a new value (more may follow).
+// Enter finishes a tick-box list, except when it just created a new value (more may follow), or when the
+// list is drawn straight in a modal: closing that popup would close the caller's dialog and drop its ticks.
 bool EnterFinishes(const Options& options, bool enterPressed, const Event& ev) {
-    return options.MultiSelect && enterPressed && ev.Kind != EventKind::Created;
+    return options.MultiSelect && enterPressed && ev.Kind != EventKind::Created && !HostIsModal();
 }
 
 } // namespace
