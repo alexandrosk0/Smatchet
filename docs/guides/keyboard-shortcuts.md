@@ -159,7 +159,6 @@ focus:
 | Merge-conflict resolver | `Esc` | Leave the field, keeping the text. With nothing typed, close. `Esc` never discards a typed resolution: use **Cancel** |
 | Merge-conflict resolver | `Alt+M` / `Alt+T` | **Use Mine** / **Use Theirs** |
 | Report a bug | `Ctrl+Enter` | Submit |
-| Views dashboard | `Enter` in the views search box | Open the first view listed |
 | Annotate | `Ctrl+Enter` in the callstack box | Process |
 | Scripts & Actions | `Ctrl+Enter` or `F5` | Run the open script (the row's **Run** / **Run on selected** button) |
 | Dictation overlay | `Esc` while recording | Cancel: the clip is dropped, nothing is transcribed or typed |

@@ -66,7 +66,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 11. `Source/Core/include/Ui/SmatchetPrefsSearchFocus.h` (new) — the request seam.
 12. `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` — take the request; Esc in the search box clears it and leaves; Enter puts the caret on the first matching setting; the query clears when the window closes; the placeholder names the bound key.
 13. `Source/Core/include/Ui/PreferencesFilter.h`, `Source/Core/src/Ui/PreferencesFilter.cpp` — `RequestFocusOnFirstMatch`.
-14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the search box's tooltip names the view keys (read live from the bindings).
+14. ~~`Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the search box's tooltip names the view keys.~~ **Deferred (see § Deviations from plan):** the file is in the write set of plan-lock `pane-picker-jira-sites`, held by another branch.
 15. `Source/Core/src/Config/KeybindingsConfig.cpp` — three default bindings, appended after the quick-create row.
 16. `Source/Core/include/Config/ConfigManager.h`, `Source/Core/src/Config/ConfigManager_Load.cpp`, `Source/Core/src/Config/ConfigManager_Save.cpp` — `migrated_action_keys_v1`.
 
@@ -80,7 +80,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 
 **Docs**
 
-22. `docs/guides/keyboard-shortcuts.md` — a Dialogs section with the § 3 key rules; the new defaults; the fixed keys (Lua, Annotate, resolver picks, dictation, settings search Esc/Enter, views sidebar Enter); the submit-button hint convention.
+22. `docs/guides/keyboard-shortcuts.md` — a Dialogs section with the § 3 key rules; the new defaults; the fixed keys (Lua, Annotate, resolver picks, dictation, settings search Esc/Enter); the submit-button hint convention.
 23. `docs/guides/cli.md` — `view.next` / `view.previous` / `preferences.search.focus` rows.
 
 **Tests** (existing, already-registered files only — see § Risks, plan-lock)
@@ -90,7 +90,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 26. `tests/Core/PreferencesFilter.test.cpp` — first-match focus request.
 27. `tests/Core/DictationInsertionRouter.test.cpp` — discard flag.
 28. `tests/Core/KeybindingsConfig.test.cpp`, `tests/Core/ConfigMigration.test.cpp` — defaults parity, migration seed.
-29. Bucket-E cases appended to `tests/ui/field_viewer_modal.test.cpp` (comments), `tests/ui/duration_inline_edit_commit.test.cpp` (worklog), `tests/ui/offline_conflict_modal_panes.test.cpp` (resolver picks), `tests/ui/prefs_search_filter.test.cpp` (settings search), `tests/ui/views_editor_header.test.cpp` (view keys + sidebar Enter).
+29. Bucket-E cases appended to `tests/ui/field_viewer_modal.test.cpp` (comments), `tests/ui/duration_inline_edit_commit.test.cpp` (worklog), `tests/ui/offline_conflict_modal_panes.test.cpp` (resolver picks), `tests/ui/prefs_search_filter.test.cpp` (settings search), `tests/ui/views_editor_header.test.cpp` (view keys and the dirty-draft confirm).
 
 ### File-level changes
 
@@ -151,7 +151,7 @@ N/A — single slice, orchestrator (Ui leaf + Commands leaf + Config). The Comma
 ## Verification
 
 - **Bucket A (doctest)**: `SubmitKeysPure` layout (width grows to fit, min width honoured, empty hint, hint x at the right edge) and `ShowsPlaceholder`; `CycleViewIndex` (wrap both ways, unknown active, empty list, single view); `PreferencesFilter::RequestFocusOnFirstMatch` (hook fires once on the first real match, not on an empty query, not on a fail-open unknown id, disarmed by the next `Update`); router discard flag (take clears, clear resets, request stops recording); defaults parity rows; migration seeds the three rows once and keeps a user binding.
-- **Bucket E (ImGui Test Engine)**: Comments — Post Comment shows `Ctrl+Enter`, placeholder drawn in the empty box and gone once typed; Log work — Save shows `Ctrl+Enter`, Ctrl+Enter in the description saves; resolver — `Alt+M` / `Alt+T` resolve to mine / theirs and the buttons show the keys; settings search — `preferences.search.focus` and its chord put the caret in the box, Esc clears, Enter lands on the first match, closing clears the query; views — `Ctrl+PageDown` / `Ctrl+PageUp` move the active view, Enter in the sidebar search activates the first match. Each new test is mutation-checked (the guard broken on purpose, the test seen red).
+- **Bucket E (ImGui Test Engine)**: Comments — Post Comment shows `Ctrl+Enter`, placeholder drawn in the empty box and gone once typed; Log work — Save shows `Ctrl+Enter`, Ctrl+Enter in the description saves; resolver — `Alt+M` / `Alt+T` resolve to mine / theirs and the buttons show the keys; settings search — `preferences.search.focus` and its chord put the caret in the box, Esc clears, Enter lands on the first match, closing clears the query; views — `Ctrl+PageDown` / `Ctrl+PageUp` move the active view, and with a dirty editor draft ask "Discard changes?" and keep the draft. Each new test is mutation-checked (the guard broken on purpose, the test seen red).
 - **Bash-driver scenario / screenshot / sanitizer**: N/A — covered by bucket E; bucket-C goldens may shift where a button widened (reported, mask-documented).
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) on CI; locally the `posix-core-check` compile of `Source/Core` and a scratch doctest compile of the pure headers.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green.
@@ -169,6 +169,7 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - Quick-create Create button hint and the grid header view-selector tooltip — files locked by another branch; follow-up when free.
 - Context-routed `Ctrl+F` (settings search while Preferences has focus, grid search elsewhere) — follow-up after #2435.
 - Lua autocomplete auto-open / fuzzy (#105 remainder) — 4.7 matcher.
+- Enter in the views sidebar search opens the first listed view (#65 remainder) — deferred: `SmatchetViewsDashboardUi.cpp` is held by plan-lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`); a small follow-up once that lock is released.
 - Views header combo filter row and `view.switcher` palette scope (#65 remainder) — 4.6.
 - Annotate recognised-frame count (#107 remainder) — 4.5.
 
@@ -177,6 +178,8 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Deferred: Enter in the views sidebar search opens the first listed view (§ Files row 14).** After this PR's first push, another branch (`claude/plus-dropdown-two-jira-261a42`) claimed plan-lock `pane-picker-jira-sites`, whose write set includes `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`. The hunk, its tooltip, its bucket-E section and its doc row were removed from this PR instead of overriding the lock. The `view.next` / `view.previous` commands and keys are unaffected.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*

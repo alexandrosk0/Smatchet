@@ -155,40 +155,14 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
         }
         ImGui::Separator();
         ImGui::SetNextItemWidth(-FLT_MIN);
-        // Enter opens the first view the search lists, as a click on it would; with nothing typed it
-        // does nothing.
-        const bool searchEnter =
-            ImGui::InputTextWithHint("##ViewsSidebarSearch", "Search views...", d.viewsSidebarSearchBuf,
-                                     sizeof(d.viewsSidebarSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (ImGui::IsItemHovered()) {
-            // The view-switch keys are read live, so a rebind shows here at once.
-            std::string tip =
-                SmatchetLocalization::T("views.sidebar_search_tooltip", "Enter opens the first view listed.");
-            const std::string nextKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "view.next");
-            const std::string prevKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "view.previous");
-            if (!nextKey.empty()) {
-                tip += "\n";
-                tip += SmatchetLocalization::T("views.next_view_key", "Next view:");
-                tip += " " + nextKey;
-            }
-            if (!prevKey.empty()) {
-                tip += "\n";
-                tip += SmatchetLocalization::T("views.previous_view_key", "Previous view:");
-                tip += " " + prevKey;
-            }
-            ImGui::SetTooltip("%s", tip.c_str());
-        }
+        ImGui::InputTextWithHint("##ViewsSidebarSearch", "Search views...", d.viewsSidebarSearchBuf,
+                                 sizeof(d.viewsSidebarSearchBuf));
         ImGui::Spacing();
 
         ImGui::BeginChild("ViewsSidebarList", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), false);
-        bool searchEnterTaken = false;
         for (const auto& view : store.Views) {
             if (!SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive(view.Name, d.viewsSidebarSearchBuf)) {
                 continue;
-            }
-            if (searchEnter && !searchEnterTaken && d.viewsSidebarSearchBuf[0] != '\0') {
-                searchEnterTaken = true;
-                ctx.requestActivate(view.Id);
             }
             const bool isActive = (view.Id == activeView->Id);
             ImGui::PushID(view.Id.c_str());

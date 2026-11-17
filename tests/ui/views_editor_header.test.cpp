@@ -260,7 +260,7 @@ bool WaitForCurrentView(ImGuiTestContext* ctx, AppController* app, const std::st
 }
 
 // Ctrl+PageDown / Ctrl+PageUp (view.next / view.previous) move the active view one step through the list
-// and back, and Enter in the dashboard's views search opens the first view it lists.
+// and back, and ask before switching when the Views editor holds unapplied edits.
 void CheckViewSwitchKeys(ImGuiTestContext* ctx, AppController* app) {
     // Two views of its own, so there is always a next and a previous.
     std::vector<std::string> created;
@@ -331,45 +331,6 @@ void CheckViewSwitchKeys(ImGuiTestContext* ctx, AppController* app) {
             ctx->Yield(2);
         }
 
-        // Enter in the views search box opens the first view it lists: with view A active, search B.
-        nlohmann::json activateA;
-        activateA["id"] = created[0];
-        IM_CHECK_NO_RET(RunCommand(ctx, app, "view.activate", activateA).Ok);
-        g_ui.cfg.BackendHasBeenReachable = true; // the first-launch gate on drawViewsDashboardWindow
-        g_ui.showViewsDashboard = true;
-        std::memset(g_ui.viewsSidebarSearchBuf, 0, sizeof(g_ui.viewsSidebarSearchBuf));
-#if defined(_MSC_VER)
-        strncpy_s(g_ui.viewsSidebarSearchBuf, sizeof(g_ui.viewsSidebarSearchBuf), "input keys view B", _TRUNCATE);
-#else
-        std::strncpy(g_ui.viewsSidebarSearchBuf, "input keys view B", sizeof(g_ui.viewsSidebarSearchBuf) - 1);
-#endif
-        ImGuiWindow* sidebar = nullptr;
-        const bool sidebarLive = YieldUntil(ctx, [&] {
-            g_ui.requestViewsDashboardFocus = true;
-            const ImGuiWindow* host = ImGui::FindWindowByName(kViewsWindow);
-            if (host == nullptr || !host->Active) {
-                return false;
-            }
-            for (ImGuiWindow* child : host->DC.ChildWindows) {
-                if (child->Active && !child->SkipItems && std::strstr(child->Name, "/ViewsSidebar_") != nullptr) {
-                    sidebar = child;
-                    return true;
-                }
-            }
-            return false;
-        });
-        IM_CHECK_NO_RET(sidebarLive);
-        if (sidebarLive) {
-            ctx->SetRef(sidebar);
-            ctx->ItemNavActivate("##ViewsSidebarSearch"); // the caret in the search box, without a mouse path
-            ctx->KeyPress(ImGuiKey_Enter);
-            const bool opened = WaitForCurrentView(ctx, app, created[1]);
-            if (!opened) {
-                ctx->LogError("Enter in the views search did not open the view it lists");
-            }
-            IM_CHECK_NO_RET(opened);
-        }
-        g_ui.viewsSidebarSearchBuf[0] = '\0';
         g_ui.requestViewsDashboardFocus = false;
     }
     for (const std::string& id : created) {
@@ -380,7 +341,7 @@ void CheckViewSwitchKeys(ImGuiTestContext* ctx, AppController* app) {
 }
 
 void RegisterViewSwitchKeys(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsEditorHeader", "ViewKeys_CtrlPageDownUpAndSidebarEnter");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsEditorHeader", "ViewKeys_CtrlPageDownUpAndDirtyDraftAsks");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
