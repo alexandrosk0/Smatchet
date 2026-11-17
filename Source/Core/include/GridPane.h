@@ -66,6 +66,15 @@ struct GridPane {
     /// Grid-header search box: words/keys filter the loaded rows as typed, a structured query
     /// commits on Enter (GridSearchInputClassifier routes it; see GridSearchFiltersRows).
     char gridSearchBuf[kGridSearchBufSize] = {};
+    /// Set by the `grid.search.focus` command (Ctrl+F or /): the next header draw puts the caret
+    /// in this pane's search box and clears it. The host counts it down once per frame, so a
+    /// request for a pane whose header is not drawing (hidden tab, closed window) expires instead
+    /// of taking the keyboard later.
+    int gridSearchFocusFramesLeft = 0;
+    /// ImGui id of this pane's search box, recorded after it draws (an ImGuiID; kept as a plain
+    /// unsigned so this header stays free of ImGui). Lets the next frame tell whether an Esc was
+    /// aimed at this box before the box draws.
+    unsigned int gridSearchInputId = 0;
     /// RAW box text the cached projection was built from — raw, not the effective filter, so
     /// a classification flip alone still invalidates it.
     char lastSearchBuf[kGridSearchBufSize] = {};

@@ -2,6 +2,7 @@
 #include "SmatchetActiveProjectGridUi_Internal.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
+#include "Ui/SmatchetBulkFieldEditPopup.h"
 #include "SmatchetDockNodeIds.h" // central-node re-dock for extra panes on a layout reset
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetAutocompleteUi.h"
@@ -296,6 +297,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         }
     }
     EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
+    DrawBulkFieldEditPopup(app, d, pane, readOnlyMode);
     if (pane.focused) {
         MaybeToastGridBannerFromSession(d);
     }

@@ -38,6 +38,11 @@ class IAppTicketMutations {
     /// The focused pane's tracker, latched where the user acted; field edits, comments and worklogs go to it
     /// even if focus moves before the worker submits. Also declared on IAppPendingActions.
     virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+    /// The last tracker probe, and whether the app is quitting. A worker that writes many rows refreshes
+    /// `PendingActionTarget::Connectivity` from the first before each write (a target latched once goes stale when the
+    /// tracker drops mid-run) and stops at the second. Same functions as AppController's own.
+    virtual TrackerConnectivityState GetLastTrackerConnectivityState() const = 0;
+    virtual bool IsShuttingDown() const = 0;
     /// Set `field` on `issueId` in `target`'s pane: saved now, or queued and replayed on reconnect when the
     /// tracker is unreachable (Quality Pillar 6). Blocks on the network while online — call it from a worker.
     virtual PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target,

@@ -107,6 +107,8 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "IssueDraft.h" // synthetic offline-create enqueue (case 8)
 #include "SmatchetUiSession.h"
+#include "TicketGridModel.h"          // TicketGridColumn — the draft-row keys host table (case 7b)
+#include "Ui/SmatchetGridUiSupport.h" // RenderNewIssueDraftRow
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — proven real-window probe
@@ -114,6 +116,8 @@
 #include "imgui_te_engine.h"
 
 #include <cstdlib> // getenv — fixture-env gate (case 7)
+#include <string>
+#include <vector>
 
 // g_ui — the shared bag of UI-thread visibility flags. ViewToggleCommands.cpp
 // flips these same fields to open/close panels; we set them directly here to
@@ -519,6 +523,275 @@ void RegisterAttachmentPreviewWindowRenderSmoke(ImGuiTestEngine* engine) {
 // and newIssueDraftActive stays true (proving the row drew its active branch
 // without firing Cancel / crashing). The engine traps any Begin/End or PushID/PopID
 // imbalance the grouped draft cells introduce — that is the coverage.
+const char* const kActiveProjectTitle = "Smatchet - Active Project";
+
+// Boot the fixture grid: sync, then wait for tickets so the table (and thus the draft row)
+// renders, and bring the Active Project pane up. Inactive-branch coverage ("[+ new]" cell)
+// runs for free every frame before a test activates the draft. True once the pane is live.
+bool BootFixtureActiveProjectGrid(ImGuiTestContext* ctx, AppController& app) {
+    app.SyncWithBackend();
+    const bool syncDone = YieldUntil(ctx, [&] { return !app.IsSyncPendingOrActive(); });
+    IM_CHECK_NO_RET(syncDone);
+    const auto tickets = app.GetActiveTickets();
+    IM_CHECK_NO_RET(!tickets.empty());
+
+    ctx->SetRef(kActiveProjectTitle);
+    const bool visible = YieldUntil(ctx, [&] {
+        g_ui.requestActiveProjectFocus = true;
+        return WindowIsLive(kActiveProjectTitle);
+    });
+    IM_CHECK_NO_RET(visible);
+    return visible;
+}
+
+void ClearNewIssueDraftForTest() {
+    g_ui.newIssueDraftActive = false;
+    g_ui.newIssueFocusSummaryPending = false;
+    g_ui.newIssueDraft = IssueDraft{};
+    g_ui.newIssueDraftEditBufs.clear();
+    g_ui.newIssueMissingFieldIds.clear();
+    g_ui.gridEditError.clear();
+    g_ui.gridEditSuccess.clear();
+}
+
+// The draft row's keys are exercised in a host table of their own: the fixture grid boots
+// read-only (its tracker banner reports an error with no credentials), and a read-only grid
+// does not draw the draft row. Drawn only while a test sets this.
+bool s_drawDraftRowHost = false;
+
+std::vector<TicketGridColumn> DraftRowHostColumns() {
+    std::vector<TicketGridColumn> cols(4);
+    cols[0].ColumnKind = TicketGridColumn::Kind::Id;
+    cols[0].FieldId = "id";
+    cols[1].ColumnKind = TicketGridColumn::Kind::FieldValue;
+    cols[1].FieldId = "summary";
+    cols[2].ColumnKind = TicketGridColumn::Kind::FieldValue;
+    cols[2].FieldId = "description";
+    cols[3].ColumnKind = TicketGridColumn::Kind::FieldValue;
+    cols[3].FieldId = "environment";
+    return cols;
+}
+
+void DrawDraftRowHost(ImGuiTestContext* /*ctx*/) {
+    if (!s_drawDraftRowHost) {
+        return;
+    }
+    AppController* app = SmatchetActiveUiTestAppController();
+    if (app == nullptr) {
+        return;
+    }
+    static const std::vector<TicketGridColumn> kCols = DraftRowHostColumns();
+    ImGui::SetNextWindowSize(ImVec2(900.0f, 400.0f), ImGuiCond_Appearing);
+    if (ImGui::Begin("Draft row keys host", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        if (ImGui::BeginTable("draft_host", static_cast<int>(kCols.size()), ImGuiTableFlags_Borders)) {
+            RenderNewIssueDraftRow(*app, g_ui, kCols, g_ui.cfg, nullptr);
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+}
+
+// Open a draft row with `projectKey` and put the caret in its summary field, the way
+// "+ New Issue" does. True once a text field is active.
+bool OpenDraftWithCaretInSummary(ImGuiTestContext* ctx, const char* projectKey) {
+    ClearNewIssueDraftForTest();
+    g_ui.newIssueDraft.ProjectKey = projectKey;
+    g_ui.newIssueDraftActive = true;
+    g_ui.newIssueFocusSummaryPending = true;
+    const bool active = YieldUntil(ctx, [] { return GImGui->ActiveId != 0 && !g_ui.newIssueFocusSummaryPending; }, 60);
+    if (!active) {
+        ctx->LogInfo("draft caret not placed: ActiveId=0x%08X focusPending=%d editBufs=%d", GImGui->ActiveId,
+                     g_ui.newIssueFocusSummaryPending ? 1 : 0, static_cast<int>(g_ui.newIssueDraftEditBufs.size()));
+    }
+    return active;
+}
+
+// Close the popups the test opened, if it opened any (ClosePopupToLevel asserts on a level
+// that is not below the stack size).
+void ClosePopupsAbove(int level) {
+    if (GImGui->OpenPopupStack.Size > level) {
+        ImGui::ClosePopupToLevel(level, true);
+    }
+}
+
+std::string DraftEditBufText(const char* fieldId) {
+    const auto it = g_ui.newIssueDraftEditBufs.find(fieldId);
+    return it == g_ui.newIssueDraftEditBufs.end() || it->second.empty() ? std::string()
+                                                                        : std::string(it->second.data());
+}
+
+// Audit #49: the inline draft row is worked from the keyboard. Esc in a field with text in the
+// draft leaves the field with the text kept and asks before discarding; Esc in an empty draft
+// closes it; Ctrl+Enter submits through the Create path, and without a project says why
+// instead of doing nothing.
+void RegisterNewIssueDraftRowKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_EscAndCtrlEnterKeys");
+    t->GuiFunc = DrawDraftRowHost;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        // Fixture-gated so the draft's project catalog refresh talks to the fixture backend,
+        // never a live tracker.
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — keep the draft off a live backend");
+            return;
+        }
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        s_drawDraftRowHost = true;
+        ctx->Yield(2);
+        ctx->WindowFocus("Draft row keys host");
+
+        // Typed summary + Esc: the draft stays, the text stays, the discard question opens.
+        IM_CHECK_NO_RET(OpenDraftWithCaretInSummary(ctx, "SMAT"));
+        ctx->KeyChars("Typed summary");
+        ctx->Yield(2);
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.newIssueDraftActive);
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "Typed summary");
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore + 1);
+        ClosePopupsAbove(popupsBefore);
+        ctx->Yield(2);
+
+        // Ctrl+Enter without a project: nothing is sent, the draft stays, the row says why.
+        IM_CHECK_NO_RET(OpenDraftWithCaretInSummary(ctx, ""));
+        ctx->KeyChars("No project yet");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.newIssueDraftActive);
+        IM_CHECK_NO_RET(!g_ui.newIssueCreateInFlight);
+        IM_CHECK_STR_EQ_NO_RET(g_ui.gridEditError.c_str(), "Pick a project");
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "No project yet");
+
+        // Text typed only into another free-text field (not summary or description): Esc asks too.
+        IM_CHECK_NO_RET(OpenDraftWithCaretInSummary(ctx, "SMAT"));
+        ctx->KeyPress(ImGuiKey_Tab); // summary -> description
+        ctx->KeyPress(ImGuiKey_Tab); // description -> environment
+        ctx->KeyChars("Windows 11");
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("environment").c_str(), "Windows 11");
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "");
+        const int popupsOther = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.newIssueDraftActive);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsOther + 1);
+        ClosePopupsAbove(popupsOther);
+        ctx->Yield(2);
+
+        // Nothing typed + Esc: the draft closes without a question.
+        IM_CHECK_NO_RET(OpenDraftWithCaretInSummary(ctx, "SMAT"));
+        const int popupsEmpty = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.newIssueDraftActive);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsEmpty);
+
+        ClearNewIssueDraftForTest();
+        s_drawDraftRowHost = false;
+        ctx->Yield();
+    };
+}
+
+// Audit #60: Ctrl+F (the grid.search.focus default binding) puts the caret in the focused pane's
+// search box; Esc there clears the search and leaves the box.
+void RegisterGridSearchFocusKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "GridSearch_CtrlFFocusesAndEscClears");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — the grid header does not draw");
+            return;
+        }
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        if (!BootFixtureActiveProjectGrid(ctx, *app)) {
+            return;
+        }
+        GridPane& pane = g_ui.focusedPane();
+        pane.gridSearchBuf[0] = '\0';
+        ImGui::ClearActiveID();
+        ctx->Yield(2);
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_F);
+        const bool focused = YieldUntil(ctx, [] { return GImGui->ActiveId != 0; }, 10);
+        if (!focused) {
+            ctx->LogInfo("Ctrl+F: ActiveId=0x%08X framesLeft=%d paneFocused=%d", GImGui->ActiveId,
+                         g_ui.focusedPane().gridSearchFocusFramesLeft, g_ui.focusedPane().focused ? 1 : 0);
+        }
+        IM_CHECK_NO_RET(focused);
+        IM_CHECK_NO_RET(g_ui.focusedPane().gridSearchFocusFramesLeft == 0);
+        ctx->KeyChars("zz-no-such-title");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(g_ui.focusedPane().gridSearchBuf, "zz-no-such-title");
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(g_ui.focusedPane().gridSearchBuf, "");
+        IM_CHECK_NO_RET(GImGui->ActiveId == 0);
+
+        g_ui.focusedPane().gridSearchBuf[0] = '\0';
+        ctx->Yield();
+    };
+}
+
+std::string QuickCreateSummaryText() {
+    return g_ui.quickCreateSummaryBuf.empty() ? std::string() : std::string(g_ui.quickCreateSummaryBuf.data());
+}
+
+// Open the quick-create popup the way issue.quick_create.open does. True once the summary
+// field (focused on open) holds the caret.
+bool OpenQuickCreateWithCaret(ImGuiTestContext* ctx) {
+    g_ui.showQuickCreateIssue = true;
+    g_ui.quickCreateOpenLatch = true;
+    return YieldUntil(ctx, [] { return !g_ui.quickCreateOpenLatch && GImGui->ActiveId != 0; }, 30);
+}
+
+// Audit #50: Esc in the quick-create popup with a summary typed keeps the text and asks before
+// discarding; Esc with nothing typed closes it.
+void RegisterQuickCreateEscKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "QuickCreate_EscAsksWhenTyped");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_ui.quickCreateArgSummary.clear();
+        g_ui.quickCreateArgDescription.clear();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->KeyChars("Typed title");
+        ctx->Yield(2);
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "Typed title");
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore + 1);
+        // Esc on the question closes it, and only it: the popup stays open with the text, and
+        // the question does not come straight back.
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore);
+        IM_CHECK_NO_RET(g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "Typed title");
+        ClosePopupsAbove(popupsBefore);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+
+        // Reopened with nothing typed: Esc closes it without a question.
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "");
+        const int popupsEmpty = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsEmpty);
+
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield();
+    };
+}
+
 void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_RendersActiveBranchOnFixtureData");
@@ -534,22 +807,8 @@ void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
             return;
         }
 
-        // Boot the fixture grid: sync, then wait for tickets so the table (and thus
-        // the draft row) renders. Inactive-branch coverage ("[+ new]" cell) runs for
-        // free here every frame before we activate the draft.
-        app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); });
-        IM_CHECK_NO_RET(syncDone);
-        const auto tickets = app->GetActiveTickets();
-        IM_CHECK_NO_RET(!tickets.empty());
-
-        const char* kWindowTitle = "Smatchet - Active Project";
-        ctx->SetRef(kWindowTitle);
-        const bool visible = YieldUntil(ctx, [&] {
-            g_ui.requestActiveProjectFocus = true;
-            return WindowIsLive(kWindowTitle);
-        });
-        IM_CHECK_NO_RET(visible);
+        const char* kWindowTitle = kActiveProjectTitle;
+        const bool visible = BootFixtureActiveProjectGrid(ctx, *app);
 
         if (visible) {
             // Arm the draft. Seed a synthetic project + summary so the active branch
@@ -708,6 +967,9 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
     RegisterAnnotateAnalysisWindowRenderSmoke(engine);
     RegisterAttachmentPreviewWindowRenderSmoke(engine);
     RegisterNewIssueDraftRowRenderSmoke(engine);
+    RegisterNewIssueDraftRowKeys(engine);
+    RegisterGridSearchFocusKeys(engine);
+    RegisterQuickCreateEscKeys(engine);
     RegisterOfflineQueuePanelRenderSmoke(engine);
 }
 

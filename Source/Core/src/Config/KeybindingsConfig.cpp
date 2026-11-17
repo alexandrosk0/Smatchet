@@ -301,6 +301,10 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBindingMulti({"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+V", "ui.open_view", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+G", "grid.clear_selection", "{}"));
+    // Jump into the focused pane's issue search box. The bare "/" is held back while a text
+    // field is active (SmatchetUI::dispatchKeybindings' typing gate), so it never eats a typed
+    // slash; Ctrl+F works from anywhere.
+    c.Bindings.push_back(MakeBindingMulti({"Ctrl+F", "/"}, "grid.search.focus", "{}"));
     // View reveals. "Open Project View" and "Views Dashboard" share the
     // views_dashboard command but bind distinct keys via distinct args (matched
     // semantically by BoundHotkeyDisplayForArgs).

@@ -345,6 +345,11 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
         return std::future<IssueCreateResult>();
     }
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override { return nullptr; }
+    // Bulk-edit pre-flight reads; the single-worklog dialog never calls them.
+    TrackerConnectivityState GetLastTrackerConnectivityState() const override {
+        return TrackerConnectivityState::AuthenticatedReachable;
+    }
+    bool IsShuttingDown() const override { return false; }
 
     /// While held, a submit stays "in flight" (the worker waits) so a test can act during the save.
     void SetHold(bool hold) { m_Hold.store(hold); }
