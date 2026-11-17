@@ -859,8 +859,7 @@ PanelNudgeResult NudgePanelExtent(UiDrawSession& d, PanelTarget target, float de
     const float base = st.applyFrames > 0 ? st.pendingExtent : node->Size[spec->axis];
     const float minPx = ::ImGui::GetStyle().WindowMinSize[spec->axis];
     const float parentPx = node->ParentNode->Size[spec->axis];
-    const float maxPx = parentPx > minPx * 2.0f ? parentPx - minPx : minPx;
-    st.pendingExtent = pure::ClampPx(base + deltaPx, minPx, maxPx);
+    st.pendingExtent = pure::NudgeTargetExtent(base, deltaPx, minPx, parentPx);
     if (st.applyFrames < 2) {
         st.applyFrames = 2;
     }

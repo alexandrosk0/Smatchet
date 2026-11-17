@@ -9,17 +9,21 @@
 //                                      SmatchetToolbarUi.
 //   C. McpSplitter_KeysResize          Shift+Alt+Down / Shift+Alt+Up move the MCP panel's divider.
 //   D. PanelResize_KeysNudgeAVisiblePanel  a rebound view.panel.grow / view.panel.shrink chord, naming whichever
-//                                      edge panel is visible, resizes it (#138); seen through the panel state.
+//                                      edge panel is visible, resizes it (#138); seen through the panel state. Skips
+//                                      (logged) under the headless software-GL lane when no dock node is realised
+//                                      there, and fails on a real-GL run: see the backlog entry
+//                                      2026-11-17-bucket-e-headless-lane-realises-no-edge-panel.
 //   E. Calendar_KeysPickDay            PageDown then Enter picks the day a month on; T then Enter picks today
 //                                      (#44), through the real RenderGenericDatePicker.
 //   F. PathRemaps_AddFocusesAndEnter   Add path remap puts the caret in the new row; Enter in the last filled
 //                                      "to" adds the next row and focuses it (#130).
 //   G. ReadOnlyText_CtrlAFromFocus     Ctrl+A selects a keyboard-focused run with the mouse elsewhere (#12).
 //
-// Each case puts back what it touched (bindings, panel state, config value, the toolbar modal), red or green, through
-// a scope guard, so a sibling case starts from the same state. Mutation check (recorded in the plan's Verification):
-// reverting the consumer's take, the command's post, the default binding or the focus branch turns the matching case
-// red.
+// Each case puts back what it touched (bindings, collapsed panel, config value, the toolbar modal), red or green,
+// through a scope guard, so a sibling case starts from the same state; the panel case's grow and shrink net to zero,
+// and a red case between them can leave the panel one step larger. Mutation check (recorded in the plan's
+// Verification): reverting the consumer's take, the command's post, the default binding or the focus branch turns
+// the matching case red, except case D, which does not run in the headless lane.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -35,6 +39,7 @@
 #include "Tracker/TrackerDateTimePure.h"
 #include "Ui/SmatchetBottomPanelDrag.h"
 #include "Ui/SmatchetMcpServerUi.h"
+#include "ui_test_skip.h" // SmatchetUiTestIsHeadlessSoftwareGl
 #include "Ui/SmatchetToolbarUi.h"
 #include "Ui/SelectableTextRun.h"
 
@@ -373,10 +378,19 @@ void RegisterPanelResizeKeys(ImGuiTestEngine* engine) {
         }
         if (panel == nullptr) {
             const ImGuiDockNode* node = ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel);
-            ctx->LogError("no edge panel is visible: bottom node=%d parent=%d isVisible=%d windows=%d showLog=%d",
-                          node != nullptr ? 1 : 0, (node != nullptr && node->ParentNode != nullptr) ? 1 : 0,
-                          (node != nullptr && node->IsVisible) ? 1 : 0, node != nullptr ? node->Windows.Size : -1,
-                          g_ui.showLogWindow ? 1 : 0);
+            const bool realized = node != nullptr && node->ParentNode != nullptr && node->HostWindow != nullptr;
+            ctx->LogInfo(
+                "no edge panel is visible: bottom node=%d parent=%d isVisible=%d windows=%d realized=%d showLog=%d",
+                node != nullptr ? 1 : 0, (node != nullptr && node->ParentNode != nullptr) ? 1 : 0,
+                (node != nullptr && node->IsVisible) ? 1 : 0, node != nullptr ? node->Windows.Size : -1,
+                realized ? 1 : 0, g_ui.showLogWindow ? 1 : 0);
+            // The headless software-GL lane does not realise the canonical dock nodes even when healthy
+            // (reset_layout_docking.test.cpp, LiveHostProbe), so there is no panel to resize there. On a real-GL run
+            // a missing panel is a failure. The nudge's bounds are covered by the NudgeTargetExtent doctests.
+            if (SmatchetUiTestIsHeadlessSoftwareGl() && !realized) {
+                ctx->LogInfo("SKIP: no dock node realised under headless software GL (see ui_test_skip.h)");
+                return;
+            }
             IM_CHECK(false);
             return;
         }
