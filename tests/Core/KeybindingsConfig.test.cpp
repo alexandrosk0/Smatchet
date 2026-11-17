@@ -51,6 +51,9 @@ const ExpectedBinding kExpectedDefaults[] = {
     {{"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"},
     {{"Ctrl+Shift+V"}, "ui.open_view", "{}"},
     {{"Ctrl+Shift+G"}, "grid.clear_selection", "{}"},
+    // Grid search focus (input UX audit #60); seeded into existing configs via
+    // migrated_grid_search_focus_hotkey_v1.
+    {{"Ctrl+F", "/"}, "grid.search.focus", "{}"},
     {{"Ctrl+O"}, "view.toggle.views_dashboard", "{\"action\":\"show\",\"via\":\"open_project_view\"}"},
     {{"Ctrl+Shift+E"}, "view.toggle.views_dashboard", "{\"action\":\"show\"}"},
     {{"Ctrl+Shift+U"}, "view.toggle.log", "{\"action\":\"show\"}"},

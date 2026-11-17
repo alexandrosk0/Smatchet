@@ -297,6 +297,10 @@ struct FakeMutations : IAppTicketMutations {
         StatusField.Id = "status";
         StatusField.Name = "Status";
     }
+    TrackerConnectivityState GetLastTrackerConnectivityState() const override {
+        return TrackerConnectivityState::AuthenticatedReachable;
+    }
+    bool IsShuttingDown() const override { return false; }
     const TrackerField* FindFieldById(const std::string& fieldId) const override {
         return fieldId == "status" ? &StatusField : nullptr;
     }
