@@ -178,15 +178,29 @@ constexpr int kPrefsSearchFocusFrames = 30;
 // was aimed at it: ImGui's nav cancel has usually taken the caret out by then.
 ImGuiID s_prefsSearchInputId = 0;
 
-// PreferencesFilter::RequestFocusOnFirstMatch hook: the caret goes to the next item, the matched setting's
-// widget. Called from inside ShowSetting, in the window that draws that setting.
-void FocusNextPrefsItem() { ::ImGui::SetKeyboardFocusHere(); }
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int s_prefsFirstMatchFocusCount = 0;
+#endif
+
+// PreferencesFilter::RequestFocusOnFirstMatch hook: the keyboard goes to the next item, the matched
+// setting's widget. Called from inside ShowSetting, in the window that draws that setting. ImGui's own
+// tabbing request only activates an item that takes text; a checkbox, button or combo is focused, not
+// pressed, so Enter in the search never changes a setting.
+void FocusNextPrefsItem() {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    ++s_prefsFirstMatchFocusCount;
+#endif
+    ::ImGui::SetKeyboardFocusHere();
+}
 
 } // namespace
 
 namespace smatchet {
 namespace ui {
 void RequestPrefsSearchFocus() { s_prefsSearchFocusRequestFrame = ::ImGui::GetFrameCount(); }
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int PrefsSearchFirstMatchFocusCountForTest() { return s_prefsFirstMatchFocusCount; }
+#endif
 } // namespace ui
 } // namespace smatchet
 

@@ -11,5 +11,12 @@ namespace ui {
 
 void RequestPrefsSearchFocus();
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+/// Bucket-E seam: how many times Enter in the settings search sent the keyboard to the first matching
+/// setting. A test cannot rely on where ImGui's navigation lands, which depends on how the test drives
+/// window focus; this says the decision itself was made.
+int PrefsSearchFirstMatchFocusCountForTest();
+#endif
+
 } // namespace ui
 } // namespace smatchet
