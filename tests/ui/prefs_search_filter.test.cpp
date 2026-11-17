@@ -238,11 +238,17 @@ smatchet::cmd::CommandResult RunCommand(ImGuiTestContext* ctx, AppController* ap
 // AiPrefs helper does) and the window can really close. A caret left in the search box would keep copying
 // its own text over prefsSearchBuf every frame and keep the filter on for whoever runs next: the window's
 // other pages stay hidden behind it, and the next case can neither open nor close Preferences.
+//
+// Closing Preferences for real has a side effect on the dock layout. Preferences, Log and Scripting share
+// the bottom-panel node, and in a fresh test home Preferences is its only tenant: ImGui deletes a node when
+// its last window leaves, so the slot is gone for every later case (Log then floats, Scripting finds no
+// node to dock into). The case therefore keeps the Log window open for as long as it may close Preferences,
+// and gives the window back at the end, so a tenant is always there.
 class SearchKeysCase {
   public:
     SearchKeysCase()
         : reachable_(g_ui.cfg.BackendHasBeenReachable), category_(g_ui.preferencesCategory),
-          vsync_(g_ui.cfg.VsyncEnabled) {
+          vsync_(g_ui.cfg.VsyncEnabled), showLog_(g_ui.showLogWindow) {
         g_ui.cfg.BackendHasBeenReachable = true;
     }
     SearchKeysCase(const SearchKeysCase&) = delete;
@@ -255,6 +261,19 @@ class SearchKeysCase {
         g_ui.cfg.BackendHasBeenReachable = reachable_;
         g_ui.preferencesCategory = category_;
         g_ui.cfg.VsyncEnabled = vsync_;
+        g_ui.showLogWindow = showLog_; // after the lock is back: Preferences is then drawn again as a tenant
+    }
+
+    // Opens the Log window and waits until it is drawn, so the bottom-panel node has a second tenant before
+    // anything closes Preferences. Call first in every case.
+    bool KeepBottomPanelAlive(ImGuiTestContext* ctx) const {
+        g_ui.showLogWindow = true;
+        const bool live = YieldUntil(ctx, [] { return WindowIsLive("Log"); }, 120);
+        if (!live) {
+            ctx->LogError("the Log window did not come up to keep the bottom-panel dock node alive");
+        }
+        IM_CHECK_NO_RET(live);
+        return live;
     }
 
     // Closes the window and waits until it is closed, so the next case starts from a closed one.
@@ -272,6 +291,7 @@ class SearchKeysCase {
     bool reachable_;
     PreferencesCategory category_;
     bool vsync_;
+    bool showLog_;
 };
 
 // Opens the window on the Appearance page with an empty query and no caret anywhere.
@@ -309,6 +329,7 @@ void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
             return;
         }
         SearchKeysCase scope;
+        scope.KeepBottomPanelAlive(ctx);
         if (OpenForSearchKeys(ctx)) {
             FocusSearchWithChord(ctx);
         }
@@ -324,6 +345,7 @@ void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
             return;
         }
         SearchKeysCase scope;
+        scope.KeepBottomPanelAlive(ctx);
         if (OpenForSearchKeys(ctx) && FocusSearchWithChord(ctx)) {
             ctx->KeyChars("vsy");
             IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.prefsFilter.Active(); }, 30));
@@ -351,6 +373,7 @@ void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
             return;
         }
         SearchKeysCase scope;
+        scope.KeepBottomPanelAlive(ctx);
         if (OpenForSearchKeys(ctx) && FocusSearchWithChord(ctx)) {
             ctx->KeyChars("vsy");
             IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.prefsFilter.Active(); }, 30));
@@ -381,6 +404,7 @@ void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
             return;
         }
         SearchKeysCase scope;
+        scope.KeepBottomPanelAlive(ctx);
         ctx->PopupCloseAll();
         scope.Close(ctx);
         IM_CHECK_NO_RET(PreferencesClosed());
@@ -405,6 +429,7 @@ void RegisterPrefsSearchKeys(ImGuiTestEngine* engine) {
             return;
         }
         SearchKeysCase scope;
+        scope.KeepBottomPanelAlive(ctx);
         if (OpenForSearchKeys(ctx)) {
             SetQuery(ctx, "vsy");
             IM_CHECK_NO_RET(g_ui.prefsFilter.Active());
