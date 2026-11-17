@@ -65,7 +65,7 @@ struct TextOptions {
 struct TextResult {
     bool edited = false;         ///< the text changed this frame
     bool active = false;         ///< the field has the keyboard (a half-typed value is in it)
-    bool committed = false;      ///< the edit ended this frame by anything but Esc
+    bool committed = false;      ///< the edit ended this frame by anything but an Esc the field itself took
     bool enterCommitted = false; ///< ... on a bare Enter (no modifier): run the field's action
     /// The edit ended on Esc and the field itself took that Esc: the text is back to its value at
     /// activation. When a dialog's DialogReadKeys took the Esc first and left the field, the text is kept

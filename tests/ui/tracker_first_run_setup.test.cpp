@@ -701,7 +701,13 @@ void BeginTextFieldProbe(ImGuiTestContext* ctx) {
     g_textProbe = TextFieldProbe{};
     ctx->SetRef("SmatchetTest::TextField");
     ctx->Yield(2);
-    ctx->WindowFocus("SmatchetTest::TextField");
+    // By window id: a name passed to WindowFocus is resolved relative to the ref set above and would
+    // not find this window.
+    const ImGuiWindow* probe = ImGui::FindWindowByName("SmatchetTest::TextField");
+    IM_CHECK_NO_RET(probe != nullptr);
+    if (probe != nullptr) {
+        ctx->WindowFocus(probe->ID);
+    }
     ctx->Yield();
 }
 
@@ -995,29 +1001,22 @@ static void RegisterTextFieldInsideDialogScope(ImGuiTestEngine* engine) {
 }
 
 // The shared text field in the REAL Preferences window: the Email row (a Jira credential row, drawn
-// through CredentialInputText) reverts on Esc and trims on Enter. Both tests open Preferences with
-// blank credentials, so the open puts the caret in Domain, then Tab to Email: no click needed.
+// through CredentialInputText) reverts on Esc and trims on Enter. Both tests open Preferences with only
+// Email blank, so the open puts the caret straight in it: no click, no Tab.
 namespace {
 
-// Opens Preferences on the Jira tab with blank credentials and moves the caret to the Email row.
-// False (with the checks already recorded) when any step did not land; the caller then still runs
-// CloseAndRestore.
+// Opens Preferences on the Jira tab with the caret in the Email row. Domain is filled, so Email is the
+// first blank credential and the open itself puts the caret there (no Tab, no click). The host is on the
+// reserved .invalid TLD, so Test connection (run by Enter) can never reach a real server. False (with the
+// checks already recorded) when a step did not land; the caller then still runs CloseAndRestore.
 bool OpenPreferencesAtEmail(ImGuiTestContext* ctx) {
     BlankJiraCredentials(g_ui.cfg);
+    g_ui.cfg.Domain = "probe.invalid";
     g_ui.preferencesCategory = PreferencesCategory::Tracker;
     g_ui.prefsSearchBuf[0] = '\0';
     g_keepTrackerBodyLive = true;
     const bool opened = OpenPreferences(ctx) && YieldUntil(ctx, [] { return g_ui.preferencesBuffersLoaded; });
     IM_CHECK_RETV(opened, false);
-    const bool domainFocused = YieldUntil(
-        ctx,
-        [] {
-            const ImGuiID domainId = TrackerCredentialFieldId("Domain");
-            return domainId != 0 && ImGui::GetActiveID() == domainId;
-        },
-        60);
-    IM_CHECK_RETV(domainFocused, false);
-    ctx->KeyPress(ImGuiKey_Tab);
     const bool emailFocused = YieldUntil(
         ctx,
         [] {

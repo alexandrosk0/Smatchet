@@ -53,7 +53,7 @@ struct TextOptions {
 struct TextResult {
     bool edited = false;         // text changed this frame
     bool active = false;         // the field holds the keyboard after this frame's input
-    bool committed = false;      // the edit ended this frame by anything but Esc (Enter, Tab, click away)
+    bool committed = false;      // the edit ended this frame by anything but an Esc the field itself took (Enter, Tab, click away)
     bool enterCommitted = false; // ... and it ended on a bare Enter / keypad Enter
     bool reverted = false;       // the edit ended on Esc; the text is back to its value at activation
 };
