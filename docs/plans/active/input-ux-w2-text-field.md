@@ -230,7 +230,15 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 - **Toolbar icon-name feedback (#125)**: needs a new user-facing string, so a `SmatchetLocalization.cpp` row, which is locked. The name field moves to `std::string` with the hoist; the "No such icon" message is deferred.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `6f1b615` · wip(plan): this plan.
+- `cad951d` · docs(ui): the "new text field goes through `SmatchetInput`" rule in `Ui/AGENTS.md`, plus the dictation-router and blocked-surfaces debt entries.
+- `a6478dc` · the family: `Ui/SmatchetInputPure.h` (pure rules), `Ui/SmatchetInput.{h,cpp}` (`Text`, `TextBuf`, `Multiline`, the hoisted std::string resize helpers); toolbar editor on the hoisted helpers with a std::string icon name; Preferences credential rows, Jira add-site and the Templates add / comment-template fields; Annotate settings and remap rows; icon-picker query; doctest cases; the `TextField` bucket-E group.
+- `7781473`, `7c59231` · merges of `origin/develop` (piece 4.1's dialog scope; the icon picker took 4.1's rules plus the std::string query and select-all).
+- `e947373` · a field a dialog scope left on Esc reports a commit, not a revert (review finding; `EscTakenByTheDialogScopeKeepsTextAndReportsCommit`).
+- `7431f9a` · bucket-E probe focuses its window by id; the Email tests open Preferences at Email by pre-filling Domain.
+- `a59d92f` · view rename (#5) dropped because a sibling lock now covers its file; review nits.
+- `02094d5` · bucket-E `--timeout` 160000 → 230000 and outer `timeout` 300 → 360 so a PR that adds UI tests fits the lane (see § Deviations).
+- Test and script files: the `IconPicker` bucket-E group (5 tests, `tests/ui/toolbar_append_cache_cue.test.cpp`) and the two suite-script default filters (`scripts/dev/test-ui-*.sh`) landed in `a6478dc`. That commit's subject still names the view rename, which `a59d92f` later dropped from the diff; the history is not rewritten. The bucket-E headroom debt entry (`docs/self-improvement/categories/tooling/2026-11-17-bucket-e-lane-retry-and-headroom.md`) landed in `02094d5`; the blocked-surfaces debt entry in `cad951d`, amended by `a59d92f`.
 
 ## Deviations from plan
 *(Interim entries; the post-ship pass adds the rest.)*
