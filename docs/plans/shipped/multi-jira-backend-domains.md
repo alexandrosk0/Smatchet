@@ -97,7 +97,7 @@ N/A — new helper TU, no whale extraction.
 
 - Multi-site Plane / GitHub / Linear — no-action; same pattern can copy later.
 - Per-domain Views workspaces — deferred; shared JQL is the requested "change the domain in Views - Jira".
-- Side-by-side two Jira grids — needs pane `backendKey` = `Jira:<host>` in the add-pane picker; follow-up if asked.
+- Side-by-side two Jira grids — needs pane `backendKey` = `Jira:<host>` in the add-pane picker; now tracked as #2445. The add-pane picker lists one row per Jira site and switches the global site since #2444 (`docs/plans/active/pane-picker-jira-sites.md`).
 
 ## Implementation log
 

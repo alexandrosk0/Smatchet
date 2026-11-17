@@ -1147,6 +1147,26 @@ void SmatchetUI::drawViewsConnectivityBanner(AppController& app, UiDrawSession& 
     }
 }
 
+bool SmatchetUI::switchActiveJiraSite(AppController& app, UiDrawSession& d, const std::string& domain,
+                                      bool resyncFocused) {
+    if (!smatchet::jira_backends::SelectActive(d.cfg, domain)) {
+        LOG_WARN("switchActiveJiraSite: no configured Jira site matches '%s'; active site unchanged", domain.c_str());
+        return false;
+    }
+    LOG_INFO("switchActiveJiraSite: active Jira site -> '%s' (resyncFocused=%d)", d.cfg.ActiveJiraDomain.c_str(),
+             resyncFocused ? 1 : 0);
+    // JiraClient cfg-less paths re-read the Load cache. A queued tracker write
+    // leaves that cache on the previous origin until the worker drains, so sync
+    // would talk to the old host. Blocking Save matches persist-before-sync.
+    ConfigManager::Save(d.cfg);
+    if (resyncFocused) {
+        // The catalog belongs to the focused pane: refetch only when that pane is on Jira.
+        d.triggerCatalogRefetch = true;
+        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+    }
+    return true;
+}
+
 void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d) {
     if (ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType) != "Jira") {
         return;
@@ -1173,14 +1193,9 @@ void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d)
             const bool selected = static_cast<int>(i) == current;
             const char* label = d.cfg.JiraBackends[i].Domain.c_str();
             if (ImGui::Selectable(label, selected) && !selected) {
-                if (smatchet::jira_backends::SelectActive(d.cfg, d.cfg.JiraBackends[i].Domain)) {
-                    // JiraClient cfg-less paths re-read the Load cache. A queued tracker write
-                    // leaves that cache on the previous origin until the worker drains, so sync
-                    // would talk to the old host. Blocking Save matches persist-before-sync.
-                    ConfigManager::Save(d.cfg);
-                    d.triggerCatalogRefetch = true;
-                    app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
-                }
+                // Defensive copy: the switch rewrites d.cfg; `label` must not be read after it.
+                const std::string domain = d.cfg.JiraBackends[i].Domain;
+                switchActiveJiraSite(app, d, domain, /*resyncFocused=*/true);
             }
             if (selected) {
                 ImGui::SetItemDefaultFocus();

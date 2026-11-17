@@ -37,6 +37,10 @@ struct PaneAddRequest {
     std::string sourceId;         ///< Focused pane to duplicate; empty = no request.
     std::string targetBackendKey; ///< Backend for the new pane; empty = same as source.
     std::string targetViewId;     ///< View for the new pane; empty = backend default.
+    /// Jira site the host makes active before the new pane opens (#2444); empty = no site switch.
+    /// The site is one global setting, so a switch moves every Jira pane; the new pane never
+    /// inherits the source pane's rows, which belong to the previous site.
+    std::string targetJiraDomain;
 };
 
 /// Search-box capacity; matches JqlEditorState::buf so a typed query is never truncated.

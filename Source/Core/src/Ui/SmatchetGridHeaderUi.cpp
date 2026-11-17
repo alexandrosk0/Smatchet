@@ -14,7 +14,7 @@
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
 #include "SmatchetLocalization.h"
-#include "Ui/SmatchetBackendDisplay.h"
+#include "Ui/PaneBackendTargetsPure.h"
 #include "Ui/SmatchetIconButtons.h"
 #include "SmatchetImGuiFonts.h"
 
@@ -185,8 +185,9 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
 // Header "+" / "▾" split-button (pane-backend-picker Slice 2; moved from the pane
 // strip to the left of the view selector). Bare "+" always duplicates this pane (no
-// backend arg = same-backend path). "▾" caret renders only when ≥2 backends have
-// minimum credentials present; it opens a popup that lists each credentialed backend.
+// backend arg = same-backend path). "▾" caret renders only when the picker has ≥2 rows
+// (PaneBackendTargetsPure: one per credentialed backend, one per Jira site when there are
+// 2+ sites); a Jira site row switches the global active site before the pane opens.
 // Selecting a backend (with no specific view) opens its default/active view; an
 // optional view submenu lists saved views. The host applies requests after the pane
 // loop (never mutates gridPanes mid-iteration).
@@ -201,14 +202,10 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
                                                         "drag its tab to an edge for a side-by-side split)"));
     }
 
-    const std::vector<std::string>& knownKeys = ConfigManager::KnownBackendKeys();
-    int credCount = 0;
-    for (const auto& key : knownKeys) {
-        if (ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-            ++credCount;
-        }
-    }
-    if (credCount < 2) {
+    // One row per credentialed tracker kind, one per site for Jira with 2+ sites (#2444).
+    const std::vector<smatchet::pane_targets::NewPaneTarget> targets =
+        smatchet::pane_targets::BuildNewPaneTargets(d.cfg);
+    if (!smatchet::pane_targets::ShowNewPaneCaret(targets)) {
         return;
     }
 
@@ -222,29 +219,27 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
     }
 
     if (ImGui::BeginPopup("##PaneNewOnBackend")) {
-        for (const auto& key : knownKeys) {
-            if (!ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-                continue;
-            }
-            const auto it = diskBackends.find(key);
+        for (const smatchet::pane_targets::NewPaneTarget& target : targets) {
+            const auto it = diskBackends.find(target.BackendKey);
             const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
-            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
-
-            if (hasViews && ImGui::BeginMenu(label.c_str())) {
+            // The label is also the ImGui id; Jira site rows differ by host, so ids stay unique.
+            if (hasViews && ImGui::BeginMenu(target.Label.c_str())) {
                 const ViewWorkspaceState& ws = it->second;
                 for (const auto& v : ws.Views) {
                     const bool isActive = (v.Id == ws.ActiveViewId);
                     if (ImGui::MenuItem(v.Name.c_str(), nullptr, isActive)) {
                         d.paneAddRequest.sourceId = pane.id;
-                        d.paneAddRequest.targetBackendKey = key;
+                        d.paneAddRequest.targetBackendKey = target.BackendKey;
                         d.paneAddRequest.targetViewId = v.Id;
+                        d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                     }
                 }
                 ImGui::EndMenu();
             } else if (!hasViews) {
-                if (ImGui::MenuItem(label.c_str())) {
+                if (ImGui::MenuItem(target.Label.c_str())) {
                     d.paneAddRequest.sourceId = pane.id;
-                    d.paneAddRequest.targetBackendKey = key;
+                    d.paneAddRequest.targetBackendKey = target.BackendKey;
+                    d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                 }
             }
         }
