@@ -32,6 +32,16 @@
 //     settings search box once the tracker is set up), a merely restored window
 //     takes nothing, and a bare Enter in a credential field runs Test connection.
 //
+//  4. The shared text field (Ui/SmatchetInput.h, audit § 4.2, plan
+//     docs/plans/input-ux-w2-text-field.md). Group "TextField": a self-contained probe
+//     window draws the REAL SmatchetInput::Text / TextBuf / Multiline with the option set
+//     the Preferences credential rows use, and pins the behaviours the audit asks for:
+//     a click selects the value (#9), a long paste is kept whole (#2, #132), Esc reverts
+//     and Enter / Tab / a click away commit and trim (§ 3), the caret stays for the next
+//     entry after Enter (#4), a field that appears takes the caret (#5), and the multiline
+//     keys (Enter newline, Ctrl+Enter submit, first Esc leaves the field). In the real
+//     Preferences window, the Email row trims on Enter and reverts on Esc.
+//
 // No backend, no network, no fixture env: the explainer reads only d.cfg and the
 // pin is set/cleared by UI-thread code. Registered under its own group so
 // scripts/dev/test-ui-tracker-first-run-setup.sh can filter it.
@@ -44,6 +54,8 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "TrackerSetupPure.h"
+#include "Ui/SmatchetDialogScope.h" // the dialog contract (piece 4.1) the field must work inside
+#include "Ui/SmatchetInput.h"       // the shared text field under test
 #include "Ui/SmatchetSecretInput.h" // SmatchetTextInputCommittedWithEnter — the real Enter-commit signal
 
 #include "ui_test_skip.h" // SmatchetUiTestIsHeadlessSoftwareGl
@@ -56,6 +68,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // g_ui — the shared bag of UI-thread state. Set showPreferences /
 // requestPreferencesFocus directly, exactly as the View menu does.
@@ -608,6 +621,483 @@ static void RegisterCredentialEnterCommit(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Group "TextField" — the shared text field in a self-contained probe window.
+//
+// The probe draws the production widgets (SmatchetInput::Text / TextBuf / Multiline) with the
+// same option sets the Preferences rows use, so a regression in the widget fails here without
+// needing a live Preferences body (whose lower rows clip out of the engine's item table).
+// ---------------------------------------------------------------------------
+namespace {
+
+struct TextFieldProbe {
+    std::string str;      // Text: replace-the-value field (selectAllOnFocus + trimOnCommit)
+    char buf[16] = {};    // TextBuf: the fixed-buffer variant the Preferences rows use
+    std::string add;      // Text: add-another field (refocusAfterEnter)
+    std::string focusVal; // Text: focusOnAppear field, drawn only while showFocusField
+    std::string composer; // Multiline
+    bool showFocusField = false;
+    int strCommits = 0;
+    int strEnters = 0;
+    int strReverts = 0;
+    int bufCommits = 0;
+    int mlSubmits = 0;
+    int mlLeft = 0;
+    std::vector<std::string> addLog; // each value Enter added
+};
+
+TextFieldProbe g_textProbe;
+
+void DrawTextFieldProbe() {
+    TextFieldProbe& p = g_textProbe;
+    ImGui::SetNextWindowSize(ImVec2(520, 320), ImGuiCond_Appearing);
+    if (!ImGui::Begin("SmatchetTest::TextField", nullptr,
+                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    // The Preferences credential rows' option set (CredentialInputText).
+    SmatchetInput::TextOptions replaceOpts;
+    replaceOpts.hint = "e.g. value";
+    replaceOpts.selectAllOnFocus = true;
+    replaceOpts.trimOnCommit = true;
+
+    const SmatchetInput::TextResult str = SmatchetInput::Text("##StrField", p.str, replaceOpts);
+    p.strCommits += str.committed ? 1 : 0;
+    p.strEnters += str.enterCommitted ? 1 : 0;
+    p.strReverts += str.reverted ? 1 : 0;
+
+    const SmatchetInput::TextResult buf = SmatchetInput::TextBuf("##BufField", p.buf, sizeof(p.buf), replaceOpts);
+    p.bufCommits += buf.committed ? 1 : 0;
+
+    SmatchetInput::TextOptions addOpts;
+    addOpts.refocusAfterEnter = true;
+    const SmatchetInput::TextResult add = SmatchetInput::Text("##AddField", p.add, addOpts);
+    if (add.enterCommitted) {
+        p.addLog.push_back(p.add);
+        p.add.clear();
+    }
+
+    if (p.showFocusField) {
+        SmatchetInput::TextOptions focusOpts;
+        focusOpts.focusOnAppear = true;
+        SmatchetInput::Text("##FocusField", p.focusVal, focusOpts);
+    }
+
+    SmatchetInput::MultilineOptions mlOpts;
+    mlOpts.hint = "Ctrl+Enter to send";
+    const SmatchetInput::MultilineResult ml =
+        SmatchetInput::Multiline("##Composer", p.composer, ImVec2(300, 60), mlOpts);
+    p.mlSubmits += ml.submitted ? 1 : 0;
+    p.mlLeft += ml.leftField ? 1 : 0;
+
+    ImGui::Button("Sink##TextField"); // click target that takes the keyboard away from a field
+    ImGui::End();
+}
+
+// Opens the probe window and focuses it (the focus-on-appear rule only takes the caret in the
+// focused window).
+void BeginTextFieldProbe(ImGuiTestContext* ctx) {
+    g_textProbe = TextFieldProbe{};
+    ctx->SetRef("SmatchetTest::TextField");
+    ctx->Yield(2);
+    // By window id: a name passed to WindowFocus is resolved relative to the ref set above and would
+    // not find this window.
+    const ImGuiWindow* probe = ImGui::FindWindowByName("SmatchetTest::TextField");
+    IM_CHECK_NO_RET(probe != nullptr);
+    if (probe != nullptr) {
+        ctx->WindowFocus(probe->ID);
+    }
+    ctx->Yield();
+}
+
+} // namespace
+
+// A click into a field that holds a value selects it, so the first thing typed replaces it (#9).
+static void RegisterTextFieldClickSelectsAndReplaces(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "ClickSelectsValueSoTypingReplacesIt");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+        g_textProbe.str = "old value";
+        std::snprintf(g_textProbe.buf, sizeof(g_textProbe.buf), "%s", "seed");
+        ctx->Yield();
+
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("new");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "new"); // replaced, not "old valuenew"
+
+        ctx->ItemClick("##BufField"); // the fixed-buffer variant selects too
+        ctx->KeyChars("ab");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_textProbe.buf, "ab");
+    };
+}
+
+// A paste far past any old fixed buffer is kept whole in a std::string field (#2, #132), and a
+// fixed-buffer field stays bounded and NUL-terminated rather than overflowing.
+static void RegisterTextFieldLongPasteIsKept(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "LongPasteIsKeptInStringFieldAndBoundedInBuffer");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+        const std::string longText(600, 'A'); // past the old 512 B grid / 260 B path buffers
+        ImGui::SetClipboardText(longText.c_str());
+
+        ctx->ItemClick("##StrField");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_V);
+        ctx->Yield(2);
+        IM_CHECK_EQ(static_cast<int>(g_textProbe.str.size()), 600); // nothing clipped
+        IM_CHECK(g_textProbe.str == longText);
+
+        ctx->ItemClick("##BufField");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_V);
+        ctx->Yield(2);
+        const std::size_t bufLen = std::strlen(g_textProbe.buf);
+        IM_CHECK(bufLen <= sizeof(g_textProbe.buf) - 1u); // ImGui bounds it; still NUL-terminated
+        IM_CHECK_EQ(g_textProbe.buf[sizeof(g_textProbe.buf) - 1], '\0');
+        IM_CHECK_EQ(static_cast<int>(bufLen), static_cast<int>(sizeof(g_textProbe.buf) - 1u));
+    };
+}
+
+// How an edit ends (§ 3 single-line row): Esc reverts; Enter, Ctrl+Enter, Tab and a click away
+// commit; only a bare Enter is the field's Enter; a commit trims.
+static void RegisterTextFieldEnterEscCommit(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "EscRevertsAndEnterTabClickAwayCommitAndTrim");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+        g_textProbe.str = "keep";
+        ctx->Yield();
+
+        // Esc: back to the value the field had when it was activated; nothing committed.
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("X");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "X");
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "keep");
+        IM_CHECK_EQ(g_textProbe.strReverts, 1);
+        IM_CHECK_EQ(g_textProbe.strCommits, 0);
+
+        // Bare Enter: committed, the field's Enter, and the edge whitespace is dropped.
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("  Y  ");
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "Y");
+        IM_CHECK_EQ(g_textProbe.strCommits, 1);
+        IM_CHECK_EQ(g_textProbe.strEnters, 1);
+
+        // A click elsewhere commits too, but it is not the field's Enter.
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("Z");
+        ctx->ItemClick("Sink##TextField");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "Z");
+        IM_CHECK_EQ(g_textProbe.strCommits, 2);
+        IM_CHECK_EQ(g_textProbe.strEnters, 1);
+
+        // Ctrl+Enter commits and stays the dialog's Save key: not the field's Enter.
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("W");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "W");
+        IM_CHECK_EQ(g_textProbe.strCommits, 3);
+        IM_CHECK_EQ(g_textProbe.strEnters, 1);
+
+        // Tab commits too and moves on to the next field: not the field's Enter either.
+        ctx->ItemClick("##StrField");
+        ctx->KeyChars("  V  ");
+        ctx->KeyPress(ImGuiKey_Tab);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.str.c_str(), "V"); // committed and trimmed
+        IM_CHECK_EQ(g_textProbe.strCommits, 4);
+        IM_CHECK_EQ(g_textProbe.strEnters, 1);
+
+        // The fixed-buffer variant trims on commit as well.
+        ctx->ItemClick("##BufField");
+        ctx->KeyChars("  k  ");
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_textProbe.buf, "k");
+        IM_CHECK_EQ(g_textProbe.bufCommits, 1);
+    };
+}
+
+// After a bare Enter in an add-another field the caret is still in it: the next entry needs no click (#4).
+static void RegisterTextFieldRefocusAfterEnter(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "EnterKeepsTheCaretForTheNextEntry");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+
+        ctx->ItemClick("##AddField");
+        ctx->KeyChars("one");
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        // No click: the keyboard is still in the field, so the second entry types straight in.
+        ctx->KeyChars("two");
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+
+        IM_CHECK_EQ(static_cast<int>(g_textProbe.addLog.size()), 2);
+        if (g_textProbe.addLog.size() == 2u) {
+            IM_CHECK_STR_EQ(g_textProbe.addLog[0].c_str(), "one");
+            IM_CHECK_STR_EQ(g_textProbe.addLog[1].c_str(), "two");
+        }
+    };
+}
+
+// A field that appears (a Rename swapped it in, a popup opened) takes the caret on its first
+// frame, every time it appears, with no click (#5).
+static void RegisterTextFieldFocusOnAppear(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "FieldThatAppearsTakesTheCaret");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+        ImGui::ClearActiveID();
+        ctx->Yield();
+
+        g_textProbe.showFocusField = true;
+        ctx->Yield(3);
+        const ImGuiID focusId = ctx->ItemInfo("##FocusField", ImGuiTestOpFlags_NoError).ID;
+        IM_CHECK(focusId != 0);
+        IM_CHECK_EQ(ImGui::GetActiveID(), focusId);
+        ctx->KeyChars("ab");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_textProbe.focusVal.c_str(), "ab"); // typed with no click
+
+        // Gone, then back: a new appearance takes the caret again.
+        g_textProbe.showFocusField = false;
+        ctx->Yield(3);
+        ImGui::ClearActiveID();
+        ctx->Yield();
+        g_textProbe.showFocusField = true;
+        ctx->Yield(3);
+        IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("##FocusField", ImGuiTestOpFlags_NoError).ID);
+
+        // Staying drawn does not keep taking it back: click away and the caret stays away.
+        ctx->ItemClick("Sink##TextField");
+        ctx->Yield(3);
+        IM_CHECK(ImGui::GetActiveID() != ctx->ItemInfo("##FocusField", ImGuiTestOpFlags_NoError).ID);
+        g_textProbe.showFocusField = false;
+        ctx->Yield(2);
+    };
+}
+
+// § 3 multiline row: Enter types a newline, Ctrl+Enter submits, the first Esc leaves the field and
+// keeps what was typed.
+static void RegisterTextFieldMultilineKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "MultilineEnterNewlineCtrlEnterSubmitsEscKeepsText");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTextFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        BeginTextFieldProbe(ctx);
+
+        ctx->ItemClick("##Composer");
+        ctx->KeyChars("a");
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->KeyChars("b");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_textProbe.composer.c_str(), "a\nb"); // Enter typed a newline
+        IM_CHECK_EQ(g_textProbe.mlSubmits, 0);
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_textProbe.mlSubmits, 1);
+        IM_CHECK_STR_EQ(g_textProbe.composer.c_str(), "a\nb"); // no stray newline from the submit
+
+        // The first Esc leaves the field and KEEPS the text (ImGui alone would revert the edit).
+        ctx->ItemClick("##Composer");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_End); // caret at the end whatever the line height is
+        ctx->KeyChars("c");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_textProbe.mlLeft, 1);
+        IM_CHECK_STR_EQ(g_textProbe.composer.c_str(), "a\nbc");
+        IM_CHECK(ImGui::GetActiveID() != ctx->ItemInfo("##Composer", ImGuiTestOpFlags_NoError).ID);
+    };
+}
+
+// A text field inside a dialog scope (piece 4.1): DialogReadKeys takes the first Esc, leaves the field
+// and keeps what was typed, before the field is drawn. ImGui then never runs its own revert, so the
+// field must report a commit (trimmed, saved by a caller that saves on `committed`), not a revert.
+namespace {
+
+struct DialogFieldProbe {
+    bool requestOpen = false;
+    bool requestClose = false;
+    std::string value;
+    int commits = 0;
+    int reverts = 0;
+};
+
+DialogFieldProbe g_dialogField;
+smatchet::ui::DialogScopeState g_dialogFieldScope;
+
+void DrawDialogFieldProbe() {
+    DialogFieldProbe& p = g_dialogField;
+    ImGui::SetNextWindowSize(ImVec2(420, 200), ImGuiCond_Appearing);
+    if (ImGui::Begin("SmatchetTest::TextFieldDialogHost", nullptr,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        if (p.requestOpen) {
+            p.requestOpen = false;
+            ImGui::OpenPopup("Probe dialog###TextFieldDialogProbe");
+        }
+        if (smatchet::ui::BeginDialog(g_dialogFieldScope, "Probe dialog###TextFieldDialogProbe", nullptr,
+                                      ImGuiWindowFlags_NoSavedSettings)) {
+            smatchet::ui::DialogReadKeys(g_dialogFieldScope, false); // typed text: the first Esc leaves the field
+            smatchet::ui::DialogFocusHere(g_dialogFieldScope);
+            SmatchetInput::TextOptions opts;
+            opts.trimOnCommit = true;
+            const SmatchetInput::TextResult r = SmatchetInput::Text("##DialogField", p.value, opts);
+            p.commits += r.committed ? 1 : 0;
+            p.reverts += r.reverted ? 1 : 0;
+            if (p.requestClose) {
+                p.requestClose = false;
+                ImGui::CloseCurrentPopup();
+            }
+            smatchet::ui::EndDialog(g_dialogFieldScope);
+        }
+    }
+    ImGui::End();
+}
+
+} // namespace
+
+static void RegisterTextFieldInsideDialogScope(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "EscTakenByTheDialogScopeKeepsTextAndReportsCommit");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawDialogFieldProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_dialogField = DialogFieldProbe{};
+        ctx->SetRef("SmatchetTest::TextFieldDialogHost");
+        ctx->Yield(2);
+        ImGui::ClearActiveID();
+        g_dialogField.requestOpen = true;
+        for (int i = 0; i < 30 && ImGui::GetCurrentContext()->OpenPopupStack.Size == 0; ++i) {
+            ctx->Yield();
+        }
+        ctx->Yield(3);
+        // The dialog's own opening focus put the caret in the field: no click.
+        const ImGuiContext& g = *ImGui::GetCurrentContext();
+        IM_CHECK(g.ActiveId != 0 && ImGui::GetInputTextState(g.ActiveId) != nullptr);
+
+        ctx->KeyChars("  hi  ");
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ(g_dialogField.value.c_str(), "hi"); // kept, and trimmed as the edit ended
+        IM_CHECK_EQ(g_dialogField.commits, 1);
+        IM_CHECK_EQ(g_dialogField.reverts, 0);
+        IM_CHECK(g.OpenPopupStack.Size > 0); // the first Esc only left the field; the dialog stays
+
+        g_dialogField.requestClose = true;
+        ctx->Yield(3);
+        IM_CHECK_EQ(g.OpenPopupStack.Size, 0);
+    };
+}
+
+// The shared text field in the REAL Preferences window: the Email row (a Jira credential row, drawn
+// through CredentialInputText) reverts on Esc and trims on Enter. Both tests open Preferences with only
+// Email blank, so the open puts the caret straight in it: no click, no Tab.
+namespace {
+
+// Opens Preferences on the Jira tab with the caret in the Email row. Domain is filled, so Email is the
+// first blank credential and the open itself puts the caret there (no Tab, no click). Test connection (run
+// by Enter) cannot reach a real server for two reasons: the token is blank, which the probe turns back
+// before any request (ProbeReachability -> EnsureTrackerAuthConfig), and the host is on the reserved
+// .invalid TLD, which never resolves. False (with the checks already recorded) when a step did not land;
+// the caller then still runs CloseAndRestore.
+bool OpenPreferencesAtEmail(ImGuiTestContext* ctx) {
+    BlankJiraCredentials(g_ui.cfg);
+    g_ui.cfg.Domain = "probe.invalid";
+    g_ui.preferencesCategory = PreferencesCategory::Tracker;
+    g_ui.prefsSearchBuf[0] = '\0';
+    g_keepTrackerBodyLive = true;
+    const bool opened = OpenPreferences(ctx) && YieldUntil(ctx, [] { return g_ui.preferencesBuffersLoaded; });
+    IM_CHECK_RETV(opened, false);
+    const bool emailFocused = YieldUntil(
+        ctx,
+        [] {
+            const ImGuiID emailId = TrackerCredentialFieldId("Email");
+            return emailId != 0 && ImGui::GetActiveID() == emailId;
+        },
+        60);
+    IM_CHECK_RETV(emailFocused, false);
+    return true;
+}
+
+// Registers one Email-row test; `body` runs with the caret already in Email.
+template <typename Body> void RegisterEmailRowTest(ImGuiTestEngine* engine, const char* name, Body body) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", name);
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { KeepTrackerBodyLive(); };
+    t->TestFunc = body;
+}
+
+} // namespace
+
+static void RegisterPreferencesEmailEscReverts(ImGuiTestEngine* engine) {
+    RegisterEmailRowTest(engine, "PreferencesEmailRevertsOnEsc", [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        const TrackerConfig cfgBackup = g_ui.cfg;
+        const PreferencesCategory categoryBackup = g_ui.preferencesCategory;
+        const bool closed = ClosePreferences(ctx);
+        IM_CHECK_NO_RET(closed);
+        if (!closed) {
+            g_ui.cfg = cfgBackup;
+            return;
+        }
+        if (OpenPreferencesAtEmail(ctx)) {
+            ctx->KeyChars("zz");
+            ctx->Yield();
+            IM_CHECK_NO_RET(std::strcmp(g_ui.emailBuf, "zz") == 0);
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield(2);
+            IM_CHECK_NO_RET(g_ui.emailBuf[0] == '\0'); // back to what the field held when it was activated
+        }
+        CloseAndRestore(ctx, cfgBackup, categoryBackup);
+    });
+}
+
+static void RegisterPreferencesEmailEnterTrims(ImGuiTestEngine* engine) {
+    RegisterEmailRowTest(engine, "PreferencesEmailTrimsOnEnterAndRunsTest", [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        const TrackerConfig cfgBackup = g_ui.cfg;
+        const PreferencesCategory categoryBackup = g_ui.preferencesCategory;
+        const bool closed = ClosePreferences(ctx);
+        IM_CHECK_NO_RET(closed);
+        if (!closed) {
+            g_ui.cfg = cfgBackup;
+            return;
+        }
+        if (OpenPreferencesAtEmail(ctx)) {
+            ctx->KeyChars("  me@x.io  ");
+            ctx->Yield();
+            IM_CHECK_NO_RET(std::strcmp(g_ui.emailBuf, "  me@x.io  ") == 0); // untouched while typing
+            const int genBefore = g_ui.trackerPrefsTestGen;
+            ctx->KeyPress(ImGuiKey_Enter);
+            YieldUntil(ctx, [genBefore] { return g_ui.trackerPrefsTestGen != genBefore; }, 30);
+            IM_CHECK_NO_RET(std::strcmp(g_ui.emailBuf, "me@x.io") == 0); // trimmed as the edit ended
+            IM_CHECK_NO_RET(g_ui.trackerPrefsTestGen == genBefore + 1);  // and Enter ran one probe
+            YieldUntil(ctx, [] { return !g_ui.trackerPrefsTestInFlight; }, 600);
+            g_ui.emailBuf[0] = '\0'; // match the blank cfg so closing raises no unsaved-changes modal
+        }
+        CloseAndRestore(ctx, cfgBackup, categoryBackup);
+    });
+}
+
 extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engine) {
     RegisterExplainerBranches(engine);
     RegisterVerifiedPinClearsOnClose(engine);
@@ -616,6 +1106,15 @@ extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engin
     RegisterOpenFocusesSearchBox(engine);
     RegisterRestoredOpenLeavesKeyboardAlone(engine);
     RegisterCredentialEnterCommit(engine);
+    RegisterTextFieldClickSelectsAndReplaces(engine);
+    RegisterTextFieldLongPasteIsKept(engine);
+    RegisterTextFieldEnterEscCommit(engine);
+    RegisterTextFieldRefocusAfterEnter(engine);
+    RegisterTextFieldFocusOnAppear(engine);
+    RegisterTextFieldMultilineKeys(engine);
+    RegisterTextFieldInsideDialogScope(engine);
+    RegisterPreferencesEmailEscReverts(engine);
+    RegisterPreferencesEmailEnterTrims(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
