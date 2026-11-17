@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib> // std::strtoll (CPP_CODE_AUDIT.md #33f — was only transitively included)
 #include <string>
 #include <vector>
@@ -39,6 +40,20 @@ inline std::string TrimCopyIsspace(const std::string& input) {
 inline std::string ToLowerAsciiCopy(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+/// `text` cut to at most `maxBytes` bytes, never inside a UTF-8 sequence, with "..." appended when anything was cut.
+/// A byte-level resize can leave half a character, which shows as a replacement glyph.
+inline std::string TruncateUtf8WithEllipsis(const std::string& text, std::size_t maxBytes) {
+    if (text.size() <= maxBytes) {
+        return text;
+    }
+    // Back off past continuation bytes (0b10xxxxxx) so the cut lands on the start of a character.
+    std::size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) {
+        --cut;
+    }
+    return text.substr(0, cut) + "...";
 }
 
 /// Case-insensitive equality with the same folding as ToLowerAsciiCopy, without allocating.

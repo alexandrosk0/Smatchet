@@ -48,6 +48,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -75,7 +76,9 @@ using smatchet::grid::bulk::BulkSummary;
 const char* const kGridWindow = "Smatchet - Active Project";
 const char* const kPriorityKey = "field:priority";
 const char* const kSummaryKey = "field:summary";
+const char* const kLabelsKey = "field:labels";
 const char* const kPriorityField = "priority";
+const char* const kLabelsField = "labels";
 constexpr int kFixtureRows = 12;
 
 // True when the app was booted with the bulk-edit-rows fixture; otherwise logs a SKIP.
@@ -252,19 +255,19 @@ bool PrepareGrid(ImGuiTestContext* ctx, AppController* app) {
     if (!live) {
         return false;
     }
-    if (IndexOfKey(kPriorityKey) < 0 || IndexOfKey(kSummaryKey) < 0) {
+    if (IndexOfKey(kPriorityKey) < 0 || IndexOfKey(kSummaryKey) < 0 || IndexOfKey(kLabelsKey) < 0) {
+        // Only the columns the cases drive, so all of them sit inside the grid window (the default view's other columns
+        // push labels past the right edge, where no click can reach it).
         nlohmann::json fields = nlohmann::json::array();
-        for (const std::string& key : DrawnKeys()) {
-            if (key != "id") {
-                fields.push_back(key.substr(6));
-            }
-        }
         fields.push_back("priority");
         fields.push_back("summary");
+        fields.push_back("labels");
         if (!RunCommand(ctx, app, "view.update", {{"fields", fields}}).Ok) {
             return false;
         }
-        if (!StepUntil(ctx, 300, [] { return IndexOfKey(kPriorityKey) >= 0 && IndexOfKey(kSummaryKey) >= 0; })) {
+        if (!StepUntil(ctx, 300, [] {
+                return IndexOfKey(kPriorityKey) >= 0 && IndexOfKey(kSummaryKey) >= 0 && IndexOfKey(kLabelsKey) >= 0;
+            })) {
             return false;
         }
     }
@@ -329,8 +332,9 @@ bool MenuOffersBulkItem(ImGuiTestContext* ctx, const std::string& columnKey, int
 }
 
 // Opens the popup through the menu (the selection must already be set) and returns once it is on screen.
-bool OpenBulkPopup(ImGuiTestContext* ctx, const char* fieldName, int rows, int clickedRow) {
-    if (!RightClickCell(ctx, kPriorityKey, clickedRow)) {
+bool OpenBulkPopup(ImGuiTestContext* ctx, const char* fieldName, int rows, int clickedRow,
+                   const char* columnKey = kPriorityKey) {
+    if (!RightClickCell(ctx, columnKey, clickedRow)) {
         return false;
     }
     const std::string ref = MenuItemRef(fieldName, rows);
@@ -390,6 +394,68 @@ std::string BulkToastTitle(const char* fieldName) {
 std::string CountText(const char* key, const char* fallback, int count) {
     return SmatchetLocalization::Format(key, fallback, count);
 }
+
+// The first `count` sort-order rows, leaving out SMAT-12: an earlier case marks it not editable (its type is its own,
+// so the editmeta change stays on that one issue), and these cases want every selected row to save.
+std::set<int> EditableRows(int count) {
+    std::set<int> rows;
+    for (int row = 0; row < kFixtureRows && static_cast<int>(rows.size()) < count; ++row) {
+        if (IdAtRow(row) != "SMAT-12") {
+            rows.insert(row);
+        }
+    }
+    return rows;
+}
+
+// The cached labels of `issueId`, as the grid shows them.
+std::set<std::string> LabelsOf(AppController& app, const std::string& issueId) {
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = app.GetActiveTicketsSnapshot();
+    std::set<std::string> out;
+    if (!tickets) {
+        return out;
+    }
+    for (const CachedTicket& ticket : *tickets) {
+        if (ticket.id != issueId) {
+            continue;
+        }
+        const std::string csv = ticket.GetFieldValue(kLabelsField);
+        std::size_t start = 0;
+        while (start <= csv.size()) {
+            std::size_t comma = csv.find(',', start);
+            if (comma == std::string::npos) {
+                comma = csv.size();
+            }
+            std::string part = csv.substr(start, comma - start);
+            const std::size_t first = part.find_first_not_of(' ');
+            const std::size_t last = part.find_last_not_of(' ');
+            if (first != std::string::npos) {
+                out.insert(part.substr(first, last - first + 1));
+            }
+            start = comma + 1;
+        }
+    }
+    return out;
+}
+
+// A button / radio of the open picker, addressed the way the app labels it (text + ### id).
+std::string PopupItemRef(const char* key, const char* fallback, const char* id) {
+    return std::string("//$FOCUSED/") + SmatchetLocalization::Label(key, fallback, id);
+}
+
+bool PopupItemExists(ImGuiTestContext* ctx, const std::string& ref) {
+    return ctx->ItemInfo(ref.c_str(), ImGuiTestOpFlags_NoError).ID != 0;
+}
+
+bool PopupItemDisabled(ImGuiTestContext* ctx, const std::string& ref) {
+    const ImGuiTestItemInfo info = ctx->ItemInfo(ref.c_str(), ImGuiTestOpFlags_NoError);
+    return info.ID != 0 && (info.ItemFlags & ImGuiItemFlags_Disabled) != 0;
+}
+
+std::string AddModeRef() { return PopupItemRef("grid.bulk.mode_add", "Add", "bulk_mode_add"); }
+std::string RemoveModeRef() { return PopupItemRef("grid.bulk.mode_remove", "Remove", "bulk_mode_remove"); }
+std::string ReplaceModeRef() { return PopupItemRef("grid.bulk.mode_replace", "Replace", "bulk_mode_replace"); }
+std::string PickApplyRef() { return PopupItemRef("grid.bulk.apply", "Apply", "bulk_pick_apply"); }
+std::string PickCancelRef() { return PopupItemRef("grid.bulk.cancel", "Cancel", "bulk_pick_cancel"); }
 
 // Everything a test needs to start from the same state: the grid is up and the popup request is idle.
 struct Env {
@@ -794,12 +860,228 @@ static void RegisterCommandPath(ImGuiTestEngine* engine) {
     };
 }
 
+// BulkFieldEdit/Labels_ModeToggleGatesApply: the Replace / Add / Remove radios set the request's mode, and Apply stays
+// disabled until something is ticked (or, in Replace mode, <clear all> is chosen).
+static void RegisterLabelsModeToggle(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_ModeToggleGatesApply");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const std::set<int> rows = EditableRows(4);
+        SelectRows(rows);
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 4, *rows.begin(), kLabelsKey));
+        const BulkEditPopupRequest& req = g_ui.bulkEditPopupRequest;
+        IM_CHECK_NO_RET(req.Mode == smatchet::grid::bulk::BulkMode::Replace);
+        IM_CHECK_NO_RET(PopupItemExists(ctx, ReplaceModeRef()));
+        IM_CHECK_NO_RET(PopupItemDisabled(ctx, PickApplyRef())); // nothing ticked yet
+
+        ctx->ItemClick(AddModeRef().c_str());
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(req.Mode == smatchet::grid::bulk::BulkMode::Add);
+        IM_CHECK_NO_RET(PopupItemDisabled(ctx, PickApplyRef()));
+
+        ctx->ItemClick(RemoveModeRef().c_str());
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(req.Mode == smatchet::grid::bulk::BulkMode::Remove);
+
+        ctx->ItemClick(ReplaceModeRef().c_str());
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(req.Mode == smatchet::grid::bulk::BulkMode::Replace);
+
+        // A ticked label enables Apply in every mode.
+        ctx->KeyChars("zeta");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(!PopupItemDisabled(ctx, PickApplyRef()));
+        ctx->ItemClick(AddModeRef().c_str());
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!PopupItemDisabled(ctx, PickApplyRef()));
+
+        // Cancel closes the request and sends nothing.
+        ctx->ItemClick(PickCancelRef().c_str());
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(!g_ui.bulkEditPopupRequest.Active);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Labels_AddModeMergesIntoEachRow: type a new label, tick it with Enter, switch to Add, press Apply.
+// Every row keeps the labels it had and gains the new one.
+static void RegisterLabelsAddMode(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_AddModeMergesIntoEachRow");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SmatchetToastManager::Instance().ClearHistory();
+
+        const std::set<int> rows = EditableRows(4);
+        SelectRows(rows);
+        const std::set<std::string> selectedIds = IdsAtRows(rows);
+        IM_CHECK_NO_RET(selectedIds.size() == 4);
+        std::map<std::string, std::set<std::string>> before;
+        for (const std::string& id : selectedIds) {
+            before[id] = LabelsOf(*env.App, id);
+        }
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 4, *rows.begin(), kLabelsKey));
+        ctx->ItemClick(AddModeRef().c_str());
+        ctx->Yield(2);
+        ctx->KeyChars("beta");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(3);
+        {
+            const BulkEditPopupRequest& req = g_ui.bulkEditPopupRequest;
+            IM_CHECK_NO_RET(req.Active);
+            IM_CHECK_NO_RET(req.Picked.size() == 1 && req.Picked.front() == "beta");
+            IM_CHECK_NO_RET(FindJob(jobId) == nullptr); // Enter ticked the label; nothing was sent yet
+        }
+        BULK_REQUIRE(PopupItemExists(ctx, PickApplyRef()));
+        ctx->ItemClick(PickApplyRef().c_str());
+        ctx->Yield(2);
+        BULK_REQUIRE(FindJob(jobId) != nullptr);
+        BULK_REQUIRE(WaitJobDone(ctx, jobId));
+
+        const BulkSummary summary = smatchet::grid::bulk::Summarize(*FindJob(jobId));
+        IM_CHECK_NO_RET(summary.Total == 4);
+        IM_CHECK_NO_RET(summary.Saved == 4);
+        IM_CHECK_NO_RET(summary.Failed == 0);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + 4);
+        for (std::size_t i = callsBefore; i < env.Fake->UpdateIssueFieldsCalls().size(); ++i) {
+            const auto& call = env.Fake->UpdateIssueFieldsCalls()[i];
+            const std::string sent = call.Fields.dump();
+            IM_CHECK_NO_RET(sent.find("beta") != std::string::npos);
+            for (const std::string& kept : before[call.IssueId]) {
+                IM_CHECK_NO_RET(sent.find(kept) != std::string::npos); // Add keeps what the row had
+            }
+        }
+        for (const std::string& id : selectedIds) {
+            std::set<std::string> want = before[id];
+            want.insert("beta");
+            IM_CHECK_NO_RET(LabelsOf(*env.App, id) == want);
+        }
+        const ToastHistoryEntry* toast = LastToastTitled(BulkToastTitle("Labels"));
+        IM_CHECK_NO_RET(toast != nullptr);
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Labels_RemoveModeSkipsRowsWithoutTheLabel: Remove "alpha" from four rows. Rows that hold it are saved
+// without it; the others have nothing to remove, so they are skipped and not sent.
+static void RegisterLabelsRemoveMode(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_RemoveModeSkipsRowsWithoutTheLabel");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+
+        const std::set<int> rows = EditableRows(4);
+        SelectRows(rows);
+        const std::set<std::string> selectedIds = IdsAtRows(rows);
+        std::set<std::string> holders;
+        std::map<std::string, std::set<std::string>> before;
+        for (const std::string& id : selectedIds) {
+            before[id] = LabelsOf(*env.App, id);
+            if (before[id].count("alpha") != 0) {
+                holders.insert(id);
+            }
+        }
+        IM_CHECK_NO_RET(!holders.empty() && holders.size() < selectedIds.size()); // the fixture mixes both kinds
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 4, *rows.begin(), kLabelsKey));
+        ctx->ItemClick(RemoveModeRef().c_str());
+        ctx->Yield(2);
+        ctx->KeyChars("alpha");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(3);
+        BULK_REQUIRE(PopupItemExists(ctx, PickApplyRef()));
+        ctx->ItemClick(PickApplyRef().c_str());
+        ctx->Yield(2);
+        BULK_REQUIRE(FindJob(jobId) != nullptr);
+        BULK_REQUIRE(WaitJobDone(ctx, jobId));
+
+        const BulkSummary summary = smatchet::grid::bulk::Summarize(*FindJob(jobId));
+        IM_CHECK_NO_RET(summary.Saved == static_cast<int>(holders.size()));
+        IM_CHECK_NO_RET(summary.Skipped == static_cast<int>(selectedIds.size() - holders.size()));
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + holders.size());
+        for (std::size_t i = callsBefore; i < env.Fake->UpdateIssueFieldsCalls().size(); ++i) {
+            IM_CHECK_NO_RET(holders.count(env.Fake->UpdateIssueFieldsCalls()[i].IssueId) == 1);
+        }
+        for (const std::string& id : selectedIds) {
+            std::set<std::string> want = before[id];
+            want.erase("alpha");
+            IM_CHECK_NO_RET(LabelsOf(*env.App, id) == want);
+        }
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Labels_EnterInTickBoxListKeepsModalOpen: Enter in the tick-box list of the modal ticks the match and
+// leaves the dialog open with its picks (the shared dropdown used to close the modal on Enter and lose them).
+static void RegisterLabelsEnterKeepsModal(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_EnterInTickBoxListKeepsModalOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const std::set<int> rows = EditableRows(3);
+        SelectRows(rows);
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 3, *rows.begin(), kLabelsKey));
+        ctx->KeyChars("gam");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(3);
+        const BulkEditPopupRequest& req = g_ui.bulkEditPopupRequest;
+        IM_CHECK_NO_RET(req.Active);
+        IM_CHECK_NO_RET(req.CurrentStage == BulkEditPopupRequest::Stage::Pick);
+        IM_CHECK_NO_RET(req.Picked.size() == 1 && req.Picked.front() == "gamma");
+        IM_CHECK_NO_RET(PopupItemExists(ctx, PickApplyRef())); // the dialog is still drawn
+        IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+
+        ctx->ItemClick(PickCancelRef().c_str());
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(!g_ui.bulkEditPopupRequest.Active);
+        SelectRows({});
+    };
+}
+
 extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterCommandPath(engine);
     RegisterMenuItemVisibility(engine);
     RegisterPickSavesEveryRow(engine);
     RegisterConfirmStep(engine);
     RegisterOfflineQueues(engine);
+    RegisterLabelsModeToggle(engine);
+    RegisterLabelsAddMode(engine);
+    RegisterLabelsRemoveMode(engine);
+    RegisterLabelsEnterKeepsModal(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
