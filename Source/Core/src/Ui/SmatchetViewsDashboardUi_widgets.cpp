@@ -8,6 +8,8 @@
 #include "JqlProjectScope.h"
 #include "PlaneProjectScope.h"
 #include "FieldCatalogCache.h"
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
 #include "SmatchetAutocompleteUi.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -255,28 +257,34 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
     // helper, which refreshes the shared UiDrawSession snapshot only on the closed→open edge.
     RefreshCachedProjectsSnapshotOnOpen(d, ImGui::IsPopupOpen("##ProjectPillPopup"), d.projectPillPopupWasOpen);
     if (ImGui::BeginPopup("##ProjectPillPopup")) {
-        const std::vector<FieldCatalogCache::CachedProjectEntry>& cached = d.cachedProjectsSnapshot;
-        int shown = 0;
-        for (const auto& e : cached) {
-            if (!pillScopesQuery || !SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
-                continue;
+        // The shared dropdown body: filter, the last picked projects (the pickers' "project" scope for
+        // this tracker instance), then every project whose field catalog is saved on this machine.
+        std::vector<smatchet::dropdown::Item> items;
+        if (pillScopesQuery) {
+            for (const auto& e : d.cachedProjectsSnapshot) {
+                if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
+                    continue;
+                }
+                smatchet::dropdown::Item item;
+                item.Id = e.projectKey.c_str();
+                item.Label = e.projectKey.c_str();
+                item.Checked = e.projectKey == scopeProj;
+                items.push_back(item);
             }
-            ImGui::PushID(shown);
-            if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
-                const std::string newJql = isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
-                                                   : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
-                CopyStringToBuffer(d.viewJqlEditor.buf, newJql);
-                // Only ever reached from the dashboard's Filter tab (drawProjectPill is
-                // hard-bound to it) — its own before/after buffer diff picks up this mutation
-                // and writes d.viewDraft.Jql; no flag to set here (column-view-save-
-                // simplification).
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::PopID();
-            ++shown;
         }
-        if (shown == 0) {
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)"));
+        const std::string recentsScope = smatchet::recents::MakeScopeKey(app.FocusedCacheBackendKey(), "project");
+        smatchet::dropdown::Options options = smatchet::dropdown::SingleSelect(recentsScope);
+        options.RecentsMinOptions = -1; // always: the last picks are the point, however short the list
+        options.EmptyText = SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)");
+        const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
+        if (ev.Kind == smatchet::dropdown::EventKind::Picked && !ev.Id.empty()) {
+            const std::string newJql = isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, ev.Id)
+                                               : JqlProjectScope::SetProjectClause(currentJql, ev.Id);
+            CopyStringToBuffer(d.viewJqlEditor.buf, newJql);
+            // Only ever reached from the dashboard's Filter tab (drawProjectPill is
+            // hard-bound to it) — its own before/after buffer diff picks up this mutation
+            // and writes d.viewDraft.Jql; no flag to set here (column-view-save-
+            // simplification).
         }
         ImGui::EndPopup();
     }

@@ -390,6 +390,25 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
     cfg.MigratedQuickCreateHotkeyV1 = true;
 }
 
+// One-shot migration: seed the grid search focus binding ("grid.search.focus", Ctrl+F and /)
+// into a config saved before the command existed, for the same replace-not-merge reason as the
+// menu shortcut migration. The row is copied from the defaults table, so it arrives with both
+// combos, and a binding the user already gave the command is kept as it is.
+void MigrateGridSearchFocusKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedGridSearchFocusHotkeyV1 = j.value("migrated_grid_search_focus_hotkey_v1", false);
+    if (cfg.MigratedGridSearchFocusHotkeyV1) {
+        return;
+    }
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    const int di = defaults.FindBindingIndex("grid.search.focus", "{}");
+    if (di >= 0 && cfg.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0) {
+        cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
+        LOG_INFO("ConfigManager: seeded the grid search focus keybinding into an existing config "
+                 "(migrated_grid_search_focus_hotkey_v1)");
+    }
+    cfg.MigratedGridSearchFocusHotkeyV1 = true;
+}
+
 // One-shot migration: widen the zoom bindings from their single legacy combo to the
 // full alias set (Ctrl+= / Ctrl+Shift+= / Ctrl+NumAdd, etc). Needed for the same
 // replace-not-merge reason as the migrations above — from_json REPLACES the binding
@@ -677,6 +696,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV1(j, cfg);
     MigrateMenuShortcutKeybindingsV2(j, cfg);
     MigrateQuickCreateKeybindingV1(j, cfg);
+    MigrateGridSearchFocusKeybindingV1(j, cfg);
     // Last: the seeding migrations above pull straight from Defaults(), which already
     // carries the alias sets, so a freshly-seeded row arrives complete and V1/V2's
     // exact-legacy-match guards correctly skip it. V3 then appends any missing

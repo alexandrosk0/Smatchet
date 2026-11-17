@@ -186,6 +186,19 @@ local r = commands.invoke("view.delete", { id = "abc", __confirm = true })
 ```
 
 ```lua
+-- One field on several tickets: ticket.set_field_bulk returns one result per row.
+local r = commands.invoke("ticket.set_field_bulk",
+    { ids = '["PROJ-1","PROJ-2"]', field = "labels", values = '["needs-review"]', mode = "add", __confirm = true })
+-- Called from a UI-thread script (a ticket action, the Lua console) it returns at once with
+-- { started = true, rowCount = N } and saves in the background, so test `rows` before reading it.
+if r.data.rows then
+    for _, row in ipairs(r.data.rows) do
+        print(row.id, row.state, row.message or "")
+    end
+end
+```
+
+```lua
 -- Focus the next grid pane, then rename it.
 commands.invoke("pane.next")
 local r = commands.invoke("pane.rename", { title = "Blockers" })

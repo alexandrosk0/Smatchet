@@ -8,9 +8,9 @@
 #include "TrackerFieldSchema.h"
 #include "Tracker/TrackerInputNormalisePure.h"
 #include "Ui/SmatchetInlineError.h"
+#include "Ui/SmatchetInput.h"
 
 #include <algorithm>
-#include <cstring>
 #include <string>
 
 namespace AnnotateInternal {
@@ -25,34 +25,46 @@ void PersistAnnotateCfg(const char* reason) {
     SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
 }
 
-template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgField, const char* reason) {
-    if (!ImGui::IsItemDeactivatedAfterEdit()) {
-        return false;
-    }
-    cfgField.assign(buf);
-    PersistAnnotateCfg(reason);
-    return true;
+// A path or URL is replaced whole and never carries edge whitespace: a click selects it and the
+// commit trims it. A command template keeps its spaces (`trim` false).
+SmatchetInput::TextOptions SettingFieldOptions(bool trim) {
+    SmatchetInput::TextOptions opts;
+    opts.selectAllOnFocus = true;
+    opts.trimOnCommit = trim;
+    return opts;
 }
 
-// A path or link field the user pastes into (#82, #128). Call right after the InputText. When the caret leaves,
-// the quotes "Copy as path" adds and stray spaces are taken off the text; text that cannot be used is explained
-// under the field and is not saved, so the config keeps the last value that worked. `normalise` reads the buffer.
-template <size_t N, typename NormaliseFn>
-void CommitCheckedField(char (&buf)[N], std::string& cfgField, const char* reason, NormaliseFn normalise) {
-    const bool leftAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
-    const TrackerInputNormalise::PathParse parsed = normalise(buf);
+// One settings row: the shared text field over the form's std::string, persisted to `cfgField`
+// when an edit ends with a changed value (Enter, Tab, a click away; Esc reverts and saves nothing).
+void DrawSettingTextField(const char* label, std::string& text, std::string& cfgField, const char* reason, bool trim) {
+    if (SmatchetInput::Text(label, text, SettingFieldOptions(trim)).committed && text != cfgField) {
+        cfgField = text;
+        PersistAnnotateCfg(reason);
+    }
+}
+
+// A path or link field the user pastes into (#82, #128): the shared text field over the form's string. When
+// the edit ends, the quotes "Copy as path" adds and stray spaces come off the text; text that cannot be used
+// is explained under the field and is not saved, so the config keeps the last value that worked.
+template <typename NormaliseFn>
+void DrawCheckedSettingField(const char* label, std::string& text, std::string& cfgField, const char* reason,
+                             NormaliseFn normalise) {
+    const bool committed = SmatchetInput::Text(label, text, SettingFieldOptions(true)).committed;
+    const TrackerInputNormalise::PathParse parsed = normalise(text.c_str());
     if (!parsed.Ok) {
         smatchet::ui::DrawInlineParseError(parsed.Message);
         return;
     }
-    if (!leftAfterEdit) {
+    if (!committed) {
         return;
     }
-    if (parsed.Rewritten && parsed.Value.size() < N) {
-        std::memcpy(buf, parsed.Value.c_str(), parsed.Value.size() + 1);
+    if (parsed.Rewritten) {
+        text = parsed.Value;
     }
-    cfgField.assign(buf);
-    PersistAnnotateCfg(reason);
+    if (text != cfgField) {
+        cfgField = text;
+        PersistAnnotateCfg(reason);
+    }
 }
 
 void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const IAppTicketMutations& ticketMutations,
@@ -136,9 +148,8 @@ void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
     }
 
     if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
-        ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
-        CommitCheckedField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
-                           [](const char* text) { return TrackerInputNormalise::ValidateHttpUrl(text); });
+        DrawCheckedSettingField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
+                                [](const char* text) { return TrackerInputNormalise::ValidateHttpUrl(text); });
     }
 }
 
@@ -148,26 +159,26 @@ void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
     if (filter.ShowSetting("connections.perforce.p4_exe")) {
-        ImGui::InputText("p4 executable", State().p4Exe, sizeof(State().p4Exe));
-        CommitCheckedField(State().p4Exe, cfg.P4Executable, "edit_p4exe",
-                           [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
+        DrawCheckedSettingField(
+            "p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe",
+            [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
     }
 
     if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
-        ImGui::InputText("p4vc executable", State().p4vcExe, sizeof(State().p4vcExe));
-        CommitCheckedField(State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
-                           [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
+        DrawCheckedSettingField(
+            "p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
+            [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
     }
 
     if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {
-        ImGui::InputText("Timelapse command (optional)", State().timeTpl, sizeof(State().timeTpl));
-        CommitTextField(State().timeTpl, cfg.TimelapseCommandTemplate, "edit_timelapse");
+        DrawSettingTextField("Timelapse command (optional)", State().timeTpl, cfg.TimelapseCommandTemplate,
+                             "edit_timelapse", false);
         ImGui::TextDisabled("Placeholders: {file} {line} {cl}");
     }
 
     if (filter.ShowSetting("connections.perforce.change_cmd")) {
-        ImGui::InputText("Changelist command (optional)", State().changeTpl, sizeof(State().changeTpl));
-        CommitTextField(State().changeTpl, cfg.ChangeCommandTemplate, "edit_change");
+        DrawSettingTextField("Changelist command (optional)", State().changeTpl, cfg.ChangeCommandTemplate,
+                             "edit_change", false);
     }
 
     // One descriptor covers the whole remap-rule editor; its per-row from/to inputs are not
@@ -237,20 +248,22 @@ void DrawAnnotatePathRemaps(bool filtering) {
     if (State().remapBufs.size() != remaps.size()) {
         State().remapBufs.assign(remaps.size(), RemapEditBuf{});
         for (size_t i = 0; i < remaps.size(); ++i) {
-            CopyToBuffer(State().remapBufs[i].from, remaps[i].FromPrefix);
-            CopyToBuffer(State().remapBufs[i].to, remaps[i].ToPrefix);
+            State().remapBufs[i].from = remaps[i].FromPrefix;
+            State().remapBufs[i].to = remaps[i].ToPrefix;
         }
     }
     int removeIdx = -1;
     for (size_t i = 0; i < remaps.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
         ImGui::SetNextItemWidth(220.f);
-        ImGui::InputText("from", State().remapBufs[i].from, sizeof(State().remapBufs[i].from));
-        const bool fromDirty = ImGui::IsItemDeactivatedAfterEdit();
+        // Prefixes keep their exact spelling (a trailing separator is meaningful), so no trim.
+        const bool fromDirty =
+            SmatchetInput::Text("from", State().remapBufs[i].from, SettingFieldOptions(false)).committed &&
+            State().remapBufs[i].from != remaps[i].FromPrefix;
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.f);
-        ImGui::InputText("to", State().remapBufs[i].to, sizeof(State().remapBufs[i].to));
-        const bool toDirty = ImGui::IsItemDeactivatedAfterEdit();
+        const bool toDirty = SmatchetInput::Text("to", State().remapBufs[i].to, SettingFieldOptions(false)).committed &&
+                             State().remapBufs[i].to != remaps[i].ToPrefix;
         ImGui::SameLine();
         const bool remove = ImGui::Button("Remove");
         ImGui::PopID();

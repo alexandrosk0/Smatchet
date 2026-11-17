@@ -3,6 +3,7 @@
 #include "TicketFieldEditorDurationPopupPure.h"
 
 #include <cstring>
+#include <vector>
 
 using TicketFieldEditorDurationPopupPure::IsPrintableTypedChar;
 using TicketFieldEditorDurationPopupPure::ShouldFinalizeOnPopupClose;
@@ -68,6 +69,27 @@ TEST_CASE("SpliceTypedCharsIntoBuf: control chars in the queue are skipped, prin
     const unsigned int queue[] = {0x1Bu, '2', '\r', 'h'};
     CHECK(SpliceTypedCharsIntoBuf(queue, 4, buf, sizeof(buf)));
     CHECK(std::strcmp(buf, "2h") == 0);
+}
+
+TEST_CASE("SpliceTypedCharsIntoBuf: a long mixed batch lands every printable that fits") {
+    // The filter dropdown offers the whole queue: 64 printable, 64 control, then 40 more printable
+    // characters must all land in a 128-byte buffer, whatever the number of queued entries.
+    std::vector<unsigned int> queue;
+    for (int i = 0; i < 64; ++i) {
+        queue.push_back('a');
+    }
+    for (int i = 0; i < 64; ++i) {
+        queue.push_back(0x09u);
+    }
+    for (int i = 0; i < 40; ++i) {
+        queue.push_back('b');
+    }
+    char buf[128] = "";
+    CHECK(SpliceTypedCharsIntoBuf(queue.data(), static_cast<int>(queue.size()), buf, sizeof(buf)));
+    CHECK(std::strlen(buf) == 104);
+    CHECK(buf[63] == 'a');
+    CHECK(buf[64] == 'b');
+    CHECK(buf[103] == 'b');
 }
 
 TEST_CASE("SpliceTypedCharsIntoBuf: non-ASCII codepoint is UTF-8 encoded (2-byte)") {

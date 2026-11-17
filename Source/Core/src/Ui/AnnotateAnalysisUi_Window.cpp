@@ -60,8 +60,8 @@ bool DrawAnnotateHeaderToolbar(AnnotateDrawCtx& ctx) {
     if (ImGui::Button("Ask AI")) {
         const std::string payload = BuildAiExport();
         ImGui::SetClipboardText(payload.c_str());
-        if (State().aiUrl[0] != '\0') {
-            app.OpenUrl(std::string(State().aiUrl));
+        if (!State().aiUrl.empty()) {
+            app.OpenUrl(State().aiUrl);
         }
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {

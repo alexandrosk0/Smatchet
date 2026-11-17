@@ -124,6 +124,22 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, IMainThreadPoster& post
         c.AsyncSafe = true;
         reg.Register(std::move(c));
     }
+    {
+        Command c = MakeCommand("grid.search.focus",
+                                "Put the caret in the focused grid pane's search box (the issue search, not the "
+                                "command search).",
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(poster, []() {
+                                        // Drawn on the next header pass; expires after a few frames.
+                                        g_ui.focusedPane().gridSearchFocusFramesLeft = 3;
+                                        return CommandResult::Success({{"requested", true}});
+                                    });
+                                });
+        c.Destructive = false;
+        c.Idempotent = true; // a second request before the next frame lands on the same box
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
 }
 
 } // namespace cmd
