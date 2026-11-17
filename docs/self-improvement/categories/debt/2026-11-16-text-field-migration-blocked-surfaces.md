@@ -2,7 +2,7 @@
 
 Details:
 The shared text field (`Source/Core/include/Ui/SmatchetInput.h`, plan `docs/plans/input-ux-w2-text-field.md`)
-shipped with Preferences (Tracker credential rows, templates, Annotate), the icon picker, the view rename
+shipped with Preferences (Tracker credential rows, templates, Annotate), the icon picker
 and the toolbar editor migrated. These surfaces were left on raw `InputText` because their files were
 held by another branch's plan-lock when it was written (no lock override was used):
 
@@ -15,6 +15,7 @@ held by another branch's plan-lock when it was written (no lock override was use
 - Every buffer that lives in `Source/Core/include/Ui/SmatchetUiSession.h` still goes through
   `SmatchetInput::TextBuf` (fixed buffer, byte counter, select-all, trim), not `std::string`: the
   Preferences search box (64 B, #2), the tracker credential buffers, the view name buffer.
+- View rename (#5): the title field in `SmatchetViewsDashboardUi.cpp` should take the caret with the name selected when Rename shows it (`SmatchetInput::TextBuf` with `focusOnAppear` + `selectAllOnFocus` + `trimOnCommit`, storage `d.viewNameBuf`; ends on `committed || reverted`). Written and reviewed on the first version of PR #2438, then dropped when sibling lock `pane-picker-jira-sites` claimed the file.
 - Offline conflict resolver: `conflictResolveBuf` (64 KiB / 8 KiB, #112) is in `SmatchetUiSession.h`.
 - Toolbar editor icon name "No such icon" message (#125) needs a new localization row in
   `SmatchetLocalization.cpp`, which was held by three branches.

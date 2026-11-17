@@ -88,14 +88,14 @@ inline bool FieldAppearedThisFrame(int lastDrawnFrame, int frame) {
 struct SingleLineEnd {
     bool committed;      ///< ended by anything but an Esc the field took: Enter, Tab, a click elsewhere
     bool enterCommitted; ///< ... and on a bare Enter, the key a form runs its action on
-    bool reverted;       ///< ended on Esc; ImGui put back the text the field had when activated
+    bool reverted;       ///< ended on an Esc the field itself took; ImGui put back the text it had when activated
 };
 
 /// An Esc the field itself took reverts; everything else that ends the edit commits (§ 3 single-line row).
 /// `escPressed` is false when a surrounding scope took the Esc first and left the field with its text kept,
-/// since nothing was reverted then. Only a bare Enter
-/// (`bareEnterPressed`: no Ctrl / Shift / Alt / Super) counts as the field's Enter: Ctrl+Enter also
-/// ends a single-line edit, and commits it, but stays the surrounding dialog's Save key.
+/// since nothing was reverted then. Only a bare Enter (`bareEnterPressed`: no Ctrl / Shift / Alt / Super)
+/// counts as the field's Enter: Ctrl+Enter also ends a single-line edit, and commits it, but stays the
+/// surrounding dialog's Save key.
 inline SingleLineEnd ResolveSingleLineEnd(bool deactivated, bool escPressed, bool bareEnterPressed) {
     SingleLineEnd end = {false, false, false};
     if (!deactivated) {

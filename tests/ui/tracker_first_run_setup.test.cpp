@@ -912,6 +912,7 @@ static void RegisterTextFieldMultilineKeys(ImGuiTestEngine* engine) {
 
         // The first Esc leaves the field and KEEPS the text (ImGui alone would revert the edit).
         ctx->ItemClick("##Composer");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_End); // caret at the end whatever the line height is
         ctx->KeyChars("c");
         ctx->Yield();
         ctx->KeyPress(ImGuiKey_Escape);
@@ -1006,9 +1007,11 @@ static void RegisterTextFieldInsideDialogScope(ImGuiTestEngine* engine) {
 namespace {
 
 // Opens Preferences on the Jira tab with the caret in the Email row. Domain is filled, so Email is the
-// first blank credential and the open itself puts the caret there (no Tab, no click). The host is on the
-// reserved .invalid TLD, so Test connection (run by Enter) can never reach a real server. False (with the
-// checks already recorded) when a step did not land; the caller then still runs CloseAndRestore.
+// first blank credential and the open itself puts the caret there (no Tab, no click). Test connection (run
+// by Enter) cannot reach a real server for two reasons: the token is blank, which the probe turns back
+// before any request (ProbeReachability -> EnsureTrackerAuthConfig), and the host is on the reserved
+// .invalid TLD, which never resolves. False (with the checks already recorded) when a step did not land;
+// the caller then still runs CloseAndRestore.
 bool OpenPreferencesAtEmail(ImGuiTestContext* ctx) {
     BlankJiraCredentials(g_ui.cfg);
     g_ui.cfg.Domain = "probe.invalid";

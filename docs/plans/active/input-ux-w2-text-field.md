@@ -126,7 +126,7 @@ Write set (plan-lock claim). Every path below is outside every other branch's li
 
 12. `Source/Core/include/Ui/SmatchetIconPickerUi.h`: `search_` becomes `std::string`.
 13. `Source/Core/src/Ui/SmatchetIconPickerUi.cpp`: the filter query is a `std::string` field (`SmatchetInput::Text`, select-all on click, never clips). The caret on open, Esc to cancel and Enter-picks-the-only-match come from the dialog contract (piece 4.1, `Ui/SmatchetDialogScope.h`), which had already moved this picker when this branch merged develop; this branch takes only the storage and select-all. (Written before 4.1 merged as "caret on open, Enter picks the first match": superseded, see § Deviations.)
-14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`: the view-title rename field takes the caret when Rename shows it, with the name selected (#5), via `TextBuf` + `focusOnAppear` (storage `d.viewNameBuf` is in the locked session header).
+14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`: **deferred, not in this PR.** The view-title rename field was to take the caret with the name selected (#5). A sibling plan-lock (`pane-picker-jira-sites`) claimed this file after the branch was written, so the change was dropped from the PR rather than overriding the lock; it moves to the debt entry `2026-11-16-text-field-migration-blocked-surfaces`.
 
 **Tests**
 
@@ -151,7 +151,6 @@ Write set (plan-lock claim). Every path below is outside every other branch's li
 | `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp` | `CommitTextField` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/AnnotateAnalysisUi_Worker.cpp` | `RunAnnotateProcessFromBuffers` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetIconPickerUi.cpp` | `SmatchetIconPickerUi::Draw` | `CORE_SOURCES` |
-| `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` | `drawViewsEditorHeader` | `CORE_SOURCES` |
 
 ## Existing utilities reused
 
@@ -203,7 +202,7 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 
 - **Slice 1 — family.** Write set: items 1-4, 15, 18. Pre-resolved: `::ImGui` only inside the widget TU (no `#define ImGui` alias); labels go through `LabelFromSource` exactly once.
 - **Slice 2 — Preferences.** Write set: items 5-11, 16. Pre-resolved: `CredentialInputText` keeps `FocusNextItemIfOpenTarget` ahead of the widget (Wave 1's open-focus latch), and its return stays the bare-Enter signal that runs Test connection. Annotate's `RunAnnotateProcessFromBuffers` stays on the UI thread.
-- **Slice 3 — pickers.** Write set: items 12-14, 17. Pre-resolved: dialog behaviour (caret on open, Esc, Enter) belongs to the dialog scope (4.1) and the picker keeps 4.1's rules; the field only owns the query's storage and select-all.
+- **Slice 3 — pickers.** Write set: items 12, 13, 17 (14, the view rename, was dropped: see § Deviations). Pre-resolved: dialog behaviour (caret on open, Esc, Enter) belongs to the dialog scope (4.1) and the picker keeps 4.1's rules; the field only owns the query's storage and select-all.
 - **Order:** slice 1 first (everything calls it). Composers are not in this PR (§ Out of scope).
 
 ## Verification
@@ -224,7 +223,7 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
-- **Surfaces behind another branch's plan-lock** (follow-up once released; debt entry item 20): grid inline edit 512 B (#36, `SpreadsheetState.h` + `TicketFieldEditor.cpp`); labels add-and-keep-focus (#4, `TrackerLabelsEditor.cpp`); project-picker and labels filter focus (#3, project picker + labels editor); JQL-style suggestion popup for other fields (#10, `SmatchetViewsDashboardUi_widgets.cpp`); the Preferences search box and every `SmatchetUiSession.h`-backed buffer moving from `TextBuf` to `std::string` (#2's `prefsSearchBuf[64]`); conflict resolver growable buffer (#112, `conflictResolveBuf` in `SmatchetUiSession.h`).
+- **Surfaces behind another branch's plan-lock** (follow-up once released; debt entry item 20): view rename caret (#5, `SmatchetViewsDashboardUi.cpp`, claimed by `pane-picker-jira-sites` after this plan was written); grid inline edit 512 B (#36, `SpreadsheetState.h` + `TicketFieldEditor.cpp`); labels add-and-keep-focus (#4, `TrackerLabelsEditor.cpp`); project-picker and labels filter focus (#3, project picker + labels editor); JQL-style suggestion popup for other fields (#10, `SmatchetViewsDashboardUi_widgets.cpp`); the Preferences search box and every `SmatchetUiSession.h`-backed buffer moving from `TextBuf` to `std::string` (#2's `prefsSearchBuf[64]`); conflict resolver growable buffer (#112, `conflictResolveBuf` in `SmatchetUiSession.h`).
 - **Composers** (comment box, worklog description #2, AI composer #102, Quick Create, new-issue description, long-text editor): wait on the dictation string target (item 21). They also overlap pieces 4.3 (drafts) and 4.4 (Ctrl+Enter + key hints). `Multiline` ships ready for them.
 - **Toolbar icon-name feedback (#125)**: needs a new user-facing string, so a `SmatchetLocalization.cpp` row, which is locked. The name field moves to `std::string` with the hoist; the "No such icon" message is deferred.
 
@@ -236,6 +235,7 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 
 - **Icon picker follows piece 4.1, not this plan's first draft.** The plan first gave the picker "caret on open, Enter picks the first match". Piece 4.1 (`Ui/SmatchetDialogScope.h`, #2437) merged first and already owns dialog focus, Esc and Enter: the caret on open comes from `DialogFocusHere`, Esc cancels, Enter picks only when exactly one icon matches. This branch kept 4.1's rules and took only the `std::string` query and select-all; its picker tests follow 4.1's Enter rule. No second dialog helper was written.
 - **A dialog that takes Esc first makes the field report a commit.** Found in review: under 4.1's `DialogReadKeys` the dialog clears the active field before the field is drawn, so ImGui never reverts, but the field reported `reverted`. The field now notes whether it held the keyboard when drawn and reports `committed` otherwise (header `SmatchetInput.h`, test `EscTakenByTheDialogScopeKeepsTextAndReportsCommit`).
+- **View rename (#5) deferred.** Item 14 was written and reviewed, then dropped before merge: the sibling lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`) now covers `SmatchetViewsDashboardUi.cpp`, and this session's own pre-push hook and the CI plan-lock gate refuse a diff that touches it. Narrowed per the lock rules; no override. It was the only file of the diff in a live lock; the diff now overlaps none.
 - **Plan-lock not claimed.** `lock-claim.sh` pushes `refs/locks/input-ux-w2-text-field`, which the session's git proxy refuses with HTTP 403 (two attempts, one from a clean `origin/develop` worktree). The write set was checked by hand against every live lock and overlaps none. No override was used.
 
 ## Verification (actual)
