@@ -30,9 +30,10 @@ EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58815}"
 # imgui_test_engine's filter is substring-match with optional ^ / $ / comma —
-# NOT a glob. "TrackerFirstRun" is the registered category, so it matches every
-# test in the file and nothing else.
-FILTER="${UI_TEST_FILTER:-TrackerFirstRun}"
+# NOT a glob. The file registers two categories: "TrackerFirstRun" (the Preferences
+# first-run surface) and "TextField" (the shared text field, Ui/SmatchetInput.h), so
+# the default filter lists both.
+FILTER="${UI_TEST_FILTER:-TrackerFirstRun,TextField}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc" >&2
