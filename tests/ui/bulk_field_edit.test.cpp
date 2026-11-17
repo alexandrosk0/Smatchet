@@ -1036,8 +1036,9 @@ static void RegisterLabelsRemoveMode(ImGuiTestEngine* engine) {
     };
 }
 
-// BulkFieldEdit/Labels_EnterInTickBoxListKeepsModalOpen: Enter in the tick-box list of the modal ticks the match and
-// leaves the dialog open with its picks (the shared dropdown used to close the modal on Enter and lose them).
+// BulkFieldEdit/Labels_EnterInTickBoxListKeepsModalOpen: the first Enter in the modal's tick-box list ticks the match
+// and leaves the dialog open with its picks (the shared dropdown used to close the modal on Enter and lose them); the
+// next Enter, with no row left to act on, finishes the list, and the dialog treats that as Apply.
 static void RegisterLabelsEnterKeepsModal(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_EnterInTickBoxListKeepsModalOpen");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -1057,13 +1058,59 @@ static void RegisterLabelsEnterKeepsModal(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(3);
-        const BulkEditPopupRequest& req = g_ui.bulkEditPopupRequest;
-        IM_CHECK_NO_RET(req.Active);
-        IM_CHECK_NO_RET(req.CurrentStage == BulkEditPopupRequest::Stage::Pick);
-        IM_CHECK_NO_RET(req.Picked.size() == 1 && req.Picked.front() == "gamma");
-        IM_CHECK_NO_RET(PopupItemExists(ctx, PickApplyRef())); // the dialog is still drawn
-        IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
-        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+        {
+            const BulkEditPopupRequest& req = g_ui.bulkEditPopupRequest;
+            IM_CHECK_NO_RET(req.Active);
+            IM_CHECK_NO_RET(req.CurrentStage == BulkEditPopupRequest::Stage::Pick);
+            IM_CHECK_NO_RET(req.Picked.size() == 1 && req.Picked.front() == "gamma");
+            IM_CHECK_NO_RET(PopupItemExists(ctx, PickApplyRef())); // the dialog is still drawn
+            IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
+            IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+        }
+
+        // A pick already made and nothing new matched: Enter only finishes the list, which applies the pick.
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        BULK_REQUIRE(FindJob(jobId) != nullptr);
+        BULK_REQUIRE(WaitJobDone(ctx, jobId));
+        const BulkSummary summary = smatchet::grid::bulk::Summarize(*FindJob(jobId));
+        IM_CHECK_NO_RET(summary.Saved == 3);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + 3);
+        IM_CHECK_NO_RET(!g_ui.bulkEditPopupRequest.Active);
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Labels_EnterWithNothingTickedKeepsModalOpen: Enter in an empty tick-box list has nothing to apply, so
+// the dialog stays open and sends nothing.
+static void RegisterLabelsEnterNothingTicked(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Labels_EnterWithNothingTickedKeepsModalOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const std::set<int> rows = EditableRows(3);
+        SelectRows(rows);
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 3, *rows.begin(), kLabelsKey));
+        for (int pass = 0; pass < 2; ++pass) { // Replace, then Add
+            ctx->KeyPress(ImGuiKey_Enter);
+            ctx->Yield(3);
+            IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.Active);
+            IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.Picked.empty());
+            IM_CHECK_NO_RET(PopupItemExists(ctx, PickApplyRef()));
+            IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
+            IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+            if (pass == 0) {
+                ctx->ItemClick(AddModeRef().c_str());
+                ctx->Yield(2);
+            }
+        }
 
         ctx->ItemClick(PickCancelRef().c_str());
         ctx->Yield(3);
@@ -1082,6 +1129,7 @@ extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterLabelsAddMode(engine);
     RegisterLabelsRemoveMode(engine);
     RegisterLabelsEnterKeepsModal(engine);
+    RegisterLabelsEnterNothingTicked(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -21,6 +21,11 @@
 // Per-popup state (filter text, highlight) is kept inside, keyed by the popup window, and starts fresh
 // each time the popup opens.
 //
+// DrawBody must be called directly in the popup window it belongs to, not inside a child window or a table:
+// what it does on Enter and Esc (close the popup, or leave it to the caller) depends on whether that window is
+// a modal, and it reads the current window to tell. A tick-box list drawn straight in a caller's modal never
+// closes it on Enter; it reports EventKind::Done instead, for the caller's own Apply.
+//
 // Combo callers pass ImGuiComboFlags_HeightLargest so the combo's own height limit does not add a second
 // scrollbar around the body's list.
 //
@@ -59,6 +64,8 @@ enum class EventKind {
     Picked,  // an option row: Id (and ItemIndex, or -1 for a recent id outside the options)
     Cleared, // the clear row
     Created, // the 'Add "<text>"' row: Id is the trimmed filter text
+    Done,    // Enter finished a tick-box list drawn straight in a caller's modal and acted on no row: the caller
+             // decides what finishing means (its Apply button). Never sent from a combo popup, which closes itself.
 };
 
 struct Event {

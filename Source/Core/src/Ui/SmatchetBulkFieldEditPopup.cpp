@@ -14,6 +14,7 @@
 #include "Tracker/ProjectResolver.h"
 #include "Tracker/TrackerFieldValueUtils.h"
 #include "Tracker/TrackerLabelsPure.h"
+#include "TicketFieldEditor.h"
 #include "TrackerOptionDropdown.h"
 #include "Ui/BulkFieldEditPure.h"
 
@@ -46,7 +47,7 @@ struct PopupEnv {
 };
 
 // The option list the picker offers. Components are scoped to the clicked row's own Jira project (the same rule as the
-// grid's components cell, PickRowComponents in TicketFieldEditor.cpp); every other field uses the catalog's list.
+// grid's components cell: PickProjectComponents); every other field uses the catalog's list.
 struct OptionList {
     ProjectComponentsLookup Holder; // keeps the project list alive
     const std::vector<TrackerFieldOption>* Options = nullptr;
@@ -61,15 +62,8 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
     if (!IsComponentsField(req.Field)) {
         return list;
     }
-    const std::string projectKey = smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId);
-    list.Holder = app.GetComponentOptionsForProject(projectKey);
-    if (list.Holder.freshness != smatchet::offline::DataFreshness::Fresh &&
-        app.EnsureProjectComponentsLoaded(projectKey)) {
-        list.Holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
-    }
-    const bool catalogIsRowProject = !list.Holder.options && app.IsFieldCatalogScopedToProject(projectKey);
-    const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickComponentOptions(
-        list.Holder, catalogIsRowProject, req.Field.AllowedValueOptions, app.GetLastTrackerConnectivityState());
+    const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickProjectComponents(
+        app, smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId), req.Field, list.Holder);
     list.Options = pick.Options;
     list.Freshness = pick.Freshness;
     return list;
@@ -277,12 +271,19 @@ void ApplyMultiEvent(BulkEditPopupRequest& req, const smatchet::dropdown::Event&
     req.Clear = false;
 }
 
-// Apply / Cancel row of the multi-value picker. Apply needs a pick, or Replace with an explicit clear.
-void DrawMultiButtons(PopupEnv& e) {
+// Apply needs a pick, or Replace with an explicit clear.
+bool CanApplyMulti(const BulkEditPopupRequest& req) {
+    return !req.Picked.empty() || (req.Mode == BulkMode::Replace && req.Clear);
+}
+
+// Apply / Cancel row of the multi-value picker. `enterDone`: Enter finished the tick-box list this frame, which
+// is Apply when Apply is enabled.
+void DrawMultiButtons(PopupEnv& e, bool enterDone) {
     BulkEditPopupRequest& req = e.Req;
-    const bool canApply = !req.Picked.empty() || (req.Mode == BulkMode::Replace && req.Clear);
+    const bool canApply = CanApplyMulti(req);
     ImGui::BeginDisabled(!canApply);
-    if (ImGui::Button(SmatchetLocalization::Label("grid.bulk.apply", "Apply", "bulk_pick_apply"))) {
+    if (ImGui::Button(SmatchetLocalization::Label("grid.bulk.apply", "Apply", "bulk_pick_apply")) ||
+        (enterDone && canApply)) {
         Proceed(e, req.Picked);
         ImGui::CloseCurrentPopup();
     }
@@ -343,7 +344,7 @@ void DrawPickBody(PopupEnv& e) {
     if (multi) {
         ApplyMultiEvent(req, ev);
         ImGui::Separator();
-        DrawMultiButtons(e);
+        DrawMultiButtons(e, ev.Kind == smatchet::dropdown::EventKind::Done);
         return;
     }
     if (ev.Kind == smatchet::dropdown::EventKind::Picked) {

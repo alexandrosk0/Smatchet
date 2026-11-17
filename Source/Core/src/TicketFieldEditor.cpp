@@ -369,6 +369,18 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     return submitted || finalDeactivated;
 }
 
+smatchet::components::ComponentOptionsPick
+smatchet::components::PickProjectComponents(AppController& app, const std::string& projectKey,
+                                            const TrackerField& field, ProjectComponentsLookup& holder) {
+    holder = app.GetComponentOptionsForProject(projectKey);
+    if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
+        holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
+    }
+    const bool catalogIsRowProject = !holder.options && app.IsFieldCatalogScopedToProject(projectKey);
+    return PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
+                                app.GetLastTrackerConnectivityState());
+}
+
 namespace {
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
@@ -833,30 +845,19 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
     }
 }
 
-// The option list a components editor or cell uses for its row (Pillar 6): the row's own project list,
-// live or saved, kicking a background fetch while it is not live; else the catalog's list when the
-// catalog was fetched for that same project; else none. Never another project's list: the catalog of a
-// cross-project view would offer components that do not exist in this row's project. `holder` keeps
-// the returned list alive.
+// The option list a components editor or cell uses for its row: PickProjectComponents on the row's project.
 smatchet::components::ComponentOptionsPick PickRowComponents(AppController& app, const CachedTicket& ticket,
                                                              const TrackerField& field,
                                                              ProjectComponentsLookup& holder) {
-    const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-    holder = app.GetComponentOptionsForProject(projectKey);
-    if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
-        holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
-    }
-    const bool catalogIsRowProject = !holder.options && app.IsFieldCatalogScopedToProject(projectKey);
-    return smatchet::components::PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
-                                                      app.GetLastTrackerConnectivityState());
+    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field, holder);
 }
 
 void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                              bool singleClickToEdit) {
-    // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickRowComponents
-    // explains. Every other field keeps the global AllowedValueOptions.
+    // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickProjectComponents
+    // (TicketFieldEditor.h) explains. Every other field keeps the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
     ProjectComponentsLookup rowComponents;
     smatchet::offline::DataFreshness optionsFreshness = smatchet::offline::DataFreshness::Fresh;
