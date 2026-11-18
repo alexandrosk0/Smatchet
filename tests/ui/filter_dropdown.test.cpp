@@ -547,6 +547,24 @@ void RegisterPageDown(ImGuiTestEngine* engine) {
 }
 
 // ============================================================================
+// L2. Ctrl+PageDown is the global next-view shortcut, not a page move: the highlight stays put.
+// ============================================================================
+void RegisterCtrlPageDownDoesNotPage(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "CtrlPageDown_DoesNotMoveAPage");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown); // "alpha" (row 0) stays highlighted
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "alpha");
+    };
+}
+
+// ============================================================================
 // M. A picker with a clear row and no options: the empty-state text is shown under the clear row,
 //    Enter does not clear the field, and the clear row is still one arrow key away.
 // ============================================================================
@@ -917,6 +935,7 @@ extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
     RegisterKeptTickedDoesNotTakeEnter(engine);                  // J: Enter acts on the match, not a kept ticked option
     RegisterUnknownRecentPick(engine);                           // K: a recent pick outside the options
     RegisterPageDown(engine);                                    // L: PageDown
+    RegisterCtrlPageDownDoesNotPage(engine);                     // L2: Ctrl+PageDown is next view, not a page
     RegisterLoneClearRow(engine);                                // M: empty state under a lone clear row
     RegisterOptionsArriveLate(engine);                           // N: options arriving under an open popup
     RegisterHighlightFollowsItsOption(engine);                   // O: rows inserted above the highlight

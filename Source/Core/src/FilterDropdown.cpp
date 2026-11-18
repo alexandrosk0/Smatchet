@@ -598,10 +598,13 @@ void UpdateHighlight(BodyState& st, int count, const Options& options, const std
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
         move -= 1;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_PageDown, true)) {
+    // Ctrl+PageDown / Ctrl+PageUp belong to the global view.next / view.previous shortcuts, which
+    // still fire under this non-modal popup: paging the list on the same key press would act twice.
+    const bool ctrlHeld = ImGui::GetIO().KeyCtrl;
+    if (!ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_PageDown, true)) {
         move += maxRows;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_PageUp, true)) {
+    if (!ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_PageUp, true)) {
         move -= maxRows;
     }
     if (move != 0) {

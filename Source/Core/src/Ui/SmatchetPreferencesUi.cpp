@@ -1533,18 +1533,7 @@ bool DrawPrefsSearchBoxInput(UiDrawSession& d) {
         ImGui::SetKeyboardFocusHere();
         s_prefsOpenFocus.searchBox = false;
     }
-    ImGuiContext& g = *::ImGui::GetCurrentContext();
-    const ImGuiID searchId = s_prefsSearchInputId;
-    if (searchId != 0 && (g.ActiveId == searchId || g.ActiveIdPreviousFrame == searchId) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        d.prefsSearchBuf[0] = '\0';
-        if (g.ActiveId == searchId) {
-            ImGui::ClearActiveID();
-        }
-        if (g.InputTextDeactivatedState.ID == searchId) {
-            g.InputTextDeactivatedState.ClearFreeMemory();
-        }
-    }
+    SmatchetInput::ClearSearchOnEscape(s_prefsSearchInputId, d.prefsSearchBuf);
     // The placeholder names the bound key, read live so a rebind shows on the next frame.
     std::string hint = SmatchetLocalization::TranslateSource("Search settings...");
     const std::string boundKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "preferences.search.focus");
