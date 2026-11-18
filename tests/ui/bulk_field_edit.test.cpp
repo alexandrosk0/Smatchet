@@ -437,6 +437,42 @@ std::set<std::string> LabelsOf(AppController& app, const std::string& issueId) {
     return out;
 }
 
+// The values one recorded bulk call sent to the backend.
+std::set<std::string> SentValues(const nlohmann::json& fields) {
+    std::set<std::string> out;
+    if (fields.is_object() && fields.contains("values") && fields["values"].is_array()) {
+        for (const nlohmann::json& value : fields["values"]) {
+            if (value.is_string()) {
+                out.insert(value.get<std::string>());
+            }
+        }
+    }
+    return out;
+}
+
+// `holders` rows that carry `label` and `others` rows that do not, picked by what they hold so a sort saved in the
+// profile cannot change the mix (SMAT-12 left out, as in EditableRows).
+std::set<int> RowsByLabel(AppController& app, const std::string& label, int holders, int others) {
+    std::set<int> rows;
+    int haveHolders = 0;
+    int haveOthers = 0;
+    for (int row = 0; row < kFixtureRows; ++row) {
+        const std::string id = IdAtRow(row);
+        if (id.empty() || id == "SMAT-12") {
+            continue;
+        }
+        const bool holds = LabelsOf(app, id).count(label) != 0;
+        if (holds && haveHolders < holders) {
+            rows.insert(row);
+            ++haveHolders;
+        } else if (!holds && haveOthers < others) {
+            rows.insert(row);
+            ++haveOthers;
+        }
+    }
+    return rows;
+}
+
 // A button / radio of the open picker, addressed the way the app labels it (text + ### id).
 std::string PopupItemRef(const char* key, const char* fallback, const char* id) {
     return std::string("//$FOCUSED/") + SmatchetLocalization::Label(key, fallback, id);
@@ -444,6 +480,12 @@ std::string PopupItemRef(const char* key, const char* fallback, const char* id) 
 
 bool PopupItemExists(ImGuiTestContext* ctx, const std::string& ref) {
     return ctx->ItemInfo(ref.c_str(), ImGuiTestOpFlags_NoError).ID != 0;
+}
+
+// The item is drawn and is not disabled (an item that vanished is neither enabled nor disabled).
+bool PopupItemEnabled(ImGuiTestContext* ctx, const std::string& ref) {
+    const ImGuiTestItemInfo info = ctx->ItemInfo(ref.c_str(), ImGuiTestOpFlags_NoError);
+    return info.ID != 0 && (info.ItemFlags & ImGuiItemFlags_Disabled) == 0;
 }
 
 bool PopupItemDisabled(ImGuiTestContext* ctx, const std::string& ref) {
@@ -899,10 +941,10 @@ static void RegisterLabelsModeToggle(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(3);
-        IM_CHECK_NO_RET(!PopupItemDisabled(ctx, PickApplyRef()));
+        IM_CHECK_NO_RET(PopupItemEnabled(ctx, PickApplyRef()));
         ctx->ItemClick(AddModeRef().c_str());
         ctx->Yield(2);
-        IM_CHECK_NO_RET(!PopupItemDisabled(ctx, PickApplyRef()));
+        IM_CHECK_NO_RET(PopupItemEnabled(ctx, PickApplyRef()));
 
         // Cancel closes the request and sends nothing.
         ctx->ItemClick(PickCancelRef().c_str());
@@ -963,11 +1005,9 @@ static void RegisterLabelsAddMode(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + 4);
         for (std::size_t i = callsBefore; i < env.Fake->UpdateIssueFieldsCalls().size(); ++i) {
             const auto& call = env.Fake->UpdateIssueFieldsCalls()[i];
-            const std::string sent = call.Fields.dump();
-            IM_CHECK_NO_RET(sent.find("beta") != std::string::npos);
-            for (const std::string& kept : before[call.IssueId]) {
-                IM_CHECK_NO_RET(sent.find(kept) != std::string::npos); // Add keeps what the row had
-            }
+            std::set<std::string> want = before[call.IssueId]; // Add keeps what the row had, plus the new label
+            want.insert("beta");
+            IM_CHECK_NO_RET(SentValues(call.Fields) == want);
         }
         for (const std::string& id : selectedIds) {
             std::set<std::string> want = before[id];
@@ -992,7 +1032,8 @@ static void RegisterLabelsRemoveMode(ImGuiTestEngine* engine) {
         BucketE::UiTestWriteScope writeScope;
         ctx->SetRef(kGridWindow);
 
-        const std::set<int> rows = EditableRows(4);
+        const std::set<int> rows = RowsByLabel(*env.App, "alpha", 2, 2);
+        IM_CHECK_NO_RET(rows.size() == 4); // fixture must offer 2 alpha holders + 2 other rows
         SelectRows(rows);
         const std::set<std::string> selectedIds = IdsAtRows(rows);
         std::set<std::string> holders;
@@ -1025,7 +1066,12 @@ static void RegisterLabelsRemoveMode(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(summary.Skipped == static_cast<int>(selectedIds.size() - holders.size()));
         IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + holders.size());
         for (std::size_t i = callsBefore; i < env.Fake->UpdateIssueFieldsCalls().size(); ++i) {
-            IM_CHECK_NO_RET(holders.count(env.Fake->UpdateIssueFieldsCalls()[i].IssueId) == 1);
+            const auto& call = env.Fake->UpdateIssueFieldsCalls()[i];
+            IM_CHECK_NO_RET(holders.count(call.IssueId) == 1);
+            std::set<std::string> want = before[call.IssueId]; // what the backend got: the row's labels minus alpha
+            want.erase("alpha");
+            IM_CHECK_NO_RET(call.Fields.contains("values")); // an empty `want` must not match a missing payload
+            IM_CHECK_NO_RET(SentValues(call.Fields) == want);
         }
         for (const std::string& id : selectedIds) {
             std::set<std::string> want = before[id];

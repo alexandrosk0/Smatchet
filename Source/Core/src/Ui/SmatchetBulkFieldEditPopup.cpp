@@ -277,20 +277,22 @@ bool CanApplyMulti(const BulkEditPopupRequest& req) {
 }
 
 // Apply / Cancel row of the multi-value picker. `enterDone`: Enter finished the tick-box list this frame, which
-// is Apply when Apply is enabled.
+// is Apply when Apply is enabled. Cancel wins when both fire in one frame: Enter on a focused Cancel button
+// reaches the list as a finish too, and must cancel, not submit the pick.
 void DrawMultiButtons(PopupEnv& e, bool enterDone) {
     BulkEditPopupRequest& req = e.Req;
     const bool canApply = CanApplyMulti(req);
     ImGui::BeginDisabled(!canApply);
-    if (ImGui::Button(SmatchetLocalization::Label("grid.bulk.apply", "Apply", "bulk_pick_apply")) ||
-        (enterDone && canApply)) {
-        Proceed(e, req.Picked);
-        ImGui::CloseCurrentPopup();
-    }
+    const bool applyClicked = ImGui::Button(SmatchetLocalization::Label("grid.bulk.apply", "Apply", "bulk_pick_apply"));
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::Label("grid.bulk.cancel", "Cancel", "bulk_pick_cancel"))) {
         req.Active = false;
+        ImGui::CloseCurrentPopup();
+        return;
+    }
+    if (applyClicked || (enterDone && canApply)) {
+        Proceed(e, req.Picked);
         ImGui::CloseCurrentPopup();
     }
 }
@@ -304,6 +306,7 @@ void DrawPickBody(PopupEnv& e) {
 
     ImGui::TextUnformatted(HeaderText(req.Preview).c_str());
     DrawSkippedRows(req.Preview);
+    const BulkMode modeBefore = req.Mode; // an Enter that switched the mode is not an Apply
     if (multi) {
         DrawModeToggle(req);
     }
@@ -344,7 +347,7 @@ void DrawPickBody(PopupEnv& e) {
     if (multi) {
         ApplyMultiEvent(req, ev);
         ImGui::Separator();
-        DrawMultiButtons(e, ev.Kind == smatchet::dropdown::EventKind::Done);
+        DrawMultiButtons(e, ev.Kind == smatchet::dropdown::EventKind::Done && req.Mode == modeBefore);
         return;
     }
     if (ev.Kind == smatchet::dropdown::EventKind::Picked) {

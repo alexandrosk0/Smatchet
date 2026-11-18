@@ -793,7 +793,7 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     if (closePopup) {
         ImGui::CloseCurrentPopup();
     }
-    if (EnterDoneInModal(options, enterPressed, ev)) {
+    if (!closePopup && EnterDoneInModal(options, enterPressed, ev)) { // Esc in the same frame wins: not a finish
         ev.Kind = EventKind::Done;
     }
     return ev;

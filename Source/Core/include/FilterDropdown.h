@@ -24,7 +24,9 @@
 // DrawBody must be called directly in the popup window it belongs to, not inside a child window or a table:
 // what it does on Enter and Esc (close the popup, or leave it to the caller) depends on whether that window is
 // a modal, and it reads the current window to tell. A tick-box list drawn straight in a caller's modal never
-// closes it on Enter; it reports EventKind::Done instead, for the caller's own Apply.
+// closes it on Enter; it reports EventKind::Done instead, for the caller's own Apply. Esc is not part of that:
+// a focused body closes its popup on Esc whether or not the popup is a modal, so a caller must not count on its
+// modal staying open after Esc (and an Esc in the same frame as the Enter suppresses Done).
 //
 // Combo callers pass ImGuiComboFlags_HeightLargest so the combo's own height limit does not add a second
 // scrollbar around the body's list.

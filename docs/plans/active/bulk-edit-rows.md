@@ -276,7 +276,8 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - Doctests (`ninja-test-msvc`, `SmatchetTests.exe`): 4218 / 4218 passed, including the `TruncateUtf8WithEllipsis` and `BulkFieldEditPure` cases.
 - Bucket-E (`ninja-ui-test-msvc`): `test-ui-bulk-field-edit` 10 / 10, `test-ui-filter-dropdown` 19 / 19, `test-ui-data-dependent-windows` 12 / 12.
 - `bash scripts/dev/pre-ship.sh`: all gates passed except the review ack, which is recorded after the code-review pass.
-- Not run: the `SmatchetCore_DX12` dual-target build gate (no change touches a GLFW/OpenGL path; Core headers stay GL-free); a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
+- Build gate: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` passed (fresh configure, 1107 steps).
+- Not done: a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
 - Manual residue: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
