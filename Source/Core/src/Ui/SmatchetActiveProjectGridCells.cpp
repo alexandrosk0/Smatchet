@@ -486,10 +486,10 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         const bool allowEditsForCell = !readOnlyMode && column.NeedsAllowEditsCheck &&
                                        app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
         ImGui::BeginGroup();
-        TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
-                                           d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, ctx.pane.gridState,
-                                           pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
-                                           d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells);
+        TicketFieldEditor::RenderFieldCell(
+            app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
+            allowEditsForCell, ctx.pane.gridState, pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
+            d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells, ctx.pane.id);
         ImGui::EndGroup();
         // Fields with a viewer window (History) open it on a plain left click: the release must not end
         // a drag (rect-selection) and Ctrl/Shift stay multi-select. The hover tooltip is unchanged.

@@ -11,6 +11,11 @@
 // The query is read with the pane's own backend parser (ITrackerConnectivity::ExtractProjectFromQuery), so a
 // Jira pane parses JQL and a Plane pane its structured query. The parser is pure: no request is sent, which
 // keeps this safe on the UI thread. Header-only.
+//
+// Plane note: the focused grid's own fetch resolves a Plane project further (ResolvePlaneOperationProject: the
+// config query, then the workspace's sole project via ListProjects). Both are left out here: the config query
+// carries the FOCUSED view's scope, and ListProjects is a network call. A Plane pane whose view names no
+// project_id therefore fetches its own catalog unscoped.
 
 #include "ITrackerConnectivity.h"
 

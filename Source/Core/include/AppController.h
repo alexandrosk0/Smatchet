@@ -1144,6 +1144,11 @@ class AppController : public IAppThreading,
      *  availableFieldsMutex_. */
     bool IsFieldCatalogScopedToProject(const std::string& projectKey) const;
 
+    /** IsFieldCatalogScopedToProject for the catalog grid pane `paneId`'s cells read: the pane's own
+     *  catalog when the pane is unfocused and its own catalog is populated (the per-pane catalog
+     *  routing), else the focused one. An empty `paneId` means the focused pane. UI thread. */
+    bool IsPaneFieldCatalogScopedToProject(const std::string& paneId, const std::string& projectKey) const;
+
     /** True when the focused context's field catalog was fetched for the Jira backend WITHOUT a
      *  project scope (#2146): the active view's JQL resolved to no single project, so createmeta
      *  enrichment was skipped and every project-scoped option list (versions, project custom-field

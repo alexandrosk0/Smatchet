@@ -1260,14 +1260,37 @@ bool AppController::RefreshProjectComponents(const std::string& projectKey) {
     return components_ && components_->RefreshComponents(projectKey);
 }
 
+namespace {
+
+// True when `cat` was fetched for `projectKey` (compared without case). Caller holds cat.availableFieldsMutex_.
+bool CatalogScopedToProjectLocked(const GridContextFieldCatalog& cat, const std::string& projectKey) {
+    return !projectKey.empty() && ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(projectKey);
+}
+
+} // namespace
+
 bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
-    if (projectKey.empty()) {
-        return false;
-    }
     const GridContextFieldCatalog& cat =
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
     std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-    return ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(projectKey);
+    return CatalogScopedToProjectLocked(cat, projectKey);
+}
+
+bool AppController::IsPaneFieldCatalogScopedToProject(const std::string& paneId, const std::string& projectKey) const {
+    // UI thread. Ask the catalog the pane's cells actually read (SmatchetUI::resolvePaneCatalog /
+    // ChoosePaneCatalogSource): an unfocused pane whose own catalog is populated reads that one, so its pinned
+    // project decides. The focused pane, an unknown pane and an unpopulated one read the focused catalog.
+    if (!paneId.empty() && paneId != focusedPaneId_) {
+        const std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+        if (it != gridContexts_.end() && it->second) {
+            const GridContextFieldCatalog& own = it->second->fieldCatalog;
+            std::lock_guard<std::mutex> lock(own.availableFieldsMutex_);
+            if (own.fieldCatalogEverLoaded_ || own.fieldCatalogRestored_) {
+                return CatalogScopedToProjectLocked(own, projectKey);
+            }
+        }
+    }
+    return IsFieldCatalogScopedToProject(projectKey);
 }
 
 bool AppController::FieldCatalogLacksProjectScope() const {
