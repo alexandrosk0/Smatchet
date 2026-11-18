@@ -1534,6 +1534,7 @@ bool DrawPrefsSearchBoxInput(UiDrawSession& d) {
         s_prefsOpenFocus.searchBox = false;
     }
     ImGuiContext& g = *::ImGui::GetCurrentContext();
+    // SMATCHET_DEVIATION(rule=duplication; reason=the Esc-clears-the-search block is the same ImGui deactivated-state workaround as the grid search box in SmatchetGridHeaderUi.cpp, which another branch's plan-lock (pane-picker-jira-sites) holds, so a shared helper cannot touch it from this PR (debt entry 2026-11-18-esc-clears-search-helper-duplication extracts one once that file is free); owner=orchestrator; revisit=2026-12-02)
     const ImGuiID searchId = s_prefsSearchInputId;
     if (searchId != 0 && (g.ActiveId == searchId || g.ActiveIdPreviousFrame == searchId) &&
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
