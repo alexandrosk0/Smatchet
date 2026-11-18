@@ -1432,7 +1432,7 @@ jobs:
     needs: windows-msvc
     runs-on: windows-2022
     # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
-    # up to ~250 s under `timeout 300`: the 160 s --timeout deadline plus the spawn's
+    # up to ~310 s under `timeout 360`: the 220 s --timeout deadline plus the spawn's
     # ready/dispatch/quit bounds) can exceed 30m on a slow runner — on develop run
     # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
     # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
@@ -1568,13 +1568,17 @@ jobs:
             # this lane needs more wall-clock without inflating the suite's
             # frame allowance. The suite then grew to ~119 s under llvmpipe and
             # tripped that 120 s deadline (develop run 41318850756), so the
-            # wall-clock is now set directly: --timeout=160000 keeps ~33%
-            # headroom over the measured run.
+            # wall-clock is now set directly. 160000 held until the suite reached
+            # ~142 s (#2443) and ~163 s (#2439, whose first two attempts then
+            # tripped the deadline); --timeout=220000 keeps ~35% headroom over that.
+            # A deadline trip is worse than a red: the retry reuses the profile the
+            # killed attempt left behind, so the next attempt runs on a non-default
+            # dock layout and fails unrelated docking tests.
             # The outer `timeout` stays above that deadline so the harness, not
             # coreutils, reports the failure.
-            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes"
+            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=220000 --spawn --yes"
             set +e
-            out="$(timeout 300 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes 2>&1)"
+            out="$(timeout 360 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --timeout=220000 --spawn --yes 2>&1)"
             rc=$?
             set -e
             # The parent has returned, so any surviving Smatchet.exe is this attempt's
