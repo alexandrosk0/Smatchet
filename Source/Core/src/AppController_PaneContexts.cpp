@@ -13,6 +13,7 @@
 #include "AppController.h"
 #include "CacheBackendKeyPure.h"
 #include "CatalogOfflinePolicyPure.h"
+#include "ComponentOptionsPickPure.h" // CatalogIsRowProject: does the loaded catalog already have the view's scope
 // clang-format on
 
 #include "ConfigManager.h"
@@ -530,9 +531,9 @@ void AppController::KickPaneCatalogFetchForTest(const std::string& paneId, const
 
 void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
                                                   const std::string& projectKey, std::uint64_t capturedGeneration) {
-    // UI thread. Resolve the (just-synced) context; a fetch is only worthwhile when it lacks
-    // its OWN catalog — a same-backend pane already carries the seeded copy, and re-fetching
-    // it here would duplicate the focused catalog's own fetch traffic for no gain.
+    // UI thread. Resolve the (just-synced) context; a fetch is only worthwhile when it lacks a
+    // catalog for the project its view names — a same-backend pane already carrying a seeded
+    // copy of that scope would only duplicate the focused catalog's own fetch traffic.
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
     if (it == gridContexts_.end()) {
         return;
@@ -540,8 +541,14 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
     GridLiveContext& ctx = *it->second;
     {
         std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
-        if (ctx.fieldCatalog.fieldCatalogEverLoaded_) {
-            return; // already populated (same-backend seed or a prior fetch) — nothing to do
+        // Loaded for this scope already (same-backend seed or a prior fetch): nothing to do. A catalog of another
+        // scope (an unscoped seed, or the pane's previous view's project) does not count for a scoped view: its
+        // components and versions are not this project's. It stays visible while the scoped fetch runs. An
+        // unscoped request keeps whatever loaded catalog the pane has, which is a superset.
+        if (ctx.fieldCatalog.fieldCatalogEverLoaded_ &&
+            (projectKey.empty() ||
+             smatchet::components::CatalogIsRowProject(ctx.fieldCatalog.currentCatalogProjectKey_, projectKey))) {
+            return;
         }
     }
     // Capture a STRONG handle to the pane's backend (ADR-0012): a live swap must not free it
@@ -551,7 +558,9 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
         return; // backend not up yet, or a backend without a catalog endpoint (e.g. fixture)
     }
     TrackerConfig cfgForFetch = cfgCopy; // value-capture: the worker must not touch UI-thread cfg
-    LaunchBackgroundTask([this, paneId, backend, cfgForFetch, projectKey, capturedGeneration]() mutable {
+    // This fetch supersedes any still in flight for the pane (its view changed): only the latest one applies.
+    const std::uint64_t fetchSeq = ctx.fieldCatalog.PaneCatalogFetchSeq.fetch_add(1) + 1;
+    LaunchBackgroundTask([this, paneId, backend, cfgForFetch, projectKey, capturedGeneration, fetchSeq]() mutable {
         /* PILLAR2_WORKER_ONLY */ // est-latency: catalog HTTP fetch off the UI thread
         auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(cfgForFetch, projectKey);
         std::string restoredWarning;
@@ -586,11 +595,11 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
                               smatchet::catalogoffline::kLastFetchFailedMarker + catalogResult.error().Detail;
         }
         mainThreadDispatcher.PostToMainThread(
-            [this, paneId, capturedGeneration, fields = std::move(catalog.Fields),
+            [this, paneId, capturedGeneration, fetchSeq, fields = std::move(catalog.Fields),
              components = std::move(catalog.Components), issueTypeMeta = std::move(catalog.IssueTypeMeta),
              catalogProjectKey = std::move(catalogProjectKey), restoredWarning = std::move(restoredWarning)]() mutable {
                 applyPaneCatalogOnMainThread_(paneId, capturedGeneration, std::move(fields), std::move(components),
-                                              std::move(issueTypeMeta), catalogProjectKey, restoredWarning);
+                                              std::move(issueTypeMeta), catalogProjectKey, restoredWarning, fetchSeq);
             });
     });
 }
@@ -600,7 +609,7 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
                                                   std::vector<TrackerComponent> components,
                                                   std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
                                                   const std::string& catalogProjectKey,
-                                                  const std::string& restoredWarning) {
+                                                  const std::string& restoredWarning, std::uint64_t fetchSeq) {
     // UI thread. Re-validate the CAPTURED context (issue #1457 / #1081 discipline): write ONLY
     // when the pane's context still exists AND its backend generation is unchanged since the
     // fetch was kicked. A swap/retirement between kick and apply means this snapshot belongs to
@@ -618,6 +627,12 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
                  paneId.c_str());
         return;
     }
+    if (ctx.fieldCatalog.PaneCatalogFetchSeq.load() != fetchSeq) {
+        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' catalog for project '%s' dropped — a later "
+                 "fetch for the pane's current view superseded it.",
+                 paneId.c_str(), catalogProjectKey.c_str());
+        return;
+    }
     const bool restored = !restoredWarning.empty();
     std::size_t fieldCount = 0;
     {
@@ -630,7 +645,7 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         ctx.fieldCatalog.AvailableComponents = std::move(components);
         ctx.fieldCatalog.AvailableIssueTypeMeta = std::move(issueTypeMeta);
         // Pinned with the catalog it describes: the components editor trusts the catalog's list for a row only
-        // when this names the row's project (IsFieldCatalogScopedToProject / ComponentOptionsPickPure.h).
+        // when this names the row's project (GetPaneFieldCatalogProjectKey / ComponentOptionsPickPure.h).
         ctx.fieldCatalog.currentCatalogProjectKey_ = catalogProjectKey;
         // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch,
         // while fieldCatalogRestored_ still routes the pane's reads to it.

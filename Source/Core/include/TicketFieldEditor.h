@@ -13,13 +13,16 @@ struct TrackerGridFieldAsyncState;
 
 class TicketFieldEditor {
   public:
+    /// `catalogProjectKey` is the project the catalog `field` came from was fetched for ("" = unscoped), resolved
+    /// once per pane per frame by the caller: a components cell offers that catalog's options for its row only
+    /// when the row belongs to that project. The default (unscoped) never lends them.
     static void RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                 int columnIndex, const TrackerField* field, const std::string& currentValue,
                                 float availWidth, bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits,
                                 TrackerGridFieldAsyncState& trackerGridAsync, const std::string& dateFormatOption = {},
                                 int thresholdDays = 0, bool singleClickToEdit = true,
-                                const std::string& paneId = std::string());
+                                const std::string& catalogProjectKey = std::string());
 
     /// Renders the floating modal used to edit ADF / long-text fields (Jira description/environment,
     /// Plane description, etc.). Must be called once per frame from a stable top-level location so the
@@ -36,5 +39,5 @@ class TicketFieldEditor {
                                      const TrackerField* field, const std::string& currentValue, float availWidth,
                                      bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                      std::vector<PendingFieldEdit>& pendingEdits, const std::string& dateFormatOption,
-                                     int thresholdDays, bool singleClickToEdit, const std::string& paneId);
+                                     int thresholdDays, bool singleClickToEdit, const std::string& catalogProjectKey);
 };

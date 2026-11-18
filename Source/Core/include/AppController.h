@@ -1150,10 +1150,15 @@ class AppController : public IAppThreading,
      *  availableFieldsMutex_. */
     bool IsFieldCatalogScopedToProject(const std::string& projectKey) const;
 
-    /** IsFieldCatalogScopedToProject for the catalog grid pane `paneId`'s cells read: the pane's own
-     *  catalog when the pane is unfocused and its own catalog is populated (the per-pane catalog
-     *  routing), else the focused one. An empty `paneId` means the focused pane. UI thread. */
-    bool IsPaneFieldCatalogScopedToProject(const std::string& paneId, const std::string& projectKey) const;
+    /** The project the focused context's field catalog was fetched for ("" = unscoped). Read under
+     *  availableFieldsMutex_. */
+    std::string GetFieldCatalogProjectKey() const;
+
+    /** The project grid pane `paneId`'s OWN context catalog was fetched for ("" = unscoped); the
+     *  focused context's for an unknown pane. A pane whose cells read its own catalog (the per-pane
+     *  catalog routing) compares a row's project against this, resolved once per pane per frame, so
+     *  another project's components never stand in for the row's (ComponentOptionsPickPure.h). */
+    std::string GetPaneFieldCatalogProjectKey(const std::string& paneId) const;
 
     /** True when the focused context's field catalog was fetched for the Jira backend WITHOUT a
      *  project scope (#2146): the active view's JQL resolved to no single project, so createmeta
@@ -1705,11 +1710,14 @@ class AppController : public IAppThreading,
     /// (Quality Pillar 6): it is applied only to a pane with no catalog, becomes the pane's catalog
     /// warning, and leaves the catalog "not loaded" so the next sync kick retries the live fetch.
     /// `catalogProjectKey` is the project the applied catalog describes ("" for an unscoped one),
-    /// pinned as the pane's currentCatalogProjectKey_ with it.
+    /// pinned as the pane's currentCatalogProjectKey_ with it. `fetchSeq` is the pane's
+    /// PaneCatalogFetchSeq taken when the fetch started: a fetch superseded by a later one
+    /// (the pane's view changed meanwhile) is dropped, so an older result never lands last.
     void applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
                                        std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                        std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
-                                       const std::string& catalogProjectKey, const std::string& restoredWarning);
+                                       const std::string& catalogProjectKey, const std::string& restoredWarning,
+                                       std::uint64_t fetchSeq);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);

@@ -71,6 +71,11 @@ struct ActiveProjectDrawCtx {
     // The pane's cache namespace (AppController::PaneCacheBackendKey), resolved ONCE per window: the key every
     // offline-queue row of this pane's tracker is stored under, and so the first part of the pending-overlay lookup.
     std::string cacheBackendKey{};
+    // The project the catalog this pane's cells read (`catalogIndex`) was fetched for, "" when unscoped: resolved ONCE
+    // per window with the same routing decision as the index (the pane's own catalog when resolvePaneCatalog routed
+    // to it, else the focused one). A components cell compares its row's project against it, so per-cell code does
+    // no map lookup or lock (Ui AGENTS.md) and never offers another project's components.
+    std::string catalogProjectKey{};
     // The pending-edit cue of the row currently being drawn (set per row by drawActiveProjectGridRows from
     // d.pendingOverlay, read by the Id cell and by that row's value cells). None = nothing unconfirmed.
     smatchet::sync::PendingRowCue currentRowPending{};

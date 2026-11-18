@@ -1160,9 +1160,12 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
     RefreshPendingOverlay(app, ctx.d);
     ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
+    // resolvePaneCatalog marks the pane's own catalog as the one this frame's index came from.
+    ctx.catalogProjectKey =
+        pane.cachedPaneCatalogValid ? app.GetPaneFieldCatalogProjectKey(pane.id) : app.GetFieldCatalogProjectKey();
     ctx.cellMenu = GridKeyCellMenuCtx{&ctx.tickets,      &pane.filteredIndices,   &ctx.columns,
                                       &ctx.catalogIndex, &pane.gridState.RectSel, -1,
-                                      nullptr,           &ctx.cacheBackendKey};
+                                      nullptr,           &ctx.cacheBackendKey,    &ctx.catalogProjectKey};
     const size_t oldFilteredCount = pane.filteredIndices.size();
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),

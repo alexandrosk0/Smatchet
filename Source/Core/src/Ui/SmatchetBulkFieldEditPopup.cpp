@@ -67,9 +67,10 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
         app.EnsureProjectComponentsLoaded(projectKey)) {
         list.Holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
     }
-    // req.Field came from the clicked pane's catalog: ask that catalog's scope, not the focused pane's.
+    // req.Field's options are the catalog's as it was when the popup opened: trust them for this row only when that
+    // catalog was fetched for the row's project (the scope captured with the field), never by the live catalog.
     const bool catalogIsRowProject =
-        !list.Holder.options && app.IsPaneFieldCatalogScopedToProject(req.PaneId, projectKey);
+        !list.Holder.options && smatchet::components::CatalogIsRowProject(req.FieldCatalogProjectKey, projectKey);
     const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickComponentOptions(
         list.Holder, catalogIsRowProject, req.Field.AllowedValueOptions, app.GetLastTrackerConnectivityState());
     list.Options = pick.Options;
@@ -83,10 +84,10 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
 TrackerField EffectiveField(AppController& app, const BulkEditPopupRequest& req) {
     TrackerField field = req.Field;
     if (IsComponentsField(field)) {
+        // Always the row's resolved list, even when it is empty: keeping req.Field's catalog options would let the
+        // before-values and the entry check use another project's components (Ui AGENTS.md, Pillar 6).
         const OptionList list = ResolveOptionList(app, req);
-        if (list.Options && !list.Options->empty()) {
-            field.AllowedValueOptions = *list.Options;
-        }
+        field.AllowedValueOptions = *list.Options;
     }
     return field;
 }

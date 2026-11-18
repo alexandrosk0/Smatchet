@@ -1,6 +1,7 @@
 // Field-edit write path (SubmitFieldEditOrQueue): rules in Source/Core/src/Sync/AGENTS.md § Invariants.
 #include "AppController.h"
 #include "CatalogOfflinePolicyPure.h"
+#include "ComponentOptionsPickPure.h" // CatalogIsRowProject: the one scope comparison the catalog and the grid share
 #include "GridContextFieldCatalogOps.h"
 #include "Config/CacheBackendKeyPure.h" // a guarded catalog apply compares the fetch-time tracker
 #include "EditMetaCacheService.h"       // editmeta delegators forward to editMeta_ (god-object decomposition Phase 1).
@@ -1262,35 +1263,23 @@ bool AppController::RefreshProjectComponents(const std::string& projectKey) {
 
 namespace {
 
-// True when `cat` was fetched for `projectKey` (compared without case). Caller holds cat.availableFieldsMutex_.
-bool CatalogScopedToProjectLocked(const GridContextFieldCatalog& cat, const std::string& projectKey) {
-    return !projectKey.empty() && ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(projectKey);
+std::string CatalogProjectKeyOf(const GridContextFieldCatalog& cat) {
+    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+    return cat.currentCatalogProjectKey_;
 }
 
 } // namespace
 
 bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
-    const GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
-    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-    return CatalogScopedToProjectLocked(cat, projectKey);
+    return smatchet::components::CatalogIsRowProject(GetFieldCatalogProjectKey(), projectKey);
 }
 
-bool AppController::IsPaneFieldCatalogScopedToProject(const std::string& paneId, const std::string& projectKey) const {
-    // UI thread. Ask the catalog the pane's cells actually read (SmatchetUI::resolvePaneCatalog /
-    // ChoosePaneCatalogSource): an unfocused pane whose own catalog is populated reads that one, so its pinned
-    // project decides. The focused pane, an unknown pane and an unpopulated one read the focused catalog.
-    if (!paneId.empty() && paneId != focusedPaneId_) {
-        const std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
-        if (it != gridContexts_.end() && it->second) {
-            const GridContextFieldCatalog& own = it->second->fieldCatalog;
-            std::lock_guard<std::mutex> lock(own.availableFieldsMutex_);
-            if (own.fieldCatalogEverLoaded_ || own.fieldCatalogRestored_) {
-                return CatalogScopedToProjectLocked(own, projectKey);
-            }
-        }
-    }
-    return IsFieldCatalogScopedToProject(projectKey);
+std::string AppController::GetFieldCatalogProjectKey() const {
+    return CatalogProjectKeyOf(fieldCatalog()); // latch once — lock/object resolve to the same context (Pillar 3)
+}
+
+std::string AppController::GetPaneFieldCatalogProjectKey(const std::string& paneId) const {
+    return CatalogProjectKeyOf(paneContextOrFocused_(paneId).fieldCatalog);
 }
 
 bool AppController::FieldCatalogLacksProjectScope() const {
