@@ -1677,6 +1677,9 @@ class AppController : public IAppThreading,
     /// only; a no-op when the pane already has a populated catalog (same-backend seed) or is
     /// backend-less. cfgCopy carries the pane's own backend endpoint fields (flat TrackerConfig
     /// holds every backend's endpoint simultaneously — no per-backend endpoint plumbing needed).
+    /// `projectKey` scopes the fetch and its saved-snapshot fallback key: the single project the
+    /// pane's own resolved view names (smatchet::catalog::PaneCatalogProjectKey), "" when it names
+    /// zero or several (unscoped: no createmeta enrichment).
     void populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
                                        const std::string& projectKey, std::uint64_t capturedGeneration);
     /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch: re-validate the
@@ -1685,10 +1688,12 @@ class AppController : public IAppThreading,
     /// `restoredWarning` marks the saved snapshot the worker fell back to after a failed fetch
     /// (Quality Pillar 6): it is applied only to a pane with no catalog, becomes the pane's catalog
     /// warning, and leaves the catalog "not loaded" so the next sync kick retries the live fetch.
+    /// `catalogProjectKey` is the project the applied catalog describes ("" for an unscoped one),
+    /// pinned as the pane's currentCatalogProjectKey_ with it.
     void applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
                                        std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                        std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
-                                       const std::string& restoredWarning);
+                                       const std::string& catalogProjectKey, const std::string& restoredWarning);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);
