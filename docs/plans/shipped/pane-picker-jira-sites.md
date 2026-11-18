@@ -1,6 +1,6 @@
 # Plan — "+ ▾" new-pane caret with two Jira sites
 
-**Status**: implemented (2026-11-16)
+**Status**: shipped (#2451)
 **Branch**: `claude/plus-dropdown-two-jira-261a42`
 **Issues**: fixes #2444 (bug); the full side-by-side feature is #2445
 **Reported symptom**: "the down-arrow next to `+` is missing with two Jira instances"
@@ -82,15 +82,17 @@ None.
 ## Implementation log
 
 - 2026-11-16 — implemented per Approach.
+- 2026-11-18 — merged develop (#2432), CodeRabbit round: Jira site rows no longer need the live site to carry a token (two other sites with their own tokens still get rows); plan archived.
 
 ## Deviations from plan
 
 - Review round: added `TwoJiraSitesRowOpensPaneOnSite` (the click path was first left manual), `LOG_INFO`/`LOG_WARN` on the switch, the catalog refetch only when the focused pane is on Jira, and the stale-pane hazard filed as #2446.
+- CodeRabbit round: `BuildNewPaneTargets` checks usable Jira sites before the live-site credential gate. Declined: localizing the row labels (the pre-#2444 label was English too, tracked as P2-M18) and the stale-pane write (waived, #2446). Deferred (backlog `debt/2026-11-18-pane-picker-jira-sites-deferred.md`): the offline bucket-E case for the switch, the header and call-site comments, the tooltip wording.
 
 ## Verification (actual)
 
-See the PR test plan.
+See the PR #2451 test plan: doctest all pass (8 `BuildNewPaneTargets` cases + 1 `ApplyPaneAddAndCloseRequestsCore` case), GridPanes 4/4.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
-Move to `docs/plans/shipped/` at merge.
+Done in #2451.

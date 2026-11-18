@@ -106,6 +106,21 @@ TEST_CASE("BuildNewPaneTargets: only the active extra site has a token, so one s
     CHECK_FALSE(ShowNewPaneCaret(targets));
 }
 
+TEST_CASE("BuildNewPaneTargets: two other sites with their own tokens still get rows when the live site has none") {
+    // The active (first) site has no token, so Jira as a whole reads as not credentialed; the two
+    // extras carry their own tokens and can each be switched to.
+    const TrackerConfig cfg = JiraCfg(
+        {Site("acme.atlassian.net", ""), Site("other.atlassian.net", "tok2"), Site("third.atlassian.net", "tok3")});
+    REQUIRE_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Jira"));
+    const std::vector<NewPaneTarget> targets = BuildNewPaneTargets(cfg);
+    REQUIRE(targets.size() == 2);
+    CHECK(ShowNewPaneCaret(targets));
+    CHECK(targets[0].Label == "New Jira \xC2\xB7 other.atlassian.net pane");
+    CHECK(targets[0].SwitchToJiraDomain == "other.atlassian.net");
+    CHECK(targets[1].Label == "New Jira \xC2\xB7 third.atlassian.net pane");
+    CHECK(targets[1].SwitchToJiraDomain == "third.atlassian.net");
+}
+
 TEST_CASE("BuildNewPaneTargets: Jira sites and other trackers together, in KnownBackendKeys order") {
     TrackerConfig cfg = JiraCfg({Site("acme.atlassian.net", "tok"), Site("other.atlassian.net", "tok2")});
     cfg.PlaneUrl = "https://plane.example";

@@ -39,20 +39,23 @@ void AppendSingleJiraTarget(std::vector<NewPaneTarget>& out) {
     out.push_back(t);
 }
 
-void AppendJiraTargets(const TrackerConfig& cfg, std::vector<NewPaneTarget>& out) {
-    // Fewer than two entries (an empty list is not hydrated yet) is one site either way.
-    if (cfg.JiraBackends.size() < 2) {
-        AppendSingleJiraTarget(out);
-        return;
-    }
+// `liveCredentialed`: the live (active) site has a host and token. Two or more usable sites get one
+// row each even when it does not (the active site and the first site may both lack a token while
+// two other sites carry their own); the single-site row keeps the old credential gate.
+void AppendJiraTargets(const TrackerConfig& cfg, bool liveCredentialed, std::vector<NewPaneTarget>& out) {
     std::vector<const JiraBackendInstance*> sites;
-    for (std::size_t i = 0; i < cfg.JiraBackends.size(); ++i) {
-        if (JiraSiteUsable(cfg, cfg.JiraBackends[i])) {
-            sites.push_back(&cfg.JiraBackends[i]);
+    // Fewer than two entries (an empty list is not hydrated yet) is one site either way.
+    if (cfg.JiraBackends.size() >= 2) {
+        for (std::size_t i = 0; i < cfg.JiraBackends.size(); ++i) {
+            if (JiraSiteUsable(cfg, cfg.JiraBackends[i])) {
+                sites.push_back(&cfg.JiraBackends[i]);
+            }
         }
     }
     if (sites.size() < 2) {
-        AppendSingleJiraTarget(out);
+        if (liveCredentialed) {
+            AppendSingleJiraTarget(out);
+        }
         return;
     }
     // Same resolution as drawViewsJiraDomainPicker: the live origin when no site was ever picked.
@@ -74,11 +77,12 @@ std::vector<NewPaneTarget> BuildNewPaneTargets(const TrackerConfig& cfg) {
     std::vector<NewPaneTarget> out;
     const std::vector<std::string>& keys = ConfigManager::KnownBackendKeys();
     for (std::size_t i = 0; i < keys.size(); ++i) {
-        if (!ConfigManager::BackendCredentialsPresent(cfg, keys[i])) {
+        const bool credentialed = ConfigManager::BackendCredentialsPresent(cfg, keys[i]);
+        if (keys[i] == "Jira") {
+            AppendJiraTargets(cfg, credentialed, out);
             continue;
         }
-        if (keys[i] == "Jira") {
-            AppendJiraTargets(cfg, out);
+        if (!credentialed) {
             continue;
         }
         NewPaneTarget t;
