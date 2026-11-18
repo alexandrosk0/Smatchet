@@ -496,24 +496,36 @@ void AppController::applyPaneSyncKickOnMainThread_(const std::string& paneId, Tr
     // Per-pane catalog population (per-pane-catalog-value-read-routing): SyncPaneWithBackend
     // above just created this pane's OWN backend. A cross-backend pane's context catalog is
     // still empty (the same-backend seed in EnsurePaneContextLive didn't apply), so kick an
-    // off-thread fetch into ITS context now. The just-recorded generation is captured so the
-    // apply drops if a swap/retirement happens mid-flight (#1081). The catalog is scoped to the single
-    // project the pane's OWN resolved view names, read with the pane's own backend parser, as the focused
-    // catalog's ResolveViewProjectKeyForCatalog does: Jira only runs createmeta (components, versions,
-    // project custom-field options) for a scoped fetch. Empty (unscoped) is the documented fallback for a
-    // view naming zero or several projects, or a kick that resolved no view (cfgCopy then carries the
-    // focused view's query, which is another pane's scope).
-    std::string paneProjectKey;
-    {
-        const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator scopeIt = gridContexts_.find(paneId);
-        if (scopeIt != gridContexts_.end()) {
-            // SyncPaneWithBackend above may have just created the backend: read it after the sync.
-            const std::shared_ptr<ITrackerBackend> paneBackend = std::atomic_load(&scopeIt->second->Backend);
-            paneProjectKey = smatchet::catalog::PaneCatalogProjectKey(
-                paneBackend ? &paneBackend->Connectivity() : nullptr, kickOwnView ? kickOwnView->Jql : std::string());
-        }
+    // off-thread fetch into ITS context now, scoped by the view this kick resolved. The
+    // just-recorded generation is captured so the apply drops if a swap/retirement happens
+    // mid-flight (#1081).
+    kickPaneCatalogFetch_(paneId, cfgCopy, kickOwnView ? kickOwnView->Jql : std::string(), capturedGeneration);
+}
+
+void AppController::kickPaneCatalogFetch_(const std::string& paneId, const TrackerConfig& cfg,
+                                          const std::string& ownViewQuery, std::uint64_t capturedGeneration) {
+    // UI thread. The catalog is scoped to the single project the pane's OWN resolved view names, read with
+    // the pane's own backend parser, as the focused catalog's ResolveViewProjectKeyForCatalog does: Jira only
+    // runs createmeta (components, versions, project custom-field options) for a scoped fetch. Empty
+    // (unscoped) is the documented fallback for a view naming zero or several projects, or a kick that
+    // resolved no view (its config then carries the focused view's query, which is another pane's scope).
+    const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it == gridContexts_.end()) {
+        return;
     }
-    populatePaneCatalogAfterSync_(paneId, cfgCopy, paneProjectKey, capturedGeneration);
+    // Read after the sync kick: SyncPaneWithBackend may have just created the backend.
+    const std::shared_ptr<ITrackerBackend> paneBackend = std::atomic_load(&it->second->Backend);
+    const std::string paneProjectKey =
+        smatchet::catalog::PaneCatalogProjectKey(paneBackend ? &paneBackend->Connectivity() : nullptr, ownViewQuery);
+    populatePaneCatalogAfterSync_(paneId, cfg, paneProjectKey, capturedGeneration);
+}
+
+void AppController::KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
+                                                const std::string& ownViewQuery) {
+    const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it != gridContexts_.end()) {
+        kickPaneCatalogFetch_(paneId, cfg, ownViewQuery, it->second->backendGeneration_.load());
+    }
 }
 
 void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,

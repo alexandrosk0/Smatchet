@@ -67,7 +67,9 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
         app.EnsureProjectComponentsLoaded(projectKey)) {
         list.Holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
     }
-    const bool catalogIsRowProject = !list.Holder.options && app.IsFieldCatalogScopedToProject(projectKey);
+    // req.Field came from the clicked pane's catalog: ask that catalog's scope, not the focused pane's.
+    const bool catalogIsRowProject =
+        !list.Holder.options && app.IsPaneFieldCatalogScopedToProject(req.PaneId, projectKey);
     const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickComponentOptions(
         list.Holder, catalogIsRowProject, req.Field.AllowedValueOptions, app.GetLastTrackerConnectivityState());
     list.Options = pick.Options;

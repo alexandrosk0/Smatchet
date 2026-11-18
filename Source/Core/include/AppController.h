@@ -404,6 +404,12 @@ class AppController : public IAppThreading,
     /// the caller waits for `GetOfflineQueueSnapshot` to show it). Writes state only: no conflict logic runs.
     /// Returns false without a live cache or queue. No production caller.
     bool MarkFieldEditConflictForTest(std::int64_t id, const std::string& contextJson);
+    /// TEST SEAM (headless AppController tests): runs the pane sync kick's catalog step for pane `paneId`, whose
+    /// backend is already in place, as if the kick had resolved a view whose query is `ownViewQuery`: the project
+    /// derivation, the off-thread fetch or saved-snapshot fallback, and the apply all run as in production. The
+    /// caller pumps `mainThreadDispatcher` for the apply. No production caller.
+    void KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
+                                     const std::string& ownViewQuery);
     /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
     /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
     void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {
@@ -1687,6 +1693,11 @@ class AppController : public IAppThreading,
     /// zero or several (unscoped: no createmeta enrichment).
     void populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
                                        const std::string& projectKey, std::uint64_t capturedGeneration);
+    /// The catalog step of the pane sync kick: scopes pane `paneId`'s own catalog fetch to the project
+    /// `ownViewQuery` (the query of the view the kick resolved for the pane, "" for none) names, read
+    /// with the pane's own backend parser, and hands it to populatePaneCatalogAfterSync_. UI thread.
+    void kickPaneCatalogFetch_(const std::string& paneId, const TrackerConfig& cfg, const std::string& ownViewQuery,
+                               std::uint64_t capturedGeneration);
     /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch: re-validate the
     /// captured context is still current (present + generation unchanged), then write the fields
     /// into ITS fieldCatalog under the context mutex and bump the per-context revision. A non-empty
