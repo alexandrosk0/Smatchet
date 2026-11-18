@@ -37,6 +37,35 @@ struct GridRectSelection {
     int DragStartRow = -1;
     std::set<int> DragBaseRows; // rows selected before the current drag started
 
+    // Issue ids to keep selected across a re-sort (bulk edit, docs/plans/bulk-edit-rows.md D5). `Rows` are sort-order
+    // indices, which the first landed edit invalidates (the snapshot revision moves, the sort signature changes and
+    // the selection is cleared). While KeepIssueIds is set, the grid rebuilds `Rows` from it after such a clear
+    // (RestoreKeptRows). `KeepRows` is the `Rows` value the ids were last matched to: when `Rows` differs from it
+    // the user made a selection gesture, and KeepIssueIds is dropped (KeepStale). In-memory only.
+    std::set<std::string> KeepIssueIds;
+    std::set<int> KeepRows;
+
+    bool KeepStale() const { return !KeepIssueIds.empty() && Rows != KeepRows; }
+
+    /// Selects again the rows whose issue id is in KeepIssueIds. `idAt(row)` returns the id (const std::string&)
+    /// shown at sort-order row `row`, for rows 0..rowCount-1. Stamps `sortSignature` so the selection counts as
+    /// valid for the current order. Returns the number of rows selected; none found drops KeepIssueIds.
+    template <class IdAt> int RestoreKeptRows(int rowCount, IdAt idAt, std::uint64_t sortSignature) {
+        Rows.clear();
+        for (int row = 0; row < rowCount; ++row) {
+            if (KeepIssueIds.find(idAt(row)) != KeepIssueIds.end()) {
+                Rows.insert(row);
+            }
+        }
+        KeepRows = Rows;
+        PrimaryRow = Rows.empty() ? -1 : *Rows.begin();
+        SortSignature = sortSignature;
+        if (Rows.empty()) {
+            KeepIssueIds.clear();
+        }
+        return static_cast<int>(Rows.size());
+    }
+
     int MinRow() const { return AnchorRow < ExtentRow ? AnchorRow : ExtentRow; }
     int MaxRow() const { return AnchorRow > ExtentRow ? AnchorRow : ExtentRow; }
     int MinCol() const { return AnchorCol < ExtentCol ? AnchorCol : ExtentCol; }
@@ -113,18 +142,6 @@ struct SpreadsheetState {
     bool IsEditingField(const std::string& id, const std::string& fieldId) const {
         return EditingId == id && EditingFieldId == fieldId;
     }
-
-    /** Per-instance state for the multi-select combo search box.
-     *  Previously block-scope statics in RenderMultiSelectEditor — shared across all combos,
-     *  which aliased the buffer when two different editors were open in the same frame (§3.4). */
-    std::string MultiSelectActiveKey;
-    char MultiSelectSearchBuf[128] = {};
-
-    /** Per-instance state for the single-select combo quick-filter box.
-     *  Same lifetime pattern as `MultiSelect*`: keyed on `ticket.id + "::" + field.Id` so the
-     *  buffer auto-clears when the user opens a different cell's dropdown. */
-    std::string SingleSelectActiveKey;
-    char SingleSelectSearchBuf[128] = {};
 
     /** Double-click arm-then-popup: in double-click-to-edit mode, a double-clicked combo cell
      *  writes its `ticket.id + "::" + field.Id` here on frame N. On frame N+1 the matching

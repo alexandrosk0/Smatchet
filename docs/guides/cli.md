@@ -310,6 +310,7 @@ Mutations — all destructive (`--yes`), dry-run supported where noted.
 |---|---|---|
 | `ticket.set_field` | `id`, `field`, `value` *(all required)* | Update one field. Dry-run returns `{wouldDo:{ticket, field, from, to}}`. |
 | `ticket.set_fields` | `id` *(required)*, `fields` *(JSON object)* | Update multiple fields in one call. Dry-run supported. |
+| `ticket.set_field_bulk` | `ids` *(JSON array, required, at most 500)*, `field` *(required)*, `value` or `values` *(JSON array)*, `mode?` (`replace` / `add` / `remove`) | Set one field on several tickets. Each ticket is a separate update: it is saved or queued offline, and audited like `ticket.set_field`. `add` / `remove` merge into a multi-value field (labels, components, multi-select). Returns `{rows:[{id, state, message?}], saved, queued, failed, skipped}`; from the palette it returns `{started:true, rowCount}` at once and saves in the background. Dry-run returns `{wouldDo:{rows:[{id, from, to, skip?}]}}`. |
 | `ticket.transition` | `id`, `toStatus` *(both required)* | Change status. Dry-run supported. |
 | `ticket.add_comment` | `id`, `body` *(both required)* | Post plain-text comment. |
 | `ticket.add_worklog` | `id`, `seconds` *(both required)*, `started?`, `comment?` | Log time. `seconds` is converted to `1h 30m` notation. |
@@ -322,6 +323,10 @@ Smatchet.exe cmd ticket.set_field --id=PROJ-1 --field=priority --value=High --ye
 
 # Bulk field update
 Smatchet.exe cmd ticket.set_fields --id=PROJ-1 --fields='{"priority":"High","labels":"needs-review"}' --yes
+
+# One field on several tickets (preview, then apply)
+Smatchet.exe cmd ticket.set_field_bulk --ids='["PROJ-1","PROJ-2"]' --field=labels --values='["needs-review"]' --mode=add --dry-run
+Smatchet.exe cmd ticket.set_field_bulk --ids='["PROJ-1","PROJ-2"]' --field=labels --values='["needs-review"]' --mode=add --yes
 
 # Queue a create for later
 Smatchet.exe cmd ticket.create --projectKey=PROJ --summary="Fix auth bug" --offline=true --yes
