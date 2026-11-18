@@ -5,6 +5,8 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetTheme.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -20,6 +22,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -290,17 +293,43 @@ void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
         ImGui::SetTooltip("%s", GridSearchModeTooltip(kind));
     }
     ImGui::SameLine();
+    // grid.search.focus (Ctrl+F or /) asked for the caret here: bring this pane forward and focus
+    // the box this frame.
+    if (pane.gridSearchFocusFramesLeft > 0) {
+        pane.gridSearchFocusFramesLeft = 0;
+        ImGui::SetWindowFocus();
+        ImGui::SetKeyboardFocusHere();
+    }
+    // Esc in the box clears the search and leaves the box. ImGui's keyboard-nav cancel runs in
+    // NewFrame and has usually taken the caret out already on the Esc frame, so the box counts as
+    // the Esc target when it held the caret this frame or the last one. A box that lost the caret
+    // before it drew writes its edited text back when it next draws, from ImGui's saved copy of
+    // the deactivated field. Dropping that copy keeps the cleared buffer cleared.
+    const ImGuiID filterId = pane.gridSearchInputId;
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (filterId != 0 && (g.ActiveId == filterId || g.ActiveIdPreviousFrame == filterId) &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        pane.gridSearchBuf[0] = '\0';
+        if (g.ActiveId == filterId) {
+            ImGui::ClearActiveID();
+        }
+        if (g.InputTextDeactivatedState.ID == filterId) {
+            g.InputTextDeactivatedState.ClearFreeMemory();
+        }
+    }
     ImGui::SetNextItemWidth(260.0f);
     // The placeholder distinguishes this ISSUE-search box from the command-search entry points
-    // (menu-bar box / Ctrl+Shift+P palette). The ##GridFilter id is unchanged: it is the
-    // grid-rendered probe several UI tests key on.
+    // (menu-bar box / Ctrl+Shift+P palette) and names the key that jumps here. The ##GridFilter
+    // id is unchanged: it is the grid-rendered probe several UI tests key on.
     if (ImGui::InputTextWithHint(
-            "##GridFilter", SmatchetLocalization::T("gridsearch.hint", "Search issues: key, query, or title text"),
+            "##GridFilter",
+            SmatchetLocalization::T("gridsearch.hint_keys", "Search issues: key, query, or title text (Ctrl+F)"),
             pane.gridSearchBuf, sizeof(pane.gridSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
         d.paneDeferredActionPaneId = pane.id;
         d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::GridSearchCommit;
         d.paneDeferredSearchText.assign(pane.gridSearchBuf);
     }
+    pane.gridSearchInputId = ImGui::GetItemID();
     if (pane.gridSearchBuf[0] != '\0') {
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
@@ -341,21 +370,27 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                                       : (!pane.title.empty() ? pane.title.c_str() : "(no active view)");
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel)) {
+    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel, ImGuiComboFlags_HeightLargest)) {
+        // The shared dropdown body: filter, the last views switched to, then every view.
+        std::vector<smatchet::dropdown::Item> items;
+        items.reserve(viewState.GetStore().Views.size());
         for (const auto& view : viewState.GetStore().Views) {
-            const bool isSelected = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
-            if (ImGui::Selectable(view.Name.c_str(), isSelected)) {
-                if (viewState.Activate(view.Id)) {
-                    activeViewForGrid = viewState.GetActiveViewMutable();
-                    if (activeViewForGrid) {
-                        d.cfg.JqlQuery = activeViewForGrid->Jql;
-                        d.cfg.SelectedFields = activeViewForGrid->Fields;
-                        SyncWithCurrentView(app, d, viewState.GetStore(), true);
-                    }
-                }
-            }
-            if (isSelected) {
-                ImGui::SetItemDefaultFocus();
+            smatchet::dropdown::Item item;
+            item.Id = view.Id.c_str();
+            item.Label = view.Name.c_str();
+            item.Checked = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
+            items.push_back(item);
+        }
+        const std::string recentsScope = smatchet::recents::MakeScopeKey(app.PaneCacheBackendKey(pane.id), "view");
+        const smatchet::dropdown::Event ev =
+            smatchet::dropdown::DrawBody(items, smatchet::dropdown::SingleSelect(recentsScope));
+        // `items` points into the store Activate may change: nothing reads it past this line.
+        if (ev.Kind == smatchet::dropdown::EventKind::Picked && viewState.Activate(ev.Id)) {
+            activeViewForGrid = viewState.GetActiveViewMutable();
+            if (activeViewForGrid) {
+                d.cfg.JqlQuery = activeViewForGrid->Jql;
+                d.cfg.SelectedFields = activeViewForGrid->Fields;
+                SyncWithCurrentView(app, d, viewState.GetStore(), true);
             }
         }
         ImGui::EndCombo();

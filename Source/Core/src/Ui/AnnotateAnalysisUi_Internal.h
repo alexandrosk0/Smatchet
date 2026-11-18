@@ -48,11 +48,12 @@ struct AnnotateRow {
     P4LineAnnotate Annotate;
 };
 
-/// Per-row edit buffers backing the multi-rule path-remap editor in the
-/// Annotate preferences form. Mirror `AnnotateAnalysisConfig::PathRemaps` 1:1.
+/// Per-row edit text backing the multi-rule path-remap editor in the Annotate
+/// preferences form. Mirror `AnnotateAnalysisConfig::PathRemaps` 1:1. std::string,
+/// so a long UNC or non-ASCII prefix is never cut at a fixed size (INPUT_UX_AUDIT.md #132).
 struct RemapEditBuf {
-    char from[512]{};
-    char to[512]{};
+    std::string from;
+    std::string to;
 };
 
 struct DetailPack {
@@ -87,11 +88,13 @@ struct AnnotateAnalysisUi::AnnotateState {
     int maxFramesVal = 64;
     int clCacheVal = 512;
     std::vector<RemapEditBuf> remapBufs;
-    char p4Exe[260]{};
-    char p4vcExe[260]{};
-    char timeTpl[1024]{};
-    char changeTpl[512]{};
-    char aiUrl[512]{};
+    // Settings-form text, edited through the shared text field (Ui/SmatchetInput.h). std::string so a
+    // long path, template or URL is kept whole instead of clipped at a fixed buffer size (#132).
+    std::string p4Exe;
+    std::string p4vcExe;
+    std::string timeTpl;
+    std::string changeTpl;
+    std::string aiUrl;
     bool showRaw = false;
     AnnotateAnalysisConfig annotateCfg;
 

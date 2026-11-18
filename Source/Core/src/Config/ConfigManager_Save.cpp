@@ -316,6 +316,7 @@ void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
     j["migrated_menu_shortcuts_v1"] = config.MigratedMenuShortcutsV1;
     j["migrated_menu_shortcuts_v2"] = config.MigratedMenuShortcutsV2;
     j["migrated_quick_create_hotkey_v1"] = config.MigratedQuickCreateHotkeyV1;
+    j["migrated_grid_search_focus_hotkey_v1"] = config.MigratedGridSearchFocusHotkeyV1;
     j["migrated_multi_hotkey_zoom_v1"] = config.MigratedMultiHotkeyZoomV1;
     j["migrated_multi_hotkey_zoom_v2"] = config.MigratedMultiHotkeyZoomV2;
     j["migrated_multi_hotkey_zoom_v3"] = config.MigratedMultiHotkeyZoomV3;

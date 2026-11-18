@@ -4,10 +4,12 @@
 #include "ConfigManager.h"
 #include "DataFreshnessCue.h"
 #include "FieldCatalogCache.h"
+#include "FilterDropdown.h"
 #include "ITrackerBackend.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
 #include "ProjectListLookup.h"
+#include "RecentSelections.h"
 #include "ScopeExit.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
@@ -19,6 +21,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -39,141 +42,145 @@ void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBac
 
 namespace {
 
-// "Recently used" section of the combo popup: the rows StartRecentProjectsLoad read, filtered by
-// backend/endpoint/text. Sets selectedKey + returns true when a row is picked (and closes the popup,
-// matching the pre-decomposition body). Runs inside the active BeginCombo scope.
-bool DrawRecentSection(State& state, const std::string& backendKind, const std::string& endpoint,
-                       const std::string& filter, std::string& selectedKey) {
-    bool changed = false;
-    ImGui::Separator();
-    ImGui::TextDisabled("%s", SmatchetLocalization::T("draft.project.section.recent", "Recently used"));
-    std::vector<FieldCatalogCache::CachedProjectEntry> cached;
-    bool loaded = false;
+// What the popup lists of the tracker's project list this frame.
+struct ProjectListView {
+    std::vector<RemoteProject> Projects; // live or saved rows; empty while there is nothing to show
+    smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
+};
+
+// Above the list: the freshness cue for the tracker's project list, the error when there is nothing to
+// show, and Retry / Refresh. Returns the rows to list. Runs inside the active BeginCombo scope.
+ProjectListView DrawProjectListStatus(State& state, AppController& app) {
+    ProjectListView view;
+    std::string fetchError;
+    bool failed = false;
+    bool fromSaved = false;
     {
-        std::lock_guard<std::mutex> lk(state.recentMutex);
-        cached = state.recent; // at most the LRU cap (16) small rows
-        loaded = state.recentLoaded;
+        std::lock_guard<std::mutex> lk(state.fetchMutex);
+        view.Projects = state.fetchedAll;
+        fetchError = state.fetchError;
+        failed = state.fetchFailed;
+        fromSaved = state.fetchFromSaved;
     }
-    int recentShown = 0;
-    for (const auto& e : cached) {
-        if (!detail::RecentEntryPasses(e, backendKind, endpoint, filter)) {
-            continue;
+    const bool inFlight = state.fetchInFlight.load();
+    const bool done = state.fetchDone.load();
+    smatchet::offline::FreshnessInputs in;
+    in.HasCache = !view.Projects.empty() || fromSaved || (done && !failed);
+    in.Live = done && !failed && !fromSaved;
+    in.InFlight = inFlight;
+    in.LastAttemptFailed = failed;
+    in.Connectivity = app.GetLastTrackerConnectivityState();
+    view.Freshness = smatchet::offline::ClassifyFreshness(in);
+    const bool showRows = smatchet::offline::ShouldRenderContent(view.Freshness);
+    const float cursorBefore = ImGui::GetCursorPosY();
+    // Pillar 6: saved or stale rows stay visible under the cue; the failure is its tooltip.
+    DataFreshnessCue::Draw(view.Freshness, fetchError.empty() ? nullptr : fetchError.c_str());
+    if (failed && !inFlight) {
+        // P2-M11: with nothing to show, the error itself is the content — a bad or expired token
+        // must never read as an empty project list. Retry re-kicks the load next frame.
+        if (!showRows && !fetchError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+            ImGui::TextWrapped("%s", SmatchetLocalization::Format("draft.project.fetch_failed",
+                                                                  "Couldn't load projects: %s", fetchError.c_str()));
+            ImGui::PopStyleColor();
         }
-        const bool selected = (e.projectKey == selectedKey);
-        ImGui::PushID(static_cast<int>(recentShown));
-        if (ImGui::Selectable(e.projectKey.c_str(), selected)) {
-            selectedKey = e.projectKey;
-            changed = true;
-            ImGui::CloseCurrentPopup();
+        if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
+            state.fetchBypassSaved.store(true);
+            state.fetchDone.store(false);
         }
-        ImGui::PopID();
-        ++recentShown;
+    } else if (fromSaved && !inFlight) {
+        // A saved copy served inside its lifetime looks complete but may be out of date: Refresh asks the
+        // tracker now.
+        if (ImGui::SmallButton(SmatchetLocalization::T("common.refresh", "Refresh"))) {
+            state.fetchBypassSaved.store(true);
+            state.fetchDone.store(false);
+        }
     }
-    // Before the first read lands (a few milliseconds) the section stays empty rather than claiming
-    // there are no recent projects.
-    if (recentShown == 0 && loaded) {
-        ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.recent.none", "No recent projects"));
+    if (ImGui::GetCursorPosY() != cursorBefore) {
+        ImGui::Separator();
     }
-    return changed;
+    if (!showRows) {
+        view.Projects.clear();
+    }
+    return view;
 }
 
-// Rows of the "All projects" list that pass the filter; sets selectedKey + returns true when one is
-// picked. `freshness` decides whether an empty list reads "No projects found." (only a live list does).
-bool DrawAllProjectRows(const std::vector<RemoteProject>& projects, const std::string& backendKind,
-                        const std::string& filter, smatchet::offline::DataFreshness freshness,
-                        std::string& selectedKey) {
-    bool changed = false;
-    int allShown = 0;
+// One row of the popup: the key a pick stores and the text shown.
+struct ProjectRow {
+    std::string Key;
+    std::string Label;
+};
+
+// The rows of the popup: the tracker's projects, then the projects whose field catalog is saved on this
+// machine (the ones opened before) that the tracker's list does not hold, so those stay pickable
+// before the list loads and while offline.
+std::vector<ProjectRow> BuildProjectRows(State& state, const std::vector<RemoteProject>& projects,
+                                         const std::string& backendKind, const std::string& endpoint) {
+    std::vector<ProjectRow> rows;
+    rows.reserve(projects.size());
     for (const auto& p : projects) {
-        const std::string key = detail::AllProjectKey(p, backendKind);
-        if (!detail::AllProjectPasses(key, p, filter)) {
+        ProjectRow row;
+        row.Key = detail::AllProjectKey(p, backendKind);
+        if (!detail::AllProjectPasses(row.Key, p, std::string())) {
             continue;
         }
-        const std::string label = detail::MakeRowLabel(p, backendKind);
-        const bool selected = (key == selectedKey);
-        ImGui::PushID(static_cast<int>(allShown));
-        if (ImGui::Selectable(label.c_str(), selected)) {
-            selectedKey = key;
-            changed = true;
-            ImGui::CloseCurrentPopup();
+        row.Label = detail::MakeRowLabel(p, backendKind);
+        rows.push_back(std::move(row));
+    }
+    const std::size_t listed = rows.size();
+    std::lock_guard<std::mutex> lk(state.cachedMutex);
+    for (const auto& e : state.cached) { // at most the catalog cache's cap (16) small rows
+        if (!detail::RecentEntryPasses(e, backendKind, endpoint, std::string())) {
+            continue;
         }
-        ImGui::PopID();
-        ++allShown;
+        const bool known = std::any_of(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(listed),
+                                       [&e](const ProjectRow& row) { return row.Key == e.projectKey; });
+        if (!known) {
+            rows.push_back(ProjectRow{e.projectKey, e.projectKey});
+        }
     }
-    if (allShown == 0 && !filter.empty()) {
-        ImGui::TextDisabled("  %s",
-                            SmatchetLocalization::T("draft.project.none_filtered", "No projects match the filter."));
-    } else if (allShown == 0 && freshness == smatchet::offline::DataFreshness::Fresh) {
-        ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.none", "No projects found."));
-    }
-    return changed;
+    return rows;
 }
 
-// "All projects" collapsible section of the combo popup: kicks the lazy off-thread load on first
-// expand, then renders the live or saved rows under a freshness cue. Owns its own TreeNodeEx/TreePop
-// pair. Sets selectedKey + returns true when a row is picked. Runs inside the active BeginCombo scope.
-bool DrawAllProjectsSection(State& state, AppController& app, const std::string& backendKind, const std::string& filter,
-                            std::string& selectedKey) {
-    bool changed = false;
-    ImGui::Separator();
-    const char* allLabel = SmatchetLocalization::T("draft.project.section.all", "All projects");
-    if (ImGui::TreeNodeEx(allLabel, state.allExpanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-        state.allExpanded = true;
-        StartAllProjectsFetch(state, app);
-
-        std::vector<RemoteProject> snapshot;
-        std::string fetchError;
-        bool failed = false;
-        bool fromSaved = false;
-        {
-            std::lock_guard<std::mutex> lk(state.fetchMutex);
-            snapshot = state.fetchedAll;
-            fetchError = state.fetchError;
-            failed = state.fetchFailed;
-            fromSaved = state.fetchFromSaved;
-        }
-        const bool inFlight = state.fetchInFlight.load();
-        const bool done = state.fetchDone.load();
-        smatchet::offline::FreshnessInputs in;
-        in.HasCache = !snapshot.empty() || fromSaved || (done && !failed);
-        in.Live = done && !failed && !fromSaved;
-        in.InFlight = inFlight;
-        in.LastAttemptFailed = failed;
-        in.Connectivity = app.GetLastTrackerConnectivityState();
-        const smatchet::offline::DataFreshness freshness = smatchet::offline::ClassifyFreshness(in);
-        const bool showRows = smatchet::offline::ShouldRenderContent(freshness);
-        // Pillar 6: saved or stale rows stay visible under the cue; the failure is its tooltip.
-        DataFreshnessCue::Draw(freshness, fetchError.empty() ? nullptr : fetchError.c_str());
-        if (failed && !inFlight) {
-            // P2-M11: with nothing to show, the error itself is the content — a bad or expired token
-            // must never read as an empty project list. Retry re-kicks the load next frame.
-            if (!showRows && !fetchError.empty()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
-                ImGui::TextWrapped("%s",
-                                   SmatchetLocalization::Format("draft.project.fetch_failed",
-                                                                "Couldn't load projects: %s", fetchError.c_str()));
-                ImGui::PopStyleColor();
-            }
-            if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
-                state.fetchBypassSaved.store(true);
-                state.fetchDone.store(false);
-            }
-        } else if (fromSaved && !inFlight) {
-            // A saved copy served inside its lifetime looks complete but may be out of date: Refresh asks the
-            // tracker now.
-            if (ImGui::SmallButton(SmatchetLocalization::T("common.refresh", "Refresh"))) {
-                state.fetchBypassSaved.store(true);
-                state.fetchDone.store(false);
-            }
-        }
-        if (showRows && DrawAllProjectRows(snapshot, backendKind, filter, freshness, selectedKey)) {
-            changed = true;
-        }
-        ImGui::TreePop();
-    } else {
-        state.allExpanded = false;
+// Before any pick is recorded for a tracker (first run of a build with recent picks, or a new
+// connection), its Recent section starts from the projects whose catalog is saved on this machine,
+// the ones opened before, most recently used first. Looked at once per scope, when the tracker's
+// project list and the saved-catalog read are both here; the dropdown reads its recents when it opens,
+// so the section shows from the next open. Only projects in `projects`, the focused tracker's own list,
+// are taken: the scope is that tracker's, while the saved catalogs are matched on the form's connection,
+// and in a split over two trackers those can differ.
+void SeedRecentsFromSavedCatalogs(State& state, const std::string& backendKey,
+                                  const std::vector<RemoteProject>& projects, const std::string& backendKind,
+                                  const std::string& endpoint) {
+    if (backendKey.empty() || projects.empty()) {
+        return; // no tracker yet, or its list is not here yet
     }
-    return changed;
+    const std::string scope = smatchet::recents::MakeScopeKey(backendKey, "project");
+    if (state.recentsSeedScope == scope) {
+        return;
+    }
+    std::vector<FieldCatalogCache::CachedProjectEntry> saved;
+    {
+        std::lock_guard<std::mutex> lk(state.cachedMutex);
+        if (!state.cachedLoaded) {
+            return;
+        }
+        saved = state.cached; // at most the catalog cache's cap (16)
+    }
+    std::vector<std::string> listed;
+    listed.reserve(projects.size());
+    for (const auto& p : projects) {
+        listed.push_back(detail::AllProjectKey(p, backendKind));
+    }
+    const std::vector<std::string> keys =
+        detail::RecentSeedKeys(std::move(saved), backendKind, endpoint, listed, smatchet::recents::kMaxPerScope);
+    state.recentsSeedScope = scope;
+    if (keys.empty() || !smatchet::recents::SharedGet(scope).empty()) {
+        return;
+    }
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it) { // oldest first: the newest ends on top
+        smatchet::recents::RecordAndPersist(scope, *it);
+    }
 }
 
 } // namespace
@@ -264,11 +271,11 @@ void StartAllProjectsFetch(State& state, AppController& app) {
     }
 }
 
-void StartRecentProjectsLoad(State& state, AppController& app) {
+void StartCachedProjectsLoad(State& state, AppController& app) {
     std::uint64_t generation = 0;
     {
-        std::lock_guard<std::mutex> lk(state.recentMutex);
-        generation = ++state.recentGeneration;
+        std::lock_guard<std::mutex> lk(state.cachedMutex);
+        generation = ++state.cachedGeneration;
     }
     // `statePtr` is app-lifetime window state, as for StartAllProjectsFetch.
     State* statePtr = &state;
@@ -276,16 +283,16 @@ void StartRecentProjectsLoad(State& state, AppController& app) {
         app.LaunchBackgroundTask([statePtr, generation]() {
             // Logs and returns an empty list on any failure; it never throws.
             std::vector<FieldCatalogCache::CachedProjectEntry> rows = FieldCatalogCache::ListCachedProjects();
-            std::lock_guard<std::mutex> lk(statePtr->recentMutex);
-            if (statePtr->recentGeneration != generation) {
+            std::lock_guard<std::mutex> lk(statePtr->cachedMutex);
+            if (statePtr->cachedGeneration != generation) {
                 return; // a newer read (the popup reopened) owns the rows
             }
-            statePtr->recent = std::move(rows);
-            statePtr->recentLoaded = true;
+            statePtr->cached = std::move(rows);
+            statePtr->cachedLoaded = true;
         });
     } catch (const std::exception& ex) {
         // The rows already shown stay; the next open reads again.
-        LOG_WARN("SmatchetProjectPicker: reading the recently used projects did not start: %s", ex.what());
+        LOG_WARN("SmatchetProjectPicker: reading the saved-catalog projects did not start: %s", ex.what());
     }
 }
 
@@ -297,27 +304,41 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
     const char* placeholder = SmatchetLocalization::T("draft.project.placeholder", "(pick one)");
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
 
-    if (ImGui::BeginCombo("##projectpicker", preview.c_str())) {
+    if (ImGui::BeginCombo("##projectpicker", preview.c_str(), ImGuiComboFlags_HeightLargest)) {
         if (!state.popupWasOpen) {
-            StartRecentProjectsLoad(state, app); // once per open, never per frame (Pillar 2)
+            StartCachedProjectsLoad(state, app); // once per open, never per frame (Pillar 2)
         }
         state.popupWasOpen = true;
-        // Search field at top.
-        const char* searchPlaceholder = SmatchetLocalization::T("draft.project.search", "Search...");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##projsearch", searchPlaceholder, state.searchBuf, sizeof(state.searchBuf));
-        const std::string filter(state.searchBuf);
+        StartAllProjectsFetch(state, app); // returns at once when the list is loaded or loading
 
-        // --- Recently used (read on a worker when the popup opened). ---
-        if (DrawRecentSection(state, backendKind, endpoint, filter, selectedKey)) {
+        const ProjectListView view = DrawProjectListStatus(state, app);
+        const std::vector<ProjectRow> rows = BuildProjectRows(state, view.Projects, backendKind, endpoint);
+        std::vector<smatchet::dropdown::Item> items;
+        items.reserve(rows.size());
+        for (const auto& row : rows) {
+            smatchet::dropdown::Item item;
+            item.Id = row.Key.c_str();
+            item.Label = row.Label.c_str();
+            item.Checked = row.Key == selectedKey;
+            items.push_back(item);
+        }
+        // The last picks come from the shared store, per tracker instance, and are listed even when
+        // the project list has not loaded (offline, first open): a recent project is always one pick away.
+        const std::string backendKey = app.FocusedCacheBackendKey();
+        const std::string recentsScope = smatchet::recents::MakeScopeKey(backendKey, "project");
+        SeedRecentsFromSavedCatalogs(state, backendKey, view.Projects, backendKind, endpoint);
+        smatchet::dropdown::Options options = smatchet::dropdown::SingleSelect(recentsScope);
+        options.RecentsMinOptions = -1; // always: the last picks are the point, however short the list
+        options.RecentsShowUnknown = true;
+        // "No projects found." only ever describes a live, empty list; otherwise the cue above explains.
+        options.EmptyText = view.Freshness == smatchet::offline::DataFreshness::Fresh
+                                ? SmatchetLocalization::T("draft.project.none", "No projects found.")
+                                : "";
+        const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
+        if (ev.Kind == smatchet::dropdown::EventKind::Picked && !ev.Id.empty()) {
+            selectedKey = ev.Id;
             changed = true;
         }
-
-        // --- All projects (collapsible, lazy). ---
-        if (DrawAllProjectsSection(state, app, backendKind, filter, selectedKey)) {
-            changed = true;
-        }
-
         ImGui::EndCombo();
     } else {
         state.popupWasOpen = false;

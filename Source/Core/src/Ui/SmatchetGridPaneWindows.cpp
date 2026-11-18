@@ -157,6 +157,10 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         pane.focused = (pane.id == d.focusedPaneId);
         ScopedActivePaneForDraw activePane(d, pane);
         drawActiveProjectWindow(app, d, pane, trackerBanner);
+        // A grid.search.focus request the header did not take this frame counts down and expires.
+        if (pane.gridSearchFocusFramesLeft > 0) {
+            --pane.gridSearchFocusFramesLeft;
+        }
     }
 
     // Focus switch: the pane whose window holds ImGui focus becomes the focused pane —

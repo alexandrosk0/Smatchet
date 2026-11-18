@@ -2,11 +2,16 @@
 
 #include "Ui/SmatchetProjectPicker_detail.h"
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 using SmatchetProjectPicker::detail::AllProjectKey;
 using SmatchetProjectPicker::detail::AllProjectPasses;
 using SmatchetProjectPicker::detail::ContainsCi;
 using SmatchetProjectPicker::detail::MakeRowLabel;
 using SmatchetProjectPicker::detail::RecentEntryPasses;
+using SmatchetProjectPicker::detail::RecentSeedKeys;
 
 namespace {
 
@@ -60,6 +65,32 @@ TEST_CASE("RecentEntryPasses filters on endpoint mismatch" * doctest::test_suite
 TEST_CASE("RecentEntryPasses filters on search text" * doctest::test_suite("[ui]")) {
     CHECK_FALSE(RecentEntryPasses(MakeEntry("PROJ", "Jira", "ep"), "Jira", "ep", "zzz"));
     CHECK(RecentEntryPasses(MakeEntry("PROJ", "Jira", "ep"), "Jira", "ep", "pro"));
+}
+
+TEST_CASE("RecentSeedKeys: this tracker's listed saved-catalog projects, most recently used first, capped" *
+          doctest::test_suite("[ui]")) {
+    std::vector<FieldCatalogCache::CachedProjectEntry> entries;
+    const auto add = [&entries](const char* key, const char* backend, const char* endpoint, std::int64_t used) {
+        FieldCatalogCache::CachedProjectEntry e = MakeEntry(key, backend, endpoint);
+        e.lastUsedUnix = used;
+        entries.push_back(e);
+    };
+    add("OLD", "Jira", "ep", 10);
+    add("NEW", "Jira", "ep", 40);
+    add("OTHER", "Plane", "ep", 50); // another tracker kind
+    add("ELSE", "Jira", "epB", 60);  // another instance
+    add("MID", "Jira", "ep", 30);
+    add("NEW", "Jira", "ep", 20); // the same key again: listed once, at its newest use
+    add("", "Jira", "ep", 70);    // no key
+
+    const std::vector<std::string> listed{"OLD", "MID", "NEW", "ELSE", "OTHER", "UNSAVED"};
+    CHECK(RecentSeedKeys(entries, "Jira", "ep", listed, 5) == std::vector<std::string>{"NEW", "MID", "OLD"});
+    CHECK(RecentSeedKeys(entries, "Jira", "ep", listed, 2) == std::vector<std::string>{"NEW", "MID"});
+    CHECK(RecentSeedKeys(entries, "Jira", "ep", listed, 0).empty());
+    CHECK(RecentSeedKeys({}, "Jira", "ep", listed, 5).empty());
+    // A saved-catalog project the tracker's own list does not hold is never taken, and does not use up the cap.
+    CHECK(RecentSeedKeys(entries, "Jira", "ep", {"OLD", "MID"}, 1) == std::vector<std::string>{"MID"});
+    CHECK(RecentSeedKeys(entries, "Jira", "ep", {}, 5).empty());
 }
 
 TEST_CASE("AllProjectKey uses id for Plane, key otherwise" * doctest::test_suite("[ui]")) {

@@ -1862,7 +1862,7 @@ class AppController : public IAppThreading,
 
     /// True once shutdown has begun. Public so `EditMetaCacheService` (via the deps adapter) can
     /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).
-    bool IsShuttingDown() const { return shuttingDown_.load(); }
+    bool IsShuttingDown() const override { return shuttingDown_.load(); }
 
   private:
     void JoinBackgroundTasks();
