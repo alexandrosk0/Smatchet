@@ -743,16 +743,23 @@ bool AppController::IsPaneFieldCatalogPopulated(const std::string& paneId) const
 
 std::shared_ptr<const std::vector<TrackerField>>
 AppController::GetPaneAvailableFields(const std::string& paneId) const {
+    std::string projectKey;
+    return GetPaneAvailableFields(paneId, projectKey);
+}
+
+std::shared_ptr<const std::vector<TrackerField>>
+AppController::GetPaneAvailableFields(const std::string& paneId, std::string& outProjectKey) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     if (it != gridContexts_.end()) {
         const GridContextFieldCatalog& cat = it->second->fieldCatalog;
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
         if (cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_) {
+            outProjectKey = cat.currentCatalogProjectKey_; // pinned with the snapshot, read in the same hold
             return cat.AvailableFields; // snapshot under the lock — the fetch worker swaps, never rewrites
         }
     }
     // No populated per-pane catalog: the focused catalog's snapshot (same data the shared read used).
-    return GetAvailableFields();
+    return GetAvailableFields(outProjectKey);
 }
 
 void AppController::SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,

@@ -1611,6 +1611,11 @@ class AppController : public IAppThreading,
     /// this one, so a TrackerFieldCatalogIndex built from it stays valid while the snapshot is
     /// held). Falls back to the focused catalog's snapshot when the pane has no populated context.
     std::shared_ptr<const std::vector<TrackerField>> GetPaneAvailableFields(const std::string& paneId) const;
+    /// GetPaneAvailableFields plus the project that snapshot was fetched for ("" = unscoped), read under the same
+    /// lock. The grid caches the key beside the per-pane index it builds from the snapshot, so a components cell
+    /// never pairs that index with another catalog's project (e.g. a re-created context at the same revision).
+    std::shared_ptr<const std::vector<TrackerField>> GetPaneAvailableFields(const std::string& paneId,
+                                                                            std::string& outProjectKey) const;
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
     void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,

@@ -166,6 +166,9 @@ struct GridPane {
     /// first routes to its own catalog; a focused / unpopulated pane reads the shared index.
     std::shared_ptr<const std::vector<TrackerField>> cachedPaneCatalogFields;
     std::shared_ptr<const TrackerFieldCatalogIndex> cachedPaneCatalogIndex;
+    /// Project cachedPaneCatalogFields was fetched for ("" = unscoped), read with it under one lock and replaced only
+    /// with it: the components cells compare their row's project against this, never against the live context.
+    std::string cachedPaneCatalogProjectKey;
     /// Per-context catalog revision the cached index was built from (staleness invalidation:
     /// a same-backend re-seed / a fetch bumps the context revision → the index rebuilds).
     std::uint64_t cachedPaneCatalogRevision = 0;

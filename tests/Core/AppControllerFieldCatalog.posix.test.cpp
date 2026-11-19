@@ -1069,6 +1069,13 @@ TEST_CASE("Pane catalog: a view naming one project scopes the pane's own fetch a
     CHECK_FALSE(PaneCatalogScopedTo(app, kCatalogPane, "OTHER"));
     CHECK_FALSE(app.IsFieldCatalogScopedToProject("KEY"));
     CHECK_FALSE(PaneCatalogScopedTo(app, "main", "KEY"));
+    // The grid's per-pane index reads the snapshot and its project together (cached side by side).
+    std::string paneProject;
+    const std::shared_ptr<const std::vector<TrackerField>> paneFields =
+        app.GetPaneAvailableFields(kCatalogPane, paneProject);
+    REQUIRE(paneFields);
+    CHECK(paneProject == "KEY");
+    CHECK(FindField(*paneFields, "components") != nullptr);
 
     // The components dropdown of a KEY row in this pane uses the pane catalog's list (no per-project list cached).
     const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetPaneAvailableFields(kCatalogPane);
