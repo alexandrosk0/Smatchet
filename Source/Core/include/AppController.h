@@ -835,6 +835,15 @@ class AppController : public IAppThreading,
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         return cat.AvailableFields;
     }
+    /// GetAvailableFields plus the project that snapshot was fetched for ("" = unscoped), read together under one
+    /// lock so they always describe the same catalog. The grid builds its shared frame index from the snapshot and
+    /// keeps the key beside it, so a components cell never compares against another catalog's project.
+    std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields(std::string& outProjectKey) const {
+        const GridContextFieldCatalog& cat = fieldCatalog(); // latch once (Pillar 3)
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        outProjectKey = cat.currentCatalogProjectKey_;
+        return cat.AvailableFields;
+    }
     /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
     /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
     std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }

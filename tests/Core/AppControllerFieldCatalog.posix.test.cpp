@@ -1351,3 +1351,26 @@ TEST_CASE("Pane catalog: switching back to the loaded view drops a fetch still o
     CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_seed"));
     CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
 }
+
+TEST_CASE("AppController::GetAvailableFields reads the snapshot and the project it was fetched for together") {
+    // The grid's shared frame index keeps this key beside the snapshot it indexes, so a components cell compares its
+    // row against the project of the catalog it actually reads, even after focus moves later in the frame.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    REQUIRE(ApplyGridCatalog(app, cfg, "KEY", CatalogWithField("customfield_key").Fields));
+    std::string project = "stale";
+    std::shared_ptr<const std::vector<TrackerField>> fields = app.GetAvailableFields(project);
+    REQUIRE(fields);
+    CHECK(project == "KEY");
+    CHECK(HasField(*fields, "customfield_key"));
+
+    REQUIRE(ApplyGridCatalog(app, cfg, std::string(), CatalogWithField("customfield_any").Fields));
+    fields = app.GetAvailableFields(project);
+    REQUIRE(fields);
+    CHECK(project.empty());
+    CHECK(HasField(*fields, "customfield_any"));
+}

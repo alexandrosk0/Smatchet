@@ -909,11 +909,13 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             // The index holds raw pointers into the catalog vector, so the frame context owns the snapshot it
             // was built from. The snapshot is swapped in after the index: the previous one is released only
             // once the index built from it is gone.
-            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+            std::string catalogProjectKey;
+            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields(catalogProjectKey);
             gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(*catalog);
             gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)
                                        : std::vector<TicketGridColumn>();
             gridFrameCtx_.catalogFields = std::move(catalog);
+            gridFrameCtx_.catalogProjectKey = std::move(catalogProjectKey);
         }
     }
 }

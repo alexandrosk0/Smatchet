@@ -180,8 +180,9 @@ void PrepareOpen(PopupEnv& e) {
     req.Picked.clear();
     req.PendingValues.clear();
     req.Clear = false;
-    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, req.Field, req.IssueIds, std::vector<std::string>(),
-                                          BulkMode::Replace, nullptr);
+    // The preview's before-values resolve against the row's own list too (EffectiveField), as the apply does.
+    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, EffectiveField(e.App, req), req.IssueIds,
+                                          std::vector<std::string>(), BulkMode::Replace, nullptr);
     if (smatchet::grid::bulk::ClassifyBulkField(req.Field) == BulkFieldKind::Labels) {
         CollectLabelSuggestions(e.App, req);
     }
