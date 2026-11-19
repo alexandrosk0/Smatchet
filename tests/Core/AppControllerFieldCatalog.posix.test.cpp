@@ -1324,3 +1324,30 @@ TEST_CASE("Pane catalog: a pane fetch gets the Jira catalog corrections the focu
     CHECK(HasField(*fields, "history"));
     CHECK(HasField(*fields, "comments"));
 }
+
+TEST_CASE("Pane catalog: switching back to the loaded view drops a fetch still out for the view in between") {
+    // Catalog A is loaded; the view switches to B (fetch held), then back to A, which needs no fetch. B's result,
+    // landing afterwards, must not replace A's catalog.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<HeldFirstFetchBackend>();
+    HeldFirstFetchBackend* const held = backend.get();
+    AddCatalogPane(app, std::move(backend));
+    ReleaseHeldFetchOnExit releaseOnExit{held};
+    SeedPaneCatalog(app, "A");
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = B");
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstStarted(); }));
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = A"); // A is loaded: no fetch
+
+    held->Release();
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstReturned(); }));
+    PumpFor(app, std::chrono::milliseconds(300)); // B's result is posted right after it returns
+
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "A"));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_seed"));
+    CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
+}

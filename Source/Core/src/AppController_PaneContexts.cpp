@@ -548,6 +548,9 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
         if (ctx.fieldCatalog.fieldCatalogEverLoaded_ &&
             (projectKey.empty() ||
              smatchet::components::CatalogIsRowProject(ctx.fieldCatalog.currentCatalogProjectKey_, projectKey))) {
+            // The loaded catalog answers the current view, so a fetch still in flight for an earlier view (the pane
+            // switched away and back) is superseded too: it must not land over this one.
+            ctx.fieldCatalog.PaneCatalogFetchSeq.fetch_add(1);
             return;
         }
     }
