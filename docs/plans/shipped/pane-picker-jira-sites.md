@@ -1,4 +1,5 @@
 # Plan — "+ ▾" new-pane caret with two Jira sites
+<!-- plan-date: 2026-11-16 -->
 
 **Status**: shipped (#2451)
 **Branch**: `claude/plus-dropdown-two-jira-261a42`
