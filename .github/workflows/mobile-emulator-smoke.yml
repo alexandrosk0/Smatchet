@@ -50,8 +50,8 @@ jobs:
   mobile-emulator-smoke:
     name: Mobile — Android emulator smoke (x86_64, boot APK + first frame)
     # Pinned to ubuntu-24.04, NOT ubuntu-latest: ubuntu-latest flipped to ubuntu-26.04 on
-    # 2026-11-18 (clang 21, CMake 4.4), whose OpenSSL imported target leaks host
-    # `-lzstd -l:libjitterentropy.a` into the NDK link line. Stopgap until the 26.04 port
+    # 2026-11-18 (CMake 4.4): the NDK link line picks up host `-lzstd -l:libjitterentropy.a`
+    # (suspected CMake 4 FindOpenSSL / pkg-config). Stopgap until the 26.04 port
     # lands (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
     runs-on: ubuntu-24.04
     timeout-minutes: 60
