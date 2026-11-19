@@ -1533,19 +1533,7 @@ bool DrawPrefsSearchBoxInput(UiDrawSession& d) {
         ImGui::SetKeyboardFocusHere();
         s_prefsOpenFocus.searchBox = false;
     }
-    ImGuiContext& g = *::ImGui::GetCurrentContext();
-    // SMATCHET_DEVIATION(rule=duplication; reason=the Esc-clears-the-search block is the same ImGui deactivated-state workaround as the grid search box in SmatchetGridHeaderUi.cpp, which another branch's plan-lock (pane-picker-jira-sites) holds, so a shared helper cannot touch it from this PR (debt entry 2026-11-18-esc-clears-search-helper-duplication extracts one once that file is free); owner=orchestrator; revisit=2026-12-02)
-    const ImGuiID searchId = s_prefsSearchInputId;
-    if (searchId != 0 && (g.ActiveId == searchId || g.ActiveIdPreviousFrame == searchId) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        d.prefsSearchBuf[0] = '\0';
-        if (g.ActiveId == searchId) {
-            ImGui::ClearActiveID();
-        }
-        if (g.InputTextDeactivatedState.ID == searchId) {
-            g.InputTextDeactivatedState.ClearFreeMemory();
-        }
-    }
+    SmatchetInput::ClearSearchOnEscape(s_prefsSearchInputId, d.prefsSearchBuf);
     // The placeholder names the bound key, read live so a rebind shows on the next frame.
     std::string hint = SmatchetLocalization::TranslateSource("Search settings...");
     const std::string boundKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "preferences.search.focus");
