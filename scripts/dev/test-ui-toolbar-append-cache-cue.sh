@@ -21,8 +21,9 @@ set -euo pipefail
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58752}"
-# imgui_test_engine filter is substring match.
-FILTER="${UI_TEST_FILTER:-ToolbarAppendCue}"
+# imgui_test_engine filter is substring match, with a comma for "or". The file registers
+# the append-cache cue ("ToolbarAppendCue" test names) and the icon picker ("IconPicker").
+FILTER="${UI_TEST_FILTER:-ToolbarAppendCue,IconPicker}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2

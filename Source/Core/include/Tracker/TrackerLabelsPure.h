@@ -49,25 +49,6 @@ bool ContainsLabelCaseInsensitive(const std::vector<std::string>& values, const 
  */
 std::vector<std::string> SortAndUniqueLabels(std::vector<std::string> values);
 
-/**
- * Substring filter predicate. `filterLower` is expected to already be lower-cased + trimmed
- * by the caller (the production combo input runs ToLowerAsciiCopy(TrimCopy(searchBuf)) once
- * per frame; this helper is hot-path-cheap). Empty `filterLower` -> always true.
- */
-bool LabelMatchesFilter(const std::string& label, const std::string& filterLower);
-
-/**
- * Filter a sorted-unique suggestion list for the combo dropdown: keep entries that either
- * are already selected (so the checkbox stays visible for un-checking) or whose lower-cased
- * label substring-matches `filterLower`.
- *
- * `filterLower` must be pre-lowered + trimmed. Empty `filterLower` -> all entries pass the
- * filter side; selected-side stays true regardless.
- */
-std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::string>& suggestions,
-                                                     const std::vector<std::string>& selectedLabels,
-                                                     const std::string& filterLower);
-
 } // namespace TrackerLabelsPure
 
 #endif

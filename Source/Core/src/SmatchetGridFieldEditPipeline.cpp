@@ -8,15 +8,21 @@
 #include "MainThreadDispatcher.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
+#include "StringUtil.h"
 #include "SmatchetUiSession.h"
 #include "TrackerHttpUtils.h"
+#include "Ui/BulkFieldEditPure.h"
 #include "UiPerfMonitor.h"
 
 #include "imgui.h"
 #include <algorithm>
+#include <deque>
 #include <exception>
 #include <memory>
+#include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,6 +41,13 @@ bool ApplyFieldEditResultBool(AppController& app, const PendingFieldEdit& edit, 
     return r.has_value();
 }
 
+// A single-cell edit raises its own toast; a bulk row stays quiet and reports through its job's summary toast.
+void PushUnlessBulk(bool bulkRow, const std::string& title, const std::string& message, ToastType type) {
+    if (!bulkRow) {
+        SmatchetToastManager::Instance().Push(title, message, type);
+    }
+}
+
 // Apply the final commit result on the UI thread. Runs from the
 // MainThreadDispatcher::Drain at the top of the next frame, which mutates
 // `d` (the singleton UiDrawSession via `g_ui`) safely from the UI thread.
@@ -46,28 +59,34 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
                                  FieldEditCommitResult result) {
     const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
     std::string applyError;
+    // A bulk row reports through its job's one summary toast (FoldBulkRowResult), not one toast per row, and
+    // never through the single-edit error banner. Its cell badge still shows the row's own outcome.
+    const bool bulkRow = edit.BulkJobId != 0;
+    smatchet::grid::bulk::BulkRowState bulkState = smatchet::grid::bulk::BulkRowState::Failed;
+    std::string bulkMessage;
 
     if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
         // The worker already persisted the edit to the offline queue (CommitOrQueue); only the
         // optimistic local apply is left.
+        // The worker really enqueued it: a bulk row is "queued" even if the optimistic local apply below fails.
+        bulkState = smatchet::grid::bulk::BulkRowState::Queued;
         if (!ApplyFieldEditResultBool(app, edit, result.ApplyResult, applyError)) {
-            SmatchetToastManager::Instance().Push(
-                SmatchetLocalization::T("toast.apply_error", "Apply Error"),
-                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
-                                                                         "Failed to apply queued field edit."))
-                                   : applyError,
-                ToastType::Error);
+            bulkMessage = applyError;
+            PushUnlessBulk(bulkRow, SmatchetLocalization::T("toast.apply_error", "Apply Error"),
+                           applyError.empty() ? std::string(SmatchetLocalization::T(
+                                                    "toast.apply_queued_failed", "Failed to apply queued field edit."))
+                                              : applyError,
+                           ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
             feedback.Message = applyError;
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[editKey] = feedback;
         } else {
-            SmatchetToastManager::Instance().Push(
-                SmatchetLocalization::T("toast.queued_offline", "Queued Offline"),
-                SmatchetLocalization::T("toast.field_edit_will_sync",
-                                        "Field edit will sync when Tracker is reachable."),
-                ToastType::Info);
+            PushUnlessBulk(bulkRow, SmatchetLocalization::T("toast.queued_offline", "Queued Offline"),
+                           SmatchetLocalization::T("toast.field_edit_will_sync",
+                                                   "Field edit will sync when Tracker is reachable."),
+                           ToastType::Info);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Success;
             feedback.Message = "Queued";
@@ -81,23 +100,23 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
         }
     } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
         const bool applied = ApplyFieldEditResultBool(app, edit, result.ApplyResult, applyError);
+        bulkState = smatchet::grid::bulk::BulkRowState::Saved; // the tracker took it, whatever the local apply did
         if (!applied) {
-            SmatchetToastManager::Instance().Push(
-                SmatchetLocalization::T("toast.save_error", "Save Error"),
-                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_saved_failed",
-                                                                         "Failed to apply saved field update."))
-                                   : applyError,
-                ToastType::Error);
+            bulkMessage = applyError;
+            PushUnlessBulk(bulkRow, SmatchetLocalization::T("toast.save_error", "Save Error"),
+                           applyError.empty() ? std::string(SmatchetLocalization::T(
+                                                    "toast.apply_saved_failed", "Failed to apply saved field update."))
+                                              : applyError,
+                           ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
             feedback.Message = applyError;
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[editKey] = feedback;
         } else {
-            SmatchetToastManager::Instance().Push(
-                SmatchetLocalization::T("toast.success", "Success"),
-                SmatchetLocalization::T("toast.field_update_saved", "Field update saved to Tracker."),
-                ToastType::Success);
+            PushUnlessBulk(bulkRow, SmatchetLocalization::T("toast.success", "Success"),
+                           SmatchetLocalization::T("toast.field_update_saved", "Field update saved to Tracker."),
+                           ToastType::Success);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Success;
             feedback.Message = "Saved";
@@ -105,13 +124,18 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             d.cellFeedbackByKey[editKey] = feedback;
         }
     } else {
-        d.gridEditError = result.Error.empty() ? std::string(SmatchetLocalization::T(
-                                                     "toast.save_field_failed", "Failed to save Tracker field update."))
-                                               : result.Error;
-        d.gridEditSuccess.clear();
+        const std::string failText = result.Error.empty()
+                                         ? std::string(SmatchetLocalization::T("toast.save_field_failed",
+                                                                               "Failed to save Tracker field update."))
+                                         : result.Error;
+        bulkMessage = failText;
+        if (!bulkRow) {
+            d.gridEditError = failText;
+            d.gridEditSuccess.clear();
+        }
         CellWriteFeedback feedback;
         feedback.State = CellWriteState::Error;
-        feedback.Message = d.gridEditError;
+        feedback.Message = failText;
         feedback.FramesRemaining = 0;
         d.cellFeedbackByKey[editKey] = feedback;
     }
@@ -120,6 +144,10 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
     // following frame. Done unconditionally so a failed save does not
     // strand the deque.
     d.hasInFlightEdit = false;
+
+    if (bulkRow) {
+        FoldBulkRowResult(d, edit.BulkJobId, edit.IssueId, bulkState, bulkMessage);
+    }
 }
 
 // Worker half of the commit: CommitOrQueue decides queue-first (tracker offline at dispatch) or
@@ -179,6 +207,66 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, const PendingFieldEdi
         [&app, &d, edit, result]() mutable { ApplyCommitResultOnUiThread(app, d, edit, std::move(result)); });
 }
 
+// The cell an edit targets, scoped by tracker (two panes may show the same issue key on different trackers).
+std::string QueuedCellKey(const PendingFieldEdit& e) {
+    return e.Target.BackendKey + '\x1f' + e.IssueId + '\x1f' + e.Field.Id;
+}
+
+// Drops every queued edit that one of `incoming` replaces (latest-per-cell). One pass over the queue against a set
+// of the incoming cells, because a bulk job enqueues N edits at once and a scan per edit would be O(N^2) string
+// builds on the UI thread. A cell is scoped by its tracker too: two panes may show the same issue key on
+// different trackers. A dropped bulk row closes its job row so the job can still finish.
+void SupersedeQueuedEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& incoming) {
+    if (incoming.empty() || d.queuedFieldEdits.empty()) {
+        return;
+    }
+    std::unordered_set<std::string> cells;
+    cells.reserve(incoming.size());
+    for (const PendingFieldEdit& edit : incoming) {
+        cells.insert(QueuedCellKey(edit));
+    }
+    for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
+        if (cells.count(QueuedCellKey(*it)) == 0) {
+            ++it;
+            continue;
+        }
+        const std::uint64_t droppedJob = it->BulkJobId;
+        const std::string droppedIssue = it->IssueId;
+        it = d.queuedFieldEdits.erase(it);
+        if (droppedJob != 0) {
+            FoldBulkRowResult(d, droppedJob, droppedIssue, smatchet::grid::bulk::BulkRowState::Skipped,
+                              SmatchetLocalization::T("grid.bulk.skip_superseded", "replaced by a newer edit"));
+        }
+    }
+}
+
+// Queues `incoming` latest-per-cell: older queued edits for the same cells go (SupersedeQueuedEdits), and when one
+// batch holds two edits of a cell only the last is queued. A dropped bulk row closes its job row.
+void QueueLatestPerCell(UiDrawSession& d, const std::vector<PendingFieldEdit>& incoming) {
+    if (incoming.empty()) {
+        return; // the idle frame: no container is built
+    }
+    SupersedeQueuedEdits(d, incoming);
+    if (incoming.size() == 1) {
+        d.queuedFieldEdits.push_back(incoming.front());
+        return;
+    }
+    std::unordered_map<std::string, std::size_t> lastOfCell;
+    lastOfCell.reserve(incoming.size());
+    for (std::size_t i = 0; i < incoming.size(); ++i) {
+        lastOfCell[QueuedCellKey(incoming[i])] = i;
+    }
+    for (std::size_t i = 0; i < incoming.size(); ++i) {
+        if (lastOfCell[QueuedCellKey(incoming[i])] == i) {
+            d.queuedFieldEdits.push_back(incoming[i]);
+        } else if (incoming[i].BulkJobId != 0) {
+            FoldBulkRowResult(d, incoming[i].BulkJobId, incoming[i].IssueId,
+                              smatchet::grid::bulk::BulkRowState::Skipped,
+                              SmatchetLocalization::T("grid.bulk.skip_superseded", "replaced by a newer edit"));
+        }
+    }
+}
+
 } // namespace
 
 // Enqueue half (called once per visible PANE per frame — review MEDIUM-1 split):
@@ -189,18 +277,7 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
         // Keep queued edits latest-per-cell (drop older queued item for same cell). A cell is scoped
         // by its tracker too: two panes may show the same issue key on different trackers.
         if (!readOnlyMode) {
-            for (const auto& edit : pendingEdits) {
-                const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
-                for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
-                    if (it->Target.BackendKey == edit.Target.BackendKey &&
-                        BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
-                        it = d.queuedFieldEdits.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-                d.queuedFieldEdits.push_back(edit);
-            }
+            QueueLatestPerCell(d, pendingEdits);
         } else if (!pendingEdits.empty()) {
             d.gridEditSuccess.clear();
             d.gridEditError = "Edit skipped: Tracker is in read-only mode.";
@@ -210,7 +287,14 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
         // error banner also makes the grid read-only, but those edits are held (the pump does not
         // dispatch while read-only) and go out once the tracker is usable again.
         if (readOnlyMode && d.cfg.ReadOnlyMode) {
+            const std::deque<PendingFieldEdit> discarded = std::move(d.queuedFieldEdits);
             d.queuedFieldEdits.clear();
+            for (const PendingFieldEdit& edit : discarded) {
+                if (edit.BulkJobId != 0) {
+                    FoldBulkRowResult(d, edit.BulkJobId, edit.IssueId, smatchet::grid::bulk::BulkRowState::Failed,
+                                      SmatchetLocalization::T("grid.bulk.fail_read_only", "read-only mode"));
+                }
+            }
         }
     }
 
@@ -323,6 +407,10 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode)
             failed.Message = d.gridEditError;
             failed.FramesRemaining = 0;
             d.cellFeedbackByKey[BuildCellKey(edit.IssueId, edit.Field.Id)] = failed;
+            if (edit.BulkJobId != 0) {
+                FoldBulkRowResult(d, edit.BulkJobId, edit.IssueId, smatchet::grid::bulk::BulkRowState::Failed,
+                                  failed.Message);
+            }
         }
     }
 
@@ -349,4 +437,239 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vect
                            bool readOnlyMode) {
     EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
     PumpGridFieldEdits(app, d, readOnlyMode);
+}
+
+// Bulk field edit (docs/plans/bulk-edit-rows.md). A job fans out into one ordinary PendingFieldEdit per row, so each
+// row goes through the same pump, CommitOrQueueFieldEdit, offline queue and audit as a single-cell edit.
+
+namespace {
+
+using smatchet::grid::bulk::BulkFieldEditJob;
+using smatchet::grid::bulk::BulkFieldKind;
+using smatchet::grid::bulk::BulkMode;
+using smatchet::grid::bulk::BulkRow;
+using smatchet::grid::bulk::BulkRowState;
+
+// Finished jobs kept for the summary toast's click action and the later Revert.
+constexpr std::size_t kMaxKeptBulkJobs = 8;
+
+// One toast per finished job. "Queued" counts only rows the worker really enqueued (a row stays Pending until then).
+void PushBulkSummaryToast(UiDrawSession& d, const BulkFieldEditJob& job) {
+    const smatchet::grid::bulk::BulkSummary summary = smatchet::grid::bulk::Summarize(job);
+    std::string message = smatchet::grid::bulk::BulkSummaryText(summary);
+    std::set<std::string> failedIds;
+    std::string firstError;
+    for (const BulkRow& row : job.Rows) {
+        if (row.State == BulkRowState::Failed) {
+            failedIds.insert(row.IssueId);
+            if (firstError.empty() && !row.Message.empty()) {
+                firstError = row.IssueId + ": " + row.Message;
+            }
+        }
+    }
+    if (!firstError.empty()) {
+        if (firstError.size() > 160) {
+            firstError.resize(160);
+            firstError += "...";
+        }
+        message += "\n" + firstError;
+    }
+    const std::string fieldName = job.Field.Name.empty() ? job.Field.Id : job.Field.Name;
+    const std::string title = SmatchetLocalization::Format("grid.bulk.done_title", "Bulk edit: %s", fieldName.c_str());
+    const ToastType type = smatchet::grid::bulk::BulkSummaryToastType(summary);
+    if (failedIds.empty()) {
+        SmatchetToastManager::Instance().Push(title, message, type, 6000);
+        return;
+    }
+    // A click on the toast selects the failed rows, so the user can inspect or retry them.
+    UiDrawSession* session = &d;
+    const std::string paneId = job.PaneId;
+    SmatchetToastManager::Instance().PushClickable(title, message, type, 8000, [session, paneId, failedIds]() {
+        SelectGridRowsByIssueIds(*session, paneId, failedIds);
+    });
+}
+
+void PruneFinishedBulkJobs(UiDrawSession& d) {
+    for (auto it = d.bulkFieldEditJobs.begin();
+         d.bulkFieldEditJobs.size() > kMaxKeptBulkJobs && it != d.bulkFieldEditJobs.end();) {
+        if (smatchet::grid::bulk::Summarize(it->second).Done) {
+            it = d.bulkFieldEditJobs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+} // namespace
+
+smatchet::grid::bulk::BulkFieldEditJob
+PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
+                        const std::vector<std::string>& issueIds, const std::vector<std::string>& values,
+                        smatchet::grid::bulk::BulkMode mode, std::vector<std::vector<std::string>>* rowValues) {
+    BulkFieldEditJob job;
+    job.PaneId = paneId;
+    job.Field = field;
+    job.Values = values;
+    job.Mode = mode;
+    const BulkFieldKind kind = smatchet::grid::bulk::ClassifyBulkField(field);
+    const bool preview = rowValues == nullptr;
+    if (rowValues) {
+        rowValues->clear();
+    }
+
+    // The pane's own tickets, as they are now. Memory only: no network, no SQLite.
+    const PendingActionTarget target = app.LatchPendingActionTargetForPane(paneId);
+    const std::shared_ptr<const std::vector<CachedTicket>> snapshot = app.TicketsSnapshotForTarget(target);
+    std::unordered_map<std::string, const CachedTicket*> byId;
+    if (snapshot) {
+        byId.reserve(snapshot->size());
+        for (const CachedTicket& ticket : *snapshot) {
+            byId.emplace(ticket.id, &ticket);
+        }
+    }
+
+    std::unordered_set<std::string> seen;
+    for (const std::string& issueId : issueIds) {
+        if (issueId.empty() || !seen.insert(issueId).second) {
+            continue; // one row per issue
+        }
+        BulkRow row;
+        row.IssueId = issueId;
+        std::vector<std::string> newValues;
+        const auto it = byId.find(issueId);
+        if (it == byId.end()) {
+            row.State = BulkRowState::Skipped;
+            row.Message = SmatchetLocalization::T("grid.bulk.skip_gone", "no longer in this view");
+        } else {
+            const CachedTicket& ticket = *it->second;
+            row.BeforeValue = ticket.GetFieldValue(field.Id);
+            row.BeforeValues = smatchet::grid::bulk::BeforeValuesFor(field, kind, row.BeforeValue);
+            // Edit permission is a memory read (EditMetaCacheService, under its own mutex). The row's own issue type is
+            // passed so the check does not scan the whole ticket list once per row.
+            const std::string issueType = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
+            if (!app.CanEditFieldForIssue(issueId, field.Id, &field, issueType.empty() ? nullptr : &issueType)) {
+                row.State = BulkRowState::Skipped;
+                row.Message = SmatchetLocalization::T("grid.bulk.skip_not_editable", "not editable on this issue");
+            } else if (mode != BulkMode::Replace && kind == BulkFieldKind::MultiChoice &&
+                       !smatchet::grid::bulk::AllEntriesResolve(field, row.BeforeValues)) {
+                // Add / Remove merges into the current set; an entry outside the option list (an archived version, a
+                // component of another project) cannot be written back as an id, so this row is left alone.
+                row.State = BulkRowState::Skipped;
+                row.Message =
+                    SmatchetLocalization::T("grid.bulk.skip_unresolved", "current value is not in this option list");
+            } else if (!preview) {
+                newValues = smatchet::grid::bulk::NewValuesForRow(kind, mode, row.BeforeValues, values);
+                if (smatchet::grid::bulk::IsRowUnchanged(kind, row.BeforeValues, newValues)) {
+                    row.State = BulkRowState::Skipped;
+                    row.Message = SmatchetLocalization::T("grid.bulk.skip_unchanged", "already has this value");
+                }
+            }
+        }
+        job.Rows.push_back(row);
+        if (rowValues) {
+            rowValues->push_back(std::move(newValues));
+        }
+    }
+    return job;
+}
+
+std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                                 const TrackerField& field, const std::vector<std::string>& issueIds,
+                                 const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
+                                 bool readOnlyMode) {
+    const std::string fieldName = field.Name.empty() ? field.Id : field.Name;
+    const std::string title = SmatchetLocalization::Format("grid.bulk.done_title", "Bulk edit: %s", fieldName.c_str());
+    if (readOnlyMode) {
+        SmatchetToastManager::Instance().Push(
+            title, SmatchetLocalization::T("grid.bulk.read_only", "Nothing was changed: the grid is read-only."),
+            ToastType::Warning);
+        return 0;
+    }
+
+    std::vector<std::vector<std::string>> rowValues;
+    BulkFieldEditJob job = PrepareBulkFieldEditJob(app, paneId, field, issueIds, values, mode, &rowValues);
+    const smatchet::grid::bulk::BulkSummary prepared = smatchet::grid::bulk::Summarize(job);
+    const int toSend = prepared.Remaining;
+    if (toSend == 0) {
+        // Nothing to send: report it now; no job is kept.
+        SmatchetToastManager::Instance().Push(title,
+                                              SmatchetLocalization::Format("grid.bulk.nothing_to_change",
+                                                                           "Nothing to change: %d skipped.",
+                                                                           prepared.Skipped),
+                                              ToastType::Info);
+        return 0;
+    }
+
+    job.Id = d.nextBulkJobId++;
+    const PendingActionTarget target = app.LatchPendingActionTargetForPane(paneId);
+    std::vector<PendingFieldEdit> edits;
+    edits.reserve(static_cast<std::size_t>(toSend));
+    for (std::size_t i = 0; i < job.Rows.size(); ++i) {
+        const BulkRow& row = job.Rows[i];
+        if (row.State != BulkRowState::Pending) {
+            continue;
+        }
+        PendingFieldEdit edit;
+        edit.IssueId = row.IssueId;
+        edit.Field = field;
+        edit.Values = rowValues[i];
+        // ADR-0016: the same scalar-base capture QueueEdit does, so a queued bulk row that replays after someone
+        // else changed the value raises a conflict instead of overwriting it.
+        smatchet::grid::bulk::CaptureScalarBase(row.BeforeValue, edit);
+        edit.Target = target;
+        edit.BulkJobId = job.Id;
+        edits.push_back(std::move(edit));
+    }
+
+    // Keep the selection by issue id: the first landed edit bumps the snapshot revision, which clears the
+    // sort-order row selection (SmatchetActiveProjectGridTable.cpp rebuilds it from these ids).
+    if (GridPane* pane = FindGridPaneById(d.gridPanes, paneId)) {
+        GridRectSelection& sel = pane->gridState.RectSel;
+        sel.KeepIssueIds.clear();
+        sel.KeepIssueIds.insert(issueIds.begin(), issueIds.end());
+        sel.KeepRows = sel.Rows;
+    }
+
+    const std::uint64_t jobId = job.Id;
+    d.bulkFieldEditJobs[jobId] = std::move(job);
+    PruneFinishedBulkJobs(d);
+    EnqueueGridFieldEdits(d, edits, false);
+    SmatchetToastManager::Instance().Push(
+        title, SmatchetLocalization::Format("grid.bulk.saving", "Saving %d rows...", toSend), ToastType::Info, 2500);
+    LOG_INFO("GridBulkEdit: job %llu field=%s rows=%d skipped=%d", static_cast<unsigned long long>(jobId),
+             field.Id.c_str(), toSend, prepared.Skipped);
+    return jobId;
+}
+
+void FoldBulkRowResult(UiDrawSession& d, std::uint64_t jobId, const std::string& issueId,
+                       smatchet::grid::bulk::BulkRowState state, const std::string& message) {
+    const auto it = d.bulkFieldEditJobs.find(jobId);
+    if (it == d.bulkFieldEditJobs.end()) {
+        LOG_WARN("GridBulkEdit: result for unknown job %llu issue=%s ignored", static_cast<unsigned long long>(jobId),
+                 issueId.c_str());
+        return;
+    }
+    BulkFieldEditJob& job = it->second;
+    if (!smatchet::grid::bulk::SetRowState(job, issueId, state, message)) {
+        LOG_WARN("GridBulkEdit: job %llu has no row for issue=%s", static_cast<unsigned long long>(jobId),
+                 issueId.c_str());
+        return;
+    }
+    if (!job.Reported && smatchet::grid::bulk::Summarize(job).Done) {
+        job.Reported = true;
+        PushBulkSummaryToast(d, job);
+    }
+}
+
+void SelectGridRowsByIssueIds(UiDrawSession& d, const std::string& paneId, const std::set<std::string>& issueIds) {
+    GridPane* pane = FindGridPaneById(d.gridPanes, paneId);
+    if (!pane) {
+        return; // the pane was closed since
+    }
+    GridRectSelection& sel = pane->gridState.RectSel;
+    sel.KeepIssueIds = issueIds;
+    sel.KeepRows = sel.Rows;
+    // A sort signature that matches no order makes the pane's next draw clear the selection and rebuild it from
+    // KeepIssueIds against its current sort order (SmatchetActiveProjectGridTable.cpp).
+    sel.SortSignature = 0;
 }
