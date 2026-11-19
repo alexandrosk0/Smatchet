@@ -100,6 +100,42 @@ inline bool ContainsKeywordSpan(const std::string& haystack, const std::string& 
     return false;
 }
 
+/// True when `input` holds a JQL list test, "<field> IN (a, b)" or "<field> NOT IN (a)". The phrase "in (" also
+/// opens ordinary titles ("log in (again)", "sign in (mobile)"), so a bare lowercase "in (x)" is not enough:
+/// the list counts when the keyword is UPPERCASE, when it follows "not", or when the parentheses hold a comma.
+/// A lowercase single-value list ("status in (Open)") therefore stays a title, the same TitleSearch bias as the
+/// lowercase "is empty" rule below. Pure.
+inline bool ContainsInList(const std::string& input) {
+    const std::string lower = ToLowerAsciiCopy(input); // ASCII fold: byte offsets match `input`
+    for (std::size_t at = lower.find("in"); at != std::string::npos; at = lower.find("in", at + 1)) {
+        if (at == 0 || input[at - 1] != ' ') {
+            continue; // a list test follows a field name
+        }
+        std::size_t open = at + 2;
+        while (open < input.size() && input[open] == ' ') {
+            ++open;
+        }
+        if (open >= input.size() || input[open] != '(') {
+            continue;
+        }
+        if (input.compare(at, 2, "IN") == 0) {
+            return true;
+        }
+        std::size_t wordEnd = at;
+        while (wordEnd > 0 && input[wordEnd - 1] == ' ') {
+            --wordEnd;
+        }
+        const bool afterNot =
+            wordEnd >= 3 && lower.compare(wordEnd - 3, 3, "not") == 0 && (wordEnd == 3 || input[wordEnd - 4] == ' ');
+        const std::size_t close = input.find(')', open);
+        const bool hasComma = input.find(',', open) < (close == std::string::npos ? input.size() : close);
+        if (afterNot || hasComma) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// True when `input` looks like a structured filter query rather than a plain
 /// title phrase. Conservative heuristic (favours TitleSearch on ambiguity):
 ///   1. a comparison — `= ~ < >`, or `!` only as `!=` / `!~` — unambiguously marks a
@@ -150,12 +186,10 @@ inline bool LooksLikeStructuredQuery(const std::string& input) {
         ContainsKeywordSpan(input, "IS NULL") || ContainsKeywordSpan(input, "IS NOT NULL")) {
         return true;
     }
-    const std::string lower = ToLowerAsciiCopy(input);
-    // `status in (Open, Done)`: the space before "in" keeps "login (again)" a title.
-    if (lower.find(" in (") != std::string::npos || lower.find(" in(") != std::string::npos) {
+    if (ContainsInList(input)) {
         return true;
     }
-    return lower.find("order by") != std::string::npos;
+    return ToLowerAsciiCopy(input).find("order by") != std::string::npos;
 }
 
 /// True when `input` is a pasted link to one issue the backend can open ("https://acme.atlassian.net/browse/

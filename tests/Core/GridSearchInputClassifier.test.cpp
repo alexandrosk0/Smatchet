@@ -174,8 +174,31 @@ TEST_CASE("LooksLikeStructuredQuery: real queries still read as queries") {
     CHECK(LooksLikeStructuredQuery("labels in (a, b)"));
     CHECK(LooksLikeStructuredQuery("labels IN (a,b)"));
     CHECK(LooksLikeStructuredQuery("labels not in (a)"));
-    CHECK(LooksLikeStructuredQuery("status in(Open)"));
+    CHECK(LooksLikeStructuredQuery("status IN(Open)"));
+    CHECK(LooksLikeStructuredQuery("status NOT IN (Done)"));
     CHECK(LooksLikeStructuredQuery("is:open (label:bug)"));
+}
+
+TEST_CASE("LooksLikeStructuredQuery: 'in (' inside a title is plain words") {
+    // "in (" also opens ordinary English: a bare lowercase list is not enough to call it a query.
+    CHECK_FALSE(LooksLikeStructuredQuery("log in (again)"));
+    CHECK_FALSE(LooksLikeStructuredQuery("sign in (mobile)"));
+    CHECK_FALSE(LooksLikeStructuredQuery("plug in (the cable)"));
+    CHECK(ClassifyGridSearchInput("log in (again)", GridSearchBackend::Jira) == GridSearchInputKind::TitleSearch);
+    // Documented bias: a lowercase single-value list reads as a title, the way lowercase "is empty" does.
+    CHECK_FALSE(LooksLikeStructuredQuery("status in (Open)"));
+    // The list keeps reading as a query once it carries a JQL signal.
+    CHECK(LooksLikeStructuredQuery("status in (Open, Done)"));
+    CHECK(LooksLikeStructuredQuery("status not in (Done)"));
+    CHECK(LooksLikeStructuredQuery("status IN (Open)"));
+    CHECK(LooksLikeStructuredQuery("a  in  (x, y)"));
+    // No field before the keyword, or no list after it: not a list test.
+    CHECK_FALSE(LooksLikeStructuredQuery("in (a, b)"));
+    CHECK_FALSE(LooksLikeStructuredQuery("login (a, b)"));
+    CHECK_FALSE(LooksLikeStructuredQuery("log in"));
+    // A comma after the closing parenthesis is not inside the list; "cannot" is not the word "not".
+    CHECK_FALSE(LooksLikeStructuredQuery("log in (again), later"));
+    CHECK_FALSE(LooksLikeStructuredQuery("cannot in (x)"));
 }
 
 TEST_CASE("A pasted issue link is a ticket key, and Enter jumps to the key inside it") {
