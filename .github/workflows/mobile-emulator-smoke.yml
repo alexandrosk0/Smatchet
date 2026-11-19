@@ -49,10 +49,7 @@ env:
 jobs:
   mobile-emulator-smoke:
     name: Mobile — Android emulator smoke (x86_64, boot APK + first frame)
-    # Pinned: ubuntu-latest moved to ubuntu-26.04 on 2026-11-18, whose toolchain rejects the
-    # vendored cpr headers (no <cstdint>) and puts host libzstd / libjitterentropy on the
-    # Android link line. Unpin once cpr and the link flags are fixed for 26.04.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
