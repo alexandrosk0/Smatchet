@@ -2612,7 +2612,10 @@ jobs:
     name: Mobile — POSIX core compile gate (Linux clang)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to ubuntu-26.04 on 2026-11-18, whose toolchain rejects the
+    # vendored cpr headers (no <cstdint>) and puts host libzstd / libjitterentropy on the
+    # Android link line. Unpin once cpr and the link flags are fixed for 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2692,7 +2695,10 @@ jobs:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to ubuntu-26.04 on 2026-11-18, whose toolchain rejects the
+    # vendored cpr headers (no <cstdint>) and puts host libzstd / libjitterentropy on the
+    # Android link line. Unpin once cpr and the link flags are fixed for 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -2819,7 +2825,10 @@ jobs:
     # mobile-android-ndk; restored OpenSSL cache wins.
     needs: [changes, mobile-android-ndk]
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to ubuntu-26.04 on 2026-11-18, whose toolchain rejects the
+    # vendored cpr headers (no <cstdint>) and puts host libzstd / libjitterentropy on the
+    # Android link line. Unpin once cpr and the link flags are fixed for 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
