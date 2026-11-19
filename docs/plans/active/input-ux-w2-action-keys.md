@@ -1,9 +1,8 @@
 # Plan — Input UX Wave 2 piece 4.4: a key for every primary action
-<!-- plan-date: 2026-11-16 -->
 
 > **Slug**: `input-ux-w2-action-keys` (matches this file's basename without `.md`).
 >
-> **Status**: `shipped` — Wave 2 piece 4.4, PR #2443 (base `develop`).
+> **Status**: `active` — Wave 2 piece 4.4, PR #2443 (base `develop`). Implementation, Deviations and Verification (actual) are filled in; the archive step below waits for `docs/plans/INDEX.md` (held by another branch's plan-lock) and happens after #2443 merges.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -14,7 +13,7 @@
 Wave 1 already closed four of them, and they are **not** reworked here:
 
 - #49 (new-issue row Tab / Ctrl+Enter / Esc) and #60 (`grid.search.focus`, Ctrl+F and /) ship in #2435 (`claude/input-ux-wave1-stack`).
-- #72 (Preferences Ctrl+S, Enter tests the connection) and #97 (assistant Esc stops or leaves) ship in #2433 (this branch's base).
+- #72 (Preferences Ctrl+S, Enter tests the connection) and #97 (assistant Esc stops or leaves) ship in #2433 (merged; it was this branch's base).
 - Wave 1 also gave Comments (#48) and Log work (#37) their Ctrl+Enter, which leaves #6 with only the placeholder and the button hint.
 
 After this lands: every multiline composer that submits names its key **on the submit button**, its placeholder sits inside the box, the remaining primary actions (settings search, next/previous view, Lua Run, Annotate Process, the conflict resolver's Use Mine / Use Theirs, the dictation cancel) have a key, the global ones are registered rebindable commands listed in the shortcut guide, and `docs/guides/keyboard-shortcuts.md` states the dialog key rules.
@@ -194,6 +193,7 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - **Plan-lock not claimed.** `lock-claim.sh` could not push to `refs/locks/*` from this environment (HTTP 403 through the proxy). The PR was narrowed against sibling locks instead of overriding anything, and the CI `Plan-lock gate` passed.
 - **fr-FR rows not added** for the new strings: `SmatchetLocalization.cpp` is held by other plan-locks, so English fallbacks render.
 - **Plan stress-test (`grill-with-docs`)**: not run as its own pass; the plan was instead checked by eight gate-review rounds (two High findings and three Medium findings fixed, one claim about `SetKeyboardFocusHere` re-checked against ImGui 1.92.8 and rejected, one Medium accepted as the Esc-on-dictation risk above).
+- **Archive deferred.** The plan stays under `docs/plans/active/` with its Implementation log, Deviations and Verification (actual) filled in. The `git mv` to `shipped/` and the `docs/plans/INDEX.md` row wait for plan-lock `pane-picker-jira-sites` (another branch) to release `INDEX.md`; the CI `Plan-lock gate` and the pre-push gate both refuse a branch diff that touches it. Tracked by debt entry `2026-11-19-archive-input-ux-w2-action-keys-plan`; the `## Archive` block below stays so the later `git mv` follows it and deletes it.
 - **Deferral residue-sweep**: the deferred sidebar Enter and the quick-create / grid-header hints are recorded under Out of scope and in the PR description.
 
 ## Verification (actual)
@@ -204,3 +204,13 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - **Lint / gates**: `scripts/dev/pre-ship.sh --ack-review origin/develop` passed at each pushed head; CI C++ lint, duplication, Pillar 2, comment-noise, plan-lock and doc gates passed.
 - **Sanitizers / goldens**: TSan, ASan (MSVC), UBSan (Clang), bucket-C and the launch smoke passed in CI; the aggregate `All checks green (block-on-any-red)` passed at `f8f7f2c`.
 - **Manual residue**: none.
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
+   > expand it to this plan's real filename.**
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+
+*(Delete this `## Archive` block as part of step 2.)*
