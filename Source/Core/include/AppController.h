@@ -1874,6 +1874,11 @@ class AppController : public IAppThreading,
     // Same unpublished-vector contract as the Ensure* helpers above. The blob survives in per-ticket
     // fieldValues["comment"] (Jira mapper, catalog-independent) for the Comments-cell hover tooltip.
     void EraseCatalogLegacyCommentField(std::vector<TrackerField>& fields);
+    // Every correction an applied catalog of `trackerType` gets before it is published, live or restored
+    // (the focused path's SetFieldCatalog applies the same): for Jira, non-editable timetracking fields
+    // marked read-only plus the legacy-comment / History / Comments fixups above; Plane as fetched.
+    // Static and stateless, so a pane catalog worker calls it before posting its result.
+    static void ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType);
     // TryBuildFieldEditPayloadForNetwork + SubmitFieldEditCtx + the three SubmitFieldEdit branch
     // helpers (Sprint/Timetracking/Regular) moved into FieldEditPipelineService (god-object
     // decomposition Phase 2). Accessed via `fieldEdit_`; the public delegators above preserve the

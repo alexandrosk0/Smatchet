@@ -594,6 +594,9 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
             restoredWarning = std::string("Offline: restored the field catalog from local snapshot.") +
                               smatchet::catalogoffline::kLastFetchFailedMarker + catalogResult.error().Detail;
         }
+        // The corrections the focused catalog gets (read-only timetracking, History / Comments columns): without
+        // them a pane catalog that replaces a seeded copy would make non-editable fields editable.
+        ApplyCatalogCorrections(catalog.Fields, backend->Connectivity().GetTrackerType());
         mainThreadDispatcher.PostToMainThread(
             [this, paneId, capturedGeneration, fetchSeq, fields = std::move(catalog.Fields),
              components = std::move(catalog.Components), issueTypeMeta = std::move(catalog.IssueTypeMeta),

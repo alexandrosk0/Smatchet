@@ -115,6 +115,13 @@ void AddJiraCatalogFieldFixups(std::vector<TrackerField>& fields) {
     EnsureCommentsField(fields);
 }
 
+// Every correction a Jira catalog gets before it is published, live or restored from a snapshot (snapshots are
+// saved uncorrected). Plane catalogs are published as fetched.
+void ApplyJiraCatalogCorrections(std::vector<TrackerField>& fields) {
+    MarkNonEditableTimetrackingReadOnly(fields);
+    AddJiraCatalogFieldFixups(fields);
+}
+
 // Drops a worker's catalog write once the pane it fetched for has moved on: its backend was swapped
 // or the pane retired (Generation), its catalog was explicitly cleared, as a tracker switch does
 // before the new backend is installed (Epoch), or a newer RefreshFieldCatalog started (RefreshSeq).
@@ -213,8 +220,7 @@ ErrorRestoreSnapshot ReadSnapshotForError(const std::vector<std::string>& candid
                                                                       snap.IssueTypeMeta, snap.Error, loadedIndex);
     snap.Unscoped = snap.Loaded && loadedIndex > 0;
     if (snap.Loaded && !catalogPlane) {
-        MarkNonEditableTimetrackingReadOnly(snap.Fields);
-        AddJiraCatalogFieldFixups(snap.Fields);
+        ApplyJiraCatalogCorrections(snap.Fields);
     }
     return snap;
 }
@@ -400,8 +406,7 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     }
     SaveCatalogSnapshot(io.Queue, cfgSnap, catalogCacheKey, projectKeyForCache, fields, components, issueTypeMeta);
     if (!catalogPlane) {
-        MarkNonEditableTimetrackingReadOnly(fields);
-        AddJiraCatalogFieldFixups(fields);
+        ApplyJiraCatalogCorrections(fields);
     }
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
@@ -1242,6 +1247,12 @@ void AppController::EnsureCatalogCommentsField(std::vector<TrackerField>& fields
 
 void AppController::EraseCatalogLegacyCommentField(std::vector<TrackerField>& fields) {
     EraseLegacyCommentField(fields);
+}
+
+void AppController::ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType) {
+    if (trackerType != "Plane") {
+        ApplyJiraCatalogCorrections(fields);
+    }
 }
 
 // FieldEditSupportsOfflineQueue + the field-edit pipeline (CommitOrQueue and its network / offline-

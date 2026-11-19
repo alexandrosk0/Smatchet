@@ -1293,3 +1293,34 @@ TEST_CASE("Pane catalog: a fetch for the pane's previous view that finishes last
     CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_NEW"));
     CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_OLD"));
 }
+
+TEST_CASE("Pane catalog: a pane fetch gets the Jira catalog corrections the focused catalog gets") {
+    // Once a scoped fetch may replace a seeded (already corrected) catalog, the pane's own result must be corrected
+    // the same way: non-editable timetracking stays read-only, the legacy comment blob is dropped, and the
+    // synthetic History / Comments columns are present.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    TrackerFieldCatalogResult raw = CatalogWithField("timespent");
+    TrackerField legacyComment;
+    legacyComment.Id = "comment";
+    legacyComment.Name = "Comment";
+    raw.Fields.push_back(legacyComment);
+    backend->SetFieldCatalogResult(raw);
+    AddCatalogPane(app, std::move(backend));
+    SeedPaneCatalog(app, std::string());
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, ConfigManager::Load(), "project = KEY");
+    REQUIRE(PumpUntil(app, [&app]() { return PaneCatalogScopedTo(app, kCatalogPane, "KEY"); }));
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetPaneAvailableFields(kCatalogPane);
+    REQUIRE(fields);
+    const TrackerField* const timespent = FindField(*fields, "timespent");
+    REQUIRE(timespent != nullptr);
+    CHECK(timespent->ReadOnly);
+    CHECK_FALSE(HasField(*fields, "comment"));
+    CHECK(HasField(*fields, "history"));
+    CHECK(HasField(*fields, "comments"));
+}

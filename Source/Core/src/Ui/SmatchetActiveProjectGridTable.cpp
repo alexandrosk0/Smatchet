@@ -1134,6 +1134,12 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     }
 }
 
+// The project the catalog this pane's cells read this frame was fetched for ("" = unscoped). resolvePaneCatalog marks
+// the pane's own catalog as the one the frame's index came from; otherwise the cells read the focused catalog.
+static std::string RoutedCatalogProjectKey(const AppController& app, const GridPane& pane) {
+    return pane.cachedPaneCatalogValid ? app.GetPaneFieldCatalogProjectKey(pane.id) : app.GetFieldCatalogProjectKey();
+}
+
 void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     AppController& app = ctx.app;
     GridPane& pane = ctx.pane;
@@ -1160,9 +1166,7 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
     RefreshPendingOverlay(app, ctx.d);
     ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
-    // resolvePaneCatalog marks the pane's own catalog as the one this frame's index came from.
-    ctx.catalogProjectKey =
-        pane.cachedPaneCatalogValid ? app.GetPaneFieldCatalogProjectKey(pane.id) : app.GetFieldCatalogProjectKey();
+    ctx.catalogProjectKey = RoutedCatalogProjectKey(app, pane);
     ctx.cellMenu = GridKeyCellMenuCtx{&ctx.tickets,      &pane.filteredIndices,   &ctx.columns,
                                       &ctx.catalogIndex, &pane.gridState.RectSel, -1,
                                       nullptr,           &ctx.cacheBackendKey,    &ctx.catalogProjectKey};
