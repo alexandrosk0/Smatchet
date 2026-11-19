@@ -2613,7 +2613,11 @@ jobs:
     name: Mobile — POSIX core compile gate (Linux clang)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04, NOT ubuntu-latest: ubuntu-latest flipped to ubuntu-26.04 on
+    # 2026-11-18 (clang 21, newer libstdc++), where bundled cpr 1.9.2 `callback.h` fails with
+    # `unknown type name 'intptr_t'` (no <cstdint>). Stopgap until the 26.04 port lands
+    # (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2693,7 +2697,11 @@ jobs:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04, NOT ubuntu-latest: ubuntu-latest flipped to ubuntu-26.04 on
+    # 2026-11-18 (CMake 4.4): the NDK link line picks up host `-lzstd -l:libjitterentropy.a`
+    # (suspected CMake 4 FindOpenSSL / pkg-config). Stopgap until the 26.04 port
+    # lands (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -2820,7 +2828,8 @@ jobs:
     # mobile-android-ndk; restored OpenSSL cache wins.
     needs: [changes, mobile-android-ndk]
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04 with mobile-android-ndk (same 26.04 NDK link break; see there).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
