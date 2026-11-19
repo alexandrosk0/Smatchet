@@ -13,8 +13,9 @@
  *   tie). Both fields are trimmed; '/' and '\' compare equal; a drive-letter path ("C:...", rule or
  *   frame) compares ASCII case-insensitively, every other path (POSIX, depot) case-sensitively; a
  *   FromPrefix without a trailing separator matches only whole path segments; the join never doubles
- *   or drops the separator. An empty ToPrefix strips the prefix and leaves the path relative to it
- *   ("/depot/" -> "" turns "/depot/src/a.cpp" into "src/a.cpp"), as it always did. Before changing the matching, check
+ *   or drops the separator. An empty ToPrefix strips the matched prefix and keeps the rest of the path
+ *   as it is, as it always did: "/depot/" -> "" turns "/depot/src/a.cpp" into "src/a.cpp", while
+ *   "/depot" -> "" leaves "/src/a.cpp" (the separator was not part of the rule). Before changing the matching, check
  * every ApplyPathRemaps caller and tests/Core/CallstackParser.test.cpp: Windows path semantics break easily.
  * - Ignore keywords: FrameMatchesIgnoreKeywords is a case-insensitive substring test over RawLine,
  *   Function and FilePath. Frames are filtered with it in the analysis worker, never in draw code.
