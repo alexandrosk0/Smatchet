@@ -255,9 +255,10 @@ bool PrepareGrid(ImGuiTestContext* ctx, AppController* app) {
     if (!live) {
         return false;
     }
-    if (IndexOfKey(kPriorityKey) < 0 || IndexOfKey(kSummaryKey) < 0 || IndexOfKey(kLabelsKey) < 0) {
-        // Only the columns the cases drive, so all of them sit inside the grid window (the default view's other columns
-        // push labels past the right edge, where no click can reach it).
+    {
+        // Always narrow the view to the columns the cases drive, so all of them sit inside the grid window (a view that
+        // merely contains all three, behind other columns, still pushes labels past the right edge, where no click can
+        // reach it).
         nlohmann::json fields = nlohmann::json::array();
         fields.push_back("priority");
         fields.push_back("summary");
