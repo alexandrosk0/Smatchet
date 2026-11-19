@@ -135,6 +135,27 @@ void AppendTerms(const std::string& prefix, const char* const* terms, int termCo
     }
 }
 
+namespace {
+
+// True when some word of `nameFolded` (words split at anything that is not an ASCII letter or digit, or a
+// non-ASCII byte) starts with `wordFolded`.
+bool NameHasWordStartingWith(const std::string& nameFolded, const std::string& wordFolded) {
+    const auto isWordByte = [](char c) {
+        const unsigned char b = static_cast<unsigned char>(c);
+        return b >= 0x80u || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z');
+    };
+    std::size_t at = nameFolded.find(wordFolded);
+    while (at != std::string::npos) {
+        if (at == 0 || !isWordByte(nameFolded[at - 1])) {
+            return true;
+        }
+        at = nameFolded.find(wordFolded, at + 1);
+    }
+    return false;
+}
+
+} // namespace
+
 void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::string& prefix,
                         std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     const std::string pre = ToLowerAsciiCopy(prefix);
@@ -153,9 +174,9 @@ void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::stri
             }
         }
     }
-    // Then names that hold the typed words anywhere, after every prefix hit ("points" finds "Story Points",
-    // "points story" too). Plain words through the shared fold: a field name is matched as written, never
-    // letters-in-order, so a short prefix does not pull in the whole catalog. Ids stay prefix-only.
+    // Then names with a later word that starts with each typed word, after every prefix hit ("points" finds
+    // "Story Points", "points story" too). Word starts only, through the shared fold: a one-letter prefix must
+    // not pull in every name that merely contains the letter ("s" is not "Assignee"). Ids stay prefix-only.
     if (prefix.empty()) {
         return;
     }
@@ -164,7 +185,10 @@ void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::stri
         if (f.Id.empty() || f.Name.empty() || f.Name == f.Id) {
             continue;
         }
-        if (smatchet::textmatch::ContainsAllWordsFolded(smatchet::textmatch::FoldCopy(f.Name), words)) {
+        const std::string name = smatchet::textmatch::FoldCopy(f.Name);
+        const bool all = std::all_of(words.WordsUtf8.begin(), words.WordsUtf8.end(),
+                                     [&name](const std::string& w) { return NameHasWordStartingWith(name, w); });
+        if (all) {
             AddSuggestionUnique(out, seen, f.Name + " (" + f.Id + ")", f.Id);
         }
     }

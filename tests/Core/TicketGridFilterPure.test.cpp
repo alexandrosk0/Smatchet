@@ -238,6 +238,15 @@ TEST_CASE("TicketTitleMatchesGridFilterFuzzy — letters in order, title only") 
     CHECK_FALSE(TicketMatchesGridFilter(t, "lgn crsh"));
 }
 
+TEST_CASE("Grid filter — a filter of only no-break spaces is one strict word but no fallback words") {
+    // The two splits differ on wide spaces, so the grid skips the fallback for an empty query rather than
+    // letting an empty query keep every title (ApplyGridFilterProjection).
+    const std::string nbsp = "\xC2\xA0\xC2\xA0";
+    CHECK(SplitGridFilterTokens(nbsp).size() == 1);
+    CHECK(smatchet::textmatch::MakeQuery(nbsp).Empty());
+    CHECK_FALSE(TicketMatchesGridFilter(Ticket("PROJ-1", {{"summary", "Login"}}), nbsp));
+}
+
 TEST_CASE("SplitGridFilterTokens — words past the cap are ignored, so the match only gets looser") {
     std::string many;
     for (std::size_t i = 0; i < kGridFilterMaxTokens; ++i) {

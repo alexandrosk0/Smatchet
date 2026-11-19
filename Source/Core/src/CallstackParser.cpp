@@ -464,7 +464,7 @@ bool IsRemapSeparator(char c) { return c == '/' || c == '\\'; }
 
 // "C:..." — a Windows drive path, whose file system ignores case.
 bool StartsWithDriveLetter(const std::string& s) {
-    return s.size() >= 2 && std::isalpha(static_cast<unsigned char>(s[0])) != 0 && s[1] == ':';
+    return s.size() >= 2 && smatchet::ascii::IsAlpha(s[0]) && s[1] == ':';
 }
 
 // True when `path` starts with `from`, '/' and '\' comparing equal and, when `foldCase`, ASCII letters
@@ -481,7 +481,7 @@ bool PathStartsWithRemapPrefix(const std::string& path, const std::string& from,
             continue;
         }
         const bool same =
-            foldCase ? std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b))
+            foldCase ? smatchet::ascii::ToLower(a) == smatchet::ascii::ToLower(b) // ASCII only: locale-independent
                      : a == b;
         if (!same) {
             return false;

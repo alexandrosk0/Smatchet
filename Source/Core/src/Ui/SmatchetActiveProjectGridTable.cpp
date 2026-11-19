@@ -277,10 +277,12 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
             }
         }
     }
-    if (filterActive && !anyExact) {
-        // No row holds every word as written: fall back to titles that hold the words' letters in order
-        // (a typo, a dropped letter), the shared matcher's exact-first rule.
-        const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(filter);
+    // No row holds every word as written: fall back to titles that hold the words' letters in order (a typo,
+    // a dropped letter), the shared matcher's exact-first rule. A filter the matcher splits into no words
+    // (only no-break or other wide spaces) falls back to nothing: an empty query would match every title.
+    const smatchet::textmatch::Query query =
+        filterActive && !anyExact ? smatchet::textmatch::MakeQuery(filter) : smatchet::textmatch::Query();
+    if (!query.Empty()) {
         smatchet::textmatch::Scratch scratch;
         for (size_t idx : pane.cachedSortedIndices) {
             if (idx < tickets.size() && !isPresentParent(idx) &&

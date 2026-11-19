@@ -113,6 +113,8 @@ TEST_CASE("field mode — a field name is found by a word inside it, not only by
     CHECK(HasInsert(story, "customfield_10016")); // the prefix hit still works
     const auto none = Run("pnts", 4, fields, DefaultUsers());
     CHECK_FALSE(HasInsert(none, "customfield_10016")); // as written only: no letters-in-order for field names
+    const auto midWord = Run("oints", 5, fields, DefaultUsers());
+    CHECK_FALSE(HasInsert(midWord, "customfield_10016")); // a word must start a word of the name
     const auto idMid = Run("10016", 5, fields, DefaultUsers());
     CHECK_FALSE(HasInsert(idMid, "customfield_10016")); // ids stay prefix-only
 }
