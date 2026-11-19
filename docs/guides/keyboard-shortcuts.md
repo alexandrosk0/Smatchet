@@ -272,9 +272,8 @@ the alias set instead.
 The grid search shortcut (`grid.search.focus`) is added once to a config saved
 before it existed. A binding you already gave that command is kept as it is.
 
-The settings search, next view and previous view shortcuts
-(`preferences.search.focus`, `view.next`, `view.previous`) are added the same way,
-once, to a config saved before they existed. A binding you already gave any of
+The settings-search and view-stepping shortcuts (`preferences.search.focus`, `view.next`, `view.previous`)
+are added the same way, once, to a config saved before they existed; a binding you already gave one of
 those commands is kept as it is.
 
 Configs that already ran #2276's wheel migration (`migrated_multi_hotkey_zoom_v2`)

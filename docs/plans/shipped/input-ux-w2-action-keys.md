@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2 piece 4.4: a key for every primary action
+<!-- plan-date: 2026-11-16 -->
 
 > **Slug**: `input-ux-w2-action-keys` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving the Wave 2 piece 4.4 PR (base `claude/frictionless-user-input-ux-ea174b` until #2433 merges, then `develop`).
+> **Status**: `shipped` — Wave 2 piece 4.4, PR #2443 (base `develop`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -175,22 +176,31 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - Annotate recognised-frame count (#107 remainder) — 4.5.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `5ea1be7` · wip(plan): this plan.
+- `b8b77bd` · a key for every primary action, named on its button: `SubmitMultilineInput` / `KeyHintButton`, the three new rebindable commands and their migration, the window keys, the docs, doctests and bucket-E cases.
+- `187f2a4` · merge of `origin/develop` once #2433 landed (per-file three-way merge of the files both sides touched).
+- `100797a` · `view.next` / `view.previous` ask "Discard changes?" before dropping unapplied editor edits (`ViewDraftWouldLoseEditsOnSwitch`, review finding).
+- `68b5225` · test diagnostics: name the wait that failed when the Assistant page helper cannot open Preferences.
+- `cec9eeb` · settings-search bucket-E cases stop leaving Preferences open (first-run lock, caret in the search box).
+- `b8c35c8` · the views-sidebar Enter hunk is taken out while another plan-lock holds that file.
+- `f8f7f2c` · the settings-search cases keep the Log window open while they close Preferences, so the shared bottom-panel dock node survives.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
 - **Deferred: Enter in the views sidebar search opens the first listed view (§ Files row 14).** After this PR's first push, another branch (`claude/plus-dropdown-two-jira-261a42`) claimed plan-lock `pane-picker-jira-sites`, whose write set includes `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`. The hunk, its tooltip, its bucket-E section and its doc row were removed from this PR instead of overriding the lock. The `view.next` / `view.previous` commands and keys are unaffected.
+- **Settings-search bucket-E cases needed a dock-node tenant.** The cases lift the first-run lock and really close Preferences, which is the only window in the bottom-panel dock node of a fresh test home; ImGui deletes a node when its last window leaves, so the next `WindowExpand` cases found no bottom panel (CI run 1 of `b8c35c8`: two failures). Not in the plan; fixed in `f8f7f2c` (`SearchKeysCase::KeepBottomPanelAlive`). Other tests that close Preferences with the lock lifted (`ai_prefs_autosave_flow`, `funcsize_preferences_tabs`, `prefs_schema_coverage`, `keybindings_editor_rebind`) were not audited for the same exposure; the lane is green at `f8f7f2c`, but a new Preferences-closing case placed before `WindowExpand` would hit the same trap (a shared fixture or an after-test `EnsureDockSlotAlive(kBottomPanel)` check would catch it; not built here).
+- **Plan-lock not claimed.** `lock-claim.sh` could not push to `refs/locks/*` from this environment (HTTP 403 through the proxy). The PR was narrowed against sibling locks instead of overriding anything, and the CI `Plan-lock gate` passed.
+- **fr-FR rows not added** for the new strings: `SmatchetLocalization.cpp` is held by other plan-locks, so English fallbacks render.
+- **Plan stress-test (`grill-with-docs`)**: not run as its own pass; the plan was instead checked by eight gate-review rounds (two High findings and three Medium findings fixed, one claim about `SetKeyboardFocusHere` re-checked against ImGui 1.92.8 and rejected, one Medium accepted as the Esc-on-dictation risk above).
+- **Deferral residue-sweep**: the deferred sidebar Enter and the quick-create / grid-header hints are recorded under Out of scope and in the PR description.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.**
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **Bucket A (doctest)**: `SubmitKeysPure`, `CycleViewIndex`, `ViewDraftWouldLoseEditsOnSwitch` (clean draft, edited draft, title being typed, rebased draft), `PreferencesFilter::RequestFocusOnFirstMatch`, the router discard flag, default-binding parity and the migration: passed locally in a scratch doctest harness (the Linux container cannot build the full suite) and in CI (Windows MSVC unit tests). Each guard was broken on purpose and the test seen red before the fix was restored: passed.
+- **Bucket E (ImGui Test Engine)**: comments, Log work, resolver (`Alt+M` / `Alt+T`), settings search (chord, Esc, Enter, command, close clears) and the views keys including the dirty-draft "Discard changes?" case: passed in CI, `Bucket-E UI tests (Mesa headless GL)` at `f8f7f2c` = `252/252 passed` on attempt 1. The two earlier failing runs (`100797a`: the new search cases left Preferences open and used up the lane's frame budget, fixed in `cec9eeb`; `b8c35c8`: the dock node, under Deviations) came from the new tests' own state, not from a product defect.
+- **Build gate**: `posix-core-check` (Linux clang) compile of `Source/Core` locally; the Windows MSVC, light, ARM64 cross-compile, DX12 packaging, NDK and Android APK builds passed in CI (the APK job at `b8c35c8` failed on a Maven Central 429, an infrastructure error; it passed on attempt 1 at `f8f7f2c`).
+- **Lint / gates**: `scripts/dev/pre-ship.sh --ack-review origin/develop` passed at each pushed head; CI C++ lint, duplication, Pillar 2, comment-noise, plan-lock and doc gates passed.
+- **Sanitizers / goldens**: TSan, ASan (MSVC), UBSan (Clang), bucket-C and the launch smoke passed in CI; the aggregate `All checks green (block-on-any-red)` passed at `f8f7f2c`.
+- **Manual residue**: none.
