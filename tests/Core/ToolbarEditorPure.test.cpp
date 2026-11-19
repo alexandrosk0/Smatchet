@@ -293,3 +293,10 @@ TEST_CASE("RankCommandMatches: words in any order, any case, exact matches befor
     const std::vector<int> layout = {2};
     CHECK(RankCommandMatches(names, haystacks, "rfl lay") == layout);
 }
+
+TEST_CASE("RankCommandMatches: an exact match leaves out letters-in-order ones") {
+    const std::vector<std::string> names = {"task.return", "task.run"};
+    const std::vector<int> runOnly = {1};
+    CHECK(RankCommandMatches(names, names, "run") == runOnly);   // r..u..n in "return" is left out
+    CHECK(RankCommandMatches(names, names, "tsrn").size() == 2); // no exact entry: both by letters in order
+}

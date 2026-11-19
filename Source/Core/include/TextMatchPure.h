@@ -89,6 +89,45 @@ inline void AppendUtf8(std::string& out, char32_t cp) {
     }
 }
 
+/// `n` cut to at most `cap` bytes without splitting a valid UTF-8 sequence: when the cut would land inside one,
+/// it moves back to that sequence's lead byte. Malformed bytes are single characters and are never moved over.
+inline std::size_t CapAtCharBoundary(const char* s, std::size_t n, std::size_t cap) {
+    if (s == nullptr || n <= cap) {
+        return s == nullptr ? 0 : n;
+    }
+    for (std::size_t back = 1; back <= 3 && back <= cap; ++back) {
+        const std::size_t lead = cap - back;
+        std::size_t len = 1;
+        DecodeUtf8(s + lead, n - lead, len);
+        if (len > back) {
+            return lead; // the sequence at `lead` runs past the cap: stop before it
+        }
+        if ((static_cast<unsigned char>(s[lead]) & 0xC0u) != 0x80u) {
+            break; // a lead or ASCII byte that ends before the cap: the cap is a boundary
+        }
+    }
+    return cap;
+}
+
+/// The first character boundary at or after byte `from`: `from` itself unless it falls inside a valid UTF-8
+/// sequence that starts before it, then the byte after that sequence.
+inline std::size_t CharBoundaryAtOrAfter(const char* s, std::size_t n, std::size_t from) {
+    if (s == nullptr || from == 0 || from >= n) {
+        return from;
+    }
+    for (std::size_t back = 1; back <= 3 && back <= from; ++back) {
+        const std::size_t lead = from - back;
+        const unsigned char b = static_cast<unsigned char>(s[lead]);
+        if ((b & 0xC0u) == 0x80u) {
+            continue; // still a continuation byte: look further back for the lead
+        }
+        std::size_t len = 1;
+        DecodeUtf8(s + lead, n - lead, len);
+        return len > back ? lead + len : from;
+    }
+    return from;
+}
+
 namespace detail {
 
 // Upper case at an even code point, its lower case at the next one.
@@ -302,7 +341,7 @@ inline std::size_t FindFolded(const char* hay, std::size_t hayLen, const std::st
         return from;
     }
     const char* needle = needleFolded.data();
-    std::size_t start = from;
+    std::size_t start = CharBoundaryAtOrAfter(hay, hayLen, from); // never a match inside a character
     while (start < hayLen) {
         std::size_t i = start;
         std::size_t j = 0;
@@ -381,7 +420,7 @@ inline Query MakeQuery(const char* raw, std::size_t n) {
     if (raw == nullptr) {
         return q;
     }
-    n = (std::min)(n, kMaxTextBytes);
+    n = CapAtCharBoundary(raw, n, kMaxTextBytes);
     std::u32string word;
     const auto flush = [&q, &word]() {
         if (!word.empty() && q.Words.size() < kMaxQueryWords) {
@@ -415,8 +454,14 @@ inline Query MakeQuery(const std::string& raw) { return MakeQuery(raw.data(), ra
 /// True when every query word occurs in `haystackFolded` (a FoldCopy'd string) as a plain substring. The
 /// exact-only check for pre-folded haystacks (settings search tier 1, the audit log). No words: true.
 inline bool ContainsAllWordsFolded(const std::string& haystackFolded, const Query& q) {
-    for (const std::string& w : q.WordsUtf8) {
-        if (haystackFolded.find(w) == std::string::npos) {
+    for (std::size_t i = 0; i < q.WordsUtf8.size(); ++i) {
+        const std::string& w = q.WordsUtf8[i];
+        const std::u32string& cps = q.Words[i];
+        // A word with a malformed byte is compared character by character, so a stray continuation byte
+        // never matches inside a valid character of the haystack; a valid word takes the byte-search fast path.
+        const bool malformed = std::any_of(cps.begin(), cps.end(), [](char32_t c) { return c >= kInvalidByteBase; });
+        const std::size_t at = malformed ? FindFolded(haystackFolded, w) : haystackFolded.find(w);
+        if (at == std::string::npos) {
             return false;
         }
     }
@@ -498,7 +543,7 @@ inline void DecodeText(const char* text, std::size_t n, Decoded& d) {
     if (text == nullptr) {
         n = 0;
     }
-    n = (std::min)(n, kMaxTextBytes);
+    n = CapAtCharBoundary(text, n, kMaxTextBytes);
     // Sized for the worst case (one code point per byte) and trimmed after: writes by index are far cheaper
     // than four push_backs per code point on the per-frame path, and a warm Scratch never reallocates.
     d.Cp.resize(n);
@@ -677,7 +722,7 @@ inline bool LettersOccurInOrder(const std::u32string& w, const char* text, std::
     if (text == nullptr) {
         return w.empty();
     }
-    n = (std::min)(n, kMaxTextBytes);
+    n = CapAtCharBoundary(text, n, kMaxTextBytes);
     std::size_t k = 0;
     std::size_t i = 0;
     while (i < n && k < w.size()) {

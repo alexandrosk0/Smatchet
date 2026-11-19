@@ -43,8 +43,15 @@ inline std::string TrimFilter(const char* raw) {
 }
 
 /// Trims ASCII whitespace from both ends and case-folds (UTF-8 aware, TextMatchPure.h): the form every
-/// filter compare uses.
-inline std::string NormalizeFilter(const char* raw) { return textmatch::FoldCopy(TrimFilter(raw)); }
+/// filter compare uses. A filter the matcher splits into no words (only no-break or other wide spaces) is
+/// blank: it lists every option and offers no create row, as an empty filter does.
+inline std::string NormalizeFilter(const char* raw) {
+    std::string folded = textmatch::FoldCopy(TrimFilter(raw));
+    if (!folded.empty() && textmatch::MakeQuery(folded).Empty()) {
+        folded.clear();
+    }
+    return folded;
+}
 
 /// Field weights: a word matching the label counts three times a match in the secondary text or id.
 constexpr int kLabelWeight = 3;

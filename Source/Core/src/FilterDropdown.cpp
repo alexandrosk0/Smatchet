@@ -65,7 +65,21 @@ struct BodyState {
     bool FilteredRowsValid = false;
     std::uint64_t FilteredRowsKey = 0;
     std::string FilteredRowsFilter;
+    // The label match ranges a drawn row shows, per row of Rows: worked out on the row's first draw and kept
+    // until Rows is rebuilt, so an unchanged list is not rescored every frame for its highlight.
+    std::vector<std::vector<textmatch::ByteRange>> RowLabelRanges;
+    std::vector<unsigned char> RowLabelRangesReady;
+    // The row a mouse press started on, so its release acts only if that row still shows the same option.
+    pure::RowIdentity PressedIdentity;
+    int PressedItemIndex = -1;
+    int PressedRecentIndex = -1;
 };
+
+// Rows was rebuilt: no row's label ranges are known yet.
+void ForgetRowLabelRanges(BodyState& st) {
+    st.RowLabelRanges.resize(st.Rows.size());
+    st.RowLabelRangesReady.assign(st.Rows.size(), 0u);
+}
 
 BodyState& StateForWindow(ImGuiID windowId) {
     // Dropdowns do not nest more than a couple deep (a picker inside a modal inside a popup); the slot
@@ -90,6 +104,7 @@ void ResetForOpen(BodyState& st) {
     st.AppliedFilterLower.clear();
     st.AppliedQuery = textmatch::Query();
     st.FilteredRowsValid = false;
+    st.PressedIdentity = pure::RowIdentity();
     st.Highlight = -1;
     st.NeedDefaultHighlight = true;
     st.UserMovedHighlight = false;
@@ -369,8 +384,8 @@ struct RowTextFit {
 
 // The label, clipped to its space with the part that matches the filter highlighted, and the dimmed
 // secondary text on the right when both fit.
-RowTextFit DrawRowText(ImDrawList* dl, BodyState& st, const pure::Row& row, const RowContent& rc, ImVec2 textPos,
-                       float textMaxX, float rowTop, float rowH, ImU32 textCol) {
+RowTextFit DrawRowText(ImDrawList* dl, BodyState& st, int rowIndex, const pure::Row& row, const RowContent& rc,
+                       ImVec2 textPos, float textMaxX, float rowTop, float rowH, ImU32 textCol) {
     const float fontSize = ImGui::GetFontSize();
     const char* label = rc.Label;
     const float labelW = ImGui::CalcTextSize(label, nullptr, false).x;
@@ -387,15 +402,22 @@ RowTextFit DrawRowText(ImDrawList* dl, BodyState& st, const pure::Row& row, cons
     dl->PushClipRect(ImVec2(textPos.x, rowTop), ImVec2(textMaxX, rowTop + rowH), true);
     const bool filtered = row.Kind == pure::RowKind::Item && row.ItemIndex >= 0 &&
                           static_cast<std::size_t>(row.ItemIndex) < st.Views.size() && !st.AppliedQuery.Empty();
-    std::size_t rangeCount = 0;
-    if (filtered) {
-        // The same scoring BuildRows ranked the row with, asked for the label's matched letters.
-        pure::ScoreItem(st.Views[static_cast<std::size_t>(row.ItemIndex)], st.AppliedQuery, st.MatchScratch,
-                        st.MatchRanges);
-        rangeCount = st.MatchRanges[0].size();
+    const std::size_t slot = static_cast<std::size_t>(rowIndex);
+    const bool cacheable = rowIndex >= 0 && slot < st.RowLabelRanges.size() && slot < st.RowLabelRangesReady.size();
+    const std::vector<textmatch::ByteRange>* ranges = nullptr;
+    if (filtered && cacheable) {
+        if (st.RowLabelRangesReady[slot] == 0u) {
+            // The same scoring BuildRows ranked the row with, asked for the label's matched letters.
+            pure::ScoreItem(st.Views[static_cast<std::size_t>(row.ItemIndex)], st.AppliedQuery, st.MatchScratch,
+                            st.MatchRanges);
+            st.RowLabelRanges[slot].swap(st.MatchRanges[0]);
+            st.RowLabelRangesReady[slot] = 1u;
+        }
+        ranges = &st.RowLabelRanges[slot];
     }
-    SmatchetMatchHighlight::DrawText(dl, textPos, textCol, label, nullptr,
-                                     rangeCount > 0 ? st.MatchRanges[0].data() : nullptr, rangeCount);
+    const std::size_t rangeCount = ranges != nullptr ? ranges->size() : 0;
+    SmatchetMatchHighlight::DrawText(dl, textPos, textCol, label, nullptr, rangeCount > 0 ? ranges->data() : nullptr,
+                                     rangeCount);
     dl->PopClipRect();
     fit.LabelCut = textPos.x + labelW > textMaxX;
     return fit;
@@ -430,7 +452,8 @@ void DrawOptionRow(BodyState& st, int rowIndex, const pure::Row& row, const Item
     if (disabled) {
         ImGui::BeginDisabled();
     }
-    const bool pressed = ImGui::InvisibleButton("##row", ImVec2(rowW, rowH));
+    bool pressed = ImGui::InvisibleButton("##row", ImVec2(rowW, rowH));
+    const bool activated = ImGui::IsItemActivated();
     const bool hovered = ImGui::IsItemHovered();
     const bool held = ImGui::IsItemActive();
     const bool wantTooltip = hovered && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
@@ -463,9 +486,22 @@ void DrawOptionRow(BodyState& st, int rowIndex, const pure::Row& row, const Item
     // Text is drawn on whole pixels; the match highlight starts from the same origin.
     const ImVec2 textPos(static_cast<float>(static_cast<int>(markPos.x + markSz + padX)),
                          static_cast<float>(static_cast<int>(pos.y + (rowH - fontSize) * 0.5f)));
-    const RowTextFit fit = DrawRowText(dl, st, row, rc, textPos, pos.x + rowW - padX, pos.y, rowH, textCol);
+    const RowTextFit fit = DrawRowText(dl, st, rowIndex, row, rc, textPos, pos.x + rowW - padX, pos.y, rowH, textCol);
     if (wantTooltip) {
         ShowRowTooltip(rc, fit);
+    }
+    // A click acts on release. When the list was rebuilt under the held button (options arriving, a refresh
+    // re-ranking them), the row at this index can be another option by then: the release then does nothing.
+    if (activated) {
+        pure::IdentityOfRow(st.Rows, st.Views.data(), count, &st.Recents, rowIndex, st.PressedIdentity);
+        st.PressedItemIndex = row.ItemIndex;
+        st.PressedRecentIndex = row.RecentIndex;
+    }
+    if (pressed) {
+        pressed = st.PressedIdentity.Valid && row.ItemIndex == st.PressedItemIndex &&
+                  row.RecentIndex == st.PressedRecentIndex &&
+                  pure::RowHasIdentity(row, st.Views.data(), count, &st.Recents, st.PressedIdentity);
+        st.PressedIdentity = pure::RowIdentity();
     }
     if (pressed) {
         ev = ActivateRow(st, row, items, count);
@@ -561,11 +597,14 @@ std::uint64_t FilteredRowsKey(const std::vector<pure::ItemView>& views, const Op
         h ^= b;
         h *= 1099511628211ULL;
     };
+    // A tag byte says whether a text follows, and a text ends at its NUL (it holds none): the byte stream
+    // decodes one way only, so two different option lists never feed the hash the same bytes.
     const auto mixText = [&mix](const char* t) {
         if (t == nullptr) {
-            mix(0xFFu); // null and "" differ
+            mix(0u);
             return;
         }
+        mix(1u);
         for (; *t != '\0'; ++t) {
             mix(static_cast<unsigned char>(*t));
         }
@@ -607,6 +646,7 @@ void BuildRowsForFrame(BodyState& st, const Item* items, int count, const Option
     if (filterLower.empty()) {
         st.FilteredRowsValid = false;
         pure::BuildRows(in, st.Rows); // no scoring: every option in order, cheap
+        ForgetRowLabelRanges(st);
         return;
     }
     const std::uint64_t key = FilteredRowsKey(st.Views, options);
@@ -614,6 +654,7 @@ void BuildRowsForFrame(BodyState& st, const Item* items, int count, const Option
         return; // same options, same filter: last frame's ranked rows still hold
     }
     pure::BuildRows(in, st.Rows);
+    ForgetRowLabelRanges(st);
     st.FilteredRowsValid = true;
     st.FilteredRowsKey = key;
     st.FilteredRowsFilter = filterLower;

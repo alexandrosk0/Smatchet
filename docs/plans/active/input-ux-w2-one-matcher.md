@@ -10,7 +10,7 @@
 
 [`docs/audits/INPUT_UX_AUDIT.md`](../../audits/INPUT_UX_AUDIT.md) § 4.7 found that every picker and filter matches text its own way: exact substrings, some case-sensitive, most ASCII-only, none ranked, and none show why a row matched. Settings search is the one surface that already falls back to the palette's fuzzy score when a plain substring finds nothing. This plan is piece 4.7: one shared matcher that every picker, filter and the grid title search go through, plus one draw helper that highlights the matched letters.
 
-After this lands: typing in the shared dropdown, the command palette, settings search, the toolbar command list, the icon picker, the audit search, query field-name suggestions or the grid search box splits the input into words, folds case for Latin, Greek, Cyrillic and Armenian letters (not only ASCII), finds the words in any order, falls back to letters-in-order matching when no word matches as written, ranks the rows where a list is shown, and (dropdown and palette) highlights the letters that matched.
+After this lands: typing in the shared dropdown, the command palette, settings search, the toolbar command list, the icon picker, the audit search, query field-name suggestions or the grid search box splits the input into words, folds case for Latin, Greek, Cyrillic and Armenian letters (not only ASCII) and finds the words in any order. The pickers, the palette, settings search, the toolbar list and the grid title search also fall back to letters-in-order matching when no word matches as written; the audit search and field-name suggestions match words as written only (ids, JSON and field names). Lists are ranked where shown, and the dropdown and palette highlight the letters that matched.
 
 Closes (audit § 7): #8, #20, #42 (partly, see § Out of scope), #62 (the word split already shipped in Wave 1; this adds the fold and the title fallback), #67, #118 (the toolbar list already ranks through `FuzzyScore` since Wave 1; this gives it the token matcher), #131.
 
@@ -222,6 +222,6 @@ None.
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+3. *regen the index from the repository root: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
 
 *(Delete this `## Archive` block as part of step 2.)*

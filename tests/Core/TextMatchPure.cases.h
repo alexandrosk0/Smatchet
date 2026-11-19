@@ -269,11 +269,18 @@ TEST_CASE("TextMatch — MatchFields: every word in some field, the best field t
     REQUIRE(ranges[2].size() == 1);
     CHECK(summary.substr(ranges[2][0].Begin, ranges[2][0].End - ranges[2][0].Begin) == "window");
 
-    // An exact occurrence in a light field beats letters-in-order in a heavy one.
+    // An exact occurrence in a light field beats letters-in-order in a heavy one: the title holds h..i..d..e,
+    // and its weight x score would win if the weight came first.
+    const std::string spread = "h i d e";
+    fields[0].Text = spread.data();
+    fields[0].Len = spread.size();
+    REQUIRE(Match(MakeQuery("hide"), spread, Mode::Fuzzy).Matched()); // the heavy field is a real candidate
     const Result s = MatchFields(MakeQuery("hide"), fields, 3, Mode::Fuzzy, scratch, ranges);
     CHECK(s.Substring);
     CHECK(ranges[0].empty());
     CHECK(ranges[2].size() == 1);
+    fields[0].Text = title.data();
+    fields[0].Len = title.size();
 
     CHECK_FALSE(MatchFields(MakeQuery("toggle absent"), fields, 3, Mode::Fuzzy, scratch, ranges).Matched());
     CHECK(ranges[0].empty());
@@ -302,6 +309,30 @@ TEST_CASE("TextMatch — caps: long candidates and hostile input stay bounded") 
                       "a\xE2\x82"
                       "b")
               .Matched());
+}
+
+TEST_CASE("TextMatch — character boundaries: no match starts or ends inside a valid character") {
+    using smatchet::textmatch::CapAtCharBoundary;
+    using smatchet::textmatch::CharBoundaryAtOrAfter;
+    using smatchet::textmatch::ContainsAllWordsFolded;
+    using smatchet::textmatch::FindFolded;
+    const std::string a = "\xC4\x81"; // ā
+    CHECK(CharBoundaryAtOrAfter(a.data(), a.size(), 1) == 2);
+    CHECK(CharBoundaryAtOrAfter(a.data(), a.size(), 0) == 0);
+    CHECK(FindFolded(a, "\x81", 1) == std::string::npos);   // a lone continuation byte is not a character here
+    CHECK(FindFolded(std::string("\x81"), "\x81", 0) == 0); // ...but a stray one matches itself
+    CHECK_FALSE(ContainsAllWordsFolded(a, MakeQuery("\x81")));
+    CHECK(ContainsAllWordsFolded(std::string("x\x81"), MakeQuery("\x81")));
+    // The read cap backs off to the lead byte of a character it would split.
+    const std::string text = "ab\xC3\xA9"; // ab + é
+    CHECK(CapAtCharBoundary(text.data(), text.size(), 3) == 2);
+    CHECK(CapAtCharBoundary(text.data(), text.size(), 2) == 2);
+    CHECK(CapAtCharBoundary(text.data(), text.size(), 10) == text.size());
+    const std::string bad = "ab\x80\x80";
+    CHECK(CapAtCharBoundary(bad.data(), bad.size(), 3) == 3); // malformed bytes are not moved over
+    std::string longText(smatchet::textmatch::kMaxTextBytes - 1, 'a');
+    longText += "\xC3\xA9"; // é straddles the cap
+    CHECK_FALSE(Match(MakeQuery("\xC3"), longText, Mode::Fuzzy).Matched());
 }
 
 TEST_CASE("TextMatch — ContainsAllWordsFolded is the exact check for pre-folded haystacks") {

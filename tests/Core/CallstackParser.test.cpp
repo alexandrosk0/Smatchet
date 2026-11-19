@@ -257,6 +257,14 @@ TEST_CASE("CallstackParser::ApplyPathRemaps tolerates case, slash direction, edg
         both.push_back(MakeRule("/depot/foo", "C:/local/foo/"));
         CHECK(ApplyPathRemaps("/depot/foo/src/bar.cpp", both) == "C:/local/foo/src/bar.cpp");
     }
+    SUBCASE("an empty ToPrefix strips the prefix, leaving the path relative to it") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("/depot/", ""));
+        CHECK(ApplyPathRemaps("/depot/src/a.cpp", rules) == "src/a.cpp");
+        std::vector<PathRemapRule> noSlash;
+        noSlash.push_back(MakeRule("/depot", ""));
+        CHECK(ApplyPathRemaps("/depot/src/a.cpp", noSlash) == "/src/a.cpp"); // the rule kept the separator out
+    }
     SUBCASE("pasted edge whitespace on either field is ignored") {
         std::vector<PathRemapRule> rules;
         rules.push_back(MakeRule("  /depot/x/ \t", " /mapped/ "));
