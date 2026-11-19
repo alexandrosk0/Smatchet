@@ -39,6 +39,9 @@ TEST_CASE("ContainsCi is case-insensitive and empty-needle matches" * doctest::t
     CHECK(ContainsCi("HelloWorld", "HELLO"));
     CHECK(ContainsCi("anything", ""));
     CHECK_FALSE(ContainsCi("abc", "xyz"));
+    CHECK(ContainsCi("\xCE\xA0\xCF\x81\xCF\x8C\xCE\xB3\xCF\x81\xCE\xB1\xCE\xBC\xCE\xBC\xCE\xB1",
+                     "\xCE\xA0\xCE\xA1\xCE\x8C")); // Πρόγραμμα / ΠΡΌ
+    CHECK(ContainsCi("\xD0\x9F\xD1\x80\xD0\xBE\xD0\xB5\xD0\xBA\xD1\x82", "\xD0\xBF\xD0\xA0\xD0\x9E")); // Проект / пРО
 }
 
 TEST_CASE("RecentEntryPasses rejects empty key" * doctest::test_suite("[ui]")) {

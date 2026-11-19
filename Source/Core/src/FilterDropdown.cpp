@@ -3,13 +3,16 @@
 #include "FilterDropdownPure.h"
 #include "RecentSelections.h"
 #include "SmatchetLocalization.h"
+#include "TextMatchPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
+#include "Ui/SmatchetMatchHighlight.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // RenderCheckMark, PushItemFlag, the current window id
 
 #include <algorithm>
 #include <cfloat>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <type_traits>
@@ -50,6 +53,18 @@ struct BodyState {
     std::vector<pure::ItemView> Views; // scratch, reused across frames
     std::vector<pure::Row> Rows;       // scratch, reused across frames
     std::string CreateLabel;           // scratch: the 'Add "<text>"' row text
+
+    // The shared matcher (TextMatchPure.h): the applied filter split into words (rebuilt only when it
+    // changes), working memory reused by the per-frame scoring and the row highlight, and a drawn row's
+    // label / secondary / id match ranges.
+    textmatch::Query AppliedQuery;
+    textmatch::Scratch MatchScratch;
+    std::vector<textmatch::ByteRange> MatchRanges[3];
+
+    // Filtered rows are scored once per change, not per frame: the key of what they were built from.
+    bool FilteredRowsValid = false;
+    std::uint64_t FilteredRowsKey = 0;
+    std::string FilteredRowsFilter;
 };
 
 BodyState& StateForWindow(ImGuiID windowId) {
@@ -73,6 +88,8 @@ BodyState& StateForWindow(ImGuiID windowId) {
 void ResetForOpen(BodyState& st) {
     st.Filter[0] = '\0';
     st.AppliedFilterLower.clear();
+    st.AppliedQuery = textmatch::Query();
+    st.FilteredRowsValid = false;
     st.Highlight = -1;
     st.NeedDefaultHighlight = true;
     st.UserMovedHighlight = false;
@@ -352,7 +369,7 @@ struct RowTextFit {
 
 // The label, clipped to its space with the part that matches the filter highlighted, and the dimmed
 // secondary text on the right when both fit.
-RowTextFit DrawRowText(ImDrawList* dl, const BodyState& st, const pure::Row& row, const RowContent& rc, ImVec2 textPos,
+RowTextFit DrawRowText(ImDrawList* dl, BodyState& st, const pure::Row& row, const RowContent& rc, ImVec2 textPos,
                        float textMaxX, float rowTop, float rowH, ImU32 textCol) {
     const float fontSize = ImGui::GetFontSize();
     const char* label = rc.Label;
@@ -368,20 +385,17 @@ RowTextFit DrawRowText(ImDrawList* dl, const BodyState& st, const pure::Row& row
         }
     }
     dl->PushClipRect(ImVec2(textPos.x, rowTop), ImVec2(textMaxX, rowTop + rowH), true);
-    const bool filtered = row.Kind == pure::RowKind::Item && !st.AppliedFilterLower.empty();
-    const std::size_t at = filtered ? pure::FindCaseInsensitive(label, st.AppliedFilterLower) : std::string::npos;
-    if (at != std::string::npos) {
-        // Exact glyph advances: the usual text measure rounds every width up, which would drift the
-        // box to the right of the letters it marks.
-        ImFont* font = ImGui::GetFont();
-        const char* matchBegin = label + at;
-        const char* matchEnd = matchBegin + st.AppliedFilterLower.size();
-        const float x0 = textPos.x + font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label, matchBegin).x;
-        const float x1 = x0 + font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, matchBegin, matchEnd).x;
-        dl->AddRectFilled(ImVec2(x0 - 1.0f, textPos.y), ImVec2(x1 + 1.0f, textPos.y + fontSize),
-                          ImGui::GetColorU32(ImGuiCol_TextSelectedBg), 2.0f);
+    const bool filtered = row.Kind == pure::RowKind::Item && row.ItemIndex >= 0 &&
+                          static_cast<std::size_t>(row.ItemIndex) < st.Views.size() && !st.AppliedQuery.Empty();
+    std::size_t rangeCount = 0;
+    if (filtered) {
+        // The same scoring BuildRows ranked the row with, asked for the label's matched letters.
+        pure::ScoreItem(st.Views[static_cast<std::size_t>(row.ItemIndex)], st.AppliedQuery, st.MatchScratch,
+                        st.MatchRanges);
+        rangeCount = st.MatchRanges[0].size();
     }
-    dl->AddText(textPos, textCol, label);
+    SmatchetMatchHighlight::DrawText(dl, textPos, textCol, label, nullptr,
+                                     rangeCount > 0 ? st.MatchRanges[0].data() : nullptr, rangeCount);
     dl->PopClipRect();
     fit.LabelCut = textPos.x + labelW > textMaxX;
     return fit;
@@ -539,6 +553,34 @@ void DrawFooter(const Options& options, float width) {
 }
 
 // Rebuilds this frame's visible rows from the caller's options and the filter text.
+// FNV-1a over everything a filtered row list depends on: the options' ids, labels, secondary texts and
+// flags, and the list options. Callers rebuild their option arrays every frame, so pointers say nothing.
+std::uint64_t FilteredRowsKey(const std::vector<pure::ItemView>& views, const Options& options) {
+    std::uint64_t h = 1469598103934665603ULL;
+    const auto mix = [&h](unsigned char b) {
+        h ^= b;
+        h *= 1099511628211ULL;
+    };
+    const auto mixText = [&mix](const char* t) {
+        if (t == nullptr) {
+            mix(0xFFu); // null and "" differ
+            return;
+        }
+        for (; *t != '\0'; ++t) {
+            mix(static_cast<unsigned char>(*t));
+        }
+        mix(0u);
+    };
+    for (const pure::ItemView& v : views) {
+        mixText(v.Id);
+        mixText(v.Label);
+        mixText(v.Secondary);
+        mix(static_cast<unsigned char>((v.Checked ? 1u : 0u) | (v.Disabled ? 2u : 0u)));
+    }
+    mix(static_cast<unsigned char>((options.KeepCheckedVisible ? 1u : 0u) | (options.AllowCreate ? 2u : 0u)));
+    return h;
+}
+
 void BuildRowsForFrame(BodyState& st, const Item* items, int count, const Options& options,
                        const std::string& filterLower, bool hasScope) {
     st.Views.resize(static_cast<std::size_t>(count));
@@ -560,7 +602,21 @@ void BuildRowsForFrame(BodyState& st, const Item* items, int count, const Option
     in.KeepCheckedVisible = options.KeepCheckedVisible;
     in.AllowCreate = options.AllowCreate;
     in.ShowClear = options.ClearLabel != nullptr;
+    in.Query = &st.AppliedQuery;
+    in.Scratch = &st.MatchScratch;
+    if (filterLower.empty()) {
+        st.FilteredRowsValid = false;
+        pure::BuildRows(in, st.Rows); // no scoring: every option in order, cheap
+        return;
+    }
+    const std::uint64_t key = FilteredRowsKey(st.Views, options);
+    if (st.FilteredRowsValid && key == st.FilteredRowsKey && filterLower == st.FilteredRowsFilter) {
+        return; // same options, same filter: last frame's ranked rows still hold
+    }
     pure::BuildRows(in, st.Rows);
+    st.FilteredRowsValid = true;
+    st.FilteredRowsKey = key;
+    st.FilteredRowsFilter = filterLower;
 }
 
 // Keeps the highlight on the right row (pure::DecideHighlight). It gets a fresh default when the popup
@@ -753,6 +809,7 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     const std::string filterLower = pure::NormalizeFilter(st.Filter);
     if (filterLower != st.AppliedFilterLower) {
         st.AppliedFilterLower = filterLower;
+        st.AppliedQuery = textmatch::MakeQuery(filterLower);
         st.NeedDefaultHighlight = true;
         st.KeyNavigated = false; // typing: Space is filter text again until an arrow key moves the highlight
         st.ToggledThisFilter = false;

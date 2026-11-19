@@ -1,6 +1,6 @@
 #include "SmatchetProjectPicker_detail.h"
 
-#include "StringUtil.h"
+#include "TextMatchPure.h"
 
 #include <algorithm>
 #include <string>
@@ -13,7 +13,7 @@ bool ContainsCi(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) {
         return true;
     }
-    return ToLowerAsciiCopy(haystack).find(ToLowerAsciiCopy(needle)) != std::string::npos;
+    return smatchet::textmatch::FindFolded(haystack, smatchet::textmatch::FoldCopy(needle)) != std::string::npos;
 }
 
 std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind) {

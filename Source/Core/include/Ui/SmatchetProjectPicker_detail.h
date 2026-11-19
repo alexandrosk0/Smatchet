@@ -14,7 +14,7 @@
 namespace SmatchetProjectPicker {
 namespace detail {
 
-/** Case-insensitive substring test. Empty needle always matches. */
+/** Substring test through the shared matcher's UTF-8 case fold (TextMatchPure.h). Empty needle always matches. */
 bool ContainsCi(const std::string& haystack, const std::string& needle);
 
 /** Display label for an "All projects" row. Jira / Linear (Team): "KEY — DisplayName"; Plane (or

@@ -99,6 +99,18 @@ TEST_CASE("PreferencesFilter — keywords keep old-tab muscle memory working") {
     CHECK_FALSE(filter.ShowSetting(kVsyncId));
 }
 
+TEST_CASE("PreferencesFilter — words match in any order, in tier 1") {
+    // "notifications change" is no substring of any haystack, but both words occur in the
+    // "Change notifications" section's rows: tier 1 finds them, so tier 2 never runs.
+    PreferencesFilter filter;
+    filter.Update("notifications change", "en");
+    CHECK(filter.ShowSetting("tracker.notifications.enabled"));
+    filter.Update("  change   notifications ", "en");
+    CHECK(filter.ShowSetting("tracker.notifications.enabled"));
+    // Greek capitals fold to the lower-case letters a translated haystack would hold.
+    CHECK(PreferencesFilter::ToLowerFold("\xCE\x9F\xCE\xA8\xCE\x97") == "\xCE\xBF\xCF\x88\xCE\xB7");
+}
+
 TEST_CASE("PreferencesFilter — section and category titles are part of the haystack") {
     PreferencesFilter filter;
     filter.Update("change notifications", "en");

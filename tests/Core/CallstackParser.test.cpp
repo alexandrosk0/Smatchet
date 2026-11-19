@@ -235,6 +235,44 @@ TEST_CASE("CallstackParser::ApplyPathRemaps prefers longest matching prefix" * d
     }
 }
 
+TEST_CASE("CallstackParser::ApplyPathRemaps tolerates case, slash direction, edge spaces and a missing slash") {
+    SUBCASE("a Windows rule matches a frame with the other slashes and case") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("D:\\Work\\Game", "C:/Game/"));
+        CHECK(ApplyPathRemaps("d:/work/game/Source/x.cpp", rules) == "C:/Game/Source/x.cpp");
+        CHECK(ApplyPathRemaps("D:\\Work\\Game\\Source\\x.cpp", rules) == "C:/Game/Source\\x.cpp");
+    }
+    SUBCASE("a rule without its trailing slash matches whole segments only") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("D:/Work/Game", "E:/G"));
+        CHECK(ApplyPathRemaps("D:/Work/Games/x.cpp", rules) == "D:/Work/Games/x.cpp");
+        CHECK(ApplyPathRemaps("D:/Work/Game/x.cpp", rules) == "E:/G/x.cpp");
+        CHECK(ApplyPathRemaps("D:/Work/Game", rules) == "E:/G");
+    }
+    SUBCASE("the join never doubles or drops the separator") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("/depot/foo/", "C:\\local\\foo"));
+        CHECK(ApplyPathRemaps("/depot/foo/src/bar.cpp", rules) == "C:\\local\\foo\\src/bar.cpp");
+        std::vector<PathRemapRule> both;
+        both.push_back(MakeRule("/depot/foo", "C:/local/foo/"));
+        CHECK(ApplyPathRemaps("/depot/foo/src/bar.cpp", both) == "C:/local/foo/src/bar.cpp");
+    }
+    SUBCASE("pasted edge whitespace on either field is ignored") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("  /depot/x/ \t", " /mapped/ "));
+        CHECK(ApplyPathRemaps("/depot/x/a.cpp", rules) == "/mapped/a.cpp");
+        std::vector<PathRemapRule> blank;
+        blank.push_back(MakeRule("   ", "/IGNORED/"));
+        CHECK(ApplyPathRemaps("/depot/x/a.cpp", blank) == "/depot/x/a.cpp");
+    }
+    SUBCASE("POSIX and depot paths stay case-sensitive") {
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("//depot/Main/", "/src/"));
+        CHECK(ApplyPathRemaps("//depot/main/a.cpp", rules) == "//depot/main/a.cpp");
+        CHECK(ApplyPathRemaps("//depot/Main/a.cpp", rules) == "/src/a.cpp");
+    }
+}
+
 TEST_CASE("CallstackParser::FrameMatchesIgnoreKeywords matches case-insensitively across raw/function/path") {
     const ParsedCallstackFrame frame = MakeFrame("RawLine has Marker", "Function::Foo", "C:/Path/Bar.cpp");
 

@@ -1,11 +1,8 @@
 #include "PreferencesFilter.h"
 
-#include "Commands/FuzzyMatch.h"
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
-#include "StringUtil.h"
-
-#include <cctype>
+#include "TextMatchPure.h"
 
 namespace {
 
@@ -23,37 +20,11 @@ std::string VisibleLabel(const char* labelEn) {
 
 } // namespace
 
-// Search fold: ASCII via the canonical repo helper, plus the Latin-1 Supplement
-// letters (U+00C0-U+00DE, encoded as 0xC3 0x80-0x9E). In that block the
-// upper->lower offset is a flat +0x20 on the trail byte, so folding needs no
-// table. U+00D7 (0xC3 0x97, the multiplication sign) sits inside the range but
-// is punctuation, not a letter, so it is skipped.
-//
-// A plain ASCII fold is wrong HERE specifically because the haystack is built
-// from TranslateSource output — translated text. "É" is 0xC3 0x89 and "é" is
-// 0xC3 0xA9, so byte-wise ASCII folding left them unequal and typing "PRÉ" never
-// matched "préférences" in the French UI this search exists to serve.
-//
-// It deliberately stops at Latin-1 rather than reaching for full Unicode
-// folding: this covers French, Spanish, Portuguese, German and Italian with one
-// two-byte rule and no dependency, whereas Latin Extended-A and beyond need real
-// case tables. Un-folded is honest; half a table would be a subtler version of
-// the bug being fixed. A 0xC3 byte is always a lead byte (continuation bytes are
-// 0x80-0xBF), so the scan cannot mistake one for the other.
-std::string PreferencesFilter::ToLowerFold(const std::string& s) {
-    std::string out = ToLowerAsciiCopy(s);
-    for (std::size_t i = 0; i + 1 < out.size(); ++i) {
-        if (static_cast<unsigned char>(out[i]) != 0xC3u) {
-            continue;
-        }
-        const unsigned char trail = static_cast<unsigned char>(out[i + 1]);
-        if (trail >= 0x80u && trail <= 0x9Eu && trail != 0x97u) {
-            out[i + 1] = static_cast<char>(trail + 0x20u);
-        }
-        ++i; // trail byte consumed
-    }
-    return out;
-}
+// Search fold: the shared matcher's UTF-8 case fold (TextMatchPure.h). The haystack is built from
+// TranslateSource output, i.e. translated text, so an ASCII-only fold would leave "É" and "é" unequal and a
+// French user typing "PRÉ" would never match "préférences". The fold covers Latin-1, Latin Extended-A,
+// Greek, Cyrillic and the other blocks whose case mapping is regular; anything else compares as written.
+std::string PreferencesFilter::ToLowerFold(const std::string& s) { return smatchet::textmatch::FoldCopy(s); }
 
 bool PreferencesFilter::ContainsLower(const std::string& haystack, const std::string& needleLower) {
     return ToLowerFold(haystack).find(needleLower) != std::string::npos;
@@ -174,17 +145,21 @@ void PreferencesFilter::RecomputeMatches() {
     if (queryLower_.empty()) {
         return;
     }
-    // Tier 1: plain substring over the pre-lowered haystacks.
+    // Tier 1: every word of the query occurs in the pre-folded haystack, in any order.
+    const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(queryLower_);
     for (const Entry& entry : index_) {
-        if (entry.Haystack.find(queryLower_) != std::string::npos) {
+        if (smatchet::textmatch::ContainsAllWordsFolded(entry.Haystack, query)) {
             matched_.insert(entry.Id);
         }
     }
-    // Tier 2: fuzzy subsequence, only when the substring pass found nothing —
-    // a typo like "vsnc" still lands, but fuzzy noise never joins exact hits.
+    // Tier 2: letters in order, only when the exact pass found nothing — a typo like "vsnc" still lands,
+    // but fuzzy noise never joins exact hits (the same rule every picker list follows).
     if (matched_.empty()) {
+        smatchet::textmatch::Scratch scratch;
         for (const Entry& entry : index_) {
-            if (smatchet::cmd::FuzzyScore(queryLower_, entry.Haystack) > 0) {
+            if (smatchet::textmatch::Match(query, entry.Haystack.data(), entry.Haystack.size(),
+                                           smatchet::textmatch::Mode::Fuzzy, scratch)
+                    .Matched()) {
                 matched_.insert(entry.Id);
             }
         }

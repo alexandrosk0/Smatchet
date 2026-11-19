@@ -29,33 +29,43 @@ New shared headers. No tracker interface, command, Lua / MCP binding, config, ca
 namespace smatchet { namespace textmatch {
 constexpr std::size_t kMaxQueryWords = 16;        // words past this are dropped (the match only loosens)
 constexpr std::size_t kMaxWordCodepoints = 64;    // a longer word is cut
-constexpr std::size_t kMaxFuzzyCodepoints = 512;  // fuzzy alignment looks at this much of a candidate
-constexpr std::size_t kMaxTextBytes = 16384;      // a candidate is read this far
+constexpr std::size_t kMaxFuzzyCodepoints = 512;  // letters-in-order matching looks this far into a candidate
+constexpr std::size_t kMaxTextBytes = 16384;      // a candidate or query is read this far when matched
+constexpr char32_t kInvalidByteBase = 0x110000;   // an invalid UTF-8 byte b decodes as this + b
+constexpr int kMaxScore = 1 << 22;                // Result::Score is clamped here
+constexpr long long kExactRankTier = 1LL << 40;   // added to the RankKey of an all-words-as-written result
 
-char32_t FoldCodepoint(char32_t cp);
 char32_t DecodeUtf8(const char* s, std::size_t n, std::size_t& len);   // invalid byte -> itself, len 1
-std::string FoldCopy(const std::string& s);                            // folded UTF-8
+void AppendUtf8(std::string& out, char32_t cp);
+char32_t FoldCodepoint(char32_t cp);
+std::string FoldCopy(const char* s, std::size_t n);                    // folded UTF-8, every byte read
+std::string FoldCopy(const std::string& s);
 std::size_t FindFolded(const char* hay, std::size_t hayLen, const std::string& needleFolded, std::size_t from = 0);
+std::size_t FindFolded(const std::string& hay, const std::string& needleFolded, std::size_t from = 0);
+bool EqualsFolded(const char* text, std::size_t len, const std::string& otherFolded);
+bool EqualsFolded(const char* text, const std::string& otherFolded);
 
 struct Query { std::vector<std::u32string> Words; std::vector<std::string> WordsUtf8; bool Empty() const; };
+Query MakeQuery(const char* raw, std::size_t n);
 Query MakeQuery(const char* raw);
 Query MakeQuery(const std::string& raw);
+bool ContainsAllWordsFolded(const std::string& haystackFolded, const Query&);  // exact words, pre-folded haystack
 
-struct ByteRange { std::size_t Begin; std::size_t End; };     // [Begin, End) bytes of the candidate
-enum class Mode { Substring, Fuzzy };                         // Substring: every word as written
+struct ByteRange { std::size_t Begin = 0; std::size_t End = 0; };      // [Begin, End) bytes of the candidate
+enum class Mode { Substring, Fuzzy };                                 // Substring: every word as written
 struct Result { int Score = 0; bool Substring = false; bool Matched() const; };
-long long RankKey(const Result& r);                           // Substring results always outrank fuzzy ones
+long long RankKey(const Result& r);                                   // exact results always outrank fuzzy ones
+bool IsExactRank(long long rankKey);
+bool RowListed(const Result& r, bool anyExactRow);                    // the exact-first list rule
 
-struct Scratch;                                               // reusable buffers: no allocation per call once warm
-Result Match(const Query&, const char* text, std::size_t len, Mode, Scratch&, std::vector<ByteRange>* ranges = nullptr);
-Result Match(const Query&, const std::string& text, Mode = Mode::Fuzzy, std::vector<ByteRange>* ranges = nullptr);
-
-struct Field { const char* Text; std::size_t Len; int Weight; };
-// Every word must match one field; a word's score is its best weighted field score (a substring
-// match in any field beats a fuzzy one). `ranges`, when given, holds one vector per field.
+struct Field { const char* Text = nullptr; std::size_t Len = 0; int Weight = 1; bool ExactOnly = false; };
+struct Scratch;                                                       // reusable working memory
+// Every word must match one field; a word takes its best field (as written in any field beats letters in
+// order anywhere; then weight x score). `ranges`, when given, points at `count` vectors.
 Result MatchFields(const Query&, const Field* fields, std::size_t count, Mode, Scratch&,
                    std::vector<ByteRange>* ranges = nullptr);
-bool ContainsAllWordsFolded(const std::string& haystackFolded, const Query&);  // pre-folded haystacks
+Result Match(const Query&, const char* text, std::size_t len, Mode, Scratch&, std::vector<ByteRange>* ranges = nullptr);
+Result Match(const Query&, const std::string& text, Mode = Mode::Fuzzy, std::vector<ByteRange>* ranges = nullptr);
 }}
 
 // Source/Core/include/Ui/SmatchetMatchHighlight.h (include after imgui.h)
@@ -66,7 +76,7 @@ void DrawText(ImDrawList* dl, const ImVec2& pos, ImU32 col, const char* text, co
 }
 ```
 
-`FilterDropdownPure.h` keeps its function names; `ItemMatches` / `MatchRank` / `NormalizeFilter` / `ShouldOfferCreate` change meaning from "ASCII substring" to "the shared matcher". `BuildRows` orders filtered rows by score (stable on list order). `CommandPaletteUi::rebuildFiltered` scores Title (weight 3), Name (2) and Summary (1) separately and adds a small boost for recent commands; the row draws the title through the highlight helper.
+`FilterDropdownPure.h`: `ItemMatches` / `NormalizeFilter` / `ShouldOfferCreate` keep their names and now mean "the shared matcher" (fold beyond ASCII). New `ScoreItem(item, query, scratch, ranges)` scores label (weight 3), secondary text (1) and id (1, `ExactOnly`). `Row` gains `Rank` (the option's `RankKey`, 0 for a row listed only because it is checked) and `ModelInput` gains optional `Query` / `Scratch` pointers. `BuildRows` lists filtered matches best first (ties in list order), then the kept checked options; `DefaultHighlight` and `RowAnswersFilter` read `Row::Rank`. `MatchRank`, `FindCaseInsensitive`, `EqualsCaseInsensitive` and `LowerAscii` are removed (no caller left). `CommandPaletteUi::rebuildFiltered` scores Title (weight 3), Name (2) and Summary (1) separately (`rankByQuery`) and adds a small boost for recent commands; the row draws its title and summary through the highlight helper. Test-observability accessors `FilteredCount` / `FilteredName` / `FilteredTitleRangeCount` join `SelectedIndex`.
 
 ## Files to modify
 
@@ -135,7 +145,7 @@ N/A — nothing is split to clear a cap; the highlight hoist is ~20 lines.
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: the dropdown scores its options each frame a filter is typed (it did a substring scan each frame before). The matcher reuses one `Scratch` per open dropdown, so a warm frame allocates nothing per option; decode is linear and the alignment is bounded by 64 × 512 cells per word. The grid keeps its per-keystroke compare allocation-free (`FindFolded` decodes on the fly, ASCII fast path); the title fallback runs only when the strict pass found nothing. The palette and icon picker score only when the query changes.
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: an open dropdown with a filter scores its options only when the filter or the options change: the body keys its ranked rows on an FNV-1a hash of the options' text and flags (callers rebuild their option arrays each frame, so pointers prove nothing), which costs about what the old per-frame substring scan did. A rebuild first rejects, straight off the bytes, every option whose fields cannot hold a word's letters in order, and decodes only fields some word can use. Measured at -O2 in the container on label + e-mail + id rows (one rebuild): 2k options 0.15-0.8 ms, 10k options 0.8 ms for a filter nothing matches, 1.1-2.1 ms for a selective one, 4.3-5.0 ms for a one-letter filter every option holds (once per keystroke, not per frame). The matcher reuses one `Scratch` per open dropdown, so a warm rebuild allocates nothing per option. The grid keeps its per-keystroke compare allocation-free (`FindFolded` decodes on the fly, ASCII fast path); the title fallback runs only when the strict pass found nothing. The palette and icon picker score only when the query changes.
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no I/O, locks or waits. The audit haystack fold stays on its worker.
 - **Pillar 3 (never crash)**: every decode is bounded by the byte count and never reads past it; an invalid UTF-8 byte decodes as itself; words, word length, candidate length and the alignment table are capped; ranges are clamped to the text. No recursion.
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: what this plan exists for: fewer keystrokes to reach a row, and the matched letters are marked. The mark is the theme's existing selected-text colour, already used by the dropdown, so no contrast change.
@@ -195,7 +205,15 @@ None.
 *(populated post-ship)*
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Matcher doctests** live in `tests/Core/TextMatchPure.cases.h`, a header included once by `tests/Core/TicketGridFilterPure.test.cpp`, rather than inline in that TU: same rig (Linux subset and `SmatchetTests`), one file to move when `tests/CMakeLists.txt` unlocks (debt entry).
+- **`FoldCopy` reads every byte.** The plan capped it at `kMaxTextBytes`; an audit event's JSON can be longer, and a capped fold would hide matches past 16 KiB. Matching (`Match` / `MatchFields`) keeps the cap.
+- **Added to the API while building:** `EqualsFolded` (the create row's "no label equals the filter" test without an allocation), `Field::ExactOnly` (ids never match letters-in-order, as #8 asks), `kExactRankTier` / `IsExactRank` / `RowListed` (one spelling of the exact-first rule for every list), `kMaxScore` (so `FuzzyScore` can add its tier boost inside `int`).
+- **Dropdown order under a filter:** matches first, best first; options listed only because they are ticked (`KeepCheckedVisible`) come after them, in list order (they used to sit in list order among the matches). `MatchRank` and the ASCII helpers were removed with their last caller.
+- **Path remaps (#131):** besides trim, slash folding and drive-letter case, a `FromPrefix` without a trailing separator now matches whole path segments only ("D:/Work/Game" no longer rewrites "D:/Work/Games/..."), and the join puts back a separator the rule's `ToPrefix` dropped.
+- **Files touched beyond the list:** `Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp` (review fix above), `Source/Core/include/Ui/SmatchetIconPickerUi.h` (the cached match list), `Source/Core/include/Ui/SmatchetProjectPicker_detail.h` (doc line), `tests/Core/AuditWindowFilter.test.cpp` and `tests/Core/ProjectPickerFilter.test.cpp` (cases for the audit and project-picker folds).
+- **Audit search** keeps `ContainsNoCasePreLower`'s name; it now means "every word, in any order" over the shared fold.
+- **Code review (2026-11-19) fixes:** (High) a Create row now outranks a letters-in-order match for the default highlight, so Enter in the labels picker adds "qa" instead of ticking "quarantine" (the arrow keys still reach it; pure and bucket-E cases). (Medium) the per-frame rescoring became a per-change one (row cache keyed on an options hash, byte-level pre-reject, lazy decode), measured above. (Low) the grid falls back to letters-in-order only when no row at all, shown or hidden as a parent, holds the words as written. (Low) the missing simple folds in Greek and Coptic (U+0370/0372/0376/037F, U+03CF-03FF symbols) and U+1E9B were added, with an idempotence check over U+0000-U+1FFFF. (Low) the keybinding table's filters (`SmatchetPreferencesUi_Keybindings.cpp`) match every word in any order through the shared fold, like the settings search above them.
+- **Golden:** `tests/golden/command-palette-fuzzy.png` predates the palette's match marks. Bucket-C reports the drift (advisory lane); the re-capture needs the CI bootstrap job and a human verdict, so it is in the debt entry, not this PR.
 
 ## Verification (actual)
 *(populated post-ship)*

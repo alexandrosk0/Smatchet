@@ -2,6 +2,7 @@
 
 #include "TunableLimits.h"
 #include "StringUtil.h"
+#include "TextMatchPure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -150,6 +151,21 @@ void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::stri
                 std::string label = f.Name + " (" + f.Id + ")";
                 AddSuggestionUnique(out, seen, label, f.Id);
             }
+        }
+    }
+    // Then names that hold the typed words anywhere, after every prefix hit ("points" finds "Story Points",
+    // "points story" too). Plain words through the shared fold: a field name is matched as written, never
+    // letters-in-order, so a short prefix does not pull in the whole catalog. Ids stay prefix-only.
+    if (prefix.empty()) {
+        return;
+    }
+    const smatchet::textmatch::Query words = smatchet::textmatch::MakeQuery(prefix);
+    for (const auto& f : fields) {
+        if (f.Id.empty() || f.Name.empty() || f.Name == f.Id) {
+            continue;
+        }
+        if (smatchet::textmatch::ContainsAllWordsFolded(smatchet::textmatch::FoldCopy(f.Name), words)) {
+            AddSuggestionUnique(out, seen, f.Name + " (" + f.Id + ")", f.Id);
         }
     }
 }
