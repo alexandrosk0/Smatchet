@@ -12,6 +12,7 @@
 
 #include "SmatchetImGuiFonts.h"
 #include "Ui/SmatchetDialogScope.h"
+#include "Ui/SmatchetInput.h"
 #include "imgui.h"
 
 #include "SmatchetLocalizedImGui.h"
@@ -30,7 +31,7 @@ void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
 bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
     if (requestOpen_) {
         requestOpen_ = false;
-        search_[0] = '\0';
+        search_.clear();
         // "###" (not "##") so the popup ID survives title translation — OpenPopup is not
         // wrapped, so the raw and translated titles must hash to the same ID.
         ImGui::OpenPopup("Pick Icon###SmatchetIconPicker");
@@ -43,8 +44,12 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(s_iconPickerDialog, true);
         ImGui::SetNextItemWidth(-1.0f);
         smatchet::ui::DialogFocusHere(s_iconPickerDialog);
-        const bool searchEnter = ImGui::InputTextWithHint("##iconsearch", "Search icons...", search_, sizeof(search_),
-                                                          ImGuiInputTextFlags_EnterReturnsTrue);
+        // The query is a std::string (a long paste is kept whole) and a click selects it so a new one
+        // replaces it. The dialog scope above owns the opening caret and Esc; this field only reports Enter.
+        SmatchetInput::TextOptions searchOpts;
+        searchOpts.hint = "Search icons...";
+        searchOpts.selectAllOnFocus = true;
+        const bool searchEnter = SmatchetInput::Text("##iconsearch", search_, searchOpts).enterCommitted;
 
         std::string q(search_);
         std::transform(q.begin(), q.end(), q.begin(),

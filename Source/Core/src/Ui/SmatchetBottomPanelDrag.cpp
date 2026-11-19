@@ -31,8 +31,8 @@ namespace {
 struct ClosableWindowEntry {
     const char* layoutKey;
     const char* sourceTitle;
-    bool UiDrawSession::*showFlag;
-    bool UiDrawSession::*focusFlag; // null when the window has no focus latch
+    bool UiDrawSession::* showFlag;
+    bool UiDrawSession::* focusFlag; // null when the window has no focus latch
 };
 
 const ClosableWindowEntry kClosableWindows[] = {
@@ -82,8 +82,8 @@ struct EdgePanelSpec {
     const char* revealTipFallback;
     const char* gripWindowName; // bottom panel only (side strips are draw-list overlays)
     const char* logName;
-    bool TrackerConfig::*cfgFlag; // persisted visibility flag kept in step (null: none)
-    EdgePanelDragState UiDrawSession::*state;
+    bool TrackerConfig::* cfgFlag; // persisted visibility flag kept in step (null: none)
+    EdgePanelDragState UiDrawSession::* state;
 };
 
 const EdgePanelSpec kBottomSpec = {SmatchetDockNodeIds::kBottomPanel,

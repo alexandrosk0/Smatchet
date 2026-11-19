@@ -6,8 +6,6 @@
 #include <vector>
 
 using TrackerLabelsPure::ContainsLabelCaseInsensitive;
-using TrackerLabelsPure::FilterSuggestionsForDisplay;
-using TrackerLabelsPure::LabelMatchesFilter;
 using TrackerLabelsPure::LabelsEqualCaseInsensitive;
 using TrackerLabelsPure::ParseCsv;
 using TrackerLabelsPure::SortAndUniqueLabels;
@@ -153,65 +151,5 @@ TEST_CASE("ParseCsv + SortAndUniqueLabels round-trip") {
         REQUIRE(out.size() == 2);
         CHECK(out[0] == "alpha");
         CHECK(out[1] == "beta");
-    }
-}
-
-TEST_CASE("LabelMatchesFilter: empty filter matches all; substring otherwise") {
-    SUBCASE("empty filter passes any label, including empty") {
-        CHECK(LabelMatchesFilter("anything", ""));
-        CHECK(LabelMatchesFilter("", ""));
-    }
-
-    SUBCASE("substring match is case-insensitive on label side") {
-        CHECK(LabelMatchesFilter("BugFix", "bug"));
-        CHECK(LabelMatchesFilter("feature-flag", "flag"));
-        CHECK(LabelMatchesFilter("Alpha", "alpha"));
-    }
-
-    SUBCASE("non-match returns false") {
-        CHECK_FALSE(LabelMatchesFilter("alpha", "beta"));
-        CHECK_FALSE(LabelMatchesFilter("", "x"));
-    }
-}
-
-TEST_CASE("FilterSuggestionsForDisplay: union of selected-set + substring match") {
-    const std::vector<std::string> suggestions = {"Alpha", "Beta", "Gamma", "Delta"};
-
-    SUBCASE("empty filter returns every suggestion") {
-        const auto out = FilterSuggestionsForDisplay(suggestions, {}, "");
-        REQUIRE(out.size() == 4);
-        CHECK(out[0] == "Alpha");
-        CHECK(out[3] == "Delta");
-    }
-
-    SUBCASE("filter narrows to substring match (case-insensitive)") {
-        const auto out = FilterSuggestionsForDisplay(suggestions, {}, "a");
-        REQUIRE(out.size() == 4);
-    }
-
-    SUBCASE("filter narrows correctly with no selected") {
-        const auto out = FilterSuggestionsForDisplay(suggestions, {}, "gam");
-        REQUIRE(out.size() == 1);
-        CHECK(out[0] == "Gamma");
-    }
-
-    SUBCASE("selected suggestion stays visible even when filter excludes it") {
-        const std::vector<std::string> selected = {"Beta"};
-        const auto out = FilterSuggestionsForDisplay(suggestions, selected, "gam");
-        REQUIRE(out.size() == 2);
-        CHECK(out[0] == "Beta");
-        CHECK(out[1] == "Gamma");
-    }
-
-    SUBCASE("selected-side fold is case-insensitive") {
-        const std::vector<std::string> selected = {"BETA"};
-        const auto out = FilterSuggestionsForDisplay(suggestions, selected, "zzz");
-        REQUIRE(out.size() == 1);
-        CHECK(out[0] == "Beta");
-    }
-
-    SUBCASE("empty suggestions yields empty output") {
-        const auto out = FilterSuggestionsForDisplay({}, {"Beta"}, "");
-        CHECK(out.empty());
     }
 }

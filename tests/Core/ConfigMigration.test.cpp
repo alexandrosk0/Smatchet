@@ -26,6 +26,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -671,6 +672,45 @@ TEST_CASE("ConfigMigration gesture keys: flag set on disk skips the seed (cleare
 
     CHECK(cfg.MigratedGestureKeysV1 == true);
     CHECK(cfg.Keybindings.FindBindingIndex("ui.list.remove", "{}") < 0); // not resurrected
+}
+
+// --- Grid search focus keybinding (migrated_grid_search_focus_hotkey_v1) ---
+//
+// grid.search.focus (input UX audit #60) arrived after configs with a saved keybindings block
+// existed; from_json replaces the table, so only the one-shot seed brings Ctrl+F and / to them.
+
+TEST_CASE("ConfigMigration grid search focus: seeds Ctrl+F and / once, keeps a user's own key") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig seeded = ConfigManager::Load();
+    CHECK(seeded.MigratedGridSearchFocusHotkeyV1 == true);
+    const int si = seeded.Keybindings.FindBindingIndex("grid.search.focus", "{}");
+    REQUIRE(si >= 0);
+    const std::vector<std::string>& combos = seeded.Keybindings.Bindings[static_cast<std::size_t>(si)].Hotkeys;
+    REQUIRE(combos.size() == 2U);
+    CHECK(combos[0] == "Ctrl+F");
+    CHECK(combos[1] == "/");
+    CHECK(seeded.Keybindings.FindBindingIndex("ui.zoom.reset", "{}") >= 0);
+
+    // A user who bound the command to another key before the seed ran keeps that key, alone.
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"grid.search.focus","hotkey":"Alt+S","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig rebound = ConfigManager::Load();
+    CHECK(CountCommand(rebound.Keybindings, "grid.search.focus") == 1);
+    const int ri = rebound.Keybindings.FindBindingIndex("grid.search.focus", "{}");
+    REQUIRE(ri >= 0);
+    CHECK(rebound.Keybindings.Bindings[static_cast<std::size_t>(ri)].PrimaryHotkey() == "Alt+S");
+
+    // Once the flag is on disk a cleared binding stays cleared.
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","migrated_grid_search_focus_hotkey_v1":true,
+        "keybindings":{"bindings":[
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig cleared = ConfigManager::Load();
+    CHECK(cleared.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0);
 }
 
 // --- multi-combo zoom aliases (docs/plans/keybindings-multi-combo.md) ------------

@@ -34,6 +34,7 @@
 #include "ConfigManager.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetUI.h" // SmatchetUI_ResetLayoutToDefault
 #include "SmatchetUiSession.h"
 #include "Tracker/TrackerDateTimeFieldEditor.h"
 #include "Tracker/TrackerDateTimePure.h"
@@ -359,6 +360,8 @@ void RegisterPanelResizeKeys(ImGuiTestEngine* engine) {
         if (app == nullptr) {
             return;
         }
+        // A popup an earlier case left open would mute the chord (view.panel.* does not run under a modal).
+        ctx->PopupCloseAll();
         const KeybindingsConfig originalBindings = g_ui.cfg.Keybindings;
         const bool bottomWasVisible = SmatchetBottomPanelDrag::IsPanelVisible();
         bool expandedBottom = false;
@@ -373,6 +376,19 @@ void RegisterPanelResizeKeys(ImGuiTestEngine* engine) {
         if (panel == nullptr) {
             SmatchetBottomPanelDrag::Expand(g_ui, 0.0f);
             expandedBottom = true;
+            YieldUntil(ctx, [&] { return FirstVisiblePanelName() != nullptr; }, 120);
+            panel = FirstVisiblePanelName();
+        }
+        if (panel == nullptr && ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel) == nullptr) {
+            // An earlier docking case in the full suite can leave a layout without the canonical bottom node, and
+            // Expand has nothing to open then. Rebuild the default layout (as View > Reset Layout does) and open
+            // the panel again. The healed default layout is kept: an ini restore would only half undo the reset
+            // (it also resets show-flags and panel state), and later cases are better off on the default layout.
+            ctx->LogInfo("no bottom dock node: resetting the layout to the default");
+            SmatchetUI_ResetLayoutToDefault(g_ui);
+            YieldUntil(
+                ctx, [&] { return ImGui::DockBuilderGetNode(SmatchetDockNodeIds::kBottomPanel) != nullptr; }, 120);
+            SmatchetBottomPanelDrag::Expand(g_ui, 0.0f);
             YieldUntil(ctx, [&] { return FirstVisiblePanelName() != nullptr; }, 120);
             panel = FirstVisiblePanelName();
         }

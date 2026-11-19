@@ -425,6 +425,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
         # ConfigSaveConcurrency closure: ConfigSaveWorker (ConfigManager.cpp already linked).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
+        # Recent-picks store (ImGui-free; hands its saves to ConfigSaveWorker above). In this rig
+        # because it is the mutation-smoke oracle: the RECENTS-01-cap mutant is killed here.
+        Core/RecentSelections.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/RecentSelections.cpp"
         # --- AiAssistant streaming hand-off (slice 2c — tsan-imgui-linked-target.md). After slices
         #     2a/2b, AiAssistantController is g_ui-/ImGui-free (depends on MainThreadDispatcher +
         #     IAiAssistantUiState only), so its worker→PostToMainThread→Drain hand-off + internal
@@ -933,7 +937,11 @@ add_executable(SmatchetTests
     Core/TrackerIssueExistsProbe.test.cpp
     Core/TrackerDateTimePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
-    Core/TicketFieldEditorOptionFilterPure.test.cpp
+    # Shared value-dropdown (docs/plans/shared-dropdown-recents.md): the ImGui-free row model
+    # (header-only) and the recent-picks store (links Source/Core/src/RecentSelections.cpp below).
+    Core/FilterDropdownPure.test.cpp
+    Core/RecentSelections.test.cpp
+    Core/TrackerOptionDropdown.test.cpp
     Core/TicketFieldEditorCommitPolicyPure.test.cpp
     # Security finding #13 — automation count-hook abort policy (shutdown + runaway budget).
     # Header-only pure predicate; no extra production .cpp to link.
@@ -1550,6 +1558,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/RecentSelections.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     # EditMetaCacheService (AppController god-object decomposition Phase 1). Pulls
@@ -1692,6 +1701,12 @@ add_executable(SmatchetTests
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's
     # new history record. Pure STL (no ImGui), so it links in this pure block.
     Core/ToastHistoryPure.test.cpp
+    # bulk-edit-rows P1 — pure job core of "set one field on N selected rows" (Ui/BulkFieldEditPure.h):
+    # Add / Remove merge, summary counts, mixed-value label, confirm threshold, ADR-0016 scalar-base capture.
+    # ImGui-free; the TU depends on StringUtil.h, the field schema header, TrackerFieldValueUtils and
+    # TrackerLabelsPure (both already linked into SmatchetTests).
+    Core/BulkFieldEditPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/BulkFieldEditPure.cpp"
     # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
     # oldest past MaxLiveToasts(); sticky error toasts never expire so the bound is load-
     # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.

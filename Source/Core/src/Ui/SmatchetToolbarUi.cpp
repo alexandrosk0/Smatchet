@@ -4,7 +4,6 @@
 #include "Ui/SmatchetToolbarUi.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,6 +22,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
+#include "Ui/SmatchetInput.h"
 #include "Ui/SmatchetTheme.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/GestureKeys.h"
@@ -33,33 +33,11 @@
 
 namespace {
 
-// DR23 — std::string-backed InputText so an editor field (LuaCode / ArgsJson / CommandId / Tooltip)
-// is never rounded through a fixed char buffer that silently truncates on the first keystroke.
-// Mirrors misc/cpp/imgui_stdlib.h: the buffer IS the std::string's storage and CallbackResize grows
-// it as the user types past capacity. The mutable pointer is taken via a c_str cast, matching
-// imgui_stdlib, so it stays valid under the project's C++14 build where the non-const data overload
-// is unavailable.
-int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
-        auto* str = static_cast<std::string*>(data->UserData);
-        str->resize(static_cast<size_t>(data->BufTextLen));
-        data->Buf = const_cast<char*>(str->c_str());
-    }
-    return 0;
-}
-
-bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
-    flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags, InputTextStdStringResize,
-                            &str);
-}
-
-bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
-                                 ImGuiInputTextFlags flags = 0) {
-    flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
-                                     InputTextStdStringResize, &str);
-}
+// DR23 — every editor field (LuaCode / ArgsJson / CommandId / Tooltip / icon name) is a
+// std::string-backed InputText (SmatchetInput::InputTextStdString), never a fixed char buffer that
+// silently truncates. The resize helper this TU used to own now lives in Ui/SmatchetInput.
+using SmatchetInput::InputTextMultilineStdString;
+using SmatchetInput::InputTextStdString;
 
 const int kArgsOk = static_cast<int>(smatchet::toolbar_editor::ArgsJsonStatus::Ok);
 
@@ -824,11 +802,7 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
         }
 
         if (b.Kind != ToolbarButtonKind::Separator) {
-            char nameBuf[64];
-            std::snprintf(nameBuf, sizeof(nameBuf), "%s", b.IconName.c_str());
-            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.icon_name", "Icon name"), nameBuf,
-                                 sizeof(nameBuf))) {
-                b.IconName = nameBuf;
+            if (InputTextStdString(SmatchetLocalization::T("toolbar.editor.icon_name", "Icon name"), b.IconName)) {
                 b.IconGlyph = SmatchetToolbarIconGlyph(b.IconName);
             }
             ImGui::SameLine();

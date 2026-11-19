@@ -14,18 +14,28 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "StringUtil.h"
 #include "TrackerFieldValueUtils.h"
+#include "Ui/SmatchetInput.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
-#include <cstring>
 #include <string>
 #include <vector>
 
 namespace {
+
+// An "add another" field: Enter adds the entry and the caret stays in the field for the next one.
+// The add handler trims what it stores, so the Add button (which can run without the field ending
+// its edit, from the keyboard) and Enter store the same value.
+SmatchetInput::TextOptions AddAnotherFieldOptions() {
+    SmatchetInput::TextOptions opts;
+    opts.refocusAfterEnter = true;
+    return opts;
+}
 
 // Grid behaviour. The overflow-tooltip and wheel-swallow rows came from the old
 // Appearance tab's "Grid and field text" block — both are grid behaviour, not
@@ -193,24 +203,23 @@ void DrawTimeEstimatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplat
     ImGui::Spacing();
 
     // Inline add controls
-    static char s_prefNewSuggestionBuf[16] = "";
+    static std::string s_prefNewSuggestion;
     ImGui::Text("Add Custom Suggestion");
     ImGui::SetNextItemWidth(140.0f);
-    // EnterReturnsTrue commits from the input itself — the old IsItemFocused() check
-    // ran on the BUTTON, so Enter in the field silently did nothing (P2-L10).
+    // Enter in the field adds, like the button (P2-L10), and the caret stays for the next entry
+    // (INPUT_UX_AUDIT.md #4). std::string storage: the old 16-byte buffer clipped longer entries.
     const bool suggestionEntered =
-        ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue);
+        SmatchetInput::Text("##PrefNewSuggestion", s_prefNewSuggestion, AddAnotherFieldOptions()).enterCommitted;
     ImGui::SameLine();
     if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || suggestionEntered) {
-        std::string newVal = s_prefNewSuggestionBuf;
+        const std::string newVal = TrimCopyAsciiWhitespace(s_prefNewSuggestion);
         if (!newVal.empty()) {
             if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
                 s_suggestionsList.push_back(newVal);
                 d.cfg.DurationSuggestions = s_suggestionsList;
                 MarkPrefsDirty(d);
             }
-            s_prefNewSuggestionBuf[0] = '\0';
+            s_prefNewSuggestion.clear();
         }
     }
     ImGui::SetItemTooltip("Enter duration strings e.g. '15m', '2h', '3.5h', '1d', '2w'");
@@ -288,37 +297,35 @@ void DrawWorkLogTemplatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemp
     ImGui::Spacing();
 
     // Inline add controls for templates
-    static char s_prefNewTemplateBuf[128] = "";
+    static std::string s_prefNewTemplate;
     ImGui::Text("Add Comment Template");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
+    // Enter adds (P2-L10) and keeps the caret (#4); no 128-byte clip.
     const bool templateEntered =
-        ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue); // Enter adds (P2-L10)
+        SmatchetInput::Text("##PrefNewTemplate", s_prefNewTemplate, AddAnotherFieldOptions()).enterCommitted;
     ImGui::SameLine();
     if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || templateEntered) {
-        std::string newVal = s_prefNewTemplateBuf;
+        const std::string newVal = TrimCopyAsciiWhitespace(s_prefNewTemplate);
         if (!newVal.empty()) {
             if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
                 s_templatesList.push_back(newVal);
                 d.cfg.WorkLogCommentTemplates = s_templatesList;
                 MarkPrefsDirty(d);
             }
-            s_prefNewTemplateBuf[0] = '\0';
+            s_prefNewTemplate.clear();
         }
     }
     ImGui::SetItemTooltip("Enter template text, e.g. 'Investigated and resolved issue #123.'");
 }
 
-// Persistent per-sub-tab state for a comment-template editor (working-copy list, selection, and the
-// detail-editor input buffers). One static instance per sub-tab keeps the two editors independent —
-// exactly the behaviour the former separate function-static sets had.
+// Persistent per-sub-tab state for a comment-template editor (working-copy list and selection). One
+// static instance per sub-tab keeps the two editors independent — exactly the behaviour the former
+// separate function-static sets had. The detail editor edits the selected working-list entry's own
+// std::strings, so no field has a size cap (the old 64-byte title / id and 4 KiB body buffers clipped
+// longer values: P2-L9, INPUT_UX_AUDIT.md #2).
 struct CommentTemplateSubTabState {
     std::vector<CommentTemplate> workingList;
     int selectedIdx = -1;
-    char titleBuf[64] = "";
-    char idBuf[64] = "";
-    char textBuf[4096] = ""; // 512 silently truncated longer bodies on the first keystroke (P2-L9)
-    int lastSelectedIdx = -2;
     /// Row index whose two-step delete is armed (-1 = none). A member (not index-keyed
     /// ImGui storage) so reorder/delete can clear it — storage keyed by position would
     /// let "armed" drift onto whatever template lands in that slot.
@@ -419,22 +426,19 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
         auto& t = st.workingList[st.selectedIdx];
         ImGui::TextDisabled("Edit Selected Template details:");
 
-        // Copy to buffer if different to avoid typing overwrites
-        if (st.lastSelectedIdx != st.selectedIdx) {
-            std::strncpy(st.titleBuf, t.Title.c_str(), sizeof(st.titleBuf) - 1);
-            st.titleBuf[sizeof(st.titleBuf) - 1] = '\0';
-            std::strncpy(st.idBuf, t.Id.c_str(), sizeof(st.idBuf) - 1);
-            st.idBuf[sizeof(st.idBuf) - 1] = '\0';
-            std::strncpy(st.textBuf, t.Text.c_str(), sizeof(st.textBuf) - 1);
-            st.textBuf[sizeof(st.textBuf) - 1] = '\0';
-            st.lastSelectedIdx = st.selectedIdx;
-        }
+        // The fields edit the selected entry in place, so their ids are scoped to it: an edit that ends
+        // on the frame the selection moves (ImGui re-applies the last text when a field is deactivated)
+        // can then only land in the template it was typed into.
+        ImGui::PushID(st.selectedIdx);
+        // A title or id is replaced whole, so a click selects it; edge whitespace never belongs in either.
+        SmatchetInput::TextOptions nameOpts;
+        nameOpts.selectAllOnFocus = true;
+        nameOpts.trimOnCommit = true;
 
         ImGui::TextUnformatted("Title:");
         ImGui::SameLine(60.0f);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::InputText(titleWidgetId, st.titleBuf, sizeof(st.titleBuf))) {
-            t.Title = st.titleBuf;
+        if (SmatchetInput::Text(titleWidgetId, t.Title, nameOpts).edited) {
             cfgField = st.workingList;
             MarkPrefsDirty(d);
         }
@@ -443,25 +447,18 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
         ImGui::TextUnformatted("ID:");
         ImGui::SameLine(310.0f);
         ImGui::SetNextItemWidth(150.0f);
-        if (ImGui::InputText(idWidgetId, st.idBuf, sizeof(st.idBuf))) {
-            t.Id = st.idBuf;
+        if (SmatchetInput::Text(idWidgetId, t.Id, nameOpts).edited) {
             cfgField = st.workingList;
             MarkPrefsDirty(d);
         }
 
         ImGui::TextUnformatted("Body:");
-        if (ImGui::InputTextMultiline(bodyWidgetId, st.textBuf, sizeof(st.textBuf), ImVec2(-FLT_MIN, 60.0f))) {
-            t.Text = st.textBuf;
+        if (SmatchetInput::InputTextMultilineStdString(SmatchetLocalization::LabelFromSource(bodyWidgetId), t.Text,
+                                                       ImVec2(-FLT_MIN, 60.0f))) {
             cfgField = st.workingList;
             MarkPrefsDirty(d);
         }
-        // Make the cap visible instead of silently cutting the body off (P2-L9).
-        ImGui::TextDisabled("%d / %d", static_cast<int>(std::strlen(st.textBuf)),
-                            static_cast<int>(sizeof(st.textBuf) - 1));
-        if (t.Text.size() > sizeof(st.textBuf) - 1) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("(stored body is longer than the editor cap - editing here would truncate it)");
-        }
+        ImGui::PopID();
     } else {
         ImGui::TextDisabled("Select a template above to view or edit its details.");
     }
