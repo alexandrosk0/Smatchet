@@ -157,8 +157,8 @@ Typed text that has not been sent is saved as you type, off the UI thread, in
 Assistant message box and a typed merge resolution), so a restart or a crash does not
 lose it. Sending, saving or choosing **Discard** erases it.
 
-Two confirmed actions can be taken back from their notification for a few seconds:
-clearing the Assistant conversation and deleting a view. The notification has an **Undo**
+A confirmed action can be taken back from its notification for a few seconds: clearing
+the Assistant conversation. The notification has an **Undo**
 button, and `Ctrl+Z` does the same while no text field has the caret and no dialog is
 open. Dismissing the notification, or letting it go, makes the action final. Clear is
 unavailable while a reply is coming in.

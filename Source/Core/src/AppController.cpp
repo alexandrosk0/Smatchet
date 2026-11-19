@@ -190,7 +190,7 @@ ILuaBindingHost* AppController::GetLuaBindingHost() {
 }
 
 // The user's own work that is still pending when the app closes. Undoable actions still inside their undo
-// window (a cleared chat, a deleted view) become final now, while the workers they write through are
+// window (a cleared chat) become final now, while the workers they write through are
 // still running; then the typed-text drafts are written and their worker is joined
 // (docs/plans/input-ux-w2-drafts-undo.md). Both are no-ops when nothing is pending.
 static void SettleUserWorkBeforeShutdown() {

@@ -1329,40 +1329,6 @@ void SmatchetUI::applyPendingViewCreate(UiDrawSession& d) {
     SmatchetToastManager::Instance().Push(toastTitle, nowActive->Name, ToastType::Success, toastMs);
 }
 
-// The toast of a deleted view, with Undo (docs/plans/input-ux-w2-drafts-undo.md; INPUT_UX_AUDIT.md #90).
-// Undo goes through the same one-frame create latch as "New view", so the store is never resized
-// mid-frame (see the Frame state and focus rules in Ui/AGENTS.md). It refuses when the focused tracker changed since:
-// the view belongs to the tracker it was deleted from.
-static void PushViewDeletedUndoToast(AppController& app, UiDrawSession& d, const std::string& name,
-                                     const ViewDefinition& removed) {
-    if (removed.Id.empty()) {
-        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), name,
-                                              ToastType::Info, 1800);
-        return;
-    }
-    AppController* const appPtr = &app;
-    UiDrawSession* const dp = &d;
-    const std::string backendKey = app.FocusedCacheBackendKey();
-    SmatchetToastManager::Instance().PushUndoable(
-        SmatchetLocalization::T("toast.view_deleted", "View deleted"), name, 8000,
-        [appPtr, dp, removed, backendKey]() {
-            if (appPtr->FocusedCacheBackendKey() != backendKey) {
-                SmatchetToastManager::Instance().Push(
-                    SmatchetLocalization::T("toast.view_restore_refused", "View not restored"),
-                    SmatchetLocalization::T("toast.view_restore_refused_body",
-                                            "The tracker changed since the view was deleted."),
-                    ToastType::Warning);
-                return;
-            }
-            dp->viewsPendingCreate = true;
-            dp->viewsPendingCreatePayload = removed;
-            dp->viewsPendingCreateToastTitle = SmatchetLocalization::T("toast.view_restored", "View restored");
-            dp->viewsPendingCreateToastMs = 1800;
-            dp->viewsPendingCreateAdoptCfg = false;
-        },
-        nullptr);
-}
-
 // Consume the one-frame deferred view-DELETE latch (see
 // UiDrawSession::viewsPendingDeleteActive). Runs immediately after the create
 // latch at the top of SmatchetUI::Draw — same rationale: Views::DeleteActive
@@ -1384,9 +1350,6 @@ void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
     const ViewDefinition* activeBefore = ViewState.GetActiveView();
     const std::string activeIdBefore = activeBefore ? activeBefore->Id : std::string();
     const bool deletingActive = targetId.empty() || targetId == activeIdBefore;
-    // Taken before the erase: Undo puts this definition back.
-    const ViewDefinition* const doomed = ViewState.Find(deletingActive ? activeIdBefore : targetId);
-    const ViewDefinition removedView = doomed ? *doomed : ViewDefinition();
     const bool ok = deletingActive ? ViewState.DeleteActive() : ViewState.Delete(targetId);
     if (!ok) {
         return;
@@ -1400,7 +1363,8 @@ void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
             SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
         }
     }
-    PushViewDeletedUndoToast(app, d, deletedName, removedView);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), deletedName,
+                                          ToastType::Info, 1800);
 }
 
 // Window-level keyboard shortcuts: Ctrl+Enter = Apply, Ctrl+N = New. Split out of
