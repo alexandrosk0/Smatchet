@@ -254,6 +254,20 @@ TEST_CASE("Chat URL: only a link the app will open is accepted") {
     CHECK(ValidateHttpUrl("https://").Message.Id == ParseMessageId::SiteUrlNoHost);
 }
 
+TEST_CASE("AcceptedOr: refused text never replaces the last value that worked") {
+    const std::string kept = "https://chat.example.com";
+    CHECK(AcceptedOr(ValidateHttpUrl("https://other.example.com"), kept) == "https://other.example.com");
+    CHECK(AcceptedOr(ValidateHttpUrl("  \"https://other.example.com\"  "), kept) == "https://other.example.com");
+    CHECK(AcceptedOr(ValidateHttpUrl("javascript://x"), kept) == kept);
+    CHECK(AcceptedOr(ValidateHttpUrl("chat.example.com"), kept) == kept);
+    // Empty is a valid choice (the optional link was cleared), not a refusal.
+    CHECK(AcceptedOr(ValidateHttpUrl(""), kept).empty());
+
+    const std::string p4 = "C:\\Perforce\\p4.exe";
+    CHECK(AcceptedOr(NormaliseExecutablePath("\"D:\\Tools\\p4.exe\""), p4) == "D:\\Tools\\p4.exe");
+    CHECK(AcceptedOr(NormaliseExecutablePath("C:\\Perforce\\"), p4) == p4);
+}
+
 TEST_CASE("Normalisers survive hostile input without throwing") {
     const std::string wall(20000, 'a');
     CHECK_NOTHROW(Jira(wall.c_str()));

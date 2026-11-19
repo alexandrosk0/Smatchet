@@ -49,7 +49,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
-#include "imgui_internal.h" // ClearActiveID
+#include "imgui_internal.h" // ClearActiveID, GImGui->LastItemData
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -447,6 +447,9 @@ void FillIfEmpty(char* buf, std::size_t bufSize, const std::string& value) {
 bool SiteInputText(const char* label, char* buf, std::size_t bufSize, TrackerInputNormalise::SiteField kind,
                    const char* hint, TrackerInputNormalise::SiteUrlParse* outRewrite = nullptr) {
     const bool enterPressed = CredentialInputText(label, buf, bufSize, ImGuiInputTextFlags_CharsNoBlank, hint);
+    // The error or "Using ..." line drawn below must not become the last item: the caller's SetItemTooltip
+    // right after this call means the field.
+    const ImGuiLastItemData field = GImGui->LastItemData;
     const bool leftAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
     const bool active = ImGui::IsItemActive();
     const TrackerInputNormalise::SiteUrlParse parse = TrackerInputNormalise::NormaliseSiteField(buf, kind);
@@ -467,6 +470,7 @@ bool SiteInputText(const char* label, char* buf, std::size_t bufSize, TrackerInp
         ImGui::TextDisabled(
             "%s", SmatchetLocalization::Format("prefs.site.using", "Using %s", g_siteRewriteNote.Text.c_str()));
     }
+    GImGui->LastItemData = field;
     return enterPressed;
 }
 
@@ -676,9 +680,10 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
         TrackerInputNormalise::SiteUrlParse found;
-        enterPressed = SiteInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
-                                     TrackerInputNormalise::SiteField::GitHubBaseUrl, "https://api.github.com", &found) ||
-                       enterPressed;
+        enterPressed =
+            SiteInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
+                          TrackerInputNormalise::SiteField::GitHubBaseUrl, "https://api.github.com", &found) ||
+            enterPressed;
         FillIfEmpty(d.githubOwnerBuf, sizeof(d.githubOwnerBuf), found.Owner);
         FillIfEmpty(d.githubRepoBuf, sizeof(d.githubRepoBuf), found.Repo);
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");

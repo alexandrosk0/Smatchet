@@ -1186,7 +1186,7 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
             struct TextMember {
                 const char* Key;
                 const char* Fallback;
-                std::string ConflictModalCtx::*Member;
+                std::string ConflictModalCtx::* Member;
             };
             static const TextMember kMembers[] = {
                 {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},

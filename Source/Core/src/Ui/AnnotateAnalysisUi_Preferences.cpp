@@ -50,7 +50,7 @@ template <typename NormaliseFn>
 void DrawCheckedSettingField(const char* label, std::string& text, std::string& cfgField, const char* reason,
                              NormaliseFn normalise) {
     const bool committed = SmatchetInput::Text(label, text, SettingFieldOptions(true)).committed;
-    const TrackerInputNormalise::PathParse parsed = normalise(text.c_str());
+    const TrackerInputNormalise::PathParse parsed = normalise(text);
     if (!parsed.Ok) {
         smatchet::ui::DrawInlineParseError(parsed.Message);
         return;
@@ -149,7 +149,7 @@ void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
 
     if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
         DrawCheckedSettingField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
-                                [](const char* text) { return TrackerInputNormalise::ValidateHttpUrl(text); });
+                                TrackerInputNormalise::ValidateHttpUrl);
     }
 }
 
@@ -159,15 +159,13 @@ void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
     if (filter.ShowSetting("connections.perforce.p4_exe")) {
-        DrawCheckedSettingField(
-            "p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe",
-            [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
+        DrawCheckedSettingField("p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
-        DrawCheckedSettingField(
-            "p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
-            [](const char* text) { return TrackerInputNormalise::NormaliseExecutablePath(text); });
+        DrawCheckedSettingField("p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {

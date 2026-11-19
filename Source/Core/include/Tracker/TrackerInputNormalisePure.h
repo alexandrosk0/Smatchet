@@ -54,4 +54,10 @@ PathParse NormaliseExecutablePath(const std::string& input);
 /// whitespace are refused, because the link opener would refuse them later without a word.
 PathParse ValidateHttpUrl(const std::string& input);
 
+/// The value a consumer may act on: the cleaned text when the parse accepted it, otherwise `kept` (the last
+/// value that worked). A field left on text it refused must not leak that text to Process, Ask AI or a save.
+inline std::string AcceptedOr(const PathParse& parsed, const std::string& kept) {
+    return parsed.Ok ? parsed.Value : kept;
+}
+
 } // namespace TrackerInputNormalise
