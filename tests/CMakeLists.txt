@@ -109,6 +109,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
         Core/TouchGesturePure.test.cpp
         Core/TouchSizingPure.test.cpp
+        # Keyboard-gesture latch (Ui/GestureKeysPure.h) — header-only, ImGui-free, no threads.
+        Core/GestureKeysPure.test.cpp
         # Drag-to-paint checkbox gesture (click a checkbox and drag across its neighbours to
         # set the whole run) — header-only, ImGui-free, no threads
         # (SmatchetDragCheckboxPure.h); the ImGui wrapper SmatchetDragCheckbox.h feeds live
@@ -1981,6 +1983,8 @@ add_executable(SmatchetTests
     # only the engine-free UiTestOutcomeFormat.cpp so it pulls no imgui/cpr/sqlite.
     Core/UiTestOutcomeFormat.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/UiTestOutcomeFormat.cpp"
+    # Keyboard equivalents for pointer gestures (docs/plans/input-ux-w2-gesture-keys.md) — header-only latch.
+    Core/GestureKeysPure.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent

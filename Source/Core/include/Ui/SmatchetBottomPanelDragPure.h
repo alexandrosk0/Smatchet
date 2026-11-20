@@ -25,6 +25,15 @@ const float kMaxRevealWorkShare = 0.85f;
 
 inline float ClampPx(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// The extent a keyboard nudge (view.panel.grow / shrink) asks for: `basePx` moved by `deltaPx`, held between the
+// style minimum and what the parent split leaves its other child. A parent too small for two panes leaves only the
+// minimum. The same bounds ApplyPendingExtent applies when the extent is written, so a nudge never asks for a size
+// the write would then change.
+inline float NudgeTargetExtent(float basePx, float deltaPx, float minPx, float parentPx) {
+    const float maxPx = parentPx > minPx * 2.0f ? parentPx - minPx : minPx;
+    return ClampPx(basePx + deltaPx, minPx, maxPx);
+}
+
 // Height of the band hugging the panel's bottom edge that arms drag-to-hide. The dock
 // splitter clamps the panel at the style's minimum window height, so the band must sit
 // BELOW that clamp: the mouse only enters it by dragging deliberately past the minimum.

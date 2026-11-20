@@ -68,6 +68,7 @@ extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine*
 extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInputRecoveryTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteCancelTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGestureKeysTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine);
@@ -154,6 +155,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
     SmatchetRegisterOfflineFirstTests(engine);
     SmatchetRegisterFieldViewerModalTests(engine);
+    SmatchetRegisterGestureKeysTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiChatPanelTests(engine);

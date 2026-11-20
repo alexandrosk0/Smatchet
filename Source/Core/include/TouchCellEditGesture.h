@@ -51,6 +51,7 @@ inline bool ShouldOpenCellEditorOnGesture(bool cellSelectableClicked, bool openO
     if (kMobileTouchBuild) {
         // IsItemHovered() refers to the cell Selectable drawn immediately before this call.
         const ImGuiIO& io = ImGui::GetIO();
+        // keyboard-equivalent: native(the drag test only tells scroll from long-press)
         return TicketFieldEditorCommitPolicyPure::ShouldOpenCellEditorByLongPress(
             ImGui::IsItemHovered(), io.MouseDown[0], io.MouseDownDuration[0], ImGui::IsMouseDragging(0),
             kCellLongPressOpenSeconds);
