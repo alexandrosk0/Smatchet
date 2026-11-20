@@ -31,7 +31,7 @@ migrate each surface above to `SmatchetInput::Text` and delete the matching bull
 
 2026-11-20 review: the plan-locks are gone, and the view rename (#5) landed
 (`SmatchetViewsDashboardUi.cpp`, input UX Wave 2 lock-deferrals PR). Of what is left, these wait on open PRs:
-`tests/CMakeLists.txt` and `SmatchetUiSession.h` (#2452), and `TicketFieldEditor.cpp` (#2450). Since #2440
+`tests/CMakeLists.txt`, `SmatchetUiSession.h` and `TicketFieldEditor.cpp` (all three edited by #2452). Since #2440
 merged, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp` and `SmatchetLocalization.cpp` are free,
 so the bucket-E moves and the icon-name message (#125) can go. So can the labels editor (#4), the picker filter
 focus (#3) and the suggestion popup (#10): no open PR touches their files. When `SmatchetUiSession.h` is
