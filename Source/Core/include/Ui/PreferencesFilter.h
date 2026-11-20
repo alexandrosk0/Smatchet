@@ -14,9 +14,10 @@
 //
 // docs/plans/shipped/preferences-ia-resegmentation-and-search.md.
 //
-// Matching: tier 1 is case-insensitive substring; tier 2 (fuzzy subsequence via
-// smatchet::cmd::FuzzyScore) runs only when tier 1 matched nothing, so exact
-// text always wins and fuzzy noise never dilutes a good substring hit.
+// Matching goes through the shared matcher (TextMatchPure.h): the query is split
+// into case-folded words. Tier 1 needs every word as written, in any order; tier 2
+// (letters in order) runs only when tier 1 matched nothing, so exact text always
+// wins and fuzzy noise never dilutes a good substring hit.
 //
 // The observed-id set exists for the bucket-E drift guard: the guard walks all
 // categories with an empty query and diffs ObservedSettingIds() against the
@@ -28,11 +29,11 @@ class PreferencesFilter {
     // (the keybindings TU shares these so its row filter folds identically to the
     // global query — Pillar 5).
     //
-    /// Case-fold for search matching: ASCII plus the Latin-1 Supplement letters.
+    /// Case-fold for search matching: the shared UTF-8 fold (textmatch::FoldCopy).
     /// NOT the repo-wide `ToLowerAsciiCopy` — the haystack here is built from
     /// TranslateSource output, i.e. *translated* text, and a byte-wise ASCII fold
     /// leaves "É" and "é" as different bytes, so a French user typing "PRÉ" would
-    /// never match "préférences". Latin-1 is where this stops; see the .cpp.
+    /// never match "préférences".
     static std::string ToLowerFold(const std::string& s);
     /// True when `needleLower` (already ToLowerFold'ed) occurs in `haystack`.
     static bool ContainsLower(const std::string& haystack, const std::string& needleLower);
