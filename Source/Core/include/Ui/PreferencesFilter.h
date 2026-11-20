@@ -69,6 +69,13 @@ class PreferencesFilter {
     /// SetRecordObservedSettingIds.
     bool ShowSetting(const char* id);
 
+    /// Enter in the search box: put the caret on the first setting the query matches. Arms a request
+    /// for this frame's draw: the first ShowSetting that returns true for a real match (not an empty
+    /// query, not a fail-open unknown id) calls `focusHook` once, just before the caller draws that
+    /// setting, and disarms. The UI passes a hook that focuses the next item, which keeps this class
+    /// ImGui-free. The next Update() disarms a request no setting took. A null hook disarms.
+    void RequestFocusOnFirstMatch(void (*focusHook)()) { focusFirstMatchHook_ = focusHook; }
+
     /// Fold a match the schema cannot see into this frame's result set. The
     /// keybindings table is dynamic rows with no descriptors, so its "does the
     /// query hit a command?" answer only exists at draw time; without folding it
@@ -125,6 +132,7 @@ class PreferencesFilter {
     bool queryChanged_ = false;
     bool matchesRecomputed_ = false;
     bool recordObserved_ = false;
+    void (*focusFirstMatchHook_)() = nullptr;
     std::vector<Entry> index_;
     std::unordered_set<std::string> matched_;
     std::unordered_set<std::string> sectionMatches_;

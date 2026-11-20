@@ -108,6 +108,14 @@ struct MultilineResult {
 MultilineResult Multiline(const char* label, std::string& value, const ImVec2& size,
                           const MultilineOptions& opts = MultilineOptions());
 
+/// Esc in a search box clears the query and leaves the box. Call before drawing the box, with the item id
+/// it had last frame (0 before its first draw). ImGui's keyboard-nav cancel runs in NewFrame and has usually
+/// taken the caret out already on the Esc frame, so the box counts as the Esc target when it held the caret
+/// this frame or the last one. A box that lost the caret writes its edited text back when it next draws,
+/// from ImGui's saved copy of the deactivated field; dropping that copy keeps the cleared buffer cleared.
+/// Returns true when it cleared the query.
+bool ClearSearchOnEscape(ImGuiID searchId, char* buf);
+
 } // namespace SmatchetInput
 
 #endif // SMATCHET_UI_SMATCHET_INPUT_H

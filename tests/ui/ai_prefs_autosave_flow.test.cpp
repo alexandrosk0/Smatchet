@@ -455,6 +455,19 @@ bool LiveMcpServerUntouched(AppController* app, const LiveMcpServerState& before
     return now.port == before.port && now.startStopLines <= before.startStopLines;
 }
 
+// One line of the state that decides whether Preferences opens, seeds and closes, so a red run says
+// which wait failed and why instead of only that the helper returned false.
+void LogPreferencesState(ImGuiTestContext* ctx, const char* what) {
+    const ImGuiWindow* prefsWindow = ImGui::FindWindowByName("Preferences");
+    const bool windowLive = prefsWindow != nullptr && prefsWindow->Active;
+    ctx->LogError("%s: showPreferences=%d buffersLoaded=%d seeded=%d closeGuardOpen=%d windowLive=%d "
+                  "backendReached=%d category=%d search='%s' modal=%d",
+                  what, g_ui.showPreferences ? 1 : 0, g_ui.preferencesBuffersLoaded ? 1 : 0,
+                  g_ui.assistantPrefsWorkingSeeded ? 1 : 0, g_ui.prefsTrackerCloseGuardOpen ? 1 : 0, windowLive ? 1 : 0,
+                  g_ui.cfg.BackendHasBeenReachable ? 1 : 0, static_cast<int>(g_ui.preferencesCategory),
+                  g_ui.prefsSearchBuf, ImGui::GetCurrentContext()->OpenPopupStack.Size);
+}
+
 // Opens Preferences on the Assistant page, waits until the page has seeded its working copy from
 // cfg, then stages one edit into it — the state a user is in after changing a setting there
 // without pressing Save. `savingApp` is the app when the variant goes on to run a real save (see
@@ -464,6 +477,7 @@ bool OpenAssistantPageWithStagedEdit(ImGuiTestContext* ctx, const char* stagedEf
     g_ui.cfg.BackendHasBeenReachable = true; // without it the first-run lock re-opens the window
     g_ui.showPreferences = false;
     if (!YieldUntil(ctx, [] { return PreferencesFullyClosed(); })) {
+        LogPreferencesState(ctx, "the window never closed");
         return false;
     }
     if (savingApp != nullptr) {
@@ -482,12 +496,17 @@ bool OpenAssistantPageWithStagedEdit(ImGuiTestContext* ctx, const char* stagedEf
     // window every frame, over the modal.
     g_ui.requestPreferencesFocus = false;
     if (!seeded) {
+        LogPreferencesState(ctx, "the Assistant page never seeded its working copy");
         return false;
     }
     ctx->Yield(3);
     g_ui.assistantPrefsWorking.AiReasoningEffort = stagedEffort;
     ctx->Yield();
-    return g_ui.assistantPrefsWorking.AiReasoningEffort == stagedEffort;
+    if (g_ui.assistantPrefsWorking.AiReasoningEffort != stagedEffort) {
+        LogPreferencesState(ctx, "the staged edit did not stay in the working copy");
+        return false;
+    }
+    return true;
 }
 
 // Asks the window to close and waits for the modal. False when the window closed, or stayed open

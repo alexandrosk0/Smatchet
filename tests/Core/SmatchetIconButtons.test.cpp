@@ -6,6 +6,7 @@
 // icon-vs-text path, which is the actual correctness-bearing logic.
 
 #include "Ui/SmatchetIconButtonLabel.h"
+#include "Ui/SubmitKeysPure.h"
 
 #include <doctest/doctest.h>
 
@@ -67,4 +68,48 @@ TEST_CASE("SmatchetIconLeadingLabel: empty/null icon degrades to bare text") {
     CHECK(SmatchetIconLeadingLabel(true, "", "Apply & Sync") == "Apply & Sync");
     CHECK(SmatchetIconLeadingLabel(true, nullptr, "Apply & Sync") == "Apply & Sync");
     CHECK(SmatchetIconLeadingLabel(true, kIcon, nullptr) == std::string(kIcon) + " ");
+}
+
+// --- Key-hint button layout and the in-box placeholder (Ui/SubmitKeysPure.h) ----------------------
+// The widgets in Ui/SmatchetSubmitKeys.h measure text and draw; these rules decide where the key name
+// goes and when the placeholder shows.
+
+TEST_CASE("KeyHintButtonLayout: the button grows to fit label, gap and key name") {
+    using smatchet::submitkeys::ComputeKeyHintButtonLayout;
+    // pad 8 + label 60 + gap 16 + hint 50 + pad 8 = 142
+    const auto layout = ComputeKeyHintButtonLayout(60.0f, 50.0f, 16.0f, 8.0f, 0.0f);
+    CHECK(layout.Width == doctest::Approx(142.0f));
+    // The key name ends at the right padding.
+    CHECK(layout.HintX == doctest::Approx(142.0f - 8.0f - 50.0f));
+    // ...which leaves at least the gap after the label.
+    CHECK(layout.HintX - (8.0f + 60.0f) == doctest::Approx(16.0f));
+}
+
+TEST_CASE("KeyHintButtonLayout: a caller's minimum width is kept, the key name stays at the right edge") {
+    using smatchet::submitkeys::ComputeKeyHintButtonLayout;
+    const auto wide = ComputeKeyHintButtonLayout(40.0f, 30.0f, 10.0f, 5.0f, 200.0f);
+    CHECK(wide.Width == doctest::Approx(200.0f));
+    CHECK(wide.HintX == doctest::Approx(200.0f - 5.0f - 30.0f));
+    // A minimum narrower than the content does not shrink the button.
+    const auto narrow = ComputeKeyHintButtonLayout(40.0f, 30.0f, 10.0f, 5.0f, 20.0f);
+    CHECK(narrow.Width == doctest::Approx(90.0f));
+}
+
+TEST_CASE("KeyHintButtonLayout: no key name is a plain button, and negatives count as zero") {
+    using smatchet::submitkeys::ComputeKeyHintButtonLayout;
+    const auto plain = ComputeKeyHintButtonLayout(60.0f, 0.0f, 16.0f, 8.0f, 0.0f);
+    CHECK(plain.Width == doctest::Approx(76.0f)); // no gap without a key name
+    CHECK(plain.HintX == doctest::Approx(0.0f));
+    const auto negative = ComputeKeyHintButtonLayout(-5.0f, 20.0f, -3.0f, -1.0f, 0.0f);
+    CHECK(negative.Width == doctest::Approx(20.0f));
+    CHECK(negative.HintX == doctest::Approx(0.0f));
+}
+
+TEST_CASE("ShowsPlaceholder: only an empty box shows it") {
+    using smatchet::submitkeys::ShowsPlaceholder;
+    CHECK(ShowsPlaceholder(""));
+    CHECK(ShowsPlaceholder(nullptr));
+    CHECK_FALSE(ShowsPlaceholder(" ")); // typed spaces are typed text
+    CHECK_FALSE(ShowsPlaceholder("\n"));
+    CHECK_FALSE(ShowsPlaceholder("note"));
 }

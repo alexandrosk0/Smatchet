@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "P4Annotate.h"
 #include "SmatchetHelpMarker.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h" // g_ui — this TU has no UiDrawSession& parameter to thread through
 #include "SmatchetWindowExpand.h"
 #include "TrackerDateTimeFieldEditor.h"
@@ -17,6 +18,7 @@
 #include "Ui/P4ClPreview.h"
 #include "Ui/P4vLaunch.h"
 #include "Ui/PendingActionSubmitAsync.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Tracker/AnnotateContextCommentPure.h"
 
 #include <algorithm>
@@ -264,7 +266,8 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
     }
 
     PushAnnotateLinkButtonColors(theme);
-    if (ImGui::Button("Process") && !ctx.Busy) {
+    // Ctrl+Enter in the callstack box runs this too (DrawCallstackBufferField); the button says so.
+    if (smatchet::ui::KeyHintButton("Process", smatchet::ui::CtrlEnterKeyName()) && !ctx.Busy) {
         RunAnnotateProcessFromBuffers();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !ctx.Busy) {
@@ -282,8 +285,9 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
     PopAnnotateLinkButtonColors();
 }
 
-// Raw (read-only colored) or multiline editable callstack buffer field.
-void DrawCallstackBufferField() {
+// Raw (read-only colored) or multiline editable callstack buffer field. Ctrl+Enter in the editable box
+// runs Process, as the button does, unless a run is already going (`busy`).
+void DrawCallstackBufferField(bool busy) {
     if (State().showRaw) {
         float rawMaxLineW = 0.f;
         for (const char* p = State().callstackBuf; *p != '\0';) {
@@ -311,8 +315,14 @@ void DrawCallstackBufferField() {
         DrawColoredCallstackText(State().callstackBuf);
         ImGui::EndChild();
     } else {
-        ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
-                                  ImVec2(-1.f, 120.f), 0);
+        const bool submitted = smatchet::ui::SubmitMultilineInput(
+            "##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf), ImVec2(-1.f, 120.f),
+            SmatchetLocalization::T("annotate.callstack_placeholder",
+                                    "Paste a callstack, then press Ctrl+Enter to process it"),
+            0, /*dictation=*/false); // the buffer belongs to the AnnotateAnalysisUi instance, not static storage
+        if (submitted && !busy) {
+            RunAnnotateProcessFromBuffers();
+        }
     }
 }
 
@@ -549,7 +559,7 @@ void DrawAnnotateCallstackTab(AnnotateDrawCtx& ctx) {
     }
 
     if (!streamlinedHide) {
-        DrawCallstackBufferField();
+        DrawCallstackBufferField(ctx.Busy);
     }
 
     if (!State().showRaw && ctx.NRow > 0) {

@@ -330,3 +330,19 @@ inline ViewDraftRebaseResult RebaseViewDraft(ViewDefinition& draft, ViewDefiniti
     base = saved;
     return result;
 }
+
+/// True when switching the active view away from `saved` would throw away an edit the user made in
+/// the Views editor. The same answer the sidebar gets (the dashboard rebases its draft before it
+/// asks), for a caller outside the dashboard that cannot rebase the live draft: it rebases COPIES
+/// of `draft` and `base` onto `saved`, so a layout change the grid autosaved since the draft was
+/// last synced is not read as an edit. A rename still being typed in the title box (`titleEditing`)
+/// has not reached the draft yet, because the box commits on Enter or when it is left, so
+/// `titleBuffer` counts as the draft's name while it is open.
+inline bool ViewDraftWouldLoseEditsOnSwitch(ViewDefinition draft, ViewDefinition base, const ViewDefinition& saved,
+                                            bool titleEditing, const std::string& titleBuffer) {
+    RebaseViewDraft(draft, base, saved);
+    if (titleEditing) {
+        draft.Name = titleBuffer;
+    }
+    return ViewDraftHasUnsavedEdits(draft, saved);
+}

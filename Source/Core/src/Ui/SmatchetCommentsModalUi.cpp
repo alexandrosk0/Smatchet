@@ -4,6 +4,7 @@
 #include "AppController.h"
 #include "CachedTicketTypes.h"
 #include "DataFreshnessCue.h"
+#include "DictationInsertionRouter.h"
 #include "ITrackerCollaboration.h"
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
@@ -18,6 +19,7 @@
 #include "Ui/SmatchetCommentsModalSeedPure.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
 #include "Ui/SmatchetHeightCulledList.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -114,7 +116,17 @@ CommentsModalState s_CommentsState;
 /// pinned Gen to 1 and made the stale-guard inert (#1713). Each dispatch takes the next value.
 int s_genCounter = 0;
 
-void CloseCommentsModal() { s_CommentsState = CommentsModalState{}; }
+/// Resets the comments state. The post box registers PostBuf with the dictation router while it has the
+/// caret, and the router keeps that pointer past blur as its sticky target, so the buffer is unregistered
+/// before the reset frees it (the long-text editor's CloseLongTextEditor does the same).
+void ResetCommentsState() {
+    if (!s_CommentsState.PostBuf.empty()) {
+        g_dictationRouter.UnregisterInputText(s_CommentsState.PostBuf.data());
+    }
+    s_CommentsState = CommentsModalState{};
+}
+
+void CloseCommentsModal() { ResetCommentsState(); }
 
 /// Where one comments load starts: the copies saved with the ticket (parsed on the worker) and
 /// whether to ask the tracker even while the last probe says it is unreachable (an explicit Retry).
@@ -589,9 +601,10 @@ bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
             ImGui::SetKeyboardFocusHere();
         }
     }
-    const bool ctrlEnter =
-        ImGui::InputTextMultiline("##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize,
-                                  ImVec2(-FLT_MIN, 80.0f), ImGuiInputTextFlags_EnterReturnsTrue);
+    // The placeholder sits inside the empty box; Ctrl+Enter submits (Ui/SmatchetSubmitKeys.h).
+    const bool ctrlEnter = smatchet::ui::SubmitMultilineInput(
+        "##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize, ImVec2(-FLT_MIN, 80.0f),
+        SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     st.ComposerActive = ImGui::IsItemActive();
     ImGui::PopID();
     return ctrlEnter && !disabled;
@@ -620,21 +633,16 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     }
     const bool ctrlEnter = DrawCommentsPostInput(disabled, readOnlyMode);
     const bool hasText = PostBufHasText();
-    if (s_CommentsState.PostBuf.data()[0] == '\0') {
-        ImGui::TextDisabled(
-            "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
-    }
     ImGui::BeginDisabled(!hasText);
-    const bool clicked = ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0));
+    // The button names its key; read-only mode has no key to name.
+    const bool clicked =
+        smatchet::ui::KeyHintButton(SmatchetLocalization::T("comments.post_button", "Post Comment"),
+                                    readOnlyMode ? nullptr : smatchet::ui::CtrlEnterKeyName(), ImVec2(140, 0));
     ImGui::EndDisabled();
     if (disabled) {
         ImGui::EndDisabled();
     }
     s_CommentsState.PostEnabled = !disabled && hasText;
-    if (!readOnlyMode) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.post_shortcut_hint", "Ctrl+Enter to post"));
-    }
 
     if ((clicked || ctrlEnter) && s_CommentsState.PostEnabled) {
         const bool fromKeyboard = ctrlEnter && !clicked;
@@ -699,7 +707,7 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     // First: replacing a viewer runs its OnClose, which (for a previous Comments open) resets
     // s_CommentsState — that must happen before this open seeds the state below.
     OpenFieldViewer(std::make_unique<CommentsViewerContent>(), issueId, "comments");
-    s_CommentsState = CommentsModalState{};
+    ResetCommentsState();
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
     s_CommentsState.FocusComposerPending = focus == CommentsOpenFocus::Composer;

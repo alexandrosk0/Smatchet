@@ -37,6 +37,7 @@
 
 #include "TicketFieldEditor_detail.h"  // SmatchetTest_RenderTextInlineEdit forwarder
 #include "TicketFieldEditor_Worklog.h" // the worklog dialog + its test snapshot
+#include "Ui/SmatchetSubmitKeys.h"     // what the key-hint button and the placeholder drew
 
 #include "AppController.h"                     // IAppThreading for the dialog's worker; IssueCreateResult
 #include "CachedTicketTypes.h"                 // CachedTicket
@@ -571,6 +572,33 @@ void RegisterWorklogCtrlEnterFromDescription(ImGuiTestEngine* engine) {
     };
 }
 
+// M. Save prints its key (Ctrl+Enter) and the empty description shows its placeholder inside the box,
+// which goes once something is typed (INPUT_UX_AUDIT.md #6). Fails if the dialog goes back to a plain
+// Save button or a bare multiline field.
+void RegisterWorklogSaveNamesItsKey(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_SaveNamesItsKey_DescriptionPlaceholder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenWorklogDialogForTest(ctx)) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Save").c_str(), "Ctrl+Enter");
+        IM_CHECK_NO_RET(smatchet::ui::PlaceholderDrawnForTest("##WorklogDesc"));
+        ImGuiWindow* dialog = WorklogDialogOnTop();
+        IM_CHECK_NO_RET(dialog != nullptr);
+        if (dialog != nullptr) {
+            ctx->SetRef(dialog->ID);
+            ctx->ItemClick("##WorklogDesc");
+            ctx->KeyChars("notes");
+            ctx->Yield(3); // the last placeholder draw ages out of the seam's two-frame window
+            IM_CHECK_STR_EQ_NO_RET(GetWorklogDialogSnapshotForTests().Description.c_str(), "notes");
+            IM_CHECK_NO_RET(!smatchet::ui::PlaceholderDrawnForTest("##WorklogDesc"));
+        }
+        CloseWorklogDialog(ctx);
+    };
+}
+
 // I. Esc on a dialog nothing was typed into closes it at once, although the caret is in a field.
 void RegisterWorklogEscOnUntouchedDialog(ImGuiTestEngine* engine) {
     ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_EscUntouched_ClosesAtOnce");
@@ -686,6 +714,7 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
     RegisterWorklogEscKeepsTypedText(engine);                  // J: Esc, text typed
     RegisterWorklogCtrlEnterDoesNotPressFocusedButton(engine); // K: Ctrl+Enter with the cursor on Cancel
     RegisterWorklogEscKeepsTypedDate(engine);                  // L: Esc, start date typed into
+    RegisterWorklogSaveNamesItsKey(engine);                    // M: Save names Ctrl+Enter, placeholder
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
