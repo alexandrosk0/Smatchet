@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2 piece 4.4: a key for every primary action
+<!-- plan-date: 2026-11-19 -->
 
 > **Slug**: `input-ux-w2-action-keys` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — Wave 2 piece 4.4, PR #2443 (base `develop`). Implementation, Deviations and Verification (actual) are filled in; the archive step below waits for `docs/plans/INDEX.md` (held by another branch's plan-lock) and happens after #2443 merges.
+> **Status**: `shipped` — Wave 2 piece 4.4, PR #2443 (merged as `8cf3bb91a`); the row-14 sidebar Enter and the grid-header view-selector hint landed after the sibling plan-lock released (see § Deviations).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -66,7 +67,7 @@ Dialog-scope work (focus the first field, route Esc/Enter, mute global shortcuts
 11. `Source/Core/include/Ui/SmatchetPrefsSearchFocus.h` (new) — the request seam.
 12. `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` — take the request; Esc in the search box clears it and leaves; Enter puts the caret on the first matching setting; the query clears when the window closes; the placeholder names the bound key.
 13. `Source/Core/include/Ui/PreferencesFilter.h`, `Source/Core/src/Ui/PreferencesFilter.cpp` — `RequestFocusOnFirstMatch`.
-14. ~~`Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the search box's tooltip names the view keys.~~ **Deferred (see § Deviations from plan):** the file is in the write set of plan-lock `pane-picker-jira-sites`, held by another branch.
+14. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — Enter in the sidebar search activates the first listed match; the search box's tooltip names the view keys. **Landed after #2443** (see § Deviations from plan): the file was in the write set of plan-lock `pane-picker-jira-sites` when #2443 shipped.
 15. `Source/Core/src/Config/KeybindingsConfig.cpp` — three default bindings, appended after the quick-create row.
 16. `Source/Core/include/Config/ConfigManager.h`, `Source/Core/src/Config/ConfigManager_Load.cpp`, `Source/Core/src/Config/ConfigManager_Save.cpp` — `migrated_action_keys_v1`.
 
@@ -167,10 +168,9 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
-- Quick-create Create button hint and the grid header view-selector tooltip — files locked by another branch; follow-up when free.
+- Quick-create Create button hint — `SmatchetQuickCreateIssueUi.cpp` was locked, then edited by open PR #2450; tracked by debt entry `2026-11-20-input-ux-w2-held-hints-and-fr-rows`. (The grid header view-selector tooltip landed after #2443: § Deviations.)
 - Context-routed `Ctrl+F` (settings search while Preferences has focus, grid search elsewhere) — follow-up after #2435.
 - Lua autocomplete auto-open / fuzzy (#105 remainder) — 4.7 matcher.
-- Enter in the views sidebar search opens the first listed view (#65 remainder) — deferred: `SmatchetViewsDashboardUi.cpp` is held by plan-lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`); a small follow-up once that lock is released.
 - Views header combo filter row and `view.switcher` palette scope (#65 remainder) — 4.6.
 - Annotate recognised-frame count (#107 remainder) — 4.5.
 
@@ -191,10 +191,11 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - **Deferred: Enter in the views sidebar search opens the first listed view (§ Files row 14).** After this PR's first push, another branch (`claude/plus-dropdown-two-jira-261a42`) claimed plan-lock `pane-picker-jira-sites`, whose write set includes `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`. The hunk, its tooltip, its bucket-E section and its doc row were removed from this PR instead of overriding the lock. The `view.next` / `view.previous` commands and keys are unaffected.
 - **Settings-search bucket-E cases needed a dock-node tenant.** The cases lift the first-run lock and really close Preferences, which is the only window in the bottom-panel dock node of a fresh test home; ImGui deletes a node when its last window leaves, so the next `WindowExpand` cases found no bottom panel (CI run 1 of `b8c35c8`: two failures). Not in the plan; fixed in `f8f7f2c` (`SearchKeysCase::KeepBottomPanelAlive`). Other tests that close Preferences with the lock lifted (`ai_prefs_autosave_flow`, `funcsize_preferences_tabs`, `prefs_schema_coverage`, `keybindings_editor_rebind`) were not audited for the same exposure; the lane is green at `f8f7f2c`, but a new Preferences-closing case placed before `WindowExpand` would hit the same trap (a shared fixture or an after-test `EnsureDockSlotAlive(kBottomPanel)` check would catch it; not built here).
 - **Plan-lock not claimed.** `lock-claim.sh` could not push to `refs/locks/*` from this environment (HTTP 403 through the proxy). The PR was narrowed against sibling locks instead of overriding anything, and the CI `Plan-lock gate` passed.
-- **fr-FR rows not added** for the new strings: `SmatchetLocalization.cpp` is held by other plan-locks, so English fallbacks render.
+- **Landed after #2443 (2026-11-20, input UX Wave 2 lock-deferrals PR, branch `claude/vigorous-khayyam-8e2d16`).** Once `pane-picker-jira-sites` was released: Enter in the views sidebar search opens the first listed view (now the matcher's best match, since the list ranks through `TextMatchPure.h`), the search box's tooltip names `view.next` / `view.previous` read live from the bindings, and the grid header's view selector tooltip names the same keys (`smatchet::views::ViewSwitchKeysTooltip`, `ViewPickerPure.h`, drawn by `Ui/SmatchetViewSwitchTooltip.h`). Only a bare Enter opens a view: Ctrl+Enter stays the dashboard's Apply & Sync key, and a blank search opens nothing. Doctests in `tests/Core/ViewColumnsPure.test.cpp`; bucket-E `ViewsEditorHeader/Sidebar_EnterOpensFirstMarksMatchRenameSelects`. The Quick-create Create button hint stays out (its file is in open PR #2450), and so does the shortcut guide's row for the views search (open PR #2439 edits the guide); both are in debt `2026-11-20-input-ux-w2-held-hints-and-fr-rows`.
+- **fr-FR rows not added** for the new strings: `SmatchetLocalization.cpp` was held by other plan-locks and is now edited by open PR #2440, so English fallbacks render (debt `2026-11-20-input-ux-w2-held-hints-and-fr-rows`).
 - **Plan stress-test (`grill-with-docs`)**: not run as its own pass; the plan was instead checked by eight gate-review rounds (two High findings and three Medium findings fixed, one claim about `SetKeyboardFocusHere` re-checked against ImGui 1.92.8 and rejected, one Medium accepted as the Esc-on-dictation risk above).
-- **Archive deferred.** The plan stays under `docs/plans/active/` with its Implementation log, Deviations and Verification (actual) filled in. The `git mv` to `shipped/` and the `docs/plans/INDEX.md` row wait for plan-lock `pane-picker-jira-sites` (another branch) to release `INDEX.md`; the CI `Plan-lock gate` and the pre-push gate both refuse a branch diff that touches it. Tracked by debt entry `2026-11-19-archive-input-ux-w2-action-keys-plan`; the `## Archive` block below stays so the later `git mv` follows it and deletes it.
-- **Deferral residue-sweep**: the deferred sidebar Enter and the quick-create / grid-header hints are recorded under Out of scope and in the PR description.
+- **Archive deferred, then done.** #2443 could not move this plan to `shipped/` or add its `docs/plans/INDEX.md` row while plan-lock `pane-picker-jira-sites` held `INDEX.md`. The lock-deferrals PR above did both and archived debt entry `2026-11-19-archive-input-ux-w2-action-keys-plan`.
+- **Deferral residue-sweep**: the quick-create hint and the fr-FR rows are the only items left; both are in debt entry `2026-11-20-input-ux-w2-held-hints-and-fr-rows`.
 
 ## Verification (actual)
 
@@ -204,13 +205,3 @@ None. The `Ctrl+F` routing question is settled for this PR (not bound; follow-up
 - **Lint / gates**: `scripts/dev/pre-ship.sh --ack-review origin/develop` passed at each pushed head; CI C++ lint, duplication, Pillar 2, comment-noise, plan-lock and doc gates passed.
 - **Sanitizers / goldens**: TSan, ASan (MSVC), UBSan (Clang), bucket-C and the launch smoke passed in CI; the aggregate `All checks green (block-on-any-red)` passed at `f8f7f2c`.
 - **Manual residue**: none.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.**
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*

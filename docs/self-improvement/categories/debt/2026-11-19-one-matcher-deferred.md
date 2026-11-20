@@ -6,13 +6,15 @@ search through `TextMatchPure.h` and drew the matched letters in the shared drop
 palette (`Ui/SmatchetMatchHighlight.h`). Some of the audit's asks sit in files another branch held when it
 shipped, so they were left out rather than overriding a plan-lock or racing an open PR:
 
-- **Highlight in more rows.** The toolbar editor's command list (`SmatchetToolbarUi.cpp`, changed by the
-  gesture-keys PR) ranks through the matcher but does not mark letters; the views list
-  (`SmatchetViewsDashboardUi.cpp`, plan-locked by `pane-picker-jira-sites`) still filters by its own
-  compare; grid cells do not mark the search words (a per-cell draw change, measured under Pillar 1 first).
+- **Highlight in more rows.** The toolbar editor's command list (`SmatchetToolbarUi.cpp`, free since the
+  gesture-keys PR #2440 merged) ranks through the matcher but does not mark letters; grid cells do not mark the
+  search words (a per-cell draw change, measured under Pillar 1 first). The views list landed 2026-11-20
+  (input UX Wave 2 lock-deferrals PR: `ViewPickerPure.h`, listed, ranked and marked through the matcher).
 - **A "close matches" cue for the grid.** When no row holds every word as written, the grid shows the rows
   whose title holds the letters in order, with no cue saying so. The cue belongs under the search box
-  (`SmatchetGridSearchUi.cpp`, changed by the tolerant-parsing PR) with state on `GridPane.h` (plan-locked).
+  (`SmatchetGridHeaderUi.cpp` draws it; the tolerant-parsing PR #2441 has merged) with a flag on `GridPane.h`
+  set by `ApplyGridFilterProjection` (`SmatchetActiveProjectGridTable.cpp`). `GridPane.h` and the only other per-pane
+  home, `SmatchetUiSession.h`, are both edited by open PR #2452, so the cue waits for it.
 - **Remap preview (#131).** `ApplyPathRemaps` now trims, folds slashes and drive-letter case, and fixes the
   join; the audit's "Preview" field and trim-on-commit in the Annotate preferences
   (`AnnotateAnalysisUi_Preferences.cpp`, changed by two open PRs) are not built.
@@ -27,11 +29,11 @@ shipped, so they were left out rather than overriding a plan-lock or racing an o
   (`agent-layer/docs/agent-rules/golden-image-approval.md`).
 
 Concrete next action:
-Once the locks and PRs above have landed: mark matched letters in the toolbar command list and the views
-list with `SmatchetMatchHighlight::DrawText`; add the grid's "showing close matches" line under the search box
+Once the PRs above have landed: mark matched letters in the toolbar command list with
+`SmatchetMatchHighlight::DrawText`; add the grid's "showing close matches" line under the search box
 (a `GridPane` flag set by `ApplyGridFilterProjection` when the fallback ran); add the remap Preview field and
 trim-on-commit; move the matcher doctests to their own registered TU; re-bootstrap the palette golden.
 Each gets bucket-E coverage next to the existing dropdown / grid search / palette cases.
 
 Status: open
-Last-reviewed: 2026-11-19
+Last-reviewed: 2026-11-20

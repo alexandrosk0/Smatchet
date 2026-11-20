@@ -237,6 +237,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`background-traffic-idle-gating`](shipped/background-traffic-idle-gating.md) | 2026-11-02 | stop background tracker traffic when the app sits unfocused + idle — idle-gated connectivity probe, live-success probe push, outage backoff, Unreal focus feed, minimized frame throttle |
 | [`shared-dropdown-recents`](shipped/shared-dropdown-recents.md) | 2026-11-13 | Plan — Shared filter dropdown with recent picks |
 | [`pane-picker-jira-sites`](shipped/pane-picker-jira-sites.md) | 2026-11-16 | Plan — "+ ▾" new-pane caret with two Jira sites |
+| [`input-ux-w2-action-keys`](shipped/input-ux-w2-action-keys.md) | 2026-11-19 | Plan — Input UX Wave 2 piece 4.4: a key for every primary action |
 <!-- END auto-plan-index -->
 
 ### Notes

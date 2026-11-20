@@ -196,7 +196,7 @@ None.
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
-- Highlight in the grid cells, the toolbar command list (`SmatchetToolbarUi.cpp`, changed by `#2440`) and the views list (`SmatchetViewsDashboardUi.cpp`, locked): follow-ups in the debt entry.
+- Highlight in the grid cells and the toolbar command list (`SmatchetToolbarUi.cpp`, changed by `#2440`): follow-ups in the debt entry. (The views list landed after this PR: § Deviations.)
 - A "showing close matches" cue for the grid fallback: debt entry.
 - #42's tracker label lookup and per-user recent labels: a data-source change, not the matcher.
 - #131's remap Preview field and trim-on-commit in the Annotate preferences (`AnnotateAnalysisUi_Preferences.cpp`, changed by `#2440` / `#2441`): the matcher side trims instead; the preview is in the debt entry.
@@ -220,6 +220,7 @@ None.
 - **Files touched beyond the list:** `Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp` (review fix above), `Source/Core/include/Ui/SmatchetIconPickerUi.h` (the cached match list), `Source/Core/include/Ui/SmatchetProjectPicker_detail.h` (doc line), `tests/Core/AuditWindowFilter.test.cpp` and `tests/Core/ProjectPickerFilter.test.cpp` (cases for the audit and project-picker folds).
 - **Audit search** keeps `ContainsNoCasePreLower`'s name; it now means "every word, in any order" over the shared fold.
 - **Code review (2026-11-19) fixes:** (High) a Create row now outranks a letters-in-order match for the default highlight, so Enter in the labels picker adds "qa" instead of ticking "quarantine" (the arrow keys still reach it; pure and bucket-E cases). (Medium) the per-frame rescoring became a per-change one (row cache keyed on an options hash, byte-level pre-reject, lazy decode), measured above. (Low) the grid falls back to letters-in-order only when no row at all, shown or hidden as a parent, holds the words as written. (Low) the missing simple folds in Greek and Coptic (U+0370/0372/0376/037F, U+03CF-03FF symbols) and U+1E9B were added, with an idempotence check over U+0000-U+1FFFF. (Low) the keybinding table's filters (`SmatchetPreferencesUi_Keybindings.cpp`) match every word in any order through the shared fold, like the settings search above them.
+- **Views list landed later (2026-11-20, input UX Wave 2 lock-deferrals PR, branch `claude/vigorous-khayyam-8e2d16`).** Once `pane-picker-jira-sites` was released, the views sidebar search lists, ranks and marks its rows through the matcher (`smatchet::views::ListViewsForSearch` in `ViewPickerPure.h`, drawn with `SmatchetMatchHighlight::DrawText`), replacing its own `ContainsCaseInsensitive` compare. The grid's "close matches" cue is still out: it needs a flag on `GridPane.h` (or `SmatchetUiSession.h`), both edited by open PR #2452.
 - **Golden:** `tests/golden/command-palette-fuzzy.png` predates the palette's match marks. Bucket-C reports the drift (advisory lane); the re-capture needs the CI bootstrap job and a human verdict, so it is in the debt entry, not this PR.
 
 ## Verification (actual)

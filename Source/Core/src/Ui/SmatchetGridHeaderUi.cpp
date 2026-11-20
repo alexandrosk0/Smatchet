@@ -18,6 +18,8 @@
 #include "SmatchetLocalization.h"
 #include "Ui/PaneBackendTargetsPure.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetViewSwitchTooltip.h"
 #include "SmatchetImGuiFonts.h"
 
 #include "IconsFontAwesome6.h"
@@ -300,23 +302,8 @@ void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
         ImGui::SetWindowFocus();
         ImGui::SetKeyboardFocusHere();
     }
-    // Esc in the box clears the search and leaves the box. ImGui's keyboard-nav cancel runs in
-    // NewFrame and has usually taken the caret out already on the Esc frame, so the box counts as
-    // the Esc target when it held the caret this frame or the last one. A box that lost the caret
-    // before it drew writes its edited text back when it next draws, from ImGui's saved copy of
-    // the deactivated field. Dropping that copy keeps the cleared buffer cleared.
-    const ImGuiID filterId = pane.gridSearchInputId;
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    if (filterId != 0 && (g.ActiveId == filterId || g.ActiveIdPreviousFrame == filterId) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        pane.gridSearchBuf[0] = '\0';
-        if (g.ActiveId == filterId) {
-            ImGui::ClearActiveID();
-        }
-        if (g.InputTextDeactivatedState.ID == filterId) {
-            g.InputTextDeactivatedState.ClearFreeMemory();
-        }
-    }
+    // Esc in the box clears the search and leaves the box: the shared helper the settings search uses.
+    SmatchetInput::ClearSearchOnEscape(pane.gridSearchInputId, pane.gridSearchBuf);
     ImGui::SetNextItemWidth(260.0f);
     // The placeholder distinguishes this ISSUE-search box from the command-search entry points
     // (menu-bar box / Ctrl+Shift+P palette) and names the key that jumps here. The ##GridFilter
@@ -396,7 +383,10 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Switch active grid view");
+        // Names the view-switch keys, read live so a rebind shows at once.
+        SmatchetViewSwitchTooltip::Show(
+            SmatchetLocalization::T("grid.view_selector.tooltip", "Switch active grid view"),
+            d.cfg.Keybindings.Bindings);
     }
 
     // Refresh View — re-runs the active view's query and refreshes the grid.
