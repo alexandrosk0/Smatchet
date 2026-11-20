@@ -209,7 +209,8 @@ static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs
 }
 
 // Step 2 of RebuildGridSortAndFilterProjection: `pane.cachedSortedIndices` → `pane.filteredIndices`.
-// Quick-filter is the every-word full-text match (TicketMatchesGridFilterTokens), fed by the search box's
+// Quick-filter is the every-word full-text match (TicketMatchesGridFilterTokens), with a letters-in-order
+// title fallback when nothing matches as written (TicketTitleMatchesGridFilterFuzzy), fed by the search box's
 // EFFECTIVE filter (GridSearchRowFilterText) rather than the raw box text: a ticket key /
 // structured query in the box is a commit-on-Enter action, and substring-matching it against
 // the rows would blank the grid (most visibly right after its own Enter re-ran the view) —
@@ -267,9 +268,27 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
     };
 
     std::vector<char> keep(tickets.size(), 0);
+    bool anyExact = false; // some row holds every word as written, shown or not (a hidden parent counts)
     for (size_t idx : pane.cachedSortedIndices) {
-        if (idx < tickets.size() && checkMatch(idx) && !isPresentParent(idx)) {
-            keep[idx] = 1;
+        if (idx < tickets.size() && checkMatch(idx)) {
+            anyExact = true;
+            if (!isPresentParent(idx)) {
+                keep[idx] = 1;
+            }
+        }
+    }
+    // No row holds every word as written: fall back to titles that hold the words' letters in order (a typo,
+    // a dropped letter), the shared matcher's exact-first rule. A filter the matcher splits into no words
+    // (only no-break or other wide spaces) falls back to nothing: an empty query would match every title.
+    const smatchet::textmatch::Query query =
+        filterActive && !anyExact ? smatchet::textmatch::MakeQuery(filter) : smatchet::textmatch::Query();
+    if (!query.Empty()) {
+        smatchet::textmatch::Scratch scratch;
+        for (size_t idx : pane.cachedSortedIndices) {
+            if (idx < tickets.size() && !isPresentParent(idx) &&
+                TicketTitleMatchesGridFilterFuzzy(tickets[idx], query, scratch)) {
+                keep[idx] = 1;
+            }
         }
     }
     if (filterActive && hierarchy.storyGroupSort && !hierarchy.hideParents) {

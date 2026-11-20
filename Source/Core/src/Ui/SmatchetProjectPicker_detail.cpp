@@ -1,6 +1,6 @@
 #include "SmatchetProjectPicker_detail.h"
 
-#include "StringUtil.h"
+#include "TextMatchPure.h"
 
 #include <algorithm>
 #include <string>
@@ -9,11 +9,27 @@
 namespace SmatchetProjectPicker {
 namespace detail {
 
+namespace {
+
+// Every word of `filter` occurs, through the fold, in `a` or `b` (words in any order).
+bool EveryWordIn(const std::string& a, const std::string& b, const std::string& filter) {
+    const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(filter);
+    for (const std::string& w : query.WordsUtf8) {
+        if (smatchet::textmatch::FindFolded(a, w) == std::string::npos &&
+            smatchet::textmatch::FindFolded(b, w) == std::string::npos) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool ContainsCi(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) {
         return true;
     }
-    return ToLowerAsciiCopy(haystack).find(ToLowerAsciiCopy(needle)) != std::string::npos;
+    return smatchet::textmatch::FindFolded(haystack, smatchet::textmatch::FoldCopy(needle)) != std::string::npos;
 }
 
 std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind) {
@@ -40,7 +56,7 @@ bool RecentEntryPasses(const FieldCatalogCache::CachedProjectEntry& e, const std
     if (!endpoint.empty() && !e.endpoint.empty() && e.endpoint != endpoint) {
         return false;
     }
-    if (!filter.empty() && !ContainsCi(e.projectKey, filter)) {
+    if (!filter.empty() && !EveryWordIn(e.projectKey, std::string(), filter)) {
         return false;
     }
     return true;
@@ -78,7 +94,7 @@ bool AllProjectPasses(const std::string& key, const RemoteProject& p, const std:
     if (key.empty()) {
         return false;
     }
-    if (!filter.empty() && !ContainsCi(key, filter) && !ContainsCi(p.displayName, filter)) {
+    if (!filter.empty() && !EveryWordIn(key, p.displayName, filter)) {
         return false;
     }
     return true;

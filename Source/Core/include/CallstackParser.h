@@ -10,9 +10,13 @@
  * Callstack parsing for annotate analysis. Rules:
  *
  * - PathRemaps: ApplyPathRemaps replaces the LONGEST matching FromPrefix (a later rule wins a
- *   tie), compared byte for byte, so Windows paths match case-sensitively as the user typed them.
- *   Before changing the matching, check every ApplyPathRemaps caller and
- *   tests/Core/CallstackParser.test.cpp: Windows path semantics break easily.
+ *   tie). Both fields are trimmed; '/' and '\' compare equal; a drive-letter path ("C:...", rule or
+ *   frame) compares ASCII case-insensitively, every other path (POSIX, depot) case-sensitively; a
+ *   FromPrefix without a trailing separator matches only whole path segments; the join never doubles
+ *   or drops the separator. An empty ToPrefix strips the matched prefix and keeps the rest of the path
+ *   as it is, as it always did: "/depot/" -> "" turns "/depot/src/a.cpp" into "src/a.cpp", while
+ *   "/depot" -> "" leaves "/src/a.cpp" (the separator was not part of the rule). Before changing the matching, check
+ * every ApplyPathRemaps caller and tests/Core/CallstackParser.test.cpp: Windows path semantics break easily.
  * - Ignore keywords: FrameMatchesIgnoreKeywords is a case-insensitive substring test over RawLine,
  *   Function and FilePath. Frames are filtered with it in the analysis worker, never in draw code.
  * - A new callstack format is a new Match*Format matcher in CallstackParser.cpp, tried from
@@ -29,7 +33,7 @@ struct ParsedCallstackFrame {
     int LineNumber = 0;
 };
 
-/** Apply longest matching PathRemaps prefix replacement (case-sensitive on Windows paths as given). */
+/** Apply the longest matching PathRemaps prefix replacement (matching rules: header comment above). */
 std::string ApplyPathRemaps(std::string path, const std::vector<PathRemapRule>& remaps);
 
 bool FrameMatchesIgnoreKeywords(const ParsedCallstackFrame& frame, const std::vector<std::string>& keywords);

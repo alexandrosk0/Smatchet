@@ -4,6 +4,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "StringUtil.h"
+#include "TextMatchPure.h"
 #include "Ui/SmatchetAudit_detail.h"
 #include "Ui/SmatchetIconButtons.h"
 #include "IconsFontAwesome6.h"
@@ -73,7 +74,7 @@ AuditDisplayCachePayload BuildAuditDisplayCachePayload() {
     for (const auto& e : p.Events) {
         p.FullJson.push_back(AuditJsonDump(e));
         p.DataJson.push_back(e.is_object() && e.contains("data") ? AuditJsonDump(e["data"]) : std::string());
-        p.SearchLower.push_back(ToLowerAsciiCopy(p.FullJson.back()));
+        p.SearchLower.push_back(smatchet::textmatch::FoldCopy(p.FullJson.back()));
     }
     return p;
 }
@@ -283,7 +284,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const std::string& readError = d.auditCachedReadError;
     DrawAuditFilters(d, readError);
     const std::string query = d.auditSearchBuf;
-    const std::string queryLower = ToLowerAsciiCopy(query);
+    const std::string queryLower = smatchet::textmatch::FoldCopy(query);
     const std::vector<std::size_t> filteredIndices = CollectFilteredAuditIndices(
         events, d.auditCachedSearchLower, d.auditActionFilter, d.auditResultFilter, queryLower, d.auditNewestFirst);
     d.auditRowsPerPage = ClampRowsPerPage(d.auditRowsPerPage);

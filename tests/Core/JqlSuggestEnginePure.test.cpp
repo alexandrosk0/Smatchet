@@ -101,6 +101,35 @@ TEST_CASE("field mode — empty buffer suggests the field catalog + NOT") {
     }));
 }
 
+TEST_CASE("field mode — a field name is found by a word inside it, not only by its start") {
+    std::vector<TrackerField> fields = DefaultFields();
+    fields.push_back(MakeField("customfield_10016", "Story Points", TrackerFieldFamily::Number));
+    const auto points = Run("points", 6, fields, DefaultUsers());
+    CHECK(HasInsert(points, "customfield_10016"));
+    CHECK(HasLabel(points, "Story Points (customfield_10016)"));
+    const auto version = Run("VERSION", 7, fields, DefaultUsers());
+    CHECK(HasInsert(version, "fixVersion")); // "Fix Version", case-folded
+    const auto story = Run("story", 5, fields, DefaultUsers());
+    CHECK(HasInsert(story, "customfield_10016")); // the prefix hit still works
+    const auto none = Run("pnts", 4, fields, DefaultUsers());
+    CHECK_FALSE(HasInsert(none, "customfield_10016")); // as written only: no letters-in-order for field names
+    const auto midWord = Run("oints", 5, fields, DefaultUsers());
+    CHECK_FALSE(HasInsert(midWord, "customfield_10016")); // a word must start a word of the name
+    const auto idMid = Run("10016", 5, fields, DefaultUsers());
+    CHECK_FALSE(HasInsert(idMid, "customfield_10016")); // ids stay prefix-only
+}
+
+TEST_CASE("field mode — a name word starts after the matcher's separators, not only after ASCII ones") {
+    std::vector<TrackerField> fields = DefaultFields();
+    fields.push_back(MakeField("customfield_1", "Story\xE2\x80\x94Points", TrackerFieldFamily::Number)); // em dash
+    fields.push_back(MakeField("customfield_2", "Sprint\xC2\xA0Goal", TrackerFieldFamily::Text)); // no-break space
+    fields.push_back(MakeField("customfield_4", "Caf\xC3\xA9team", TrackerFieldFamily::Text));    // "Caféteam"
+    CHECK(HasInsert(Run("points", 6, fields, DefaultUsers()), "customfield_1"));
+    CHECK(HasInsert(Run("goal", 4, fields, DefaultUsers()), "customfield_2"));
+    CHECK_FALSE(HasInsert(Run("oints", 5, fields, DefaultUsers()), "customfield_1"));
+    CHECK_FALSE(HasInsert(Run("team", 4, fields, DefaultUsers()), "customfield_4")); // é is a letter, not a split
+}
+
 TEST_CASE("operator mode — after a recognised field token") {
     const std::string buf = "status ";
     const auto out = Run(buf, static_cast<int>(buf.size()), DefaultFields(), DefaultUsers());

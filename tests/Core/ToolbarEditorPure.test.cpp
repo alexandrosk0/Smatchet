@@ -278,3 +278,25 @@ TEST_CASE("RankCommandMatches: best score first, equal scores by name") {
     const std::vector<int> byName = {1, 0};
     CHECK(RankCommandMatches(tied, tied, "run") == byName);
 }
+
+TEST_CASE("RankCommandMatches: words in any order, any case, exact matches before letters in order") {
+    const std::vector<std::string> names = {"view.list", "tracker.refresh", "view.refresh.layout"};
+    const std::vector<std::string> haystacks = {"view.list List views", "tracker.refresh Refresh tracker",
+                                                "view.refresh.layout Refresh layout"};
+    const std::vector<int> listOnly = {0};
+    CHECK(RankCommandMatches(names, haystacks, "views LIST") == listOnly);
+    // Both refresh commands hold "refresh" as written; "tracker" narrows to one.
+    CHECK(RankCommandMatches(names, haystacks, "REFRESH").size() == 2);
+    const std::vector<int> trackerOnly = {1};
+    CHECK(RankCommandMatches(names, haystacks, "refresh tracker") == trackerOnly);
+    // "rfl" is in no haystack as written: letters in order still find the layout command.
+    const std::vector<int> layout = {2};
+    CHECK(RankCommandMatches(names, haystacks, "rfl lay") == layout);
+}
+
+TEST_CASE("RankCommandMatches: an exact match leaves out letters-in-order ones") {
+    const std::vector<std::string> names = {"task.return", "task.run"};
+    const std::vector<int> runOnly = {1};
+    CHECK(RankCommandMatches(names, names, "run") == runOnly);   // r..u..n in "return" is left out
+    CHECK(RankCommandMatches(names, names, "tsrn").size() == 2); // no exact entry: both by letters in order
+}
