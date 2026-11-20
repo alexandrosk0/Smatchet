@@ -34,6 +34,46 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-20 · PR #2443, #2451, #2454 · override: `cr-out-of-band` on all three (CodeRabbit `skipped` on every merged head), plus a `plan-lock-out-of-band` label on #2443 that its merged head never needed
+
+### What escaped
+Three PRs merged with `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled`. CodeRabbit's check run on each merged head is `skipped` (`Review skipped: manual review required for this OSS repository`), which `postmortem-owed.sh` reads as a red check. #2443 also carried `plan-lock-out-of-band`. The newest run of every other check on each merged head was green.
+
+| PR | merged (UTC) | head | diff | CodeRabbit on the PR | other review |
+|---|---|---|---|---|---|
+| #2454 | 2026-11-19 21:32:32 | `cb99195bd` | CI runner-label pin on four workflows + one backlog entry; 0 C++ lines | never reviewed; the under-10-stars notice only | code-review agent: 1 Medium (the `monkey-nightly` sibling lane) fixed, Lows addressed; `adversarial-code-review: n/a` line pinned to the merged head |
+| #2451 | 2026-11-19 23:10:34 | `28c313ba6` | pane-picker Jira-site rows (#2444), 16 files | one `COMMENTED` review on `2fa0a82e5f` (4 actionable, all 4 threads resolved); `7e63ae5849` (Jira site rows when the live site has no token) came later and was not seen; after it, a docs commit and a develop merge-in | code-review agent: 8 findings (1 High waived by the user and tracked in #2446, 1 fixed, rest deferred to `debt/2026-11-18-pane-picker-jira-sites-deferred.md`); Bugbot reviewed `602eebd46f`, its one Medium resolved |
+| #2443 | 2026-11-20 00:43:43 | `6cf8ae608` | input-UX Wave 2 piece 4.4 (a key for every primary action), 50 files | never reviewed; the under-10-stars notice only | 13 rounds of code-review agent; the last whole-branch round 0 findings, earlier rounds 2 Highs and 3 Mediums fixed, 1 Medium accepted and recorded in the plan; Bugbot reviewed `c46972ab85` |
+
+`plan-lock-out-of-band` went on #2443 at 2026-11-19T13:19:28Z, with the user's OK in the authoring session. The red it waived was `Plan-lock gate` run 44536629642 on `6fde446a55`: `.github/workflows/build-and-test.yml` and `mobile-emulator-smoke.yml` overlapped `ci-mobile-ubuntu-24-04-pin`, the lock #2454 held for the same runner pin. #2443 then reverted its own copy of the pin in favour of #2454, and #2454 merged and released the lock. `Plan-lock gate` on the merged head passed (job 135947572166), so the label waived nothing at merge.
+
+None of the four PRs (#2443, #2451, #2454 and #2455) had a `merge-snapshots.jsonl` row. They are added in this change: #2455 as `GATES_PASSED` / `orchestrator`, because the in-session poller passed `merge-gates.sh` and merged it with `--match-head-commit`; the other three as `BACKFILLED` / `git-janitor`, because no merge actor wrote one.
+
+### Root cause
+None of the three shipped a known defect. The shapes are the known ones:
+
+- **No obtainable automatic review** (#2443, #2454). The repository has fewer than 10 stars, so CodeRabbit reviews only on a manual trigger, and the triggers here are rate-limited. A separate-context code-review agent stood in for it, with its verdict pinned to the merged head.
+- **Reviewed at an earlier head** (#2451). CodeRabbit reviewed the first code commit plus a develop merge-in; the one later code commit was reviewed by the code-review agent and Bugbot, not by CodeRabbit.
+- **A label that outlived its collision** (#2443 × `ci-mobile-ubuntu-24-04-pin`). The crossing was real while #2443 carried the duplicate pin; the revert ended it, and the gate on the merged head was green. `postmortem-owed.sh` judges by the override label alone, so it flags an override the merge never used. #2443's backfilled snapshot row records `redChecks: []`, but a backfilled row is read from the live rollup after the merge, so only a row the merge actor wrote could settle it.
+
+The snapshot holes come from how the merges were run. The in-session poller called `merge-gates.sh` and `gh pr merge` directly and wrote no row; it is not a sanctioned merge actor (`safe-merge.sh`, the merge-watcher). The other merges were made outside this session.
+
+Provenance: the check-run conclusions, review states, label timelines and the `Plan-lock gate` log were read from the GitHub API on 2026-11-20 around 01:10Z. The snapshot projections came from `safe-admin-merge.sh`'s `downgraded_red_checks` / `override_labels_csv`, sourced from a worktree at `origin/develop` `8cf3bb91a`.
+
+### Preventing gate
+None — the override was legitimate for all three. Each had the user's OK and a code-review agent verdict pinned to the merged head, and CodeRabbit could not be had without a manual, rate-limited trigger. The class is the existing P1 entry's, and the three PRs are added to its **Observed on** list.
+
+The inert `plan-lock-out-of-band` is new. It is filed as [`categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md`](categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md) (P3): when a snapshot row exists, `postmortem-owed.sh` should count an override label only if the check it names is in `redChecks`.
+
+The snapshot holes need no new gate. The SessionStart `merge-snapshot holes` nudge caught them inside the backfill window, and the fix is to merge through a sanctioned actor.
+
+### Eval case
+None — not agent-reviewable. These are review-availability and detector-precision decisions, and no defect is known to have shipped.
+
+### Filed as
+- [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+- [`categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md`](categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md) (new, P3)
+
 ## 2026-11-19 · PR #2430, #2432, #2433 · override: `plan-lock-out-of-band` over four lock crossings, two of them merge-clean against the holder's open PR (plus `cr-out-of-band` on all three)
 
 ### What escaped
