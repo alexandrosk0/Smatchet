@@ -29,6 +29,9 @@
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
 #include "Ui/FieldPreviewLinePure.h"
+#include "Ui/SmatchetInlineError.h"
+#include "Ui/SmatchetToast.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
 #include "TouchCellEditGesture.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "TextEditor.h"
@@ -438,11 +441,18 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     bool explicitSubmit = false;
     bool deactivated = false;
 
+    // The duration field's own rectangle: the widget ends in a "▼" button, so the error is placed from this.
+    ImVec2 durationRectMin(0.0f, 0.0f);
+    ImVec2 durationRectMax(0.0f, 0.0f);
+
     if (isDuration) {
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (editJustStarted) {
             ImGui::SetKeyboardFocusHere();
         }
+        durationRectMin = ImGui::GetCursorScreenPos();
+        durationRectMax =
+            ImVec2(durationRectMin.x + ImGui::GetContentRegionAvail().x, durationRectMin.y + ImGui::GetFrameHeight());
         EditCbUser cbUser{&state};
         const bool committedOrDeactivated = DrawDurationFieldWithSuggestions(
             "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
@@ -469,6 +479,18 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     }
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
+    // under the field while the user types and is never committed (#38). An untouched value is left alone: a
+    // tracker figure this reader cannot parse is not the user's typo.
+    const bool durationEdited = isDuration && state.EditInitialValue != std::string(state.EditBuffer);
+    const TrackerParseExplain::DurationParse typedDuration =
+        durationEdited
+            ? TrackerParseExplain::ParseDurationInput(state.EditBuffer, TrackerParseExplain::BareNumberUnit::Minutes)
+            : TrackerParseExplain::DurationParse();
+    const bool durationUnreadable = durationEdited && !typedDuration.Ok && !typedDuration.Empty;
+    if (durationUnreadable) {
+        smatchet::ui::DrawInlineParseErrorBelowRect(typedDuration.Message, durationRectMin, durationRectMax);
+    }
     const std::string originalValue = ticket.GetFieldValue(field.Id);
     // Dirty check against the buffer's start content (state.EditInitialValue) — the value as loaded
     // when the edit opened — NOT the live field value. They are the same today (both GetFieldValue),
@@ -476,7 +498,31 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     // the buffer against the live value would then read an untouched edit as dirty and fire a
     // spurious PUT. EditInitialValue is captured once at edit-start, so the dirty verdict reflects
     // only what the USER typed, never an out-of-band store change.
-    const bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    if (isDuration && !escapePressed && (explicitSubmit || deactivated) && valueChanged) {
+        if (durationUnreadable) {
+            if (explicitSubmit) {
+                // Enter on text that does not read: stay in the field with the explanation under it.
+                ImGui::PushID("##textedit_duration");
+                ImGui::GetStateStorage()->SetInt(ImGui::GetID("##needRepositionAndFocus"), 1);
+                ImGui::PopID();
+                return;
+            }
+            // Focus left the cell: the caret cannot be kept, so say why nothing was saved.
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("field_editor.duration_not_saved", "Time not saved"),
+                (field.Name.empty() ? field.Id : field.Name) + ": " +
+                    TrackerParseExplain::DescribeParseMessage(typedDuration.Message),
+                ToastType::Warning);
+            state.ClearEditing();
+            return;
+        }
+        if (typedDuration.Ok && typedDuration.Canonical.size() < sizeof(state.EditBuffer)) {
+            // Commit the spelling the tracker and the sort already understand: "90 m" becomes "1h 30m".
+            std::memcpy(state.EditBuffer, typedDuration.Canonical.c_str(), typedDuration.Canonical.size() + 1);
+            valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+        }
+    }
     // DR23: if the stored value was longer than EditBuffer it was truncated on seed. Committing the
     // truncated copy would silently overwrite the field, destroying the untruncated tail — refuse the
     // commit (the value stays intact) and warn. The single-line inline cap stays; edit long values in

@@ -1,4 +1,5 @@
 #include "TicketFieldEditor_Worklog.h"
+#include "Ui/SmatchetInlineError.h"
 
 // The time-tracking (worklog) dialog of the ticket grid, split out of TicketFieldEditor.cpp: seeding,
 // the logged/remaining bar, the duration and date inputs, and Save on a worker. Reaches the controller
@@ -12,6 +13,7 @@
 #include "Logger.h"
 #include "PendingActionTypes.h"
 #include "SmatchetLocalization.h"
+#include "StringUtil.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldValueUtils.h"
@@ -162,14 +164,14 @@ static smatchet::worklog::WorklogSubmitInFlightSet s_WorklogSubmitInFlightIssueI
 void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& outDisplayRemSec) {
     const long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
     const long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
-    const long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+    const long long newSpentSec = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeSpent);
 
     outDisplaySpentSec = spentSec + newSpentSec;
     outDisplayRemSec = remSec;
     if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
         outDisplayRemSec = (std::max)(0LL, remSec - newSpentSec);
     } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-        outDisplayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
+        outDisplayRemSec = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeRemaining);
     }
 }
 
@@ -252,13 +254,22 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
         s_ActiveWorklogState.ErrorMsg = validationError;
         return;
     }
+    // A Time remaining the user typed must read too: Jira refuses a worklog whose remaining estimate it cannot parse.
+    const TrackerParseExplain::ParseMessage remainingProblem = smatchet::worklog::TimeRemainingProblem(
+        s_ActiveWorklogState.TimeRemainingManuallyEdited ? std::string(s_ActiveWorklogState.TimeRemaining)
+                                                         : std::string());
+    if (remainingProblem.IsError()) {
+        s_ActiveWorklogState.ErrorMsg = TrackerParseExplain::DescribeParseMessage(remainingProblem);
+        return;
+    }
 
     IAppTicketMutations* mutationsPtr = &mutations;
     // Latched at Save: the worklog goes to this pane's tracker even if focus moves before the worker runs.
     const PendingActionTarget target = mutations.LatchPendingActionTarget();
     const std::string issueId = s_ActiveWorklogState.IssueId;
-    const std::string timeSpent = s_ActiveWorklogState.TimeSpent;
-    const std::string timeRemaining = s_ActiveWorklogState.TimeRemaining;
+    // What goes out is the canonical form ("1h 30m"), whatever natural spelling was typed.
+    const std::string timeSpent = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeSpent);
+    const std::string timeRemaining = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeRemaining);
     const std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
     const std::string description = s_ActiveWorklogState.WorkDescription;
     const std::string startedDate = s_ActiveWorklogState.DateStarted;
@@ -362,6 +373,45 @@ void PrimeTimeSpentFocus(ImGuiID spentInputId) {
     }
 }
 
+// Rewrites a duration buffer to its canonical spelling when what is typed reads: "90 m" -> "1h 30m".
+// Text that does not read is left as typed, so the user can fix it.
+void RewriteDurationBufferToCanonical(char* buf, std::size_t bufSize) {
+    const std::string typed = buf;
+    const std::string canonical = smatchet::worklog::CanonicalDurationText(typed);
+    if (canonical != typed && canonical.size() < bufSize) {
+        std::memcpy(buf, canonical.c_str(), canonical.size() + 1);
+    }
+}
+
+// Under a duration field: the red line that says what is wrong while the text does not read, or the dim
+// "= 1h 30m" once it reads in a spelling other than the canonical one. Blank shows the format hint instead.
+// `required`: Time spent must be above zero; Time remaining may be zero or blank.
+void DrawTypedDurationFeedback(const char* typedText, bool required) {
+    const std::string typed = typedText;
+    const TrackerParseExplain::DurationParse parsed = smatchet::worklog::ParseTypedDuration(typed);
+    if (parsed.Empty) {
+        if (required) {
+            ImGui::TextDisabled(
+                "%s", SmatchetLocalization::T("worklog.duration_hint", "Examples: 1h 30m, 1.5h, 90m, 2d (d=8h, w=5d)"));
+        }
+        return;
+    }
+    if (!parsed.Ok) {
+        smatchet::ui::DrawInlineParseError(parsed.Message);
+        return;
+    }
+    if (required && parsed.Seconds <= 0) {
+        TrackerParseExplain::ParseMessage zero;
+        zero.Id = TrackerParseExplain::ParseMessageId::DurationRequiredPositive;
+        smatchet::ui::DrawInlineParseError(zero);
+        return;
+    }
+    // Only a spelling that is not already canonical earns a preview line: "1h 30m" shows nothing.
+    if (!EqualsIgnoreCaseAscii(TrimCopyAsciiWhitespace(typed), parsed.Canonical)) {
+        smatchet::ui::DrawInlineParseHint("= " + parsed.Canonical);
+    }
+}
+
 // Time-spent + time-remaining duration inputs, including the auto-decrement of remaining. Returns
 // true when Enter was pressed in Time spent (the dialog's quick submit).
 bool DrawWorklogTimeInputs() {
@@ -384,8 +434,10 @@ bool DrawWorklogTimeInputs() {
     s_WorklogTimeSpentActiveForTests = spentActive;
 #endif
     if (spentCommitted) {
+        // The field takes the canonical spelling once it is committed: "90 m" becomes "1h 30m".
+        RewriteDurationBufferToCanonical(s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent));
         if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-            long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+            long long spentVal = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeSpent);
             long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
             if (spentVal > 0) {
                 long long newRem = (std::max)(0LL, remVal - spentVal);
@@ -400,7 +452,7 @@ bool DrawWorklogTimeInputs() {
             }
         }
     }
-    ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
+    DrawTypedDurationFeedback(s_ActiveWorklogState.TimeSpent, /*required=*/true);
 
     ImGui::Spacing();
     ImGui::Text("Time remaining");
@@ -408,8 +460,10 @@ bool DrawWorklogTimeInputs() {
     if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining,
                                          sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr,
                                          &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
-        // value changed!
+        RewriteDurationBufferToCanonical(s_ActiveWorklogState.TimeRemaining,
+                                         sizeof(s_ActiveWorklogState.TimeRemaining));
     }
+    DrawTypedDurationFeedback(s_ActiveWorklogState.TimeRemaining, /*required=*/false);
     return spentEnter;
 }
 

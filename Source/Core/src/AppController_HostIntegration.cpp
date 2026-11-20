@@ -22,7 +22,10 @@
 #include "LuaAutomationHost.h"
 
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
+#include "UiThreadAffinity.h"
+#include "Ui/SmatchetToast.h"
 
 #include <cctype>
 #include <cstdint>
@@ -103,6 +106,26 @@ void AppController::RequestAppQuit() const {
 
 void AppController::SetRuntimePluginHost(PluginHost* host) { runtimePluginHost_ = host; }
 
+namespace {
+
+// Says why a link was not opened (INPUT_UX_AUDIT.md #128): the click used to do nothing and leave one log line.
+// The toast manager belongs to the UI thread, so a caller on a worker (a Lua or MCP command) still gets only the
+// log line; every click handler runs on the UI thread and gets the toast.
+void ToastLinkNotOpened(const std::string& cause) {
+    if (!UiThreadAffinity::IsOnUiThread()) {
+        return;
+    }
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("openurl.refused.title", "Link not opened"), cause,
+                                          ToastType::Warning);
+}
+
+std::string LinkSnippet(const std::string& url) {
+    constexpr std::size_t kMaxShown = 80;
+    return url.size() > kMaxShown ? url.substr(0, kMaxShown) + "..." : url;
+}
+
+} // namespace
+
 void AppController::OpenUrl(const std::string& url) const {
 
     if (url.empty()) {
@@ -123,6 +146,9 @@ void AppController::OpenUrl(const std::string& url) const {
         if (colonPos == std::string::npos) {
 
             LOG_WARN("AppController::OpenUrl rejected: missing scheme in url=%s", TruncateForLog(url, 200).c_str());
+            ToastLinkNotOpened(SmatchetLocalization::Format(
+                "openurl.refused.no_scheme", "\"%s\" needs https:// at the start. Fix the link and try again.",
+                LinkSnippet(url).c_str()));
 
             return;
         }
@@ -141,6 +167,9 @@ void AppController::OpenUrl(const std::string& url) const {
             LOG_WARN("AppController::OpenUrl rejected: scheme '%s' not allowlisted for url=%s", schemePrefix.c_str(),
 
                      TruncateForLog(url, 200).c_str());
+            ToastLinkNotOpened(SmatchetLocalization::Format(
+                "openurl.refused.scheme",
+                "Links starting with \"%s:\" are not opened. Use an https:// or http:// link.", schemePrefix.c_str()));
 
             return;
         }
@@ -160,6 +189,9 @@ void AppController::OpenUrl(const std::string& url) const {
     if (reinterpret_cast<intptr_t>(openResult) <= 32) {
 
         LOG_ERROR("AppController::OpenUrl failed url=%s err=%ld", TruncateForLog(url, 300).c_str(), GetLastError());
+        ToastLinkNotOpened(SmatchetLocalization::T("openurl.failed",
+                                                   "Windows could not open the link. Copy it and paste it into your "
+                                                   "browser."));
     }
 
 #elif defined(__APPLE__)
@@ -167,6 +199,9 @@ void AppController::OpenUrl(const std::string& url) const {
     if (!LaunchCommandNoShell("open", url)) {
 
         LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
+        ToastLinkNotOpened(SmatchetLocalization::T("openurl.failed.generic",
+                                                   "The system could not open the link. Copy it and paste it into "
+                                                   "your browser."));
     }
 
 #else
@@ -174,6 +209,9 @@ void AppController::OpenUrl(const std::string& url) const {
     if (!LaunchCommandNoShell("xdg-open", url)) {
 
         LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
+        ToastLinkNotOpened(SmatchetLocalization::T("openurl.failed.generic",
+                                                   "The system could not open the link. Copy it and paste it into "
+                                                   "your browser."));
     }
 
 #endif

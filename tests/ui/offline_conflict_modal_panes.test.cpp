@@ -41,6 +41,7 @@
 #include "FakeNetworkSwitch.h" // hold the fixture tracker down so a resolved edit is not replayed mid-case
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetGridUiSupport.h"         // SmatchetOfflineConflictUnsavedHintShownForTest
+#include "Ui/SmatchetInlineError.h"           // InlineErrorKindForTests — the parser's reason is on screen
 #include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
 #include "Ui/SmatchetSubmitKeys.h"            // KeyHintDrawnForTest
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
@@ -260,6 +261,8 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
 // ---- Keyboard cases ----------------------------------------------------------
 
 const char* const kScalarJson = "{\"kind\":\"scalar\",\"mine\":\"5\",\"theirs\":\"8\"}";
+const char* const kScalarEstimateJson =
+    "{\"kind\":\"scalar\",\"mine\":\"3600\",\"theirs\":\"7200\",\"fieldId\":\"timeoriginalestimate\"}";
 const char* const kTextJson = "{\"kind\":\"text\",\"mine\":\"a\",\"theirs\":\"b\"}";
 const char* const kScalarField = "##SCResolved";
 const char* const kTextField = "##CRResolved";
@@ -337,6 +340,33 @@ void CaseScalarEnterSaves(ImGuiTestContext* ctx, const KeyboardCase& c) {
     const ImGuiID fieldId = ctx->GetID(kScalarField);
     const bool caretBack = YieldUntil(ctx, [&] { return ImGui::GetActiveID() == fieldId; }, 30);
     IM_CHECK_NO_RET(caretBack);
+}
+
+// The queue service writes the field id into the conflict context, so an estimate field reads the typed value
+// as a duration: text that does not read shows the parser's reason, text that reads clears it, and a field with
+// no known kind has nothing to validate.
+void CaseScalarEstimateFieldValidatesAsTyped(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    smatchet::ui::ResetInlineErrorForTests();
+    if (!OpenWithCaretIn(ctx, kScalarEstimateJson, c.EditId + kNotQueuedOffset, kScalarField)) {
+        return;
+    }
+    ctx->KeyCharsReplace("xyz");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() == "error");
+    IM_CHECK_NO_RET(!smatchet::ui::InlineErrorTextForTests().empty());
+
+    ctx->KeyCharsReplace("1h 30m");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
+
+    CancelConflictModal(ctx);
+    smatchet::ui::ResetInlineErrorForTests();
+    if (!OpenWithCaretIn(ctx, kScalarJson, c.EditId + kNotQueuedOffset, kScalarField)) {
+        return;
+    }
+    ctx->KeyCharsReplace("xyz");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
 }
 
 // Ctrl+Enter does nothing while a conflict marker is left: the Save button is disabled then.
@@ -663,6 +693,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Scalar_CaretInFieldOnOpen", CaseScalarCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Text_CaretInFieldOnOpen", CaseTextCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Scalar_EnterSaves", CaseScalarEnterSaves);
+    RegisterKeyboardCase(engine, "Scalar_EstimateFieldValidatesAsTyped", CaseScalarEstimateFieldValidatesAsTyped);
     RegisterKeyboardCase(engine, "Scalar_CtrlEnterDoesNotPressFocusedButton",
                          CaseScalarCtrlEnterDoesNotPressFocusedButton);
     RegisterKeyboardCase(engine, "Text_CtrlEnterBlockedByMarkers", CaseTextCtrlEnterBlockedByMarkers);

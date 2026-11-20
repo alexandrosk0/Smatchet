@@ -6,6 +6,8 @@
 #include "Ui/PreferencesFilter.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
+#include "Tracker/TrackerInputNormalisePure.h"
+#include "Ui/SmatchetInlineError.h"
 #include "Ui/SmatchetInput.h"
 
 #include <algorithm>
@@ -36,6 +38,30 @@ SmatchetInput::TextOptions SettingFieldOptions(bool trim) {
 // when an edit ends with a changed value (Enter, Tab, a click away; Esc reverts and saves nothing).
 void DrawSettingTextField(const char* label, std::string& text, std::string& cfgField, const char* reason, bool trim) {
     if (SmatchetInput::Text(label, text, SettingFieldOptions(trim)).committed && text != cfgField) {
+        cfgField = text;
+        PersistAnnotateCfg(reason);
+    }
+}
+
+// A path or link field the user pastes into (#82, #128): the shared text field over the form's string. When
+// the edit ends, the quotes "Copy as path" adds and stray spaces come off the text; text that cannot be used
+// is explained under the field and is not saved, so the config keeps the last value that worked.
+template <typename NormaliseFn>
+void DrawCheckedSettingField(const char* label, std::string& text, std::string& cfgField, const char* reason,
+                             NormaliseFn normalise) {
+    const bool committed = SmatchetInput::Text(label, text, SettingFieldOptions(true)).committed;
+    const TrackerInputNormalise::PathParse parsed = normalise(text);
+    if (!parsed.Ok) {
+        smatchet::ui::DrawInlineParseError(parsed.Message);
+        return;
+    }
+    if (!committed) {
+        return;
+    }
+    if (parsed.Rewritten) {
+        text = parsed.Value;
+    }
+    if (text != cfgField) {
         cfgField = text;
         PersistAnnotateCfg(reason);
     }
@@ -122,7 +148,8 @@ void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
     }
 
     if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
-        DrawSettingTextField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl", true);
+        DrawCheckedSettingField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
+                                TrackerInputNormalise::ValidateHttpUrl);
     }
 }
 
@@ -132,11 +159,13 @@ void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
     if (filter.ShowSetting("connections.perforce.p4_exe")) {
-        DrawSettingTextField("p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe", true);
+        DrawCheckedSettingField("p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
-        DrawSettingTextField("p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe", true);
+        DrawCheckedSettingField("p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {

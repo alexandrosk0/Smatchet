@@ -51,6 +51,13 @@ int FirstOfMonthWeekday0Sun(int year, int month);
 ParsedJiraDateTime TodayUtcParsed(bool includeTime);
 
 /**
+ * Today's date on the user's own calendar (local time, not UTC), for "today" / "tomorrow" / "fri" typed
+ * into a date field: late in the evening west of Greenwich the UTC date is already tomorrow. Returns
+ * false (outputs untouched) when the clock cannot be converted.
+ */
+bool TodayLocalYmd(int& outYear, int& outMonth, int& outDay);
+
+/**
  * Clamp `w.Day` to `[1, DaysInMonth(year, month)]` in-place. Used by the calendar widget when
  * the user navigates months and the current day would fall off the new month's last row.
  */
