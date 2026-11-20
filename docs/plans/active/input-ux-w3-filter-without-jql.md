@@ -43,7 +43,8 @@ namespace query_facets {
 enum class FacetDialect : unsigned char { Jql, GitHubSubset, LinearSubset };   // Plane has no dialect
 enum class FacetOp : unsigned char { Eq, NotEq, In, NotIn };
 struct FacetClause {
-    std::string FieldId; FacetOp Op = FacetOp::Eq; std::vector<std::string> Values;
+    std::string FieldId;                 // the canonical facet id (CanonicalFacetField), not the typed spelling
+    FacetOp Op = FacetOp::Eq; std::vector<std::string> Values;
     bool CurrentUser = false;            // the value is currentUser()
     std::size_t At = 0, Len = 0;         // byte span in the parsed query
 };
@@ -67,6 +68,10 @@ std::string ReplaceFacetClause(const std::string& query, FacetDialect d, std::si
                                const FacetClause& clause);
 std::string RemoveFacetClause(const std::string& query, std::size_t at, std::size_t len);   // drops the clause and one adjacent AND
 bool DialectSupports(FacetDialect d, const std::string& fieldId, FacetOp op, std::size_t valueCount);
+// The facet id a typed field name stands for in this dialect, or empty when it is not a facet field. Matches
+// without case and through the translator's own aliases: Linear state -> status, label -> labels,
+// creator -> reporter; GitHub label -> labels, author -> reporter. Jql has no alias here, only case.
+std::string CanonicalFacetField(FacetDialect d, const std::string& typedField);
 // True when the dialect writes one clause per value on this field, so several clauses on it are normal:
 // GitHubSubset "labels" only.
 bool FieldRepeats(FacetDialect d, const std::string& fieldId);
@@ -91,6 +96,8 @@ std::string IgnoredClauseNote(const std::string& query, FacetDialect d);
 **Add or change.** A pick made on a chip changes that chip and no other: `ReplaceFacetClause` at the chip's own span, so in `status = "Open" AND status = "Closed"` the second chip rewrites the second clause. + Filter adds a clause with `AddFacetClause`, with one exception: when the picked field already has a chip, with any operator, and the field does not repeat in this dialect (`FieldRepeats` is false), + Filter opens the first such chip's picker, so a second pick on the field edits the clause that is there and + Filter never writes a second clause on such a field. A GitHub label is one clause per value, so `FieldRepeats` is true for it and + Filter always adds: `labels = "a"`, then a pick of `b`, gives `labels = "a" AND labels = "b"` and two chips.
 
 A hand-typed query can still hold two clauses on one field. On Jira and GitHub both take effect, so both are chips. On Linear they do not: `TranslateJqlToLinearFilter` writes one filter key per field and operator, so in `status = "Open" AND status = "Closed"` the second replaces the first and no warning is raised. A chip must stand for a condition that takes effect, so in the Linear dialect a query with two clauses on one field is not chippable: it shows "Custom query", and + Filter is disabled with the reason. The silent replacement itself is the translator's and is listed under § Out of scope.
+
+**One field, several spellings.** Every "same field" test above (the Linear rule, `FieldRepeats`, + Filter opening the chip that is there) compares canonical ids, never the typed text. `ParseFacetClauses` sets `FieldId` through `CanonicalFacetField`, which follows the translators: they match without case, and Linear reads `state` as `status`, `label` as `labels` and `creator` as `reporter`, while GitHub reads `label` as `labels` and `author` as `reporter`. So `status = "Open" AND state = "Closed"` is two clauses on one field on Linear, in either order, and is not chippable; and a clause typed with an alias is a facet chip, not an "other" clause, so no clause on a facet field can hide among the other clauses. The bytes of a clause stay as typed until its chip is changed; `ReplaceFacetClause` then writes the canonical name.
 
 **Per backend:**
 
@@ -383,7 +390,7 @@ No slice waits on #2441: it merged on 2026-11-20 and its API is on `develop`. S1
 Per `AGENTS.md` § Verification automation: zero manual steps.
 
 - **Bucket A (pure-logic doctest, `test-authoring` skill § Unit rig)**:
-  - S1 `QueryFacetClausesPure.test.cpp`: per dialect, parse → add → remove returns the original bytes; a replace at the second of two same-field spans leaves the first clause alone; an add on GitHub `labels` keeps the label clause that is there; `assignee = currentUser()` and the unspaced `assignee=currentUser()` are chippable; OR, NOT and grouping are not chippable; `ORDER BY` is kept; a GitHub `type:pr` token is kept; quoting per dialect, with a double quote refused on GitHub and Linear and a comma refused in a Linear list; `DialectSupports` rejects a GitHub multi-label and a GitHub `assignee !=`; a wrapped non-chippable query, with its `ORDER BY` tail outside the parentheses, parses as chippable in Jql with the group as one other clause and the added clause as a chip, and a second add does not wrap again; a group is not chippable on GitHub or Linear; two clauses on one field are chips on Jira and not chippable on Linear; `FieldRepeats` is true for GitHub `labels` only; `IgnoredClauseNote` reports an OR on GitHub and an unknown field on Linear, and stays empty for a lone `ORDER BY` and for Jira.
+  - S1 `QueryFacetClausesPure.test.cpp`: per dialect, parse → add → remove returns the original bytes; a replace at the second of two same-field spans leaves the first clause alone; an add on GitHub `labels` keeps the label clause that is there; `assignee = currentUser()` and the unspaced `assignee=currentUser()` are chippable; OR, NOT and grouping are not chippable; `ORDER BY` is kept; a GitHub `type:pr` token is kept; quoting per dialect, with a double quote refused on GitHub and Linear and a comma refused in a Linear list; `DialectSupports` rejects a GitHub multi-label and a GitHub `assignee !=`; a wrapped non-chippable query, with its `ORDER BY` tail outside the parentheses, parses as chippable in Jql with the group as one other clause and the added clause as a chip, and a second add does not wrap again; a group is not chippable on GitHub or Linear; two clauses on one field are chips on Jira and not chippable on Linear, including `status` with `state` in both orders; `label = "x"` is a labels chip on GitHub and Linear, `State` and `STATUS` resolve without case, and a replace on an alias chip writes the canonical name; `FieldRepeats` is true for GitHub `labels` only; `IgnoredClauseNote` reports an OR on GitHub and an unknown field on Linear, and stays empty for a lone `ORDER BY` and for Jira.
   - S2 `TicketSyncService.test.cpp`: `ErrorTransient`, `Cancelled`, `ViewId` and `Query` reach the stats; a worker exception is not cancelled.
   - S3 `GridSearchBoxPure.test.cpp` and `GridSearchInputClassifier.test.cpp`: line priority; the watch (stale request id, another view's or another query's session, transient error, cancelled session, rejection, clean session); the Linear key and query cases.
   - S4 `AutocompleteListNav.test.cpp`: the pick decision for a `CommitOnPick` row.
@@ -439,7 +446,7 @@ Per `AGENTS.md` § Verification automation: zero manual steps.
 **Resolved by the second CodeRabbit round (2026-11-20; three findings, all taken):**
 
 - *A condition added to a custom query must stay editable*: in the Jql dialect a parenthesized group is one opaque clause, so the wrapped query is chippable and the added condition is a chip.
-- *Two Linear clauses on one field*: the second replaces the first in the translator, so such a query is not chippable on Linear, and + Filter never writes one.
+- *Two Linear clauses on one field*: the second replaces the first in the translator, so such a query is not chippable on Linear, and + Filter never writes one. Fields are compared by canonical id (`CanonicalFacetField`), so the translator's aliases (`state`, `label`, `creator`, `author`) and letter case cannot hide a repeat.
 - *The replay guard and the snapshot*: `GetPaneResolvedView` is written only at a sync kick and keeps the saved query through an unsaved apply. The guard moved into `applyQueryToPaneView`, where it compares the live view; a dropped edit says so.
 
 ## Out of scope (flagged, not designed)
