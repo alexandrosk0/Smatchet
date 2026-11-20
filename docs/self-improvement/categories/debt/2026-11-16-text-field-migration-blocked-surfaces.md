@@ -34,7 +34,10 @@ migrate each surface above to `SmatchetInput::Text` and delete the matching bull
 `tests/CMakeLists.txt` and `SmatchetUiSession.h` (#2452), and `TicketFieldEditor.cpp` (#2450). Since #2440
 merged, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp` and `SmatchetLocalization.cpp` are free,
 so the bucket-E moves and the icon-name message (#125) can go. So can the labels editor (#4), the picker filter
-focus (#3) and the suggestion popup (#10): no open PR touches their files.
+focus (#3) and the suggestion popup (#10): no open PR touches their files. When `SmatchetUiSession.h` is
+free, also move the view-rename start latch (`s_titleWasEditing`, a static in `drawViewsEditorHeader`) onto
+`UiDrawSession` beside `viewsTitleEditing` and reset both in `LoadBuffersFromView` (CodeRabbit nitpick on the
+lock-deferrals PR #2463).
 
 Status: open
 Last-reviewed: 2026-11-20
