@@ -211,7 +211,6 @@ MultilineResult Multiline(const char* label, std::string& value, const ImVec2& s
     return r;
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=SmatchetGridHeaderUi.cpp grid-search Esc block still inlines this; it moves onto this helper once plan-lock pane-picker-jira-sites releases that file (debt 2026-11-18-grid-search-esc-onto-shared-helper); owner=orchestrator; revisit=2027-01-31)
 bool ClearSearchOnEscape(ImGuiID searchId, char* buf) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     if (searchId == 0 || (g.ActiveId != searchId && g.ActiveIdPreviousFrame != searchId) ||
