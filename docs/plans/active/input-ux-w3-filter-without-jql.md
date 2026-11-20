@@ -170,7 +170,7 @@ Grouped by slice (§ Implementation handoff). New files are marked; a synonym gr
 8. `Source/Core/include/Ui/GridSearchInputClassifier.h`: `GridSearchBackend::Linear`.
 9. `Source/Core/include/Ui/GridSearchBoxPure.h` (new): `PickGridSearchLine`, `QueryRejectWatch`, `ResolveQueryRejectWatch` (the suggestion gate arrives in S5).
 10. `Source/Core/include/GridPane.h`: the validation memo, the rejection and its watch.
-11. `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`: validate on change, draw the line, extend the funnel tooltip, poll the watch; the inline Esc block becomes `SmatchetInput::ClearSearchOnEscape` (closes debt `2026-11-18-grid-search-esc-onto-shared-helper`, including the deviation marker in `SmatchetInput.cpp`).
+11. `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`: validate on change, draw the line, extend the funnel tooltip, poll the watch.
 12. `Source/Core/src/Ui/SmatchetGridSearchUi.cpp`: the dialect, the catalog (`GetPaneAvailableFields`) and the roster (`GetPaneAvailableUsers`) of the pane, no account-id rewrite on Linear, arm the watch on `Ok`, drop the refusal toast.
 13. `Source/Core/src/SmatchetLocalization.cpp`: remove `gridsearch.query_refused` if nothing else reads it.
 14. `tests/Core/GridSearchBoxPure.test.cpp` (new), `tests/Core/GridSearchInputClassifier.test.cpp`, `tests/CMakeLists.txt`, `tests/ui/tolerant_parse_inline_error.test.cpp`, `tests/ui/grid_search_apply.test.cpp`.
@@ -266,7 +266,7 @@ Existing symbols the slices change or call (one per row, for `plan-doc-table-pro
 
 ## Extraction sizing (when this plan EXTRACTS or SPLITS code/docs)
 
-N/A — nothing is extracted or split. `SmatchetGridHeaderUi.cpp` is 786 lines and gains about 250 across S3 to S7, which stays under the 1,200-line advisory ceiling; `DrawGridFacetChips` and the box each stay under the 200-line draw cap as separate functions.
+N/A — nothing is extracted or split. `SmatchetGridHeaderUi.cpp` is 776 lines and gains about 250 across S3 to S7, which stays under the 1,200-line advisory ceiling; `DrawGridFacetChips` and the box each stay under the 200-line draw cap as separate functions.
 
 ## UX Pillar callouts
 
@@ -332,28 +332,28 @@ No slice waits on #2441: it merged on 2026-11-20 and its API is on `develop`. S1
 - **Owner subsystem**: `Source/Core/src/Ui/` (grid).
 - **Write set**: items 8-14.
 - **Pre-resolved decisions**: the line replaces the Enter toast; validation runs on a text change, never per frame; the watch reads the pane's own stats (`GetPaneLastSyncSessionStats`), is polled at most every 250 ms whether or not the pane is focused, and resolves only on a session for the same view and query; a transient failure and a cancelled session show nothing here (the connectivity toast already covers the first); no account-id rewrite on Linear; a Linear pane is validated for structure only; fields and users come from the pane, never from the focused-pane accessors; the line is an overlay and may cover the start of whatever is drawn under the box.
-- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:105-116` (validate and refuse), `:128-131` (the rewrite); `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:288-294` (glyph and tooltip), `:308-319` (the inline Esc block).
+- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:105-116` (validate and refuse), `:128-131` (the rewrite); `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:290-296` (glyph and tooltip), `:306` (the Esc clear, already on `SmatchetInput::ClearSearchOnEscape`).
 - **Order**: after S1 and S2, and after #2452 merges (both edit `GridPane.h`).
 
 **S4 — the shell takes a second host**
 - **Owner subsystem**: `Source/Core/src/Ui/`.
 - **Write set**: items 15-19.
 - **Pre-resolved decisions**: no behaviour change in the dashboard editor except the offline pause; the kind is a parameter, never read from `d.cfg`; no build memo; `ResolveAcpCommit` and the key rules are not edited; the reset helper clears fields and never touches a future; `QuerySuggestion` stays a C++14 aggregate.
-- **Inline inventory**: `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp:106` (`RunSuggestBuild`), `:214` (`HandleAcpAlwaysEvent`; replacement first, build at `:237`, commit handling after), `:303` and `:541` (the two `d.cfg.TrackerType` reads), `:346` (hover sets the selection), `:599-606` (why a running future is never reassigned); `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:74-86` (the field-by-field reset to move); `Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp:311` (the one call site); `Source/Core/src/Ui/SmatchetInput.cpp:157` (`TextBuf`).
+- **Inline inventory**: `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp:106` (`RunSuggestBuild`), `:214` (`HandleAcpAlwaysEvent`; replacement first, build at `:237`, commit handling after), `:303` and `:541` (the two `d.cfg.TrackerType` reads), `:346` (hover sets the selection), `:599-606` (why a running future is never reassigned); `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:76-92` (the field-by-field reset to move); `Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp:311` (the one call site); `Source/Core/src/Ui/SmatchetInput.cpp:157` (`TextBuf`).
 - **Order**: independent; before S5.
 
 **S5 — suggestions and recent queries**
 - **Owner subsystem**: `Source/Core/src/Ui/` (grid). `RecentSelections.{h,cpp}` sits at the include root with no leaf; it rides with this slice as the store's only new caller.
 - **Write set**: items 20-27.
 - **Pre-resolved decisions**: one session-level `gridSearchAcp`; when the owning pane or its cache key changes it is cleared with `TrackerQueryAcp_ResetForNewOwner`, never replaced; three modes from `SuggestModeFor`, with the shell's commit handling running in all of them; the engine runs on Jira only; no pre-highlighted row and no hover selection; Enter and Tab accept a highlighted row only, as in the Views editor; Esc closes a showing list and keeps the caret, and clears the box only when no list is showing; the focus-return flag is honoured only by the owning pane's box; a recent row applies on pick in the grid box and only fills the dashboard editor; the `##GridFilter` id stays (UI tests key on it); the box stays on `TextBuf` (the dictation router needs the fixed buffer).
-- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:296-337` (the box); `Source/Core/src/Ui/SmatchetGridPaneWindows.cpp:253` (the replay); `Source/Core/include/Ui/SmatchetUiSession.h:249` (`JqlEditorState`), `:292,307` (its futures), `:994` (`PaneDeferredActionKind`); `Source/Core/include/RecentSelections.h:22-26` (the caps).
+- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:288-327` (the box); `Source/Core/src/Ui/SmatchetGridPaneWindows.cpp:253` (the replay); `Source/Core/include/Ui/SmatchetUiSession.h:249` (`JqlEditorState`), `:292,307` (its futures), `:994` (`PaneDeferredActionKind`); `Source/Core/include/RecentSelections.h:22-26` (the caps).
 - **Order**: after S3 and S4 (and so after #2452, which also edits `SmatchetUiSession.h`).
 
 **S6 — facet chips**
 - **Owner subsystem**: `Source/Core/src/Ui/` (grid), with one registry entry in `Source/Core/src/Commands/`. Kept in one slice: the command only sets a pane latch this slice introduces, and it cannot be tested without the menu.
 - **Write set**: items 28-32.
 - **Pre-resolved decisions**: chips edit the view's query through `applyQueryToPaneView`, never `ViewState` directly; the Ui leaf's § Grid rule lists the in-grid view gestures, and this slice adds the query apply and the chips to it as unsaved edits; the chip source is the pane's own view (`headerViewIsPanesOwn`, else `GetPaneResolvedView`), never a fallback-resolved one; the apply is latched with the query it was computed from and dropped at replay if the view's query has changed; a multi-select picker applies on close; pickers read the pane's catalog, the pane's roster (`GetPaneAvailableUsers`) and, for an empty label list, the labels of the loaded rows, built when the popup opens; a value `ValueSupported` refuses is drawn disabled with the reason; the chip row is its own layout row; a Plane pane draws + Filter disabled with its reason; the command handler runs on the UI thread like `grid.search.focus` (`ui-request-flag-off-thread`).
-- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:160-192` (`applyQueryToPaneView`); `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:361-370` (`activeViewForGrid` and `headerViewIsPanesOwn`); `Source/Core/src/Ui/AGENTS.md:66` (the gesture list) and `:78` (the fallback-resolved-object rule); `Source/Core/src/Commands/Builtin/BuiltinCommands_Ui.cpp:147` (`grid.search.focus`, the shape to copy); `Source/Core/include/FilterDropdown.h:71-81`.
+- **Inline inventory**: `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:160-192` (`applyQueryToPaneView`); `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:347-357` (`activeViewForGrid` as a fallback, and `headerViewIsPanesOwn`); `Source/Core/src/Ui/AGENTS.md:66` (the gesture list) and `:78` (the fallback-resolved-object rule); `Source/Core/src/Commands/Builtin/BuiltinCommands_Ui.cpp:147` (`grid.search.focus`, the shape to copy); `Source/Core/include/FilterDropdown.h:71-81`.
 - **Order**: after S1 and S5.
 
 **S7 — the close-matches hint**
