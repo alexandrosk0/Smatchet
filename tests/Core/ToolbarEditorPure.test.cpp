@@ -23,6 +23,31 @@ ToolbarButton MakeCmd(const std::string& id, const std::string& tip = std::strin
 
 using smatchet::toolbar_editor::DragDropDestIndex;
 using smatchet::toolbar_editor::EditorRowLabel;
+using smatchet::toolbar_editor::SameToolbarButtons;
+
+TEST_CASE("SameToolbarButtons: equal lists, and each field that differs") {
+    const std::vector<ToolbarButton> base = {MakeCmd("view.list", "Views"), MakeCmd("app.quit")};
+    CHECK(SameToolbarButtons(base, base));
+    CHECK(SameToolbarButtons({}, {}));
+    std::vector<ToolbarButton> other = base;
+    other.pop_back();
+    CHECK_FALSE(SameToolbarButtons(base, other));
+    const auto differsAfter = [&](void (*edit)(ToolbarButton&)) {
+        std::vector<ToolbarButton> changed = base;
+        edit(changed[1]);
+        return !SameToolbarButtons(base, changed);
+    };
+    CHECK(differsAfter([](ToolbarButton& b) { b.Kind = ToolbarButtonKind::Lua; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.IconName = "gear"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.IconGlyph = "x"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.Tooltip = "Quit"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.CommandId = "app.restart"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.ArgsJson = "{\"a\":1}"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.LuaCode = "print(1)"; }));
+    // Order counts: a reorder is an edit.
+    const std::vector<ToolbarButton> swapped = {base[1], base[0]};
+    CHECK_FALSE(SameToolbarButtons(base, swapped));
+}
 
 TEST_CASE("EditorRowLabel: separator renders a fixed marker") {
     ToolbarButton b;

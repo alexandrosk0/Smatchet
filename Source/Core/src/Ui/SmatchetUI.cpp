@@ -190,6 +190,10 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 }
 
+// Keys (smatchet::ui dialog contract): the dialog opens by itself, often while the user is typing, so the
+// keyboard starts on Later and Enter straight away installs nothing. Esc is Later.
+static smatchet::ui::DialogScopeState s_appUpdateDialog;
+
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
         ImGui::OpenPopup("Update Available###AppUpdateAvailable");
@@ -206,8 +210,8 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (!d.appUpdateModalOpen) {
         return;
     }
-    if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!smatchet::ui::BeginDialog(s_appUpdateDialog, "Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
 
@@ -248,8 +252,12 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             }
         }
     } else {
-        // Auto-size: the label translates, so a fixed 170px width clips the French text.
-        if (ImGui::Button("Download and Install")) {
+        // Auto-size: the labels translate, so a fixed width clips the French text.
+        smatchet::ui::ConfirmFooterSpec footer = smatchet::ui::ConsentFooter("Download and Install");
+        footer.AlternateLabel = "Skip This Version";
+        footer.CancelLabel = "Later";
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(s_appUpdateDialog, footer);
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             d.installerDownloadInFlight = true;
             d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
             const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
@@ -276,21 +284,16 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
                     }
                 });
             });
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Skip This Version")) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
             ConfigManager::Save(d.cfg);
             d.appUpdateModalOpen = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Later", ImVec2(90.0f, 0.0f))) {
-            d.appUpdateModalOpen = false;
-            ImGui::CloseCurrentPopup();
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
+            d.appUpdateModalOpen = false; // ConfirmFooter closed the popup
         }
     }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_appUpdateDialog);
 }
 
 /// The project the field catalog is scoped to for a view's JQL: the one value both the catalog fetch and the
@@ -396,6 +399,8 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
+    // Before any window draws: hands the caret back to the field that had it when the last modal closed.
+    smatchet::ui::ServiceDialogFocusReturn();
     drawInitConfigOnce(app, d);
     drawResolveUiMode(d);
     drawApplyAppearanceSettings(d);

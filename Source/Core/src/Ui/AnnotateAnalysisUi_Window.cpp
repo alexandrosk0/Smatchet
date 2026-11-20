@@ -18,6 +18,7 @@
 #include "Ui/P4ClPreview.h"
 #include "Ui/P4vLaunch.h"
 #include "Ui/PendingActionSubmitAsync.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetSubmitKeys.h"
 #include "Tracker/AnnotateContextCommentPure.h"
 #include "Tracker/TrackerInputNormalisePure.h"
@@ -141,9 +142,9 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
     ImGui::Text("Callstack Frames: %zu", ctx.NRow);
     const ImGuiStyle& stBtn = ImGui::GetStyle();
     const float padH = stBtn.FramePadding.x * 2.f;
-    const float callstackViewBtnW = (std::max)(
-        ImGui::CalcTextSize("Show Raw Text").x + padH,
-        (std::max)(ImGui::CalcTextSize("Show Table").x + padH, ImGui::CalcTextSize("Show raw callstack…").x + padH));
+    const float callstackViewBtnW = (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
+                                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
+                                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
     if (!streamlinedHide) {
         ImGui::SameLine();
         PushAnnotateLinkButtonColors(theme);
@@ -1080,6 +1081,18 @@ void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool re
     DrawAssignAndContextAction(ctx, readOnly, commitInFlight, hasJiraAccount);
 }
 
+// Keys (smatchet::ui dialog contract) of the assign and profile dialogs: the keyboard starts on Close, so
+// Enter straight away posts nothing, and Esc closes. Arrows reach the actions above Close.
+smatchet::ui::DialogScopeState s_assignDialog;
+smatchet::ui::DialogScopeState s_profileDialog;
+
+// Esc closes the dialog. Read before any item of the dialog.
+void CloseOnEsc(smatchet::ui::DialogScopeState& s) {
+    if (smatchet::ui::DialogReadKeys(s, true, /*readSubmit=*/false).Esc == smatchet::dialogkeys::EscapeAction::Cancel) {
+        ImGui::CloseCurrentPopup();
+    }
+}
+
 } // namespace
 
 void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
@@ -1089,9 +1102,10 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
         ImGui::OpenPopup("annotate_assign");
         State().openAssignModal = false;
     }
-    if (!ImGui::BeginPopupModal("annotate_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!smatchet::ui::BeginDialog(s_assignDialog, "annotate_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
+    CloseOnEsc(s_assignDialog);
     const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     const TrackerConfig cfg = ConfigManager::Load();
     ImGui::TextUnformatted(State().assignTitle.c_str());
@@ -1121,6 +1135,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
         DrawAssignModalBody(ctx, cfg, cfg.ReadOnlyMode);
     }
     PushAnnotateLinkButtonColors(theme);
+    smatchet::ui::DialogFocusHere(s_assignDialog);
     if (ImGui::Button("Close")) {
         ImGui::CloseCurrentPopup();
     }
@@ -1128,7 +1143,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
         ImGui::SetTooltip("Close this dialog without making further changes.");
     }
     PopAnnotateLinkButtonColors();
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_assignDialog);
 }
 
 void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx) {
@@ -1137,9 +1152,10 @@ void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx) {
         ImGui::OpenPopup("Jira user profile");
         State().openProfileModal = false;
     }
-    if (!ImGui::BeginPopupModal("Jira user profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!smatchet::ui::BeginDialog(s_profileDialog, "Jira user profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
+    CloseOnEsc(s_profileDialog);
     if (!State().profileErr.empty() && State().profileName.empty()) {
         ImGui::TextUnformatted(State().profileErr.c_str());
     } else {
@@ -1159,6 +1175,7 @@ void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx) {
         }
     }
     PushAnnotateLinkButtonColors(theme);
+    smatchet::ui::DialogFocusHere(s_profileDialog);
     if (ImGui::Button("Close")) {
         ImGui::CloseCurrentPopup();
     }
@@ -1166,7 +1183,7 @@ void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx) {
         ImGui::SetTooltip("Close the Jira user profile dialog.");
     }
     PopAnnotateLinkButtonColors();
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_profileDialog);
 }
 
 } // namespace AnnotateInternal

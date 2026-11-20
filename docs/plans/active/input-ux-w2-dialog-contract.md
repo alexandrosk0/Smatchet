@@ -2,7 +2,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slices 1 and 2 (in part) shipped in the stacked PR; slices 3 and 4 open.
+> **Status**: `active` — slices 1, 2 and 3 shipped; slice 4 (row 25) and row 16 open, waiting on PR #2439 (drafts and undo), which rewrites the same Esc paths.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -230,7 +230,8 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 
 - `112aa561e` · wip(plan): this plan.
 - `c1b6f43f1` · merge of `origin/claude/frictionless-user-input-ux-ea174b` (PR #2433, head `b12bdb424`) for `Ui/DialogKeysPure.h`.
-- Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (this PR's feature commit).
+- Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (PR #2437).
+- Slice 3 (rows 18–24) · form and info dialogs on the scope, focus return after a modal or the palette closes, tests and docs (the slice 3 PR's feature commit).
 
 ## Deviations from plan
 
@@ -271,6 +272,21 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - Row 25: Wave 1 re-point (slice 4) — after #2432 and #2435 merge (`TicketFieldEditor.cpp` is #2432's).
 - Dialogs in #2435's files (`SmatchetNewIssueDraftUi.cpp`, `SmatchetGridHeaderUi.cpp`, `SmatchetQuickCreateIssueUi.cpp`, `SmatchetMobileShellUi.cpp`, `SmatchetGridPaneWindows.cpp`) and #2432's (`FilterDropdown*`, `TicketFieldEditor.cpp`) — after those PRs merge.
 
+**Slice 3 (rows 18–24)**
+
+- **Focus return is one per-frame service, not per-dialog state.** `ServiceDialogFocusReturn()` runs at the top of `SmatchetUI::Draw`. It remembers the text field that had the caret before the first modal of a stack opened and, once the last one closes, gives it back with `ActivateItemByID` (`TryToPreserveState`, so the text and cursor stay). The rules are the pure `StepCaretReturn` / `RequestCaretReturn` in `DialogKeysPure.h`: no return when the user already moved the keyboard (another field is active, or another window has focus), a wait while Enter is held, and a cap of four frames. Every modal gets it without a call, which `DialogOpen` / `DialogServiceFocusReturn` on each dialog would not. The open question is answered: ImGui's own restore does not race the activation (bucket-E `DialogContract/CaretReturnsToFieldAfterModal`).
+- **The palette uses `CaptureFocusOpener` / `ReturnFocusTo`**, not `DialogScopeState`: it is not a modal. Esc or Cancel gives the keyboard back to the opener window and the caret to its field. A command that ran does not: it may have moved the keyboard on purpose. Nor does closing the palette while the keyboard is in another window (`ReturnFocusTo`'s `onlyFromRootName`): the user clicked away and is typing there. `CommandPaletteUi.h` keeps the opener as two ids, not a `FocusOpener`, so the Commands header does not include a Ui header (include-layer gate).
+- **The caret and selection are put back by hand.** ImGui keeps one text-edit state. When the palette's filter or a modal's own field took it, `TryToPreserveState` cannot hold and ImGui selects all the text on re-entry, so the next key would replace it (found by the code-review pass). `ServiceDialogFocusReturn` records the field's cursor and selection while it has the caret and sets them again on the first frame it is active after the return.
+- **`DialogReadKeys` takes `readSubmit`** (default true). The date-time picker, About and the annotate windows read Esc only: their fields' own Enter / Ctrl+Enter (the typed date applies) must still reach them.
+- **Update Available defaults to Later**, not to the primary. It opens by itself after the async check, often while the user types, so an Enter meant for a field must not start a download. The footer is `ConsentFooter("Download and Install")` with **Skip This Version** as the alternate.
+- **Bulk-import project modal button order** is now `[Use this project][Cancel]` (`ConfirmFooter`), Cancel was first before.
+- **Toolbar editor Esc** uses the open-time snapshot of the buttons and the visibility flag: untouched, Esc closes; with an edit made, Esc only leaves a field and never closes, so a reorder or delete is not lost on one key with no prompt. Cancel discards. The ask-first prompt stays with `input-ux-w2-drafts-undo`. Save carries its `Ctrl+Enter` hint (`KeyHintButton`). `SameToolbarButtons` (field-wise compare) is new in `SmatchetToolbarUi_detail.h`.
+- **"Save view as new"** prefills "`<name>` (copy)"; Esc treats that unchanged name as nothing typed.
+- **`TrackerDateTimeFieldEditor.cpp` gains a second `no-ui-include-in-domain` deviation** for `Ui/SmatchetDialogScope.h`, next to the existing one, with the same reason (the picker is a modal).
+- **Tests:** the new slice 3 bucket-A cases go in a new `tests/Core/DialogKeysPure.test.cpp` (the `bulk-edit-rows` lock on `tests/CMakeLists.txt` is gone); the slice 1–2 cases stay in `SmatchetWorklogSubmitPure.test.cpp` for now. Bucket E is a new `tests/ui/dialog_contract_forms.test.cpp` (5 `DialogContract/*` tests).
+- **Slice 4 and row 16 wait for PR #2439** (`input-ux-w2-drafts-undo`). It rewrites the Esc paths of the worklog, long-text, field viewer, offline queue and comments dialogs, which are row 25's sites.
+- **Not migrated:** the annotate assignee modal still calls `ConfigManager::Load()` every frame (Pillar 2 smell, out of scope here).
+
 ## Verification (actual)
 
 - **Build (dual-target)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed.
@@ -279,6 +295,15 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - **Doc validation**: `scripts/dev/test-docs.sh` — see the PR body.
 - **`grill-with-docs`**: not run. The peer coordinator session fixed scope and stacking. The deviations above record each decision the plan left open.
 - **Manual residue**: none. The red destructive buttons and the action-first order are unchanged from before.
+
+Slice 3:
+
+- **Build (dual-target)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed.
+- **Bucket A**: `ninja-test-msvc` `SmatchetTests.exe` — 4344 / 4344 cases passed, including the new `StepCaretReturn` / `RequestCaretReturn` cases in `tests/Core/DialogKeysPure.test.cpp` and `SameToolbarButtons` in `ToolbarEditorPure.test.cpp`.
+- **Bucket E**: `ninja-ui-test-msvc`, `ui_test.run --spawn`: `DialogContract` 10 / 10 passed (spawn log checked: no SKIP). Mutation checks: with the `ServiceDialogFocusReturn()` call removed and Update Available's safe default turned off, `CaretReturnsToFieldAfterModal`, `CaretReturnsToFieldAfterPaletteEsc` and `UpdatePromptStartsOnLater` fail; with only the caret restore (`RestoreOwedCaret`) removed, both caret tests fail on the next key replacing the text (`"d"`, not `"abcd"`). After the code-review fixes: `DialogContract` + `Toolbar` 16 / 16, and the wider filter below 48 / 49 with the same one failure. Regression filter `CommandPalette, IconPicker, FuncSizeMainUi, Toolbar, Views, Preferences, Annotate, Bulk, DateTime, Grid`: 83 / 84. The one failure, `FuncSizeMainUi/BulkImportWindow_RendersAndShowsLoadFile`, is not from this change: it still fails with `SmatchetBulkTicketsUi.cpp` put back to develop's, and it waits for a window named "Bulk import tickets" while the window is now "Bulk Import Issues". CI skips it under software GL, which is why it went unnoticed.
+- **Code review**: `code-review` agent on the diff. Fixed: a DRY clone in `SameToolbarButtons`, the caret coming back with the text selected, the palette pulling the caret out of another window, Ctrl+Enter no longer applying in the date-time picker, and one Esc discarding toolbar edits made outside a field. Left as is (low): the caret is not returned to an outer modal's field when a nested modal closes, and Update Available can still be dismissed by a stray Enter, since Later is the safe choice.
+- **Lint**: `test-lint-rules.sh --diff origin/develop` passed. Advisory WARNs only: `RenderDateTimeFieldEditor` is 102 lines against the soft 100 (the blocking cap is 120), `CommandPaletteUi.h` comment ratio 53 %, and two file-level WARNs on `SmatchetBulkTicketsUi.cpp` (an older file read) and `AnnotateAnalysisUi_Window.cpp` (over 1,200 lines before this change).
+- **Manual residue**: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

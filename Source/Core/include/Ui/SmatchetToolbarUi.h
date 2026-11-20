@@ -66,6 +66,7 @@ class SmatchetToolbarUi {
         std::vector<ToolbarButton>& buttons;
         bool trackerScope;
         bool faLoaded;
+        bool submit = false; // Ctrl+Enter this frame (smatchet::ui::DialogReadKeys): Save, as the button does
     };
     // Section helpers for the editor draw body. Each keeps its own paired ImGui begin and end
     // calls balanced internally; the editor orchestrator only sequences them in order. See the

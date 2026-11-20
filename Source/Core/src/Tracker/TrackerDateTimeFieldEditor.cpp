@@ -5,6 +5,8 @@
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TouchCellEditGesture.h"
 #include "TrackerFieldValueParseExplain.h"
+// SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=the picker is a modal dialog and takes the shared dialog keys (audit #91); owner=orchestrator; revisit=2027-02-16)
+#include "Ui/SmatchetDialogScope.h"
 // SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=this TU is an ImGui calendar/date widget that predates the zone rule and already draws UI; the inline error is the shared draw helper; owner=orchestrator; revisit=2027-02-16)
 #include "Ui/SmatchetInlineError.h"
 // SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=a rejected typed date raises the same toast every other editor does; the widget has no other way to tell the user; owner=orchestrator; revisit=2027-02-16)
@@ -577,11 +579,18 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
         ImGui::OpenPopup("picker");
     }
 
-    const bool modalOpen = ImGui::BeginPopupModal("picker", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    // One picker is open at a time (the cell being edited), so one dialog state serves every cell.
+    static smatchet::ui::DialogScopeState s_pickerDialog;
+    const bool modalOpen =
+        smatchet::ui::BeginDialog(s_pickerDialog, "picker", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     if (modalOpen) {
         // Back / Escape dismisses with no PUT (mirrors the inline mobile rule: focus-loss never
         // commits). A modal has no tap-away path, so dismissedByTapAway is always false here.
-        const bool backPressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+        // Through the dialog scope (audit #91): Esc does not repeat while held, and the Esc that closed a
+        // dropdown above the picker does not also close the picker. Ctrl+Enter stays the typed-date
+        // fields' own Enter (they apply what is typed), so the scope does not read it.
+        const bool backPressed = smatchet::ui::DialogReadKeys(s_pickerDialog, true, /*readSubmit=*/false).Esc ==
+                                 smatchet::dialogkeys::EscapeAction::Cancel;
 
         PickerAction action = DrawCalendarPicker(s_working, s_viewYear, s_viewMonth, s_forceTextMode, isDateOnly,
                                                  currentValue, state.EditBuffer, sizeof(state.EditBuffer),
@@ -610,7 +619,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
             ImGui::CloseCurrentPopup();
         }
 
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_pickerDialog);
     } else {
         ImGui::Dummy(ImVec2(1.0f, 1.0f));
     }

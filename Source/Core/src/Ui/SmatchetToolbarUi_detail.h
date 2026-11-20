@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,17 @@ inline std::string EditorRowLabelWithArgsCue(const std::string& rowLabel, bool b
 // the original target `dst`. Erasing an earlier element shifts the target left by
 // one, so the insert position is dst-1 when src precedes dst, dst otherwise.
 inline int DragDropDestIndex(int src, int dst) { return (src < dst) ? (dst - 1) : dst; }
+
+// True when two button lists would save the same: the editor holds no edits while its list equals the one
+// it opened with, so Esc closes it in one press (Ui/DialogKeysPure.h ResolveEscape `nothingTyped`).
+inline bool SameToolbarButtons(const std::vector<ToolbarButton>& a, const std::vector<ToolbarButton>& b) {
+    // Every field a button saves; a field added to ToolbarButton belongs here too.
+    const auto saved = [](const ToolbarButton& t) {
+        return std::tie(t.Kind, t.IconName, t.IconGlyph, t.Tooltip, t.CommandId, t.ArgsJson, t.LuaCode);
+    };
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                      [&saved](const ToolbarButton& x, const ToolbarButton& y) { return saved(x) == saved(y); });
+}
 
 // Shortcut text for one toolbar button's hover tooltip: every combo bound to the
 // button's OWN (CommandId, ArgsJson) identity — the very pair DispatchButton
