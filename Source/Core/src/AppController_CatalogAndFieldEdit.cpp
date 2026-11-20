@@ -1,6 +1,7 @@
 // Field-edit write path (SubmitFieldEditOrQueue): rules in Source/Core/src/Sync/AGENTS.md § Invariants.
 #include "AppController.h"
 #include "CatalogOfflinePolicyPure.h"
+#include "ComponentOptionsPickPure.h" // CatalogIsRowProject: the one scope comparison the catalog and the grid share
 #include "GridContextFieldCatalogOps.h"
 #include "Config/CacheBackendKeyPure.h" // a guarded catalog apply compares the fetch-time tracker
 #include "EditMetaCacheService.h"       // editmeta delegators forward to editMeta_ (god-object decomposition Phase 1).
@@ -114,6 +115,13 @@ void AddJiraCatalogFieldFixups(std::vector<TrackerField>& fields) {
     EnsureCommentsField(fields);
 }
 
+// Every correction a Jira catalog gets before it is published, live or restored from a snapshot (snapshots are
+// saved uncorrected). Plane catalogs are published as fetched.
+void ApplyJiraCatalogCorrections(std::vector<TrackerField>& fields) {
+    MarkNonEditableTimetrackingReadOnly(fields);
+    AddJiraCatalogFieldFixups(fields);
+}
+
 // Drops a worker's catalog write once the pane it fetched for has moved on: its backend was swapped
 // or the pane retired (Generation), its catalog was explicitly cleared, as a tracker switch does
 // before the new backend is installed (Epoch), or a newer RefreshFieldCatalog started (RefreshSeq).
@@ -212,8 +220,7 @@ ErrorRestoreSnapshot ReadSnapshotForError(const std::vector<std::string>& candid
                                                                       snap.IssueTypeMeta, snap.Error, loadedIndex);
     snap.Unscoped = snap.Loaded && loadedIndex > 0;
     if (snap.Loaded && !catalogPlane) {
-        MarkNonEditableTimetrackingReadOnly(snap.Fields);
-        AddJiraCatalogFieldFixups(snap.Fields);
+        ApplyJiraCatalogCorrections(snap.Fields);
     }
     return snap;
 }
@@ -399,8 +406,7 @@ bool ApplyFieldCatalogInto(GridContextFieldCatalog& cat, std::vector<TrackerFiel
     }
     SaveCatalogSnapshot(io.Queue, cfgSnap, catalogCacheKey, projectKeyForCache, fields, components, issueTypeMeta);
     if (!catalogPlane) {
-        MarkNonEditableTimetrackingReadOnly(fields);
-        AddJiraCatalogFieldFixups(fields);
+        ApplyJiraCatalogCorrections(fields);
     }
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
@@ -1243,6 +1249,12 @@ void AppController::EraseCatalogLegacyCommentField(std::vector<TrackerField>& fi
     EraseLegacyCommentField(fields);
 }
 
+void AppController::ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType) {
+    if (trackerType != "Plane") {
+        ApplyJiraCatalogCorrections(fields);
+    }
+}
+
 // FieldEditSupportsOfflineQueue + the field-edit pipeline (CommitOrQueue and its network / offline-
 // prepare helpers, ApplyFieldEditResult) live in FieldEditPipelineService (god-object decomposition
 // Phase 2). Only thin public delegators remain here; see the delegator block below. The editmeta cache
@@ -1260,14 +1272,25 @@ bool AppController::RefreshProjectComponents(const std::string& projectKey) {
     return components_ && components_->RefreshComponents(projectKey);
 }
 
-bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
-    if (projectKey.empty()) {
-        return false;
-    }
-    const GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+namespace {
+
+std::string CatalogProjectKeyOf(const GridContextFieldCatalog& cat) {
     std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-    return ToLowerAsciiCopy(cat.currentCatalogProjectKey_) == ToLowerAsciiCopy(projectKey);
+    return cat.currentCatalogProjectKey_;
+}
+
+} // namespace
+
+bool AppController::IsFieldCatalogScopedToProject(const std::string& projectKey) const {
+    return smatchet::components::CatalogIsRowProject(GetFieldCatalogProjectKey(), projectKey);
+}
+
+std::string AppController::GetFieldCatalogProjectKey() const {
+    return CatalogProjectKeyOf(fieldCatalog()); // latch once — lock/object resolve to the same context (Pillar 3)
+}
+
+std::string AppController::GetPaneFieldCatalogProjectKey(const std::string& paneId) const {
+    return CatalogProjectKeyOf(paneContextOrFocused_(paneId).fieldCatalog);
 }
 
 bool AppController::FieldCatalogLacksProjectScope() const {

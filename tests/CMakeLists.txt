@@ -485,6 +485,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Loose JSON int coercion behind the Jira catalog / board / sprint parsers, incl. the
         # out-of-range-float regression fuzz_jira_field_catalog found. Header-only.
         Core/JsonParseUtil.test.cpp
+        # The project a grid pane's own field catalog is scoped to (PaneCatalogScopePure.h, header-only) over
+        # the JQL project-scope parser it delegates to. ImGui-free, no threads.
+        Core/PaneCatalogScopePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -1711,6 +1715,8 @@ add_executable(SmatchetTests
     Core/LookupFreshnessPure.test.cpp
     # delta-sync follow-up - the saved field catalog is restored off the UI thread (Sync/CatalogRestorePure.h).
     Core/CatalogRestorePure.test.cpp
+    # The project a grid pane's own field catalog is scoped to, from the pane's resolved view (PaneCatalogScopePure.h).
+    Core/PaneCatalogScopePure.test.cpp
     # delta-sync follow-up - the cache recreate outcome and its refusal wording (Sync/CacheRecreateReportPure.h).
     Core/CacheRecreateReportPure.test.cpp
     # delta-sync follow-up - the pending-edit overlay of the grid, built from the queue snapshots (Sync/PendingOverlayPure.h).

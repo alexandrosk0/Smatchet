@@ -404,6 +404,12 @@ class AppController : public IAppThreading,
     /// the caller waits for `GetOfflineQueueSnapshot` to show it). Writes state only: no conflict logic runs.
     /// Returns false without a live cache or queue. No production caller.
     bool MarkFieldEditConflictForTest(std::int64_t id, const std::string& contextJson);
+    /// TEST SEAM (headless AppController tests): runs the pane sync kick's catalog step for pane `paneId`, whose
+    /// backend is already in place, as if the kick had resolved a view whose query is `ownViewQuery`: the project
+    /// derivation, the off-thread fetch or saved-snapshot fallback, and the apply all run as in production. The
+    /// caller pumps `mainThreadDispatcher` for the apply. No production caller.
+    void KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
+                                     const std::string& ownViewQuery);
     /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
     /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
     void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {
@@ -829,6 +835,15 @@ class AppController : public IAppThreading,
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         return cat.AvailableFields;
     }
+    /// GetAvailableFields plus the project that snapshot was fetched for ("" = unscoped), read together under one
+    /// lock so they always describe the same catalog. The grid builds its shared frame index from the snapshot and
+    /// keeps the key beside it, so a components cell never compares against another catalog's project.
+    std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields(std::string& outProjectKey) const {
+        const GridContextFieldCatalog& cat = fieldCatalog(); // latch once (Pillar 3)
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        outProjectKey = cat.currentCatalogProjectKey_;
+        return cat.AvailableFields;
+    }
     /// When the field catalog restored at startup was saved from a live fetch (epoch seconds); 0 when none was
     /// restored or its age is unknown. The grid uses it to skip the startup fetch while the snapshot is fresh.
     std::int64_t StartupCatalogSnapshotSavedUnix() const { return startupCatalogSavedUnix_.load(); }
@@ -1143,6 +1158,16 @@ class AppController : public IAppThreading,
      *  case), so the catalog's component options are that project's own. Read under
      *  availableFieldsMutex_. */
     bool IsFieldCatalogScopedToProject(const std::string& projectKey) const;
+
+    /** The project the focused context's field catalog was fetched for ("" = unscoped). Read under
+     *  availableFieldsMutex_. */
+    std::string GetFieldCatalogProjectKey() const;
+
+    /** The project grid pane `paneId`'s OWN context catalog was fetched for ("" = unscoped); the
+     *  focused context's for an unknown pane. A pane whose cells read its own catalog (the per-pane
+     *  catalog routing) compares a row's project against this, resolved once per pane per frame, so
+     *  another project's components never stand in for the row's (ComponentOptionsPickPure.h). */
+    std::string GetPaneFieldCatalogProjectKey(const std::string& paneId) const;
 
     /** True when the focused context's field catalog was fetched for the Jira backend WITHOUT a
      *  project scope (#2146): the active view's JQL resolved to no single project, so createmeta
@@ -1586,6 +1611,11 @@ class AppController : public IAppThreading,
     /// this one, so a TrackerFieldCatalogIndex built from it stays valid while the snapshot is
     /// held). Falls back to the focused catalog's snapshot when the pane has no populated context.
     std::shared_ptr<const std::vector<TrackerField>> GetPaneAvailableFields(const std::string& paneId) const;
+    /// GetPaneAvailableFields plus the project that snapshot was fetched for ("" = unscoped), read under the same
+    /// lock. The grid caches the key beside the per-pane index it builds from the snapshot, so a components cell
+    /// never pairs that index with another catalog's project (e.g. a re-created context at the same revision).
+    std::shared_ptr<const std::vector<TrackerField>> GetPaneAvailableFields(const std::string& paneId,
+                                                                            std::string& outProjectKey) const;
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
     void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
@@ -1677,18 +1707,31 @@ class AppController : public IAppThreading,
     /// only; a no-op when the pane already has a populated catalog (same-backend seed) or is
     /// backend-less. cfgCopy carries the pane's own backend endpoint fields (flat TrackerConfig
     /// holds every backend's endpoint simultaneously — no per-backend endpoint plumbing needed).
+    /// `projectKey` scopes the fetch and its saved-snapshot fallback key: the single project the
+    /// pane's own resolved view names (smatchet::catalog::PaneCatalogProjectKey), "" when it names
+    /// zero or several (unscoped: no createmeta enrichment).
     void populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
                                        const std::string& projectKey, std::uint64_t capturedGeneration);
+    /// The catalog step of the pane sync kick: scopes pane `paneId`'s own catalog fetch to the project
+    /// `ownViewQuery` (the query of the view the kick resolved for the pane, "" for none) names, read
+    /// with the pane's own backend parser, and hands it to populatePaneCatalogAfterSync_. UI thread.
+    void kickPaneCatalogFetch_(const std::string& paneId, const TrackerConfig& cfg, const std::string& ownViewQuery,
+                               std::uint64_t capturedGeneration);
     /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch: re-validate the
     /// captured context is still current (present + generation unchanged), then write the fields
     /// into ITS fieldCatalog under the context mutex and bump the per-context revision. A non-empty
     /// `restoredWarning` marks the saved snapshot the worker fell back to after a failed fetch
     /// (Quality Pillar 6): it is applied only to a pane with no catalog, becomes the pane's catalog
     /// warning, and leaves the catalog "not loaded" so the next sync kick retries the live fetch.
+    /// `catalogProjectKey` is the project the applied catalog describes ("" for an unscoped one),
+    /// pinned as the pane's currentCatalogProjectKey_ with it. `fetchSeq` is the pane's
+    /// PaneCatalogFetchSeq taken when the fetch started: a fetch superseded by a later one
+    /// (the pane's view changed meanwhile) is dropped, so an older result never lands last.
     void applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
                                        std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                        std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
-                                       const std::string& restoredWarning);
+                                       const std::string& catalogProjectKey, const std::string& restoredWarning,
+                                       std::uint64_t fetchSeq);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);
@@ -1845,6 +1888,11 @@ class AppController : public IAppThreading,
     // Same unpublished-vector contract as the Ensure* helpers above. The blob survives in per-ticket
     // fieldValues["comment"] (Jira mapper, catalog-independent) for the Comments-cell hover tooltip.
     void EraseCatalogLegacyCommentField(std::vector<TrackerField>& fields);
+    // Every correction an applied catalog of `trackerType` gets before it is published, live or restored
+    // (the focused path's SetFieldCatalog applies the same): for Jira, non-editable timetracking fields
+    // marked read-only plus the legacy-comment / History / Comments fixups above; Plane as fetched.
+    // Static and stateless, so a pane catalog worker calls it before posting its result.
+    static void ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType);
     // TryBuildFieldEditPayloadForNetwork + SubmitFieldEditCtx + the three SubmitFieldEdit branch
     // helpers (Sprint/Timetracking/Regular) moved into FieldEditPipelineService (god-object
     // decomposition Phase 2). Accessed via `fieldEdit_`; the public delegators above preserve the

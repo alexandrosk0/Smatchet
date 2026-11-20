@@ -7,10 +7,12 @@
 // freshness cue explains why. Pure, header-only.
 
 #include "OfflineFirstPure.h"
+#include "StringUtil.h"
 #include "Tracker/TrackerFieldSchema.h"
 #include "Types/ConnectivityTypes.h"
 #include "Types/ProjectComponentsTypes.h"
 
+#include <string>
 #include <vector>
 
 namespace smatchet {
@@ -23,6 +25,13 @@ struct ComponentOptionsPick {
     offline::DataFreshness Freshness = offline::DataFreshness::UnavailableNoCache;
     bool FromCatalog = false; ///< the list is the catalog's, standing in for the project's own
 };
+
+/// True when a catalog fetched for `catalogProjectKey` ("" = unscoped) carries `rowProjectKey`'s own component
+/// options: the keys name the same project (compared without case, no allocation). An unscoped catalog, or a row
+/// with no project, never matches.
+inline bool CatalogIsRowProject(const std::string& catalogProjectKey, const std::string& rowProjectKey) {
+    return !rowProjectKey.empty() && EqualsIgnoreCaseAscii(catalogProjectKey, rowProjectKey);
+}
 
 inline ComponentOptionsPick PickComponentOptions(const ProjectComponentsLookup& lookup, bool catalogIsRowProject,
                                                  const std::vector<TrackerFieldOption>& catalogOptions,

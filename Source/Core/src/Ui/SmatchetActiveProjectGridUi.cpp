@@ -360,7 +360,7 @@ const TrackerFieldCatalogIndex& SmatchetUI::resolvePaneCatalog(AppController& ap
     if (!pane.cachedPaneCatalogValid || !pane.cachedPaneCatalogIndex || pane.cachedPaneCatalogRevision != rev) {
         // Hold the catalog snapshot so the index's raw TrackerField* stay valid (the index points
         // INTO this immutable vector; a catalog swap publishes a new one instead of rewriting it).
-        pane.cachedPaneCatalogFields = app.GetPaneAvailableFields(pane.id);
+        pane.cachedPaneCatalogFields = app.GetPaneAvailableFields(pane.id, pane.cachedPaneCatalogProjectKey);
         pane.cachedPaneCatalogIndex = std::make_shared<const TrackerFieldCatalogIndex>(*pane.cachedPaneCatalogFields);
         pane.cachedPaneCatalogRevision = rev;
         pane.cachedPaneCatalogValid = true;

@@ -36,6 +36,8 @@ struct GridKeyCellMenuCtx {
     int clickedRow;
     const TrackerField* field = nullptr;       ///< the clicked column's catalog field (data cells)
     const std::string* paneCacheKey = nullptr; ///< AppController::PaneCacheBackendKey of the pane (data cells)
+    /// The project `catalog` (and so `field`) was fetched for, "" = unscoped (ActiveProjectDrawCtx::catalogProjectKey)
+    const std::string* catalogProjectKey = nullptr;
 };
 
 // SMATCHET_DEVIATION(rule=duplication; reason=declaration mirrors its definition's long parameter list, not a copy-paste clone; owner=grid-engine; revisit=2027-10-13)
