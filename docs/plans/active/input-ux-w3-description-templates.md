@@ -34,7 +34,7 @@ Other facts the design rests on:
 
 **After this lands:** a user can start a description from a saved template, flip the description or comment box to a rendered preview before sending, and type `@` to pick a person from a list that works offline; on Jira the pick becomes a real mention that survives a later edit.
 
-Wave 2 context this plan builds on and must not duplicate: the shared field and submit keys (4.2 / 4.4, merged: `SmatchetInput.h`, `SmatchetSubmitKeys.h`), the dialog contract (4.1, `SmatchetDialogScope.h`), the one matcher (4.7, `TextMatchPure.h`), tolerant parsing (4.5, #2441, merged) and drafts and undo (4.3, [`docs/plans/input-ux-w2-drafts-undo.md`](input-ux-w2-drafts-undo.md), PR #2439, **open**).
+Wave 2 context this plan builds on and must not duplicate: the shared field and submit keys (4.2 / 4.4, merged: `SmatchetInput.h`, `SmatchetSubmitKeys.h`), the dialog contract (4.1, `SmatchetDialogScope.h`), the one matcher (4.7, `TextMatchPure.h`), tolerant parsing (4.5, #2441, merged) and drafts and undo (4.3, plan `input-ux-w2-drafts-undo`, which arrives with PR #2439, **open**).
 
 ## Approach
 
@@ -51,9 +51,10 @@ Out of the audit's phase 3, the Ctrl+B / Ctrl+I wrappers are **not** in this pla
 Used with one meaning throughout; the glossary writes are assigned to the slices that make them real (§ Implementation handoff).
 
 - **Mention token** — the text `[@Display Name](mention:<id>)` inside Markdown. Backend-neutral. `<id>` is the tracker's opaque account id.
-- **Description template** — a locally saved `CommentTemplate` in `TrackerConfig::DescriptionTemplates`. A **project template** is one whose `ProjectKey` is set; it is still local, not fetched from the tracker.
+- **Description template** — a locally saved `CommentTemplate` in `TrackerConfig::DescriptionTemplates`. A **project-scoped template** is one whose `ProjectKey` is set; it is still local, not fetched from the tracker. _Avoid_ "project template": in Jira that names the blueprint a project is created from.
 - **Composer** — a multiline box whose text is sent to the tracker as a description or a comment. Not the AI assistant's chat input.
-- **Saved roster** — a pane's `AvailableUsers`, live or seeded from `lookup_cache` (`users` / `all`). The term the Ui leaf already uses ("the saved roster").
+- **Saved user roster** — a pane's `AvailableUsers`, live or seeded from `lookup_cache` (`users` / `all`); what the Ui leaf calls "the saved roster". Not the **Group roster** of `Tracker/CONTEXT.md` (group name → members, transient).
+- **Mention node** — the ADF inline node Jira stores. Only the converters see it.
 
 ## Interface contracts
 
@@ -77,21 +78,21 @@ Used with one meaning throughout; the glossary writes are assigned to the slices
 - `MarkdownToAdf`: an `MD_SPAN_A` whose href is `mention:<valid id>` produces one inline node `{"type":"mention","attrs":{"id":"<id>","text":"@Display Name"}}` instead of a `link` mark. Marks nested inside the token are dropped. An invalid id leaves an ordinary text run (`@Display Name`), never a link to `mention:…`.
 - `MarkdownToHtml`: a `mention:` link writes escaped plain `@Display Name`, never `<a href="mention:…">`.
 - `MarkdownPreviewRender`: a run whose href starts with `mention:` draws in the theme's existing link colour without underline and is never passed to the link-open path. No new palette token.
-- New pure header `Ui/MarkdownMentionPure.h` (namespace `smatchet::ui::mention`): `IsValidMentionId` (`[A-Za-z0-9:_-]{1,128}`, hand-written scan, no `std::regex`), `FormatMentionToken(displayName, id)` (escapes `]` and `\` in the name), `ParseMentionHref(href, outId)`, `DowngradeMentionTokens(markdown)` (every token → `@Display Name`).
+- New pure header `Ui/MarkdownMentionPure.h` (namespace `smatchet::ui::mention`): `IsValidMentionId` (`[A-Za-z0-9:_-]{1,128}`, hand-written scan, no `std::regex`), `FormatMentionToken(displayName, id)` (backslash-escapes the Markdown-significant characters in the name — backslash, square brackets, `*`, `_` and the backtick — so the name can neither close the link text nor pick up emphasis; the ADF `text` attribute gets the unescaped name), `ParseMentionHref(href, outId)`, `DowngradeMentionTokens(markdown)` (every token → `@Display Name`).
 
 ### Shared UI contract
 
 - `Ui/SmatchetSubmitKeys.h`: `SubmitMultilineInput` gains two trailing defaulted parameters, `ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr`. The implementation ORs the caller's callback flags into the ones it already builds and forwards both to `SmatchetLocalizedImGui::InputTextMultiline`, which already takes them. The existing call sites (`TicketFieldEditor_Worklog.cpp`, `AnnotateAnalysisUi_Window.cpp`) compile unchanged.
 - New `Ui/SmatchetComposerAssist.h` (namespace `smatchet::ui::composer`), the only header hosts include:
   - `struct ComposerAssistState` — per-composer, owned by the host TU as a file-static (keeps `SmatchetUiSession.h` out of the write set).
-  - `struct ComposerOptions { bool templates; bool preview; bool mentions; const char* idScope; }`.
+  - `struct ComposerOptions { bool templates; bool preview; bool mentions; }` — which of the three a host turns on.
   - `void BeginFrame(ComposerAssistState&)` — called by the host **before** its own key reads; when the people popup was open last frame it claims Up / Down / Enter / KeypadEnter / Tab / Esc for this frame.
-  - `bool PopupOwnsKeys(const ComposerAssistState&)` — hosts skip their own Esc / Enter / Ctrl-less key reads while it is true.
+  - `bool PopupOwnsKeys(const ComposerAssistState&)` — hosts skip their own Esc and plain-Enter reads while it is true (Ctrl+Enter is still theirs).
   - `void DrawBar(AppController&, ComposerAssistState&, const ComposerOptions&, char* buf, std::size_t bufSize, const std::string& projectKey)` — Template picker, Preview toggle, hint.
   - `bool PreviewActive(const ComposerAssistState&)` and `void DrawPreview(ComposerAssistState&, const char* buf, const ImVec2& size)`.
   - `ImGuiInputTextCallback InputCallback()` with `void* CallbackUserData(ComposerAssistState&)` — reads caret and text, applies a pending splice inside the callback (bounded by `BufSize`), as `ApplyInlineReplace` does for the query box.
   - `void DrawMentionPopup(AppController&, ComposerAssistState&, const ImRect& fieldRect)`.
-  - `std::string TextForSend(const ComposerAssistState&, const char* buf)` — the buffer as is when mentions are supported, `DowngradeMentionTokens` otherwise.
+  - `std::string TextForSend(const ComposerAssistState&, const char* buf, const std::string& sendBackendKey)` — the buffer as is when mentions are supported and `sendBackendKey` equals the key latched at open; `DowngradeMentionTokens(buf)` otherwise. Every host calls it where it hands text to a create or a post.
 
 ### Config (additive; older builds ignore both keys)
 
@@ -127,6 +128,7 @@ Grouped by slice (§ Implementation handoff). Existing symbols are in the probe 
 | `Source/Core/include/Interfaces/IAppUsers.h` | `IAppUsers` | `CORE_SOURCES` |
 | `Source/Core/include/AppController.h` | `SearchUsersByQueryTyped` | `CORE_SOURCES` |
 | `Source/Core/src/AppController_CatalogAndFieldEdit.cpp` | `SearchUsersByQueryTyped` | `CORE_SOURCES` |
+| `Source/Core/include/Tracker/CollaborationPreconditionPure.h` | `CollaborationResultToResult` | `CORE_SOURCES` |
 | `Source/Core/include/Config/ConfigManager.h` | `CommentTemplate` | `CORE_SOURCES` |
 | `Source/Core/src/Config/ConfigManager_Views.cpp` | `CommentTemplate` | `CORE_SOURCES` |
 | `Source/Core/src/Config/ConfigManager_Load.cpp` | `LoadListFields` | `CORE_SOURCES` |
@@ -136,6 +138,7 @@ Grouped by slice (§ Implementation handoff). Existing symbols are in the probe 
 | `Source/Core/src/Ui/PreferencesSchema.cpp` | `editing.quick_comments` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp` | `DrawDraftTextFieldInput` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp` | `HandleDraftRowKeys` | `CORE_SOURCES` |
+| `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp` | `TrySubmitNewIssueDraft` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp` | `ReadQuickCreateKeys` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp` | `quickCreateDescUserEdited` | `CORE_SOURCES` |
 | `Source/Core/include/Ui/SmatchetSubmitKeys.h` | `SubmitMultilineInput` | `CORE_SOURCES` |
@@ -143,7 +146,6 @@ Grouped by slice (§ Implementation handoff). Existing symbols are in the probe 
 | `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp` | `DrawCommentsPostInput` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp` | `KickCommentPost` | `CORE_SOURCES` |
 | `Source/Core/src/SmatchetLocalization.cpp` | `SmatchetLocalization` | `CORE_SOURCES` |
-| `tests/CMakeLists.txt` | `SmatchetTests` | `SmatchetTests` |
 
 Per-file rationale:
 
@@ -153,7 +155,7 @@ Per-file rationale:
 4. `MarkdownPreviewRender.cpp` — a `mention:` run draws as a mention and never opens (S1).
 5. `TicketFieldEditorLongTextPure.cpp` — the long-text seed and round-trip preview pass `emitMentionTokens = true`, which ends the lossy save (S1).
 6. `ITrackerCollaboration.h`, `JiraClient.h` — `SupportsMentions` (S2).
-7. `IAppUsers.h`, `AppController.h`, `AppController_CatalogAndFieldEdit.cpp` — `FocusedBackendSupportsMentions`, `SearchUsersForBackendTyped` (S2).
+7. `IAppUsers.h`, `AppController.h`, `AppController_CatalogAndFieldEdit.cpp`, `Tracker/CollaborationPreconditionPure.h` — `FocusedBackendSupportsMentions`, `SearchUsersForBackendTyped` and its pure refusal decision (S2).
 8. `ConfigManager.h`, `ConfigManager_Views.cpp`, `ConfigManager_Load.cpp`, `ConfigManager_Save.cpp` — `ProjectKey`, `DescriptionTemplates`, defaults (S3).
 9. `SmatchetPreferencesUi_Templates.cpp`, `PreferencesSchema.cpp` — the "Description templates" section, reusing `DrawCommentTemplateSectionBody` with a project-key input shown only for this list (S3).
 10. `SmatchetNewIssueDraftUi.cpp`, `SmatchetQuickCreateIssueUi.cpp` — attach the composer: bar and preview (S3), then callback, popup and key hand-off (S4).
@@ -190,7 +192,7 @@ New cases go into tests that already exist and are already registered: `tests/Co
 - `FilterDropdownPure` (`MoveHighlight`, `DefaultHighlight`) — `Source/Core/include/FilterDropdownPure.h` — highlight movement in the popup.
 - `smatchet::offline::KeyedLookupCache` + `RunKeyedFetch` — `Source/Core/include/KeyedLookupCache.h` — the mandated state machine for the keyed people search: no fetch while offline, backoff on failure, in-flight cleared on every path. `KeyedLookupCache::Freshness` + `DataFreshnessCue` (`Source/Core/include/DataFreshnessCue.h`) give the cue.
 - `AppController::LaunchBackgroundTask` — `Source/Core/include/AppController.h` — the worker; joined in `~AppController`, so the composer owns no thread or future.
-- `AppController::GetAvailableUsers` + `SeedAvailableUsersFromStoreAsync` — the saved roster (cache-first candidates).
+- `AppController::GetAvailableUsers` + `SeedAvailableUsersFromStoreAsync` — the saved user roster (cache-first candidates).
 - `ApplyInlineReplace` — `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp` — the in-callback splice pattern (`DeleteChars` / `InsertChars`), mirrored, not called (it is file-local to the query box).
 - `TrackerQueryAcp_TickDebouncedUserSearch` — same file — the 220 ms debounce and request-id stale drop, mirrored as pure decisions in `ComposerMentionPure.h`.
 - `SubmitMultilineInput`, `KeyHintButton` — `Source/Core/include/Ui/SmatchetSubmitKeys.h` — the comment box and the "Preview Ctrl+P" button.
@@ -209,7 +211,7 @@ N/A — nothing is extracted or split. New logic goes into new files; the three 
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: the people search runs only on `LaunchBackgroundTask`, annotated `/* PILLAR2_WORKER_ONLY */ // est-latency: 300ms`; the UI thread reads `KeyedLookupCache::Get`. No future is owned or waited on. Template apply and config reads use the in-memory `d.cfg`; saving goes through the existing debounced config save.
 - **Pillar 3 (never crash)**: splices happen inside the ImGui callback and are bounded by `BufSize`; an over-long insert is refused and the popup says the text is full. Offsets are byte offsets validated against UTF-8 boundaries in the pure layer. The worker captures a `shared_ptr` to the cache, never the composer state. A malformed template entry is skipped on load, as today.
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: every action has a key (Ctrl+P preview; Up / Down / Enter / Tab / Esc in the popup; the Template picker is a filterable, arrow-navigable combo). Mentions in the preview reuse the theme link colour, so no new contrast check. Sizes derive from font size and frame height, not pixels.
-- **Pillar 6 (offline-first)**: templates are local config. People suggestions come from the saved roster first and work with the tracker unreachable; no request is sent while `IsOfflineState`. The popup never shows a loading-only state when roster rows exist, and "No match" is shown only for a live answer — offline with an empty roster it says the people list is not saved yet. A failed search keeps the rows already shown and backs off (`KeyedLookupCache`).
+- **Pillar 6 (offline-first)**: templates are local config. People suggestions come from the saved user roster first and work with the tracker unreachable; no request is sent while `IsOfflineState`. The popup never shows a loading-only state when roster rows exist, and "No match" is shown only for a live answer — offline with an empty roster it says the people list is not saved yet. A failed search keeps the rows already shown and backs off (`KeyedLookupCache`).
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
@@ -234,14 +236,16 @@ Risks:
 - **Wrong person mentioned.** An id from another site would notify a stranger. Mitigation: the composer latches the pane's cache backend key at open, `SearchUsersForBackendTyped` refuses a mismatched pane, roster rows come from that pane only, and results are keyed by backend key plus query.
 - **Token leaks to a backend that cannot convert it.** Linear and GitHub send Markdown verbatim. Mitigation: the popup is gated on `SupportsMentions()`, and every composer send goes through `TextForSend`, which downgrades pasted tokens. Text sent by MCP or Lua callers is theirs and is not rewritten.
 - **Long-text editor shows raw tokens.** After S1, an existing Jira description with a mention shows `[@Name](mention:id)` in Edit mode (and a mention in Preview). This is the price of a lossless save; the alternative is today's silent loss.
-- **Stale saved roster.** Offline rows can include people who left. Jira renders an unknown id as plain text; accepted.
+- **Stale saved user roster.** Offline rows can include people who left. Jira renders an unknown id as plain text; accepted.
+- **Search is site-wide.** `SearchUsersByQuery` returns people on the Jira site, not only those who can see the issue's project; Jira does not notify a mentioned user who lacks access. Accepted for v1.
+- **Ctrl+P rebinding.** No default binding uses Ctrl+P (the palette is Ctrl+Shift+P), but a user binding on Ctrl+P would fire alongside the toggle, exactly as it does in the long-text editor today. Accepted; the button is the other way in.
 - **Save-format breaks.** Config: additive keys only, older builds ignore them, an older config loads with the two default templates. SQLite: none. Drafts file: none.
 - **Backend leakage.** The only interface change is a `Supports*` flag. The ADF node is built in the converter that is already Atlassian-specific; the token is neutral.
-- **Unreal vs standalone.** New TUs use ImGui and `imgui_internal.h` only (no GLFW, no Win32) and compile into `SmatchetCore_DX12` through the glob. Dictation keeps working because the fixed buffers stay. Each slice builds both targets.
+- **Unreal vs standalone.** New TUs use ImGui and `imgui_internal.h` only (no GLFW, no Win32) and compile into `SmatchetCore_DX12` through the glob. Dictation keeps working because the fixed buffers stay. Each slice builds both targets. Bucket E runs on the standalone target only, so the Unreal quick-create path is covered by the compile gate and by sharing every line of composer code, not by its own UI test.
 - **Localization key churn.** About 15 new keys under `composer.*` and `prefs.editing.description_templates.*`; `SmatchetLocalization.cpp` is also edited by the sibling Wave 3 slices, so each slice adds its rows in one block to keep merges trivial.
 - **MCP wire format.** Unchanged: `AdfToMarkdown` defaults to today's output.
 - **`std::regex` budgets.** None: the id check and the trigger scan are hand-written.
-- **File collisions with open work.** `SmatchetCommentsModalUi.cpp`, `TicketFieldEditor_Modal.cpp`, `docs/guides/keyboard-shortcuts.md` ← #2439. `AppController.h`, `AppController_CatalogAndFieldEdit.cpp` ← #2450, #2452. `SmatchetQuickCreateIssueUi.cpp` ← #2450. `tests/CMakeLists.txt` ← #2452. `SmatchetNewIssueDraftUi.cpp`, `SmatchetCommentsModalUi.cpp` ← the attachments-by-drop-and-paste Wave 3 plan (Ctrl+V on the same boxes). `SmatchetLocalization.cpp`, `tests/CMakeLists.txt` ← the grid-spreadsheet plan ([`docs/plans/input-ux-w3-grid-spreadsheet.md`](input-ux-w3-grid-spreadsheet.md), PR #2461). Mitigation: each slice claims a plan-lock on its write set before editing, lands behind the PRs named in its Order line, and never uses a lock override.
+- **File collisions with open work.** `SmatchetCommentsModalUi.cpp`, `TicketFieldEditor_Modal.cpp`, `docs/guides/keyboard-shortcuts.md` ← #2439. `AppController.h`, `AppController_CatalogAndFieldEdit.cpp` ← #2450, #2452. `SmatchetQuickCreateIssueUi.cpp` ← #2450. `tests/CMakeLists.txt` ← #2452. `SmatchetNewIssueDraftUi.cpp`, `SmatchetCommentsModalUi.cpp` ← the attachments-by-drop-and-paste Wave 3 plan (Ctrl+V on the same boxes). `SmatchetLocalization.cpp`, `tests/CMakeLists.txt` ← the grid-spreadsheet plan (`input-ux-w3-grid-spreadsheet`, which arrives with PR #2461). Mitigation: each slice claims a plan-lock on its write set before editing, lands behind the PRs named in its Order line, and never uses a lock override.
 
 Non-goals:
 
@@ -257,7 +261,7 @@ Six slices, one PR each. S1 and S2 are independent and can run in parallel; S3 i
 ### S1 — Mention token and converters
 
 - **Owner subsystem**: Ui (`Source/Core/src/Ui/AGENTS.md`; `TicketFieldEditor*.cpp` is governed by the same leaf per `CONTEXT-MAP.md`).
-- **Write set**: `Ui/MarkdownMentionPure.h` (new), `MarkdownToAdf.cpp`, `MarkdownToHtml.cpp`, `AdfToMarkdown.cpp`, `MarkdownConvert.h`, `MarkdownPreviewRender.cpp`, `TicketFieldEditorLongTextPure.cpp`, `Source/Core/src/Tracker/CONTEXT.md` (term), the five `tests/Core` files named above, `tests/CMakeLists.txt`.
+- **Write set**: `Ui/MarkdownMentionPure.h` (new), `MarkdownToAdf.cpp`, `MarkdownToHtml.cpp`, `AdfToMarkdown.cpp`, `MarkdownConvert.h`, `MarkdownPreviewRender.cpp`, `TicketFieldEditorLongTextPure.cpp`, `Source/Core/src/Tracker/CONTEXT.md` (the **Mention token** term, and the stale **ITrackerCollaboration** line the stress-test found: it says `PlaneClient` returns `nullptr`, but `PlaneClient::Collaboration()` returns `this`), the five `tests/Core` files named above, `tests/CMakeLists.txt`.
 - **Pre-resolved decisions**: `emitMentionTokens` defaults to `false` and only the two long-text call sites pass `true`. A mention inside a link, code span or fence is not converted. `MarkdownMentionPure.h` includes no ImGui, md4c or json header (grep-guard it in the test).
 - **Inline inventory**: `MarkdownToAdf.cpp` `case MD_SPAN_A` in `AdfEnterSpan` (pushes a `link` mark) and in `AdfLeaveSpan`; `AdfToMarkdown.cpp` `EmitInlineMention`; `MarkdownToHtml.cpp` both `MD_SPAN_A` cases; `TicketFieldEditorLongTextPure.cpp` the two `AdfToMarkdown(` calls; other `AdfToMarkdown(` callers that must stay on the default: `JiraCommentMappingPure.cpp`, `OfflineQueueService.cpp`, `SmatchetOfflineQueueUi.cpp`.
 - **Order**: none. Ships a user-visible fix on its own (mentions survive a long-text save).
@@ -265,7 +269,7 @@ Six slices, one PR each. S1 and S2 are independent and can run in parallel; S3 i
 ### S2 — Capability flag and pane-bound search
 
 - **Owner subsystem**: Tracker (`Source/Core/src/Tracker/AGENTS.md`) for the role interface; the facade edits ride along because the flag is unreachable from UI code without them and the whole slice is about 40 lines.
-- **Write set**: `ITrackerCollaboration.h`, `Tracker/JiraClient.h`, `Interfaces/IAppUsers.h`, `AppController.h`, `AppController_CatalogAndFieldEdit.cpp`, one doctest for the mismatch refusal (existing `tests/Core` file for the collaboration facade if one fits, else new and registered).
+- **Write set**: `ITrackerCollaboration.h`, `Tracker/JiraClient.h`, `Interfaces/IAppUsers.h`, `AppController.h`, `AppController_CatalogAndFieldEdit.cpp`, `Tracker/CollaborationPreconditionPure.h` (the refusal decision as a pure function, beside `CollaborationResultToResult`) and `tests/Core/CollaborationPreconditionPure.test.cpp` (already registered). `AppController` is not linkable into the unit rig, so its method stays a thin wrapper over that function.
 - **Pre-resolved decisions**: default `false`; Jira only. Plane stays `false` until Q3 is answered. The mismatch returns `InvalidRequest` (not retryable), so `KeyedLookupCache` does not treat it as a transport outage.
 - **Order**: behind #2450 and #2452 (both edit `AppController.h` and `AppController_CatalogAndFieldEdit.cpp`), or rebased over whichever is still open.
 
@@ -274,12 +278,14 @@ Six slices, one PR each. S1 and S2 are independent and can run in parallel; S3 i
 - **Owner subsystem**: Ui. The four `Config/` files have no leaf (root rules apply) and ship in the same PR because a config list with no editor and no consumer is dead code.
 - **Write set**: the four config files, `SmatchetPreferencesUi_Templates.cpp`, `PreferencesSchema.cpp`, `Ui/DescriptionTemplatePure.h` (new), `Ui/SmatchetComposerAssist.{h,cpp}` (new; bar and preview only), `SmatchetNewIssueDraftUi.cpp`, `SmatchetQuickCreateIssueUi.cpp`, `SmatchetLocalization.cpp`, `scripts/dev/perf-scenario-map.json`, `docs/guides/keyboard-shortcuts.md`, tests.
 - **Pre-resolved decisions**:
-  - Template filter: `ProjectKey` empty → every project; otherwise a case-insensitive match on the draft's project key. Project templates sort first.
+  - Template filter: `ProjectKey` empty → every project; otherwise a case-insensitive match on the draft's project key. Project-scoped templates sort first.
+  - The inline row has a description box only when the view shows a description column (existing behaviour); the bar follows the box and adds one frame height to that cell. Quick Create always has both.
+  - The last applied template's text is kept in `ComposerAssistState` (session-only) for the replace-or-append decision.
   - Apply rule (`ApplyTemplate`, pure): buffer empty or equal to the last applied template's text → replace; otherwise append after one blank line. Text that would not fit the buffer is refused with a toast; nothing is truncated.
   - Apply happens only while the field is not active; the host writes the buffer and `FieldValues["description"]`, and drops ImGui's saved deactivated-field copy for that id (as `SmatchetInput.cpp` does) so the old text is not written back.
   - Quick Create: applying a template sets `quickCreateDescUserEdited = true` so AI prefill does not overwrite it.
   - No placeholders in template text (Q2).
-  - Preview: Ctrl+P while the composer or its bar has focus, and a `KeyHintButton`. Session-only, off by default, same height as the input. Draft text is rendered as typed (no ADF or HTML round trip). Leaving preview returns the caret to the input.
+  - Preview: a `KeyHintButton`, and Ctrl+P while the input holds the caret or the preview child window is focused (turning preview on focuses that child, so the same key turns it off). Session-only, off by default, same height as the input. Draft text is rendered as typed (no ADF or HTML round trip). Leaving preview returns the caret to the input. The host's Esc and Ctrl+Enter keep their meaning in preview.
   - The static hint line at `SmatchetNewIssueDraftUi.cpp:560` moves into the bar.
   - Comments keep their existing right-click quick templates; no Template picker there.
 - **Order**: none on #2439. Behind #2450 for `SmatchetQuickCreateIssueUi.cpp`.
@@ -291,19 +297,21 @@ Six slices, one PR each. S1 and S2 are independent and can run in parallel; S3 i
 - **Pre-resolved decisions**:
   - **Trigger**: `@` at the start of the text or after whitespace or one of `(["'`; not inside an inline code span or a fenced block; not `x@y`. Query = bytes from `@` to the caret, at most 64 bytes, at most one inner space, no newline.
   - **Closes when**: the caret leaves the query, a second space or a newline is typed, a row is accepted, Esc, or the field loses the keyboard.
-  - **Candidates**: the saved roster of the latched pane ranked with `textmatch` (exact-first, `RowListed`), then, when online and the query has 2+ bytes, a search debounced 220 ms through `KeyedLookupCache` keyed `<backendKey>\n<folded query>`; results merge by `AccountId`. The cache is session-only and cleared when the backend key changes or it passes 64 keys. Accounts whose `AccountType` is `app` or `customer` are left out, as the query box does.
+  - **Candidates**: the saved user roster of the latched pane ranked with `textmatch` (exact-first, `RowListed`), then, when online and the query has 2+ bytes, a search debounced 220 ms through `KeyedLookupCache` keyed `<backendKey>\n<folded query>`; results merge by `AccountId`. The cache is session-only and cleared when the backend key changes or it passes 64 keys. Accounts whose `AccountType` is `app` or `customer` are left out, as the query box does.
   - **Rows**: `DisplayName` only (no email address on screen). Cue rows per Pillar 6 above.
   - **Keys** (audit § 3 "Picker or filter popup" row, adapted to an inline caret): Up / Down move; Enter or Tab accept the highlighted row; with no rows they are not claimed (Enter types a new line, Tab moves on); Esc closes the popup only — the caret stays and the host's Esc does not fire; Ctrl+Enter is never claimed, so submit still works; a click accepts.
   - **Accept**: replace `@query` with `FormatMentionToken(displayName, accountId)` plus one space, caret after it.
   - **Gate**: `FocusedBackendSupportsMentions()` read once when the composer opens. False → no popup, and `TextForSend` downgrades tokens.
-  - **Pane binding**: backend key latched with `app.FocusedCacheBackendKey()` when the composer opens; never re-read on the worker.
+  - **Send**: both create hosts pass the description through `TextForSend` where they submit the draft (`TrySubmitNewIssueDraft`, the Quick Create submit), with `app.FocusedCacheBackendKey()` as the send key.
+  - **One search at a time**: at most one search is in flight per composer; a newer query starts when it finishes. Connectivity for `TryBeginFetch` comes from `app.GetLastTrackerConnectivityState()`.
+  - **Pane binding**: backend key latched with `app.FocusedCacheBackendKey()` when the composer opens; never re-read on the worker. `GetAvailableUsers()` answers for the focused pane, so while the popup is open each frame compares `FocusedCacheBackendKey()` with the latched key and closes the popup on a mismatch instead of listing another site's people.
 - **Order**: after S1, S2, S3. First task is the Q5 probe.
 
 ### S5 — Comments: people popup and preview
 
 - **Owner subsystem**: Ui.
 - **Write set**: `SmatchetSubmitKeys.{h,cpp}`, `SmatchetCommentsModalUi.cpp`, `SmatchetLocalization.cpp`, tests.
-- **Pre-resolved decisions**: the composer state is a file-static beside `s_CommentsState` and is reset where that is. The splice runs inside `SubmitMultilineInput`'s callback, so #2439's by-value draft compare sees the new text the same frame; no `drafts::` call is added. `KickCommentPost` receives `TextForSend(...)`. The backend key comes from the modal's own pane (`LatchPendingActionTarget().BackendKey` at open) rather than the focused pane.
+- **Pre-resolved decisions**: the composer state is a file-static beside `s_CommentsState` and is reset where that is. The splice runs inside `SubmitMultilineInput`'s callback, so #2439's by-value draft compare sees the new text the same frame; no `drafts::` call is added. `KickCommentPost` latches its target when it posts (`app.LatchPendingActionTarget()`), so it sends `TextForSend(state, buf, target.BackendKey)`: a token never goes to a different site than the one whose people were listed.
 - **Order**: **after #2439 merges** — both edit `DrawCommentsPostInput`, and the splice must sit before its draft compare. After S4.
 
 ### S6 — People popup in the long-text editor (only if Q1 is yes)
@@ -326,14 +334,14 @@ Zero manual steps.
   - `DescriptionTemplatePure`: project filter and order; replace on empty; replace when the buffer equals the last template; append otherwise; refusal when it would not fit.
   - `ConfigManager`: `description_templates` and `project_key` round trip; absent key → defaults; empty array stays empty; a pre-change config loads.
   - `PreferencesSchema`: the new section and descriptor are well-formed.
-  - S2: `SearchUsersForBackendTyped` refuses a mismatched key without calling the backend.
+  - `CollaborationPreconditionPure` (S2): a mismatched backend key is refused as `InvalidRequest`; a matching key passes.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)** — `tests/ui/description_composer.test.cpp` on the deterministic Jira backend (pattern: `tests/ui/jira_deterministic_backend.test.cpp`) with a seeded roster:
   - Template picker fills an empty Quick Create description; picking a second template appends when text was typed.
   - Ctrl+P shows the rendered preview and Ctrl+P again returns the caret to the input with the text intact.
   - Typing `@jo` opens the popup with roster rows; Down then Enter inserts the token; the description buffer holds `[@…](mention:…)`.
   - Esc closes the popup, leaves Quick Create open and the text intact; in the inline row it does not start the discard flow.
   - Enter with no rows types a new line; Ctrl+Enter with the popup open still submits.
-  - Offline: the popup lists saved people with the offline cue and sends no request; with an empty roster it does not say "No match".
+  - Offline: the popup lists saved people with the offline cue and sends no request (asserted on the deterministic backend's `SearchUsersByQuery` call count; add the counter if it has none); with an empty roster it does not say "No match".
   - Comments (S5): a mention typed in the post box survives closing and reopening the window (#2439's store), and the posted body carries the token.
   - `tests/ui/prefs_schema_coverage.test.cpp` covers the new section.
 - **Bash-driver scenario / screenshot / sanitizer**: N/A — no new CLI command or scenario; text assertions in bucket E cover what a screenshot would. No new threading primitive (`KeyedLookupCache` + `LaunchBackgroundTask`), so the existing sanitizer lanes are the coverage.
@@ -345,7 +353,26 @@ Zero manual steps.
 
 ### Stress-test record (`grill-with-docs`)
 
-*(filled by the stress-test pass that follows the first commit of this file)*
+Run 2026-11-20 against `Source/Core/src/Tracker/CONTEXT.md`, `docs/CONTEXT.md`, the five leaf `AGENTS.md` files, ADR-0026 and the code at `79baaa7a4`. It ran without the user in the loop: every question the code or the docs could answer was answered there, and the rest are in § Open questions.
+
+| # | Question | Answer | Effect on the plan |
+|---|---|---|---|
+| 1 | "Project template": the tracker's or ours? | Ours; and in Jira the phrase already means a project-creation blueprint. | Term renamed **project-scoped template**; tracker-sourced templates stay out of scope. |
+| 2 | "Roster": does it collide with the glossary's **Group roster**? | In name, not in meaning. | Term sharpened to **saved user roster**, with the distinction written down. |
+| 3 | Storage: is there really a persisted user list? | Yes: `lookup_cache` kind `users`, key `all` (`LookupPayloadsPure.h:20-22`), written by `SaveAvailableUsersForOfflineAsync`, read by `SeedAvailableUsersFromStoreAsync`. | No schema change; no new table claimed. |
+| 4 | Storage: where do templates live, and what does an old config do? | Config JSON, loaded in `LoadListFields` with the `quick_comment_templates` shape (`ConfigManager_Load.cpp:664-674`): absent key → defaults. | Load rule written to match; an empty array stays empty. |
+| 5 | Storage: does the drafts store need a new surface for tokens? | No. #2439's `drafts::Put` stores the buffer text, and a token is text. | No `drafts::` call in this plan; S5 is ordered behind #2439 only for the shared lines. |
+| 6 | The roster call answers for the focused pane. What if focus moves while the popup is open? | It would list another site's people. | A per-frame key compare closes the popup; the search is pane-bound by `SearchUsersForBackendTyped`. |
+| 7 | The Ui leaf says keyed lookups go through `KeyedLookupCache`. Does the people search? | The first design polled a future, as the query box does. | Switched to `KeyedLookupCache` + `RunKeyedFetch` on `LaunchBackgroundTask`; the composer owns no future, so it has no shutdown-join contract. |
+| 8 | The Ui leaf says take the typed call so an unreachable tracker is not read as "none". | `IAppUsers::SearchUsersByQuery` flattens the error to a string. | The new call returns `TrackerError`; "No match" only for a live answer. |
+| 9 | What does a token do on a backend that cannot convert it? | Plane: the HTML converter would emit a dead link. Linear and GitHub: posted literally. | `MarkdownToHtml` writes `@Name`; `TextForSend` downgrades at every composer send. |
+| 10 | After the app creates a mention, does editing that description keep it? | No: `EmitInlineMention` flattens it. | The `emitMentionTokens` opt-in for the long-text editor is part of S1, not optional. |
+| 11 | Can a display name break the token? | Yes, with square brackets or emphasis characters. | Escaping rule widened and tested. |
+| 12 | Does Esc with the popup open lose text? | A raw `InputTextMultiline` reverts on Esc if the key reaches it. | Named as a risk with a bucket-E assertion; the Q5 probe decides inline versus focused popup. |
+| 13 | Does the glossary agree with the code on who has **ITrackerCollaboration**? | No: the glossary says `PlaneClient` returns `nullptr`; `PlaneClient.cpp:179` returns `this`. | Stale line; the fix is assigned to S1, which already edits that file. Not fixed here, to keep this PR to one file. |
+| 14 | Does the token format need an ADR? | No. It is a real trade-off and would surprise a reader, but it is cheap to reverse: tokens persist only in local drafts and queued writes, and Jira stores nodes. | The **Mention token** glossary term (S1) carries the decision. |
+| 15 | Is the inline row always a description surface? | Only when the view has a description column. | Stated in S3. |
+| 16 | Does the Unreal quick-create path get UI-test coverage? | No; bucket E is standalone. | Stated in Risks. |
 
 ## Open questions
 
