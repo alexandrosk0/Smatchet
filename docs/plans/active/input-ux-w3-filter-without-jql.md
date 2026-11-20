@@ -64,9 +64,9 @@ const std::vector<std::string>& FacetFieldIds(FacetDialect d);
 }
 ```
 
-**Round-trip rule.** A query is `Chippable` when its top level is joined by `AND` only, it has no top-level `OR` or `NOT`, its only parentheses are `IN` lists, and every clause is `<field> (= | != | IN | NOT IN) <value | currentUser() | (list)>`. A trailing `ORDER BY …` is kept verbatim. Then:
+**Round-trip rule.** A query is `Chippable` when its top level is joined by `AND` only, it has no top-level `OR` or `NOT`, its only parentheses are `IN` lists, and every clause is `<field> (= | != | IN | NOT IN) <value | currentUser() | (list)>`. A trailing `ORDER BY …` is kept verbatim. In the GitHub dialect a bare `word:value` token (`type:pr`, which the translator accepts beside JQL clauses) is one more clause, kept as it is. Then:
 
-- a clause on a facet field is a chip that can be changed or removed;
+- a clause on a facet field is a chip that can be changed or removed. A Jira assignee chip shows the person's name, resolved from the saved roster the way `jql_user_display::RenderQueryWithUserNames` does, and falls back to the id;
 - every other clause stays byte-for-byte and shows as one read-only chip, "N more conditions", with the text in its tooltip;
 - a query that is not chippable shows one read-only chip, "Custom query". On Jira, + Filter still works by wrapping the query. On GitHub and Linear it is disabled with the reason, because their translators drop parentheses.
 
@@ -80,12 +80,12 @@ const std::vector<std::string>& FacetFieldIds(FacetDialect d);
 | Assignee chip | `assignee = "<accountId>"` / `currentUser()` | none | `assignee = "<login>"` / `currentUser()`, one value, no `!=` | `assignee = "<name>"` / `currentUser()`, one value |
 | Label chip | `labels in (…)` | none | `labels = "x"`, one per chip; several chips are AND | `labels in (…)` |
 | Other facets | priority, issuetype, components, fixVersion, resolution, reporter | none | reporter | priority, project, team |
-| Validation | `QueryDialect::Jql` + the pane's catalog | `QueryDialect::FieldValue` | `QueryDialect::FieldValue` | `QueryDialect::Jql` + the pane's catalog |
+| Validation | `QueryDialect::Jql` + the pane's catalog | `QueryDialect::FieldValue` | `QueryDialect::FieldValue` | `QueryDialect::Jql`, structure only (no catalog: the validator's built-in field names are Jira's and do not include `team`) |
 | Offline | lists from the cached catalog and saved roster; live user search paused | recents only | cached lists | cached lists |
 
-**Parse messages** (`Tracker/TrackerFieldValueParseExplain.h`): two ids appended after `QueryUnknownField`: `QueryRejectedByTracker` (Arg: the tracker's text) and `QueryClausesDropped` (Arg: the translator's warning). Text in `DescribeParseMessage`. Neither blocks; `IsBlockingQueryError` is unchanged.
+**Parse messages** (`Tracker/TrackerFieldValueParseExplain.h`): two ids appended after `QueryUnknownField`: `QueryRejectedByTracker` (Arg: the tracker's text; sentence "The tracker did not run this query: …", which stays true for a sign-in failure) and `QueryClausesDropped` (Arg: the translator's warning). Text in `DescribeParseMessage`. Neither blocks; `IsBlockingQueryError` is unchanged.
 
-**Sync** (`Sync/SyncSessionStats.h`): `SyncSessionStats` gains `std::string Warning;` and `bool ErrorTransient = false;` beside `Error`. `TicketSyncService::RecordSessionStats(const std::string& fetchError, bool fetchErrorTransient, const std::string& fetchWarning, bool fullSyncCompleted)` widens from the two-argument form; its one call site in `TickStreamingApply` already holds all three values as locals. The `sync.stats` command's JSON is unchanged.
+**Sync** (`Sync/SyncSessionStats.h`): `SyncSessionStats` gains five fields beside `Error`: `std::string Warning;`, `bool ErrorTransient = false;`, `bool Cancelled = false;` (set where `RecordSessionStats` today substitutes "cancelled or superseded before a result"), and `std::string ViewId;` / `std::string Query;` (the view the session fetched and its query, captured in `StartStreamingSync` next to `sessionViewId_`). `TicketSyncService::RecordSessionStats(const std::string& fetchError, bool fetchErrorTransient, const std::string& fetchWarning, bool fullSyncCompleted)` widens from the two-argument form; its one call site, in `FinalizeStreamingSessionIfDone`, already holds all three values as locals. The stats are per tracker context: `AppController::GetLastSyncSessionStats` returns the focused context's. The `sync.stats` command's JSON is unchanged.
 
 ```cpp
 // Source/Core/include/Ui/GridSearchBoxPure.h (new, header-only) — no ImGui, C++14
@@ -96,9 +96,11 @@ enum class GridSearchLineKind : unsigned char { None, BlockingError, TrackerReje
 struct GridSearchLine { GridSearchLineKind Kind = GridSearchLineKind::None; TrackerParseExplain::ParseMessage Msg; };
 GridSearchLine PickGridSearchLine(const TrackerParseExplain::ParseMessage& typed,
                                   const TrackerParseExplain::ParseMessage& rejection, bool closeMatches);
-struct QueryRejectWatch { bool Armed = false; std::uint64_t BaselineRequestId = 0; std::string ContextKey; double NextPollAt = 0; };
-// When `s` is a finished session newer than the baseline: a non-transient Error gives QueryRejectedByTracker, a
-// Warning gives QueryClausesDropped, a transient Error or a clean session gives None. Sets `outResolved` and disarms.
+struct QueryRejectWatch { bool Armed = false; std::uint64_t BaselineRequestId = 0; std::string ContextKey;
+                          std::string ViewId; std::string Query; double NextPollAt = 0; };
+// Resolves only on a finished session newer than the baseline whose ViewId and Query equal the watch's (any other
+// session leaves it armed). A non-transient Error gives QueryRejectedByTracker, a Warning gives QueryClausesDropped;
+// a transient Error, a cancelled session or a clean one gives None. Sets `outResolved` and disarms.
 TrackerParseExplain::ParseMessage ResolveQueryRejectWatch(QueryRejectWatch& w, const smatchet::sync::SyncSessionStats& s,
                                                           bool& outResolved);
 }}
@@ -115,7 +117,7 @@ TrackerParseExplain::ParseMessage ResolveQueryRejectWatch(QueryRejectWatch& w, c
 
 **State.** `GridPane` (copyable, not persisted) gains: the last validated text with its classified kind and `ParseMessage` (`gridSearchCheckedText`, `gridSearchTyped`); `gridSearchRejection` and `QueryRejectWatch gridSearchRejectWatch`; the facet memo (`facetSource`, `facetParse`, re-parsed only when the view's query changes); `bool gridFilterCloseMatches`; `int gridFacetMenuFramesLeft`. `UiDrawSession` gains `JqlEditorState gridSearchAcp` with its owner (`gridSearchAcpPaneId`, `gridSearchAcpCacheKey`) and `PaneDeferredActionKind::GridFacetApply`, whose payload reuses `paneDeferredSearchText`. `DrainUiDrawSessionFuturesBeforeAppTeardown` also waits on `gridSearchAcp`'s two futures.
 
-**Recent queries.** Same store, config key and JSON shape as `smatchet::recents`. Scope: `MakeScopeKey(app.PaneCacheBackendKey(pane.id), "query.grid")`. A query scope keeps 10 entries of up to 512 bytes (the box's buffer size); every other scope keeps 5 of 256 as today. The limits come from one internal `LimitsForScope(scope)` that `Record` and `FromJson` both apply. A query is recorded only when a typed query was applied (`ApplyQueryResult::Ok` in `applyGridSearchEnter`), in the form the user typed. A chip change and the User Info "add to query" action do not record. An older build reading the file trims the lists to 5 entries.
+**Recent queries.** Same store, config key and JSON shape as `smatchet::recents`: the `recent_selections` array in the config file (`Source/Core/src/RecentSelections.cpp:16`, `ToJson` `:66`, `FromJson` `:77`, the queued save `:170-181`). No SQLite table and no migration. Scope: `MakeScopeKey(app.PaneCacheBackendKey(pane.id), "query.grid")`. A query scope keeps 10 entries of up to 512 bytes (the box's buffer size); every other scope keeps 5 of 256 as today. The limits come from one internal `LimitsForScope(scope)` that `Record` and `FromJson` both apply. A query is recorded only when a typed query was applied (`ApplyQueryResult::Ok` in `applyGridSearchEnter`), in the form the user typed. A chip change and the User Info "add to query" action do not record. An older build reading the file trims the lists to 5 entries.
 
 **Command.** One new registry entry, `grid.search.add_filter` ("Open the focused pane's + Filter menu"), shaped like `grid.search.focus`: it sets `gridFacetMenuFramesLeft` on the focused pane. No default key. It is reachable from the CLI, the palette, MCP and Lua through the registry, with no schema of its own.
 
@@ -127,7 +129,7 @@ TrackerParseExplain::ParseMessage ResolveQueryRejectWatch(QueryRejectWatch& w, c
 | Enter | The callback sets `gridSearchAcp.jqlWantsApplyFromEnter` only when no row is highlighted. The box latches `PaneDeferredActionKind::GridSearchCommit` from that flag, not from `TextResult::enterCommitted`, because Enter on a highlighted row must not apply. The replay in `drawGridPaneWindows` calls `applyGridSearchEnter`, which on Jira maps names to account ids with `TrackerQueryAcp_QueryWithAccountIds(*paneFields, users, d.gridSearchAcp, input)` when `d.gridSearchAcpPaneId == target.id`, else with the catalog-only `RenderQueryWithAccountIds` it uses today. |
 | Chip pick → apply | Chip or + Filter popup (drawn inside the pane) → `query_facets::SetFacetClause(view.Jql, dialect, clause)` → latch `GridFacetApply` with `paneDeferredSearchText = newQuery` → replay beside the search commit → `applyQueryToPaneView(app, d, *target, query)`. A multi-select picker applies once, when its popup closes. |
 | Validate → line | Each frame compares the buffer with `pane.gridSearchCheckedText`. Only on a change: `ClassifyGridSearchInput` and `JqlQueryValidate::ValidateQuery(text, dialect, paneFields.get())` → `pane.gridSearchTyped` → `PickGridSearchLine(…)` → `DrawInlineParseErrorBelowItem(msg)` (a hint through `DrawInlineParseHintBelowRect`). The funnel tooltip appends `DescribeParseMessage(line.Msg)`. The Enter refusal keeps its early return in `applyGridSearchEnter`; its toast is removed because the line is already showing. |
-| Tracker's answer → line | A successful apply (typed or chip) arms `pane.gridSearchRejectWatch` with `BaselineRequestId = app.GetLastSyncSessionStats().RequestId` and `ContextKey = app.FocusedCacheBackendKey()`. While it is armed and the pane is focused, at most every 250 ms: when the focused cache key still equals `ContextKey`, `ResolveQueryRejectWatch(w, app.GetLastSyncSessionStats(), resolved)` → `pane.gridSearchRejection`. The next edit of the box, the next apply and a view switch clear it. |
+| Tracker's answer → line | A successful apply (typed or chip) arms `pane.gridSearchRejectWatch` after `applyQueryToPaneView` returns `Ok` (the pane's view is then the active one) with `BaselineRequestId = app.GetLastSyncSessionStats().RequestId`, `ContextKey = app.PaneCacheBackendKey(target.id)`, the view id and the query as applied. While it is armed and the pane is focused, at most every 250 ms: when `app.FocusedCacheBackendKey()` equals `ContextKey`, `ResolveQueryRejectWatch(w, app.GetLastSyncSessionStats(), resolved)` → `pane.gridSearchRejection`. Matching on the view and the query, not only on the request id, keeps an older session that finishes late from being read as this query's answer. The next edit of the box, the next apply and a view switch clear it. |
 | Applied → recents → list | `applyGridSearchEnter` on `Ok` → `smatchet::recents::RecordAndPersist(scope, input)` (the config-save worker writes; the frame never waits). An empty focused box reads `SharedGet(scope)` once per focus gain → rows `{Label = q, Insert = q, CommitOnPick = true}` replacing the whole buffer. |
 
 ## Files to modify
@@ -142,10 +144,10 @@ Grouped by slice (§ Implementation handoff). New files are marked; a synonym gr
 4. `Source/Core/src/Tracker/CONTEXT.md`: glossary terms **Facet clause** and **Chippable query**; one line each stating that a Plane view query filters by key only and that GitHub and Linear view queries are a translated JQL subset.
 5. `tests/Core/QueryFacetClausesPure.test.cpp` (new), `tests/CMakeLists.txt`: bucket A, added to `add_executable(SmatchetTests …)` and the Linux subset.
 
-**S2 — Sync: session stats carry the warning and the transient flag**
+**S2 — Sync: session stats say how the session ended and for which query**
 
 6. `Source/Core/include/Sync/SyncSessionStats.h`, `Source/Core/include/Sync/TicketSyncService.h`, `Source/Core/src/Sync/TicketSyncService.cpp`: § Interface contracts.
-7. `tests/Core/TicketSyncService.test.cpp`: stats carry `Warning` and `ErrorTransient`; the error-only path is unchanged.
+7. `tests/Core/TicketSyncService.test.cpp`: stats carry `Warning`, `ErrorTransient`, `Cancelled`, `ViewId` and `Query`; the error-only path is unchanged.
 
 **S3 — Ui: the line under the box**
 
@@ -217,6 +219,8 @@ Existing symbols the slices change or call (one per row, for `plan-doc-table-pro
 | `Source/Core/src/Ui/SmatchetUI.cpp` | `DrainUiDrawSessionFuturesBeforeAppTeardown` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp` | `ApplyGridFilterProjection` | `CORE_SOURCES` |
 | `Source/Core/src/Sync/TicketSyncService.cpp` | `RecordSessionStats` | `CORE_SOURCES` |
+| `Source/Core/src/Sync/TicketSyncService.cpp` | `FinalizeStreamingSessionIfDone` | `CORE_SOURCES` |
+| `Source/Core/src/Sync/TicketSyncService.cpp` | `StartStreamingSync` | `CORE_SOURCES` |
 | `Source/Core/src/Sync/TicketSyncService.cpp` | `FetchErrorTransient` | `CORE_SOURCES` |
 | `Source/Core/src/Tracker/TrackerFieldValueParseExplainText.cpp` | `DescribeParseMessage` | `CORE_SOURCES` |
 | `Source/Core/src/Tracker/JqlQueryValidatePure.cpp` | `IsBlockingQueryError` | `CORE_SOURCES` |
@@ -267,7 +271,8 @@ This PR is docs-only. The gates below bind the implementation slices.
 - **A suggestion takes over a title search.** Mitigated by the gate, by no pre-highlighted row and by hover not arming Enter; pinned by the bucket-E case "typing `sta` offers `status`, Enter still filters titles".
 - **A chip writes a clause the backend ignores.** `DialectSupports` is the only way a picker is offered, and its table is tested against the two translators' own doctest expectations. A drift shows as the `QueryClausesDropped` line after the next sync.
 - **A chip rewrite damages a hand-written query.** Only chippable queries are edited in place; everything else is kept byte-for-byte or wrapped whole. The bucket-A table asserts parse → set → remove returns the original bytes.
-- **The tracker's answer is attributed to the wrong query.** The watch records the request id and cache key at apply time and is polled only on the focused pane; a newer apply or an edit clears it. A session that never finishes leaves the line empty, not wrong.
+- **The tracker's answer is attributed to the wrong query.** The watch records the request id, the cache key, the view id and the query at apply time, resolves only on a session that matches all of them, and is polled only on the focused pane; a newer apply or an edit clears it. A session that never finishes, or is cancelled, leaves the line empty, not wrong.
+- **A non-transient failure that is not about the query** (sign-in, a worker fault) also lands on the line. Its wording does not claim a syntax fault, and the tracker's own text follows it.
 - **Backend leakage**: none. No role-interface virtual is added; the Ui names a dialect, not a client.
 - **Save format**: the recents JSON shape is unchanged; an older build trims query lists to 5 entries. View storage, config keys and the SQLite cache are untouched.
 - **Recent queries hold what the user typed**, which can include names. They sit in the same config file as the saved views that hold the same text.
@@ -292,14 +297,14 @@ No slice waits on #2441: it merged on 2026-11-20 and its API is on `develop`. S1
 **S2 — session stats**
 - **Owner subsystem**: `Source/Core/src/Sync/` (strict lint zone).
 - **Write set**: items 6-7.
-- **Pre-resolved decisions**: `Warning` and `ErrorTransient` mirror the locals `TickStreamingApply` already reads under `QueueMutex`; no new lock, no new thread hop; the `sync.stats` JSON is unchanged.
-- **Inline inventory**: `Source/Core/src/Sync/TicketSyncService.cpp:676-683` (the three locals), `:732` (the call), `:759` (the definition); `Source/Core/include/Sync/SyncSessionStats.h:47` (`Error`).
-- **Order**: any time before S3. Its first step is the probe in § Open questions Q4.
+- **Pre-resolved decisions**: `Warning` and `ErrorTransient` mirror the locals `FinalizeStreamingSessionIfDone` already reads under `QueueMutex`; `ViewId` and `Query` are captured on the UI thread in `StartStreamingSync`; no new lock, no new thread hop; the `sync.stats` JSON is unchanged. The streaming session is the only path that ends a view fetch (`ApplyIssueFetchPack` has no caller under `Source/Core/src`), so one recording site is enough.
+- **Inline inventory**: `Source/Core/src/Sync/TicketSyncService.cpp:676-683` (the three locals), `:732` (the call), `:759` (the definition), `:771-777` (the substituted "cancelled or superseded" text), `:1186-1192` (`StartStreamingSync`, where the session's view is resolved); `Source/Core/include/Sync/SyncSessionStats.h:47` (`Error`).
+- **Order**: any time before S3.
 
 **S3 — the line under the box**
 - **Owner subsystem**: `Source/Core/src/Ui/` (grid).
 - **Write set**: items 8-14.
-- **Pre-resolved decisions**: the line replaces the Enter toast; validation runs on a text change, never per frame; the watch is polled on the focused pane only, at most every 250 ms; a transient failure shows nothing here (the connectivity toast already covers it); no account-id rewrite on Linear; this-frame focus gates the poll (Ui leaf § Frame state and focus).
+- **Pre-resolved decisions**: the line replaces the Enter toast; validation runs on a text change, never per frame; the watch is polled on the focused pane only, at most every 250 ms; a transient failure shows nothing here (the connectivity toast already covers it); no account-id rewrite on Linear; a Linear pane is validated for structure only; this-frame focus gates the poll (Ui leaf § Frame state and focus).
 - **Inline inventory**: `Source/Core/src/Ui/SmatchetGridSearchUi.cpp:105-116` (validate and refuse), `:128-131` (the rewrite); `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:288-294` (glyph and tooltip), `:308-319` (the inline Esc block).
 - **Order**: after S1 and S2, and after #2452 merges (both edit `GridPane.h`).
 
@@ -337,8 +342,8 @@ Per `AGENTS.md` § Verification automation: zero manual steps.
 
 - **Bucket A (pure-logic doctest, `test-authoring` skill § Unit rig)**:
   - S1 `QueryFacetClausesPure.test.cpp`: per dialect, parse → set → remove returns the original bytes; OR, NOT and grouping are not chippable; `ORDER BY` is kept; quoting of values with spaces and quotes; `DialectSupports` rejects a GitHub multi-label and a GitHub `assignee !=`; a wrapped non-chippable query.
-  - S2 `TicketSyncService.test.cpp`: `Warning` and `ErrorTransient` reach the stats.
-  - S3 `GridSearchBoxPure.test.cpp` and `GridSearchInputClassifier.test.cpp`: line priority; the watch (stale request id, transient error, warning, clean session); the Linear key and query cases.
+  - S2 `TicketSyncService.test.cpp`: `Warning`, `ErrorTransient`, `Cancelled`, `ViewId` and `Query` reach the stats.
+  - S3 `GridSearchBoxPure.test.cpp` and `GridSearchInputClassifier.test.cpp`: line priority; the watch (stale request id, another view's or another query's session, transient error, cancelled session, warning, clean session); the Linear key and query cases.
   - S4 `AutocompleteListNav.test.cpp`: `CommitOnPick`, the memo skip, hover.
   - S5 `GridSearchBoxPure.test.cpp` and `RecentSelections.test.cpp`: the suggestion gate (a title word, a field prefix, a query, a non-Jira pane); query-scope limits and the `FromJson` re-cap; other scopes still 5 of 256.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**:
@@ -357,8 +362,19 @@ Per `AGENTS.md` § Verification automation: zero manual steps.
 - **Q1 (user):** a Plane pane gets no chips, because a Plane view query cannot filter by field. Is a disabled + Filter with that reason enough for now, or should a follow-up plan add a local filter over the loaded rows for Plane?
 - **Q2 (user):** GitHub and Linear panes get chips but no typed suggestions. Suggestions there need the Jira engine limited to the fields each translator supports. Wanted as a follow-up?
 - **Q3 (user):** should changing a chip also add the resulting query to the recent list? The plan says no, so the list holds only what was typed.
-- **Q4 (probe, S2's first step):** `RecordSessionStats` has one call site, in `TickStreamingApply`. Does any query apply still finish through `ApplyIssueFetchPack` without recording stats? If so, S2 records them there too, or S3 documents the gap.
-- **Q5 (probe, S5):** is a dedicated `grid-search-typing` perf scenario worth adding, or do the two permanent markers under `side-by-side-2-grid` suffice?
+- **Q4 (probe, S5):** is a dedicated `grid-search-typing` perf scenario worth adding, or do the two permanent markers under `side-by-side-2-grid` suffice?
+
+**Resolved by the `grill-with-docs` pass (2026-11-20), against the code:**
+
+- *Glossary.* No `CONTEXT.md` uses "facet" or "chip", so the two new terms are free; the Tracker glossary's "Plane filter mini-language" entry agrees with the Plane column above. The glossary lines are written in S1, with the code they name.
+- *Whose stats?* `GetLastSyncSessionStats` returns the focused tracker context's last finished session, so the watch is keyed on the pane's cache key and polled only while that context is focused.
+- *Could an older session be read as the answer?* Yes, with a request-id check alone. The stats now carry the view id and the query, and the watch matches on both.
+- *Is every non-transient error a rejection?* No. A cancelled session records a fixed error text, so it gets its own `Cancelled` flag and shows nothing. A sign-in failure or a worker exception is also non-transient; the line's wording is "The tracker did not run this query: …" followed by the tracker's own text, which stays true for those.
+- *Linear validation.* The validator's built-in field names do not include `team`, so a Linear pane is checked for structure only. A clause Linear ignores is reported after the sync.
+- *GitHub `type:pr`.* A `word:value` token is kept as an opaque clause, so a pull-request view can still take chips.
+- *Does any fetch end outside the streaming session?* No: `ApplyIssueFetchPack` has no caller under `Source/Core/src`.
+- *Storage.* Recents are a JSON array in the config file, not a table; no migration.
+- *ADR?* None. No storage shape or interface changes, and every choice here can be reversed in one slice.
 
 ## Out of scope (flagged, not designed)
 
