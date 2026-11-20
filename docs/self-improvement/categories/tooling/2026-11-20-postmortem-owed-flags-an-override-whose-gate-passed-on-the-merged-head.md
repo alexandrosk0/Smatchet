@@ -3,7 +3,7 @@
 - **Category**: tooling
 - **Priority**: P3
 - **Date**: 2026-11-20
-- **Observed on**: PR #2443 (merged 2026-11-20T00:43:43Z as `8cf3bb91a`), in the 2026-11-20 entry in [`postmortems.md`](../../postmortems.md).
+- **Observed on**: PR #2443 (merged 2026-11-20T00:43:43Z as `8cf3bb91a`), in the 2026-11-20 entry in [`postmortems.md`](../../postmortems.md); PR #2440 (merged 2026-11-20T15:30:36Z as `79baaa7a4`) and PR #2441 (merged 2026-11-20T04:45:35Z as `3d1ff166f`), both with `Plan-lock gate` green on the merged head, in the [later 2026-11-20 entry](../../postmortems.md#2026-11-20--pr-2440-2441--override-cr-out-of-band--plan-lock-out-of-band-on-both-coderabbit-skipped-on-both-merged-heads-plan-lock-gate-green-on-both).
 - **Status**: open
 
 ## What happened

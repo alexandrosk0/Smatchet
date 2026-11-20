@@ -34,6 +34,40 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-20 · PR #2440, #2441 · override: `cr-out-of-band` + `plan-lock-out-of-band` on both (CodeRabbit `skipped` on both merged heads; `Plan-lock gate` green on both)
+
+### What escaped
+Two input-UX Wave 2 PRs merged with `cr-out-of-band`, `plan-lock-out-of-band` and `cr-disposition:cr-auto-review-disabled`, all three labels added on 2026-11-16 with the user's OK. CodeRabbit's check run on each merged head is `skipped` (`Review skipped: manual review required for this OSS repository`), which `postmortem-owed.sh` reads as a red check. The newest run of every other check on each merged head was green, `Plan-lock gate` included.
+
+| PR | merged (UTC) | head | diff | CodeRabbit on the PR | other review |
+|---|---|---|---|---|---|
+| #2441 | 2026-11-20 04:45:35 | `7dc782aab` | Wave 2 piece 4.5, tolerant parsing with inline errors, 47 files | never reviewed; the under-10-stars notice only | code-review agent over the staged diff, the branch and each of two develop merges: 4 High and 3 Medium on the staged diff, merge damage on the branch, 1 High and 2 Medium on the first merge, all fixed; 1 Low accepted as documented TitleSearch bias; the second merge clean. Verdict line pinned to the merged head. Bugbot reviewed and its findings were followed up |
+| #2440 | 2026-11-20 15:30:36 | `ccc653a1f` | Wave 2 piece 4.6, keyboard equivalents for pointer gestures, 47 files | never reviewed; the under-10-stars notice only | independent code-review agent over the full branch diff after five develop merges: 1 Low accepted and carried. Verdict and `independent-review` lines pinned to the merged head |
+
+The `plan-lock-out-of-band` label waived lock crossings that existed while the Wave 2 branches overlapped each other's write sets. By merge the crossings were gone: `Plan-lock gate` passed on both merged heads (jobs 136054443680 and 136338805726), so the label waived nothing at merge. This is the shape the existing P3 entry describes.
+
+Neither PR had a `merge-snapshots.jsonl` row; the SessionStart `merge-snapshot holes` nudge listed #2440. Both are added in this change as `GATES_PASSED` / `orchestrator`, because the in-session poller passed `merge-gates.sh` on the merged head and merged with `--match-head-commit`. #2456 (`BACKFILLED` / `git-janitor`, merged by another session) and #2457 (`GATES_PASSED` / `orchestrator`) are added too; neither carried an override.
+
+### Root cause
+Neither PR shipped a known defect. Both are the known shapes:
+
+- **No obtainable automatic review.** The repository has fewer than 10 stars, so CodeRabbit reviews only on a rate-limited manual trigger. A separate-context code-review agent stood in for it, with its verdict pinned to the merged head.
+- **A label that outlived its collision.** `postmortem-owed.sh` judges by the override label alone, so it flags a `plan-lock-out-of-band` whose gate was green at merge.
+
+The snapshot holes have the cause the 2026-11-20 entry below names: the in-session poller calls `merge-gates.sh` and `gh pr merge` directly and writes no row.
+
+Provenance: check-run conclusions, review states and label timelines were read from the GitHub API on 2026-11-20 after 15:30Z. The snapshot projections came from `safe-admin-merge.sh`'s `downgraded_red_checks` / `override_labels_csv`, sourced from a worktree at `origin/develop` `79baaa7a4`.
+
+### Preventing gate
+None — the override was legitimate for both. Each had the user's OK and a code-review agent verdict pinned to the merged head, and CodeRabbit could not be had without a manual, rate-limited trigger. The class is the existing P1 entry's, and both PRs are added to its **Observed on** list. The inert `plan-lock-out-of-band` is the existing P3 entry's class; both PRs are added to its **Observed on** list. Both are snapshot rows the merge actor did not write, so that entry's fix would still need a sanctioned merge actor to settle them.
+
+### Eval case
+None — not agent-reviewable. These are review-availability and detector-precision decisions, and no defect is known to have shipped.
+
+### Filed as
+- [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+- [`categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md`](categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md) (existing, P3; **Observed on** updated)
+
 ## 2026-11-20 · PR #2443, #2451, #2454 · override: `cr-out-of-band` on all three (CodeRabbit `skipped` on every merged head), plus a `plan-lock-out-of-band` label on #2443 that its merged head never needed
 
 ### What escaped
