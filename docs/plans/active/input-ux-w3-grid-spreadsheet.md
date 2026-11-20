@@ -43,11 +43,16 @@ CellPos Step(CellPos from, Move m, int rowCount, int colCount, int pageRows);
 template <class Editable> CellPos StepToEditable(CellPos from, Move m, int rowCount, int colCount, Editable editable);
 struct Range { CellPos Anchor; CellPos Extent; int MinRow() const; int MaxRow() const; int MinCol() const; int MaxCol() const; };
 Range Extend(const Range& r, Move m, int rowCount, int colCount, int pageRows);   // Shift+arrow
-// A TSV block (CopyGridRectAsTsv's format) laid onto the grid at `at`: one value fills the whole range, a block
-// is placed from `at` and clipped to the grid. Pure; rows/cols outside the grid are dropped and counted.
+// A range's membership as GridRectSelection::Remap builds it: one byte per shown row / column, nonzero = member.
+// Passed instead of two corners, so a range that a re-sort split (rows A, B shown as A, C, B) never fills C.
+struct RangeMask { const std::vector<char>* RowIn = nullptr; const std::vector<char>* ColIn = nullptr; };
+// A TSV block (CopyGridRectAsTsv's format) laid onto the grid at `at`. One value with a `fill` mask fills every
+// member cell (RowIn[r] && ColIn[c]) and nothing else; one value without a mask fills `at`. A block is placed
+// from `at` over the shown cells and clipped to the grid; the mask does not shape it. Pure; rows/cols outside
+// the grid are dropped and counted; a mask whose sizes differ from rowCount / colCount fills nothing.
 struct PasteCell { int Row; int Col; std::string Text; };
 struct PastePlan { std::vector<PasteCell> Cells; int Dropped = 0; };
-PastePlan PlanPaste(const std::string& tsv, CellPos at, const Range* fill, int rowCount, int colCount);
+PastePlan PlanPaste(const std::string& tsv, CellPos at, const RangeMask* fill, int rowCount, int colCount);
 }}}
 
 // Source/Core/include/Ui/GridUndoPure.h — header-only, no ImGui, C++14
@@ -124,7 +129,7 @@ Plumbing, hop by hop:
 
 **Tests**
 
-15. `tests/Core/GridCursorPure.test.cpp` (new): every move at the edges, Tab wrap, skip-read-only sweep, range extend, paste plan (one value over a range, block clip, ragged rows, CRLF, quoted TSV from `CopyGridRectAsTsv`). Registered in both lists in `tests/CMakeLists.txt` (the Linux subset next to `Core/GridCopyPure.test.cpp` at `:186`, and `SmatchetTests` at `:991`).
+15. `tests/Core/GridCursorPure.test.cpp` (new): every move at the edges, Tab wrap, skip-read-only sweep, range extend, paste plan (one value over a range, one value over a split range: members A and B shown as A, C, B fill A and B but not C, a mask of the wrong size fills nothing, block clip, ragged rows, CRLF, quoted TSV from `CopyGridRectAsTsv`). Registered in both lists in `tests/CMakeLists.txt` (the Linux subset next to `Core/GridCopyPure.test.cpp` at `:186`, and `SmatchetTests` at `:991`).
 16. `tests/Core/GridUndoPure.test.cpp` (new): push / take / take-newest per pane, bound, inverse order, bulk entry. Also: `MarkLanded` with an empty display (a cleared field) is still inverted; `MarkFailed` drops the change and removes an emptied entry; `TakeNewest` on an entry with a pending change returns `StillSaving` and keeps it. Same two lists.
 17. `tests/Core/BulkFieldEditPure.test.cpp`: the identity remap that replaces `RestoreKeptRows`, with the existing D5 cases kept green; a range that a re-sort splits keeps exactly its members (rows A, B sorting to A, C, B leave C out); per-row input with distinct values in one column, and the shared form equal to per-row input with one value repeated.
 18. `tests/ui/grid_spreadsheet_keys.test.cpp` (new, bucket E, fixture lane `test-ui-grid-spreadsheet`): arrows move the active cell and scroll it into view past the clipper, Shift+arrow ranges, F2 / Enter / a typed letter open the editor, Enter-down and Tab-right with read-only skip, Esc reverts and stays, Ctrl+Enter applies to the selection, Ctrl+V single and block, Ctrl+D, Ctrl+Z and the toast Undo restore the value, a rejected value comes back, a sync keeps the active cell and the range. Registered in `tests/ui/CMakeLists.txt` and `tests/ui/ui_tests_registry.cpp`.
@@ -226,7 +231,7 @@ All slices are owned by `grid-engine` (`Source/Core/src/Ui/AGENTS.md` § Grid). 
 
 **S4: paste, fill-down, Ctrl+Enter apply-to-selection** (#27 rest, #28 paste)
 - **Write set:** items 1 (`PlanPaste`), 5 (Ctrl+V / Ctrl+D), 8 (Ctrl+Enter), 12 (`pendingBulkConfirm`), 12a (`RequestBulkFieldEdit` and its confirm), 13 (Paste / Fill down entries), 14, 15 (paste cases), 18 (paste cases, including the 11-row confirm).
-- **Pre-resolved:** one value over a range is a fill. A block is placed from the active cell, so a column's cells form one bulk job with per-row values (`BulkRowInput`: each row writes its own pasted cell), and a one-cell column is a single `QueueEdit`. Text is resolved per field kind: choice fields through `BeforeValuesFor` with `AllEntriesResolve` (a miss is skipped and counted), dates and durations through `TrackerParseExplain` (a miss is skipped and counted), plain text as is. ADF / long-text and key columns are skipped. Ctrl+D copies the top row of the range down each column. Ctrl+Enter writes the editor's value to the edited column of every selected row (rows from `Rows` or the range), through one job. Every one of these goes through `RequestBulkFieldEdit`, never straight to `StartBulkFieldEdit`.
+- **Pre-resolved:** one value over a range is a fill of its members: `PlanPaste` gets the range's `RowInRange` / `ColInRange` masks, never its corners. A block is placed from the active cell, so a column's cells form one bulk job with per-row values (`BulkRowInput`: each row writes its own pasted cell), and a one-cell column is a single `QueueEdit`. Text is resolved per field kind: choice fields through `BeforeValuesFor` with `AllEntriesResolve` (a miss is skipped and counted), dates and durations through `TrackerParseExplain` (a miss is skipped and counted), plain text as is. ADF / long-text and key columns are skipped. Ctrl+D copies the top row of the range down each column. Ctrl+Enter writes the editor's value to the edited column of every selected row (rows from `Rows` or the range), through one job. Every one of these goes through `RequestBulkFieldEdit`, never straight to `StartBulkFieldEdit`.
 - **Order:** after S2 and S3.
 
 ## Verification
