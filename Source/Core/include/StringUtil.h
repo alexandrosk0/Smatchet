@@ -54,6 +54,11 @@ inline bool EqualsIgnoreCaseAscii(const std::string& a, const std::string& b) {
     return true;
 }
 
+/// True when `s` ends with `suffix` (case-sensitive, byte-wise). An empty suffix always matches.
+inline bool EndsWithAscii(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 inline std::string ToUpperAsciiCopy(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     return s;

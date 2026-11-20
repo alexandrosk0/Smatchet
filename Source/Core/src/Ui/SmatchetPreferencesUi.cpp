@@ -44,11 +44,12 @@
 #include "Ui/SmatchetInput.h"
 #include "Ui/SmatchetSecretInput.h"
 #include "Ui/SmatchetHotkeyCapture.h"
+#include "Ui/SmatchetInlineError.h"
 #include "Ui/SmatchetIconButtons.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
-#include "imgui_internal.h" // ClearActiveID
+#include "imgui_internal.h" // ClearActiveID, GImGui->LastItemData
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -461,6 +462,55 @@ bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGu
     return SmatchetInput::TextBuf(label, buf, bufSize, opts).enterCommitted;
 }
 
+// What the last pasted site URL was turned into, for the dim "Using ..." line under that field.
+struct SiteRewriteNote {
+    const char* Buf = nullptr;
+    std::string Text;
+};
+SiteRewriteNote g_siteRewriteNote;
+
+// Copies `value` into `buf` when `buf` is empty and the value fits: a URL that carries an owner, a repo or a
+// workspace fills the field for it, never overwrites one the user has already set.
+void FillIfEmpty(char* buf, std::size_t bufSize, const std::string& value) {
+    if (buf[0] == '\0' && !value.empty() && value.size() < bufSize) {
+        std::memcpy(buf, value.c_str(), value.size() + 1);
+    }
+}
+
+// A tracker site field (#80): takes a pasted browser URL and rewrites it to the plain form once the caret leaves,
+// saying what it is now using; text that cannot be a site gets the reason under it. `outRewrite` reports what a
+// rewrite found (owner, repo, workspace) so the caller can fill its neighbours. `hint` is the example value shown
+// in the empty field.
+bool SiteInputText(const char* label, char* buf, std::size_t bufSize, TrackerInputNormalise::SiteField kind,
+                   const char* hint, TrackerInputNormalise::SiteUrlParse* outRewrite = nullptr) {
+    const bool enterPressed = CredentialInputText(label, buf, bufSize, ImGuiInputTextFlags_CharsNoBlank, hint);
+    // The error or "Using ..." line drawn below must not become the last item: the caller's SetItemTooltip
+    // right after this call means the field.
+    const ImGuiLastItemData field = GImGui->LastItemData;
+    const bool leftAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+    const bool active = ImGui::IsItemActive();
+    const TrackerInputNormalise::SiteUrlParse parse = TrackerInputNormalise::NormaliseSiteField(buf, kind);
+    if (leftAfterEdit && parse.Ok && parse.Rewritten && parse.Value.size() < bufSize) {
+        std::memcpy(buf, parse.Value.c_str(), parse.Value.size() + 1);
+        g_siteRewriteNote.Buf = buf;
+        g_siteRewriteNote.Text = parse.Value;
+        if (outRewrite != nullptr) {
+            *outRewrite = parse;
+        }
+    }
+    if (active && g_siteRewriteNote.Buf == buf) {
+        g_siteRewriteNote = SiteRewriteNote();
+    }
+    if (!parse.Ok && buf[0] != '\0') {
+        smatchet::ui::DrawInlineParseError(parse.Message);
+    } else if (g_siteRewriteNote.Buf == buf && !g_siteRewriteNote.Text.empty()) {
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::Format("prefs.site.using", "Using %s", g_siteRewriteNote.Text.c_str()));
+    }
+    GImGui->LastItemData = field;
+    return enterPressed;
+}
+
 // The masked variant of CredentialInputText.
 bool CredentialSecretInput(const char* label, char* buf, std::size_t bufSize) {
     FocusNextItemIfOpenTarget(buf);
@@ -595,8 +645,8 @@ bool DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_domain")) {
-        enterPressed = CredentialInputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank,
-                                           "companyname.atlassian.net") ||
+        enterPressed = SiteInputText("Domain", d.domainBuf, sizeof(d.domainBuf),
+                                     TrackerInputNormalise::SiteField::JiraDomain, "companyname.atlassian.net") ||
                        enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_email")) {
@@ -631,9 +681,11 @@ bool DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Plane Configuration (plane.so)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_url")) {
-        enterPressed = CredentialInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.plane.so") ||
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed = SiteInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf),
+                                     TrackerInputNormalise::SiteField::PlaneUrl, "https://api.plane.so", &found) ||
                        enterPressed;
+        FillIfEmpty(d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf), found.WorkspaceSlug);
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_workspace")) {
         enterPressed = CredentialInputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
@@ -664,9 +716,13 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
-        enterPressed = CredentialInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.github.com") ||
-                       enterPressed;
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed =
+            SiteInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
+                          TrackerInputNormalise::SiteField::GitHubBaseUrl, "https://api.github.com", &found) ||
+            enterPressed;
+        FillIfEmpty(d.githubOwnerBuf, sizeof(d.githubOwnerBuf), found.Owner);
+        FillIfEmpty(d.githubRepoBuf, sizeof(d.githubRepoBuf), found.Repo);
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_pat")) {
@@ -675,9 +731,11 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
         ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_owner")) {
-        enterPressed = CredentialInputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed = SiteInputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
+                                     TrackerInputNormalise::SiteField::GitHubOwner, nullptr, &found) ||
                        enterPressed;
+        FillIfEmpty(d.githubRepoBuf, sizeof(d.githubRepoBuf), found.Repo);
         ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_repo")) {
@@ -961,6 +1019,7 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.LinearTeamId = d.linearTeamIdBuf;
     cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
     SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(cfg);
+    SmatchetPreferencesUiDetail::NormaliseTrackerSiteFields(cfg);
     smatchet::jira_backends::EnsureHydrated(cfg);
     cfg.JiraBackends[0].Domain = cfg.Domain;
     cfg.JiraBackends[0].Email = cfg.Email;

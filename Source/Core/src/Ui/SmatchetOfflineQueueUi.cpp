@@ -18,6 +18,9 @@
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
 #include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
+#include "TrackerFieldValueUtils.h"
+#include "Ui/SmatchetInlineError.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1170,6 +1173,7 @@ struct ConflictModalCtx {
     std::string Theirs;
     std::string Base;
     std::string RichKind = "adf";
+    std::string FieldId; ///< the field the queued edit is for ("" when the context predates it)
     bool Valid = false;
 };
 
@@ -1179,11 +1183,20 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
         std::string parseErr;
         const nlohmann::json ctx = smatchet::json_safe::ParseBounded(json, parseErr);
         if (parseErr.empty() && ctx.is_object()) {
-            out.Kind = ctx.value("kind", std::string("text"));
-            out.Mine = ctx.value("mine", std::string());
-            out.Theirs = ctx.value("theirs", std::string());
-            out.Base = ctx.value("base", std::string());
-            out.RichKind = ctx.value("richKind", std::string("adf"));
+            // The context's text members and the value each keeps when the key is absent.
+            struct TextMember {
+                const char* Key;
+                const char* Fallback;
+                std::string ConflictModalCtx::*Member;
+            };
+            static const TextMember kMembers[] = {
+                {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},
+                {"theirs", "", &ConflictModalCtx::Theirs},        {"base", "", &ConflictModalCtx::Base},
+                {"richKind", "adf", &ConflictModalCtx::RichKind}, {"fieldId", "", &ConflictModalCtx::FieldId},
+            };
+            for (const TextMember& m : kMembers) {
+                out.*(m.Member) = ctx.value(m.Key, std::string(m.Fallback));
+            }
             out.Valid = (out.Kind == "text" || out.Kind == "scalar" || out.Kind == "unverified");
         }
     } catch (...) { // catch-all-ok: malformed conflict context → Valid stays false (safe read-only render)
@@ -1486,8 +1499,66 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
                          "Ctrl+Enter saves. Esc leaves the text box and keeps what you typed.");
 }
 
+// What kind of value the queued edit's field takes, for the hint under the resolved-value box and for the text
+// shown when the replay turns the value down (#115). The kind comes from the field id in the conflict context.
+enum class ScalarConflictKind : unsigned char { Estimate, Sprint, Other };
+
+static ScalarConflictKind ScalarKindForField(const std::string& fieldId) {
+    if (TrackerFieldValueUtils::IsTimeDurationField(fieldId)) {
+        return ScalarConflictKind::Estimate;
+    }
+    return ToLowerAsciiCopy(fieldId).find("sprint") != std::string::npos ? ScalarConflictKind::Sprint
+                                                                         : ScalarConflictKind::Other;
+}
+
+static TrackerParseExplain::ParseMessageId RejectionIdForKind(ScalarConflictKind kind) {
+    switch (kind) {
+    case ScalarConflictKind::Estimate:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedEstimate;
+    case ScalarConflictKind::Sprint:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedSprint;
+    case ScalarConflictKind::Other:
+    default:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedGeneric;
+    }
+}
+
+static const char* ScalarHintForKind(ScalarConflictKind kind) {
+    switch (kind) {
+    case ScalarConflictKind::Estimate:
+        return SmatchetLocalization::T("offline.conflict.hint.estimate", "An estimate takes a time like 3d or 2h 30m.");
+    case ScalarConflictKind::Sprint:
+        return SmatchetLocalization::T("offline.conflict.hint.sprint", "A sprint takes its name or its id.");
+    case ScalarConflictKind::Other:
+    default:
+        return SmatchetLocalization::T("offline.conflict.hint.other", "Enter one of this field's own values.");
+    }
+}
+
+// The value as it will be sent: an estimate is read the tolerant way ("1.5d", "90 m") and sent as "1d 4h" / "1h 30m".
+// `problem` is set when an estimate does not read, and Save value stays off until it does.
+static std::string ResolvedValueToSend(const std::string& typed, ScalarConflictKind kind,
+                                       TrackerParseExplain::ParseMessage& problem) {
+    problem = TrackerParseExplain::ParseMessage();
+    if (kind != ScalarConflictKind::Estimate) {
+        return typed;
+    }
+    const TrackerParseExplain::DurationParse parsed =
+        TrackerParseExplain::ParseDurationInput(typed, TrackerParseExplain::BareNumberUnit::Minutes);
+    if (parsed.Ok) {
+        return parsed.Canonical;
+    }
+    problem =
+        parsed.Empty
+            ? TrackerParseExplain::ParseMessage{TrackerParseExplain::ParseMessageId::ConflictValueRejectedEstimate,
+                                                std::string(), 0, 0}
+            : parsed.Message;
+    return typed;
+}
+
 // Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
-// Theirs / Save edited. Writes the chosen value verbatim (no Markdown reconversion).
+// Theirs / Save edited. Writes the chosen value as it is (no Markdown reconversion); an estimate is sent in its
+// canonical form ("1h 30m"), read the tolerant way first.
 static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
@@ -1523,12 +1594,25 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
                                              ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::Spacing();
 
+    // The kind of value this field takes: a hint while it reads, the parser's reason while it does not (#115).
+    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId);
+    TrackerParseExplain::ParseMessage valueProblem;
+    const std::string valueToSend = ResolvedValueToSend(std::string(d.conflictResolveBuf.data()), kind, valueProblem);
+    if (valueProblem.IsError()) {
+        smatchet::ui::DrawInlineParseError(valueProblem);
+    } else {
+        ImGui::TextDisabled("%s", ScalarHintForKind(kind));
+    }
+
     auto doResolve = [&](const std::string& chosen) {
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
-        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
-                                    "That value cannot be used for this field, so the edit is still waiting and "
-                                    "your resolution is still here. Enter one of the field's values: for a sprint, "
-                                    "its name or id; for an estimate, a value such as 3d.");
+        TrackerParseExplain::ParseMessage rejected;
+        rejected.Id = RejectionIdForKind(kind);
+        const std::string failure =
+            TrackerParseExplain::DescribeParseMessage(rejected) + " " +
+            SmatchetLocalization::T("offline.conflict.kept_edit",
+                                    "The edit is still waiting and your resolution is still here.");
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.", failure.c_str());
     };
 
     DrawConflictPickButtons(d, cc, keys, doResolve);
@@ -1536,11 +1620,21 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     // Neither a key nor the button does anything once Use Mine or Use Theirs has resolved the conflict
     // earlier in this frame: the resolution text is gone by then.
     const bool stillOpen = d.conflictResolveDbId != 0;
-    const bool keyboardSave = (enterSaves || keys.Save) && stillOpen;
+    const bool saveBlocked = valueProblem.IsError();
+    const bool keyboardSave = (enterSaves || keys.Save) && stillOpen && !saveBlocked;
+    if (saveBlocked) {
+        ImGui::BeginDisabled();
+    }
     const bool saveClicked =
         smatchet::ui::KeyHintButton("Save value", smatchet::ui::CtrlEnterKeyName(), ImVec2(130, 0));
+    if (saveBlocked) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", TrackerParseExplain::DescribeParseMessage(valueProblem).c_str());
+        }
+    }
     if ((saveClicked || keyboardSave) && stillOpen) {
-        doResolve(std::string(d.conflictResolveBuf.data()));
+        doResolve(valueToSend);
         if (keyboardSave && !d.conflictResolveError.empty()) {
             g_conflictFocusFieldPending = true; // the value was turned down: caret back in the field to fix it
         }

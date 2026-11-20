@@ -97,6 +97,22 @@ ParsedJiraDateTime TodayUtcParsed(bool includeTime) {
     return p;
 }
 
+bool TodayLocalYmd(int& outYear, int& outMonth, int& outDay) {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    const bool converted = localtime_s(&local, &now) == 0;
+#else
+    const bool converted = localtime_r(&now, &local) != nullptr;
+#endif
+    if (converted) {
+        outYear = local.tm_year + 1900;
+        outMonth = local.tm_mon + 1;
+        outDay = local.tm_mday;
+    }
+    return converted;
+}
+
 void ClampDayToMonth(ParsedJiraDateTime& w, int year, int month) {
     const int dim = DaysInMonth(year, month);
     if (w.Day > dim) {
