@@ -793,6 +793,91 @@ bool ExpandSideBar(UiDrawSession& d, SideBar bar) {
     return true;
 }
 
+namespace {
+
+const char* PanelName(const EdgePanelSpec& spec) {
+    if (&spec == &kBottomSpec) {
+        return "bottom";
+    }
+    return &spec == &kSecondarySideSpec ? "secondary" : "primary";
+}
+
+// The first visible spec of a target; Focused walks every panel for the one holding the focused window.
+const EdgePanelSpec* ResolveNudgeSpec(PanelTarget target) {
+    if (target == PanelTarget::Bottom) {
+        return &kBottomSpec;
+    }
+    if (target == PanelTarget::Secondary) {
+        return &kSecondarySideSpec;
+    }
+    if (target == PanelTarget::Primary) {
+        for (const EdgePanelSpec* spec : kPrimaryBarSpecs) {
+            const ImGuiDockNode* node = EdgePanelNode(*spec);
+            if (node != nullptr && NodeShowsContent(node)) {
+                return spec;
+            }
+        }
+        return kPrimaryBarSpecs[0];
+    }
+    const ImGuiWindow* focused = GImGui->NavWindow != nullptr ? GImGui->NavWindow->RootWindow : nullptr;
+    if (focused == nullptr) {
+        return nullptr;
+    }
+    if (WindowInsideNode(focused, kBottomSpec.nodeId)) {
+        return &kBottomSpec;
+    }
+    for (const EdgePanelSpec* side : kSideSpecs) {
+        if (WindowInsideNode(focused, side->nodeId)) {
+            return side;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+float KeyboardNudgeStepPx() {
+    const float font = ::ImGui::GetCurrentContext() != nullptr ? ::ImGui::GetFontSize() : 16.0f;
+    return font * 2.0f;
+}
+
+PanelNudgeResult NudgePanelExtent(UiDrawSession& d, PanelTarget target, float deltaPx) {
+    PanelNudgeResult r;
+    if (::ImGui::GetCurrentContext() == nullptr) {
+        r.Error = "No UI context.";
+        return r;
+    }
+    const EdgePanelSpec* spec = ResolveNudgeSpec(target);
+    if (spec == nullptr) {
+        r.Error = "The focused window is not in the bottom panel or a side bar.";
+        r.NoFocusedPanel = target == PanelTarget::Focused;
+        return r;
+    }
+    r.Panel = PanelName(*spec);
+    const ImGuiDockNode* node = EdgePanelNode(*spec);
+    if (node == nullptr || !NodeShowsContent(node)) {
+        r.Error = "That panel is hidden.";
+        return r;
+    }
+    if (!IsFarChildOnAxis(node, spec->axis) || node->ParentNode->ChildNodes[0] == nullptr) {
+        r.Error = "That panel has no splitter to move in this layout.";
+        return r;
+    }
+    EdgePanelDragState& st = d.*(spec->state);
+    // A press while the previous one is still being applied builds on the extent asked for, not on the
+    // node's size, which only catches up once the dock tree has re-laid out.
+    const float base = st.applyFrames > 0 ? st.pendingExtent : node->Size[spec->axis];
+    const float minPx = ::ImGui::GetStyle().WindowMinSize[spec->axis];
+    const float parentPx = node->ParentNode->Size[spec->axis];
+    st.pendingExtent = pure::NudgeTargetExtent(base, deltaPx, minPx, parentPx);
+    if (st.applyFrames < 2) {
+        st.applyFrames = 2;
+    }
+    r.Ok = true;
+    r.ExtentPx = st.pendingExtent;
+    return r;
+}
+
 void Tick(UiDrawSession& d) {
     if (::ImGui::GetCurrentContext() == nullptr) {
         return;

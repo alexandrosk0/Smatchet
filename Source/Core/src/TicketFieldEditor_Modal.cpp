@@ -16,6 +16,7 @@
 
 #include "Json/BoundedJsonParse.h"
 #include "Ui/DialogKeysPure.h"
+#include "Ui/GestureKeys.h"
 
 #include "Ui/SmatchetModalPopupOpen.h"
 #include "Ui/SmatchetToast.h"
@@ -444,8 +445,20 @@ void DrawLongTextSplitter(const LongTextModalCtx& ctx) {
     if (splitterHover || splitterActive) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     }
+    // The divider moves with the mouse, or one step (5% of the panes) per ui.splitter.grow / ui.splitter.shrink
+    // while the editor has the keyboard.
+    float dx = 0.0f;
+    // keyboard-equivalent: ui.splitter.grow, ui.splitter.shrink
     if (splitterActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-        const float dx = ImGui::GetIO().MouseDelta.x;
+        dx = ImGui::GetIO().MouseDelta.x;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterGrow)) {
+        dx += ctx.PanesW * 0.05f;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterShrink)) {
+        dx -= ctx.PanesW * 0.05f;
+    }
+    if (dx != 0.0f) {
         if (ctx.PanesW > 0.0f) {
             float r = s_ActiveLongTextState.SplitterRatio + dx / ctx.PanesW;
             if (r < 0.15f)

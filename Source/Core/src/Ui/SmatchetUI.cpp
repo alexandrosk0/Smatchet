@@ -1122,10 +1122,10 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             continue;
         }
         // Audit #88: nothing runs behind a modal dialog. A command there could change or remove what the
-        // dialog asks about (Delete view? with its pending target), or open the palette over it. Only
-        // zoom and fullscreen pass (GlobalShortcutAllowedUnderModal). Checked first: a muted
-        // wheel combo leaves the wheel to the dialog, and a muted combo does not count as this frame's
-        // firing of its action in the alias de-dup.
+        // dialog asks about (Delete view? with its pending target), or open the palette over it. Only zoom,
+        // fullscreen and the focus-scoped list / splitter keys pass (GlobalShortcutAllowedUnderModal). Checked
+        // first: a muted wheel combo leaves the wheel to the dialog, and a muted combo does not count as this
+        // frame's firing of its action in the alias de-dup.
         if (modalUp && !smatchet::dialogkeys::GlobalShortcutAllowedUnderModal(pk.commandId.c_str())) {
             continue;
         }
