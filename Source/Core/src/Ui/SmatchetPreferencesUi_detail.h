@@ -2,6 +2,7 @@
 
 #include "ConfigManager.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerInputNormalisePure.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -172,6 +173,52 @@ inline void TrimTrackerCredentialFields(TrackerConfig& cfg) {
         cfg.JiraBackends[i].Domain = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].Domain);
         cfg.JiraBackends[i].Email = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].Email);
         cfg.JiraBackends[i].ApiToken = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].ApiToken);
+    }
+}
+
+/// Audit #80 — what the user pasted into a site field, read the tolerant way: a Jira board URL becomes its host,
+/// a Plane app URL its API base plus the workspace, a GitHub repository URL the API base plus owner and repo.
+/// Runs after TrimTrackerCredentialFields on save, so a value the user never left the field to rewrite is
+/// still stored in the form the base-URL builders expect. A value that does not read stays as typed (trimmed):
+/// the field already shows why. Owner, repo and workspace found in a URL only fill a field that is empty.
+/// Pure, like the trim above.
+inline void NormaliseTrackerSiteFields(TrackerConfig& cfg) {
+    using TrackerInputNormalise::NormaliseSiteField;
+    using TrackerInputNormalise::SiteField;
+    using TrackerInputNormalise::SiteUrlParse;
+    const SiteUrlParse domain = NormaliseSiteField(cfg.Domain, SiteField::JiraDomain);
+    if (domain.Ok) {
+        cfg.Domain = domain.Value;
+    }
+    for (std::size_t i = 0; i < cfg.JiraBackends.size(); ++i) {
+        const SiteUrlParse extra = NormaliseSiteField(cfg.JiraBackends[i].Domain, SiteField::JiraDomain);
+        if (extra.Ok) {
+            cfg.JiraBackends[i].Domain = extra.Value;
+        }
+    }
+    const SiteUrlParse plane = NormaliseSiteField(cfg.PlaneUrl, SiteField::PlaneUrl);
+    if (plane.Ok) {
+        cfg.PlaneUrl = plane.Value;
+        if (cfg.PlaneWorkspaceSlug.empty()) {
+            cfg.PlaneWorkspaceSlug = plane.WorkspaceSlug;
+        }
+    }
+    const SiteUrlParse github = NormaliseSiteField(cfg.GitHubBaseUrl, SiteField::GitHubBaseUrl);
+    if (github.Ok) {
+        cfg.GitHubBaseUrl = github.Value;
+        if (cfg.GitHubOwner.empty()) {
+            cfg.GitHubOwner = github.Owner;
+        }
+        if (cfg.GitHubRepo.empty()) {
+            cfg.GitHubRepo = github.Repo;
+        }
+    }
+    const SiteUrlParse owner = NormaliseSiteField(cfg.GitHubOwner, SiteField::GitHubOwner);
+    if (owner.Ok) {
+        cfg.GitHubOwner = owner.Value;
+        if (cfg.GitHubRepo.empty()) {
+            cfg.GitHubRepo = owner.Repo;
+        }
     }
 }
 

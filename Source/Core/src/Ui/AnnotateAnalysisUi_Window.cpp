@@ -20,6 +20,7 @@
 #include "Ui/PendingActionSubmitAsync.h"
 #include "Ui/SmatchetSubmitKeys.h"
 #include "Tracker/AnnotateContextCommentPure.h"
+#include "Tracker/TrackerInputNormalisePure.h"
 
 #include <algorithm>
 #include <atomic>
@@ -62,8 +63,11 @@ bool DrawAnnotateHeaderToolbar(AnnotateDrawCtx& ctx) {
     if (ImGui::Button("Ask AI")) {
         const std::string payload = BuildAiExport();
         ImGui::SetClipboardText(payload.c_str());
-        if (!State().aiUrl.empty()) {
-            app.OpenUrl(State().aiUrl);
+        // The URL field may still show text it refused; open the last URL that worked instead.
+        const std::string aiUrl = TrackerInputNormalise::AcceptedOr(
+            TrackerInputNormalise::ValidateHttpUrl(State().aiUrl), State().annotateCfg.AiChatUrl);
+        if (!aiUrl.empty()) {
+            app.OpenUrl(aiUrl);
         }
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -390,8 +394,9 @@ void DrawCallstackRowFnLocCells(AnnotateDrawCtx& ctx, const AnnotateRow& row) {
         const std::string shortLoc = shortPath + ":" + std::to_string(row.Parsed.LineNumber);
         PushAnnotateLinkTextOnly(theme);
         if (ImGui::SelectableRaw(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
-            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, true, row.PathForP4,
-                                      row.Parsed.LineNumber, row.Annotate.Changelist);
+            P4vLaunch::LaunchP4VcLikeReporting(State().annotateCfg, State().timeTpl, State().changeTpl, true,
+                                               row.PathForP4, row.Parsed.LineNumber, row.Annotate.Changelist,
+                                               &State().lastUiStatus);
         }
         PopAnnotateLinkTextOnly();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -470,8 +475,9 @@ void DrawCallstackRowClDateCells(AnnotateDrawCtx& ctx, const AnnotateRow& row, b
             }
         }
         if (ImGui::IsItemClicked() && !pending && !row.Annotate.Changelist.empty()) {
-            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, row.PathForP4,
-                                      row.Parsed.LineNumber, row.Annotate.Changelist);
+            P4vLaunch::LaunchP4VcLikeReporting(State().annotateCfg, State().timeTpl, State().changeTpl, false,
+                                               row.PathForP4, row.Parsed.LineNumber, row.Annotate.Changelist,
+                                               &State().lastUiStatus);
         }
     }
 
@@ -647,8 +653,8 @@ void DrawEntryLineClCell(const EntryLineCtx& lc, const P4AnnotatedLine& ln) {
         PushAnnotateLinkTextOnly(theme);
         if (ImGui::SelectableRaw(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
                                  ImVec2(clCellW, lc.HitH))) {
-            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, lc.Row.PathForP4,
-                                      ln.SourceLine, ln.Changelist);
+            P4vLaunch::LaunchP4VcLikeReporting(State().annotateCfg, State().timeTpl, State().changeTpl, false,
+                                               lc.Row.PathForP4, ln.SourceLine, ln.Changelist, &State().lastUiStatus);
         }
         PopAnnotateLinkTextOnly();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {

@@ -6,7 +6,8 @@
 // clang-format on
 #include "GridPane.h"
 #include "GridSearchInputClassifier.h"
-#include "Tracker/JqlUserDisplayPure.h" // RenderQueryWithAccountIds (Jira name→accountId)
+#include "Tracker/JqlQueryValidatePure.h" // a malformed query is refused with its reason (#63)
+#include "Tracker/JqlUserDisplayPure.h"   // RenderQueryWithAccountIds (Jira name→accountId)
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -70,8 +71,9 @@ std::string GridSearchRowFilterText(const GridPane& pane) {
         return std::string();
     }
     // The same trimmed text the classification read: a pasted key with a trailing space must not
-    // become a needle its own row fails to contain.
-    return TrimCopyAsciiWhitespace(pane.gridSearchBuf);
+    // become a needle its own row fails to contain. A pasted issue link filters by the key inside it,
+    // because no row contains the link's text.
+    return gs::TicketKeyFromSearchInput(pane.gridSearchBuf, gs::GridSearchBackendFromKey(pane.backendKey));
 }
 
 // Routes a committed search-box Enter against `target` per GridSearchInputClassifier. Trims
@@ -87,7 +89,7 @@ void SmatchetUI::applyGridSearchEnter(AppController& app, UiDrawSession& d, Grid
     const gs::GridSearchBackend backend = gs::GridSearchBackendFromKey(target.backendKey);
     switch (gs::ClassifyGridSearchInput(input, backend)) {
     case gs::GridSearchInputKind::TicketKey:
-        GridSearchJumpToTicket(app, d, target, input);
+        GridSearchJumpToTicket(app, d, target, gs::TicketKeyFromSearchInput(input, backend));
         return;
     case gs::GridSearchInputKind::TitleSearch:
         // Nothing to apply: GridSearchRowFilterText already feeds this text to the row
@@ -96,6 +98,21 @@ void SmatchetUI::applyGridSearchEnter(AppController& app, UiDrawSession& d, Grid
     case gs::GridSearchInputKind::Jql:
     default:
         break;
+    }
+    // A query that cannot be sent is refused here, with the reason, instead of replacing the view's query and
+    // leaving the grid empty (#63). Only a structural fault blocks: a field this catalog does not list is the
+    // tracker's call, since the catalog may be stale.
+    const std::shared_ptr<const std::vector<TrackerField>> catalog =
+        backend == gs::GridSearchBackend::Jira ? app.GetAvailableFields() : nullptr;
+    const TrackerParseExplain::ParseMessage problem = JqlQueryValidate::ValidateQuery(
+        input,
+        backend == gs::GridSearchBackend::Jira ? JqlQueryValidate::QueryDialect::Jql
+                                               : JqlQueryValidate::QueryDialect::FieldValue,
+        catalog.get());
+    if (JqlQueryValidate::IsBlockingQueryError(problem)) {
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("gridsearch.query_refused", "Query not applied"),
+                                              TrackerParseExplain::DescribeParseMessage(problem), ToastType::Warning);
+        return;
     }
     // The box holds display names on Jira — apply the id-canonical form so the view of record
     // and the backend both see accountIds. Gate on the PANE's backend (the search box is

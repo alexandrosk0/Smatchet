@@ -39,14 +39,15 @@
 #include "TicketFieldEditor_Worklog.h" // the worklog dialog + its test snapshot
 #include "Ui/SmatchetSubmitKeys.h"     // what the key-hint button and the placeholder drew
 
-#include "AppController.h"                     // IAppThreading for the dialog's worker; IssueCreateResult
-#include "CachedTicketTypes.h"                 // CachedTicket
-#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
-#include "Interfaces/IAppTicketMutations.h"    // the facet the dialog saves through
-#include "PendingActionTypes.h"                // PendingActionSubmitResult
-#include "SmatchetUiSession.h"                 // PendingFieldEdit
-#include "SpreadsheetState.h"                  // SpreadsheetState
-#include "TrackerFieldSchema.h"                // TrackerField
+#include "AppController.h"                         // IAppThreading for the dialog's worker; IssueCreateResult
+#include "CachedTicketTypes.h"                     // CachedTicket
+#include "Commands/Scenarios/UiTestScenario.h"     // SmatchetActiveUiTestAppController
+#include "Interfaces/IAppTicketMutations.h"        // the facet the dialog saves through
+#include "PendingActionTypes.h"                    // PendingActionSubmitResult
+#include "SmatchetUiSession.h"                     // PendingFieldEdit
+#include "SpreadsheetState.h"                      // SpreadsheetState
+#include "Tracker/TrackerFieldValueParseExplain.h" // the dialog and the field explain a bad time with it
+#include "TrackerFieldSchema.h"                    // TrackerField
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -378,7 +379,13 @@ bool g_worklogOpenRequested = false;
 const char* kWorklogHostWindow = "SmatchetTest::WorklogDialog";
 const char* kWorklogIssueId = "WLOGTEST-1"; // no grid row has it, so only this harness draws the dialog
 const char* kWorklogOwnerField = "timespent";
-const char* kWorklogBadTimeError = "Invalid Time spent format. Please use e.g. 2h 30m.";
+// "0m" reads as a duration but logs nothing, so the dialog asks for a time above zero (the same words the field
+// shows under itself). Built with the parser's own text so the case holds in any language.
+std::string WorklogBadTimeError() {
+    TrackerParseExplain::ParseMessage zero;
+    zero.Id = TrackerParseExplain::ParseMessageId::DurationRequiredPositive;
+    return TrackerParseExplain::DescribeParseMessage(zero);
+}
 
 using TicketFieldEditorWorklog::GetWorklogDialogSnapshotForTests;
 using TicketFieldEditorWorklog::WorklogDialogTestSnapshot;
@@ -496,7 +503,7 @@ void RegisterWorklogEnterOnBadTimeSpent(ImGuiTestEngine* engine) {
         ctx->KeyChars("0m");
         ctx->KeyPress(ImGuiKey_Enter);
         IM_CHECK_NO_RET(WorklogYieldUntil(
-            ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == kWorklogBadTimeError; }));
+            ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == WorklogBadTimeError(); }));
         IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
         ctx->Yield(6);
         const WorklogDialogTestSnapshot snap = GetWorklogDialogSnapshotForTests();
@@ -657,7 +664,7 @@ void RegisterWorklogCtrlEnterDoesNotPressFocusedButton(ImGuiTestEngine* engine) 
             ctx->Yield(2);
             ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
             IM_CHECK_NO_RET(WorklogYieldUntil(
-                ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == kWorklogBadTimeError; }));
+                ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == WorklogBadTimeError(); }));
             ctx->Yield(4);
             IM_CHECK_NO_RET(GetWorklogDialogSnapshotForTests().Active);
             IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 0);

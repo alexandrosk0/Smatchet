@@ -47,6 +47,12 @@ A read-only backend (`GitHubFixtureBackend`, `PlaneFixtureBackend`) that loads c
 **TrackerIssueKey**:
 The canonical, opaque issue identifier carried across the backend virtuals, with a per-backend shape (Jira `PROJ-123`, Plane UUID, GitHub `owner/repo#N`); only the owning backend parses it.
 
+**Issue reference**:
+What a user types or pastes to name an issue: a key (`proj-12`), or a link with one in it (a Jira `/browse/PROJ-12` or `selectedIssue=` URL, a GitHub `/issues/12` or `/pull/12` URL, a Linear `/issue/ENG-123` URL). `TrackerParseExplain::ParseIssueReference` turns it into the **TrackerIssueKey** the owning backend already uses and does nothing else: it never asks whether the issue exists. Distinct from a **TrackerIssueKey**, which is already canonical and opaque.
+
+**Parse message**:
+The closed set of reasons a typed value cannot be used (`TrackerParseExplain::ParseMessageId`), each with the part that is wrong (`Arg`, a byte span) and one localized sentence in `DescribeParseMessage` that says how to fix it. The parse-and-explain layer (durations, dates, issue references, site URLs, executable paths, query structure) returns a value plus its canonical text, or a **Parse message**; the inline error widget (`Ui/SmatchetInlineError.h`) is the only thing that draws one under a field.
+
 ### User & activity
 
 **TrackerActivityEntry**:
