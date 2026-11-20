@@ -13,6 +13,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "Ui/DialogKeysPure.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
 #include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
@@ -1306,8 +1307,10 @@ static void CancelConflictModal(UiDrawSession& d) {
 }
 
 struct ConflictModalKeys {
-    bool Save = false;  // Ctrl+Enter, in the panes that have a resolved field
-    bool Close = false; // an Esc that closes: nothing was typed
+    bool Save = false;      // Ctrl+Enter, in the panes that have a resolved field
+    bool Close = false;     // an Esc that closes: nothing was typed
+    bool UseMine = false;   // Alt+M, in the panes that offer Use Mine / Use Theirs
+    bool UseTheirs = false; // Alt+T
 };
 
 // Reads the resolver's own keys. Call inside the modal before any of its items are drawn: a key the resolver
@@ -1320,6 +1323,8 @@ struct ConflictModalKeys {
 // - Ctrl+Enter saves. The field is left first, and nav activation is dropped for the frame: ImGui activates
 //   the button under the keyboard cursor on Enter whatever the modifiers, so Ctrl+Enter with the cursor on
 //   Use Theirs would otherwise resolve to the server's value.
+// - Alt+M / Alt+T pick a side, as Use Mine / Use Theirs do, in the panes that have a resolved field. Both
+//   chords in one frame pick neither, so a stray second key never decides.
 static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const char* fieldLabel) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool owns =
@@ -1343,7 +1348,14 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
     if (escCancels && !nothingTyped) {
         g_conflictEscUnsavedHint = true;
     }
-    if (fieldActive && (keys.Save || esc != smatchet::dialogkeys::EscapeAction::None)) {
+    if (fieldLabel != nullptr && owns) {
+        const bool mine = ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_M);
+        const bool theirs = ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_T);
+        keys.UseMine = mine && !theirs;
+        keys.UseTheirs = theirs && !mine;
+    }
+    const bool picked = keys.UseMine || keys.UseTheirs;
+    if (fieldActive && (keys.Save || picked || esc != smatchet::dialogkeys::EscapeAction::None)) {
         ImGui::ClearActiveID();
     }
     if (keys.Save) {
@@ -1373,6 +1385,26 @@ static void TakeConflictCaretRequest() {
     g_conflictFocusFieldPending = false;
     if (request == smatchet::dialogkeys::CaretRequest::Take) {
         ImGui::SetKeyboardFocusHere();
+    }
+}
+
+// Use Mine / Use Theirs, by click or by Alt+M / Alt+T, with each button naming its key. Shared by the text and
+// the scalar panes, so the two keep the same keys. `resolve` gets the chosen side's value. One side per frame,
+// and none once the conflict is resolved: a click on one button with the other's chord in the same frame
+// resolves once, to the clicked side.
+template <typename Resolve>
+static void DrawConflictPickButtons(const UiDrawSession& d, const ConflictModalCtx& cc, const ConflictModalKeys& keys,
+                                    Resolve&& resolve) {
+    const bool mineClicked = smatchet::ui::KeyHintButton("Use Mine", "Alt+M", ImVec2(110, 0));
+    ImGui::SameLine();
+    const bool theirsClicked = smatchet::ui::KeyHintButton("Use Theirs", "Alt+T", ImVec2(110, 0));
+    if (d.conflictResolveDbId == 0) {
+        return;
+    }
+    if (mineClicked || (keys.UseMine && !theirsClicked)) {
+        resolve(cc.Mine);
+    } else if (theirsClicked || keys.UseTheirs) {
+        resolve(cc.Theirs);
     }
 }
 
@@ -1440,18 +1472,13 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
                                     kConflictNotRequeued);
     };
 
-    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
-        doResolve(cc.Mine);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
-        doResolve(cc.Theirs);
-    }
+    DrawConflictPickButtons(d, cc, keys, doResolve);
     ImGui::SameLine();
     const bool saveEnabled = !hasConflictMarkers;
     if (!saveEnabled)
         ImGui::BeginDisabled();
-    const bool saveClicked = ImGui::Button("Save resolved", ImVec2(130, 0));
+    const bool saveClicked =
+        smatchet::ui::KeyHintButton("Save resolved", smatchet::ui::CtrlEnterKeyName(), ImVec2(130, 0));
     if (!saveEnabled)
         ImGui::EndDisabled();
     // Ctrl+Enter saves under the same rule as the button: not while a conflict marker is left. Neither the
@@ -1518,19 +1545,14 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
                                     "its name or id; for an estimate, a value such as 3d.");
     };
 
-    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
-        doResolve(cc.Mine);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
-        doResolve(cc.Theirs);
-    }
+    DrawConflictPickButtons(d, cc, keys, doResolve);
     ImGui::SameLine();
     // Neither a key nor the button does anything once Use Mine or Use Theirs has resolved the conflict
     // earlier in this frame: the resolution text is gone by then.
     const bool stillOpen = d.conflictResolveDbId != 0;
     const bool keyboardSave = (enterSaves || keys.Save) && stillOpen;
-    const bool saveClicked = ImGui::Button("Save value", ImVec2(130, 0));
+    const bool saveClicked =
+        smatchet::ui::KeyHintButton("Save value", smatchet::ui::CtrlEnterKeyName(), ImVec2(130, 0));
     if ((saveClicked || keyboardSave) && stillOpen) {
         doResolve(std::string(d.conflictResolveBuf.data()));
         if (keyboardSave && !d.conflictResolveError.empty()) {

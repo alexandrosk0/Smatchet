@@ -11,6 +11,10 @@
 //              (the Slice-2 single-live-context hand-over trigger).
 //   4. close — WindowClose the new pane; assert the pane is removed and focus
 //              falls back to the surviving pane (min-1 invariant).
+//   5. caret — with a second Jira site configured, the "+" split button shows its
+//              backend-picker caret and lists one row per Jira site (#2444).
+//   6. site  — clicking the other site's row switches the active Jira site and
+//              opens a pane that does not inherit the source pane's rows.
 //
 // Follows the funcsize_grid_render.test.cpp fixture-coupled recipe: fixture-gate,
 // boot-check, sync, data-check, focus latch, bare-ref widget probes. Registered
@@ -20,7 +24,10 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
+#include "Config/ConfigManager.h"
+#include "Config/JiraBackendInstancesPure.h"
 #include "SmatchetUiSession.h"
+#include "Ui/PaneBackendTargetsPure.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — docked-window probe
@@ -336,9 +343,195 @@ static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// GridPanes / TwoJiraSites* (#2444)
+//
+// With two Jira sites and no other tracker the "+" caret used to stay hidden: the picker
+// counted credentialed tracker KINDS. Both tests add a second Jira site to the session config
+// (the fixture serves the grid without Jira credentials, so test values are seeded for the first
+// site) and restore it on every exit path through TwoJiraSitesGuard. The driver runs under an
+// isolated profile (ui_test_isolate_home) with the scripted fixture backend, so the site switch's
+// ConfigManager::Save and the sync on the fake second host stay inside the test.
+// ---------------------------------------------------------------------------
+namespace {
+
+const char* const kPickerCaret = "\xe2\x96\xbe##PaneBackendPicker";
+const char* const kSecondHost = "second-site.example.invalid";
+
+std::string JiraSiteRowLabel(const std::string& host) { return "New Jira \xC2\xB7 " + host + " pane"; }
+
+// The topmost open popup window (the caret popup, or a row's view submenu), else null.
+ImGuiWindow* TopPopupWindow() {
+    ImGuiContext& g = *GImGui;
+    return g.OpenPopupStack.Size == 0 ? nullptr : g.OpenPopupStack.back().Window;
+}
+
+// Seeds a two-site Jira config into g_ui.cfg; the destructor puts back the original fields and,
+// when the test switched site (`resyncApp` set), saves the restored config so ConfigManager::Load
+// serves it again and re-syncs the focused pane on the original site.
+struct TwoJiraSitesGuard {
+    std::vector<JiraBackendInstance> sites = g_ui.cfg.JiraBackends;
+    std::string active = g_ui.cfg.ActiveJiraDomain;
+    std::string domain = g_ui.cfg.Domain;
+    std::string email = g_ui.cfg.Email;
+    std::string token = g_ui.cfg.ApiToken;
+    AppController* resyncApp = nullptr;
+    bool seeded = false;
+
+    TwoJiraSitesGuard() {
+        if (!ConfigManager::BackendCredentialsPresent(g_ui.cfg, "Jira")) {
+            g_ui.cfg.JiraBackends.clear(); // re-hydrated below from the seeded live fields
+            g_ui.cfg.ActiveJiraDomain.clear();
+            g_ui.cfg.Domain = "first-site.example.invalid";
+            g_ui.cfg.ApiToken = "ui-test-token";
+        }
+        smatchet::jira_backends::EnsureHydrated(g_ui.cfg);
+        JiraBackendInstance second;
+        second.Domain = kSecondHost; // token inherited from the first site
+        seeded = smatchet::jira_backends::AddExtra(g_ui.cfg, second);
+    }
+    ~TwoJiraSitesGuard() {
+        g_ui.cfg.JiraBackends = sites;
+        g_ui.cfg.ActiveJiraDomain = active;
+        g_ui.cfg.Domain = domain;
+        g_ui.cfg.Email = email;
+        g_ui.cfg.ApiToken = token;
+        if (resyncApp != nullptr) {
+            ConfigManager::Save(g_ui.cfg);
+            resyncApp->SyncWithBackend();
+        }
+    }
+    std::string FirstHost() const {
+        return smatchet::jira_backends::NormalizeJiraHost(g_ui.cfg.JiraBackends[0].Domain);
+    }
+    TwoJiraSitesGuard(const TwoJiraSitesGuard&) = delete;
+    TwoJiraSitesGuard& operator=(const TwoJiraSitesGuard&) = delete;
+};
+
+// Opens the caret popup of the primary pane and returns it, or null after a logged failure.
+ImGuiWindow* OpenPickerPopup(ImGuiTestContext* ctx) {
+    ctx->SetRef(kPrimary);
+    if (TopPopupWindow() != nullptr) {
+        ctx->LogError("a popup was already open before the picker probe");
+        return nullptr;
+    }
+    if (!YieldUntil(ctx, [&] { return ctx->ItemExists(kPickerCaret); }, 30)) {
+        ctx->LogError("two Jira sites configured but the \"+\" backend-picker caret is missing (#2444)");
+        return nullptr;
+    }
+    ctx->ItemClick(kPickerCaret);
+    ImGuiWindow* popup = nullptr;
+    YieldUntil(
+        ctx,
+        [&] {
+            popup = TopPopupWindow();
+            return popup != nullptr;
+        },
+        30);
+    if (popup == nullptr) {
+        ctx->LogError("the backend-picker caret did not open its popup");
+    }
+    return popup;
+}
+
+} // namespace
+
+static void RegisterTwoJiraSitesShowPickerCaret(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "TwoJiraSitesShowPickerCaret");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = BootSyncPrimaryLive(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        ctx->SetRef(kPrimary);
+        const bool baselineCaret =
+            smatchet::pane_targets::ShowNewPaneCaret(smatchet::pane_targets::BuildNewPaneTargets(g_ui.cfg));
+        {
+            TwoJiraSitesGuard guard;
+            IM_CHECK_NO_RET(guard.seeded);
+            ImGuiWindow* popup = OpenPickerPopup(ctx);
+            IM_CHECK_NO_RET(popup != nullptr);
+            if (popup == nullptr) {
+                return;
+            }
+            // Rows are queried in the caret popup itself, never via $FOCUSED: a row under the mouse
+            // can open its view submenu, which would then own focus.
+            ctx->SetRef(popup->ID);
+            IM_CHECK_NO_RET(ctx->ItemExists(JiraSiteRowLabel(guard.FirstHost()).c_str()));
+            IM_CHECK_NO_RET(ctx->ItemExists(JiraSiteRowLabel(kSecondHost).c_str()));
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield();
+        }
+        ctx->SetRef(kPrimary);
+        const bool backToBaseline = YieldUntil(ctx, [&] { return ctx->ItemExists(kPickerCaret) == baselineCaret; }, 30);
+        IM_CHECK_NO_RET(backToBaseline);
+        IM_CHECK_NO_RET(g_ui.gridPanes.size() == 1); // the caret probe never opened a pane
+    };
+}
+
+// Clicking the other site's row switches the global active site and opens a pane that starts
+// without the source pane's rows (those belong to the previous site).
+static void RegisterTwoJiraSitesRowOpensPaneOnSite(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "TwoJiraSitesRowOpensPaneOnSite");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = BootSyncPrimaryLive(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        const std::shared_ptr<const std::vector<CachedTicket>> sourceRows = g_ui.gridPanes.front().ticketsSnapshot;
+        const std::string sourceViewName = g_ui.gridPanes.front().title;
+        TwoJiraSitesGuard guard;
+        IM_CHECK_NO_RET(guard.seeded);
+        ImGuiWindow* popup = OpenPickerPopup(ctx);
+        IM_CHECK_NO_RET(popup != nullptr);
+        if (popup == nullptr) {
+            return;
+        }
+        guard.resyncApp = app; // from the click on, the switch may have saved the config
+        ctx->SetRef(popup->ID);
+        ctx->ItemClick(JiraSiteRowLabel(kSecondHost).c_str());
+        // With saved Jira views the row is a submenu: pick the view the source pane shows.
+        ctx->Yield();
+        ImGuiWindow* submenu = TopPopupWindow();
+        if (g_ui.gridPanes.size() == 1 && submenu != nullptr && submenu != popup) {
+            ctx->SetRef(submenu->ID);
+            ctx->ItemClick(sourceViewName.c_str());
+        }
+        // Read the new pane's rows on the FIRST frame it exists, before its own sync can publish.
+        std::shared_ptr<const std::vector<CachedTicket>> rowsAtCreation;
+        const bool paneAdded = YieldUntil(ctx, [&] {
+            if (g_ui.gridPanes.size() != 2) {
+                return false;
+            }
+            rowsAtCreation = g_ui.gridPanes[1].ticketsSnapshot;
+            return true;
+        });
+        IM_CHECK_NO_RET(paneAdded);
+        if (!paneAdded) {
+            return;
+        }
+        const std::string paneTwoId = g_ui.gridPanes[1].id;
+        IM_CHECK_NO_RET(smatchet::jira_backends::HostsMatch(g_ui.cfg.ActiveJiraDomain, kSecondHost));
+        IM_CHECK_NO_RET(smatchet::jira_backends::HostsMatch(g_ui.cfg.Domain, kSecondHost));
+        IM_CHECK_STR_EQ_NO_RET(g_ui.gridPanes[1].backendKey.c_str(), "Jira");
+        // Never the source pane's rows: they were fetched from the first site.
+        IM_CHECK_NO_RET(sourceRows != nullptr); // the booted primary pane has rows, so the check below bites
+        IM_CHECK_NO_RET(rowsAtCreation != sourceRows);
+
+        // Teardown: close the new pane, let the switch's sync settle, then the guard restores.
+        if (GridPane* paneTwo = FindGridPaneById(g_ui.gridPanes, paneTwoId)) {
+            paneTwo->open = false;
+        }
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; }));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !app->IsSyncPendingOrActive(); }));
+    };
+}
+
 extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine) {
     RegisterGridPaneNewSplitFocusClose(engine);
     RegisterNonFocusedVisiblePaneSyncs(engine);
+    RegisterTwoJiraSitesShowPickerCaret(engine);
+    RegisterTwoJiraSitesRowOpensPaneOnSite(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -1,5 +1,5 @@
 // ui.* / grid.* interaction commands — font-size zoom, "open view" palette
-// shortcut, and grid selection clear. These are the app-global, rebindable
+// shortcut, the settings-search focus, and grid selection clear. These are the app-global, rebindable
 // registry commands behind the menu-bar shortcuts (Zoom In/Out/Reset, Open
 // View, Clear Selection); see docs/plans/keybindings-menu-shortcuts-fix.md.
 // Like ViewToggleCommands.cpp the handlers mutate `g_ui` (UI-thread-owned), so
@@ -18,6 +18,7 @@
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetPrefsSearchFocus.h"
 
 #include <string>
 #include <utility>
@@ -108,6 +109,24 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, IMainThreadPoster& post
                         });
         c.Destructive = false;
         c.Idempotent = false; // raises a one-frame open latch
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+    {
+        Command c = MakeCommand("preferences.search.focus",
+                                "Open Preferences (raising it if open) and put the caret in its settings search box.",
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(poster, []() {
+                                        g_ui.showPreferences = true;
+                                        g_ui.requestPreferencesFocus = true;
+                                        smatchet::ui::RequestPrefsSearchFocus();
+                                        nlohmann::json out;
+                                        out["requested"] = true;
+                                        return CommandResult::Success(std::move(out));
+                                    });
+                                });
+        c.Destructive = false;
+        c.Idempotent = true; // a second request before the next frame lands on the same box
         c.AsyncSafe = true;
         reg.Register(std::move(c));
     }

@@ -588,6 +588,25 @@ TEST_CASE("DictationInsertionRouter::IsFocusedTargetAiAssistant: false when anot
     router.UnregisterInputText(other);
 }
 
+TEST_CASE("DictationInsertionRouter: a discard request stops the indicator and is taken once") {
+    DictationInsertionRouter router;
+    CHECK_FALSE(router.TakeDiscardRequest()); // nothing asked
+    router.SetRecording(true);
+    router.RequestDiscard();
+    CHECK_FALSE(router.IsRecording()); // the overlay goes away at once
+    CHECK(router.TakeDiscardRequest());
+    CHECK_FALSE(router.TakeDiscardRequest()); // test-and-clear
+}
+
+TEST_CASE("DictationInsertionRouter: a new press clears a discard nobody took") {
+    DictationInsertionRouter router;
+    router.RequestDiscard(); // landed after the previous release
+    router.ClearDiscardRequest();
+    router.SetRecording(true);
+    CHECK(router.IsRecording());
+    CHECK_FALSE(router.TakeDiscardRequest()); // the next clip is not dropped
+}
+
 #else // SMATCHET_WITH_WHISPER not defined — stubs TU is linked.
 
 TEST_CASE("DictationInsertionRouter stubs: every method is a no-op") {
@@ -618,6 +637,11 @@ TEST_CASE("DictationInsertionRouter stubs: every method is a no-op") {
     // four UI surfaces call g_dictationRouter unconditionally).
     g_dictationRouter.RegisterInputText(buf, sizeof(buf), &cursor);
     CHECK(g_dictationRouter.RegisteredCountForTest() == 0u);
+
+    // The discard flag links and never reports a request.
+    router.RequestDiscard();
+    CHECK_FALSE(router.TakeDiscardRequest());
+    router.ClearDiscardRequest();
 }
 
 #endif // SMATCHET_WITH_WHISPER

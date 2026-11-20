@@ -224,3 +224,53 @@ TEST_CASE("PreferencesFilter — RecomputeMatchesNow drops a stale dynamic match
     filter.AddDynamicMatch(kBindingsId);
     CHECK(filter.ShowSetting(kBindingsId));
 }
+
+// --- Enter in the search box: the caret goes to the first match (RequestFocusOnFirstMatch) -----------
+
+namespace {
+int g_focusHookCalls = 0;
+void CountFocusHook() { ++g_focusHookCalls; }
+} // namespace
+
+TEST_CASE("PreferencesFilter — focus request fires once, on the first shown match") {
+    PreferencesFilter filter;
+    filter.Update("vsync", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK_FALSE(filter.ShowSetting(kUpdatesId)); // hidden: not the target
+    CHECK(g_focusHookCalls == 0);
+    CHECK(filter.ShowSetting(kVsyncId)); // first match: the hook runs before the caller draws it
+    CHECK(g_focusHookCalls == 1);
+    CHECK(filter.ShowSetting(kVsyncId)); // once only
+    CHECK(g_focusHookCalls == 1);
+}
+
+TEST_CASE("PreferencesFilter — focus request ignores an empty query and fail-open unknown ids") {
+    PreferencesFilter filter;
+    filter.Update("", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK(filter.ShowSetting(kVsyncId)); // shows, but nothing was searched for
+    CHECK(g_focusHookCalls == 0);
+
+    filter.Update("vsync", "en");
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK(filter.ShowSetting("no.such.setting")); // fail-open, not a match
+    CHECK(g_focusHookCalls == 0);
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 1);
+}
+
+TEST_CASE("PreferencesFilter — the next Update drops a focus request no setting took") {
+    PreferencesFilter filter;
+    filter.Update("vsync", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    filter.Update("vsync", "en"); // next frame, same query
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 0);
+    // A null hook is a no-op request.
+    filter.RequestFocusOnFirstMatch(nullptr);
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 0);
+}

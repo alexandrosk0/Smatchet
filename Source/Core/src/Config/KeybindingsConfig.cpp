@@ -328,5 +328,11 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBindingMulti({"Shift+Alt+Up", "Shift+Alt+Left"}, "ui.splitter.shrink", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Alt+PageUp", "view.panel.grow", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Alt+PageDown", "view.panel.shrink", "{}"));
+    // Primary actions that had no key (INPUT_UX_AUDIT.md § 4.4). The settings search sits next to
+    // Ctrl+, (Preferences); the view keys are the tab-switch chords browsers and editors use. Seeded
+    // into older configs once by migrated_action_keys_v1 (ConfigManager_Load.cpp).
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+,", "preferences.search.focus", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageDown", "view.next", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageUp", "view.previous", "{}"));
     return c;
 }

@@ -60,6 +60,7 @@ bool PreferencesFilter::ContainsLower(const std::string& haystack, const std::st
 }
 
 void PreferencesFilter::Update(const char* query, const std::string& uiLanguage) {
+    focusFirstMatchHook_ = nullptr; // a request lives for one draw
     const bool languageChanged = !indexBuilt_ || uiLanguage != indexedLanguage_;
     if (languageChanged) {
         indexedLanguage_ = uiLanguage;
@@ -88,7 +89,13 @@ bool PreferencesFilter::ShowSetting(const char* id) {
     if (SmatchetPrefsSchema::FindSetting(id) == nullptr) {
         return true; // fail open — the drift guard owns reporting unknown ids
     }
-    return matched_.count(id) != 0;
+    const bool shown = matched_.count(id) != 0;
+    if (shown && focusFirstMatchHook_ != nullptr) {
+        void (*hook)() = focusFirstMatchHook_;
+        focusFirstMatchHook_ = nullptr; // once: disarm before calling, so a re-entrant ShowSetting cannot fire it
+        hook();
+    }
+    return shown;
 }
 
 void PreferencesFilter::AddDynamicMatch(const char* settingId) {

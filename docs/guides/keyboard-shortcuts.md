@@ -121,13 +121,19 @@ shortcuts** section of the editor:
 
 These are multi-key or modal-local and are out of scope for v1 rebinding.
 
-The **Preferences** window has two fixed keys of its own, active only while it has
+The **Preferences** window has fixed keys of its own, active only while it has
 keyboard focus:
 
 | Shortcut | Action |
 |---|---|
 | `Ctrl+S` | Save & Sync, and save any unsaved Assistant settings |
 | `Enter` in a tracker connection field | Test connection |
+| `Enter` in the settings search box | Put the caret on the first matching setting |
+| `Esc` in the settings search box | Clear the search and leave the box |
+
+The settings search is also a rebindable command, `preferences.search.focus`
+(`Ctrl+Shift+,` by default): it opens Preferences, or raises it, with the caret in the
+search box, and the box's placeholder names the key. Closing Preferences clears the search.
 
 Opening Preferences puts the keyboard in the first blank connection field while the
 tracker is still being set up, and in the settings search box afterwards.
@@ -151,6 +157,15 @@ focus:
 | Merge-conflict resolver | `Enter` in the value field | Save the value |
 | Merge-conflict resolver | `Ctrl+Enter` | Save (a text conflict: only once every `<<<<<<<` marker is gone) |
 | Merge-conflict resolver | `Esc` | Leave the field, keeping the text. With nothing typed, close. `Esc` never discards a typed resolution: use **Cancel** |
+| Merge-conflict resolver | `Alt+M` / `Alt+T` | **Use Mine** / **Use Theirs** |
+| Report a bug | `Ctrl+Enter` | Submit |
+| Annotate | `Ctrl+Enter` in the callstack box | Process |
+| Scripts & Actions | `Ctrl+Enter` or `F5` | Run the open script (the row's **Run** / **Run on selected** button) |
+| Dictation overlay | `Esc` while recording | Cancel: the clip is dropped, nothing is transcribed or typed |
+
+A submit button names its key at its right edge (**Post Comment** `Ctrl+Enter`, **Save**
+`Ctrl+Enter`), the way a menu item names its shortcut, and a composer's placeholder sits
+inside the empty box.
 
 Log work opens with the caret in **Time spent**, Comments opened from a cell with the
 caret in the comment box, and the long-text editor with the caret in the text (when it
@@ -185,6 +200,28 @@ zoom shortcuts, **Full Screen** and the list and divider keys below (`Alt+Up`, `
 `Shift+Alt+arrows`), which act only on the list or divider that has the keyboard. A shortcut that ran behind a
 confirm could change or remove what the confirm is asking about.
 
+## Dialog key rules
+
+The dialogs and composers follow one set of keys, so a key means the same thing in every
+window. Where a dialog's row in the tables above differs, the row describes what it does today.
+
+| Where | Enter | Ctrl+Enter | Esc | Tab |
+|---|---|---|---|---|
+| Single-line field | Commit | Same as Enter | Revert to the previous value | Commit, move to the next control |
+| Multiline composer (comment, worklog description, callstack) | New line | Submit | Leave the field; a second `Esc` closes, and typed text is kept or asked about | Next control, never a tab character |
+| Chat composer (Assistant) | Send | New line | Stop the reply in flight, else leave the field | Next control |
+| Picker or filter popup | Pick the highlighted row; nothing on an empty list | — | Close, change nothing | Accept the highlighted row |
+| Form dialog | Field-level commit | Save | Cancel, asking first when something is typed | Next field |
+| Confirm dialog | Activate the focused button | — | Cancel | Move between buttons |
+| Search box | Go to the first result | — | Clear the search and leave the box | Next control |
+
+- A button that has a key names it, dim, at its right edge.
+- A key that belongs to a window (the tables above) acts only while that window has keyboard
+  focus, so it cannot fire a dialog hidden behind another one.
+- A global shortcut (the table below) fires from anywhere, unless a text field has the caret
+  and the combo is one typing can produce. While a modal dialog is open they do nothing, except
+  the zoom shortcuts, **Full Screen** and the list and divider keys (see **Confirm dialogs** above).
+
 ## Default bindings
 
 | Action | Default | Command id |
@@ -214,6 +251,10 @@ confirm could change or remove what the confirm is asking about.
 | Move the focused splitter up / left | `Shift+Alt+Up`, `Shift+Alt+Left` | `ui.splitter.shrink` |
 | Make the focused panel bigger | `Ctrl+Alt+PageUp` | `view.panel.grow` |
 | Make the focused panel smaller | `Ctrl+Alt+PageDown` | `view.panel.shrink` |
+| Quick-create issue | `Ctrl+Shift+T` | `issue.quick_create.open` |
+| Search settings | `Ctrl+Shift+,` | `preferences.search.focus` |
+| Next view | `Ctrl+PageDown` | `view.next` |
+| Previous view | `Ctrl+PageUp` | `view.previous` |
 | Search issues (focused grid pane) | `Ctrl+F`, `/` | `grid.search.focus` |
 
 `/` on its own does nothing while you are typing in a field, so it never takes a
@@ -256,6 +297,10 @@ The keyboard versions of the mouse gestures (`ui.list.move_up` / `ui.list.move_d
 `view.panel.shrink`) are added the same way, once, to a config saved before they
 existed (`migrated_gesture_keys_v1`). A command you had already bound keeps your
 binding.
+
+The settings-search and view-stepping shortcuts (`preferences.search.focus`, `view.next`, `view.previous`)
+are added the same way, once, to a config saved before they existed; a binding you already gave one of
+those commands is kept as it is.
 
 Configs that already ran #2276's wheel migration (`migrated_multi_hotkey_zoom_v2`)
 but still hold only a *partial* default set — the common case is just `Ctrl+=` /

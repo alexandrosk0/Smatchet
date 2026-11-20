@@ -74,6 +74,11 @@ const ExpectedBinding kExpectedDefaults[] = {
     {{"Shift+Alt+Up", "Shift+Alt+Left"}, "ui.splitter.shrink", "{}"},
     {{"Ctrl+Alt+PageUp"}, "view.panel.grow", "{}"},
     {{"Ctrl+Alt+PageDown"}, "view.panel.shrink", "{}"},
+    // Primary actions with no key before the input UX audit (§ 4.4); seeded into existing configs
+    // via migrated_action_keys_v1.
+    {{"Ctrl+Shift+,"}, "preferences.search.focus", "{}"},
+    {{"Ctrl+PageDown"}, "view.next", "{}"},
+    {{"Ctrl+PageUp"}, "view.previous", "{}"},
 };
 
 } // namespace

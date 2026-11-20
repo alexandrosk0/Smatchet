@@ -15,6 +15,8 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
@@ -24,8 +26,12 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstring>
+#include <future>
+#include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 // g_ui — the shared UI-thread state bag the Views dashboard draws from.
 extern UiDrawSession g_ui;
@@ -196,8 +202,164 @@ void RegisterActionButtonOrder(ImGuiTestEngine* engine) {
     };
 }
 
+// ---- View-switch keys (INPUT_UX_AUDIT.md #65) -------------------------------------------------------
+
+// The view.* handlers hop to the UI thread and wait for it, so they run on a worker while the test keeps
+// stepping frames.
+smatchet::cmd::CommandResult RunCommand(ImGuiTestContext* ctx, AppController* app, const std::string& name,
+                                        const nlohmann::json& args) {
+    std::future<smatchet::cmd::CommandResult> pending = std::async(std::launch::async, [app, name, args] {
+        smatchet::cmd::CommandContext cmdCtx;
+        cmdCtx.ConfirmedDestructive = true; // view.delete, for the clean-up
+        return app->Commands().Dispatch(name, args, cmdCtx);
+    });
+    while (pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        ctx->Yield();
+    }
+    return pending.get();
+}
+
+std::string CurrentViewId(ImGuiTestContext* ctx, AppController* app) {
+    const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "view.current", nlohmann::json::object());
+    return r.Ok && r.Data ? r.Data->value("id", std::string()) : std::string();
+}
+
+// The saved views in list order (the order view.next steps through).
+std::vector<std::string> ViewIdsInOrder(ImGuiTestContext* ctx, AppController* app) {
+    nlohmann::json args;
+    args["limit"] = 500;
+    const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "view.list", args);
+    std::vector<std::string> ids;
+    if (r.Ok && r.Data && r.Data->contains("items")) {
+        for (const auto& item : (*r.Data)["items"]) {
+            ids.push_back(item.value("id", std::string()));
+        }
+    }
+    return ids;
+}
+
+// The id `step` places from `id` in `ids`, wrapping.
+std::string Neighbour(const std::vector<std::string>& ids, const std::string& id, int step) {
+    const int n = static_cast<int>(ids.size());
+    for (int i = 0; i < n; ++i) {
+        if (ids[static_cast<std::size_t>(i)] == id) {
+            return ids[static_cast<std::size_t>(((i + step) % n + n) % n)];
+        }
+    }
+    return std::string();
+}
+
+bool WaitForCurrentView(ImGuiTestContext* ctx, AppController* app, const std::string& id) {
+    for (int i = 0; i < 60; ++i) {
+        if (CurrentViewId(ctx, app) == id) {
+            return true;
+        }
+        ctx->Yield();
+    }
+    return false;
+}
+
+// Ctrl+PageDown / Ctrl+PageUp (view.next / view.previous) move the active view one step through the list
+// and back, and ask before switching when the Views editor holds unapplied edits.
+void CheckViewSwitchKeys(ImGuiTestContext* ctx, AppController* app) {
+    // Two views of its own, so there is always a next and a previous.
+    std::vector<std::string> created;
+    for (const char* name : {"zz input keys view A", "zz input keys view B"}) {
+        nlohmann::json args;
+        args["name"] = name;
+        const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "view.create", args);
+        IM_CHECK_NO_RET(r.Ok);
+        if (r.Ok && r.Data) {
+            created.push_back(r.Data->value("id", std::string()));
+        }
+    }
+    IM_CHECK_NO_RET(created.size() == 2);
+    if (created.size() == 2) {
+        ctx->Yield(3); // the deferred create lands
+        const std::vector<std::string> ids = ViewIdsInOrder(ctx, app);
+        IM_CHECK_NO_RET(ids.size() >= 2);
+        const std::string start = CurrentViewId(ctx, app);
+        IM_CHECK_NO_RET(!start.empty());
+        ctx->SetInputMode(ImGuiInputSource_Keyboard);
+        ImGui::ClearActiveID(); // a global chord: no text field holds the caret
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown);
+        const std::string next = Neighbour(ids, start, 1);
+        const bool movedNext = WaitForCurrentView(ctx, app, next);
+        if (!movedNext) {
+            ctx->LogError("Ctrl+PageDown did not switch from '%s' to the next view '%s'", start.c_str(), next.c_str());
+        }
+        IM_CHECK_NO_RET(movedNext);
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageUp);
+        const bool movedBack = WaitForCurrentView(ctx, app, start);
+        if (!movedBack) {
+            ctx->LogError("Ctrl+PageUp did not switch back to '%s'", start.c_str());
+        }
+        IM_CHECK_NO_RET(movedBack);
+
+        // Unapplied edits in the Views editor are not thrown away by the key: it asks first (the same
+        // "Discard changes?" a sidebar click raises), keeps the draft and stays on the active view.
+        g_ui.cfg.BackendHasBeenReachable = true; // the first-launch gate on drawViewsDashboardWindow
+        g_ui.showViewsDashboard = true;
+        ImGuiWindow* editor = nullptr;
+        const bool draftLive = YieldUntil(ctx, [&] {
+            g_ui.requestViewsDashboardFocus = true;
+            editor = FindLiveEditorPane();
+            return editor != nullptr && g_ui.viewDraftId == start;
+        });
+        IM_CHECK_NO_RET(draftLive);
+        if (draftLive) {
+            g_ui.viewDraft.Name += "_unapplied";
+            ctx->Yield(2);
+            ImGui::ClearActiveID();
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown);
+            // The dashboard turns the show flag into the open popup on the next draw, so the pending id,
+            // which stays until the question is answered, is the lasting sign that it was asked.
+            const bool asked = YieldUntil(ctx, [] { return !g_ui.viewsPendingActivateId.empty(); }, 60);
+            if (!asked) {
+                ctx->LogError("Ctrl+PageDown with unapplied editor edits did not ask before switching");
+            }
+            IM_CHECK_NO_RET(asked);
+            IM_CHECK_NO_RET(CurrentViewId(ctx, app) == start);                            // nothing was switched
+            IM_CHECK_NO_RET(g_ui.viewDraft.Name.find("_unapplied") != std::string::npos); // the draft is kept
+            // Esc answers the question as Cancel does: it clears the pending switch and keeps the view.
+            ctx->KeyPress(ImGuiKey_Escape);
+            const bool answered = YieldUntil(ctx, [] { return g_ui.viewsPendingActivateId.empty(); }, 60);
+            IM_CHECK_NO_RET(answered);
+            IM_CHECK_NO_RET(CurrentViewId(ctx, app) == start);
+            g_ui.viewDraftId = kReseedSentinel; // the next case starts from a clean draft
+            ctx->Yield(2);
+        }
+
+        g_ui.requestViewsDashboardFocus = false;
+    }
+    for (const std::string& id : created) {
+        nlohmann::json del;
+        del["id"] = id;
+        RunCommand(ctx, app, "view.delete", del);
+    }
+}
+
+void RegisterViewSwitchKeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsEditorHeader", "ViewKeys_CtrlPageDownUpAndDirtyDraftAsks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        ViewsDashboardStateGuard guard;
+        g_ui.cfg.UiMode = UiMode::Desktop;
+        CheckViewSwitchKeys(ctx, app);
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
-extern "C" void SmatchetRegisterViewsEditorHeaderTests(ImGuiTestEngine* engine) { RegisterActionButtonOrder(engine); }
+extern "C" void SmatchetRegisterViewsEditorHeaderTests(ImGuiTestEngine* engine) {
+    RegisterActionButtonOrder(engine);
+    RegisterViewSwitchKeys(engine);
+}
 
 #endif // SMATCHET_BUILD_UI_TESTS

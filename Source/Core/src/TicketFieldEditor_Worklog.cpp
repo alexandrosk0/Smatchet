@@ -19,6 +19,7 @@
 #include "Ui/PendingActionSubmitAsync.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
@@ -488,7 +489,7 @@ void DrawWorklogButtons(IAppThreading& threading, IAppTicketMutations& mutations
     if (wasInFlight) {
         ImGui::BeginDisabled();
     }
-    const bool saveClicked = ImGui::Button("Save", ImVec2(80, 0));
+    const bool saveClicked = smatchet::ui::KeyHintButton("Save", smatchet::ui::CtrlEnterKeyName(), ImVec2(80, 0));
     if (wasInFlight) {
         ImGui::EndDisabled();
     } else if (ImGui::IsItemHovered()) {
@@ -548,9 +549,12 @@ void DrawWorklogDescription() {
         }
         ImGui::EndPopup();
     }
-    ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
-                              sizeof(s_ActiveWorklogState.WorkDescription),
-                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+    // Ctrl+Enter here is read by ReadWorklogKeys for the whole dialog; the helper adds the placeholder
+    // and keeps Tab moving on.
+    smatchet::ui::SubmitMultilineInput(
+        "##WorklogDesc", s_ActiveWorklogState.WorkDescription, sizeof(s_ActiveWorklogState.WorkDescription),
+        ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4),
+        SmatchetLocalization::T("worklog.desc_placeholder", "What did you work on? (optional)"));
 }
 
 } // namespace
