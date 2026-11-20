@@ -137,19 +137,22 @@ void AppendTerms(const std::string& prefix, const char* const* terms, int termCo
 
 namespace {
 
-// True when some word of `nameFolded` (words split at anything that is not an ASCII letter or digit, or a
-// non-ASCII byte) starts with `wordFolded`.
+// True when some word of `nameFolded` starts with `wordFolded`. Words split at the shared matcher's non-word
+// characters (textmatch::IsWordChar on decoded code points), so "points" starts a word of "Story—Points" and
+// of "Story Points" with a no-break space, and never one inside "Points" ("oints"). The name is already
+// folded, so a case change ("StoryPoints") is not a split here.
 bool NameHasWordStartingWith(const std::string& nameFolded, const std::string& wordFolded) {
-    const auto isWordByte = [](char c) {
-        const unsigned char b = static_cast<unsigned char>(c);
-        return b >= 0x80u || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z');
-    };
-    std::size_t at = nameFolded.find(wordFolded);
-    while (at != std::string::npos) {
-        if (at == 0 || !isWordByte(nameFolded[at - 1])) {
+    const char* const s = nameFolded.data();
+    const std::size_t n = nameFolded.size();
+    bool prevIsWordChar = false;
+    std::size_t i = 0;
+    while (i < n) {
+        if (!prevIsWordChar && nameFolded.compare(i, wordFolded.size(), wordFolded) == 0) {
             return true;
         }
-        at = nameFolded.find(wordFolded, at + 1);
+        std::size_t len = 1;
+        prevIsWordChar = smatchet::textmatch::IsWordChar(smatchet::textmatch::DecodeUtf8(s + i, n - i, len));
+        i += len;
     }
     return false;
 }

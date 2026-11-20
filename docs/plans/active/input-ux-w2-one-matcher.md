@@ -208,7 +208,8 @@ None.
 - `a82bb10` · field-name suggestions match word starts only (Windows unit suite); the grid fallback skips an empty query; ASCII remap fold (Cursor Bugbot).
 - `93c8a5d` · clang-format of one include comment in the palette test.
 - `024b002` · CodeRabbit's 13 findings: UTF-8 character boundaries in the matcher, a blank wide-space dropdown filter, an unambiguous options cache key, cached row highlight ranges, the pressed-row guard, the toolbar exact-first rule, word matching in the project picker, the empty-ToPrefix rule documented.
-- (this commit) · the empty-ToPrefix wording in `CallstackParser.h`; this log.
+- `8d229c7` · the empty-ToPrefix wording in `CallstackParser.h`; this log.
+- (this commit) · CodeRabbit's head-`8d229c7` finding: field-name word starts split at the shared matcher's non-word characters (`textmatch::IsWordChar` on decoded code points), so "points" finds "Story—Points" and a no-break-space name; JQL case added.
 
 ## Deviations from plan
 - **Matcher doctests** live in `tests/Core/TextMatchPure.cases.h`, a header included once by `tests/Core/TicketGridFilterPure.test.cpp`, rather than inline in that TU: same rig (Linux subset and `SmatchetTests`), one file to move when `tests/CMakeLists.txt` unlocks (debt entry).
@@ -222,12 +223,12 @@ None.
 - **Golden:** `tests/golden/command-palette-fuzzy.png` predates the palette's match marks. Bucket-C reports the drift (advisory lane); the re-capture needs the CI bootstrap job and a human verdict, so it is in the debt entry, not this PR.
 
 ## Verification (actual)
-- **Bucket A, Linux subset** (`ninja-test-linux`, `SmatchetTsanTests`): 1203 / 1203 cases pass at `024b002`, including the matcher cases (fold table and idempotence over U+0000-U+1FFFF, decode safety, character boundaries, words, ranking, ranges, caps), the grid fold and fallback, remaps and JQL field names.
+- **Bucket A, Linux subset** (`ninja-test-linux`, `SmatchetTsanTests`): 1204 / 1204 cases pass after the field-name word-start fix (1203 at `024b002`), including the matcher cases (fold table and idempotence over U+0000-U+1FFFF, decode safety, character boundaries, words, ranking, ranges, caps), the grid fold and fallback, remaps and JQL field names.
 - **Bucket A, `SmatchetTests` TUs built standalone under ASan/UBSan**: FilterDropdownPure, ToolbarEditorPure, PreferencesFilter, AuditWindowFilter, ProjectPickerFilter, CallstackParser, TrackerQuerySuggestCommon: all pass. A 300k-input fuzz run of the matcher and brute-force checks of the alignment and the boundary helpers (review agent): clean.
 - **Windows CI, first head**: the MSVC build and the dual-target build compiled; `SmatchetTests` caught one real regression (`TrackerQuerySuggestCommon.test.cpp:218`, a one-letter prefix suggesting "Assignee"), fixed in `a82bb10`. The final head's CI results are on the PR's checks.
 - **Bucket E** (`FilterDropdown` T-X, `CommandPalette` `OneMatcher_InitialsRankAndMarkTheTitle`, `GridSearch` `TitleSearch_WordsAnyOrderCaseFoldedLettersInOrder`): run by CI only (Windows + Mesa); the three TUs pass a syntax check against imgui_test_engine locally.
 - **Perf**: a dropdown rebuild measured at -O2 (numbers in § UX Pillar callouts); rebuilds happen per change, not per frame.
-- **Gates**: `pre-ship.sh` lint delta, duplication, function size and `test-docs.sh` pass; the code-review agent reviewed every commit (6 findings in its first pass, all fixed, then clean); Cursor Bugbot (2) and CodeRabbit (13) findings addressed on their threads.
+- **Gates**: `pre-ship.sh` lint delta, duplication, function size and `test-docs.sh` pass; the code-review agent reviewed every commit (6 findings in its first pass, all fixed, then clean); Cursor Bugbot (2) and CodeRabbit (13, then 1 on `8d229c7`) findings addressed on their threads.
 - **`grill-with-docs`**: run without an interviewer (autonomous session). No glossary in `Source/Core/src/Ui/` or the repo root defines a picker / filter / matcher term to conflict with, and the plan claims no storage shape. Nothing to change.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
