@@ -624,6 +624,15 @@ bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
             ImGui::SetKeyboardFocusHere();
         }
     }
+    // Dictation spliced into the box while it is active: ImGui edits its own copy of the text and would
+    // write that back over the splice, so ask it to re-read the buffer before the box draws. The request
+    // names the widget it is for, so draining it here is right whichever box it names.
+    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
+    if (pendingReloadId != 0u) {
+        if (ImGuiInputTextState* state = ImGui::GetInputTextState(pendingReloadId)) {
+            state->ReloadUserBufAndMoveToEnd();
+        }
+    }
     // The placeholder sits inside the empty box; Ctrl+Enter submits (Ui/SmatchetSubmitKeys.h).
     const bool ctrlEnter = smatchet::ui::SubmitMultilineInput(
         "##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize, ImVec2(-FLT_MIN, 80.0f),
