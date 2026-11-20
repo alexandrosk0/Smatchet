@@ -870,6 +870,7 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
             LOG_DEBUG("Whisper hotkey press ignored — capture already active (mock)");
             return;
         }
+        g_dictationRouter.ClearDiscardRequest(); // a cancel left over from an earlier clip must not drop this one
         g_dictationRouter.SetRecording(true);
         LOG_DEBUG("Whisper hotkey: capture started (mock seam — WASAPI bypassed)");
         return;
@@ -896,6 +897,7 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
     }
     // SetRecording is lock-free atomic — safe from worker; UI thread polls it
     // every frame for the indicator + overlay.
+    g_dictationRouter.ClearDiscardRequest(); // a cancel left over from an earlier clip must not drop this one
     g_dictationRouter.SetRecording(true);
     LOG_DEBUG("Whisper hotkey: capture started");
 }
@@ -915,6 +917,10 @@ void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
         return;
     }
     g_dictationRouter.SetRecording(false);
+    if (g_dictationRouter.TakeDiscardRequest()) {
+        LOG_INFO("Whisper hotkey (mock): clip cancelled on the overlay; nothing transcribed");
+        return;
+    }
     bool expectedFlight = false;
     if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true, std::memory_order_acq_rel)) {
         LOG_DEBUG("Whisper hotkey release (mock): prior transcription still in flight");
@@ -993,6 +999,11 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     std::vector<std::int16_t> pcm;
     state->capture.DrainCapturedPcm(pcm);
     g_dictationRouter.SetRecording(false);
+    // Esc or Cancel on the recording overlay: the audio is dropped unheard, with no notice (the user asked).
+    if (g_dictationRouter.TakeDiscardRequest()) {
+        LOG_INFO("Whisper hotkey: clip cancelled on the overlay; %zu samples dropped, nothing transcribed", pcm.size());
+        return;
+    }
 
     if (pcm.empty()) {
         LOG_INFO("Whisper hotkey: 0 PCM samples captured (release within < 1 chunk)");

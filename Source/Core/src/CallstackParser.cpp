@@ -1,6 +1,7 @@
 #include "CallstackParser.h"
 
 #include "AsciiCharClass.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -457,21 +458,74 @@ static constexpr size_t kMaxLineLength = 16384;
 
 } // namespace
 
+namespace {
+
+bool IsRemapSeparator(char c) { return c == '/' || c == '\\'; }
+
+// "C:..." — a Windows drive path, whose file system ignores case.
+bool StartsWithDriveLetter(const std::string& s) {
+    return s.size() >= 2 && smatchet::ascii::IsAlpha(s[0]) && s[1] == ':';
+}
+
+// True when `path` starts with `from`, '/' and '\' comparing equal and, when `foldCase`, ASCII letters
+// compared without case. A `from` that does not end in a separator must end where a path segment ends
+// (a separator or the end of the path), so "D:/Work/Game" never matches "D:/Work/Games/...".
+bool PathStartsWithRemapPrefix(const std::string& path, const std::string& from, bool foldCase) {
+    if (from.empty() || from.size() > path.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < from.size(); ++i) {
+        const char a = path[i];
+        const char b = from[i];
+        if (IsRemapSeparator(a) && IsRemapSeparator(b)) {
+            continue;
+        }
+        const bool same =
+            foldCase ? smatchet::ascii::ToLower(a) == smatchet::ascii::ToLower(b) // ASCII only: locale-independent
+                     : a == b;
+        if (!same) {
+            return false;
+        }
+    }
+    return IsRemapSeparator(from.back()) || from.size() == path.size() || IsRemapSeparator(path[from.size()]);
+}
+
+// `to` + `rest` with exactly one separator where they meet when either side brought one.
+std::string JoinRemapped(const std::string& to, std::string rest, bool fromEndedWithSeparator) {
+    const bool toEndsSep = !to.empty() && IsRemapSeparator(to.back());
+    const bool restStartsSep = !rest.empty() && IsRemapSeparator(rest[0]);
+    if (toEndsSep && restStartsSep) {
+        rest.erase(0, 1);
+    } else if (!toEndsSep && !restStartsSep && fromEndedWithSeparator && !to.empty() && !rest.empty()) {
+        // The rule's From ended on a separator its To dropped: put one back, in the To's own style.
+        const bool backslash = to.find('\\') != std::string::npos && to.find('/') == std::string::npos;
+        rest.insert(rest.begin(), backslash ? '\\' : '/');
+    }
+    return to + rest;
+}
+
+} // namespace
+
 std::string ApplyPathRemaps(std::string path, const std::vector<PathRemapRule>& remaps) {
-    size_t bestLen = 0;
-    size_t bestIdx = remaps.size();
-    for (size_t i = 0; i < remaps.size(); ++i) {
-        const std::string& from = remaps[i].FromPrefix;
+    std::size_t bestLen = 0;
+    std::size_t bestIdx = remaps.size();
+    std::string bestFrom;
+    for (std::size_t i = 0; i < remaps.size(); ++i) {
+        std::string from = TrimCopyAsciiWhitespace(remaps[i].FromPrefix);
         if (from.empty()) {
             continue;
         }
-        if (path.size() >= from.size() && path.compare(0, from.size(), from) == 0 && from.size() >= bestLen) {
+        const bool foldCase = StartsWithDriveLetter(from) || StartsWithDriveLetter(path);
+        if (PathStartsWithRemapPrefix(path, from, foldCase) && from.size() >= bestLen) {
             bestLen = from.size();
             bestIdx = i;
+            bestFrom = std::move(from);
         }
     }
     if (bestIdx < remaps.size()) {
-        path.replace(0, bestLen, remaps[bestIdx].ToPrefix);
+        const bool fromEndedWithSeparator = !bestFrom.empty() && IsRemapSeparator(bestFrom.back());
+        path = JoinRemapped(TrimCopyAsciiWhitespace(remaps[bestIdx].ToPrefix), path.substr(bestLen),
+                            fromEndedWithSeparator);
     }
     return path;
 }

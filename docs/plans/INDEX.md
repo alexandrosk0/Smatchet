@@ -236,6 +236,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`touchscreen-support`](shipped/touchscreen-support.md) | 2026-10-31 | Plan — Touchscreen support (standalone + Unreal) |
 | [`background-traffic-idle-gating`](shipped/background-traffic-idle-gating.md) | 2026-11-02 | stop background tracker traffic when the app sits unfocused + idle — idle-gated connectivity probe, live-success probe push, outage backoff, Unreal focus feed, minimized frame throttle |
 | [`shared-dropdown-recents`](shipped/shared-dropdown-recents.md) | 2026-11-13 | Plan — Shared filter dropdown with recent picks |
+| [`pane-picker-jira-sites`](shipped/pane-picker-jira-sites.md) | 2026-11-16 | Plan — "+ ▾" new-pane caret with two Jira sites |
 <!-- END auto-plan-index -->
 
 ### Notes

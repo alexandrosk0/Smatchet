@@ -34,6 +34,77 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-19 · PR #2430, #2432, #2433 · override: `plan-lock-out-of-band` over four lock crossings, two of them merge-clean against the holder's open PR (plus `cr-out-of-band` on all three)
+
+### What escaped
+Three input-UX and picker PRs merged past a red `Plan-lock gate`, each waived by `plan-lock-out-of-band` with one `plan-lock-disposition:` body line per lock. All three also carried `cr-out-of-band`. The newest run of every other check on each merged head was green.
+
+| PR | merged (UTC) | head | locks red on the merged head (holder at merge time) | overlap |
+|---|---|---|---|---|
+| #2430 | 2026-11-16 00:36:37 | `3e52e1cb8` | `input-ux-wave1-palette` (#2433, open) | `CommandPaletteUi.cpp` |
+| | | | `bulk-edit-rows` (#2434, open) | `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp` |
+| #2432 | 2026-11-17 10:22:10 | `9e03b4a0b` | `pane-picker-jira-sites` (branch not on origin until 2026-11-18; later #2451) | `GridPane.h`, `SmatchetGridHeaderUi.cpp`, `SmatchetGridPaneWindows.cpp`, `tests/CMakeLists.txt` |
+| #2433 | 2026-11-16 13:24:50 | `b12bdb424` | `bulk-edit-rows` (#2434, open) | `SmatchetGridUiSupport.h/.cpp`, `SmatchetActiveProjectGridTable.cpp`, `SmatchetLocalization.cpp`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp` |
+
+The locks are the ones the `Plan-lock gate` job logs on each merged head name (jobs 132981205588, 133875743961 and 133046270965). The user approved each override in the authoring session.
+
+CodeRabbit on the merged heads:
+- **#2430**: never reviewed.
+  - Two `@coderabbitai review` requests, on 2026-11-13 and 2026-11-15, came back rate-limited.
+  - The snapshot row reads `crState: NONE+rate-limit CODE-PR-pause`.
+  - Disposition label: `cr-disposition:rate-limited-operator-waived`.
+- **#2432**: reviewed through `dc588ba99` (three `COMMENTED` reviews).
+  - Three later code commits were not seen:
+    - `6228bee67`: Enter in a tick-box list inside a modal.
+    - `3bc0f6115`: a test seam.
+    - `7a23ad227`: bucket-E time budget.
+  - Two develop merge-ins also came after the last review.
+  - The snapshot row reads `STALE_UNKNOWN`.
+  - Disposition label: `cr-disposition:cr-auto-review-disabled`.
+- **#2433**: a summary comment only, no review.
+  - Disposition label: `cr-disposition:cr-auto-review-disabled`.
+
+Each PR body carries an `adversarial-code-review:` line pinned to the merged head. #2430 and #2432 have `merge-snapshots.jsonl` rows (`GATES_PASSED`, `orchestrator-automerge`). #2433 has none, so it is left for the `git-janitor` backfill along with #2431 and #2438.
+
+### Root cause
+There are three shapes, and none of them shipped a defect.
+
+- **Merge-clean overlap with a pushed holder** (#2430 × `bulk-edit-rows`, #2433 × `bulk-edit-rows`).
+  - This is the path-only class of the entries below.
+  - #2434's branch was on origin with an open PR.
+  - `git merge-tree --write-tree` of each PR's merged head against #2434's head at that moment is clean. Those heads are `475cb544b` and `1fdc0127e`, the latest #2434 commit at or before each merge.
+- **A real conflict with an open holder** (#2430 × `input-ux-wave1-palette`).
+  - Replayed against #2433's head at the time #2430 merged (`8e51e3be9`), the merge conflicts in `CommandPaletteUi.cpp` and in both UI test registries.
+  - The user picked the order. #2433 then merged develop and resolved the conflict (`e70a5b1a3`), as its disposition line said it would.
+  - The lock did its job: it forced the decision, and the override records it.
+- **A holder with nothing pushed** (#2432 × `pane-picker-jira-sites`).
+  - The lock's branch first reached origin on 2026-11-18, the day after the merge. Its edits could not be checked, so the claim had to stand in for them.
+  - The user directed the PR in.
+  - Replayed now against that branch's commit as of the merge (`d128d5793`), the merge is clean.
+
+The CodeRabbit side is the known one. CodeRabbit reviews only on request here, the requests are rate-limited, and `merge-gates.sh` cannot read a clean incremental review (#2432's `STALE_UNKNOWN`).
+
+Provenance: the gate verdicts come from the CI job logs above. The merge-tree replays ran on 2026-11-19 from a worktree at `origin/develop` `40ab6e84e`.
+
+### Preventing gate
+None — the override was legitimate for all four crossings. Each has a per-slug disposition and the user's OK, and the holder sequenced and resolved the one real conflict.
+
+The class gate for the two merge-clean crossings is already filed: [`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md), which settles a pushed lock's overlap with `git merge-tree`.
+- Replayed here, it WARNs on both. #2433 would have needed no override at all.
+- #2430 would still have been red on `input-ux-wave1-palette`, which is correct.
+- That brings the overrides it would have removed to six.
+
+These PRs are added to that entry's **Observed on** list. Its priority (P2) is left for the next triage.
+
+The CodeRabbit waivers belong to the existing P1 entry's class, and the three PRs are added to its **Observed on** list.
+
+### Eval case
+None — not agent-reviewable. These are lock-granularity and review-availability gate decisions, and no defect is known to have shipped on the overlaps.
+
+### Filed as
+- [`categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md`](categories/tooling/2026-10-06-plan-lock-gate-reds-on-merge-clean-overlaps.md) (existing, P2; **Observed on** updated)
+- [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+
 ## 2026-11-13 · PR #2410 · override: `cr-out-of-band` + `cr-disposition:cr-auto-review-disabled` after CodeRabbit reviewed the last code commit and only develop merge-ins followed
 
 ### What escaped

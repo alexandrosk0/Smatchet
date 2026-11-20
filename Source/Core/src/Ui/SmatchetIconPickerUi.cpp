@@ -5,12 +5,12 @@
 #include "SmatchetIconPickerUi.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "SmatchetImGuiFonts.h"
+#include "TextMatchPure.h"
 #include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetInput.h"
 #include "imgui.h"
@@ -27,6 +27,50 @@ smatchet::ui::DialogScopeState s_iconPickerDialog;
 } // namespace
 
 void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
+
+// Every icon for an empty query, in catalog order. Otherwise the shared matcher over the slugs, best first and
+// ties in catalog order: the words "arrow up" find both arrow-up and up-arrow slugs, and the letters mgnf find
+// magnifying-glass. When any slug holds every word as written, letters-in-order matches are left out.
+void SmatchetIconPickerUi::refreshMatches(const std::vector<SmatchetToolbarIconEntry>& catalog) {
+    if (matchesValid_ && matchesQuery_ == search_ && matchesCatalogSize_ == catalog.size()) {
+        return;
+    }
+    matchesValid_ = true;
+    matchesQuery_ = search_;
+    matchesCatalogSize_ = catalog.size();
+    matches_.clear();
+    matches_.reserve(catalog.size());
+    const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(search_);
+    if (query.Empty()) {
+        for (std::size_t i = 0; i < catalog.size(); ++i) {
+            matches_.push_back(static_cast<int>(i));
+        }
+        return;
+    }
+    struct Scored {
+        long long Rank;
+        int Index;
+    };
+    std::vector<Scored> scored;
+    smatchet::textmatch::Scratch scratch;
+    bool anyExact = false;
+    for (std::size_t i = 0; i < catalog.size(); ++i) {
+        const char* name = catalog[i].Name != nullptr ? catalog[i].Name : "";
+        const smatchet::textmatch::Result r =
+            smatchet::textmatch::Match(query, name, std::strlen(name), smatchet::textmatch::Mode::Fuzzy, scratch);
+        if (r.Matched()) {
+            anyExact = anyExact || r.Substring;
+            scored.push_back(Scored{smatchet::textmatch::RankKey(r), static_cast<int>(i)});
+        }
+    }
+    std::sort(scored.begin(), scored.end(),
+              [](const Scored& a, const Scored& b) { return a.Rank != b.Rank ? a.Rank > b.Rank : a.Index < b.Index; });
+    for (const Scored& row : scored) {
+        if (!anyExact || smatchet::textmatch::IsExactRank(row.Rank)) {
+            matches_.push_back(row.Index);
+        }
+    }
+}
 
 bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
     if (requestOpen_) {
@@ -51,24 +95,14 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         searchOpts.selectAllOnFocus = true;
         const bool searchEnter = SmatchetInput::Text("##iconsearch", search_, searchOpts).enterCommitted;
 
-        std::string q(search_);
-        std::transform(q.begin(), q.end(), q.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
         const bool fa = SmatchetAreFaIconsLoaded();
         ImGui::BeginChild("##icongrid", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
 
-        // Build the visible list once per frame, then draw it with ImGuiListClipper so only
-        // on-screen rows cost time. Slugs are stored lowercase, so a lowercased search box
-        // matches by plain substring. About 1400 glyphs total — UX Pillar 1, 6.94 ms budget.
+        // The matching icons (refreshed only when the query changes), drawn with ImGuiListClipper so
+        // only on-screen rows cost time. About 1400 glyphs total — UX Pillar 1, 6.94 ms budget.
         const std::vector<SmatchetToolbarIconEntry>& catalog = SmatchetToolbarIconCatalog();
-        std::vector<int> matches;
-        matches.reserve(catalog.size());
-        for (int i = 0; i < static_cast<int>(catalog.size()); ++i) {
-            if (q.empty() || std::strstr(catalog[i].Name, q.c_str()) != nullptr) {
-                matches.push_back(i);
-            }
-        }
+        refreshMatches(catalog);
+        const std::vector<int>& matches = matches_;
 
         const ImGuiStyle& style = ImGui::GetStyle();
         const float cell = ImGui::GetFrameHeight() + 10.0f;

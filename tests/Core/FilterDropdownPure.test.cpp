@@ -63,18 +63,9 @@ std::string Shape(const std::vector<Row>& rows) {
 
 } // namespace
 
-TEST_CASE("FindCaseInsensitive: offset of the first match, ASCII case ignored") {
-    CHECK(FindCaseInsensitive("In Progress", "progress") == 3);
-    CHECK(FindCaseInsensitive("In Progress", "in") == 0);
-    CHECK(FindCaseInsensitive("In Progress", "") == 0);
-    CHECK(FindCaseInsensitive("In Progress", "done") == std::string::npos);
-    CHECK(FindCaseInsensitive("ab", "abc") == std::string::npos);
-    CHECK(FindCaseInsensitive(nullptr, "a") == std::string::npos);
-    CHECK(FindCaseInsensitive(nullptr, "") == 0);
-}
-
-TEST_CASE("NormalizeFilter / TrimFilter: trim both ends; Normalize also lower-cases") {
+TEST_CASE("NormalizeFilter / TrimFilter: trim both ends; Normalize also case-folds, beyond ASCII") {
     CHECK(NormalizeFilter("  Hello World \t") == "hello world");
+    CHECK(NormalizeFilter(" \xCE\x91\xCE\x9B\xCE\xA6\xCE\x91 ") == "\xCE\xB1\xCE\xBB\xCF\x86\xCE\xB1"); // ΑΛΦΑ -> αλφα
     CHECK(TrimFilter("  Hello World \t") == "Hello World");
     CHECK(NormalizeFilter("   ").empty());
     CHECK(NormalizeFilter(nullptr).empty());
@@ -89,6 +80,73 @@ TEST_CASE("ItemMatches: label, secondary text or id; empty filter matches all") 
     CHECK(ItemMatches(alice, "acc-"));
     CHECK_FALSE(ItemMatches(alice, "bob"));
     CHECK_FALSE(ItemMatches(MakeItem("1", "Bug"), "x"));
+    // Words in any order, each in any field; letters in order in the label; ids only as written.
+    CHECK(ItemMatches(alice, "smith alice"));
+    CHECK(ItemMatches(alice, "smith example"));
+    CHECK(ItemMatches(alice, "alsm"));
+    CHECK_FALSE(ItemMatches(alice, "ac1")); // "acc-1" only as written: no letters-in-order on an id
+    CHECK(ItemMatches(MakeItem("p", "\xCE\x94\xCE\xBF\xCE\xBA\xCE\xB9\xCE\xBC\xCE\xAE"),
+                      NormalizeFilter("\xCE\x94\xCE\x9F\xCE\x9A"))); // "ΔΟΚ" finds "Δοκιμή"
+}
+
+TEST_CASE("BuildRows: filtered rows are ranked best first; exact matches hide letters-in-order ones") {
+    std::vector<ItemView> items = {MakeItem("1", "Catalog"), MakeItem("2", "Open log"), MakeItem("3", "Logins"),
+                                   MakeItem("4", "Project X"), MakeItem("5", "Sprint plan")};
+    ModelInput in;
+    in.Items = items.data();
+    in.Count = 5;
+    std::vector<Row> rows;
+
+    in.FilterLower = "log"; // a word start beats the middle of a word; the start of the text beats both
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "iii");
+    CHECK(rows[0].ItemIndex == 2);
+    CHECK(rows[1].ItemIndex == 1);
+    CHECK(rows[2].ItemIndex == 0);
+    CHECK(rows[0].Rank >= rows[1].Rank);
+    CHECK(rows[1].Rank > rows[2].Rank);
+
+    in.FilterLower = "prj"; // no label holds "prj": letters in order find "Project X" only
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "i");
+    CHECK(rows[0].ItemIndex == 3);
+
+    in.FilterLower = "pr"; // "Project X" and "Sprint plan" both hold "pr" as written
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "ii");
+    CHECK(rows[0].ItemIndex == 3); // at the start of the label
+    CHECK(rows[1].ItemIndex == 4);
+
+    in.FilterLower = "po"; // "Report" holds "po"; "Open log" and "Project X" only have p..o
+    items.push_back(MakeItem("6", "Report"));
+    in.Items = items.data();
+    in.Count = 6;
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "i"); // only "Report": the letters-in-order matches are left out
+    CHECK(rows[0].ItemIndex == 5);
+
+    // A scratch and a query the caller keeps give the same rows.
+    smatchet::textmatch::Scratch scratch;
+    const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(in.FilterLower);
+    in.Scratch = &scratch;
+    in.Query = &query;
+    std::vector<Row> again;
+    BuildRows(in, again);
+    REQUIRE(Shape(again) == "i");
+    CHECK(again[0].ItemIndex == 5);
+}
+
+TEST_CASE("ScoreItem: the label's matched letters, for the row highlight") {
+    const ItemView item = MakeItem("PROJ", "Project X", "the main project");
+    smatchet::textmatch::Scratch scratch;
+    std::vector<smatchet::textmatch::ByteRange> ranges[3];
+    const smatchet::textmatch::Result r = ScoreItem(item, smatchet::textmatch::MakeQuery("prj x"), scratch, ranges);
+    CHECK(r.Matched());
+    REQUIRE(ranges[0].size() == 3); // "Pr", "j", "X"
+    CHECK(ranges[0][0].Begin == 0);
+    CHECK(ranges[0][0].End == 2);
+    CHECK(ranges[0][1].Begin == 3);
+    CHECK(ranges[0][2].Begin == 8);
 }
 
 TEST_CASE("BuildRows: no filter, no recents -> every option in order") {
@@ -224,8 +282,10 @@ TEST_CASE("BuildRows: KeepCheckedVisible keeps ticked options a filter would hid
     in.KeepCheckedVisible = true;
     BuildRows(in, rows);
     REQUIRE(Shape(rows) == "ii");
-    CHECK(rows[0].ItemIndex == 0);
-    CHECK(rows[1].ItemIndex == 2);
+    CHECK(rows[0].ItemIndex == 2); // the match first
+    CHECK(rows[1].ItemIndex == 0); // then the ticked option it would hide
+    CHECK(rows[0].Rank > 0);
+    CHECK(rows[1].Rank == 0);
 }
 
 TEST_CASE("BuildRows: the create row is offered only for text no option is named") {
@@ -346,7 +406,8 @@ TEST_CASE("DefaultHighlight: a ticked option kept visible by KeepCheckedVisible 
     std::vector<Row> rows;
     BuildRows(in, rows);
     REQUIRE(Shape(rows) == "ii");
-    CHECK(DefaultHighlight(rows, items.data(), 2, false, in.FilterLower) == 1);
+    CHECK(rows[0].ItemIndex == 1); // the match is listed first, the kept ticked option after it
+    CHECK(DefaultHighlight(rows, items.data(), 2, false, in.FilterLower) == 0);
 
     // No option matches: the create row takes Enter, not the kept ticked option.
     in.AllowCreate = true;
@@ -363,7 +424,8 @@ TEST_CASE("DefaultHighlight: a ticked option kept visible by KeepCheckedVisible 
 }
 
 TEST_CASE("DefaultHighlight: a label match outranks an id or secondary-text match") {
-    // Typing "ab" for Abby: an opaque id, an e-mail and a mid-word hit all contain "ab" and sort first.
+    // Typing "ab" for Abby: an opaque id, an e-mail and a mid-word hit all contain "ab" and come first in
+    // list order; the rows are ranked, so Abby (then Abel, equal score, list order) leads.
     std::vector<ItemView> items = {MakeItem("5ab01", "Zed"), MakeItem("u2", "Carol", "abby.fan@example.com"),
                                    MakeItem("u3", "Crabby"), MakeItem("u4", "Abby"), MakeItem("u5", "Abel")};
     ModelInput in;
@@ -373,19 +435,53 @@ TEST_CASE("DefaultHighlight: a label match outranks an id or secondary-text matc
     std::vector<Row> rows;
     BuildRows(in, rows);
     REQUIRE(Shape(rows) == "iiiii");
-    CHECK(MatchRank(items[0], "ab") == 2);
-    CHECK(MatchRank(items[1], "ab") == 2);
-    CHECK(MatchRank(items[2], "ab") == 1);
-    CHECK(MatchRank(items[3], "ab") == 0);
-    CHECK(DefaultHighlight(rows, items.data(), 5, false, in.FilterLower) == 3); // Abby, the first prefix match
+    CHECK(rows[0].ItemIndex == 3);
+    CHECK(rows[1].ItemIndex == 4);
+    CHECK(rows[2].ItemIndex == 2); // a label that contains it beats the secondary text and the id
+    CHECK(DefaultHighlight(rows, items.data(), 5, false, in.FilterLower) == 0); // Abby
 
     in.Count = 3; // no label starts with it: the label that contains it
     BuildRows(in, rows);
-    CHECK(DefaultHighlight(rows, items.data(), 3, false, in.FilterLower) == 2);
+    REQUIRE(DefaultHighlight(rows, items.data(), 3, false, in.FilterLower) == 0);
+    CHECK(rows[0].ItemIndex == 2);
 
-    in.Count = 2; // only id / secondary matches: the first of them
+    in.Count = 2; // only secondary / id matches: the e-mail that starts with it beats the mid-id hit
     BuildRows(in, rows);
-    CHECK(DefaultHighlight(rows, items.data(), 2, false, in.FilterLower) == 0);
+    REQUIRE(DefaultHighlight(rows, items.data(), 2, false, in.FilterLower) == 0);
+    CHECK(rows[0].ItemIndex == 1);
+}
+
+TEST_CASE("DefaultHighlight: the create row outranks a letters-in-order match, never an exact one") {
+    // A labels picker: typing "qa" must add "qa", not tick "quarantine" (q..a in order).
+    std::vector<ItemView> items = {MakeItem("backend", "backend"), MakeItem("frontend", "frontend"),
+                                   MakeItem("quarantine", "quarantine"), MakeItem("regression", "regression")};
+    ModelInput in;
+    in.Items = items.data();
+    in.Count = 4;
+    in.AllowCreate = true;
+    in.FilterLower = "qa";
+    std::vector<Row> rows;
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "i+"); // the near match stays listed, reachable with the arrow keys
+    CHECK(rows[0].ItemIndex == 2);
+    CHECK(DefaultHighlight(rows, items.data(), 4, false, in.FilterLower) == 1);
+    CHECK(RowAnswersFilter(rows[0], items.data(), 4, in.FilterLower)); // moved onto it, Enter would tick it
+
+    in.FilterLower = "bknd";
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "i+");
+    CHECK(DefaultHighlight(rows, items.data(), 4, false, in.FilterLower) == 1);
+
+    in.FilterLower = "end"; // held as written by backend and frontend: Enter ticks the best of them
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "ii+");
+    CHECK(DefaultHighlight(rows, items.data(), 4, false, in.FilterLower) == 0);
+
+    in.AllowCreate = false; // no create row: the letters-in-order match takes Enter
+    in.FilterLower = "qa";
+    BuildRows(in, rows);
+    REQUIRE(Shape(rows) == "i");
+    CHECK(DefaultHighlight(rows, items.data(), 4, false, in.FilterLower) == 0);
 }
 
 TEST_CASE("DefaultHighlight: never the clear row") {
@@ -529,20 +625,21 @@ TEST_CASE("DecideHighlight: an untouched highlight is the default of the list as
     CHECK_FALSE(d.Reveal);
 
     // A fetch replaces "Zed" with "Abby": still two rows, but Enter now belongs to the label that
-    // starts with the filter.
+    // starts with the filter, ranked to the top.
     items[1] = MakeItem("3", "Abby");
     BuildRows(in, rows);
     REQUIRE(Shape(rows) == "ii");
+    REQUIRE(rows[0].ItemIndex == 1);
     d = DecideHighlight(rows, items.data(), 2, nullptr, crabby, 0, untouched, in.FilterLower);
-    CHECK(d.Index == 1);
+    CHECK(d.Index == 0);
     CHECK(d.IsDefault);
     CHECK(d.Reveal);
 
-    // The same change after the user placed the highlight on "Crabby": it stays where they put it.
+    // The same change after the user placed the highlight on "Crabby": it follows "Crabby" to its new row.
     HighlightContext moved;
     moved.UserMoved = true;
     d = DecideHighlight(rows, items.data(), 2, nullptr, crabby, 0, moved, in.FilterLower);
-    CHECK(d.Index == 0);
+    CHECK(d.Index == 1);
     CHECK_FALSE(d.IsDefault);
     CHECK_FALSE(d.Reveal);
 }
@@ -640,10 +737,12 @@ TEST_CASE("RowAnswersFilter: the Create row and a matching option answer it, a k
     items[1].Label = "zzz-thing";
     Row create;
     create.Kind = RowKind::Create;
-    Row first;
+    Row first; // as BuildRows lists a kept option: Rank 0
     first.ItemIndex = 0;
-    Row second;
+    Row second; // as BuildRows lists a match: its Rank
     second.ItemIndex = 1;
+    second.Rank = smatchet::textmatch::RankKey(
+        smatchet::textmatch::Match(smatchet::textmatch::MakeQuery("zz"), std::string(items[1].Label)));
     Row clear;
     clear.Kind = RowKind::Clear;
     const ItemView* v = items.data();
@@ -653,6 +752,19 @@ TEST_CASE("RowAnswersFilter: the Create row and a matching option answer it, a k
     CHECK_FALSE(RowAnswersFilter(clear, v, 2, "zz"));
     Row unknown; // a recent id outside the list
     CHECK_FALSE(RowAnswersFilter(unknown, v, 2, "zz"));
+    CHECK(RowAnswersFilter(first, v, 2, "")); // no filter: every option row answers
+
+    // The same, built: the kept option is listed with Rank 0, the match with its rank.
+    ModelInput in;
+    in.Items = v;
+    in.Count = 2;
+    in.KeepCheckedVisible = true;
+    in.FilterLower = "zz";
+    std::vector<Row> rows;
+    BuildRows(in, rows);
+    REQUIRE(rows.size() == 2);
+    CHECK(RowAnswersFilter(rows[0], v, 2, "zz"));
+    CHECK_FALSE(RowAnswersFilter(rows[1], v, 2, "zz"));
 }
 
 TEST_CASE("SpaceTogglesRow: Space toggles on an empty filter or after arrows, else it is typed") {

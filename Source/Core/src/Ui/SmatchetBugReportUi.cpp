@@ -13,6 +13,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Ui/SmatchetSubmitKeys.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -330,7 +331,10 @@ void DrawActions(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     if (!canSubmit) {
         ImGui::BeginDisabled();
     }
-    const bool submitClicked = ImGui::Button(d.bugReportInFlight ? "Submitting…" : "Submit");
+    // Submit names its key (Ctrl+Enter, read above while this window has the keyboard).
+    const bool submitClicked = d.bugReportInFlight
+                                   ? ImGui::Button("Submitting…")
+                                   : smatchet::ui::KeyHintButton("Submit", smatchet::ui::CtrlEnterKeyName());
     if (!canSubmit) {
         ImGui::EndDisabled();
     }

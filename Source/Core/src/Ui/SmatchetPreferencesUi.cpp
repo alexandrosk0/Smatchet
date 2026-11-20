@@ -170,11 +170,48 @@ struct PrefsOpenFocus {
 };
 PrefsOpenFocus s_prefsOpenFocus;
 
+// The `preferences.search.focus` request (Ui/SmatchetPrefsSearchFocus.h): the ImGui frame it was made on,
+// or -1 for none. It waits while a popup holds the keyboard and expires after kPrefsSearchFocusFrames, so a
+// window that never came up does not take the caret later.
+int s_prefsSearchFocusRequestFrame = -1;
+constexpr int kPrefsSearchFocusFrames = 30;
+
+// The search box's id as of its last draw. Lets the next frame tell, before the box draws, whether an Esc
+// was aimed at it: ImGui's nav cancel has usually taken the caret out by then.
+ImGuiID s_prefsSearchInputId = 0;
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int s_prefsFirstMatchFocusCount = 0;
+#endif
+
+// PreferencesFilter::RequestFocusOnFirstMatch hook: the keyboard goes to the next item, the matched
+// setting's widget. Called from inside ShowSetting, in the window that draws that setting. ImGui's own
+// tabbing request only activates an item that takes text; a checkbox, button or combo is focused, not
+// pressed, so Enter in the search never changes a setting.
+void FocusNextPrefsItem() {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    ++s_prefsFirstMatchFocusCount;
+#endif
+    ::ImGui::SetKeyboardFocusHere();
+}
+
 } // namespace
+
+namespace smatchet {
+namespace ui {
+void RequestPrefsSearchFocus() { s_prefsSearchFocusRequestFrame = ::ImGui::GetFrameCount(); }
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int PrefsSearchFirstMatchFocusCountForTest() { return s_prefsFirstMatchFocusCount; }
+#endif
+} // namespace ui
+} // namespace smatchet
 
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.preferencesBuffersLoaded = false;
     s_prefsOpenFocus = PrefsOpenFocus{};
+    // A query is about one visit: the next open starts on the full settings, not a stale filtered pane.
+    d.prefsSearchBuf[0] = '\0';
+    s_prefsSearchFocusRequestFrame = -1;
     d.mcpPrefsSavedHintUntil = {};
     // Tracker "Test connection" verdict is close-scoped: reopening must not show a stale
     // "Connected" for credentials edited since. The generation bump makes any still-running
@@ -1530,15 +1567,42 @@ namespace {
 // only edits the buffer, the readout half reports the resulting MatchCount().
 // Nothing between them emits ImGui, so the readout's SameLine still attaches to
 // the clear button.
-void DrawPrefsSearchBoxInput(UiDrawSession& d) {
+// Returns true on the frame Enter was pressed in the box (the caller then sends the caret to the first
+// matching setting). Keys:
+// - `preferences.search.focus` (Ctrl+Shift+, by default) puts the caret here, ahead of the open-edge pick.
+// - Esc clears the query and leaves the box. ImGui's nav cancel runs in NewFrame and has usually taken the
+//   caret out already on the Esc frame, so the box counts as the Esc target when it held the caret this
+//   frame or the last one. A box that lost the caret that way writes its edited text back when it next
+//   draws, from ImGui's saved copy of the deactivated field; dropping that copy keeps the clear.
+bool DrawPrefsSearchBoxInput(UiDrawSession& d) {
+    if (s_prefsSearchFocusRequestFrame >= 0) {
+        if (ImGui::GetFrameCount() - s_prefsSearchFocusRequestFrame > kPrefsSearchFocusFrames) {
+            s_prefsSearchFocusRequestFrame = -1; // the window never came up for it
+        } else if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
+            s_prefsSearchFocusRequestFrame = -1;
+            s_prefsOpenFocus.searchBox = true;
+            // The search box wins over this open's credential-field pick, which would draw later this frame.
+            s_prefsOpenFocus.credentialBuf = nullptr;
+            s_prefsOpenFocus.awaitingTarget = false;
+        }
+    }
     if (s_prefsOpenFocus.searchBox) {
-        // The window just opened and there is no blank credential to fill: start in the search
-        // box, so typing narrows the settings straight away.
+        // The window just opened and there is no blank credential to fill, or the search was asked for:
+        // start in the search box, so typing narrows the settings straight away.
         ImGui::SetKeyboardFocusHere();
         s_prefsOpenFocus.searchBox = false;
     }
+    SmatchetInput::ClearSearchOnEscape(s_prefsSearchInputId, d.prefsSearchBuf);
+    // The placeholder names the bound key, read live so a rebind shows on the next frame.
+    std::string hint = SmatchetLocalization::TranslateSource("Search settings...");
+    const std::string boundKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "preferences.search.focus");
+    if (!boundKey.empty()) {
+        hint += " (" + boundKey + ")";
+    }
     ImGui::SetNextItemWidth(280.0f);
-    ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
+    const bool enter = ImGui::InputTextWithHint("##PrefsSearch", hint.c_str(), d.prefsSearchBuf,
+                                                sizeof(d.prefsSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    s_prefsSearchInputId = ImGui::GetItemID();
     const bool hasQuery = d.prefsSearchBuf[0] != '\0';
     if (hasQuery) {
         // Clear button, drawn before the caller's Update() so the cleared buffer
@@ -1552,6 +1616,7 @@ void DrawPrefsSearchBoxInput(UiDrawSession& d) {
             ImGui::SetTooltip("%s", SmatchetLocalization::T("prefs.search.clear", "Clear search"));
         }
     }
+    return enter && hasQuery;
 }
 
 // The "showing N / M" readout. Drawn after the caller folded in the dynamic
@@ -1682,8 +1747,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     loadPreferencesBuffers(d);
     UpdatePrefsOpenFocus(d, openEdge);
 
-    DrawPrefsSearchBoxInput(d);
+    const bool searchEnter = DrawPrefsSearchBoxInput(d);
     d.prefsFilter.Update(d.prefsSearchBuf, d.cfg.UiLanguage);
+    if (searchEnter) {
+        // Enter in the search box: the caret goes to the first setting the query matches, drawn below.
+        d.prefsFilter.RequestFocusOnFirstMatch(&FocusNextPrefsItem);
+    }
 
     // The keybindings rows are dynamic and carry no descriptors, so the schema-driven
     // filter cannot see a command-name query. Fold the answer back in here — after

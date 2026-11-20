@@ -16,6 +16,7 @@
 #include "TrackerFieldSchema.h"
 #include "Types/ConnectivityTypes.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "UiTestWriteScope.h" // the fresh profile is read-only, which disables the inputs under test
 
 #include "imgui.h"
@@ -573,6 +574,28 @@ static void RegisterLongTextTitleBarCloseKeepsText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_PostButtonNamesItsKey_PlaceholderInsideBox: the Post Comment button prints
+// Ctrl+Enter, and the placeholder is drawn inside the empty box (not on a line under it) and goes once
+// something is typed (INPUT_UX_AUDIT.md #6 / #59).
+static void RegisterCommentsPostButtonNamesKey(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_PostButtonNamesItsKey_PlaceholderInsideBox");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        IM_CHECK_NO_RET(smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+
+        ctx->KeyChars("typed");
+        ctx->Yield(3); // the last placeholder draw ages out of the seam's two-frame window
+        IM_CHECK_NO_RET(!smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        CloseCommentsViewer(ctx);
+    };
+}
+
 #undef SMATCHET_INPUT_CASE_PREAMBLE
 
 extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
@@ -588,6 +611,7 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsEscOnFilledBoxOnlyLeaves(engine);
     RegisterCommentsTemplateOpenKeepsPrefill(engine);
     RegisterCommentsOtherIssueStartsEmpty(engine);
+    RegisterCommentsPostButtonNamesKey(engine);
     RegisterLongTextUntouchedEscCloses(engine);
     RegisterLongTextEscWithTextAsksAndKeeps(engine);
     RegisterLongTextCancelAsksDiscardCloses(engine);
