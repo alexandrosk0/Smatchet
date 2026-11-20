@@ -180,11 +180,14 @@ static void HandleSelectionPointerInput(Context& ctx, bool hovered, const ImVec2
 }
 
 // Keyboard shortcuts for select-all and copy, plus the right-click context menu, for the End path.
-// Shortcuts are gated on hover so they do not collide with global bindings. Split out for
+// Ctrl+A works while the run has the keyboard (a click on it gives it focus, and Tab or the arrows reach its
+// hit box), so a keyboard-only user can select it too, or while it is hovered and no other run holds the
+// keyboard (`selectAllEligible`). Outside both it is left to whatever else owns Ctrl+A. Split out for
 // function-size compliance.
-static void HandleSelectionKeyboardAndMenu(Context& ctx, bool hovered, int segCount, const ImGuiIO& io) {
+static void HandleSelectionKeyboardAndMenu(Context& ctx, bool hovered, bool selectAllEligible, int segCount,
+                                           const ImGuiIO& io) {
     const bool ctrl = io.KeyCtrl;
-    if (hovered && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && segCount > 0) {
+    if (selectAllEligible && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && segCount > 0) {
         // Select all — span from start of first segment to end of last.
         detail::SelectAllSegments(ctx, segCount);
         ctx.dragging = false;
@@ -238,12 +241,12 @@ void End(Context& ctx) {
         return;
     }
 
-    // Stable per-window ID so ImGui's active-widget machinery routes input to
-    // us. The string-id constant keeps the ID stable across frames inside the
-    // same window; if the caller embeds multiple SelectableText regions in
-    // one ImGui window they share input — acceptable for MVP (cross-region
-    // selection isn't supported anyway).
-    const ImGuiID hitId = window->GetID("##selectable_text_hitbox");
+    // Stable per-region ID so ImGui's active-widget machinery routes input to
+    // us. The context lives in ContextMap's node storage, whose address is stable
+    // for as long as the region exists, so the ID is too. One ID per region (not
+    // per window) matters for keyboard focus: a window holding several regions
+    // (a list of comments) must select-all only the region the user focused.
+    const ImGuiID hitId = window->GetID(static_cast<const void*>(&ctx));
     const ImRect hitBb(bbMin, bbMax);
 
     // ItemAdd registers the hit-test rect on the window's draw list. Without
@@ -263,6 +266,18 @@ void End(Context& ctx) {
     const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
 
     HandleSelectionPointerInput(ctx, hovered, mouse, mouseDown);
+    // The run has the keyboard: its hit box is the nav item and this window has focus. The nav cursor marks
+    // it, the same rectangle every other focused item gets.
+    const bool focused = ImGui::IsItemFocused();
+    ImGui::RenderNavCursor(hitBb, hitId);
+    // Which run last held the keyboard, so hovering run B while run A still has it does not select both.
+    static ImGuiID s_focusedRunId = 0;
+    if (focused) {
+        s_focusedRunId = hitId;
+    }
+    const bool otherRunFocused =
+        s_focusedRunId != 0 && s_focusedRunId != hitId && ImGui::GetCurrentContext()->NavId == s_focusedRunId;
+    const bool selectAllEligible = focused || (hovered && !otherRunFocused);
     // Held flag is used implicitly via ButtonBehavior — also signal to ImGui
     // that we own the active state during a drag so window-drag stays off.
     (void)held;
@@ -272,7 +287,7 @@ void End(Context& ctx) {
     const int segCount = static_cast<int>(ctx.segments.size());
     DrawSelectionOverlay(ctx);
 
-    HandleSelectionKeyboardAndMenu(ctx, hovered, segCount, io);
+    HandleSelectionKeyboardAndMenu(ctx, hovered, selectAllEligible, segCount, io);
 }
 
 bool HasSelection(const Context& ctx) {

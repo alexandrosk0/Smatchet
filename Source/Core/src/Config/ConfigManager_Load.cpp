@@ -391,6 +391,40 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
     cfg.MigratedQuickCreateHotkeyV1 = true;
 }
 
+// One-shot migration: seed the gesture-key bindings (docs/plans/input-ux-w2-gesture-keys.md) into a config
+// saved before they existed. Same replace-not-merge rationale and the same guard as
+// MigrateMenuShortcutKeybindingsV1: a (command id, args) identity the config already binds is left as the
+// user set it, and the flag keeps a binding the user clears after the seed from coming back.
+void MigrateGestureKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedGestureKeysV1 = j.value("migrated_gesture_keys_v1", false);
+    if (cfg.MigratedGestureKeysV1) {
+        return;
+    }
+    static const char* const kGestureCommandIds[] = {"ui.list.move_up",  "ui.list.move_down",  "ui.list.remove",
+                                                     "ui.splitter.grow", "ui.splitter.shrink", "view.panel.grow",
+                                                     "view.panel.shrink"};
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int seeded = 0;
+    for (const Keybinding& def : defaults.Bindings) {
+        bool isGesture = false;
+        for (const char* id : kGestureCommandIds) {
+            if (def.CommandId == id) {
+                isGesture = true;
+                break;
+            }
+        }
+        if (isGesture && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
+            cfg.Keybindings.Bindings.push_back(def);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        LOG_INFO("ConfigManager: seeded %d gesture-key binding(s) into an existing config (migrated_gesture_keys_v1)",
+                 seeded);
+    }
+    cfg.MigratedGestureKeysV1 = true;
+}
+
 // One-shot migration: seed the grid search focus binding ("grid.search.focus", Ctrl+F and /)
 // into a config saved before the command existed, for the same replace-not-merge reason as the
 // menu shortcut migration. The row is copied from the defaults table, so it arrives with both
@@ -723,6 +757,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV1(j, cfg);
     MigrateMenuShortcutKeybindingsV2(j, cfg);
     MigrateQuickCreateKeybindingV1(j, cfg);
+    MigrateGestureKeybindingsV1(j, cfg);
     MigrateGridSearchFocusKeybindingV1(j, cfg);
     // Last: the seeding migrations above pull straight from Defaults(), which already
     // carries the alias sets, so a freshly-seeded row arrives complete and V1/V2's
