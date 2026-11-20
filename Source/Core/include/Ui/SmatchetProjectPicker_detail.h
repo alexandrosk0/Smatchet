@@ -14,7 +14,7 @@
 namespace SmatchetProjectPicker {
 namespace detail {
 
-/** Case-insensitive substring test. Empty needle always matches. */
+/** Substring test through the shared matcher's UTF-8 case fold (TextMatchPure.h). Empty needle always matches. */
 bool ContainsCi(const std::string& haystack, const std::string& needle);
 
 /** Display label for an "All projects" row. Jira / Linear (Team): "KEY — DisplayName"; Plane (or
@@ -23,7 +23,8 @@ std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind)
 
 /** True iff a cached-catalog project entry survives the backend/endpoint/search filter and should
  *  be listed. Empty backendKind/endpoint disable that filter; an entry with an empty
- *  backend/endpoint is treated as a wildcard match. */
+ *  backend/endpoint is treated as a wildcard match. The search filter needs every one of its words, in
+ *  any order, through the shared case fold. */
 bool RecentEntryPasses(const FieldCatalogCache::CachedProjectEntry& e, const std::string& backendKind,
                        const std::string& endpoint, const std::string& filter);
 
@@ -38,7 +39,8 @@ std::vector<std::string> RecentSeedKeys(std::vector<FieldCatalogCache::CachedPro
 std::string AllProjectKey(const RemoteProject& p, const std::string& backendKind);
 
 /** True iff an "All projects" row (with its computed key) survives the search filter and should
- *  render. A row with an empty key is always rejected. */
+ *  render: every word of the filter occurs in the key or the display name, in any order. A row with an
+ *  empty key is always rejected. */
 bool AllProjectPasses(const std::string& key, const RemoteProject& p, const std::string& filter);
 
 } // namespace detail

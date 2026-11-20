@@ -9,6 +9,7 @@
 #include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "imgui.h"
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
@@ -691,13 +692,25 @@ void LuaConsolePlugin::UpdateSplitLayout(DrawCtx& ctx) {
         (std::min)(maxScriptH, (std::max)(ctx.kMinScriptH, luaAutomationScriptPaneUserPx_));
 }
 
+// Ctrl+Enter or F5 runs the row's button, while the Scripts window has the keyboard (not the autocomplete
+// popup above it, which keeps its own keys). The text editor types no newline on Ctrl+Enter.
+static bool LuaRunKeyPressed() {
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+        return false;
+    }
+    return ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+           ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter) || ImGui::IsKeyChordPressed(ImGuiKey_F5);
+}
+
 void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName) {
     AppController& app = ctx.app;
     const bool isHooks = IsHooksFile(curName);
     const bool isAutomation = (curName == "Automation.lua");
+    const bool runKey = LuaRunKeyPressed();
+    const char* runKeyName = smatchet::ui::CtrlEnterKeyName();
     if (isHooks) {
         ImGui::SameLine();
-        if (ImGui::Button("Run", ImVec2(70, 0))) {
+        if (smatchet::ui::KeyHintButton("Run", runKeyName, ImVec2(70, 0)) || runKey) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
@@ -712,7 +725,7 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
     }
     ImGui::SameLine();
     if (isAutomation) {
-        if (ImGui::Button("Run on selected", ImVec2(150, 0))) {
+        if (smatchet::ui::KeyHintButton("Run on selected", runKeyName, ImVec2(150, 0)) || runKey) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 const auto snap = app.GetActiveTicketsSnapshot();
@@ -739,7 +752,7 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
     }
     ImGui::Checkbox("Background", &runInBackground_);
     ImGui::SameLine();
-    if (ImGui::Button("Run", ImVec2(70, 0))) {
+    if (smatchet::ui::KeyHintButton("Run", runKeyName, ImVec2(70, 0)) || runKey) {
         std::string e;
         if (SaveCurrentScript(app, e)) {
             if (runInBackground_) {
@@ -803,7 +816,8 @@ void LuaConsolePlugin::DrawEditorAndAutocomplete() {
     DrawAutocompletePopup();
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
+    ImGui::TextDisabled("Ctrl+Enter or F5: run. Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a "
+                        ":line: is present.");
 }
 
 void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) {

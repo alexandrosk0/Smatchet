@@ -8,6 +8,7 @@
 
 #include "AppController.h"
 #include "CachedTicketTypes.h"
+#include "DictationInsertionRouter.h" // a dictation splice into the comment box
 #include "DraftStore.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "FakeNetworkSwitch.h"
@@ -17,6 +18,7 @@
 #include "TrackerFieldSchema.h"
 #include "Types/ConnectivityTypes.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "UiTestWriteScope.h" // the fresh profile is read-only, which disables the inputs under test
 
 #include "imgui.h"
@@ -615,6 +617,28 @@ static void RegisterLongTextTitleBarCloseKeepsText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_PostButtonNamesItsKey_PlaceholderInsideBox: the Post Comment button prints
+// Ctrl+Enter, and the placeholder is drawn inside the empty box (not on a line under it) and goes once
+// something is typed (INPUT_UX_AUDIT.md #6 / #59).
+static void RegisterCommentsPostButtonNamesKey(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_PostButtonNamesItsKey_PlaceholderInsideBox");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        IM_CHECK_NO_RET(smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+
+        ctx->KeyChars("typed");
+        ctx->Yield(3); // the last placeholder draw ages out of the seam's two-frame window
+        IM_CHECK_NO_RET(!smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        CloseCommentsViewer(ctx);
+    };
+}
+
 // The draft store key the comments box uses for `issueId` on the focused tracker.
 static std::string CommentsDraftScopeForTest(AppController& app, const char* issueId) {
     return app.FocusedCacheBackendKey() + "|" + issueId;
@@ -652,6 +676,32 @@ static void RegisterCommentsDraftSurvivesReplace(ImGuiTestEngine* engine) {
         CloseCommentsViewer(ctx); // discards: the box is not empty
     };
 }
+
+#if defined(SMATCHET_WITH_WHISPER) // the router is a no-op stub without Whisper
+// OfflineFirst/Comments_DictatedTextIsKeptAsDraft: text dictated into the comment box is kept like typed
+// text. The router writes the buffer without an edit event, so a draft kept only on IsItemEdited would
+// miss it, and a stale draft would come back after the comment was posted.
+static void RegisterCommentsDictatedTextIsKept(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DictatedTextIsKeptAsDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("typed");
+        ctx->Yield(2);
+        g_dictationRouter.InsertIntoFocusedInputText(" and dictated", GImGui->ActiveId);
+        ctx->Yield(3);
+
+        const std::string box = GetCommentsModalSnapshotForTests().PostDraft;
+        IM_CHECK_NO_RET(box.find("dictated") != std::string::npos);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), box.c_str());
+        CloseCommentsViewer(ctx); // discards: the box is not empty
+    };
+}
+#endif
 
 // OfflineFirst/Comments_DiscardErasesTheKeptDraft: Esc asks, and choosing "Discard comment" throws the
 // text away for good: nothing is kept, and the next open starts with an empty box.
@@ -784,11 +834,15 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsEscOnFilledBoxOnlyLeaves(engine);
     RegisterCommentsTemplateOpenKeepsPrefill(engine);
     RegisterCommentsOtherIssueStartsEmpty(engine);
+    RegisterCommentsPostButtonNamesKey(engine);
     RegisterLongTextUntouchedEscCloses(engine);
     RegisterLongTextEscWithTextAsksAndKeeps(engine);
     RegisterLongTextCancelAsksDiscardCloses(engine);
     RegisterLongTextTitleBarCloseKeepsText(engine);
     RegisterCommentsDraftSurvivesReplace(engine);
+#if defined(SMATCHET_WITH_WHISPER)
+    RegisterCommentsDictatedTextIsKept(engine);
+#endif
     RegisterCommentsDiscardErasesDraft(engine);
     RegisterLongTextDraftComesBack(engine);
     RegisterDraftStorePersistsAndReloads(engine);

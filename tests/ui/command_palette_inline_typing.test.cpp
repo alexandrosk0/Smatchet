@@ -17,6 +17,9 @@
 //      PRE-Enter — proving the InputText -> filterBuf_ wiring is live; and
 //   2. (cross-check) the same FilterText() value contains the typed query and
 //      uniquely selects the synthetic command, i.e. the filter narrowed.
+//   3. the shared matcher ranks and marks: initials find the command, words match
+//      in any order and case, equal scores sort by name (FilteredCount / FilteredName /
+//      FilteredTitleRangeCount accessors).
 //
 // WHY A REPLICA, NOT THE LIVE SmatchetUI PALETTE — the live palette
 // (SmatchetUI::commandPalette_) is a private member with no bucket-E accessor
@@ -35,7 +38,7 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
-#include "Commands/CommandPaletteUi.h"        // CommandPaletteUi, FilterText()
+#include "Commands/CommandPaletteUi.h"         // CommandPaletteUi, FilterText()
 #include "Commands/CommandRegistry.h"          // CommandRegistry, Register / HasExact
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 
@@ -211,11 +214,92 @@ void RegisterPreseedThenTypeAppends(ImGuiTestEngine* engine) {
     };
 }
 
+// Third variant — the shared matcher behind the palette (docs/plans/input-ux-w2-one-matcher.md):
+// initials typed in order find the command whose title they start, the rows are ranked, words match in any
+// order and case, and the title draws its matched letters marked.
+const char* kCmdRankToggle = "buckete.palette.zqxrank_toggle_activity_log";
+const char* kCmdRankTotal = "buckete.palette.zqxrank_total";
+
+void EnsureRankingCommands(AppController& app) {
+    using smatchet::cmd::Command;
+    smatchet::cmd::CommandRegistry& reg = app.Commands();
+    const char* names[] = {kCmdRankToggle, kCmdRankTotal};
+    const char* titles[] = {"Zqxrank Toggle Activity Log", "Zqxrank Total"};
+    for (int i = 0; i < 2; ++i) {
+        if (reg.HasExact(names[i])) {
+            continue;
+        }
+        Command c;
+        c.Name = names[i];
+        c.Title = titles[i];
+        c.Category = "buckete";
+        c.Summary = "Synthetic ranking probe";
+        c.Handler = [](const nlohmann::json&, const smatchet::cmd::CommandContext&) {
+            return smatchet::cmd::CommandResult::Success(nlohmann::json::object());
+        };
+        reg.Register(std::move(c));
+    }
+}
+
+void RegisterSharedMatcherRanksAndMarks(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "CommandPalette", "OneMatcher_InitialsRankAndMarkTheTitle");
+    t->UserData = &g_state;
+    t->GuiFunc = [](ImGuiTestContext* ctx) { DrawPaletteHarness(ctx); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        EnsureRankingCommands(*app);
+        g_state.app = app;
+        g_state.palette.SetFilterText("");
+        g_state.palette.Open();
+        g_state.opened = true;
+        ctx->Yield();
+        ctx->Yield();
+
+        ctx->SetRef("##cmdpalette");
+        ctx->ItemInput("##cmdq");
+        // "tgal" is in no title as written; T..g..A..L are the start of "Toggle Activity Log" and nothing
+        // in "Zqxrank Total" (no g).
+        ctx->KeyChars("zqxrank tgal");
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK_EQ(g_state.palette.FilteredCount(), 1);
+        IM_CHECK_STR_EQ(g_state.palette.FilteredName(0), kCmdRankToggle);
+        IM_CHECK_EQ(g_state.palette.SelectedIndex(), 0);                              // Enter would run it
+        IM_CHECK_GT(static_cast<int>(g_state.palette.FilteredTitleRangeCount(0)), 1); // marked apart
+
+        // Words in any order and any case, as written: the same command, alone.
+        ctx->KeyCharsReplace("ACTIVITY zqxrank");
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK_EQ(g_state.palette.FilteredCount(), 1);
+        IM_CHECK_STR_EQ(g_state.palette.FilteredName(0), kCmdRankToggle);
+        IM_CHECK_GT(static_cast<int>(g_state.palette.FilteredTitleRangeCount(0)), 0);
+
+        // A word both titles start with: both listed, equal score, by name.
+        ctx->KeyCharsReplace("zqxrank");
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK_EQ(g_state.palette.FilteredCount(), 2);
+        IM_CHECK_STR_EQ(g_state.palette.FilteredName(0), kCmdRankToggle);
+        IM_CHECK_STR_EQ(g_state.palette.FilteredName(1), kCmdRankTotal);
+
+        g_state.palette.Close();
+        g_state.opened = false;
+        g_state.app = nullptr;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine) {
     RegisterTypingNarrowsFilterPreEnter(engine);
     RegisterPreseedThenTypeAppends(engine);
+    RegisterSharedMatcherRanksAndMarks(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

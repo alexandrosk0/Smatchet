@@ -65,6 +65,11 @@ const ExpectedBinding kExpectedDefaults[] = {
     // Quick-create issue popup (quick-create-issue-unreal-context plan). Ctrl+Shift+J is
     // reserved by the Unreal host for the overlay visibility toggle — never seed it here.
     {{"Ctrl+Shift+T"}, "issue.quick_create.open", "{}"},
+    // Primary actions with no key before the input UX audit (§ 4.4); seeded into existing configs
+    // via migrated_action_keys_v1.
+    {{"Ctrl+Shift+,"}, "preferences.search.focus", "{}"},
+    {{"Ctrl+PageDown"}, "view.next", "{}"},
+    {{"Ctrl+PageUp"}, "view.previous", "{}"},
 };
 
 } // namespace

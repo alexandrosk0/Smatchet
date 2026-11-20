@@ -6,12 +6,13 @@
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Commands/CommandRegistry.h"
-#include "Commands/FuzzyMatch.h"
 #include "Config/KeybindingsConfig.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
+#include "TextMatchPure.h"
+#include "Ui/SmatchetMatchHighlight.h"
 
 #include <algorithm>
 #include <cstring>
@@ -93,7 +94,8 @@ void CommandPaletteUi::SetFilterText(const char* query) {
 }
 
 void CommandPaletteUi::rebuildFiltered(AppController& app) {
-    const std::string q = filterBuf_;
+    // Words of the query, trimmed and case-folded: a query of only spaces is the empty query.
+    const textmatch::Query query = textmatch::MakeQuery(filterBuf_);
     // Snapshot the command table once. All() takes a lock, deep-copies, and sorts
     // the whole registry, so the empty-query branch below must reuse this snapshot
     // rather than re-fetching it once per recent (was up to 9 All() calls per
@@ -106,10 +108,11 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
                                  }),
                   all.end());
     }
-    if (q.empty()) {
+    const std::vector<std::string> recents = app.Commands().Recents(kRecentCount);
+    filtered_.clear();
+    filteredRanges_.clear();
+    if (query.Empty()) {
         // Empty query: show recent commands first, then all sorted by name.
-        filtered_.clear();
-        const std::vector<std::string> recents = app.Commands().Recents(8);
         for (const std::string& r : recents) {
             for (const Command& c : all) {
                 if (c.Name == r) {
@@ -129,28 +132,9 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
             if (!alreadyIn)
                 filtered_.push_back(c);
         }
+        filteredRanges_.resize(filtered_.size());
     } else {
-        // Fuzzy-score each command against the query.
-        struct Scored {
-            int score;
-            Command cmd;
-        };
-        std::vector<Scored> scored;
-        scored.reserve(all.size());
-        for (const Command& c : all) {
-            const int s = FuzzyScore(q, c.Title + " " + c.Name + " " + c.Summary);
-            if (s > 0)
-                scored.push_back({s, c});
-        }
-        std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
-            if (a.score != b.score)
-                return a.score > b.score;
-            return a.cmd.Name < b.cmd.Name;
-        });
-        filtered_.clear();
-        filtered_.reserve(scored.size());
-        for (auto& s : scored)
-            filtered_.push_back(std::move(s.cmd));
+        rankByQuery(query, all, recents);
     }
     // Clamp selection.
     if (selected_ < 0)
@@ -159,6 +143,70 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
         selected_ = 0;
     } else if (selected_ >= static_cast<int>(filtered_.size())) {
         selected_ = static_cast<int>(filtered_.size()) - 1;
+    }
+}
+
+// The shared matcher over each command's Title (weight 3), Name (2) and Summary (1), scored separately so
+// common letters in a long Summary cannot outrank a title match. Every word must match one of them, in any
+// order. When any command holds every word as written, letters-in-order matches are left out. A recently
+// run command gets a small boost within its tier. Best first, ties by name.
+void CommandPaletteUi::rankByQuery(const textmatch::Query& query, std::vector<Command>& all,
+                                   const std::vector<std::string>& recents) {
+    constexpr int kTitleWeight = 3;
+    constexpr int kNameWeight = 2;
+    constexpr int kSummaryWeight = 1;
+    constexpr long long kRecentBoost = 48; // about three matched letters: breaks near-ties, never a tier
+    struct Scored {
+        long long key;
+        std::size_t index;
+        RowRanges ranges;
+    };
+    std::vector<Scored> scored;
+    scored.reserve(all.size());
+    textmatch::Scratch scratch;
+    std::vector<textmatch::ByteRange> ranges[3];
+    bool anyExact = false;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        const Command& c = all[i];
+        const std::string primary = c.Title.empty() ? TitleCasedSlugFromCommandId(c.Name) : c.Title;
+        textmatch::Field fields[3];
+        fields[0].Text = primary.data();
+        fields[0].Len = primary.size();
+        fields[0].Weight = kTitleWeight;
+        fields[1].Text = c.Name.data();
+        fields[1].Len = c.Name.size();
+        fields[1].Weight = kNameWeight;
+        fields[2].Text = c.Summary.data();
+        fields[2].Len = c.Summary.size();
+        fields[2].Weight = kSummaryWeight;
+        const textmatch::Result r = textmatch::MatchFields(query, fields, 3, textmatch::Mode::Fuzzy, scratch, ranges);
+        if (!r.Matched()) {
+            continue;
+        }
+        anyExact = anyExact || r.Substring;
+        const bool recent = std::find(recents.begin(), recents.end(), c.Name) != recents.end();
+        Scored row;
+        row.key = textmatch::RankKey(r) + (recent ? kRecentBoost : 0);
+        row.index = i;
+        row.ranges.Title = ranges[0];
+        row.ranges.Summary = ranges[2];
+        row.ranges.Exact = r.Substring;
+        scored.push_back(std::move(row));
+    }
+    if (anyExact) {
+        scored.erase(std::remove_if(scored.begin(), scored.end(), [](const Scored& s) { return !s.ranges.Exact; }),
+                     scored.end());
+    }
+    std::sort(scored.begin(), scored.end(), [&all](const Scored& a, const Scored& b) {
+        if (a.key != b.key)
+            return a.key > b.key;
+        return all[a.index].Name < all[b.index].Name;
+    });
+    filtered_.reserve(scored.size());
+    filteredRanges_.reserve(scored.size());
+    for (Scored& row : scored) {
+        filtered_.push_back(std::move(all[row.index]));
+        filteredRanges_.push_back(std::move(row.ranges));
     }
 }
 
@@ -480,8 +528,10 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
         // right-aligned, not baked into the label, so the selectable id stays stable as
         // bindings change (##Name keeps it stable across Title edits too).
         const std::string primary = c.Title.empty() ? TitleCasedSlugFromCommandId(c.Name) : c.Title;
-        const std::string rowLabel = primary + "  " + c.Summary + "###row_" + c.Name;
-        if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None, ImVec2(0, 0))) {
+        const std::string rowLabel = "###row_" + c.Name;
+        const ImVec2 textPos = ImGui::GetCursorScreenPos(); // a Selectable draws its label at the cursor
+        if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None,
+                              ImVec2(0, ImGui::GetTextLineHeight()))) {
             if (selected_ != i) {
                 dispatchError_.clear();
             }
@@ -490,6 +540,7 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
                 dispatchSelected();
             }
         }
+        drawRowText(i, primary, c.Summary, textPos);
         if (c.Destructive) {
             ImGui::PopStyleColor();
         }
@@ -524,6 +575,40 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
     }
     scrollToSelected_ = false;
     ImGui::EndChild();
+}
+
+// Title, two spaces, Summary: the text the row's Selectable used to carry as its label, with the letters
+// that matched the query marked (SmatchetMatchHighlight, the theme's selected-text colour).
+void CommandPaletteUi::drawRowText(int row, const std::string& primary, const std::string& summary,
+                                   const ImVec2& pos) const {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    const bool haveRanges = row >= 0 && static_cast<std::size_t>(row) < filteredRanges_.size();
+    const RowRanges* ranges = haveRanges ? &filteredRanges_[static_cast<std::size_t>(row)] : nullptr;
+    const char* p = primary.c_str();
+    SmatchetMatchHighlight::DrawText(dl, pos, col, p, p + primary.size(),
+                                     ranges != nullptr ? ranges->Title.data() : nullptr,
+                                     ranges != nullptr ? ranges->Title.size() : 0);
+    if (summary.empty()) {
+        return;
+    }
+    const float summaryX = pos.x + ImGui::CalcTextSize(p, p + primary.size()).x + ImGui::CalcTextSize("  ").x;
+    const char* sm = summary.c_str();
+    SmatchetMatchHighlight::DrawText(dl, ImVec2(summaryX, pos.y), col, sm, sm + summary.size(),
+                                     ranges != nullptr ? ranges->Summary.data() : nullptr,
+                                     ranges != nullptr ? ranges->Summary.size() : 0);
+}
+
+int CommandPaletteUi::FilteredCount() const { return static_cast<int>(filtered_.size()); }
+
+const char* CommandPaletteUi::FilteredName(int i) const {
+    return (i >= 0 && i < FilteredCount()) ? filtered_[static_cast<std::size_t>(i)].Name.c_str() : "";
+}
+
+std::size_t CommandPaletteUi::FilteredTitleRangeCount(int i) const {
+    return (i >= 0 && static_cast<std::size_t>(i) < filteredRanges_.size())
+               ? filteredRanges_[static_cast<std::size_t>(i)].Title.size()
+               : 0;
 }
 
 std::string CommandPaletteUi::TakeQuickBindRequest() {

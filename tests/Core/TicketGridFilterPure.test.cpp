@@ -118,6 +118,16 @@ TEST_CASE("TicketMatchesGridFilter — non-ASCII text matches byte-exact and is 
     CHECK_FALSE(TicketMatchesGridFilter(t, "Γιώργος"));
 }
 
+TEST_CASE("TicketMatchesGridFilter — Greek, Cyrillic and accented Latin fold case, not only ASCII") {
+    const CachedTicket t =
+        Ticket("PROJ-1", {{"assignee", "Αλέξανδρος Κωνσταντόνης"}, {"summary", "Ошибка входа: ÉCRAN figé"}});
+    CHECK(TicketMatchesGridFilter(t, "αλέξανδρος"));
+    CHECK(TicketMatchesGridFilter(t, "ΚΩΝΣΤΑΝΤΌΝΗΣ")); // capital sigma folds to the final sigma's letter
+    CHECK(TicketMatchesGridFilter(t, "ошибка ВХОДА"));
+    CHECK(TicketMatchesGridFilter(t, "écran FIGÉ"));
+    CHECK_FALSE(TicketMatchesGridFilter(t, "ecran")); // folding is case only, never accents
+}
+
 namespace {
 // A Plane-shaped display: the State field stores a uuid, the grid shows its option name.
 class StateNames final : public IGridFilterDisplay {
@@ -206,6 +216,37 @@ TEST_CASE("SplitGridFilterTokens — lowercased words, whitespace dropped") {
     CHECK(three[2] == "login");
 }
 
+TEST_CASE("SplitGridFilterTokens — words are case-folded beyond ASCII") {
+    const std::vector<std::string> words = SplitGridFilterTokens("ΑΛΦΑ Ёлка");
+    REQUIRE(words.size() == 2);
+    CHECK(words[0] == "αλφα");
+    CHECK(words[1] == "ёлка");
+}
+
+TEST_CASE("TicketTitleMatchesGridFilterFuzzy — letters in order, title only") {
+    smatchet::textmatch::Scratch scratch;
+    const CachedTicket t = Ticket("PROJ-7", {{"summary", "Login page crashes"}, {"assignee", "Alexandros"}});
+    using smatchet::textmatch::MakeQuery;
+    CHECK(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery("lgn crsh"), scratch));
+    CHECK(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery("CRASHES login"), scratch));
+    CHECK(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery(""), scratch));
+    CHECK_FALSE(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery("alx"), scratch));   // the assignee is not the title
+    CHECK_FALSE(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery("proj7"), scratch)); // nor is the id
+    CHECK_FALSE(TicketTitleMatchesGridFilterFuzzy(t, MakeQuery("hsarc"), scratch)); // out of order
+    CHECK_FALSE(TicketTitleMatchesGridFilterFuzzy(Ticket("PROJ-8", {}), MakeQuery("a"), scratch)); // no title
+    // The strict pass still needs the words as written: the fallback is the grid's second tier.
+    CHECK_FALSE(TicketMatchesGridFilter(t, "lgn crsh"));
+}
+
+TEST_CASE("Grid filter — a filter of only no-break spaces is one strict word but no fallback words") {
+    // The two splits differ on wide spaces, so the grid skips the fallback for an empty query rather than
+    // letting an empty query keep every title (ApplyGridFilterProjection).
+    const std::string nbsp = "\xC2\xA0\xC2\xA0";
+    CHECK(SplitGridFilterTokens(nbsp).size() == 1);
+    CHECK(smatchet::textmatch::MakeQuery(nbsp).Empty());
+    CHECK_FALSE(TicketMatchesGridFilter(Ticket("PROJ-1", {{"summary", "Login"}}), nbsp));
+}
+
 TEST_CASE("SplitGridFilterTokens — words past the cap are ignored, so the match only gets looser") {
     std::string many;
     for (std::size_t i = 0; i < kGridFilterMaxTokens; ++i) {
@@ -250,3 +291,6 @@ TEST_CASE("TicketMatchesGridFilter — internal sentinel keys never match") {
     CHECK(IsInternalTicketFieldKey("_smatchet_is_pr"));
     CHECK_FALSE(IsInternalTicketFieldKey("summary"));
 }
+
+// The shared matcher's own cases live in one file and run in this TU (see that file's header).
+#include "TextMatchPure.cases.h"

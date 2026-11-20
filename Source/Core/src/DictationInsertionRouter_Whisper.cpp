@@ -215,6 +215,18 @@ bool DictationInsertionRouter::IsRecording() const {
     return recording_.load(std::memory_order_acquire);
 }
 
+void DictationInsertionRouter::RequestDiscard() {
+    // Flag first, then the indicator: a release that sees recording off has also seen the flag.
+    discardRequested_.store(true, std::memory_order_release);
+    SetRecording(false);
+}
+
+bool DictationInsertionRouter::TakeDiscardRequest() {
+    return discardRequested_.exchange(false, std::memory_order_acq_rel);
+}
+
+void DictationInsertionRouter::ClearDiscardRequest() { discardRequested_.store(false, std::memory_order_release); }
+
 void DictationInsertionRouter::SetRecording(bool active) {
     recording_.store(active, std::memory_order_release);
     if (!active) {

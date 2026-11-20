@@ -17,7 +17,8 @@ namespace detail {
  *  to_string, anything else via dump(). Missing key or non-object yields empty. */
 std::string JsonStringValue(const nlohmann::json& j, const char* key);
 
-/** Case-insensitive substring test on already-lowered inputs. Empty needle always matches. */
+/** True when every whitespace-separated word of `needleLower` occurs in `haystackLower`, both already
+ *  folded with textmatch::FoldCopy (plain substrings: the audit log is ids and JSON). Empty needle matches. */
 bool ContainsNoCasePreLower(const std::string& haystackLower, const std::string& needleLower);
 
 /** True iff an action string passes the Action dropdown filter (0=All, 1=Creates, 2=Updates/

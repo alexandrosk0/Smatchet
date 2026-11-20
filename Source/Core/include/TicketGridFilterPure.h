@@ -3,6 +3,7 @@
 // Pure (ImGui-free) grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp.
 
 #include "CachedTicketTypes.h"
+#include "TextMatchPure.h"
 
 #include <cstddef>
 #include <string>
@@ -27,12 +28,13 @@ bool IsInternalTicketFieldKey(const std::string& key);
 constexpr std::size_t kGridFilterMaxTokens = 32;
 
 /// The words of a filter: split on ASCII whitespace (space, tab, CR, LF — the set
-/// TrimCopyAsciiWhitespace trims), ASCII-lowercased, at most kGridFilterMaxTokens of them.
-/// Empty for an empty or whitespace-only filter.
+/// TrimCopyAsciiWhitespace trims), case-folded with the shared matcher's UTF-8 fold
+/// (textmatch::FoldCopy: Latin, Greek, Cyrillic and Armenian letters, not only ASCII), at most
+/// kGridFilterMaxTokens of them. Empty for an empty or whitespace-only filter.
 std::vector<std::string> SplitGridFilterTokens(const std::string& filter);
 
 /// Full-text match on pre-split words (see SplitGridFilterTokens): true when EVERY word occurs,
-/// as an ASCII case-insensitive substring, in the ticket id or a displayable field value. Each
+/// compared through the case fold, in the ticket id or a displayable field value. Each
 /// word may match a different field, in any order ("crash login" finds "Login page crashes").
 /// No words always matches. Field values go through `display` when given, so a stored id matches
 /// by the name the grid shows. Raw JSON payloads in fieldValues (attachment lists,
@@ -44,3 +46,13 @@ bool TicketMatchesGridFilterTokens(const CachedTicket& ticket, const std::vector
 /// Convenience form of TicketMatchesGridFilterTokens that splits `filter` on every call.
 bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter,
                              const IGridFilterDisplay* display = nullptr);
+
+/// The field the letters-in-order fallback searches: the ticket's title.
+constexpr const char* kGridFilterTitleField = "summary";
+
+/// The grid's fallback when no row matched every word as written (TicketMatchesGridFilterTokens): true
+/// when every word of `query` matches the ticket's title, as written or with its letters in order
+/// ("lgn crsh" finds "Login page crashes"). Title only, so a typo never reaches ids, e-mails or long
+/// descriptions. An empty query matches. `scratch` is reused across the tickets of one pass.
+bool TicketTitleMatchesGridFilterFuzzy(const CachedTicket& ticket, const smatchet::textmatch::Query& query,
+                                       smatchet::textmatch::Scratch& scratch);

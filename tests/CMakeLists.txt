@@ -1889,6 +1889,11 @@ add_executable(SmatchetTests
     Core/PaneAddRequest.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/PaneCommands_detail.cpp"
+    # Issue #2444 — "+ ▾" new-pane picker rows: one per credentialed tracker kind, one per
+    # Jira site when there are 2+ sites (the caret was hidden with two Jira sites). Pure; the
+    # Jira-instance helpers it calls (JiraBackendInstancesPure.cpp) are already linked above.
+    Core/PaneBackendTargets.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/PaneBackendTargetsPure.cpp"
     # window-expand-button.md — pure transition core behind the per-window Expand /
     # Minimize control: save-on-expand, consume-once restore replay, second-expand
     # hand-off, and the closed-while-expanded self-heal. The _detail TU is ImGui-free

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "TextMatchPure.h"
+
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -22,85 +25,6 @@ struct ItemView {
     bool Disabled = false; // shown, never picked
 };
 
-inline char LowerAscii(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
-
-/// ASCII-case-insensitive substring search with no allocation. `needleLower` must already be lower-case.
-/// Returns the byte offset of the first match, or std::string::npos. An empty needle matches at 0.
-inline std::size_t FindCaseInsensitive(const char* haystack, const std::string& needleLower) {
-    if (needleLower.empty()) {
-        return 0;
-    }
-    if (haystack == nullptr) {
-        return std::string::npos;
-    }
-    const std::size_t hayLen = std::strlen(haystack);
-    const std::size_t needleLen = needleLower.size();
-    if (needleLen > hayLen) {
-        return std::string::npos;
-    }
-    for (std::size_t start = 0; start + needleLen <= hayLen; ++start) {
-        std::size_t k = 0;
-        while (k < needleLen && LowerAscii(haystack[start + k]) == needleLower[k]) {
-            ++k;
-        }
-        if (k == needleLen) {
-            return start;
-        }
-    }
-    return std::string::npos;
-}
-
-/// True if two strings are equal ignoring ASCII case.
-inline bool EqualsCaseInsensitive(const char* a, const std::string& bLower) {
-    if (a == nullptr) {
-        return bLower.empty();
-    }
-    return std::strlen(a) == bLower.size() && FindCaseInsensitive(a, bLower) == 0;
-}
-
-/// An option passes the filter when its label, secondary text or id contains it. An empty filter passes
-/// everything. The rule every picker filters by.
-inline bool ItemMatches(const ItemView& item, const std::string& filterLower) {
-    if (filterLower.empty()) {
-        return true;
-    }
-    return FindCaseInsensitive(item.Label, filterLower) != std::string::npos ||
-           FindCaseInsensitive(item.Secondary, filterLower) != std::string::npos ||
-           FindCaseInsensitive(item.Id, filterLower) != std::string::npos;
-}
-
-/// How well an option that passes the filter answers it: 0 its label starts with the filter, 1 its label
-/// contains it, 2 only its secondary text or id does. Enter acts on the best-ranked option, so typing a
-/// name never picks an earlier option whose opaque id or description happens to contain the same letters.
-inline int MatchRank(const ItemView& item, const std::string& filterLower) {
-    const std::size_t at = FindCaseInsensitive(item.Label, filterLower);
-    if (at == 0) {
-        return 0;
-    }
-    return at != std::string::npos ? 1 : 2;
-}
-
-/// Trims ASCII whitespace from both ends and lower-cases ASCII letters: the form every filter compare uses.
-inline std::string NormalizeFilter(const char* raw) {
-    if (raw == nullptr) {
-        return {};
-    }
-    const char* begin = raw;
-    const char* end = raw + std::strlen(raw);
-    const auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-    while (begin < end && isSpace(*begin)) {
-        ++begin;
-    }
-    while (end > begin && isSpace(*(end - 1))) {
-        --end;
-    }
-    std::string out(begin, end);
-    for (char& c : out) {
-        c = LowerAscii(c);
-    }
-    return out;
-}
-
 /// Trims ASCII whitespace from both ends, keeping case (the text a create row would add).
 inline std::string TrimFilter(const char* raw) {
     if (raw == nullptr) {
@@ -118,6 +42,51 @@ inline std::string TrimFilter(const char* raw) {
     return std::string(begin, end);
 }
 
+/// Trims ASCII whitespace from both ends and case-folds (UTF-8 aware, TextMatchPure.h): the form every
+/// filter compare uses. A filter the matcher splits into no words (only no-break or other wide spaces) is
+/// blank: it lists every option and offers no create row, as an empty filter does.
+inline std::string NormalizeFilter(const char* raw) {
+    std::string folded = textmatch::FoldCopy(TrimFilter(raw));
+    if (!folded.empty() && textmatch::MakeQuery(folded).Empty()) {
+        folded.clear();
+    }
+    return folded;
+}
+
+/// Field weights: a word matching the label counts three times a match in the secondary text or id.
+constexpr int kLabelWeight = 3;
+constexpr int kSecondaryWeight = 1;
+constexpr int kIdWeight = 1;
+
+/// How an option answers the filter: the shared matcher over its label (letters in order allowed),
+/// secondary text (letters in order allowed) and id (only as written: ids are opaque keys). `ranges`, when
+/// not null, points at three vectors that receive the matched bytes of the label, secondary text and id.
+inline textmatch::Result ScoreItem(const ItemView& item, const textmatch::Query& query, textmatch::Scratch& scratch,
+                                   std::vector<textmatch::ByteRange>* ranges = nullptr) {
+    textmatch::Field fields[3];
+    const char* texts[3] = {item.Label, item.Secondary, item.Id};
+    const int weights[3] = {kLabelWeight, kSecondaryWeight, kIdWeight};
+    for (int f = 0; f < 3; ++f) {
+        fields[f].Text = texts[f] != nullptr ? texts[f] : "";
+        fields[f].Len = std::strlen(fields[f].Text);
+        fields[f].Weight = weights[f];
+    }
+    fields[2].ExactOnly = true;
+    return textmatch::MatchFields(query, fields, 3, textmatch::Mode::Fuzzy, scratch, ranges);
+}
+
+/// True if the option answers `filterLower` (NormalizeFilter output) on its own: its words occur, as
+/// written or with their letters in order. An empty filter passes everything. A list also applies the
+/// exact-first rule (BuildRows), so an option that passes here may still be left out of a list that has
+/// exact matches.
+inline bool ItemMatches(const ItemView& item, const std::string& filterLower) {
+    if (filterLower.empty()) {
+        return true;
+    }
+    textmatch::Scratch scratch;
+    return ScoreItem(item, textmatch::MakeQuery(filterLower), scratch).Matched();
+}
+
 enum class RowKind {
     HeaderRecent, // "Recent" section title
     HeaderAll,    // "All" section title, only under a Recent section
@@ -130,6 +99,7 @@ struct Row {
     RowKind Kind = RowKind::Item;
     int ItemIndex = -1;   // index into the items; -1 for a recent id outside the list
     int RecentIndex = -1; // index into the recents; -1 outside the Recent section
+    long long Rank = 0;   // under a filter: textmatch::RankKey of the option's match; 0 = listed without matching
 };
 
 struct ModelInput {
@@ -142,6 +112,8 @@ struct ModelInput {
     bool KeepCheckedVisible = false;                   // checked options stay listed when the filter hides them
     bool AllowCreate = false;                          // offer 'Add "<filter>"' when no label equals the filter
     bool ShowClear = false;                            // a clear row above the list (unfiltered only)
+    const textmatch::Query* Query = nullptr;           // MakeQuery(FilterLower), when the caller keeps one
+    textmatch::Scratch* Scratch = nullptr;             // reused working memory; null = a local one
 };
 
 inline int FindItemById(const ItemView* items, int count, const std::string& id) {
@@ -155,22 +127,58 @@ inline int FindItemById(const ItemView* items, int count, const std::string& id)
 }
 
 /// True if 'Add "<filter>"' should be offered: the filter is not blank and no option's label equals it
-/// (ignoring ASCII case).
+/// (compared through the case fold).
 inline bool ShouldOfferCreate(const ItemView* items, int count, const std::string& filterLower) {
     if (filterLower.empty()) {
         return false;
     }
     for (int i = 0; i < count; ++i) {
-        if (EqualsCaseInsensitive(items[i].Label, filterLower)) {
+        if (textmatch::EqualsFolded(items[i].Label, filterLower)) {
             return false;
         }
     }
     return true;
 }
 
+/// Filtered rows, best match first (ties keep list order); then the options listed only because they are
+/// checked (KeepCheckedVisible), in list order. When any option matches every word as written, options
+/// that matched only with letters in order are left out (the textmatch::RowListed rule).
+inline void BuildFilteredRows(const ModelInput& in, int count, std::vector<Row>& out) {
+    textmatch::Query localQuery;
+    if (in.Query == nullptr) {
+        localQuery = textmatch::MakeQuery(in.FilterLower);
+    }
+    const textmatch::Query& query = in.Query != nullptr ? *in.Query : localQuery;
+    textmatch::Scratch localScratch;
+    textmatch::Scratch& scratch = in.Scratch != nullptr ? *in.Scratch : localScratch;
+    bool anyExact = false;
+    for (int i = 0; i < count; ++i) {
+        const textmatch::Result r = ScoreItem(in.Items[i], query, scratch);
+        if (!r.Matched() && !(in.KeepCheckedVisible && in.Items[i].Checked)) {
+            continue;
+        }
+        anyExact = anyExact || (r.Matched() && r.Substring);
+        Row row;
+        row.Kind = RowKind::Item;
+        row.ItemIndex = i;
+        row.Rank = textmatch::RankKey(r);
+        out.push_back(row);
+    }
+    for (Row& row : out) {
+        if (anyExact && row.Rank > 0 && !textmatch::IsExactRank(row.Rank)) {
+            row.Rank = in.KeepCheckedVisible && in.Items[row.ItemIndex].Checked ? 0 : -1; // fuzzy: drop or keep
+        }
+    }
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Row& row) { return row.Rank < 0; }), out.end());
+    std::sort(out.begin(), out.end(), [](const Row& a, const Row& b) {
+        return a.Rank != b.Rank ? a.Rank > b.Rank : a.ItemIndex < b.ItemIndex;
+    });
+}
+
 /// The visible rows, top to bottom.
 ///   No filter: [Clear] [Recent header, recent rows, All header] every option.
-///   Filter:    matching options (plus checked ones when KeepCheckedVisible) [Create].
+///   Filter:    matching options, best first (BuildFilteredRows), checked ones after them when
+///              KeepCheckedVisible, [Create].
 /// The Recent section appears only with no filter, more than RecentsMinOptions options, and at least one
 /// recent id that resolves to an option (or any recent id when RecentsShowUnknown). Recent options are
 /// listed again in their normal place below.
@@ -178,14 +186,7 @@ inline void BuildRows(const ModelInput& in, std::vector<Row>& out) {
     out.clear();
     const int count = in.Items != nullptr ? in.Count : 0;
     if (!in.FilterLower.empty()) {
-        for (int i = 0; i < count; ++i) {
-            if (ItemMatches(in.Items[i], in.FilterLower) || (in.KeepCheckedVisible && in.Items[i].Checked)) {
-                Row row;
-                row.Kind = RowKind::Item;
-                row.ItemIndex = i;
-                out.push_back(row);
-            }
-        }
+        BuildFilteredRows(in, count, out);
         if (in.AllowCreate && ShouldOfferCreate(in.Items, count, in.FilterLower)) {
             Row row;
             row.Kind = RowKind::Create;
@@ -284,9 +285,11 @@ inline int MoveHighlight(const std::vector<Row>& rows, const ItemView* items, in
 /// Where the highlight starts for a freshly built row list.
 ///   No filter: the checked option in the main list (skipping its copy in the Recent section) when
 ///   `preferChecked`, else the first option row.
-///   Filter: the best match (MatchRank; the first one among equals), so Enter acts on the option whose
-///   label answers the filter and never on a ticked option that is only listed because
+///   Filter: the best match (the highest Row::Rank; the first one among equals), so Enter acts on the
+///   option that answers the filter best and never on a ticked option that is only listed because
 ///   KeepCheckedVisible keeps it; with no match, the Create row; with neither, the first option row.
+///   A Create row outranks a letters-in-order match: when no option holds the typed words as written,
+///   Enter adds what was typed ("qa" stays "qa", not "quarantine"); the arrow keys still reach the match.
 /// Never the clear row: Enter in a picker whose options have not arrived must not clear the field.
 inline int DefaultHighlight(const std::vector<Row>& rows, const ItemView* items, int count, bool preferChecked,
                             const std::string& filterLower) {
@@ -303,8 +306,8 @@ inline int DefaultHighlight(const std::vector<Row>& rows, const ItemView* items,
     int firstOption = -1;
     int createRow = -1;
     int bestMatch = -1;
-    int bestRank = 3;
-    for (int i = 0; i < n && bestRank > 0; ++i) {
+    long long bestRank = 0;
+    for (int i = 0; i < n; ++i) {
         const Row& row = rows[static_cast<std::size_t>(i)];
         if (row.Kind == RowKind::Create) {
             createRow = i;
@@ -317,22 +320,24 @@ inline int DefaultHighlight(const std::vector<Row>& rows, const ItemView* items,
         if (!known || filterLower.empty()) {
             return i;
         }
-        if (!ItemMatches(items[row.ItemIndex], filterLower)) {
+        if (row.Rank <= 0) {
             if (firstOption < 0) {
                 firstOption = i;
             }
             continue;
         }
-        const int rank = MatchRank(items[row.ItemIndex], filterLower);
-        if (rank < bestRank) {
-            bestRank = rank;
+        if (row.Rank > bestRank) {
+            bestRank = row.Rank;
             bestMatch = i;
         }
     }
-    if (bestMatch >= 0) {
+    if (bestMatch >= 0 && (createRow < 0 || textmatch::IsExactRank(bestRank))) {
         return bestMatch;
     }
-    return createRow >= 0 ? createRow : firstOption;
+    if (createRow >= 0) {
+        return createRow;
+    }
+    return bestMatch >= 0 ? bestMatch : firstOption;
 }
 
 /// True if Enter on `row` answers what was typed: the Create row, or an option the filter matches. False
@@ -342,8 +347,8 @@ inline bool RowAnswersFilter(const Row& row, const ItemView* items, int count, c
     if (row.Kind == RowKind::Create) {
         return true;
     }
-    return row.Kind == RowKind::Item && row.ItemIndex >= 0 && row.ItemIndex < count &&
-           ItemMatches(items[row.ItemIndex], filterLower);
+    return row.Kind == RowKind::Item && items != nullptr && row.ItemIndex >= 0 && row.ItemIndex < count &&
+           (filterLower.empty() || row.Rank > 0);
 }
 
 /// True if the list holds at least one option or create row (a lone clear row does not count): when it

@@ -105,8 +105,8 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
     // backend/view/snapshot (cheap shared_ptr copy) — unless the picker named a DIFFERENT
     // saved view of that backend, in which case the new pane opens on that view and starts
     // from an empty snapshot (a copy of the source's rows would be the wrong view's data,
-    // #2170). Cross-backend: sets the target backend + resolves a view; NO snapshot inherit
-    // (different data).
+    // #2170), or the request switched the Jira site (#2444). Cross-backend: sets the target
+    // backend + resolves a view; NO snapshot inherit (different data).
     if (!addRequest.sourceId.empty()) {
         const GridPane* src = FindGridPaneById(panes, addRequest.sourceId);
         if (src == nullptr) {
@@ -141,7 +141,8 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
                     dup.viewId = resolved;
                 }
             }
-            if (dup.viewId == src->viewId) {
+            // A Jira site switch (#2444) leaves the source's rows on the previous site.
+            if (dup.viewId == src->viewId && addRequest.targetJiraDomain.empty()) {
                 dup.ticketsSnapshot = src->ticketsSnapshot;
                 dup.snapshotRevision = src->snapshotRevision;
             }

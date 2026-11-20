@@ -23,6 +23,7 @@
 #include "SmatchetToolbarUi_detail.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
+#include "TextMatchPure.h"
 #include "Ui/PreferencesFilter.h"
 #include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetDialogScope.h"
@@ -49,26 +50,36 @@ std::string CommandLabel(IAppCommands& app, const std::string& commandId) {
     return commandId;
 }
 
-// A row matches when the (already-lowercased) filter is a substring of the action
-// label, the command id, or ANY of its combos; empty filter matches everything.
-// Loops the combo set rather than joining it — no per-row allocation on a per-frame
-// path. The ASCII helpers come from PreferencesFilter — this TU used to carry its
-// own copies (Pillar 5).
-bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
-                      const std::vector<std::string>& hotkeys) {
-    if (filterLower.empty()) {
-        return true;
-    }
-    if (PreferencesFilter::ContainsLower(label, filterLower) ||
-        PreferencesFilter::ContainsLower(commandId, filterLower)) {
-        return true;
-    }
-    for (std::size_t i = 0; i < hotkeys.size(); ++i) {
-        if (PreferencesFilter::ContainsLower(hotkeys[i], filterLower)) {
+// True when `word` (folded) occurs, through the fold, in any of `texts`.
+bool WordInAny(const std::string& word, const std::string* const* texts, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+        if (smatchet::textmatch::FindFolded(*texts[i], word) != std::string::npos) {
             return true;
         }
     }
     return false;
+}
+
+// A row matches when every word of the filter (split once per frame by the caller) occurs in the action label, the
+// command id or ANY of its combos, in any order — the shared matcher's exact words (TextMatchPure.h), like the settings
+// search above this table. An empty filter matches everything. The haystacks are compared through the fold as they are
+// read, so no folded copy is made per row.
+bool RowMatchesFilter(const smatchet::textmatch::Query& query, const std::string& label, const std::string& commandId,
+                      const std::vector<std::string>& hotkeys) {
+    for (const std::string& word : query.WordsUtf8) {
+        const std::string* fixed[] = {&label, &commandId};
+        if (WordInAny(word, fixed, 2)) {
+            continue;
+        }
+        bool inCombo = false;
+        for (std::size_t i = 0; i < hotkeys.size() && !inCombo; ++i) {
+            inCombo = smatchet::textmatch::FindFolded(hotkeys[i], word) != std::string::npos;
+        }
+        if (!inCombo) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // The Shortcut cell for one action: a chip per alternative combo, then "+ Add".
@@ -258,14 +269,15 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
     bool added = false;
     ImGui::BeginChild("###kbAddList", ImVec2(360.0f, 280.0f), true);
     const std::vector<smatchet::cmd::Command>& all = cachedAll;
+    const smatchet::textmatch::Query addQuery = smatchet::textmatch::MakeQuery(addFilterLower);
+    const std::vector<std::string> noCombos;
     bool anyShown = false;
     for (const smatchet::cmd::Command& c : all) {
         if (CommandHasRow(binds, c.Name)) {
             continue; // already listed in the table
         }
         const std::string label = !c.Summary.empty() ? c.Summary : c.Name;
-        if (!addFilterLower.empty() && !PreferencesFilter::ContainsLower(label, addFilterLower) &&
-            !PreferencesFilter::ContainsLower(c.Name, addFilterLower)) {
+        if (!RowMatchesFilter(addQuery, label, c.Name, noCombos)) {
             continue;
         }
         anyShown = true;
@@ -365,10 +377,11 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
         std::vector<std::string> offendingCombos;
         smatchet::ui::ComputeKeybindingRowConflicts(binds, conflictIds, offendingCombos);
 
+        const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(filterLower);
         for (std::size_t i = 0; i < binds.size(); ++i) {
             Keybinding& b = binds[i];
             const std::string label = CommandLabel(app, b.CommandId);
-            if (!RowMatchesFilter(filterLower, label, b.CommandId, b.Hotkeys)) {
+            if (!RowMatchesFilter(query, label, b.CommandId, b.Hotkeys)) {
                 continue;
             }
             ImGui::TableNextRow();
@@ -501,11 +514,11 @@ bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d) {
     if (!d.prefsFilter.Active()) {
         return false;
     }
-    const std::string filterLower = PreferencesFilter::ToLowerFold(std::string(d.prefsSearchBuf));
+    const smatchet::textmatch::Query query =
+        smatchet::textmatch::MakeQuery(PreferencesFilter::ToLowerFold(std::string(d.prefsSearchBuf)));
     const std::vector<Keybinding>& binds = d.cfg.Keybindings.Bindings;
     for (std::size_t i = 0; i < binds.size(); ++i) {
-        if (RowMatchesFilter(filterLower, CommandLabel(app, binds[i].CommandId), binds[i].CommandId,
-                             binds[i].Hotkeys)) {
+        if (RowMatchesFilter(query, CommandLabel(app, binds[i].CommandId), binds[i].CommandId, binds[i].Hotkeys)) {
             return true;
         }
     }

@@ -16,6 +16,7 @@
 
 #include "ConfigManager.h"
 #include "Views.h"
+#include "ViewCyclePure.h"
 
 #include <doctest/doctest.h>
 
@@ -146,7 +147,8 @@ TEST_CASE("Views::Create builds ids from names, dedupes collisions, and auto-bui
     // "id" + field:<each field>, in Fields order.
     const std::vector<std::string> expectedOrder = {"id", "field:summary", "field:status"};
     std::vector<std::string> createdOrder;
-    for (const auto& c : created.Columns) createdOrder.push_back(c.Key);
+    for (const auto& c : created.Columns)
+        createdOrder.push_back(c.Key);
     CHECK(createdOrder == expectedOrder);
 
     // Same name again: id collision resolved with a numeric suffix.
@@ -181,7 +183,7 @@ TEST_CASE("Views::UpdateActive preserves the active id and falls back the name")
     CHECK(views.GetRevision() == rev + 1);
 
     REQUIRE(views.GetActiveView() != nullptr);
-    CHECK(views.GetActiveView()->Id == "default_view"); // id preserved
+    CHECK(views.GetActiveView()->Id == "default_view");   // id preserved
     CHECK(views.GetActiveView()->Name == "default_view"); // empty name -> id
     CHECK(views.GetActiveView()->Jql == "project = UPD");
 }
@@ -311,4 +313,34 @@ TEST_CASE("Views::GetRevision is monotonic across mutations and BumpRevision is 
     (void)views.GetStore();
     (void)views.GetActiveView();
     CHECK(views.GetRevision() == last + 1);
+}
+
+// --- view.next / view.previous index rule (ViewCyclePure.h) ------------------------------------------
+
+TEST_CASE("CycleViewIndex: steps forward and back, wrapping at both ends") {
+    using smatchet::views::CycleViewIndex;
+    CHECK(CycleViewIndex(3, 0, 1) == 1);
+    CHECK(CycleViewIndex(3, 1, 1) == 2);
+    CHECK(CycleViewIndex(3, 2, 1) == 0); // last -> first
+    CHECK(CycleViewIndex(3, 2, -1) == 1);
+    CHECK(CycleViewIndex(3, 0, -1) == 2); // first -> last
+    CHECK(CycleViewIndex(3, 1, 7) == 2);  // large steps reduce first
+    CHECK(CycleViewIndex(3, 1, -7) == 0);
+}
+
+TEST_CASE("CycleViewIndex: one view stays put, no view or no step lands nowhere") {
+    using smatchet::views::CycleViewIndex;
+    CHECK(CycleViewIndex(1, 0, 1) == 0);
+    CHECK(CycleViewIndex(1, 0, -1) == 0);
+    CHECK(CycleViewIndex(0, -1, 1) == -1);
+    CHECK(CycleViewIndex(-2, 0, 1) == -1);
+    CHECK(CycleViewIndex(3, 1, 0) == -1);
+}
+
+TEST_CASE("CycleViewIndex: an unknown active view lands on the first going forward, the last going back") {
+    using smatchet::views::CycleViewIndex;
+    CHECK(CycleViewIndex(4, -1, 1) == 0);
+    CHECK(CycleViewIndex(4, -1, -1) == 3);
+    CHECK(CycleViewIndex(4, 9, 1) == 0); // stale index past the end
+    CHECK(CycleViewIndex(4, 9, -1) == 3);
 }

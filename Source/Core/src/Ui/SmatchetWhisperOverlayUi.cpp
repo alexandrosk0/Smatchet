@@ -2,9 +2,9 @@
 // Renders a small floating window pinned to the top-right of the main
 // viewport while `g_dictationRouter.IsRecording()` is true. Reads the live
 // peak amplitude from `g_dictationRouter.GetLastPeakAmplitude()` (set by the
-// Phase E capture worker) and draws an ImGui ProgressBar. Cancel button
-// flips the router's recording state to false; the WhisperPlugin's release
-// callback observes the next-frame flag drop and stops capture.
+// Phase E capture worker) and draws an ImGui ProgressBar. Cancel (or Esc)
+// asks the router to discard the clip; the WhisperPlugin's release callback
+// takes that request and drops the audio instead of transcribing it.
 // All strings flow through SmatchetLocalization::T so future locale work
 // only touches SmatchetLocalization.cpp. The TU is added to CORE_SOURCES
 // only when SMATCHET_WITH_WHISPER=ON (root CMakeLists.txt source-list
@@ -62,14 +62,13 @@ void Render(AppController& /*app*/) {
         ImGui::ProgressBar(amp, ImVec2(220.0f, 8.0f), "");
         ImGui::PopStyleColor();
 
-        // Cancel — flips the router flag; the next hook-thread WM_KEYUP
-        // observes the user-press still down + the flag false and exits
-        // cleanly. Pressing Esc through the cancel button also serves as a
-        // mouse-only cancel path for users without an Esc key (rare laptop
-        // accessibility scenario).
+        // Cancel, by click or Esc: the router stops the indicator and the release that ends the press
+        // drops the clip instead of transcribing it (WhisperPlugin's release paths take the request).
+        // The overlay is NoNav and never takes focus, so Esc is read app-wide while it is up; the
+        // window that has the keyboard also sees that Esc (a field it is typing in is left).
         const char* cancelText = SmatchetLocalization::T("whisper.overlay.cancelButton", "Cancel (Esc)");
-        if (ImGui::SmallButton(cancelText)) {
-            g_dictationRouter.SetRecording(false);
+        if (ImGui::SmallButton(cancelText) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            g_dictationRouter.RequestDiscard();
         }
     }
     ImGui::End();

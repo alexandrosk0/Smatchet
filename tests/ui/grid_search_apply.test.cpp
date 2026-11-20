@@ -17,6 +17,9 @@
 //   3. TicketKey (a bare key for the backend) → narrows the rows as it is typed AND, on
 //      Enter, selects the already-loaded row in the pane (SpreadsheetState::ActiveIssueId) —
 //      the no-network jump.
+//   4. TitleSearch goes through the shared matcher (docs/plans/input-ux-w2-one-matcher.md): the
+//      words match in any order and any case, and when no row holds them as written the titles
+//      that hold their letters in order are shown instead.
 //
 // HOW IT REACHES PRODUCTION — there is no standalone widget to instantiate; instead it
 // drives the LIVE box the booted app already renders, observing the result through the live
@@ -43,6 +46,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -264,6 +268,79 @@ void RegisterTicketKeyJumpsToLoadedRow(ImGuiTestEngine* engine) {
     };
 }
 
+// The ids of the focused pane's visible rows, in grid order.
+std::vector<std::string> FocusedVisibleKeys() {
+    std::vector<std::string> keys;
+    const GridPane& pane = g_ui.focusedPane();
+    const std::shared_ptr<const std::vector<CachedTicket>>& rows = pane.ticketsSnapshot;
+    if (!rows) {
+        return keys;
+    }
+    for (const size_t idx : pane.filteredIndices) {
+        if (idx < rows->size()) {
+            keys.push_back((*rows)[idx].id);
+        }
+    }
+    return keys;
+}
+
+// Replace the text of the (possibly still active) search box with `text`: select all, then type. An
+// active InputText keeps its own copy of the text, so zeroing gridSearchBuf behind it would not clear it.
+void ReplaceGridSearch(ImGuiTestContext* ctx, const char* text) {
+    ctx->SetRef(kPrimaryWindow);
+    ctx->ItemInput("##GridFilter");
+    ctx->KeyCharsReplace(text);
+    ctx->Yield();
+    ctx->Yield();
+}
+
+// True once the focused pane shows exactly `want` (grid order ignored).
+bool VisibleKeysAre(std::vector<std::string> want) {
+    std::vector<std::string> got = FocusedVisibleKeys();
+    std::sort(got.begin(), got.end());
+    std::sort(want.begin(), want.end());
+    return got == want;
+}
+
+// Case 4 — the shared matcher behind the title search. The fixture's titles are
+// "First deterministic issue" (SMAT-1) and "Second deterministic issue" (SMAT-2).
+void RegisterTitleSearchUsesTheSharedMatcher(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSearch", "TitleSearch_WordsAnyOrderCaseFoldedLettersInOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = PrepareGridSearch(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        const bool loaded = YieldUntil(ctx, [] { return VisibleKeysAre({"SMAT-1", "SMAT-2"}); });
+        IM_CHECK_NO_RET(loaded); // both fixture rows show with an empty box
+        if (!loaded) {
+            return;
+        }
+
+        // Words in any order, any case: only SMAT-1's title holds both.
+        ReplaceGridSearch(ctx, "ISSUE first");
+        IM_CHECK_STR_EQ(g_ui.focusedPane().gridSearchBuf, "ISSUE first");
+        IM_CHECK(YieldUntil(ctx, [] { return VisibleKeysAre({"SMAT-1"}); }));
+
+        // One word both titles hold.
+        ReplaceGridSearch(ctx, "Deterministic");
+        IM_CHECK(YieldUntil(ctx, [] { return VisibleKeysAre({"SMAT-1", "SMAT-2"}); }));
+
+        // No row holds "scnd" or "dtrm" as written: the titles with those letters in order are shown.
+        ReplaceGridSearch(ctx, "scnd dtrm");
+        IM_CHECK(YieldUntil(ctx, [] { return VisibleKeysAre({"SMAT-2"}); }));
+
+        // Neither as written nor in order: nothing.
+        ReplaceGridSearch(ctx, "zqxgrid");
+        IM_CHECK_STR_EQ(g_ui.focusedPane().gridSearchBuf, "zqxgrid"); // the box was replaced, not appended to
+        IM_CHECK(YieldUntil(ctx, [] { return FocusedVisibleKeys().empty(); }));
+
+        ReplaceGridSearch(ctx, ""); // teardown: leave the box clean for siblings
+        g_ui.focusedPane().gridSearchBuf[0] = '\0';
+        IM_CHECK(YieldUntil(ctx, [] { return VisibleKeysAre({"SMAT-1", "SMAT-2"}); }));
+    };
+}
+
 } // namespace
 
 // Registration entry point — called once from SmatchetRegisterAllUiTests (ui_tests_registry.cpp)
@@ -272,6 +349,7 @@ extern "C" void SmatchetRegisterGridSearchApplyTests(ImGuiTestEngine* engine) {
     RegisterTitleSearchFiltersRows(engine);
     RegisterJqlReplacesViewQuery(engine);
     RegisterTicketKeyJumpsToLoadedRow(engine);
+    RegisterTitleSearchUsesTheSharedMatcher(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

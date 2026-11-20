@@ -200,6 +200,8 @@ derived from it (same order, ids only) and kept for existing consumers.
 | `view.get` | `id` *(required)* | Single view by id |
 | `view.current` | — | Currently active view |
 | `view.activate` | `id` *(required)* | Switch active view + trigger sync |
+| `view.next` | — | Switch to the next view in the view list (wraps) + trigger sync. `{activated}`. Default key `Ctrl+PageDown`. With unapplied edits in the Views editor it asks "Discard changes?" instead and returns `{activated: null, pendingConfirm}` |
+| `view.previous` | — | Switch to the previous view (wraps) + trigger sync. `{activated}`. Default key `Ctrl+PageUp`. Asks first on unapplied editor edits, like `view.next` |
 | `view.refresh_active` | — | Re-sync active view from tracker |
 | `view.create` | `name` *(required)*, `jql?`, `fields?` *(JSON array)*, `columns?` *(JSON array, see below)*, `triggerSync?` | Create a new view (auto-activated). `columns` takes precedence over `fields` when both are given. Dry-run supported. |
 | `view.update` | `name?`, `jql?`, `fields?` *(JSON array)*, `columns?` *(JSON array, see below)* | Edit the currently active view in place. Omitted keys preserve current value. `columns` takes precedence over `fields` when both are given; `fields` alone keeps each surviving field's position/width and appends new ones. Dry-run supported. |
