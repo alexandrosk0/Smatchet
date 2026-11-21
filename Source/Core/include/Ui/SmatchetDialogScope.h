@@ -9,7 +9,7 @@
 //   - On open, the dialog's first field (a form) or its default button (a confirm) takes the keyboard.
 //   - Esc cancels (smatchet::dialogkeys::ResolveEscape: a field with typed text is left first).
 //   - Enter runs the default button of a confirm; a destructive confirm defaults to its safe button.
-//   - Ctrl+Enter is a form's submit.
+//   - Ctrl+Enter is a form's submit; a confirm ignores it, even on a button under the keyboard cursor.
 //   - App-wide shortcuts are muted while any modal is up (AnyModalDialogOpen, read by
 //     SmatchetUI::dispatchKeybindings).
 // The decisions are pure and live in Ui/DialogKeysPure.h; this header only reads ImGui state for them.

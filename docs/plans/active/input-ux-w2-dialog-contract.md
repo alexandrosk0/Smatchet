@@ -2,7 +2,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slices 1, 2 and 3 shipped; slice 4 (row 25) and row 16 open. PR #2439 (drafts and undo), which rewrote the same Esc paths, has merged, so slice 4 builds on it.
+> **Status**: `active` — slices 1–4 and row 16 implemented; slices 3 and 4 ship together in PR #2468. Row 25 re-pointed the worklog only; the other four sites are recorded in § Deviations.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -232,6 +232,8 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - `c1b6f43f1` · merge of `origin/claude/frictionless-user-input-ux-ea174b` (PR #2433, head `b12bdb424`) for `Ui/DialogKeysPure.h`.
 - Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (PR #2437).
 - Slice 3 (rows 18–24) · form and info dialogs on the scope, focus return after a modal or the palette closes, tests and docs (the slice 3 PR's feature commit).
+- `15e012b13` · merge of `origin/develop` (#2439, #2440); toolbar editor dialog state per instance (`Ui/DialogScopeState.h`).
+- Slice 4 (row 25) + row 16 · the worklog dialog reads its keys through `DialogReadKeys`; the long-text and field-viewer discard confirms draw `ConfirmFooter(DestructiveFooter(...))` (PR #2468, the slice 4 commit).
 
 ## Deviations from plan
 
@@ -286,6 +288,13 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - **Tests:** the new slice 3 bucket-A cases go in a new `tests/Core/DialogKeysPure.test.cpp` (the `bulk-edit-rows` lock on `tests/CMakeLists.txt` is gone); the slice 1–2 cases stay in `SmatchetWorklogSubmitPure.test.cpp` for now. Bucket E is a new `tests/ui/dialog_contract_forms.test.cpp` (5 `DialogContract/*` tests).
 - **Slice 4 and row 16 wait for PR #2439** (`input-ux-w2-drafts-undo`). It rewrites the Esc paths of the worklog, long-text, field viewer, offline queue and comments dialogs, which are row 25's sites. (#2439 has since merged; this branch merges it in.)
 - **New `Ui/DialogScopeState.h`**: `DialogScopeState` moves out of `SmatchetDialogScope.h` into an ImGui-free header. The toolbar editor's dialog state, caret latch and open-time snapshot are `SmatchetToolbarUi` members, not file statics. With a static, the `GestureKeys` test host's editor and the app's own toolbar shared one state: the closed one reset it every frame, so the open one re-armed its opening focus each frame and kept moving the keyboard to the selected row (`GestureKeys/ToolbarList_KeysMoveAndRemove` failed on the merged tree).
+- **Row 25 re-pointed one site of five.** Only the worklog dialog (`TicketFieldEditor_Worklog.cpp`) was a straight substitution: `BeginDialog` / `DialogReadKeys` / `EndDialog` replace its own `ResolveEscape` plumbing, and its own "nothing typed" rule is kept. Three small changes, all the scope's rules: Ctrl+Enter saves only once the dialog has had the keyboard for a frame (as Esc already did), so the Ctrl+Enter of the frame it opens cannot also save; Esc also counts the field that had the caret last frame, so it leaves that field instead of closing around what was typed; and "had the keyboard last frame" is read at the end of the body (`EndDialog`), not at its top, so an inner popup opened mid-body no longer lets the next Esc close the whole dialog. The caret on open stays its own (`TimeSpentFocusFramesLeft` also clears the duration field's suggestion state). Left as they are, each not a straight substitution:
+  - `SmatchetOfflineQueueUi.cpp` conflict resolver: "field active" is the one resolved field, not any field of the dialog (the read-only panes would change their Esc), and Save, Alt+M and Alt+T exist only in the panes with that field.
+  - `SmatchetCommentsModalUi.cpp`: the Esc belongs to the post box inside the comments shell, not to a modal.
+  - `TicketFieldEditor_Modal.cpp` long-text editor: Esc cancels or asks to discard even from the text area, which `ResolveEscape` would turn into "leave the field".
+  - `SmatchetFieldViewerModalUi.cpp`: Esc is ignored while any text input is active, and the content decides about its text.
+- **Row 16:** both discard confirms now draw `ConfirmFooter(DestructiveFooter(discard, keep))`, so Discard is red and Keep has the keyboard. The field-viewer confirm had no default button before, so Enter now picks Keep there. The `wasOpen` / `discardWasOpen` guard on the confirm's Esc is the scope's owned-last-frame gate now; `DrawLongTextDiscardConfirm` lost its parameter.
+- **`ConfirmFooter` no longer reads Ctrl+Enter as Enter** (every confirm). With Keep editing now holding the keyboard, the long-text editor's Ctrl+Enter (its save key), pressed while the discard question is up, closed the question through its default button; `OfflineFirst/LongText_CancelAsks_DiscardCloses` caught it. Ctrl+Enter is a form's submit, so a confirm answers only a plain Enter. It also stops ImGui's own nav from pressing the button under a visible keyboard cursor on Ctrl+Enter (that activation ignores modifiers): before, Ctrl+Enter with the cursor on Discard discarded the edit. The test now covers that case too (`NavMoveTo` Discard, then Ctrl+Enter).
 - **Not migrated:** the annotate assignee modal still calls `ConfigManager::Load()` every frame (Pillar 2 smell, out of scope here).
 
 ## Verification (actual)
@@ -305,6 +314,13 @@ Slice 3:
 - **Code review**: `code-review` agent on the diff. Fixed: a DRY clone in `SameToolbarButtons`, the caret coming back with the text selected, the palette pulling the caret out of another window, Ctrl+Enter no longer applying in the date-time picker, and one Esc discarding toolbar edits made outside a field. Left as is (low): the caret is not returned to an outer modal's field when a nested modal closes, and Update Available can still be dismissed by a stray Enter, since Later is the safe choice.
 - **Lint**: `test-lint-rules.sh --diff origin/develop` passed. Advisory WARNs only: `RenderDateTimeFieldEditor` is 102 lines against the soft 100 (the blocking cap is 120), `CommandPaletteUi.h` comment ratio 53 %, and two file-level WARNs on `SmatchetBulkTicketsUi.cpp` (an older file read) and `AnnotateAnalysisUi_Window.cpp` (over 1,200 lines before this change).
 - **Manual residue**: none.
+
+Merge with develop and slice 4 (row 25 worklog + row 16):
+
+- **Build (dual-target)**: passed on the merged tree and again with slice 4.
+- **Bucket A**: `SmatchetTests.exe` 4391 / 4391.
+- **Bucket E**: merged tree, filter `DialogContract, CommandPalette, IconPicker, FuncSizeMainUi, Toolbar, Annotate, DateTime, Views, GestureKeys, Comments, FieldViewer, OfflineConflict` — all pass except the known `FuncSizeMainUi/BulkImportWindow_RendersAndShowsLoadFile`, once the toolbar state was made per instance (with the shared static, `GestureKeys/ToolbarList_KeysMoveAndRemove` failed every run). Slice 4 filter `OfflineFirst, DurationInlineEdit, TolerantParse, DialogContract, Comments, FieldViewer, LongText, Worklog, OfflineConflict, OfflineQueue, MobileViewsConfirmModal`: 85 / 85, including `LongText_EscWithTextAsksAndKeeps`, `LongText_CancelAsks_DiscardCloses` and `Worklog_OfflineQueues`. New `OfflineFirst/Comments_DiscardConfirmKeysKeep` covers the field-viewer confirm's keys: the opening Esc is not its answer, then Esc and Enter both keep; it fails with the field viewer put back to its old confirm (mutation check). The `OfflineFirst` cases skip unless the offline-first fixture is set, so they were run through `scripts/dev/test-ui-offline-first.sh` as well: that run caught `LongText_CancelAsks_DiscardCloses`, fixed by the `ConfirmFooter` Ctrl+Enter rule above.
+- **Lint / docs**: `test-lint-rules.sh --diff origin/develop` and `test-docs.sh` passed.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

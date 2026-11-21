@@ -354,6 +354,45 @@ static void RegisterCommentsEscKeepsTypedText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_DiscardConfirmKeysKeep: the discard confirm is on the dialog scope's destructive
+// footer. The Esc that opens it is not its answer (it stays up); Esc then keeps writing, and so does Enter,
+// since Keep writing has the keyboard. The comment survives both.
+static void RegisterCommentsDiscardConfirmKeysKeep(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DiscardConfirmKeysKeep");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ImGuiWindow* viewer = TopModal();
+        IM_CHECK_NO_RET(viewer != nullptr);
+        const ImGuiID viewerId = viewer != nullptr ? viewer->ID : 0;
+        const auto confirmUp = [viewerId]() {
+            ImGuiWindow* top = TopModal();
+            return top != nullptr && top->ID != viewerId;
+        };
+        ctx->KeyChars("draft one");
+        ctx->Yield(2);
+
+        for (int round = 0; round < 2; ++round) {
+            ctx->KeyPress(ImGuiKey_Escape); // round 0: leaves the box; round 1: nothing to leave
+            ctx->Yield(3);
+            if (!confirmUp()) {
+                ctx->KeyPress(ImGuiKey_Escape); // asks
+            }
+            IM_CHECK_NO_RET(YieldUntil(ctx, 30, confirmUp));
+            ctx->Yield(3);
+            IM_CHECK_NO_RET(confirmUp()); // the Esc that opened it did not answer it
+
+            ctx->KeyPress(round == 0 ? ImGuiKey_Escape : ImGuiKey_Enter);
+            IM_CHECK_NO_RET(YieldUntil(ctx, 30, [&confirmUp]() { return !confirmUp(); }));
+            IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+            IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "draft one");
+        }
+        CloseCommentsViewer(ctx);
+    };
+}
+
 // OfflineFirst/Comments_TitleBarCloseKeepsDraft: the title-bar X with a comment typed does not lose it:
 // the viewer comes back with the comment and the question that Close and Esc ask.
 static void RegisterCommentsTitleBarCloseKeepsDraft(ImGuiTestEngine* engine) {
@@ -562,7 +601,8 @@ static void RegisterLongTextEscWithTextAsksAndKeeps(ImGuiTestEngine* engine) {
 }
 
 // OfflineFirst/LongText_CancelAsks_DiscardCloses: Cancel with typed text asks first; Ctrl+Enter while
-// the question is up saves nothing; "Discard changes" closes the editor.
+// the question is up saves nothing and answers nothing, even with the keyboard cursor on Discard;
+// "Discard changes" closes the editor.
 static void RegisterLongTextCancelAsksDiscardCloses(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "LongText_CancelAsks_DiscardCloses");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -580,6 +620,20 @@ static void RegisterLongTextCancelAsksDiscardCloses(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().Active);
         IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().Dirty);
         IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().DiscardConfirmOpen);
+
+        // The same with the keyboard cursor shown on Discard: ImGui's nav must not press it on Ctrl+Enter.
+        ImGuiWindow* confirm = TopModal();
+        IM_CHECK_NO_RET(confirm != nullptr);
+        if (confirm != nullptr) {
+            ctx->SetRef(confirm->ID);
+            ctx->NavMoveTo("Discard changes");
+            IM_CHECK_NO_RET(ImGui::GetFocusID() == ctx->GetID("Discard changes"));
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+            ctx->Yield(4);
+            IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().Active);
+            IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().Dirty);
+            IM_CHECK_NO_RET(SmatchetTest_GetLongTextEditorSnapshot().DiscardConfirmOpen);
+        }
 
         IM_CHECK_NO_RET(ClickInTopModal(ctx, "Discard changes"));
         IM_CHECK_NO_RET(YieldUntil(ctx, 30, []() { return !SmatchetTest_GetLongTextEditorSnapshot().Active; }));
@@ -828,6 +882,7 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsUserOpenPutsCaretInPostBox(engine);
     RegisterCommentsProgrammaticOpenLeavesKeyboard(engine);
     RegisterCommentsEscKeepsTypedText(engine);
+    RegisterCommentsDiscardConfirmKeysKeep(engine);
     RegisterCommentsTitleBarCloseKeepsDraft(engine);
     RegisterCommentsBlankBoxCannotPost(engine);
     RegisterCommentsCtrlEnterPosts(engine);

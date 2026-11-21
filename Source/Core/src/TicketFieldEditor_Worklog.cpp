@@ -22,6 +22,7 @@
 #include "Ui/PendingActionSubmitAsync.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
@@ -127,8 +128,8 @@ struct ActiveWorklogDialogState {
     /// Frames left to put the caret in Time spent (0 = nothing pending): set when the dialog opens
     /// and when Enter there was turned down. Bounded, so a focus that cannot land never fights the user.
     int TimeSpentFocusFramesLeft = 0;
-    /// The dialog itself (not a popup above it) had the keyboard on the last draw.
-    bool OwnedKeyboardLastFrame = false;
+    /// The dialog scope's state (Ui/SmatchetDialogScope.h): Esc and Ctrl+Enter are read through it.
+    smatchet::ui::DialogScopeState Dialog;
     /// The two text boxes as last handed to the draft store (DraftStore.h), to notice a change without
     /// allocating each frame.
     std::string DraftSyncedSpent;
@@ -566,43 +567,31 @@ bool ActiveFieldTextChanged(const ImGuiContext& g) {
 // dialog takes must not also reach the field or button that has the keyboard.
 // - Only while the dialog itself has the keyboard. A popup above it (suggestions, date picker,
 //   templates) keeps its keys, and so does any other window.
-// - Ctrl+Enter saves from anywhere. The field being typed in is left first, which commits its text
-//   the way clicking Save would. Nav activation is dropped for the frame, because ImGui activates the
-//   item under the keyboard cursor on Enter whatever the modifiers: without that, Ctrl+Enter with the
-//   cursor on Cancel would save and close, and on the date picker's reset would save a reset date.
+// - Ctrl+Enter saves from anywhere, once the dialog has had the keyboard for a frame. The field being
+//   typed in is left first, which commits its text the way clicking Save would. Nav activation is dropped
+//   for the frame, because ImGui activates the item under the keyboard cursor on Enter whatever the
+//   modifiers: without that, Ctrl+Enter with the cursor on Cancel would save and close, and on the date
+//   picker's reset would save a reset date.
 // - Esc: see smatchet::dialogkeys::ResolveEscape. Leaving the field here ends the edit the way clicking away does:
 //   Time spent, Time remaining and the description keep what was typed (ImGui's own Esc would put
 //   the field back to its text from before the caret entered); a start date or time that does not
 //   parse yet goes back to the last valid one, as it does on a click away.
+// Both are the dialog scope's (smatchet::ui::DialogReadKeys); this only says what "nothing typed" means here.
 WorklogKeys ReadWorklogKeys() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    const bool ownsKeyboard =
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool fieldActive =
         g.ActiveId != 0 && g.ActiveIdWindow != nullptr && g.ActiveIdWindow->RootWindow == g.CurrentWindow->RootWindow;
-    WorklogKeys keys;
-    keys.Save = ownsKeyboard && (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
-                                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
     // Nothing typed: Time spent and the description are empty, Time remaining and the start date
     // still show what the dialog opened with (Time remaining only moves by itself when Time spent
     // has a value), and the field holding the caret has not been typed in.
     const bool nothingTyped = st.TimeSpent[0] == '\0' && st.WorkDescription[0] == '\0' &&
                               st.TotalTimeRemaining == st.TimeRemaining && st.DateStarted == st.InitialDateStarted &&
                               !(fieldActive && ActiveFieldTextChanged(g));
-    const smatchet::dialogkeys::EscapeAction escape =
-        smatchet::dialogkeys::ResolveEscape(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsKeyboard,
-                                            st.OwnedKeyboardLastFrame, fieldActive, nothingTyped);
-    st.OwnedKeyboardLastFrame = ownsKeyboard;
-    keys.Cancel = escape == smatchet::dialogkeys::EscapeAction::Cancel;
-    if (fieldActive && (keys.Save || escape != smatchet::dialogkeys::EscapeAction::None)) {
-        ImGui::ClearActiveID();
-    }
-    if (keys.Save) {
-        g.NavActivateId = 0;
-        g.NavActivateDownId = 0;
-        g.NavActivatePressedId = 0;
-    }
+    const smatchet::ui::DialogKeys dialogKeys = smatchet::ui::DialogReadKeys(st.Dialog, nothingTyped);
+    WorklogKeys keys;
+    keys.Save = dialogKeys.Submit;
+    keys.Cancel = dialogKeys.Esc == smatchet::dialogkeys::EscapeAction::Cancel;
     return keys;
 }
 
@@ -725,7 +714,7 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
         smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, ticket.id);
     s_ActiveWorklogState.CloseRequested = false;
     s_ActiveWorklogState.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
-    s_ActiveWorklogState.OwnedKeyboardLastFrame = false;
+    s_ActiveWorklogState.Dialog = smatchet::ui::DialogScopeState();
     RestoreWorklogDraft();
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
@@ -768,7 +757,8 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
         s_ActiveWorklogState.JustOpened = false;
     }
 
-    if (!ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!smatchet::ui::BeginDialog(s_ActiveWorklogState.Dialog, "TimeTrackingPopup", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         s_ActiveWorklogState.Initialized = false;
         return;
     }
@@ -779,7 +769,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
         s_ActiveWorklogState.CloseRequested = false;
         s_ActiveWorklogState.Initialized = false;
         ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_ActiveWorklogState.Dialog);
         return;
     }
 
@@ -820,7 +810,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     DrawWorklogButtons(threading, mutations, keys, spentEnter);
     SyncWorklogDraft();
 
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_ActiveWorklogState.Dialog);
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)

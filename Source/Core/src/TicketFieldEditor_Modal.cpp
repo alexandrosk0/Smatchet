@@ -17,6 +17,7 @@
 #include "Json/BoundedJsonParse.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/GestureKeys.h"
+#include "Ui/SmatchetDialogScope.h"
 
 #include "Ui/SmatchetModalPopupOpen.h"
 #include "Ui/SmatchetToast.h"
@@ -629,28 +630,29 @@ bool LongTextHasUnsavedEdit() {
                                                                        st.BufferSeedShown, st.LoadingMarkdown);
 }
 
-// The "discard your changes?" confirm, drawn inside the editor popup. Keep editing is the default
-// (keyboard focus starts on it) and Esc keeps too, so no single stray key discards. `wasOpen`: the
-// confirm was already up when this frame began, so the Esc that opened it is not read as its answer.
-// Returns true when the user chose to discard.
-bool DrawLongTextDiscardConfirm(bool wasOpen) {
+// The "discard your changes?" confirm, drawn inside the editor popup, on the dialog scope's destructive
+// footer: Discard changes is red, Keep editing has the keyboard, and Esc keeps too, so no single stray key
+// discards. The Esc that opened the confirm is not read as its answer (the scope reads Esc only once the
+// confirm has had the keyboard for a frame). Returns true when the user chose to discard.
+bool DrawLongTextDiscardConfirm() {
+    static smatchet::ui::DialogScopeState s_discardDialog;
     bool discard = false;
-    if (ImGui::BeginPopupModal(kLongTextDiscardPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (smatchet::ui::BeginDialog(s_discardDialog, kLongTextDiscardPopupId, nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(SmatchetLocalization::T("longtext.discard_confirm.body",
                                                        "You have unsaved changes in this field. Discard them?"));
         ImGui::Spacing();
-        if (ImGui::Button(SmatchetLocalization::T("longtext.discard_confirm.discard", "Discard changes"))) {
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+            s_discardDialog, smatchet::ui::DestructiveFooter(
+                                 SmatchetLocalization::T("longtext.discard_confirm.discard", "Discard changes"),
+                                 SmatchetLocalization::T("longtext.discard_confirm.keep", "Keep editing")));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             discard = true;
             ImGui::CloseCurrentPopup();
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
+            s_ActiveLongTextState.FocusEditorPending = true; // ConfirmFooter closed the confirm
         }
-        ImGui::SameLine();
-        const bool keep = ImGui::Button(SmatchetLocalization::T("longtext.discard_confirm.keep", "Keep editing"));
-        ImGui::SetItemDefaultFocus();
-        if (keep || (wasOpen && !discard && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-            s_ActiveLongTextState.FocusEditorPending = true;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_discardDialog);
     }
     return discard;
 }
@@ -742,7 +744,7 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
             closeNow = true;
         }
     }
-    if (DrawLongTextDiscardConfirm(discardWasOpen)) {
+    if (DrawLongTextDiscardConfirm()) {
         EraseLongTextDraft(); // the user chose to throw the edit away
         closeNow = true;
     }

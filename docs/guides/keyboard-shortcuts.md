@@ -195,14 +195,15 @@ leaves the keyboard where it is.
 ### Confirm dialogs
 
 Every confirm dialog (Delete view, Discard changes, Discard queued work, Delete local
-database, Reset keyboard shortcuts, Reset window layout, Clear conversation, Unsaved
-changes in Preferences or the Lua console, and the custom-endpoint and outbound-context
-consent prompts) uses the same keys:
+database, Reset keyboard shortcuts, Reset window layout, Clear conversation, the discard
+questions of the long-text editor and of Comments, Unsaved changes in Preferences or the
+Lua console, and the custom-endpoint and outbound-context consent prompts) uses the same
+keys:
 
 | Shortcut | Action |
 |---|---|
-| `Enter` | Run the button that has the keyboard |
-| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep my shortcuts**) |
+| `Enter` | Run the button that has the keyboard. `Ctrl+Enter` does not: it is the save key of the form under the confirm |
+| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep writing**, **Keep my shortcuts**) |
 | `Tab` / arrows | Move between the buttons |
 
 When a confirm opens, the keyboard is on its safe button if the action deletes or
