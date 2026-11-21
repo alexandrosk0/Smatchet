@@ -150,105 +150,15 @@ jobs:
               range="${before}...HEAD"
             fi
           fi
-          files=$(git diff --name-only $range 2>/dev/null || true)
-          echo "Changed files in ${range}:"; printf '  %s\n' $files
-          # Default code=true (fail-safe). Only flip to false when we have a
-          # non-empty file list AND every entry is a docs-class path.
-          code=true
-          if [ -n "$files" ]; then
-            code=false
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              case "$f" in
-                # Build-invoked exception: test-lint-rules.sh is the strict-zone
-                # delta gate run by comment-noise-gate's code-gated
-                # "--diff origin/develop" step, plus the develop-push
-                # "--catalog --refresh" job.
-                # It lives in the agent layer, so it reaches this repo only through
-                # the agent-layer gitlink, and a change to it MUST trigger the build
-                # so the gate is re-validated — otherwise a bump that moves only the
-                # gate skips the build and the gate never runs. So a pointer bump is
-                # code. Keep before the agents/* docs-class arm (case matches first
-                # pattern).
-                agent-layer|.gitmodules) code=true; break ;;
-                # Docs-class scripts: test-docs.sh is the local mirror of
-                # .github/workflows/doc-validation.yml (anchors / agent-contract /
-                # plan-index / ...). It runs no compiler and touches no product
-                # code, so a change to it alone must NOT trigger the expensive
-                # Windows builds — doc-validation.yml re-validates it on its own.
-                # (Other scripts/dev/*.sh — doctor.sh, test-build-warnings.sh, etc.
-                # — DO affect the build and stay non-docs via the *) arm below.)
-                scripts/dev/test-docs.sh) ;;
-                *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
-                *) code=true; break ;;
-              esac
-            done <<< "$files"
-          fi
-          echo "non-docs changes present: ${code}"
-          echo "code=${code}" >> "$GITHUB_OUTPUT"
-          # ASAN Core-delta gate (docs/plans/ci-build-time-reduction.md Q5):
-          # the sanitizer-asan job builds Debug (uncacheable by sccache) and is the
-          # only real per-PR asan lever, so run it pre-merge ONLY when first-party
-          # shared C++ that can introduce UB changed — Source/Core or Source/Plugins
-          # (.cpp/.h/.hpp/.cc). Standalone-only / docs / yaml PRs skip asan pre-merge;
-          # sanitizer-nightly still covers them. **Fail-safe = TRUE on uncertainty**:
-          # an empty/failed `$files` means we could NOT classify the diff, so we must
-          # NOT skip the pre-merge sanitizer safety gate — default to running asan
-          # (mirrors the `code=true` fail-safe above). Only a *non-empty* file list
-          # with no Core/Plugins C++ match yields false (the intended skip on
-          # docs/yaml/Standalone-only PRs). In `case`, * spans '/', so nested paths match.
-          # The sanitizer toolchain/config itself (cmake/Sanitizers.cmake, the pinned
-          # clang-cl action) also counts: a PR that changes how the lanes instrument
-          # must run them. #2400 changed those flags with no Core C++, so the UBSan
-          # lane skipped on it and its LLVM-20 crash first surfaced on later PRs.
-          if [ -z "$files" ]; then
-            source_core_cpp=true
-          else
-            source_core_cpp=false
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              case "$f" in
-                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh|cmake/Sanitizers.cmake|.github/actions/setup-pinned-llvm/*)
-                  source_core_cpp=true; break ;;
-              esac
-            done <<< "$files"
-          fi
-          echo "Source/Core|Plugins C++ or sanitizer config changed (asan gate): ${source_core_cpp}"
-          echo "source_core_cpp=${source_core_cpp}" >> "$GITHUB_OUTPUT"
-          # Android-only diff gate: skip the desktop standalone builds + their
-          # downstream tests when the diff touches ONLY android/mobile paths —
-          # Source/Mobile/** (the mobile source tree, compiled by NO desktop job)
-          # and cmake/toolchains/** (the NDK toolchain wrapper, consumed only by
-          # the android-ndk preset). The mobile-android-ndk job — the ONLY job
-          # that compiles Source/Mobile — gates on `code`, not this, so it still
-          # runs; mobile-posix-core-check (CORE-only, host clang) is skipped since
-          # a Source/Mobile change can't affect CORE_SOURCES and android-ndk
-          # already cross-compiles CORE for the android-only case.
-          # Set true ONLY when code==true AND every changed file is an android-only
-          # path OR a docs-class path the `code` gate above already treats as
-          # non-compiling (so a mobile change + its plan-doc update still skips
-          # desktop). The two build-invoked arms (test-lint-rules.sh / test-docs.sh)
-          # MIRROR the `code` arms above so a gate-script change can't be mis-skipped.
-          # **Fail-safe = FALSE** (run the full desktop suite) on ANY uncertainty:
-          # empty/failed diff or code==false leaves it false; any non-android,
-          # non-docs file flips it false. A skipped REQUIRED check (windows-msvc /
-          # -light) counts as success for branch protection — same as docs-only.
-          android_only=false
-          if [ "$code" = "true" ] && [ -n "$files" ]; then
-            android_only=true
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              case "$f" in
-                agent-layer|.gitmodules) android_only=false; break ;;
-                Source/Mobile/*|cmake/toolchains/*) ;;
-                scripts/dev/test-docs.sh) ;;
-                *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
-                *) android_only=false; break ;;
-              esac
-            done <<< "$files"
-          fi
-          echo "android-only diff (skip desktop builds): ${android_only}"
-          echo "android_only=${android_only}" >> "$GITHUB_OUTPUT"
+          # The classification itself lives in scripts/ci/detect-changes.sh so
+          # tests/bats/detect_changes.bats can pin it: every sanitizer-lane input
+          # (Core/Plugins C++, cmake/Sanitizers.cmake, the pinned-LLVM action,
+          # CMakePresets.json, sanitizer-nightly.yml, the doctest rig under tests/,
+          # and the sanitizer jobs of this file) must flip source_core_cpp, or a PR
+          # that reconfigures a lane skips that lane and the skip counts as a pass
+          # (#2400). The script prints the three outputs on stdout and its
+          # reasoning on stderr; fail-safe values on an unclassifiable diff.
+          bash scripts/ci/detect-changes.sh "$range" >> "$GITHUB_OUTPUT"
 
   # High-integrity C++ delta gate (docs/plans/shipped/high-integrity-cpp-enforcement.md),
   # broken out of the windows-msvc build job into its OWN required lane. WHY: the
@@ -2195,9 +2105,11 @@ jobs:
   sanitizer-asan:
     name: Sanitizer (ASAN via MSVC)
     # Core-delta gate (docs/plans/ci-build-time-reduction.md Q5): run
-    # pre-merge ONLY when Source/Core|Plugins C++ changed (the `changes` job's
-    # source_core_cpp output). Standalone-only / docs / yaml PRs skip it here;
-    # sanitizer-nightly (cron) still covers them. asan builds Debug — uncacheable
+    # pre-merge ONLY when Source/Core|Plugins C++, the sanitizer config or the
+    # doctest rig changed (the `changes` job's source_core_cpp output; the full
+    # trigger set is in scripts/ci/detect-changes.sh). Standalone-only / docs /
+    # unrelated-yaml PRs skip it here; sanitizer-nightly (cron) still covers
+    # them. asan builds Debug — uncacheable
     # by sccache — so skipping it on non-Core PRs is the only real per-PR lever.
     # `needs: changes` so the output is available; still after windows-msvc to
     # avoid spending a runner when the main build is already broken.
@@ -2341,7 +2253,8 @@ jobs:
     # docs/plans/active/build-quality-velocity-hardening.md #11.
     #
     # Core-delta gate: mirrors sanitizer-asan — skip on Standalone-only / docs /
-    # yaml PRs (source_core_cpp=false); sanitizer-nightly still covers those paths
+    # unrelated-yaml PRs (source_core_cpp=false; trigger set in
+    # scripts/ci/detect-changes.sh); sanitizer-nightly still covers those paths
     # nightly. Promoted to a REQUIRED branch-protection check in Slice C (it gates
     # every Core PR); the ubsan-out-of-band label is its in-workflow escape.
     needs: [changes, windows-msvc]
