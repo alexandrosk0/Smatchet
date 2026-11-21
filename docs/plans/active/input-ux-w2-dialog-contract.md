@@ -2,7 +2,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slices 1–4 and row 16 implemented; slices 3 and 4 ship together in PR #2468. Row 25 re-pointed the worklog only; the other four sites are recorded in § Deviations.
+> **Status**: `active` — slices 1–4 and row 16 implemented; slice 3 shipped in PR #2468; slice 4 and row 16 ship in their own PR. Row 25 re-pointed the worklog only; the other four sites are recorded in § Deviations.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -233,7 +233,7 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (PR #2437).
 - Slice 3 (rows 18–24) · form and info dialogs on the scope, focus return after a modal or the palette closes, tests and docs (the slice 3 PR's feature commit).
 - `15e012b13` · merge of `origin/develop` (#2439, #2440); toolbar editor dialog state per instance (`Ui/DialogScopeState.h`).
-- Slice 4 (row 25) + row 16 · the worklog dialog reads its keys through `DialogReadKeys`; the long-text and field-viewer discard confirms draw `ConfirmFooter(DestructiveFooter(...))` (PR #2468, the slice 4 commit).
+- Slice 4 (row 25) + row 16 · the worklog dialog reads its keys through `DialogReadKeys`; the long-text and field-viewer discard confirms draw `ConfirmFooter(DestructiveFooter(...))` (the slice 4 PR's feature commit).
 
 ## Deviations from plan
 
