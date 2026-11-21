@@ -117,8 +117,18 @@ dialogkeys::ConfirmPick ConfirmFooter(DialogScopeState& s, const ConfirmFooterSp
     const bool navItemTakesEnter =
         g.NavId != 0 && g.NavCursorVisible && g.NavWindow != nullptr && g.CurrentWindow != nullptr &&
         g.NavWindow->RootWindow == g.CurrentWindow->RootWindow && (g.ActiveId == 0 || g.ActiveId == g.NavId);
+    // Ctrl+Enter is a form's submit, not a confirm's Enter: one aimed at the form under the confirm (the
+    // long-text editor's save) must not answer the confirm either.
+    const bool plainEnter = EnterPressed() && !ImGui::GetIO().KeyCtrl;
+    if (owns && EnterPressed() && ImGui::GetIO().KeyCtrl) {
+        // ImGui activates the item under a visible keyboard cursor on Enter whatever the modifiers, so
+        // without this Ctrl+Enter would still press the focused button (Discard included).
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+    }
     const ConfirmPick enterPick =
-        dialogkeys::ResolveConfirmEnter(EnterPressed(), owns, s.OwnedKeyboardLastFrame, navItemTakesEnter, def);
+        dialogkeys::ResolveConfirmEnter(plainEnter, owns, s.OwnedKeyboardLastFrame, navItemTakesEnter, def);
     const dialogkeys::EscapeAction escape =
         dialogkeys::ResolveEscape(esc, owns, s.OwnedKeyboardLastFrame, FieldActiveForEsc(s, g, esc), true);
 
