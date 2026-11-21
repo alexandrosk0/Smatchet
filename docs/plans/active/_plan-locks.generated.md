@@ -8,7 +8,48 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (2 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `input-ux-w2-dialog-contract-s3`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/vigilant-banach-e47658`
+- **Started**: 2026-11-20T14:44:22Z
+- **Updated**: 2026-11-21T04:23:04Z
+- **Write set** (25 paths):
+  - `Source/Core/include/Commands/CommandPaletteUi.h`
+  - `Source/Core/include/Ui/DialogKeysPure.h`
+  - `Source/Core/include/Ui/DialogScopeState.h`
+  - `Source/Core/include/Ui/SmatchetDialogScope.h`
+  - `Source/Core/include/Ui/SmatchetToolbarUi.h`
+  - `Source/Core/src/Commands/CommandPaletteUi.cpp`
+  - `Source/Core/src/Tracker/TrackerDateTimeFieldEditor.cpp`
+  - `Source/Core/src/Ui/AGENTS.md`
+  - `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp`
+  - `Source/Core/src/Ui/SmatchetAboutUi.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp`
+  - `Source/Core/src/Ui/SmatchetDialogScope.cpp`
+  - `Source/Core/src/Ui/SmatchetToolbarUi.cpp`
+  - `Source/Core/src/Ui/SmatchetToolbarUi_detail.h`
+  - `Source/Core/src/Ui/SmatchetUI.cpp`
+  - `docs/guides/keyboard-shortcuts.md`
+  - `docs/plans/active/input-ux-w2-dialog-contract.md`
+  - `tests/CMakeLists.txt`
+  - `tests/Core/DialogKeysPure.test.cpp`
+  - `tests/Core/ToolbarEditorPure.test.cpp`
+  - `tests/ui/CMakeLists.txt`
+  - `tests/ui/dialog_contract_forms.test.cpp`
+  - `tests/ui/funcsize_main_ui_smoke.test.cpp`
+  - `tests/ui/ui_tests_registry.cpp`
+
+### `input-ux-w3-attachments-drop-paste`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/w3-plan-attachments-drop-paste-8c1ad5`
+- **Originating plan**: [`docs/plans/active/input-ux-w3-attachments-drop-paste.md`](../../../docs/plans/active/input-ux-w3-attachments-drop-paste.md)
+- **Started**: 2026-11-20T19:25:41Z
+- **Write set** (1 paths):
+  - `docs/plans/active/input-ux-w3-attachments-drop-paste.md`
+- **Notes**: plan-only docs PR
+
