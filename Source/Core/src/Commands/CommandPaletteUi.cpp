@@ -12,6 +12,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "TextMatchPure.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetMatchHighlight.h"
 
 #include <algorithm>
@@ -34,7 +35,15 @@ int KeepArrowKeysInFilterInput(ImGuiInputTextCallbackData*) { return 0; }
 
 } // namespace
 
+// The palette's own window name: reopening it while it is open must not record it as its own opener.
+constexpr const char* kPaletteWindowName = "##cmdpalette";
+
 void CommandPaletteUi::Open() {
+    const smatchet::ui::FocusOpener opener = smatchet::ui::CaptureFocusOpener(kPaletteWindowName);
+    if (!open_ || opener.Window != 0) {
+        openerWindow_ = opener.Window;
+        openerTextField_ = opener.TextField;
+    }
     open_ = true;
     focusFilterPending_ = true;
     selected_ = 0;
@@ -58,7 +67,17 @@ void CommandPaletteUi::Open() {
     g_dictationRouter.RegisterInputText(filterBuf_, sizeof(filterBuf_), nullptr);
 }
 
-void CommandPaletteUi::Close() {
+void CommandPaletteUi::Close() { closePalette(true); }
+
+void CommandPaletteUi::closePalette(bool returnFocus) {
+    if (open_ && returnFocus) {
+        smatchet::ui::FocusOpener opener;
+        opener.Window = openerWindow_;
+        opener.TextField = openerTextField_;
+        smatchet::ui::ReturnFocusTo(opener, kPaletteWindowName);
+    }
+    openerWindow_ = 0;
+    openerTextField_ = 0;
     open_ = false;
     dispatchError_.clear();
     argFormStep_ = -1;
@@ -286,7 +305,7 @@ void CommandPaletteUi::drainPendingDispatch(AppController& app) {
     }
     // Persist recents so they survive restarts.
     app.Commands().SaveRecents();
-    Close();
+    closePalette(false);
 }
 
 void CommandPaletteUi::drawDispatchError() const {
@@ -380,7 +399,7 @@ void CommandPaletteUi::Draw(AppController& app) {
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
                              ImGuiWindowFlags_NoMove;
-    if (!ImGui::Begin("##cmdpalette", &open_, flags)) {
+    if (!ImGui::Begin(kPaletteWindowName, &open_, flags)) {
         ImGui::End();
         return;
     }

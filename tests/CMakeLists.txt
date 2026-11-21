@@ -82,6 +82,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Worklog Save validation + the shared dialog keys (header-only, ImGui-free); reads durations through
         # the parse-and-explain layer above, so the natural spellings (#38) are covered on Linux too.
         Core/SmatchetWorklogSubmitPure.test.cpp
+        # The dialog scope's caret return (Ui/DialogKeysPure.h; header-only, ImGui-free).
+        Core/DialogKeysPure.test.cpp
         # The grid search box's mode decision (header-only; reuses ExtractIssueKeyPrefix and the key parsers).
         Core/GridSearchInputClassifier.test.cpp
         # Preferences save: trim + site-URL normalisation (the helpers are inline in a private header).
@@ -1502,6 +1504,9 @@ add_executable(SmatchetTests
     # the now-async HandleWorklogSave). Links the already-listed TrackerFieldValueParser.cpp +
     # CompactDateFormat.cpp that ParseWorkDurationToSeconds / TryParseJiraDateTime live in.
     Core/SmatchetWorklogSubmitPure.test.cpp
+    # Input UX 4.1 slice 3 — the caret return after a dialog or the palette closes (Ui/DialogKeysPure.h).
+    # Header-only pure helper, no production .cpp to link.
+    Core/DialogKeysPure.test.cpp
     # Issue #1925 — kick / latch / staleness gates for the single-slot async loads that
     # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
     # Header-only pure helper, no production .cpp to link.

@@ -121,8 +121,8 @@ void RegisterMainMenuBarRenderSmoke(ImGuiTestEngine* engine) {
 // language-stable ID).
 const char* const kToolbarEditorTitle = "Customize Toolbar###SmatchetToolbarEditor";
 
-// Closes the editor through its Cancel button: Esc does not close a modal, and Save
-// would persist the toolbar into later tests.
+// Closes the editor through its Cancel button: Save would persist the toolbar into
+// later tests.
 void CloseToolbarEditor(ImGuiTestContext* ctx) {
     if (!WindowIsLive(kToolbarEditorTitle)) {
         return;

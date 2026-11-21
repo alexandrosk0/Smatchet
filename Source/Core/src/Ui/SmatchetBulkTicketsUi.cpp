@@ -12,6 +12,7 @@
 #include "SmatchetUiSession.h"
 #include "Ui/BulkImportAbandon.h"
 #include "Ui/BulkImportStatusPure.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
@@ -34,6 +35,10 @@
 #include <vector>
 
 namespace {
+
+// Keys (smatchet::ui dialog contract) of the target-project dialog: the project picker takes the keyboard on
+// open, Enter runs the button that has the keyboard (Use this project once one is chosen), Esc cancels.
+smatchet::ui::DialogScopeState s_bulkImportProjectDialog;
 
 IssueTableSerializer::Format BulkFormatFromIndex(int idx) {
     switch (idx) {
@@ -369,8 +374,8 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
     if (d.bulkImportProjectModalOpen) {
         ImGui::OpenPopup("##BulkImportProjectModal");
     }
-    if (ImGui::BeginPopupModal("##BulkImportProjectModal", &d.bulkImportProjectModalOpen,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (smatchet::ui::BeginDialog(s_bulkImportProjectDialog, "##BulkImportProjectModal", &d.bulkImportProjectModalOpen,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(
             SmatchetLocalization::T("bulkImport.chooseProject.title", "Choose target project for bulk import"));
         ImGui::Separator();
@@ -378,30 +383,26 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
         std::string endpoint;
         SmatchetProjectPicker::ResolveBackendKindAndEndpoint(d.cfg, backendKind, endpoint);
         ImGui::SetNextItemWidth(360.0f);
+        smatchet::ui::DialogFocusHere(s_bulkImportProjectDialog);
         SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app, backendKind, endpoint,
                                     d.bulkImportProjectModalChosenKey);
         ImGui::Separator();
-        if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel"))) {
-            d.bulkImportProjectModalOpen = false;
-            d.bulkImportProjectModalChosenKey.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        const bool canConfirm = !d.bulkImportProjectModalChosenKey.empty();
-        if (!canConfirm) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.confirm", "Use this project"))) {
+        smatchet::ui::ConfirmFooterSpec footer;
+        footer.PrimaryLabel = SmatchetLocalization::T("bulkImport.chooseProject.confirm", "Use this project");
+        footer.PrimaryEnabled = !d.bulkImportProjectModalChosenKey.empty();
+        footer.CancelLabel = SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel");
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(s_bulkImportProjectDialog, footer);
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             const std::string chosen = d.bulkImportProjectModalChosenKey;
             d.bulkImportProjectModalOpen = false;
             d.bulkImportProjectModalChosenKey.clear();
             ImGui::CloseCurrentPopup();
             BulkImportRunParse(app, d, chosen);
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
+            d.bulkImportProjectModalOpen = false; // ConfirmFooter closed the popup
+            d.bulkImportProjectModalChosenKey.clear();
         }
-        if (!canConfirm) {
-            ImGui::EndDisabled();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_bulkImportProjectDialog);
     }
 
     if (!d.bulkImportError.empty()) {

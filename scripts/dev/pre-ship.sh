@@ -627,6 +627,17 @@ if ! bash scripts/dev/test-docs.sh; then
     exit 1
 fi
 
+# Plan CI-proof check (infra 2026-11-12-delta-gated-lane-skips-the-pr-that-
+# reconfigures-it, action 4): a changed plan whose `## Verification` names a
+# delta-gated CI check as its proof "on this PR" must not ship a diff on which that
+# check skips — a skipped check is a pass, so the proof would silently never run
+# (#2400). Offline: it predicts the skip with the classifier the workflow runs.
+echo "pre-ship: running plan CI-proof check (plan-ci-proof-check.sh)"
+if ! bash scripts/dev/plan-ci-proof-check.sh "$base_ref"; then
+    echo "pre-ship: FAIL — a plan names a CI proof this diff will skip; fix the trigger set or the plan's proof before pushing." >&2
+    exit 1
+fi
+
 fi # end of Group B (the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1)
 
 # --- PR-burst advisory ----------------------------------------------------------------

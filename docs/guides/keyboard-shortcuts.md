@@ -162,6 +162,10 @@ focus:
 | Annotate | `Ctrl+Enter` in the callstack box | Process |
 | Scripts & Actions | `Ctrl+Enter` or `F5` | Run the open script (the row's **Run** / **Run on selected** button) |
 | Dictation overlay | `Esc` while recording | Cancel: the clip is dropped, nothing is transcribed or typed |
+| Customize Toolbar | `Ctrl+Enter` | Save |
+| Customize Toolbar | `Esc` | Cancel, when nothing is changed. With an edit made (a field, a move or a removal), `Esc` only leaves the field, and with no field to leave it does nothing: **Cancel** discards the edits |
+| Save view as new | `Enter` in the name, or `Ctrl+Enter` | Save |
+| Save view as new | `Esc` | Cancel. With a name of your own typed and the caret in it, the first `Esc` only leaves the field |
 
 A submit button names its key at its right edge (**Post Comment** `Ctrl+Enter`, **Save**
 `Ctrl+Enter`), the way a menu item names its shortcut, and a composer's placeholder sits
@@ -208,6 +212,18 @@ deletes anything. A destructive action button is red.
 
 The **Pick Icon** dialog opens with the caret in its search box. `Enter` picks the icon
 when exactly one matches, and `Esc` closes it.
+
+**About**, **Update Available**, the Annotate assignee and Jira user profile windows, the
+bulk-import project picker and the date-time picker close on `Esc`. About and the Annotate
+windows open with the keyboard on **Close**. **Update Available** opens on **Later**: it can
+appear while you type, so pressing `Enter` straight away installs nothing and skips nothing.
+**Customize Toolbar** opens with the keyboard on its button list, and **Add command** or
+**Add Lua** puts the caret in the new button's first field.
+
+When the last open dialog, or the command palette, closes, the caret goes back to the text
+field that had it before, with the text and the cursor as you left them. That includes a
+dialog that opened by itself while you were typing. Running a command from the palette, or
+clicking into another field while it is open, leaves the keyboard where it is.
 
 While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
 zoom shortcuts, **Full Screen** and the list and divider keys below (`Alt+Up`, `Alt+Down`, `Delete`,

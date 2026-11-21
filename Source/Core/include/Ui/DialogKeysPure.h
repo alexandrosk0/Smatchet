@@ -4,9 +4,9 @@
 
 #include <cstring>
 
-/// Pure decisions shared by the dialogs that hold typed text: the worklog dialog, the offline conflict
-/// resolver, the long-text editor and the field viewer. No ImGui here: the callers read the keys, the
-/// focus and the popup state, and these say what follows.
+/// Pure decisions behind the dialog keys (Ui/SmatchetDialogScope.h and the dialogs that hold typed text:
+/// the worklog dialog, the offline conflict resolver, the long-text editor and the field viewer). No ImGui
+/// here: the callers read the keys, the focus and the popup state, and these say what follows.
 namespace smatchet {
 namespace dialogkeys {
 
@@ -116,6 +116,69 @@ inline bool GlobalShortcutAllowedUnderModal(const char* commandId) {
         return true;
     }
     return std::strcmp(commandId, "app.fullscreen.toggle") == 0;
+}
+
+/// Gives the caret back to the text field that held it before a dialog opened (#89, #24). ImGui puts the
+/// keyboard back on the window under a modal when the modal closes, but not into a text field, so typing
+/// did nothing until the user clicked the field again. Ids are ImGui ids, 0 for none.
+struct CaretReturnTracker {
+    unsigned int CandidateField = 0;  ///< the text field with the caret on the last frame no modal was up
+    unsigned int CandidateWindow = 0; ///< its root window
+    unsigned int ReturnField = 0;     ///< the field owed the caret, 0 when none is
+    unsigned int ReturnWindow = 0;    ///< its root window
+    bool ModalUpLastFrame = false;
+    int Tries = 0;
+};
+
+/// Owes the caret to `field` (in root window `window`) without a modal: the command palette is a plain
+/// window, and it says itself when it closes without running anything.
+inline void RequestCaretReturn(CaretReturnTracker& t, unsigned int field, unsigned int window) {
+    t.ReturnField = window != 0 ? field : 0;
+    t.ReturnWindow = t.ReturnField != 0 ? window : 0;
+    t.Tries = 0;
+}
+
+/// One step per frame, before any window draws. `modalUp`: a modal popup is open. `activeTextField` and
+/// `activeTextWindow`: the text field holding the caret now and its root window (0 and 0 for none).
+/// `focusedWindow`: the root window with the keyboard. Returns the field to activate this frame, or 0.
+///
+/// The field that had the caret on the frame the first modal opened is owed it back when the last modal
+/// closes. It gets it only while the keyboard is still on that field's window and no field holds the caret,
+/// so a dialog whose action took the user elsewhere (another window, another field) keeps that. The request
+/// waits while Enter is held, as ResolveCaretRequest does: the Enter that closed a dialog would otherwise
+/// repeat into the field. A field that never takes it (it is no longer drawn) is dropped after `maxTries`
+/// frames.
+inline unsigned int StepCaretReturn(CaretReturnTracker& t, bool modalUp, unsigned int activeTextField,
+                                    unsigned int activeTextWindow, unsigned int focusedWindow, bool enterHeld,
+                                    int maxTries) {
+    if (modalUp) {
+        if (!t.ModalUpLastFrame) {
+            t.ReturnField = t.CandidateField;
+            t.ReturnWindow = t.CandidateWindow;
+            t.Tries = 0;
+        }
+        t.ModalUpLastFrame = true;
+        t.CandidateField = 0;
+        t.CandidateWindow = 0;
+        return 0;
+    }
+    t.ModalUpLastFrame = false;
+    t.CandidateField = activeTextField;
+    t.CandidateWindow = activeTextField != 0 ? activeTextWindow : 0;
+    if (t.ReturnField == 0) {
+        return 0;
+    }
+    if (activeTextField != 0 || focusedWindow != t.ReturnWindow || t.Tries >= maxTries) {
+        t.ReturnField = 0;
+        t.ReturnWindow = 0;
+        t.Tries = 0;
+        return 0;
+    }
+    if (enterHeld) {
+        return 0;
+    }
+    ++t.Tries;
+    return t.ReturnField;
 }
 
 } // namespace dialogkeys

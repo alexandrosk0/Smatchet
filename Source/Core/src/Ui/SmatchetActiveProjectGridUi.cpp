@@ -3,6 +3,7 @@
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
 #include "Ui/SmatchetBulkFieldEditPopup.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetDockNodeIds.h" // central-node re-dock for extra panes on a layout reset
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetAutocompleteUi.h"
@@ -637,15 +638,22 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
         activeProjectState_.openSaveAsNewModal = false;
     }
 
-    // Save-as-new modal: name input + Save / Cancel.
-    if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Save-as-new modal: name input + Save / Cancel. Keys (smatchet::ui dialog contract): the caret starts in
+    // the name, Enter or Ctrl+Enter saves, Esc cancels (a first Esc only leaves a name that was changed).
+    static smatchet::ui::DialogScopeState s_saveAsNewDialog;
+    if (smatchet::ui::BeginDialog(s_saveAsNewDialog, "Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::string suggestedName = activeViewForGrid->Name + " (copy)";
         if (ImGui::IsWindowAppearing()) {
-            std::snprintf(s_newViewName, sizeof(activeProjectState_.newViewNameBuf), "%s (copy)",
-                          activeViewForGrid->Name.c_str());
-            ImGui::SetKeyboardFocusHere();
+            std::snprintf(s_newViewName, sizeof(activeProjectState_.newViewNameBuf), "%s", suggestedName.c_str());
+        }
+        const smatchet::ui::DialogKeys keys =
+            smatchet::ui::DialogReadKeys(s_saveAsNewDialog, suggestedName == s_newViewName);
+        if (keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel) {
+            ImGui::CloseCurrentPopup();
         }
         ImGui::TextUnformatted("New view name");
         ImGui::SetNextItemWidth(300.0f);
+        smatchet::ui::DialogFocusHere(s_saveAsNewDialog);
         const bool committed =
             ImGui::InputText("##NewViewName", s_newViewName, sizeof(activeProjectState_.newViewNameBuf),
                              ImGuiInputTextFlags_EnterReturnsTrue);
@@ -653,7 +661,7 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
         if (disabled) {
             ImGui::BeginDisabled();
         }
-        const bool saveClicked = ImGui::Button("Save") || committed;
+        const bool saveClicked = ImGui::Button("Save") || committed || keys.Submit;
         if (disabled) {
             ImGui::EndDisabled();
         }
@@ -683,6 +691,6 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             d.viewsHasOriginalSnapshot = false;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_saveAsNewDialog);
     }
 }
