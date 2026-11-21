@@ -1341,7 +1341,7 @@ jobs:
     name: Bucket-E UI tests (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
+    # 30 -> 45: build (~9.6m warm, ~12.5m cold on run 44917896468) + the retry-on-collapse test step (attempts=3, each
     # up to ~235 s typical, <= ~395 s worst case, capped by `timeout 420`: the 300 s --timeout deadline plus the spawn's
     # ready/dispatch/quit bounds) can exceed 30m on a slow runner — on develop run
     # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
@@ -1488,11 +1488,14 @@ jobs:
             # (runs 44908939219, 44909491355), and #2468's 338 used 205 s; develop
             # run 44917896468 (a slower runner) hit the deadline at ~233 s on all
             # three attempts, each ending in {"code":"timeout"}. --timeout=300000
-            # keeps ~33% headroom over ~225 s.
+            # keeps ~33% headroom over ~225 s on the PR runners, ~20% on that
+            # slower develop runner (it reached ~315 of 338 tests in 230 s, so it
+            # needs ~245 s).
             # --frames stays 5400: it is inert for ui_test.run once --timeout is set (it only
             # feeds the "[spawn] scenario running" log line); --timeout alone bounds the suite.
             # The outer `timeout` is 420: worst case for one attempt is the deadline plus
-            # the spawn's ready wait (30 s), dispatch (32 s) and quit POST (32 s), ~395 s.
+            # the spawn's ready wait (30 s), dispatch (32 s) and quit POST (32 s), ~395 s,
+            # plus a few seconds of probe slack (attach probe, ready-probe overshoot).
             # The outer `timeout` stays above that deadline so the harness, not
             # coreutils, reports the failure.
             echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=300000 --spawn --yes"
