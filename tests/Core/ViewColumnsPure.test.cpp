@@ -604,6 +604,59 @@ TEST_CASE("ListViewsForSearch: best match first, ties keep store order, ranges m
     CHECK(rows.front().NameRanges[0].End == 6);
 }
 
+TEST_CASE("ListViewsForSearch: reused buffers give each frame's list, with no rows or marks left from before") {
+    const std::vector<std::string> names = {"My open sprint", "Sprint", "Old sprint board", "Backlog"};
+    const auto nameAt = [&names](std::size_t i) -> const std::string& { return names[i]; };
+    smatchet::textmatch::Scratch scratch;
+    smatchet::views::ViewListBuffers buf;
+
+    smatchet::views::ListViewsForSearch(names.size(), nameAt, "sprint", scratch, buf);
+    REQUIRE(buf.Listed.size() == 3);
+    CHECK(buf.Listed.front().Index == 1);
+
+    // A shorter list: no row left over from the longer one, and each row's marks are its own.
+    smatchet::views::ListViewsForSearch(names.size(), nameAt, "backlog", scratch, buf);
+    REQUIRE(buf.Listed.size() == 1);
+    CHECK(buf.Listed[0].Index == 3);
+    REQUIRE(buf.Listed[0].NameRanges.size() == 1);
+    CHECK(buf.Listed[0].NameRanges[0].Begin == 0);
+    CHECK(buf.Listed[0].NameRanges[0].End == 7);
+
+    // Nothing typed: every view, unmarked, although the rows held marks a frame ago.
+    smatchet::views::ListViewsForSearch(names.size(), nameAt, "sprint", scratch, buf);
+    smatchet::views::ListViewsForSearch(names.size(), nameAt, "", scratch, buf);
+    REQUIRE(buf.Listed.size() == 4);
+    for (std::size_t k = 0; k < buf.Listed.size(); ++k) {
+        CHECK(buf.Listed[k].Index == k);
+        CHECK(buf.Listed[k].NameRanges.empty());
+    }
+
+    // The same answer as a fresh call.
+    smatchet::views::ListViewsForSearch(names.size(), nameAt, "old board", scratch, buf);
+    const auto fresh = smatchet::views::ListViewsForSearch(names.size(), nameAt, "old board", scratch);
+    REQUIRE(buf.Listed.size() == fresh.size());
+    for (std::size_t k = 0; k < fresh.size(); ++k) {
+        CHECK(buf.Listed[k].Index == fresh[k].Index);
+        REQUIRE(buf.Listed[k].NameRanges.size() == fresh[k].NameRanges.size());
+        for (std::size_t r = 0; r < fresh[k].NameRanges.size(); ++r) {
+            CHECK(buf.Listed[k].NameRanges[r].Begin == fresh[k].NameRanges[r].Begin);
+            CHECK(buf.Listed[k].NameRanges[r].End == fresh[k].NameRanges[r].End);
+        }
+    }
+
+    // A smaller store after a larger one (a view deleted): only its own views are listed.
+    const std::vector<std::string> fewer = {"Backlog", "Sprint"};
+    const auto fewerAt = [&fewer](std::size_t i) -> const std::string& { return fewer[i]; };
+    smatchet::views::ListViewsForSearch(fewer.size(), fewerAt, "sprint", scratch, buf);
+    REQUIRE(buf.Listed.size() == 1);
+    CHECK(buf.Listed[0].Index == 1);
+    REQUIRE(buf.Listed[0].NameRanges.size() == 1);
+    CHECK(buf.Listed[0].NameRanges[0].Begin == 0);
+    CHECK(buf.Listed[0].NameRanges[0].End == 6);
+    smatchet::views::ListViewsForSearch(fewer.size(), fewerAt, "", scratch, buf);
+    CHECK(buf.Listed.size() == 2);
+}
+
 TEST_CASE("ViewSwitchKeysTooltip names the bound view keys, read live") {
     KeybindingsConfig cfg = KeybindingsConfig::Defaults();
     const std::string tip =
