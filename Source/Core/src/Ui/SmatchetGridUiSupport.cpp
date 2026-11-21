@@ -221,6 +221,11 @@ void DrawBulkEditMenuItem(UiDrawSession* ui, const std::string& issueKey, bool r
     request.PaneId = ui->pane().id;
     request.ClickedIssueId = issueKey;
     request.Field = field;
+    // Captured with the field it describes: the popup's component options stay bound to this scope even if the
+    // pane's catalog moves to another project while it is open.
+    if (keyMenu->catalogProjectKey) {
+        request.FieldCatalogProjectKey = *keyMenu->catalogProjectKey;
+    }
     if (keyMenu->paneCacheKey) {
         request.PaneCacheKey = *keyMenu->paneCacheKey;
     }

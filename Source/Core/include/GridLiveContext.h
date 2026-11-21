@@ -42,6 +42,10 @@ struct GridContextFieldCatalog {
     /// drops its result, so the newest refresh decides the catalog. A catalog applied by another path
     /// (the grid's own fetch) does not supersede a refresh.
     std::atomic<std::uint64_t> RefreshSeq{0};
+    /// Bumped as each pane-own catalog fetch starts (AppController::populatePaneCatalogAfterSync_, UI thread);
+    /// its apply lands only while it is still the latest, so a fetch for the pane's previous view that
+    /// finishes last never replaces the current view's catalog.
+    std::atomic<std::uint64_t> PaneCatalogFetchSeq{0};
     /// Failed-refresh snapshot restores (SetFieldCatalog / HandleFieldCatalogError) waiting on the file read for THIS
     /// pane: drives the pane's "loading saved fields" cue (AppController::IsFieldCatalogRestoring).
     std::atomic<int> errorRestoresInFlight{0};

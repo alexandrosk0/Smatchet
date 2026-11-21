@@ -9,18 +9,22 @@
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "AppController.h"
+#include "ComponentOptionsPickPure.h"
 #include "Config/CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "GridContextDepsAdapter.h"
 #include "GridContextFieldCatalogOps.h"
 #include "GridLiveContext.h"
 #include "Tracker/FieldCatalogCache.h"
+#include "Tracker/JqlProjectScope.h"
 #include "Tracker/TrackerFieldSchema.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -937,4 +941,443 @@ TEST_CASE("AppController::GetAvailableFields snapshots stay whole while a worker
     CHECK(applied.load() == 200);
     CHECK(isOneGeneration(*app.GetAvailableFields()));
     CHECK(HasField(*app.GetAvailableFields(), "genb_0")); // the 200th refresh fetched generation b
+}
+
+namespace {
+
+// A grid pane's OWN catalog (AppController::populatePaneCatalogAfterSync_, kicked by the pane's first sync)
+// is scoped to the single project the view the kick resolved for the pane names. Before, the pane always
+// fetched unscoped: Jira skipped createmeta, logged "field catalog fetched WITHOUT project scope", and the
+// pane's component / version dropdowns stayed empty.
+
+const char* const kCatalogPane = "catalog-pane";
+
+/// Parses a view's JQL as JiraClient does, records the project every catalog fetch was scoped to, and fails
+/// every fetch when `Fail` is set (set it before the kick: the fetch reads it on the kick's worker).
+class ScopedCatalogBackend : public smatchet_tests::FakeTrackerClient {
+  public:
+    bool Fail = false;
+
+    std::string ExtractProjectFromQuery(const std::string& query) const override {
+        return JqlProjectScope::ExtractSingleProject(query);
+    }
+
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                      const std::string& projectKey) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            fetchedProjects_.push_back(projectKey);
+        }
+        if (Fail) {
+            return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+                TrackerErrorInvalidRequest("the catalog is unavailable"));
+        }
+        return FakeTrackerClient::FetchFieldCatalog(cfg, projectKey);
+    }
+
+    std::vector<std::string> FetchedProjects() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return fetchedProjects_;
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    std::vector<std::string> fetchedProjects_;
+};
+
+/// A catalog whose components field carries the project's options, as a createmeta-enriched Jira fetch does.
+TrackerFieldCatalogResult CatalogWithComponents() {
+    TrackerFieldCatalogResult result;
+    TrackerField components;
+    components.Id = "components";
+    components.Name = "Components";
+    TrackerFieldOption option;
+    option.Id = "10001";
+    option.Value = "Backend";
+    components.AllowedValueOptions.push_back(option);
+    result.Fields.push_back(components);
+    return result;
+}
+
+/// Pumps the main-thread queue until `done` holds, for up to 20 s. Returns whether it held.
+template <typename Pred> bool PumpUntil(AppController& app, Pred done) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!done()) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return false;
+        }
+        app.mainThreadDispatcher.Drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return true;
+}
+
+/// An unfocused pane on the configured tracker with its own (still empty) catalog and `backend`. Created
+/// before anything fills the focused catalog, so the same-backend seed copies nothing into it.
+ScopedCatalogBackend* AddCatalogPane(AppController& app, std::unique_ptr<ScopedCatalogBackend> backend) {
+    const TrackerConfig cfg = ConfigManager::Load();
+    GridLiveContext* const pane =
+        app.EnsurePaneContextLive(kCatalogPane, ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType));
+    REQUIRE(pane != nullptr);
+    REQUIRE_FALSE(app.IsPaneFieldCatalogPopulated(kCatalogPane));
+    ScopedCatalogBackend* const raw = backend.get();
+    GridContextDepsAdapter paneAdapter(app, *pane);
+    paneAdapter.SetBackend(std::move(backend));
+    return raw;
+}
+
+/// Kicks the pane's catalog step for a view whose query is `viewQuery` and waits for its catalog to land.
+void KickAndSettle(AppController& app, const TrackerConfig& cfg, const std::string& viewQuery) {
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, viewQuery);
+    REQUIRE(PumpUntil(app, [&app]() { return app.IsPaneFieldCatalogPopulated(kCatalogPane); }));
+}
+
+/// Whether pane `paneId`'s own catalog was fetched for `project`: the comparison the grid's components cell makes
+/// against GetPaneFieldCatalogProjectKey (resolved once per pane per frame).
+bool PaneCatalogScopedTo(const AppController& app, const std::string& paneId, const std::string& project) {
+    return smatchet::components::CatalogIsRowProject(app.GetPaneFieldCatalogProjectKey(paneId), project);
+}
+
+const TrackerField* FindField(const std::vector<TrackerField>& fields, const std::string& id) {
+    for (const TrackerField& f : fields) {
+        if (f.Id == id) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("Pane catalog: a view naming one project scopes the pane's own fetch and fills its components") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    backend->SetFieldCatalogResult(CatalogWithComponents());
+    ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    KickAndSettle(app, cfg, "project = KEY AND status = Open ORDER BY updated DESC");
+
+    // The fetch was scoped, so Jira runs createmeta and logs no unscoped-catalog warning for the pane.
+    CHECK(raw->FetchedProjects() == std::vector<std::string>{"KEY"});
+    // The pane's own catalog is pinned to KEY; the focused pane's is not touched.
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "KEY"));
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "key")); // project keys compare without case
+    CHECK_FALSE(PaneCatalogScopedTo(app, kCatalogPane, "OTHER"));
+    CHECK_FALSE(app.IsFieldCatalogScopedToProject("KEY"));
+    CHECK_FALSE(PaneCatalogScopedTo(app, "main", "KEY"));
+    // The grid's per-pane index reads the snapshot and its project together (cached side by side).
+    std::string paneProject;
+    const std::shared_ptr<const std::vector<TrackerField>> paneFields =
+        app.GetPaneAvailableFields(kCatalogPane, paneProject);
+    REQUIRE(paneFields);
+    CHECK(paneProject == "KEY");
+    CHECK(FindField(*paneFields, "components") != nullptr);
+
+    // The components dropdown of a KEY row in this pane uses the pane catalog's list (no per-project list cached).
+    const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetPaneAvailableFields(kCatalogPane);
+    REQUIRE(fields);
+    const TrackerField* const components = FindField(*fields, "components");
+    REQUIRE(components != nullptr);
+    const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickComponentOptions(
+        ProjectComponentsLookup(), PaneCatalogScopedTo(app, kCatalogPane, "KEY"), components->AllowedValueOptions,
+        app.GetLastTrackerConnectivityState());
+    CHECK(pick.FromCatalog);
+    REQUIRE(pick.Options->size() == 1u);
+    CHECK(pick.Options->front().Value == "Backend");
+}
+
+TEST_CASE("Pane catalog: a view naming several projects, or none, keeps the unscoped fallback") {
+    const char* const queries[] = {"project in (A, B)", "assignee = currentUser()", ""};
+    for (const char* const query : queries) {
+        CAPTURE(query);
+        smatchet_tests::OfflineQueueTestEnvGuard env;
+        AppController app;
+        GridContextDepsAdapter adapter(app);
+        adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+        auto backend = std::make_unique<ScopedCatalogBackend>();
+        backend->SetFieldCatalogResult(CatalogWithComponents());
+        ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+
+        KickAndSettle(app, ConfigManager::Load(), query);
+
+        CHECK(raw->FetchedProjects() == std::vector<std::string>{std::string()});
+        // An unscoped catalog is no project's: its components never stand in for a row's project list.
+        CHECK_FALSE(PaneCatalogScopedTo(app, kCatalogPane, "A"));
+        const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickComponentOptions(
+            ProjectComponentsLookup(), PaneCatalogScopedTo(app, kCatalogPane, "A"),
+            FindField(*app.GetPaneAvailableFields(kCatalogPane), "components")->AllowedValueOptions,
+            app.GetLastTrackerConnectivityState());
+        CHECK_FALSE(pick.FromCatalog);
+        CHECK(pick.Options->empty());
+    }
+}
+
+TEST_CASE("Pane catalog: a failed scoped fetch restores the snapshot saved for the same project first") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    backend->Fail = true;
+    ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+    // Both snapshots exist: the unscoped one and KEY's own (saved by the focused grid's fetches).
+    REQUIRE(ApplyGridCatalog(app, cfg, std::string(), CatalogWithField("customfield_any").Fields));
+    REQUIRE(ApplyGridCatalog(app, cfg, "KEY", CatalogWithField("customfield_key").Fields));
+    REQUIRE(SnapshotHasField(app, cfg, std::string(), "customfield_any"));
+    REQUIRE(SnapshotHasField(app, cfg, "KEY", "customfield_key"));
+
+    KickAndSettle(app, cfg, "project = KEY");
+
+    CHECK(raw->FetchedProjects() == std::vector<std::string>{"KEY"});
+    const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetPaneAvailableFields(kCatalogPane);
+    REQUIRE(fields);
+    CHECK(HasField(*fields, "customfield_key"));
+    CHECK_FALSE(HasField(*fields, "customfield_any"));
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "KEY"));
+}
+
+TEST_CASE("Pane catalog: the unscoped snapshot standing in for a project restores as no project's") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    backend->Fail = true;
+    ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+    const TrackerConfig cfg = ConfigManager::Load();
+    REQUIRE(ApplyGridCatalog(app, cfg, std::string(), CatalogWithField("customfield_any").Fields));
+    REQUIRE(SnapshotHasField(app, cfg, std::string(), "customfield_any"));
+    REQUIRE_FALSE(SnapshotHasField(app, cfg, "NEW", "customfield_any"));
+
+    KickAndSettle(app, cfg, "project = NEW");
+
+    CHECK(raw->FetchedProjects() == std::vector<std::string>{"NEW"});
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_any"));
+    CHECK_FALSE(PaneCatalogScopedTo(app, kCatalogPane, "NEW"));
+}
+
+namespace {
+
+/// Puts the pane in the state the same-backend seed leaves it in: a loaded catalog copied from the focused one,
+/// pinned to `seedProject` ("" = unscoped).
+void SeedPaneCatalog(AppController& app, const std::string& seedProject) {
+    GridLiveContext* const pane = app.EnsurePaneContextLive(kCatalogPane, std::string());
+    REQUIRE(pane != nullptr);
+    GridContextFieldCatalog& cat = pane->fieldCatalog;
+    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+    cat.AvailableFields = std::make_shared<std::vector<TrackerField>>(CatalogWithField("customfield_seed").Fields);
+    cat.fieldCatalogEverLoaded_ = true;
+    cat.currentCatalogProjectKey_ = seedProject;
+}
+
+/// Answers each fetch with a catalog naming its project (`customfield_<project>`), and holds the FIRST fetch until
+/// `Release()`: the window in which the pane's view changes and a second fetch starts and lands.
+class HeldFirstFetchBackend : public ScopedCatalogBackend {
+  public:
+    HeldFirstFetchBackend() : gate_(release_.get_future().share()) {}
+    ~HeldFirstFetchBackend() override { Release(); }
+
+    void Release() {
+        if (!released_.exchange(true)) {
+            release_.set_value();
+        }
+    }
+    bool FirstStarted() const { return firstStarted_.load(); }
+    bool FirstReturned() const { return firstReturned_.load(); }
+
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& /*cfg*/,
+                                                                      const std::string& projectKey) override {
+        const bool first = calls_.fetch_add(1) == 0;
+        if (first) {
+            firstStarted_.store(true);
+            gate_.wait();
+        }
+        Result<TrackerFieldCatalogResult, TrackerError> result =
+            Result<TrackerFieldCatalogResult, TrackerError>::Ok(CatalogWithField("customfield_" + projectKey));
+        if (first) {
+            firstReturned_.store(true);
+        }
+        return result;
+    }
+
+  private:
+    std::promise<void> release_;
+    std::shared_future<void> gate_;
+    std::atomic<bool> released_{false};
+    std::atomic<int> calls_{0};
+    std::atomic<bool> firstStarted_{false};
+    std::atomic<bool> firstReturned_{false};
+};
+
+/// Releases a held fetch when the test leaves scope, before the AppController joins its workers (declare it after
+/// the AppController), so a failed REQUIRE never leaves a worker blocked in the destructor's join.
+struct ReleaseHeldFetchOnExit {
+    HeldFirstFetchBackend* Backend;
+    ~ReleaseHeldFetchOnExit() { Backend->Release(); }
+};
+
+/// Pumps the main-thread queue for `duration`: lets a result that should be dropped arrive and be dropped.
+void PumpFor(AppController& app, std::chrono::milliseconds duration) {
+    const auto until = std::chrono::steady_clock::now() + duration;
+    while (std::chrono::steady_clock::now() < until) {
+        app.mainThreadDispatcher.Drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
+
+} // namespace
+
+TEST_CASE("Pane catalog: a seeded catalog of another scope does not stop the view's project fetch") {
+    // A same-backend pane starts with the focused catalog's copy. When that copy is unscoped (or another project's),
+    // it must not count as the pane's KEY catalog: KEY's components and versions would never load.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    backend->SetFieldCatalogResult(CatalogWithComponents());
+    ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+    SeedPaneCatalog(app, std::string());
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = KEY");
+    REQUIRE(PumpUntil(app, [&app]() { return PaneCatalogScopedTo(app, kCatalogPane, "KEY"); }));
+
+    CHECK(raw->FetchedProjects() == std::vector<std::string>{"KEY"});
+    CHECK(FindField(*app.GetPaneAvailableFields(kCatalogPane), "components") != nullptr);
+    CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_seed"));
+}
+
+TEST_CASE("Pane catalog: a catalog already loaded for the view's scope is not fetched again") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    backend->SetFieldCatalogResult(CatalogWithComponents());
+    ScopedCatalogBackend* const raw = AddCatalogPane(app, std::move(backend));
+    SeedPaneCatalog(app, "KEY");
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    // The skip is decided on the UI thread before any worker starts, so nothing is launched to wait for.
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = key");            // project keys compare without case
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "assignee = currentUser()"); // unscoped: KEY's is a superset
+    PumpFor(app, std::chrono::milliseconds(50));
+
+    CHECK(raw->FetchedProjects().empty());
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "KEY"));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_seed"));
+}
+
+TEST_CASE("Pane catalog: a fetch for the pane's previous view that finishes last is dropped") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<HeldFirstFetchBackend>();
+    HeldFirstFetchBackend* const held = backend.get();
+    AddCatalogPane(app, std::move(backend));
+    ReleaseHeldFetchOnExit releaseOnExit{held};
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = OLD");
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstStarted(); }));
+    // The view changes to NEW while OLD's fetch is still out: NEW's fetch starts and lands first.
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = NEW");
+    REQUIRE(PumpUntil(app, [&app]() { return PaneCatalogScopedTo(app, kCatalogPane, "NEW"); }));
+    REQUIRE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_NEW"));
+
+    held->Release();
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstReturned(); }));
+    PumpFor(app, std::chrono::milliseconds(300)); // OLD's result is posted right after it returns
+
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "NEW"));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_NEW"));
+    CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_OLD"));
+}
+
+TEST_CASE("Pane catalog: a pane fetch gets the Jira catalog corrections the focused catalog gets") {
+    // Once a scoped fetch may replace a seeded (already corrected) catalog, the pane's own result must be corrected
+    // the same way: non-editable timetracking stays read-only, the legacy comment blob is dropped, and the
+    // synthetic History / Comments columns are present.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<ScopedCatalogBackend>();
+    TrackerFieldCatalogResult raw = CatalogWithField("timespent");
+    TrackerField legacyComment;
+    legacyComment.Id = "comment";
+    legacyComment.Name = "Comment";
+    raw.Fields.push_back(legacyComment);
+    backend->SetFieldCatalogResult(raw);
+    AddCatalogPane(app, std::move(backend));
+    SeedPaneCatalog(app, std::string());
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, ConfigManager::Load(), "project = KEY");
+    REQUIRE(PumpUntil(app, [&app]() { return PaneCatalogScopedTo(app, kCatalogPane, "KEY"); }));
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetPaneAvailableFields(kCatalogPane);
+    REQUIRE(fields);
+    const TrackerField* const timespent = FindField(*fields, "timespent");
+    REQUIRE(timespent != nullptr);
+    CHECK(timespent->ReadOnly);
+    CHECK_FALSE(HasField(*fields, "comment"));
+    CHECK(HasField(*fields, "history"));
+    CHECK(HasField(*fields, "comments"));
+}
+
+TEST_CASE("Pane catalog: switching back to the loaded view drops a fetch still out for the view in between") {
+    // Catalog A is loaded; the view switches to B (fetch held), then back to A, which needs no fetch. B's result,
+    // landing afterwards, must not replace A's catalog.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<HeldFirstFetchBackend>();
+    HeldFirstFetchBackend* const held = backend.get();
+    AddCatalogPane(app, std::move(backend));
+    ReleaseHeldFetchOnExit releaseOnExit{held};
+    SeedPaneCatalog(app, "A");
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = B");
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstStarted(); }));
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = A"); // A is loaded: no fetch
+
+    held->Release();
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstReturned(); }));
+    PumpFor(app, std::chrono::milliseconds(300)); // B's result is posted right after it returns
+
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "A"));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_seed"));
+    CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
+}
+
+TEST_CASE("AppController::GetAvailableFields reads the snapshot and the project it was fetched for together") {
+    // The grid's shared frame index keeps this key beside the snapshot it indexes, so a components cell compares its
+    // row against the project of the catalog it actually reads, even after focus moves later in the frame.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    REQUIRE(ApplyGridCatalog(app, cfg, "KEY", CatalogWithField("customfield_key").Fields));
+    std::string project = "stale";
+    std::shared_ptr<const std::vector<TrackerField>> fields = app.GetAvailableFields(project);
+    REQUIRE(fields);
+    CHECK(project == "KEY");
+    CHECK(HasField(*fields, "customfield_key"));
+
+    REQUIRE(ApplyGridCatalog(app, cfg, std::string(), CatalogWithField("customfield_any").Fields));
+    fields = app.GetAvailableFields(project);
+    REQUIRE(fields);
+    CHECK(project.empty());
+    CHECK(HasField(*fields, "customfield_any"));
 }

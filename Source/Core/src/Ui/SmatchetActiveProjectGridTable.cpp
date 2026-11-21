@@ -1153,6 +1153,14 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     }
 }
 
+// The project the catalog this pane's cells read this frame was fetched for ("" = unscoped), always the key read with
+// that catalog's snapshot: the pane's cached own-catalog key when resolvePaneCatalog routed it to its own index, else
+// `sharedIndexProjectKey`, the key read with the shared frame index's snapshot. Never a live read, which can belong
+// to another catalog (focus moved after the shared index was built; a re-created context at the cached revision).
+static const std::string& RoutedCatalogProjectKey(const GridPane& pane, const std::string& sharedIndexProjectKey) {
+    return pane.cachedPaneCatalogValid ? pane.cachedPaneCatalogProjectKey : sharedIndexProjectKey;
+}
+
 void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     AppController& app = ctx.app;
     GridPane& pane = ctx.pane;
@@ -1179,9 +1187,10 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
     RefreshPendingOverlay(app, ctx.d);
     ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
+    ctx.catalogProjectKey = RoutedCatalogProjectKey(pane, gridFrameCtx_.catalogProjectKey);
     ctx.cellMenu = GridKeyCellMenuCtx{&ctx.tickets,      &pane.filteredIndices,   &ctx.columns,
                                       &ctx.catalogIndex, &pane.gridState.RectSel, -1,
-                                      nullptr,           &ctx.cacheBackendKey};
+                                      nullptr,           &ctx.cacheBackendKey,    &ctx.catalogProjectKey};
     const size_t oldFilteredCount = pane.filteredIndices.size();
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),

@@ -62,8 +62,11 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
     if (!IsComponentsField(req.Field)) {
         return list;
     }
+    // req.Field's options are the catalog's as it was when the popup opened: PickProjectComponents trusts them for this
+    // row only when that catalog was fetched for the row's project (the scope captured with the field), never by the
+    // live catalog.
     const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickProjectComponents(
-        app, smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId), req.Field, list.Holder);
+        app, smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId), req.Field, req.FieldCatalogProjectKey, list.Holder);
     list.Options = pick.Options;
     list.Freshness = pick.Freshness;
     return list;
@@ -75,10 +78,10 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
 TrackerField EffectiveField(AppController& app, const BulkEditPopupRequest& req) {
     TrackerField field = req.Field;
     if (IsComponentsField(field)) {
+        // Always the row's resolved list, even when it is empty: keeping req.Field's catalog options would let the
+        // before-values and the entry check use another project's components (Ui AGENTS.md, Pillar 6).
         const OptionList list = ResolveOptionList(app, req);
-        if (list.Options && !list.Options->empty()) {
-            field.AllowedValueOptions = *list.Options;
-        }
+        field.AllowedValueOptions = *list.Options;
     }
     return field;
 }
@@ -171,8 +174,9 @@ void PrepareOpen(PopupEnv& e) {
     req.Picked.clear();
     req.PendingValues.clear();
     req.Clear = false;
-    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, req.Field, req.IssueIds, std::vector<std::string>(),
-                                          BulkMode::Replace, nullptr);
+    // The preview's before-values resolve against the row's own list too (EffectiveField), as the apply does.
+    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, EffectiveField(e.App, req), req.IssueIds,
+                                          std::vector<std::string>(), BulkMode::Replace, nullptr);
     if (smatchet::grid::bulk::ClassifyBulkField(req.Field) == BulkFieldKind::Labels) {
         CollectLabelSuggestions(e.App, req);
     }

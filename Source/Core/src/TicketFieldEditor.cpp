@@ -374,12 +374,16 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
 
 smatchet::components::ComponentOptionsPick
 smatchet::components::PickProjectComponents(AppController& app, const std::string& projectKey,
-                                            const TrackerField& field, ProjectComponentsLookup& holder) {
+                                            const TrackerField& field, const std::string& catalogProjectKey,
+                                            ProjectComponentsLookup& holder) {
     holder = app.GetComponentOptionsForProject(projectKey);
     if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
         holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
     }
-    const bool catalogIsRowProject = !holder.options && app.IsFieldCatalogScopedToProject(projectKey);
+    // `catalogProjectKey` was read with the catalog `field` came from (resolved once per pane per frame by the grid,
+    // captured with the field by the popup): no lookup or lock per cell, and never another catalog's scope.
+    const bool catalogIsRowProject =
+        !holder.options && smatchet::components::CatalogIsRowProject(catalogProjectKey, projectKey);
     return PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
                                 app.GetLastTrackerConnectivityState());
 }
@@ -894,21 +898,24 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
 // The option list a components editor or cell uses for its row: PickProjectComponents on the row's project.
 smatchet::components::ComponentOptionsPick PickRowComponents(AppController& app, const CachedTicket& ticket,
                                                              const TrackerField& field,
+                                                             const std::string& catalogProjectKey,
                                                              ProjectComponentsLookup& holder) {
-    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field, holder);
+    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field,
+                                                       catalogProjectKey, holder);
 }
 
 void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
-                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
-                             bool singleClickToEdit) {
+                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, bool singleClickToEdit,
+                             const std::string& catalogProjectKey) {
     // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickProjectComponents
     // (TicketFieldEditor.h) explains. Every other field keeps the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
     ProjectComponentsLookup rowComponents;
     smatchet::offline::DataFreshness optionsFreshness = smatchet::offline::DataFreshness::Fresh;
     if (field.Id == "components") {
-        const smatchet::components::ComponentOptionsPick pick = PickRowComponents(app, ticket, field, rowComponents);
+        const smatchet::components::ComponentOptionsPick pick =
+            PickRowComponents(app, ticket, field, catalogProjectKey, rowComponents);
         opts = pick.Options;
         optionsFreshness = pick.Freshness;
     }
@@ -1114,7 +1121,8 @@ bool TryRenderSpecialColumnPlan(AppController& app, const CachedTicket& ticket, 
 // renderPlainText lambda; behaviour byte-identical.
 void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                          const TrackerField* field, const std::string& currentValue, float availWidth,
-                         bool tooltipsEnabled, const std::string& dateFormatOption, int thresholdDays, bool disabled) {
+                         bool tooltipsEnabled, const std::string& dateFormatOption, int thresholdDays, bool disabled,
+                         const std::string& catalogProjectKey) {
     std::string display;
     if (column.IsDateLike) {
         display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
@@ -1128,7 +1136,7 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         if (field != nullptr && column.FieldId == "components") {
             ProjectComponentsLookup rowComponents;
             const smatchet::components::ComponentOptionsPick pick =
-                PickRowComponents(app, ticket, *field, rowComponents);
+                PickRowComponents(app, ticket, *field, catalogProjectKey, rowComponents);
             effectiveField = *field;
             effectiveField.AllowedValueOptions = *pick.Options;
             displayField = &effectiveField;
@@ -1158,8 +1166,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         float availWidth, bool tooltipsEnabled, bool allowEdits,
                                         SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
                                         TrackerGridFieldAsyncState& trackerGridAsync,
-                                        const std::string& dateFormatOption, int thresholdDays,
-                                        bool singleClickToEdit) {
+                                        const std::string& dateFormatOption, int thresholdDays, bool singleClickToEdit,
+                                        const std::string& catalogProjectKey) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
     // Cached recorded-cmd-list dispatch: cache hit replays in ~5 µs / cell; miss invokes
@@ -1184,7 +1192,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 
     if (DispatchEditorByPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, allowEdits, state,
-                             pendingEdits, dateFormatOption, thresholdDays, singleClickToEdit)) {
+                             pendingEdits, dateFormatOption, thresholdDays, singleClickToEdit, catalogProjectKey)) {
         return;
     }
 
@@ -1197,10 +1205,10 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
                                              bool allowEdits, SpreadsheetState& state,
                                              std::vector<PendingFieldEdit>& pendingEdits,
                                              const std::string& dateFormatOption, int thresholdDays,
-                                             bool singleClickToEdit) {
+                                             bool singleClickToEdit, const std::string& catalogProjectKey) {
     auto renderPlainText = [&](bool disabled) {
         RenderPlainTextCell(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, dateFormatOption,
-                            thresholdDays, disabled);
+                            thresholdDays, disabled, catalogProjectKey);
     };
 
     // A column can resolve its field to nullptr transiently when the active field catalog is
@@ -1250,7 +1258,7 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
             return true;
         }
         RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
-                                singleClickToEdit);
+                                singleClickToEdit, catalogProjectKey);
         return true;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {

@@ -153,10 +153,11 @@ struct BulkEditPopupRequest {
     bool OpenPending = false;    ///< the popup was just requested: open it on the next draw
     bool ConfirmPending = false; ///< the confirm popup is to be opened on the next draw
     Stage CurrentStage = Stage::Pick;
-    std::string PaneId;                ///< the pane the user acted in
-    std::string ClickedIssueId;        ///< the row whose cell was right-clicked (its project scopes the option list)
-    TrackerField Field;                ///< the clicked column's catalog field
-    std::vector<std::string> IssueIds; ///< the selected issues, resolved when the menu item was clicked
+    std::string PaneId;                 ///< the pane the user acted in
+    std::string ClickedIssueId;         ///< the row whose cell was right-clicked (its project scopes the option list)
+    TrackerField Field;                 ///< the clicked column's catalog field
+    std::string FieldCatalogProjectKey; ///< the project Field's catalog was fetched for ("" = unscoped), copied with it
+    std::vector<std::string> IssueIds;  ///< the selected issues, resolved when the menu item was clicked
     std::string PaneCacheKey; ///< the pane's cache backend key (the recent-picks scope), copied from the menu ctx
     // Draw-time state, rebuilt when the popup opens.
     smatchet::grid::bulk::BulkFieldEditJob Preview; ///< rows with before-values and pre-flight skips; no values yet
