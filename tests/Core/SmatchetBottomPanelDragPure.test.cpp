@@ -191,6 +191,14 @@ TEST_CASE("ShouldKeepRestoreKey drops a remembered tab once its window is open a
     CHECK_FALSE(pure::ShouldKeepRestoreKey(true));
 }
 
+TEST_CASE("ShouldHideOnDragEnd hides only on a release while armed, and never after Esc cancelled the drag") {
+    CHECK(pure::ShouldHideOnDragEnd(/*armed=*/true, /*released=*/true, /*escCancelled=*/false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, true, /*escCancelled=*/true));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(/*armed=*/false, true, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, /*released=*/false, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(false, false, true));
+}
+
 TEST_CASE("NudgeTargetExtent moves the extent by one step and holds it inside the parent split") {
     // Room both ways: the step is taken as asked.
     CHECK(pure::NudgeTargetExtent(300.0f, 32.0f, 40.0f, 900.0f) == doctest::Approx(332.0f));

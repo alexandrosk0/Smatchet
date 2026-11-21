@@ -3,8 +3,10 @@
 // "Smatchet Assistant" panel (opened via g_ui.assistantPanelOpen, same recipe as
 // ai_assistant_panel_dock_swap.test.cpp) over a seeded in-memory g_ui.assistantHistory via the
 // shared SeedAndOpenPanel helper. Covered so far:
-//   - ClearConversation_ConfirmWipesCancelKeeps — the header trash button's ##ConfirmClearChat
-//     modal: Cancel is a no-op, Clear wipes assistantHistory + assistantHistoryRowIds.
+//   - ClearConversation_UndoBringsItBack / ClearConversation_DismissMakesItFinal — the header trash
+//     button's ##ConfirmClearChat modal (Cancel is a no-op), then the "Conversation cleared" toast offers
+//     Undo: Ctrl+Z puts assistantHistory + assistantHistoryRowIds back; once the toast is dismissed the
+//     clear is final.
 //   - CopyMessage_WritesContentToClipboard — the per-turn Copy button writes the message content to
 //     the ImGui clipboard (turn seeded Pinned so its action row stays interactive without a hover).
 //   - PinBookmark_ActionRowTogglesPinnedState — the per-turn Pin/Unpin action-row button flips
@@ -25,6 +27,7 @@
 #include "SmatchetChatPersistWorker.h" // chat_persist::EnqueueAppendAndTrim / Enqueue(ClearAll)
 #include "SmatchetImGuiFonts.h"        // SmatchetAreFaIconsLoaded
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetToast.h" // the undo toast of a cleared conversation
 #if defined(SMATCHET_WITH_AI)
 #include "Ui/SmatchetAiAssistantUi.h" // SmatchetAiAssistantEscStopCountForTest
 #endif
@@ -135,8 +138,23 @@ bool OpenClearConfirm(ImGuiTestContext* ctx, const char* panelRef) {
     return YieldUntil(ctx, [] { return WindowIsLive("##ConfirmClearChat"); });
 }
 
-void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "ClearConversation_ConfirmWipesCancelKeeps");
+// Clears the conversation the way a user does: the trash button, then "Clear" in the confirm. The test
+// reference goes back to the panel afterwards, so the caller's next lookup is not inside the closed dialog.
+bool ClearThroughConfirm(ImGuiTestContext* ctx, const char* panelRef) {
+    if (!OpenClearConfirm(ctx, panelRef)) {
+        return false;
+    }
+    ctx->SetRef("##ConfirmClearChat");
+    ctx->ItemClick("Clear");
+    const bool closed = YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
+    ctx->SetRef(panelRef);
+    return closed;
+}
+
+// Cancel in the confirm keeps the conversation. Confirming clears it at once and the toast offers Undo.
+// Ctrl+Z (no text field active, no modal up) puts the conversation back.
+void RegisterClearConversationUndo(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "ClearConversation_UndoBringsItBack");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         const AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
@@ -146,45 +164,76 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
         const bool origOpen = g_ui.assistantPanelOpen;
         const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
         const char* kPanel = "Smatchet Assistant";
+        SmatchetToastManager::Instance().DismissAllLive();
         const bool panelLive = SeedAndOpenPanel(ctx, /*pinFirst=*/false);
         IM_CHECK_NO_RET(panelLive);
-        if (!panelLive) {
-            g_ui.assistantHistory.clear();
-            g_ui.assistantHistoryRowIds.clear();
-            g_ui.assistantPanelOpen = origOpen;
-            g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
+        if (panelLive) {
+            IM_CHECK_NO_RET(g_ui.assistantHistory.size() == 2);
+
+            // Cancel keeps the conversation and leaves nothing to undo.
+            const bool modalOpenForCancel = OpenClearConfirm(ctx, kPanel);
+            IM_CHECK_NO_RET(modalOpenForCancel);
+            if (modalOpenForCancel) {
+                ctx->SetRef("##ConfirmClearChat");
+                ctx->ItemClick("Cancel");
+                YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
+                IM_CHECK_NO_RET(g_ui.assistantHistory.size() == 2);
+                IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 0);
+            }
+
+            IM_CHECK_NO_RET(ClearThroughConfirm(ctx, kPanel));
+            const bool cleared = YieldUntil(ctx, [] { return g_ui.assistantHistory.empty(); });
+            IM_CHECK_NO_RET(cleared);
+            IM_CHECK_NO_RET(g_ui.assistantHistoryRowIds.empty());
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 1);
+
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+            const bool restored = YieldUntil(ctx, [] { return g_ui.assistantHistory.size() == 2; });
+            if (!restored) {
+                ctx->LogError("Ctrl+Z did not bring the cleared conversation back");
+            }
+            IM_CHECK_NO_RET(restored);
+            IM_CHECK_NO_RET(g_ui.assistantHistoryRowIds.size() == 2);
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 0);
+        }
+        SmatchetToastManager::Instance().DismissAllLive();
+        g_ui.assistantHistory.clear();
+        g_ui.assistantHistoryRowIds.clear();
+        g_ui.assistantPanelOpen = origOpen;
+        g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
+        ctx->Yield();
+    };
+}
+
+// Once the toast is gone (here: dismissed) the clear is final: nothing is left to undo, and Ctrl+Z
+// does not bring the conversation back.
+void RegisterClearConversationFinal(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "ClearConversation_DismissMakesItFinal");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
             return;
         }
+        const bool origOpen = g_ui.assistantPanelOpen;
+        const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
+        const char* kPanel = "Smatchet Assistant";
+        SmatchetToastManager::Instance().DismissAllLive();
+        const bool panelLive = SeedAndOpenPanel(ctx, /*pinFirst=*/false);
+        IM_CHECK_NO_RET(panelLive);
+        if (panelLive) {
+            IM_CHECK_NO_RET(ClearThroughConfirm(ctx, kPanel));
+            IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.assistantHistory.empty(); }));
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 1);
 
-        // CANCEL keeps the conversation: open the confirm, click Cancel, history is unchanged.
-        const bool modalOpenForCancel = OpenClearConfirm(ctx, kPanel);
-        IM_CHECK_NO_RET(modalOpenForCancel);
-        if (modalOpenForCancel) {
-            ctx->SetRef("##ConfirmClearChat");
-            ctx->ItemClick("Cancel");
-            // Confirm the modal actually closed before re-opening, so the next OpenClearConfirm can't
-            // click through a stale popup.
-            YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
-            IM_CHECK_NO_RET(g_ui.assistantHistory.size() == 2); // cancel is a no-op
+            SmatchetToastManager::Instance().DismissAllLive();
+            ctx->Yield(2);
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 0);
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+            ctx->Yield(4);
+            IM_CHECK_NO_RET(g_ui.assistantHistory.empty());
         }
-
-        // CONFIRM wipes it: re-open the confirm, click Clear, history + row-ids are emptied.
-        const bool modalOpenForClear = OpenClearConfirm(ctx, kPanel);
-        IM_CHECK_NO_RET(modalOpenForClear);
-        if (modalOpenForClear) {
-            ctx->SetRef("##ConfirmClearChat");
-            ctx->ItemClick("Clear");
-            const bool wiped = YieldUntil(ctx, [] { return g_ui.assistantHistory.empty(); });
-            if (!wiped) {
-                ctx->LogError("Clear-confirm did not wipe assistantHistory — the confirm popup's Clear "
-                              "button no longer clears the in-memory history vectors");
-                IM_CHECK(false);
-            }
-            IM_CHECK_NO_RET(g_ui.assistantHistoryRowIds.empty());
-        }
-
-        // Teardown: clear history unconditionally (the success path already emptied it, but a failed
-        // Clear would otherwise leak the 2 seeded turns into g_ui) + restore the mutated flags.
+        SmatchetToastManager::Instance().DismissAllLive();
         g_ui.assistantHistory.clear();
         g_ui.assistantHistoryRowIds.clear();
         g_ui.assistantPanelOpen = origOpen;
@@ -527,6 +576,39 @@ bool TypeIntoMessageBox(ImGuiTestContext* ctx, const char* text) {
     return YieldUntil(ctx, [&] { return g_ui.assistantInputBuf == want; }, 90);
 }
 
+// Ctrl+Z belongs to a text field while the caret is in one: with the caret in the message box it does
+// not undo the cleared conversation; once the caret is out of the box, it does.
+void RegisterClearConversationCtrlZInMessageBox(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "ClearConversation_CtrlZInMessageBoxKeepsItCleared");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        SmatchetToastManager::Instance().DismissAllLive();
+        MessageBoxCaseState saved;
+        const bool ready = StartMessageBoxCase(ctx, saved);
+        IM_CHECK_NO_RET(ready);
+        if (ready) {
+            IM_CHECK_NO_RET(ClearThroughConfirm(ctx, "Smatchet Assistant"));
+            IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.assistantHistory.empty(); }));
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 1);
+
+            IM_CHECK_NO_RET(TypeIntoMessageBox(ctx, "x"));
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+            ctx->Yield(4);
+            IM_CHECK_NO_RET(g_ui.assistantHistory.empty());
+            IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 1);
+
+            DropCaret(ctx);
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Z);
+            IM_CHECK_NO_RET(YieldUntil(ctx, [] { return g_ui.assistantHistory.size() == 1; }));
+        }
+        SmatchetToastManager::Instance().DismissAllLive();
+        FinishMessageBoxCase(ctx, saved, ready);
+    };
+}
+
 // Asking for the panel (the shortcut and the View menu both set requestAssistantFocus) puts the
 // caret in the message box, so the next key typed lands there.
 void RegisterOpenRequestPutsCaretInInput(ImGuiTestEngine* engine) {
@@ -724,12 +806,14 @@ void RegisterEscIdleNoCaretNoOp(ImGuiTestEngine* engine) {
 } // namespace
 
 extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine) {
-    RegisterClearConversationConfirm(engine);
+    RegisterClearConversationUndo(engine);
+    RegisterClearConversationFinal(engine);
     RegisterCopyMessageToClipboard(engine);
     RegisterPinBookmarkToggle(engine);
     RegisterKeyboardEnterSubmits(engine);
     RegisterHistoryPersistRoundTrip(engine);
 #if defined(SMATCHET_WITH_AI)
+    RegisterClearConversationCtrlZInMessageBox(engine);
     RegisterOpenRequestPutsCaretInInput(engine);
     RegisterRestoredOpenLeavesKeyboardAlone(engine);
     RegisterEscIdleLeavesInputKeepsText(engine);

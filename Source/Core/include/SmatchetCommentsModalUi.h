@@ -60,5 +60,7 @@ struct CommentsModalSnapshot {
     bool PostInFlight = false;
     /// The text in the post box.
     std::string PostDraft;
+    /// The post box was filled from a draft kept by an earlier open, and nothing was typed since.
+    bool DraftRestored = false;
 };
 CommentsModalSnapshot GetCommentsModalSnapshotForTests();

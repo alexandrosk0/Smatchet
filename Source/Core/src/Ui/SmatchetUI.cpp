@@ -1,5 +1,6 @@
 // SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=UI orchestrator TU over the 1,200-line advisory ceiling; split in debt 2026-10-03-ui-tu-ceiling-splits; owner=orchestrator; revisit=2027-06-30)
 #include "SmatchetUI.h"
+#include "DraftStore.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetViewVisibility.h"
@@ -492,6 +493,9 @@ void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
         g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
         ConfigManager::Save(g_ui.cfg);
     }
+
+    // Typed-text drafts (DraftStore.h): read on the store's own worker, then restored as surfaces open.
+    smatchet::drafts::Start(smatchet::drafts::DefaultPath());
 
     g_ui.cfgInitialized = true;
     // Config (incl. cfg.Keybindings) just loaded — force the shortcut parse cache to
