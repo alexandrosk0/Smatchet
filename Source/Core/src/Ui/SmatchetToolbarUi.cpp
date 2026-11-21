@@ -21,8 +21,11 @@
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetSubmitKeys.h"
+#include "Ui/SubmitKeysPure.h"
 #include "Ui/SmatchetTheme.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/GestureKeys.h"
@@ -227,6 +230,16 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
 }
 
 namespace {
+
+// Puts the caret in the next field once, after Add command / Add Lua, not while the Enter that pressed the
+// button is still down (it would repeat into the field).
+void TakeCaretForNewButton(bool& pending) {
+    if (!pending || ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter)) {
+        return;
+    }
+    pending = false;
+    ImGui::SetKeyboardFocusHere();
+}
 
 // Single source of the Customize Toolbar popup title: OpenPopup and BeginPopupModal must build
 // the byte-identical (translated) string or the popup ID never matches and the editor won't open.
@@ -475,6 +488,9 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         selected_ = editBuf_.Buttons.empty() ? -1 : 0;
     }
     requestEditSelect_ = -1;
+    editorOpenedGlobal_ = editBuf_;
+    editorOpenedTracker_ = trackerEditBuf_;
+    caretToNewButton_ = false;
     pendingListFocus_ = -1; // a cursor move left over from the last editing session must not land in this one
     cmdNames_.clear();
     cmdHaystacks_.clear();
@@ -570,13 +586,17 @@ bool SmatchetToolbarUi::RemoveSelectedButton(std::vector<ToolbarButton>& buttons
 void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
     std::vector<ToolbarButton>& buttons = ctx.buttons;
 
-    // Action row.
+    // Action row. With no button to select, the keyboard starts here.
+    if (buttons.empty()) {
+        smatchet::ui::DialogFocusHere(editorDialog_);
+    }
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_command", "Add command"))) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Command;
         b.Tooltip = "New button";
         buttons.push_back(b);
         selected_ = static_cast<int>(buttons.size()) - 1;
+        caretToNewButton_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_lua", "Add Lua"))) {
@@ -585,6 +605,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         b.Tooltip = "New Lua button";
         buttons.push_back(b);
         selected_ = static_cast<int>(buttons.size()) - 1;
+        caretToNewButton_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_separator", "Add separator"))) {
@@ -675,6 +696,8 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
         if (pendingListFocus_ == i) {
             ImGui::SetKeyboardFocusHere(); // the keyboard cursor follows the row it just moved or kept
             pendingListFocus_ = -1;
+        } else if (i == selected_) {
+            smatchet::ui::DialogFocusHere(editorDialog_); // the list takes the keyboard on open
         }
         if (ImGui::Selectable((shownLabel + "###row").c_str(), selected_ == i)) {
             selected_ = i;
@@ -738,6 +761,7 @@ void SmatchetToolbarUi::DrawEditorCommandPicker(ToolbarButton& b) {
     InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
     ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
     ImGui::SetNextItemWidth(-1.0f);
+    TakeCaretForNewButton(caretToNewButton_);
     ImGui::InputTextWithHint("##cmdsearch",
                              SmatchetLocalization::T("toolbar.editor.filter_commands", "Filter commands..."),
                              cmdSearch_, sizeof(cmdSearch_));
@@ -824,6 +848,9 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
             }
 
             // DR23: std::string-backed — no truncation of a long tooltip.
+            if (b.Kind == ToolbarButtonKind::Lua) {
+                TakeCaretForNewButton(caretToNewButton_);
+            }
             InputTextStdString(SmatchetLocalization::T("toolbar.editor.tooltip", "Tooltip"), b.Tooltip);
         }
 
@@ -853,13 +880,23 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
     } else {
         ImGui::Checkbox(SmatchetLocalization::T("toolbar.editor.show_toolbar", "Show toolbar"), &editBuf_.Visible);
     }
-    ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
+    // Right-aligned: Save is as wide as its label plus the key it names, Cancel a fixed 90 px.
+    const char* saveLabel = SmatchetLocalization::T("common.save", "Save");
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float saveWidth =
+        smatchet::submitkeys::ComputeKeyHintButtonLayout(ImGui::CalcTextSize(saveLabel).x,
+                                                         ImGui::CalcTextSize(smatchet::ui::CtrlEnterKeyName()).x,
+                                                         ImGui::GetFontSize(), style.FramePadding.x, 90.0f)
+            .Width;
+    ImGui::SameLine(ImGui::GetWindowWidth() - (saveWidth + style.ItemSpacing.x + 90.0f + style.WindowPadding.x));
     // Save waits while a Command button in the list being saved has args that would not run. The tooltip
     // names the row; a disabled item reports a hover only when asked with AllowWhenDisabled.
     const int firstBadArgs = FirstInvalidArgsIndex(ctx.buttons);
     ImGui::BeginDisabled(firstBadArgs >= 0);
-    const bool savePressed = ImGui::Button(SmatchetLocalization::T("common.save", "Save"), ImVec2(90.0f, 0.0f));
+    const bool saveClicked =
+        smatchet::ui::KeyHintButton(saveLabel, smatchet::ui::CtrlEnterKeyName(), ImVec2(90.0f, 0.0f));
     ImGui::EndDisabled();
+    const bool savePressed = saveClicked || (ctx.submit && firstBadArgs < 0);
     if (firstBadArgs >= 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
         const std::string rowLabel =
             smatchet::toolbar_editor::EditorRowLabel(ctx.buttons[static_cast<std::size_t>(firstBadArgs)], ctx.faLoaded);
@@ -902,15 +939,27 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     SyncEditorOpenRequest(app, cfg);
 
     ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal(ToolbarEditorPopupTitle(), nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    if (!smatchet::ui::BeginDialog(editorDialog_, ToolbarEditorPopupTitle(), nullptr,
+                                   ImGuiWindowFlags_NoSavedSettings)) {
         return;
+    }
+    const bool unchanged =
+        editBuf_.Visible == editorOpenedGlobal_.Visible &&
+        smatchet::toolbar_editor::SameToolbarButtons(editBuf_.Buttons, editorOpenedGlobal_.Buttons) &&
+        smatchet::toolbar_editor::SameToolbarButtons(trackerEditBuf_, editorOpenedTracker_);
+    const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(editorDialog_, unchanged);
+    // With an edit made, Esc only leaves a field: a reorder, a delete or an icon pick is not thrown away on
+    // one key, with no prompt. Cancel discards. (No ask-first prompt yet: a backlog item of the dialog contract.)
+    if (keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel && unchanged) {
+        ImGui::CloseCurrentPopup();
     }
 
     EditorCtx ctx = DrawEditorScopeSelector();
+    ctx.submit = keys.Submit;
     DrawEditorActionRow(ctx);
     DrawEditorButtonList(ctx);
     ImGui::SameLine();
     DrawEditorFieldEditor(ctx);
     DrawEditorFooter(app, ctx, cfg);
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(editorDialog_);
 }
