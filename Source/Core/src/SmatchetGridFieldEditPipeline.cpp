@@ -468,11 +468,8 @@ void PushBulkSummaryToast(UiDrawSession& d, const BulkFieldEditJob& job) {
         }
     }
     if (!firstError.empty()) {
-        if (firstError.size() > 160) {
-            firstError.resize(160);
-            firstError += "...";
-        }
-        message += "\n" + firstError;
+        // A byte-level resize could cut a UTF-8 character in half; this backs off to a character boundary.
+        message += "\n" + TruncateUtf8WithEllipsis(firstError, 160);
     }
     const std::string fieldName = job.Field.Name.empty() ? job.Field.Id : job.Field.Name;
     const std::string title = SmatchetLocalization::Format("grid.bulk.done_title", "Bulk edit: %s", fieldName.c_str());
@@ -544,10 +541,12 @@ PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const Tra
             const CachedTicket& ticket = *it->second;
             row.BeforeValue = ticket.GetFieldValue(field.Id);
             row.BeforeValues = smatchet::grid::bulk::BeforeValuesFor(field, kind, row.BeforeValue);
-            // Edit permission is a memory read (EditMetaCacheService, under its own mutex). The row's own issue type is
-            // passed so the check does not scan the whole ticket list once per row.
+            // Edit permission is a memory read (EditMetaCacheService, under its own mutex). It is looked up under the
+            // job's latched backend key, not the focused pane's, the same as the commit side
+            // (CanEditFieldForIssueWithType(target.BackendKey, ...)). The row's own issue type is passed so the check
+            // does not scan the whole ticket list once per row.
             const std::string issueType = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
-            if (!app.CanEditFieldForIssue(issueId, field.Id, &field, issueType.empty() ? nullptr : &issueType)) {
+            if (!app.CanEditFieldForIssueWithType(target.BackendKey, issueId, field.Id, &field, issueType)) {
                 row.State = BulkRowState::Skipped;
                 row.Message = SmatchetLocalization::T("grid.bulk.skip_not_editable", "not editable on this issue");
             } else if (mode != BulkMode::Replace && kind == BulkFieldKind::MultiChoice &&

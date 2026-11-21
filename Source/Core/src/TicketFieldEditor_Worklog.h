@@ -35,6 +35,8 @@ struct WorklogDialogTestSnapshot {
     std::string TimeSpent;
     std::string Description;
     std::string ErrorMsg;
+    /// The boxes were filled from an entry kept by an earlier open.
+    bool DraftRestored = false;
 };
 WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests();
 /// Test hook: the dialog closes itself on its next draw (the only place a popup can be closed), the

@@ -1180,6 +1180,11 @@ class AppController : public IAppThreading,
     bool CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                               const TrackerField* fieldMeta = nullptr,
                               const std::string* issueTypeKeyOverride = nullptr) const;
+    /// Same check against the tracker namespace `backendKey` and the given issue type, never the focused pane's
+    /// (a pane-bound write, #2260). An empty `issueTypeKey` skips the per-issue-type fallback. Memory read only.
+    bool CanEditFieldForIssueWithType(const std::string& backendKey, const std::string& issueId,
+                                      const std::string& fieldId, const TrackerField* fieldMeta,
+                                      const std::string& issueTypeKey) const;
 
     // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
     // decomposition Phase 2). Every field edit is bound to the pane the user acted in (#2260).

@@ -548,7 +548,8 @@ float DrawKeyCap(ImDrawList* dl, float x, float y, float h, const char* text, Im
 }
 
 // Is the list drawn directly in a modal popup (a caller's dialog) rather than in its own combo popup? The
-// combo's popup is the list's to close; a caller's modal is not.
+// combo's popup is the list's to close; a caller's modal is not. Reads the window DrawBody was called in, so
+// DrawBody must be drawn straight in the popup, not in a child window or a table (FilterDropdown.h says so).
 bool HostIsModal() { return (ImGui::GetCurrentWindow()->Flags & ImGuiWindowFlags_Modal) != 0; }
 
 void DrawFooter(const Options& options, float width) {
@@ -817,6 +818,12 @@ bool EnterFinishes(const Options& options, bool enterPressed, const Event& ev) {
     return options.MultiSelect && enterPressed && ev.Kind != EventKind::Created && !HostIsModal();
 }
 
+// Enter in a tick-box list drawn in a caller's modal that acted on no row: the list is done, and what that means
+// (the dialog's Apply) is the caller's to say.
+bool EnterDoneInModal(const Options& options, bool enterPressed, const Event& ev) {
+    return options.MultiSelect && enterPressed && ev.Kind == EventKind::None && HostIsModal();
+}
+
 } // namespace
 
 Event DrawBody(const Item* items, int count, const Options& options) {
@@ -886,6 +893,9 @@ Event DrawBody(const Item* items, int count, const Options& options) {
     }
     if (closePopup) {
         ImGui::CloseCurrentPopup();
+    }
+    if (!closePopup && EnterDoneInModal(options, enterPressed, ev)) { // Esc in the same frame wins: not a finish
+        ev.Kind = EventKind::Done;
     }
     return ev;
 }

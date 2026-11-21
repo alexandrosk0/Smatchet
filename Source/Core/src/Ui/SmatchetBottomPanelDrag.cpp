@@ -31,8 +31,8 @@ namespace {
 struct ClosableWindowEntry {
     const char* layoutKey;
     const char* sourceTitle;
-    bool UiDrawSession::*showFlag;
-    bool UiDrawSession::*focusFlag; // null when the window has no focus latch
+    bool UiDrawSession::* showFlag;
+    bool UiDrawSession::* focusFlag; // null when the window has no focus latch
 };
 
 const ClosableWindowEntry kClosableWindows[] = {
@@ -82,8 +82,8 @@ struct EdgePanelSpec {
     const char* revealTipFallback;
     const char* gripWindowName; // bottom panel only (side strips are draw-list overlays)
     const char* logName;
-    bool TrackerConfig::*cfgFlag; // persisted visibility flag kept in step (null: none)
-    EdgePanelDragState UiDrawSession::*state;
+    bool TrackerConfig::* cfgFlag; // persisted visibility flag kept in step (null: none)
+    EdgePanelDragState UiDrawSession::* state;
 };
 
 const EdgePanelSpec kBottomSpec = {SmatchetDockNodeIds::kBottomPanel,
@@ -271,6 +271,10 @@ void DrawReleaseToHideHint(const EdgePanelSpec& spec, const ImGuiDockNode* node)
     dl->AddText(ImVec2(textX, textY), ::ImGui::GetColorU32(ImGuiCol_Text), hint);
 }
 
+// The splitter whose current drag Esc cancelled (0 = none). One mouse, one drag at a time, so one slot
+// serves the bottom panel and both side columns.
+ImGuiID s_escCancelledSplitterDrag = 0;
+
 void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode* node) {
     ImGuiContext& g = *::ImGui::GetCurrentContext();
     EdgePanelDragState& st = d.*(spec.state);
@@ -283,8 +287,12 @@ void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode*
             st.restoreExtent = node->Size[spec.axis];
         }
         st.splitterDragId = splitterId;
+        if (::ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            s_escCancelledSplitterDrag = splitterId; // Esc cancels the hide for the rest of this drag
+        }
         const float nodeFar = node->Pos[spec.axis] + node->Size[spec.axis];
-        st.hideArmed = pure::ShouldArmHide(g.IO.MousePos[spec.axis], nodeFar,
+        st.hideArmed = s_escCancelledSplitterDrag != splitterId &&
+                       pure::ShouldArmHide(g.IO.MousePos[spec.axis], nodeFar,
                                            pure::HideArmBandPx(g.Style.WindowMinSize[spec.axis]));
         if (st.hideArmed) {
             DrawReleaseToHideHint(spec, node);
@@ -297,7 +305,9 @@ void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode*
     // The splitter drag ended this frame. Hide only when it ended in a left-button
     // release while armed (last frame's in-band verdict — the mouse barely moves in one
     // frame); a cancelled drag or one that wandered back out is a plain resize.
-    const bool hide = st.hideArmed && ::ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    const bool hide = pure::ShouldHideOnDragEnd(st.hideArmed, ::ImGui::IsMouseReleased(ImGuiMouseButton_Left),
+                                                s_escCancelledSplitterDrag == st.splitterDragId);
+    s_escCancelledSplitterDrag = 0;
     st.splitterDragId = 0;
     st.hideArmed = false;
     if (hide) {

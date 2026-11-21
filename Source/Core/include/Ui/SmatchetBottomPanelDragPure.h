@@ -47,6 +47,13 @@ inline float HideArmBandPx(float windowMinSizeY) {
 // drag-the-border-down-to-collapse.
 inline bool ShouldArmHide(float mouseY, float panelBottomY, float bandPx) { return mouseY >= panelBottomY - bandPx; }
 
+// End of a splitter drag that was armed to hide the panel: the panel hides only on a left-button
+// release while armed, and not when Esc was pressed during the drag (Esc cancels the gesture; the
+// panel stays, and the release is a plain resize).
+inline bool ShouldHideOnDragEnd(bool armed, bool released, bool escCancelled) {
+    return armed && released && !escCancelled;
+}
+
 // Reveal grip: open only once the drag travelled meaningfully upward.
 inline bool RevealDragCrossedThreshold(float dragStartY, float mouseY) {
     return dragStartY - mouseY >= kRevealDragThresholdPx;

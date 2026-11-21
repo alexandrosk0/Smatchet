@@ -444,6 +444,33 @@ void PostBulkTotalsToast(IMainThreadPoster& poster, const TrackerField& field, c
         [title, message, type]() { SmatchetToastManager::Instance().Push(title, message, type, 6000); });
 }
 
+// Checks the `mode` / `values` pair against the field before any row is planned: add / remove needs a multi-value
+// field and at least one value, and every picked option of a closed list must exist. Empty string = valid.
+std::string ValidateBulkMode(const TrackerField& field, const BulkCommandArgs& a) {
+    if (a.Mode == bulk::BulkMode::Replace) {
+        return std::string();
+    }
+    const bulk::BulkFieldKind kind = bulk::ClassifyBulkField(field);
+    if (!bulk::IsMultiValueKind(kind)) {
+        return "'mode' add / remove needs a multi-value field (labels, components, multi-select); '" + a.FieldId +
+               "' holds one value.";
+    }
+    if (a.Picked.empty()) {
+        return "'mode' add / remove needs at least one value in 'values'.";
+    }
+    if (kind == bulk::BulkFieldKind::MultiChoice) {
+        std::vector<std::string> pickedIds;
+        for (const std::string& p : a.Picked) {
+            pickedIds.push_back(TrackerFieldValueUtils::ResolveOptionId(field, p));
+        }
+        if (!bulk::AllEntriesResolve(field, pickedIds)) {
+            return "A value of 'values' is not in the option list of '" + a.FieldId +
+                   "'. Check the spelling, or load the field's options first.";
+        }
+    }
+    return std::string();
+}
+
 static void RegisterSetFieldBulkCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c = MakeCommand(
         "ticket.set_field_bulk", "Set one field to the same value on several tickets.",
@@ -458,27 +485,9 @@ static void RegisterSetFieldBulkCommand(CommandRegistry& reg, IAppTicketMutation
                 return CommandResult::Failure(ErrorCode::NotFound, "Field '" + a.FieldId + "' not found in catalog.",
                                               "Run fields.refresh_catalog first.");
             }
-            if (a.Mode != bulk::BulkMode::Replace && !bulk::IsMultiValueKind(bulk::ClassifyBulkField(*fieldMeta))) {
-                return CommandResult::Failure(ErrorCode::ValidationError,
-                                              "'mode' add / remove needs a multi-value field (labels, components, "
-                                              "multi-select); '" +
-                                                  a.FieldId + "' holds one value.");
-            }
-            if (a.Mode != bulk::BulkMode::Replace && a.Picked.empty()) {
-                return CommandResult::Failure(ErrorCode::ValidationError,
-                                              "'mode' add / remove needs at least one value in 'values'.");
-            }
-            if (a.Mode != bulk::BulkMode::Replace &&
-                bulk::ClassifyBulkField(*fieldMeta) == bulk::BulkFieldKind::MultiChoice) {
-                std::vector<std::string> pickedIds;
-                for (const std::string& p : a.Picked) {
-                    pickedIds.push_back(TrackerFieldValueUtils::ResolveOptionId(*fieldMeta, p));
-                }
-                if (!bulk::AllEntriesResolve(*fieldMeta, pickedIds)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "A value of 'values' is not in the option list of '" + a.FieldId +
-                                                      "'. Check the spelling, or load the field's options first.");
-                }
+            const std::string modeError = ValidateBulkMode(*fieldMeta, a);
+            if (!modeError.empty()) {
+                return CommandResult::Failure(ErrorCode::ValidationError, modeError);
             }
             // One latch for the whole call, taken right before planning (which reads the active tickets): every row
             // is written to that pane's tracker even if focus moves while a background run is in flight.

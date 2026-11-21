@@ -792,6 +792,50 @@ void RegisterQuickCreateEscKeys(ImGuiTestEngine* engine) {
     };
 }
 
+// A window that is on screen and is neither the quick-create popup nor one of its popups.
+ImGuiWindow* UnrelatedLiveWindow(ImGuiWindow* quickCreate) {
+    for (ImGuiWindow* w : GImGui->Windows) {
+        if (w != nullptr && w->WasActive && (w->Flags & ImGuiWindowFlags_Popup) == 0 &&
+            w->RootWindow != quickCreate->RootWindow) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
+// A popup that belongs to another window is open: Esc in quick-create still closes quick-create. Only the popups
+// quick-create opened itself (a dropdown, the discard question) hold the Esc back for the frame that closes them.
+void RegisterQuickCreateEscIgnoresOtherWindowsPopups(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "QuickCreate_EscIgnoresOtherWindowsPopups");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_ui.quickCreateArgSummary.clear();
+        g_ui.quickCreateArgDescription.clear();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ImGuiWindow* quickCreate = ImGui::FindWindowByName("Quick Create Issue");
+        IM_CHECK_NO_RET(quickCreate != nullptr);
+        ImGuiWindow* other = quickCreate ? UnrelatedLiveWindow(quickCreate) : nullptr;
+        IM_CHECK_NO_RET(other != nullptr);
+        if (other == nullptr) {
+            g_ui.showQuickCreateIssue = false;
+            return;
+        }
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        // The popup entry of the other window, as OpenPopup would leave it.
+        ImGuiPopupData fake;
+        fake.PopupId = ImGui::GetID("##quickcreate_test_other_window_popup");
+        fake.Window = other;
+        fake.OpenFrameCount = GImGui->FrameCount;
+        GImGui->OpenPopupStack.push_back(fake);
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        ClosePopupsAbove(popupsBefore);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield();
+    };
+}
+
 void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_RendersActiveBranchOnFixtureData");
@@ -970,6 +1014,7 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
     RegisterNewIssueDraftRowKeys(engine);
     RegisterGridSearchFocusKeys(engine);
     RegisterQuickCreateEscKeys(engine);
+    RegisterQuickCreateEscIgnoresOtherWindowsPopups(engine);
     RegisterOfflineQueuePanelRenderSmoke(engine);
 }
 
