@@ -55,4 +55,26 @@ bool ExpandSideBar(UiDrawSession& d, SideBar bar);
 // the Views dashboard is not already open elsewhere). The menu disables a hidden item when not.
 bool CanExpandSideBar(const UiDrawSession& d, SideBar bar);
 
+// Keyboard resize (view.panel.grow / view.panel.shrink, the keyboard equivalent of dragging the splitter
+// before a panel). Focused picks the edge panel whose dock node holds the focused window; Primary is the
+// first visible of the Views column and the primary side bar.
+enum class PanelTarget { Focused, Bottom, Primary, Secondary };
+
+struct PanelNudgeResult {
+    bool Ok = false;
+    const char* Panel = "";      // "bottom" / "primary" / "secondary" once resolved
+    float ExtentPx = 0.0f;       // the extent asked for, after the same clamp a drag gets
+    const char* Error = "";      // why nothing changed, when !Ok
+    bool NoFocusedPanel = false; // Focused target only: the focused window is in no panel, so nothing to resize
+};
+
+// Changes the visible panel's extent (height for the bottom panel, width for a side bar) by deltaPx.
+// The new extent is applied by Tick over the next frames, through the same deferred SizeRef write a
+// reveal drag uses, so it is clamped and saved with the layout like a drag. Fails, changing nothing,
+// when no panel resolves, the panel is hidden, or the layout has no splitter before it.
+PanelNudgeResult NudgePanelExtent(UiDrawSession& d, PanelTarget target, float deltaPx);
+
+// One keyboard step: two lines of the current font, so it scales with the UI zoom.
+float KeyboardNudgeStepPx();
+
 } // namespace SmatchetBottomPanelDrag

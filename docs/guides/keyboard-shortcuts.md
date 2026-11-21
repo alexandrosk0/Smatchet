@@ -145,11 +145,11 @@ focus:
 |---|---|---|
 | Log work | `Enter` in **Time spent** | Save |
 | Log work | `Ctrl+Enter` in any field | Save |
-| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field |
+| Log work | `Esc` | Cancel. With the caret in a field and text typed, the first `Esc` only leaves the field. What you typed is kept and comes back when you open Log work on that issue again (**Clear** drops it) |
 | Comments | `Ctrl+Enter` in the comment box | Post the comment |
-| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once |
+| Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once. A comment you did not discard is kept for that issue and comes back when you open Comments on it again |
 | Long-text editor | `Ctrl+Enter` | Save |
-| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes) |
+| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes). Unsaved changes are kept per issue and field, and come back when the editor opens on it again (**Use saved text** drops them) |
 | Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
 | Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
 | Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
@@ -163,13 +163,27 @@ focus:
 | Scripts & Actions | `Ctrl+Enter` or `F5` | Run the open script (the row's **Run** / **Run on selected** button) |
 | Dictation overlay | `Esc` while recording | Cancel: the clip is dropped, nothing is transcribed or typed |
 | Customize Toolbar | `Ctrl+Enter` | Save |
-| Customize Toolbar | `Esc` | Cancel, when nothing is changed. With an edit made, `Esc` only leaves the field: **Cancel** discards the edits |
+| Customize Toolbar | `Esc` | Cancel, when nothing is changed. With an edit made (a field, a move or a removal), `Esc` only leaves the field, and with no field to leave it does nothing: **Cancel** discards the edits |
 | Save view as new | `Enter` in the name, or `Ctrl+Enter` | Save |
 | Save view as new | `Esc` | Cancel. With a name of your own typed and the caret in it, the first `Esc` only leaves the field |
 
 A submit button names its key at its right edge (**Post Comment** `Ctrl+Enter`, **Save**
 `Ctrl+Enter`), the way a menu item names its shortcut, and a composer's placeholder sits
 inside the empty box.
+
+Typed text that has not been sent is saved as you type, off the UI thread, in
+`smatchet_drafts.json` beside your settings (comments, long-text edits, Log work, the
+Assistant message box and a typed merge resolution), so a restart or a crash does not
+lose it. Sending, saving or choosing **Discard** erases it.
+
+A confirmed action can be taken back from its notification for a few seconds: clearing
+the Assistant conversation. The notification has an **Undo**
+button, and `Ctrl+Z` does the same while no text field has the caret and no dialog is
+open. Dismissing the notification, or letting it go, makes the action final. Clear is
+unavailable while a reply is coming in.
+
+Dragging a side bar or the bottom panel into the edge of the window shows "release to hide";
+`Esc` while dragging cancels the hide.
 
 Log work opens with the caret in **Time spent**, Comments opened from a cell with the
 caret in the comment box, and the long-text editor with the caret in the text (when it
@@ -212,8 +226,9 @@ dialog that opened by itself while you were typing. Running a command from the p
 clicking into another field while it is open, leaves the keyboard where it is.
 
 While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
-zoom shortcuts and **Full Screen**. A shortcut that ran behind a confirm could change
-or remove what the confirm is asking about.
+zoom shortcuts, **Full Screen** and the list and divider keys below (`Alt+Up`, `Alt+Down`, `Delete`,
+`Shift+Alt+arrows`), which act only on the list or divider that has the keyboard. A shortcut that ran behind a
+confirm could change or remove what the confirm is asking about.
 
 ## Dialog key rules
 
@@ -235,7 +250,7 @@ window. Where a dialog's row in the tables above differs, the row describes what
   focus, so it cannot fire a dialog hidden behind another one.
 - A global shortcut (the table below) fires from anywhere, unless a text field has the caret
   and the combo is one typing can produce. While a modal dialog is open they do nothing, except
-  the zoom shortcuts and **Full Screen** (see **Confirm dialogs** above).
+  the zoom shortcuts, **Full Screen** and the list and divider keys (see **Confirm dialogs** above).
 
 ## Default bindings
 
@@ -259,6 +274,13 @@ window. Where a dialog's row in the tables above differs, the row describes what
 | Zoom In | `Ctrl+=`, `Ctrl+Shift+=` (i.e. `Ctrl++`), `Ctrl+NumAdd`, `Ctrl+MouseWheelUp` | `ui.zoom.in` |
 | Zoom Out | `Ctrl+-`, `Ctrl+NumSubtract`, `Ctrl+MouseWheelDown` | `ui.zoom.out` |
 | Reset Zoom | `Ctrl+0`, `Ctrl+Num0` | `ui.zoom.reset` |
+| Move the selected row up (focused list) | `Alt+Up` | `ui.list.move_up` |
+| Move the selected row down (focused list) | `Alt+Down` | `ui.list.move_down` |
+| Remove the selected row (focused list) | `Delete` | `ui.list.remove` |
+| Move the focused splitter down / right | `Shift+Alt+Down`, `Shift+Alt+Right` | `ui.splitter.grow` |
+| Move the focused splitter up / left | `Shift+Alt+Up`, `Shift+Alt+Left` | `ui.splitter.shrink` |
+| Make the focused panel bigger | `Ctrl+Alt+PageUp` | `view.panel.grow` |
+| Make the focused panel smaller | `Ctrl+Alt+PageDown` | `view.panel.shrink` |
 | Quick-create issue | `Ctrl+Shift+T` | `issue.quick_create.open` |
 | Search settings | `Ctrl+Shift+,` | `preferences.search.focus` |
 | Next view | `Ctrl+PageDown` | `view.next` |
@@ -268,6 +290,18 @@ window. Where a dialog's row in the tables above differs, the row describes what
 `/` on its own does nothing while you are typing in a field, so it never takes a
 typed slash; `Ctrl+F` works from anywhere. In the search box, **Esc** clears the
 search and leaves the box.
+
+## Keyboard versions of mouse gestures
+
+Every drag has a command you can bind, so none of these needs the mouse:
+
+- **Lists and splitters** (`ui.list.*`, `ui.splitter.*`): they act only on the list or divider in the window that has the keyboard. With none focused, the key does nothing. They still run while a dialog is open, because the lists and dividers they serve sit inside dialogs. So far: the Customize Toolbar button list (select a row with `Space` or `Enter`, then `Alt+Up`, `Alt+Down` or `Delete`), and the divider in the long-text editor's Split view, the MCP panel and the Scripts window. The Up, Down and Delete buttons in the toolbar editor name the command in their tooltips, so a rebind never leaves a stale hint.
+- **Panels** (`view.panel.grow`, `view.panel.shrink`): resize the bottom panel or a side bar by two text lines per press. They take a `panel` argument, `focused` (the default: the panel holding the focused window), `bottom`, `primary` or `secondary`, so a binding can name one. The size is clamped and saved like a splitter drag.
+- **Date pickers**: the popup opens with the keyboard on the chosen day. `PageUp` / `PageDown` move a month (with `Shift`, a year), `Home` / `End` go to the first / last day, `T` goes to today, and the arrows move between days. `Enter` picks the focused day, and `Ctrl+Enter` applies in the full picker. The **Today**, **Tomorrow** and **In a week** buttons set the day at once.
+- **Path remaps** (Preferences, Annotate): **Add path remap** puts the caret in the new rule's *from* field, and `Enter` in the last, filled *to* field adds the next rule.
+- **Read-only text** (comments, descriptions): click the text or tab to it, then `Ctrl+A` selects all and `Ctrl+C` copies, with the mouse anywhere.
+
+Not yet: moving and resizing grid columns, the sort-rule list and the filter popups are waiting on other changes to the files they live in, and are listed in `docs/plans/input-ux-w2-gesture-keys.md`.
 
 ## Upgrading from an older build
 
@@ -287,6 +321,12 @@ the alias set instead.
 
 The grid search shortcut (`grid.search.focus`) is added once to a config saved
 before it existed. A binding you already gave that command is kept as it is.
+
+The keyboard versions of the mouse gestures (`ui.list.move_up` / `ui.list.move_down` /
+`ui.list.remove`, `ui.splitter.grow` / `ui.splitter.shrink`, `view.panel.grow` /
+`view.panel.shrink`) are added the same way, once, to a config saved before they
+existed (`migrated_gesture_keys_v1`). A command you had already bound keeps your
+binding.
 
 The settings-search and view-stepping shortcuts (`preferences.search.focus`, `view.next`, `view.previous`)
 are added the same way, once, to a config saved before they existed; a binding you already gave one of

@@ -355,11 +355,265 @@ void RegisterViewSwitchKeys(ImGuiTestEngine* engine) {
     };
 }
 
+// ---- Views sidebar search and the title rename (INPUT_UX_AUDIT.md #5, #65; one-matcher plan) ------------
+
+// The sidebar's list child, live this frame. Items in it hash from the sidebar child's own id.
+ImGuiWindow* FindLiveSidebarChild(const char* namePart) {
+    const ImGuiWindow* host = ImGui::FindWindowByName(kViewsWindow);
+    if (host == nullptr || !host->Active) {
+        return nullptr;
+    }
+    std::vector<const ImGuiWindow*> stack(1, host);
+    while (!stack.empty()) {
+        const ImGuiWindow* w = stack.back();
+        stack.pop_back();
+        for (ImGuiWindow* child : w->DC.ChildWindows) {
+            if (child->Active && !child->SkipItems && std::strstr(child->Name, namePart) != nullptr) {
+                return child;
+            }
+            stack.push_back(child);
+        }
+    }
+    return nullptr;
+}
+
+void SetSidebarSearch(const char* text) {
+    std::memset(g_ui.viewsSidebarSearchBuf, 0, sizeof(g_ui.viewsSidebarSearchBuf));
+#if defined(_MSC_VER)
+    strncpy_s(g_ui.viewsSidebarSearchBuf, sizeof(g_ui.viewsSidebarSearchBuf), text, _TRUNCATE);
+#else
+    std::strncpy(g_ui.viewsSidebarSearchBuf, text, sizeof(g_ui.viewsSidebarSearchBuf) - 1);
+#endif
+}
+
+// Vertices the last frame drew in `w` in the theme's match-mark colour: SmatchetMatchHighlight's marks.
+int MatchMarkVertices(const ImGuiWindow* w) {
+    if (w == nullptr || w->DrawList == nullptr) {
+        return 0;
+    }
+    const ImU32 mark = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+    int n = 0;
+    for (const ImDrawVert& v : w->DrawList->VtxBuffer) {
+        n += v.col == mark ? 1 : 0;
+    }
+    return n;
+}
+
+// Opens the dashboard on `viewId` with a clean draft and returns its live editor pane (nullptr on timeout).
+ImGuiWindow* OpenDashboardOn(ImGuiTestContext* ctx, AppController* app, const std::string& viewId) {
+    nlohmann::json activate;
+    activate["id"] = viewId;
+    if (!RunCommand(ctx, app, "view.activate", activate).Ok) {
+        ctx->LogError("view.activate '%s' failed", viewId.c_str());
+        return nullptr;
+    }
+    g_ui.cfg.BackendHasBeenReachable = true; // the first-launch gate on drawViewsDashboardWindow
+    g_ui.showViewsDashboard = true;
+    g_ui.viewsTitleEditing = false;
+    g_ui.viewDraftId = kReseedSentinel;
+    ImGuiWindow* editor = nullptr;
+    const bool live = YieldUntil(ctx, [&] {
+        g_ui.requestViewsDashboardFocus = true;
+        editor = FindLiveEditorPane();
+        return editor != nullptr && g_ui.viewDraftId == viewId;
+    });
+    if (!live) {
+        ctx->LogError("Views dashboard never showed view '%s'", viewId.c_str());
+        return nullptr;
+    }
+    return editor;
+}
+
+// The sidebar child, live, with the dashboard kept in front (nullptr on timeout).
+ImGuiWindow* WaitForSidebar(ImGuiTestContext* ctx) {
+    ImGuiWindow* sidebar = nullptr;
+    YieldUntil(ctx, [&] {
+        g_ui.requestViewsDashboardFocus = true;
+        sidebar = FindLiveSidebarChild("/ViewsSidebar_");
+        return sidebar != nullptr;
+    });
+    return sidebar;
+}
+
+// Waits until the views list is live and its match marks satisfy `wantMarks`; reports whether it got there.
+template <typename Want> bool WaitForListMarks(ImGuiTestContext* ctx, Want wantMarks) {
+    return YieldUntil(
+        ctx,
+        [&] {
+            g_ui.requestViewsDashboardFocus = true;
+            const ImGuiWindow* list = FindLiveSidebarChild("/ViewsSidebarList_");
+            return list != nullptr && wantMarks(MatchMarkVertices(list));
+        },
+        60);
+}
+
+// Types `query` into the search (with the caret in it), presses `chord`, and returns the current view after.
+std::string PressInSidebarSearch(ImGuiTestContext* ctx, AppController* app, ImGuiWindow* sidebar, const char* query,
+                                 ImGuiKeyChord chord) {
+    SetSidebarSearch(query);
+    ctx->Yield(2);
+    ctx->SetRef(sidebar);
+    ctx->ItemNavActivate("##ViewsSidebarSearch"); // the caret in the search box, without a mouse path
+    ctx->KeyPress(chord);
+    ctx->Yield(5);
+    ImGui::ClearActiveID();
+    return CurrentViewId(ctx, app);
+}
+
+// 1. A bare Enter in the views search opens the first view it lists: with "alpha" active, search "kilo", a word
+// only the other view holds, so the list has one row whatever the scorer's tie-breaks. The listed row marks the
+// letters that matched. Ctrl+Enter (the dashboard's Apply & Sync key) and Enter on a blank search open nothing.
+void CheckSidebarEnterAndMarks(ImGuiTestContext* ctx, AppController* app, const std::vector<std::string>& created) {
+    if (OpenDashboardOn(ctx, app, created[0]) == nullptr) {
+        return;
+    }
+    ImGuiWindow* sidebar = WaitForSidebar(ctx);
+    IM_CHECK_NO_RET(sidebar != nullptr);
+    if (sidebar == nullptr) {
+        return;
+    }
+    SetSidebarSearch("kilo");
+    const bool marked = WaitForListMarks(ctx, [](int n) { return n > 0; });
+    if (!marked) {
+        ctx->LogError("The views list drew no match mark for the search 'kilo'");
+    }
+    IM_CHECK_NO_RET(marked);
+
+    const std::string afterCtrlEnter = PressInSidebarSearch(ctx, app, sidebar, "kilo", ImGuiMod_Ctrl | ImGuiKey_Enter);
+    IM_CHECK_STR_EQ_NO_RET(afterCtrlEnter.c_str(), created[0].c_str());
+    const std::string afterBlankEnter = PressInSidebarSearch(ctx, app, sidebar, "   ", ImGuiKey_Enter);
+    IM_CHECK_STR_EQ_NO_RET(afterBlankEnter.c_str(), created[0].c_str());
+
+    PressInSidebarSearch(ctx, app, sidebar, "kilo", ImGuiKey_Enter);
+    const bool opened = WaitForCurrentView(ctx, app, created[1]);
+    if (!opened) {
+        ctx->LogError("Enter in the views search did not open the view it lists");
+    }
+    IM_CHECK_NO_RET(opened);
+
+    SetSidebarSearch("");
+    IM_CHECK_NO_RET(WaitForListMarks(ctx, [](int n) { return n == 0; }));
+}
+
+// Types `text` into the title field once Rename is on and its caret has settled, then presses `key`; reports
+// whether the edit ended.
+bool TypeIntoTitle(ImGuiTestContext* ctx, const char* text, ImGuiKey key) {
+    if (!YieldUntil(ctx, [] { return g_ui.viewsTitleEditing; }, 30)) {
+        ctx->LogError("Rename did not open the title field");
+        return false;
+    }
+    ctx->Yield(2); // the field takes the caret on the frame it first draws
+    ctx->KeyChars(text);
+    ctx->KeyPress(key);
+    return YieldUntil(ctx, [] { return !g_ui.viewsTitleEditing; }, 30);
+}
+
+// 2. Rename puts the caret in the title with the name selected: typing replaces it, Enter keeps it, Esc puts
+// the name back.
+void CheckTitleRename(ImGuiTestContext* ctx, AppController* app, const std::vector<std::string>& created) {
+    ImGuiWindow* editor = OpenDashboardOn(ctx, app, created[0]);
+    if (editor == nullptr) {
+        return;
+    }
+    ctx->SetRef(editor);
+    ctx->ItemClick("Rename");
+    IM_CHECK_NO_RET(TypeIntoTitle(ctx, "renamed by keys", ImGuiKey_Enter));
+    if (g_ui.viewDraft.Name != "renamed by keys") {
+        ctx->LogError("Rename did not select the name for typing: draft name is '%s'", g_ui.viewDraft.Name.c_str());
+    }
+    IM_CHECK_NO_RET(g_ui.viewDraft.Name == "renamed by keys");
+
+    const std::string before = g_ui.viewDraft.Name;
+    ctx->ItemClick("Rename");
+    IM_CHECK_NO_RET(TypeIntoTitle(ctx, "x", ImGuiKey_Escape));
+    IM_CHECK_STR_EQ_NO_RET(g_ui.viewDraft.Name.c_str(), before.c_str());
+    g_ui.viewDraftId = kReseedSentinel; // drop the unapplied rename
+    ctx->Yield(2);
+}
+
+// 3. Rename... in a row's right-click menu takes the caret too, with no window focused beforehand.
+void CheckMenuRename(ImGuiTestContext* ctx, AppController* app, const std::vector<std::string>& created) {
+    if (OpenDashboardOn(ctx, app, created[0]) == nullptr) {
+        return;
+    }
+    ImGuiWindow* list = nullptr;
+    YieldUntil(ctx, [&] {
+        g_ui.requestViewsDashboardFocus = true;
+        list = FindLiveSidebarChild("/ViewsSidebarList_");
+        return list != nullptr;
+    });
+    IM_CHECK_NO_RET(list != nullptr);
+    if (list == nullptr) {
+        return;
+    }
+    g_ui.requestViewsDashboardFocus = false;
+    ImGui::FocusWindow(nullptr);
+    ctx->Yield(2);
+    ctx->SetRef(list);
+    // NoFocusWindow: a right-click does not focus the window it lands in, and the engine must not either.
+    ctx->ItemClick((created[0] + "/##row").c_str(), ImGuiMouseButton_Right, ImGuiTestOpFlags_NoFocusWindow);
+    ctx->ItemClick("//$FOCUSED/Rename...");
+    IM_CHECK_NO_RET(TypeIntoTitle(ctx, "renamed from the menu", ImGuiKey_Enter));
+    if (g_ui.viewDraft.Name != "renamed from the menu") {
+        ctx->LogError("Rename... from the row menu left the caret elsewhere: draft name is '%s'",
+                      g_ui.viewDraft.Name.c_str());
+    }
+    IM_CHECK_NO_RET(g_ui.viewDraft.Name == "renamed from the menu");
+    g_ui.viewDraftId = kReseedSentinel; // drop the unapplied rename
+    ctx->Yield(2);
+}
+
+void CheckSidebarSearchAndRename(ImGuiTestContext* ctx, AppController* app) {
+    std::vector<std::string> created;
+    for (const char* name : {"zz sidebar keys alpha", "zz sidebar keys kilo"}) {
+        nlohmann::json args;
+        args["name"] = name;
+        const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "view.create", args);
+        IM_CHECK_NO_RET(r.Ok);
+        if (r.Ok && r.Data) {
+            created.push_back(r.Data->value("id", std::string()));
+        }
+    }
+    IM_CHECK_NO_RET(created.size() == 2);
+    if (created.size() == 2) {
+        ctx->Yield(3); // the deferred create lands
+        ctx->SetInputMode(ImGuiInputSource_Keyboard);
+        CheckSidebarEnterAndMarks(ctx, app, created);
+        SetSidebarSearch("");
+        CheckTitleRename(ctx, app, created);
+        ctx->SetInputMode(ImGuiInputSource_Mouse);
+        CheckMenuRename(ctx, app, created);
+        g_ui.requestViewsDashboardFocus = false;
+    }
+    for (const std::string& id : created) {
+        nlohmann::json del;
+        del["id"] = id;
+        RunCommand(ctx, app, "view.delete", del);
+    }
+}
+
+void RegisterSidebarSearchAndRename(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsEditorHeader", "Sidebar_EnterOpensFirstMarksMatchRenameSelects");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        ViewsDashboardStateGuard guard;
+        g_ui.cfg.UiMode = UiMode::Desktop;
+        CheckSidebarSearchAndRename(ctx, app);
+        g_ui.viewsTitleEditing = false;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterViewsEditorHeaderTests(ImGuiTestEngine* engine) {
     RegisterActionButtonOrder(engine);
     RegisterViewSwitchKeys(engine);
+    RegisterSidebarSearchAndRename(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

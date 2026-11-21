@@ -161,6 +161,9 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
+        if (discardConfirmed) {
+            s_Viewer.Content->OnDiscard();
+        }
         if (closeNow || discardConfirmed) {
             CloseFieldViewer();
         }

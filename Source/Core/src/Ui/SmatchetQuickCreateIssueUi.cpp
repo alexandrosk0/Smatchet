@@ -145,6 +145,23 @@ bool QuickCreateHasUserContent(const UiDrawSession& d) {
 // window and close it, or open the discard question again.
 bool s_quickCreatePopupOpenLastFrame = false;
 
+// Is a popup open that the window being drawn opened, directly or through another popup? A popup of some
+// other window does not count: it must not swallow this window's next Esc. (ImGui's own Esc handling closes
+// the top popup whoever owns it, but a foreign popup takes the focus, and ReadQuickCreateKeys reads no key
+// unless this window has it, so one Esc cannot close both.)
+bool PopupOpenOverCurrentWindow() {
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    const ImGuiWindow* root = ImGui::GetCurrentWindow()->RootWindow;
+    for (int i = 0; i < g.OpenPopupStack.Size; ++i) {
+        for (const ImGuiWindow* w = g.OpenPopupStack[i].Window; w != nullptr; w = w->ParentWindow) {
+            if (w->RootWindow == root) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Keys for the popup, read before its fields draw so a field keeps its text: an InputText that
 // is still active when a key reaches it acts on it itself. Only while the popup itself has the
 // keyboard, and never for the Esc that just closed a dropdown or the discard question.
@@ -452,8 +469,7 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     }
 
     DrawActions(app, d, keys, summaryEnter);
-    s_quickCreatePopupOpenLastFrame =
-        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    s_quickCreatePopupOpenLastFrame = PopupOpenOverCurrentWindow();
 
     d.quickCreateOpenLatch = false;
     ImGui::End();

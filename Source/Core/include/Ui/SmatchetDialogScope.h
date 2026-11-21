@@ -14,7 +14,8 @@
 //     SmatchetUI::dispatchKeybindings).
 // The decisions are pure and live in Ui/DialogKeysPure.h; this header only reads ImGui state for them.
 //
-// Usage, for a confirm: keep a file-scope DialogScopeState next to the dialog, call BeginDialog where the
+// Usage, for a confirm: keep a file-scope DialogScopeState next to the dialog (a member instead when the
+// class that draws it can have several instances, see Ui/DialogScopeState.h), call BeginDialog where the
 // BeginPopupModal was, draw the message, then call ConfirmFooter with a spec (DestructiveFooter,
 // ConsentFooter or UnsavedChangesFooter cover most dialogs) and act on the pick it returns. EndDialog
 // closes the body. "Delete view?" in SmatchetViewsDashboardUi.cpp is a short example.
@@ -25,18 +26,11 @@
 // their `#define ImGui SmatchetLocalizedImGui`, so ids hash the same and labels translate the same.
 
 #include "Ui/DialogKeysPure.h"
+#include "Ui/DialogScopeState.h"
 #include "imgui.h"
 
 namespace smatchet {
 namespace ui {
-
-/// Per-dialog state, owned by the caller (a file-scope static next to the dialog is the usual home).
-struct DialogScopeState {
-    bool Open = false;                   ///< BeginDialog returned true last time it was called
-    bool FocusPending = false;           ///< the opening focus has not been placed yet
-    bool OwnedKeyboardLastFrame = false; ///< for ResolveEscape: the Esc that closed a popup above stays there
-    bool FieldActiveLastFrame = false;   ///< a field of the dialog held the caret at the end of last frame
-};
 
 /// Wraps BeginPopupModal. Call every frame the dialog could be open, where its BeginPopupModal was. Returns
 /// what BeginPopupModal returns; when true, the body runs and EndDialog must follow.

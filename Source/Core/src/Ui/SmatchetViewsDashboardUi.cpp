@@ -23,6 +23,12 @@
 #include "TrackerFieldSchema.h"
 #include "Logger.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetMatchHighlight.h"
+#include "Ui/SmatchetSecretInput.h"
+#include "Ui/SmatchetViewSwitchTooltip.h"
+#include "ViewPickerPure.h"
+#include "TextMatchPure.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
@@ -142,10 +148,90 @@ struct ViewsDashboardDrawCtx {
     std::function<void(const std::string&)> activateView;
 };
 
+namespace {
+
+// The right-click menu of one views-sidebar row: rename, duplicate, delete.
+void DrawViewsSidebarRowMenu(ViewsDashboardDrawCtx& ctx, const ViewDefinition& view) {
+    UiDrawSession& d = ctx.d;
+    if (!ImGui::BeginPopupContextItem("##ViewRowMenu")) {
+        return;
+    }
+    if (ImGui::MenuItem("Rename...")) {
+        // DR13b: the inline title editor is bound to the ACTIVE view, so a rename must
+        // switch to the right-clicked row first. A dirty editor defers that switch behind
+        // the discard-confirm; arming the rename here would rename the still-active
+        // (wrong) view. Begin editing only once a clean switch has actually landed.
+        if (view.Id == ctx.activeView->Id) {
+            d.viewsTitleEditing = true;
+        } else {
+            const std::string id = view.Id;
+            ctx.requestActivate(id);
+            if (!d.viewsShowDiscardConfirm) {
+                d.viewsTitleEditing = true;
+            }
+        }
+    }
+    if (ImGui::MenuItem("Duplicate")) {
+        // DEFERRED create (Pillar 3 crash fix): creating here would reallocate
+        // store.Views WHILE the sidebar iterates it (and dangle ctx.activeView for
+        // the rest of the frame). Copy the payload now; apply next frame.
+        ViewDefinition dup = view;
+        dup.Id.clear();
+        dup.Name = view.Name + " (copy)";
+        d.viewsPendingCreate = true;
+        d.viewsPendingCreatePayload = std::move(dup);
+        d.viewsPendingCreateToastTitle = "View duplicated";
+        d.viewsPendingCreateToastMs = 1500;
+        d.viewsPendingCreateAdoptCfg = false;
+    }
+    ImGui::Separator();
+    const bool canDelete = ctx.store.Views.size() > 1;
+    if (!canDelete) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::MenuItem("Delete view...")) {
+        // DR13b: delete targets the RIGHT-CLICKED view id, independent of which view is
+        // active or whether the active view's editor is dirty. Previously this force-
+        // activated the row (which a dirty editor defers) yet the confirm + latch still
+        // targeted the active view — deleting the wrong view. Deleting a non-active view
+        // leaves the current editing context untouched.
+        d.viewsPendingDeleteId = view.Id;
+        d.viewsShowDeleteConfirm = true;
+    }
+    if (!canDelete) {
+        ImGui::EndDisabled();
+    }
+    ImGui::EndPopup();
+}
+
+// One views-sidebar row: "* " on the active view, then the name with the letters the search matched marked.
+// The row's id is the view id, so it stays put while the search reorders the list.
+void DrawViewsSidebarRow(ViewsDashboardDrawCtx& ctx, const ViewDefinition& view,
+                         const std::vector<smatchet::textmatch::ByteRange>& nameRanges) {
+    const bool isActive = (view.Id == ctx.activeView->Id);
+    ImGui::PushID(view.Id.c_str());
+    const char* marker = isActive ? "* " : "  ";
+    const ImVec2 textPos = ImGui::GetCursorScreenPos();
+    if (ImGui::SelectableRaw("##row", isActive, ImGuiSelectableFlags_AllowDoubleClick,
+                             ImVec2(0.0f, ImGui::GetTextLineHeight()))) {
+        const std::string id = view.Id;
+        ctx.requestActivate(id);
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    dl->AddText(textPos, textCol, marker);
+    const ImVec2 namePos(textPos.x + ImGui::CalcTextSize(marker).x, textPos.y);
+    SmatchetMatchHighlight::DrawText(dl, namePos, textCol, view.Name.c_str(), view.Name.c_str() + view.Name.size(),
+                                     nameRanges.empty() ? nullptr : nameRanges.data(), nameRanges.size());
+    DrawViewsSidebarRowMenu(ctx, view);
+    ImGui::PopID();
+}
+
+} // namespace
+
 void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     const ViewsStore& store = ctx.store;
-    const ViewDefinition* activeView = ctx.activeView;
 
     ImGui::BeginChild("ViewsSidebar", ImVec2(ctx.sidebarWidth, 0), true);
     {
@@ -158,73 +244,32 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
         }
         ImGui::Separator();
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##ViewsSidebarSearch", "Search views...", d.viewsSidebarSearchBuf,
-                                 sizeof(d.viewsSidebarSearchBuf));
+        // A bare Enter opens the first view the search lists, as a click on it would; with nothing typed it
+        // does nothing (INPUT_UX_AUDIT.md #65). Ctrl+Enter stays the dashboard's Apply & Sync key.
+        const bool searchEnter =
+            ImGui::InputTextWithHint("##ViewsSidebarSearch", "Search views...", d.viewsSidebarSearchBuf,
+                                     sizeof(d.viewsSidebarSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue) &&
+            SmatchetTextInputCommittedWithEnter();
+        if (ImGui::IsItemHovered()) {
+            SmatchetViewSwitchTooltip::Show(
+                SmatchetLocalization::T("views.sidebar_search_tooltip", "Enter opens the first view listed."),
+                d.cfg.Keybindings.Bindings);
+        }
         ImGui::Spacing();
 
+        // The shared matcher picks and orders the rows and marks the letters that matched (one-matcher plan).
+        static smatchet::textmatch::Scratch s_viewsSearchScratch; // UI thread only
+        const std::vector<smatchet::views::ListedView> listed = smatchet::views::ListViewsForSearch(
+            store.Views.size(), [&store](std::size_t i) -> const std::string& { return store.Views[i].Name; },
+            d.viewsSidebarSearchBuf, s_viewsSearchScratch);
+        if (searchEnter && !listed.empty() && !smatchet::textmatch::MakeQuery(d.viewsSidebarSearchBuf).Empty()) {
+            const std::string firstId = store.Views[listed.front().Index].Id;
+            ctx.requestActivate(firstId);
+        }
+
         ImGui::BeginChild("ViewsSidebarList", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), false);
-        for (const auto& view : store.Views) {
-            if (!SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive(view.Name, d.viewsSidebarSearchBuf)) {
-                continue;
-            }
-            const bool isActive = (view.Id == activeView->Id);
-            ImGui::PushID(view.Id.c_str());
-            std::string label;
-            label.reserve(view.Name.size() + 4);
-            label += isActive ? "* " : "  ";
-            label += view.Name;
-            if (ImGui::Selectable(label.c_str(), isActive, ImGuiSelectableFlags_AllowDoubleClick)) {
-                ctx.requestActivate(view.Id);
-            }
-            // Hover-revealed context menu for rename / duplicate / delete.
-            if (ImGui::BeginPopupContextItem("##ViewRowMenu")) {
-                if (ImGui::MenuItem("Rename...")) {
-                    // DR13b: the inline title editor is bound to the ACTIVE view, so a rename must
-                    // switch to the right-clicked row first. A dirty editor defers that switch behind
-                    // the discard-confirm; arming the rename here would rename the still-active
-                    // (wrong) view. Begin editing only once a clean switch has actually landed.
-                    if (view.Id == activeView->Id) {
-                        d.viewsTitleEditing = true;
-                    } else {
-                        ctx.requestActivate(view.Id);
-                        if (!d.viewsShowDiscardConfirm) {
-                            d.viewsTitleEditing = true;
-                        }
-                    }
-                }
-                if (ImGui::MenuItem("Duplicate")) {
-                    // DEFERRED create (Pillar 3 crash fix): creating here would reallocate
-                    // store.Views WHILE this loop iterates it (and dangle ctx.activeView for
-                    // the rest of the frame). Copy the payload now; apply next frame.
-                    ViewDefinition dup = view;
-                    dup.Id.clear();
-                    dup.Name = view.Name + " (copy)";
-                    d.viewsPendingCreate = true;
-                    d.viewsPendingCreatePayload = std::move(dup);
-                    d.viewsPendingCreateToastTitle = "View duplicated";
-                    d.viewsPendingCreateToastMs = 1500;
-                    d.viewsPendingCreateAdoptCfg = false;
-                }
-                ImGui::Separator();
-                const bool canDelete = store.Views.size() > 1;
-                if (!canDelete) {
-                    ImGui::BeginDisabled();
-                }
-                if (ImGui::MenuItem("Delete view...")) {
-                    // DR13b: delete targets the RIGHT-CLICKED view id, independent of which view is
-                    // active or whether the active view's editor is dirty. Previously this force-
-                    // activated the row (which a dirty editor defers) yet the confirm + latch still
-                    // targeted the active view — deleting the wrong view. Deleting a non-active view
-                    // leaves the current editing context untouched.
-                    d.viewsPendingDeleteId = view.Id;
-                    d.viewsShowDeleteConfirm = true;
-                }
-                if (!canDelete) {
-                    ImGui::EndDisabled();
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
+        for (const smatchet::views::ListedView& row : listed) {
+            DrawViewsSidebarRow(ctx, store.Views[row.Index], row.NameRanges);
         }
         ImGui::EndChild();
 
@@ -358,14 +403,26 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
 
     // Title row. The buffer is a display mirror of d.viewDraft.Name (see its doc comment) —
     // committing writes straight into the draft, no separate dirty flag to set.
+    // The first frame of a rename: Rename... in the sidebar's row menu (or the mobile drawer's) leaves the
+    // keyboard elsewhere, and the field only takes the caret in a focused window.
+    static bool s_titleWasEditing = false; // UI thread only; one views editor
+    const bool titleRenameStarted = d.viewsTitleEditing && !s_titleWasEditing;
+    s_titleWasEditing = d.viewsTitleEditing;
     if (d.viewsTitleEditing) {
-        ImGui::SetNextItemWidth(-260.0f);
-        if (ImGui::InputText("##ViewTitle", d.viewNameBuf, sizeof(d.viewNameBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            d.viewsTitleEditing = false;
-            d.viewDraft.Name = d.viewNameBuf;
+        // Rename swaps this field in with the caret in it and the name selected, so typing replaces it
+        // (INPUT_UX_AUDIT.md #5). Enter, Tab or a click away keeps the new name; Esc puts the old one
+        // back (the field restores the buffer). Either way the edit is over.
+        if (titleRenameStarted) {
+            ImGui::SetWindowFocus();
         }
-        if (ImGui::IsItemDeactivated()) {
+        SmatchetInput::TextOptions titleOpts;
+        titleOpts.focusOnAppear = true;
+        titleOpts.selectAllOnFocus = true;
+        titleOpts.trimOnCommit = true;
+        ImGui::SetNextItemWidth(-260.0f);
+        const SmatchetInput::TextResult title =
+            SmatchetInput::TextBuf("##ViewTitle", d.viewNameBuf, sizeof(d.viewNameBuf), titleOpts);
+        if (title.committed || title.reverted) {
             d.viewsTitleEditing = false;
             d.viewDraft.Name = d.viewNameBuf;
         }

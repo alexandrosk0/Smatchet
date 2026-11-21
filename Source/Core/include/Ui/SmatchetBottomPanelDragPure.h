@@ -25,6 +25,15 @@ const float kMaxRevealWorkShare = 0.85f;
 
 inline float ClampPx(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// The extent a keyboard nudge (view.panel.grow / shrink) asks for: `basePx` moved by `deltaPx`, held between the
+// style minimum and what the parent split leaves its other child. A parent too small for two panes leaves only the
+// minimum. The same bounds ApplyPendingExtent applies when the extent is written, so a nudge never asks for a size
+// the write would then change.
+inline float NudgeTargetExtent(float basePx, float deltaPx, float minPx, float parentPx) {
+    const float maxPx = parentPx > minPx * 2.0f ? parentPx - minPx : minPx;
+    return ClampPx(basePx + deltaPx, minPx, maxPx);
+}
+
 // Height of the band hugging the panel's bottom edge that arms drag-to-hide. The dock
 // splitter clamps the panel at the style's minimum window height, so the band must sit
 // BELOW that clamp: the mouse only enters it by dragging deliberately past the minimum.
@@ -37,6 +46,13 @@ inline float HideArmBandPx(float windowMinSizeY) {
 // panel's bottom edge - i.e. well past the min-height clamp, mirroring P4V's
 // drag-the-border-down-to-collapse.
 inline bool ShouldArmHide(float mouseY, float panelBottomY, float bandPx) { return mouseY >= panelBottomY - bandPx; }
+
+// End of a splitter drag that was armed to hide the panel: the panel hides only on a left-button
+// release while armed, and not when Esc was pressed during the drag (Esc cancels the gesture; the
+// panel stays, and the release is a plain resize).
+inline bool ShouldHideOnDragEnd(bool armed, bool released, bool escCancelled) {
+    return armed && released && !escCancelled;
+}
 
 // Reveal grip: open only once the drag travelled meaningfully upward.
 inline bool RevealDragCrossedThreshold(float dragStartY, float mouseY) {

@@ -15,7 +15,6 @@ held by another branch's plan-lock when it was written (no lock override was use
 - Every buffer that lives in `Source/Core/include/Ui/SmatchetUiSession.h` still goes through
   `SmatchetInput::TextBuf` (fixed buffer, byte counter, select-all, trim), not `std::string`: the
   Preferences search box (64 B, #2), the tracker credential buffers, the view name buffer.
-- View rename (#5): the title field in `SmatchetViewsDashboardUi.cpp` should take the caret with the name selected when Rename shows it (`SmatchetInput::TextBuf` with `focusOnAppear` + `selectAllOnFocus` + `trimOnCommit`, storage `d.viewNameBuf`; ends on `committed || reverted`). Written and reviewed on the first version of PR #2438, then dropped when sibling lock `pane-picker-jira-sites` claimed the file.
 - Offline conflict resolver: `conflictResolveBuf` (64 KiB / 8 KiB, #112) is in `SmatchetUiSession.h`.
 - Toolbar editor icon name "No such icon" message (#125) needs a new localization row in
   `SmatchetLocalization.cpp`, which was held by three branches.
@@ -30,5 +29,12 @@ When those locks release, move the cases to `tests/Core/SmatchetInputPure.test.c
 `tests/ui/text_field.test.cpp` and `tests/ui/icon_picker.test.cpp` (with their registry entries), then
 migrate each surface above to `SmatchetInput::Text` and delete the matching bullet here.
 
+2026-11-20 review: the plan-locks are gone, and the view rename (#5) landed
+(`SmatchetViewsDashboardUi.cpp`, input UX Wave 2 lock-deferrals PR). Of what is left, these wait on open PRs:
+`tests/CMakeLists.txt` and `SmatchetUiSession.h` (#2452), and `TicketFieldEditor.cpp` (#2450). Since #2440
+merged, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp` and `SmatchetLocalization.cpp` are free,
+so the bucket-E moves and the icon-name message (#125) can go. So can the labels editor (#4), the picker filter
+focus (#3) and the suggestion popup (#10): no open PR touches their files.
+
 Status: open
-Last-reviewed: 2026-11-16
+Last-reviewed: 2026-11-20

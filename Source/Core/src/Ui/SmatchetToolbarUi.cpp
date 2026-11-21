@@ -28,6 +28,7 @@
 #include "Ui/SubmitKeysPure.h"
 #include "Ui/SmatchetTheme.h"
 #include "Ui/SmatchetToast.h"
+#include "Ui/GestureKeys.h"
 #include "Ui/SmatchetUiSession.h"
 #include "Ui/TouchInputRouter.h"
 #include "imgui.h"
@@ -230,23 +231,13 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
 
 namespace {
 
-// Keys (smatchet::ui dialog contract, audit #120 and the key half of #121): the selected row of the button
-// list takes the keyboard on open (Add command, when the list is empty), Ctrl+Enter saves and Esc cancels.
-// With the caret in a field and an edit made, the first Esc only leaves the field. A new Command button
-// puts the caret in the command filter, a new Lua button in its tooltip.
-smatchet::ui::DialogScopeState s_toolbarEditorDialog;
-bool s_caretToNewButton = false;
-// The lists the editor opened with: Esc closes in one press while nothing differs from them.
-ToolbarConfig s_editorOpenedGlobal;
-std::vector<ToolbarButton> s_editorOpenedTracker;
-
 // Puts the caret in the next field once, after Add command / Add Lua, not while the Enter that pressed the
 // button is still down (it would repeat into the field).
-void TakeCaretForNewButton() {
-    if (!s_caretToNewButton || ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter)) {
+void TakeCaretForNewButton(bool& pending) {
+    if (!pending || ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter)) {
         return;
     }
-    s_caretToNewButton = false;
+    pending = false;
     ImGui::SetKeyboardFocusHere();
 }
 
@@ -497,9 +488,10 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         selected_ = editBuf_.Buttons.empty() ? -1 : 0;
     }
     requestEditSelect_ = -1;
-    s_editorOpenedGlobal = editBuf_;
-    s_editorOpenedTracker = trackerEditBuf_;
-    s_caretToNewButton = false;
+    editorOpenedGlobal_ = editBuf_;
+    editorOpenedTracker_ = trackerEditBuf_;
+    caretToNewButton_ = false;
+    pendingListFocus_ = -1; // a cursor move left over from the last editing session must not land in this one
     cmdNames_.clear();
     cmdHaystacks_.clear();
     const std::vector<smatchet::cmd::Command> all = app.Commands().All();
@@ -565,12 +557,38 @@ SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
     return EditorCtx{buttons, trackerScope, fa};
 }
 
+bool SmatchetToolbarUi::MoveSelectedButton(std::vector<ToolbarButton>& buttons, int delta) {
+    const int count = static_cast<int>(buttons.size());
+    if (selected_ < 0 || selected_ >= count || (delta != -1 && delta != 1)) {
+        return false;
+    }
+    const int dst = selected_ + delta;
+    if (dst < 0 || dst >= count) {
+        return false;
+    }
+    std::swap(buttons[static_cast<std::size_t>(selected_)], buttons[static_cast<std::size_t>(dst)]);
+    selected_ = dst;
+    pendingListFocus_ = dst;
+    return true;
+}
+
+bool SmatchetToolbarUi::RemoveSelectedButton(std::vector<ToolbarButton>& buttons) {
+    const int count = static_cast<int>(buttons.size());
+    if (selected_ < 0 || selected_ >= count) {
+        return false;
+    }
+    buttons.erase(buttons.begin() + selected_);
+    selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
+    pendingListFocus_ = selected_;
+    return true;
+}
+
 void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
     std::vector<ToolbarButton>& buttons = ctx.buttons;
 
     // Action row. With no button to select, the keyboard starts here.
     if (buttons.empty()) {
-        smatchet::ui::DialogFocusHere(s_toolbarEditorDialog);
+        smatchet::ui::DialogFocusHere(editorDialog_);
     }
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_command", "Add command"))) {
         ToolbarButton b;
@@ -578,7 +596,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         b.Tooltip = "New button";
         buttons.push_back(b);
         selected_ = static_cast<int>(buttons.size()) - 1;
-        s_caretToNewButton = true;
+        caretToNewButton_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_lua", "Add Lua"))) {
@@ -587,7 +605,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         b.Tooltip = "New Lua button";
         buttons.push_back(b);
         selected_ = static_cast<int>(buttons.size()) - 1;
-        s_caretToNewButton = true;
+        caretToNewButton_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_separator", "Add separator"))) {
@@ -597,8 +615,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         selected_ = static_cast<int>(buttons.size()) - 1;
     }
 
-    const int count = static_cast<int>(buttons.size());
-    const bool hasSel = selected_ >= 0 && selected_ < count;
+    const bool hasSel = selected_ >= 0 && selected_ < static_cast<int>(buttons.size());
 
     ImGui::SameLine();
     if (!hasSel) {
@@ -609,20 +626,29 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         ++selected_;
     }
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("common.delete", "Delete")) && hasSel) {
-        buttons.erase(buttons.begin() + selected_);
-        selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
+    if (ImGui::Button(SmatchetLocalization::T("common.delete", "Delete"))) {
+        RemoveSelectedButton(buttons);
     }
+    ImGui::SetItemTooltip(
+        "%s",
+        SmatchetLocalization::T("toolbar.editor.delete_key_hint",
+                                "Also on the keyboard with the list focused: ui.list.remove (rebind it in Shortcuts)"));
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.up", "Up")) && hasSel && selected_ > 0) {
-        std::swap(buttons[selected_], buttons[selected_ - 1]);
-        --selected_;
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.up", "Up"))) {
+        MoveSelectedButton(buttons, -1);
     }
+    ImGui::SetItemTooltip("%s",
+                          SmatchetLocalization::T(
+                              "toolbar.editor.up_key_hint",
+                              "Also on the keyboard with the list focused: ui.list.move_up (rebind it in Shortcuts)"));
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.down", "Down")) && hasSel && selected_ < count - 1) {
-        std::swap(buttons[selected_], buttons[selected_ + 1]);
-        ++selected_;
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.down", "Down"))) {
+        MoveSelectedButton(buttons, 1);
     }
+    ImGui::SetItemTooltip(
+        "%s", SmatchetLocalization::T(
+                  "toolbar.editor.down_key_hint",
+                  "Also on the keyboard with the list focused: ui.list.move_down (rebind it in Shortcuts)"));
     if (!hasSel) {
         ImGui::EndDisabled();
     }
@@ -635,6 +661,23 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
 
     // Left: button list (drag-drop reorder, confined to the active scope).
     ImGui::BeginChild("##tblist", ImVec2(240.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    // The keyboard equivalents of the drag reorder below and of the Delete button: they act while this list
+    // has the keyboard, on the selected row (Space or Enter selects the row under the keyboard cursor). ImGui's
+    // own arrow navigation also fires on Alt+Up / Alt+Down and moves the cursor one row; the moved row takes
+    // the cursor back below, so the two never leave it on a different row than the one that moved.
+    // This frame's focus only: a mutation never rests on a flag from an earlier frame. Pressing Alt and Down in
+    // the same frame can lose to ImGui's Alt-release menu-layer toggle (NavUpdateWindowing), which moves focus
+    // off the list on the next frame; a person holds Alt before the arrow, which cancels the toggle.
+    const bool listFocused = ImGui::IsWindowFocused();
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListMoveUp, listFocused)) {
+        MoveSelectedButton(buttons, -1);
+    }
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListMoveDown, listFocused)) {
+        MoveSelectedButton(buttons, 1);
+    }
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListRemove, listFocused)) {
+        RemoveSelectedButton(buttons);
+    }
     for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
         const std::string rowLabel = smatchet::toolbar_editor::EditorRowLabel(buttons[i], ctx.faLoaded);
         ImGui::PushID(i);
@@ -650,8 +693,11 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
         }
         // The id is the row's place in the list (PushID above), not its label: the label changes as the
         // args go bad and good, and the row must stay the same item while it does.
-        if (i == selected_) {
-            smatchet::ui::DialogFocusHere(s_toolbarEditorDialog);
+        if (pendingListFocus_ == i) {
+            ImGui::SetKeyboardFocusHere(); // the keyboard cursor follows the row it just moved or kept
+            pendingListFocus_ = -1;
+        } else if (i == selected_) {
+            smatchet::ui::DialogFocusHere(editorDialog_); // the list takes the keyboard on open
         }
         if (ImGui::Selectable((shownLabel + "###row").c_str(), selected_ == i)) {
             selected_ = i;
@@ -660,6 +706,7 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
             ImGui::PopStyleColor();
         }
         smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the button
+        // keyboard-equivalent: ui.list.move_up, ui.list.move_down
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             ImGui::SetDragDropPayload("SMATCHET_TB_BTN", &i, sizeof(int));
             ImGui::TextUnformatted(rowLabel.c_str());
@@ -714,7 +761,7 @@ void SmatchetToolbarUi::DrawEditorCommandPicker(ToolbarButton& b) {
     InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
     ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
     ImGui::SetNextItemWidth(-1.0f);
-    TakeCaretForNewButton();
+    TakeCaretForNewButton(caretToNewButton_);
     ImGui::InputTextWithHint("##cmdsearch",
                              SmatchetLocalization::T("toolbar.editor.filter_commands", "Filter commands..."),
                              cmdSearch_, sizeof(cmdSearch_));
@@ -802,7 +849,7 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
 
             // DR23: std::string-backed — no truncation of a long tooltip.
             if (b.Kind == ToolbarButtonKind::Lua) {
-                TakeCaretForNewButton();
+                TakeCaretForNewButton(caretToNewButton_);
             }
             InputTextStdString(SmatchetLocalization::T("toolbar.editor.tooltip", "Tooltip"), b.Tooltip);
         }
@@ -892,17 +939,17 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     SyncEditorOpenRequest(app, cfg);
 
     ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
-    if (!smatchet::ui::BeginDialog(s_toolbarEditorDialog, ToolbarEditorPopupTitle(), nullptr,
+    if (!smatchet::ui::BeginDialog(editorDialog_, ToolbarEditorPopupTitle(), nullptr,
                                    ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
     const bool unchanged =
-        editBuf_.Visible == s_editorOpenedGlobal.Visible &&
-        smatchet::toolbar_editor::SameToolbarButtons(editBuf_.Buttons, s_editorOpenedGlobal.Buttons) &&
-        smatchet::toolbar_editor::SameToolbarButtons(trackerEditBuf_, s_editorOpenedTracker);
-    const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(s_toolbarEditorDialog, unchanged);
+        editBuf_.Visible == editorOpenedGlobal_.Visible &&
+        smatchet::toolbar_editor::SameToolbarButtons(editBuf_.Buttons, editorOpenedGlobal_.Buttons) &&
+        smatchet::toolbar_editor::SameToolbarButtons(trackerEditBuf_, editorOpenedTracker_);
+    const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(editorDialog_, unchanged);
     // With an edit made, Esc only leaves a field: a reorder, a delete or an icon pick is not thrown away on
-    // one key, with no prompt. Cancel discards. (The ask-first guard is input-ux-w2-drafts-undo's.)
+    // one key, with no prompt. Cancel discards. (No ask-first prompt yet: a backlog item of the dialog contract.)
     if (keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel && unchanged) {
         ImGui::CloseCurrentPopup();
     }
@@ -914,5 +961,5 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     ImGui::SameLine();
     DrawEditorFieldEditor(ctx);
     DrawEditorFooter(app, ctx, cfg);
-    smatchet::ui::EndDialog(s_toolbarEditorDialog);
+    smatchet::ui::EndDialog(editorDialog_);
 }

@@ -2,7 +2,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slices 1, 2 and 3 shipped; slice 4 (row 25) and row 16 open, waiting on PR #2439 (drafts and undo), which rewrites the same Esc paths.
+> **Status**: `active` — slices 1, 2 and 3 shipped; slice 4 (row 25) and row 16 open. PR #2439 (drafts and undo), which rewrote the same Esc paths, has merged, so slice 4 builds on it.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -284,7 +284,8 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - **"Save view as new"** prefills "`<name>` (copy)"; Esc treats that unchanged name as nothing typed.
 - **`TrackerDateTimeFieldEditor.cpp` gains a second `no-ui-include-in-domain` deviation** for `Ui/SmatchetDialogScope.h`, next to the existing one, with the same reason (the picker is a modal).
 - **Tests:** the new slice 3 bucket-A cases go in a new `tests/Core/DialogKeysPure.test.cpp` (the `bulk-edit-rows` lock on `tests/CMakeLists.txt` is gone); the slice 1–2 cases stay in `SmatchetWorklogSubmitPure.test.cpp` for now. Bucket E is a new `tests/ui/dialog_contract_forms.test.cpp` (5 `DialogContract/*` tests).
-- **Slice 4 and row 16 wait for PR #2439** (`input-ux-w2-drafts-undo`). It rewrites the Esc paths of the worklog, long-text, field viewer, offline queue and comments dialogs, which are row 25's sites.
+- **Slice 4 and row 16 wait for PR #2439** (`input-ux-w2-drafts-undo`). It rewrites the Esc paths of the worklog, long-text, field viewer, offline queue and comments dialogs, which are row 25's sites. (#2439 has since merged; this branch merges it in.)
+- **New `Ui/DialogScopeState.h`**: `DialogScopeState` moves out of `SmatchetDialogScope.h` into an ImGui-free header. The toolbar editor's dialog state, caret latch and open-time snapshot are `SmatchetToolbarUi` members, not file statics. With a static, the `GestureKeys` test host's editor and the app's own toolbar shared one state: the closed one reset it every frame, so the open one re-armed its opening focus each frame and kept moving the keyboard to the selected row (`GestureKeys/ToolbarList_KeysMoveAndRemove` failed on the merged tree).
 - **Not migrated:** the annotate assignee modal still calls `ConfigManager::Load()` every frame (Pillar 2 smell, out of scope here).
 
 ## Verification (actual)
